@@ -47,6 +47,16 @@ fn typeOf(t: Term, env: Env, path: String) -> Result<Ty, String>
 verify typeOf
     typeOf(Term.TVar("x"), emptyEnv(), "p") => Result.Err("step p: x is not a variable in scope")
 
+fn typedEquation(e: Eqn, env: Env, path: String) -> Result<Eqn, String>
+    ? "The same equation after checking that its two sides have one type."
+    match Kernel.Types.join(typeOf(e.lhs, env, path)?, typeOf(e.rhs, env, path)?)
+        Result.Ok(ty) -> Result.Ok(e)
+        Result.Err(why) -> refuse(path, "the equation compares {why}")
+
+verify typedEquation
+    typedEquation(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(2)), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(2)))
+    typedEquation(Eqn(lhs = Term.TInt(1), rhs = Term.TStr("a")), emptyEnv(), "p") => Result.Err("step p: the equation compares Int is not String")
+
 fn bound(bs: List<Binding>, declared: List<TypedVar>, env: Env, what: String, path: String) -> Result<Unit, String>
     ? "The one check of every substitution a proof writes: each term fits the declared type of the variable it stands for."
     match Kernel.Types.bindTyped(bs, declared, [], tyEnv(env), what)
@@ -70,6 +80,8 @@ fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
     ? "Every definition body and constant value fits the type its declaration gives it; theorem givens are not in their scope."
     scope = Env(defs = env.defs, consts = env.consts, laws = [], hyps = [], vars = [], sums = env.sums, recs = env.recs, sigs = env.sigs)
     Kernel.Types.unique(defNames(scope.defs), [], "step {path}: duplicate definition")?
+    Kernel.Types.unique(sigNames(scope.sigs), [], "step {path}: duplicate signature")?
+    Kernel.Types.unique(List.concat(defNames(scope.defs), sigNames(scope.sigs)), [], "step {path}: definition and signature share name")?
     Kernel.Types.unique(constNames(scope.consts), [], "step {path}: duplicate module-level binding")?
     declarationsAcyclic(scope.consts, scope.defs, scope.consts, path)?
     Kernel.Types.unique(typeNames(scope.sums, scope.recs), [], "step {path}: duplicate type declaration")?
@@ -88,6 +100,15 @@ fn defNames(ds: List<Def>) -> List<String>
 
 verify defNames
     defNames([Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(0))]) => ["f"]
+
+fn sigNames(ss: List<FnSig>) -> List<String>
+    ? "The names the script's external signatures declare, in order."
+    match ss
+        [] -> []
+        [s, ..rest] -> List.prepend(s.name, sigNames(rest))
+
+verify sigNames
+    sigNames([FnSig(name = "f", params = [], ret = Ty.TyInt)]) => ["f"]
 
 fn constNames(cs: List<Const>) -> List<String>
     ? "The names the script's module-level bindings declare, in order."
@@ -363,7 +384,7 @@ fn transFrom(ts: List<Term>, ps: List<Proof>, env: Env, path: String, i: Int) ->
     ? "Check link i and those after it; the result spans the whole chain."
     match (ts, ps)
         ([a, b, ..moreTerms], [p, ..moreSteps]) -> transLink(a, b, p, List.prepend(b, moreTerms), moreSteps, env, path, i)
-        ([a], []) -> Result.Ok(Eqn(lhs = a, rhs = a))
+        ([a], []) -> typedEquation(Eqn(lhs = a, rhs = a), env, "{path}/trans.{i}")
         _ -> refuse(path, "trans needs at least one step")
 
 verify transFrom
@@ -372,7 +393,7 @@ verify transFrom
 fn transLink(a: Term, b: Term, p: Proof, rest: List<Term>, steps: List<Proof>, env: Env, path: String, i: Int) -> Result<Eqn, String>
     ? "One link of a chain, then the rest."
     here = "{path}/trans.{i}"
-    e = conclude(p, env, here)?
+    e = typedEquation(conclude(p, env, here)?, env, here)?
     match e == Eqn(lhs = a, rhs = b)
         false -> refuse(here, "the step does not join the written terms")
         true -> joinRest(a, transFrom(rest, steps, env, path, i + 1)?)
@@ -391,10 +412,12 @@ fn congr(c: Term, q: Proof, env: Env, path: String) -> Result<Eqn, String>
     ? "From a = b, c[a] = c[b]; the context holds exactly one hole."
     match Kernel.Subst.holeCount(c) == 1
         false -> refuse(path, "a congruence context needs exactly one hole")
-        true -> plugBoth(c, conclude(q, env, "{path}/congr")?, path)
+        true -> typedEquation(plugBoth(c, typedEquation(conclude(q, env, "{path}/congr")?, env, "{path}/congr")?, path)?, env, path)
 
 verify congr
     congr(Term.TVar("x"), Proof.PRefl(Term.TInt(1)), emptyEnv(), "p") => Result.Err("step p: a congruence context needs exactly one hole")
+    congr(Term.THole, Proof.PRefl(Term.TGet(Term.TRec("Missing", [Field(name = "a", value = Term.TInt(1))]), "a")), emptyEnv(), "p") => Result.Err("step p/congr: Missing is not a declared record")
+    congr(Term.TOp("+", Term.THole, Term.TInt(1)), Proof.PRefl(Term.TStr("a")), emptyEnv(), "p") => Result.Err("step p: + takes two values of one type: String is not Int")
 
 fn plugBoth(c: Term, e: Eqn, path: String) -> Result<Eqn, String>
     ? "Put both sides of an equation into the hole."
@@ -570,6 +593,7 @@ fn caseVars(cs: List<SplitCase>, t: Ty, env: Env) -> Result<List<List<TypedVar>>
 
 verify caseVars
     caseVars([SplitCase(ctor = "cons", binders = ["a", "b"], proof = Proof.PRefl(Term.TUnit))], Ty.TyList(Ty.TyInt), emptyEnv()) => Result.Ok([[Kernel.Term.typed("a", Ty.TyInt), Kernel.Term.typed("b", Ty.TyList(Ty.TyInt))]])
+    caseVars([SplitCase(ctor = "C.A", binders = ["extra"], proof = Proof.PRefl(Term.TUnit))], Ty.TyNamed("C"), sumEnv()) => Result.Err("case C.A binds 1 names for 0 fields")
 
 fn noVars(cs: List<SplitCase>) -> List<List<TypedVar>>
     ? "No variables for any case: a literal split names hypotheses, not values."
@@ -1073,6 +1097,7 @@ fn armEquation(s: Term, chosen: Arm, outer: List<Binding>, ys: List<Term>, q: Pr
 
 verify armEquation
     armEquation(Term.TVar("c"), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), [], [], Proof.PHyp("h"), Term.TUnit, withHyp(withVars(emptyEnv(), [Kernel.Term.typed("c", Ty.TyBool)]), "h", Term.TVar("c"), false), "p") => Result.Err("step p: the premise does not select this arm")
+    armEquation(Term.TCtor("Option.None", []), Arm(pattern = Pat.PCtor("Option.None", ["extra"]), body = Term.TInt(1)), [], [Term.TInt(0)], Proof.PRefl(Term.TUnit), Term.TUnit, emptyEnv(), "p") => Result.Err("step p: constructor pattern Option.None binds 1 names for 0 fields")
 
 fn armAt(arms: List<Arm>, k: Int) -> Option<Arm>
     ? "Arm k, counting from 1."
@@ -1244,6 +1269,7 @@ verify lawPremises
 fn checkScript(s: Script) -> Result<String, String>
     ? "The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first."
     Kernel.Induct.refuseMutualRecursion(s.defs)?
+    Kernel.Types.unique(lawKeys(List.concat(s.laws, factLaws(s.facts))), [], "step proof: cited laws repeat key")?
     checkFacts(s.facts, [])?
     env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), vars = Kernel.Types.rigidVars(s.obligation.givens), sums = s.sums, recs = s.recs, sigs = s.sigs)
     declarationsTyped(env, "proof")?
@@ -1256,6 +1282,15 @@ fn checkScript(s: Script) -> Result<String, String>
 verify checkScript
     checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
     checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), defs = [], consts = [], sums = [], recs = [], sigs = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
+
+fn lawKeys(ls: List<Law>) -> List<String>
+    ? "The keys of cited laws and checked facts, in order."
+    match ls
+        [] -> []
+        [l, ..rest] -> List.prepend(l.key, lawKeys(rest))
+
+verify lawKeys
+    lawKeys([Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit)]) => ["k"]
 
 fn statementTyped(ob: Law, env: Env) -> Result<Unit, String>
     ? "The claim's two sides have one type and its when is a Bool: a statement written wrongly is refused before its proof is read."

@@ -2932,11 +2932,9 @@ pub fn patVars(
                     crate::proof_std::aver_generated::kernel::types::partsOf(&subject);
                 crate::proof_std::aver_generated::kernel::types::patVarsAll(&ps, &__arg15, e)
             }
-            (crate::proof_std::aver_generated::kernel::term::Pat::PCtor(c, ns), _) => Ok({
-                let __arg16 @ _ =
-                    crate::proof_std::aver_generated::kernel::types::ctorFields(c, &subject, e)?;
-                crate::proof_std::aver_generated::kernel::types::namedVars(&ns, &__arg16)
-            }),
+            (crate::proof_std::aver_generated::kernel::term::Pat::PCtor(c, ns), _) => {
+                crate::proof_std::aver_generated::kernel::types::ctorPatVars(c, &ns, &subject, e)
+            }
             _ => Err(aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = aver_rt::Buffer::with_capacity(
@@ -2951,6 +2949,60 @@ pub fn patVars(
                 __b
             })),
         }
+    }
+}
+
+/// A constructor pattern binds exactly one name, including _, for each constructor field.
+pub fn ctorPatVars(
+    c @ _: AverStr,
+    ns @ _: &aver_rt::AverList<AverStr>,
+    subject @ _: &crate::proof_std::aver_generated::kernel::term::Ty,
+    e @ _: &TyEnv,
+) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>, AverStr> {
+    crate::proof_std::cancel_checkpoint();
+    let fs @ _ =
+        crate::proof_std::aver_generated::kernel::types::ctorFields(c.clone(), subject, e)?;
+    if (aver_rt::AverInt::from_i64(ns.len() as i64) == aver_rt::AverInt::from_i64(fs.len() as i64))
+    {
+        Ok(crate::proof_std::aver_generated::kernel::types::namedVars(
+            ns, &fs,
+        ))
+    } else {
+        Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(93)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&::aver_rt::str_lit!("constructor pattern "));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!(" binds "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            &(aver_rt::AverInt::from_i64(ns.len() as i64)),
+                        )));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(" names for "));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    &(aver_rt::AverInt::from_i64(fs.len() as i64)),
+                )));
+                __b
+            };
+            __b.push_str(&::aver_rt::str_lit!(" fields"));
+            __b
+        }))
     }
 }
 

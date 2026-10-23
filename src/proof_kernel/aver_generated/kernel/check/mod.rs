@@ -101,7 +101,7 @@ fn __mutual_tco_trampoline_1(
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCongr(__c_fields) => {
             let c = __c_fields.0.clone();
             let q = __c_fields.1.clone();
-            return crate::proof_kernel::aver_generated::kernel::check::congr(c, q, env, path)
+            return crate::proof_kernel::aver_generated::kernel::check::congr(c, q, &env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PUnfold(__f_fields) => {
             let f = __f_fields.0.clone();
@@ -1437,6 +1437,50 @@ pub fn typeOf(
     }
 }
 
+/// The same equation after checking that its two sides have one type.
+#[inline(always)]
+pub fn typedEquation(
+    mut e @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    env @ _: &Env,
+    path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __subject = {
+            let __arg5 @ _ = crate::proof_kernel::aver_generated::kernel::check::typeOf(
+                &e.lhs,
+                env,
+                path.clone(),
+            )?;
+            {
+                let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::check::typeOf(
+                    &e.rhs,
+                    env,
+                    path.clone(),
+                )?;
+                crate::proof_kernel::aver_generated::kernel::types::join(__arg5, __arg6)
+            }
+        };
+        match __subject {
+            Ok(ty @ _) => Ok(e),
+            Err(why @ _) => {
+                let __arg7 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("the equation compares "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg7)
+            }
+        }
+    }
+}
+
 /// The one check of every substitution a proof writes: each term fits the declared type of the variable it stands for.
 #[inline(always)]
 pub fn bound(
@@ -1564,11 +1608,11 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         },
     );
     {
-        let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::check::defNames(&scope.defs);
+        let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::check::defNames(&scope.defs);
         {
-            let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            let __arg12 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg11 @ _ = aver_rt::AverStr::from({
+                let __arg13 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -1584,18 +1628,75 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::types::unique(
-                    &__arg9, __arg10, __arg11,
+                    &__arg11, __arg12, __arg13,
                 )
             }
         }
     }?;
     {
-        let __arg12 @ _ =
+        let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::check::sigNames(&scope.sigs);
+        {
+            let __arg15 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg16 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(42)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("step "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(": duplicate signature"));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::types::unique(
+                    &__arg14, __arg15, __arg16,
+                )
+            }
+        }
+    }?;
+    {
+        let __arg17 @ _ = aver_rt::AverList::concat(
+            &crate::proof_kernel::aver_generated::kernel::check::defNames(&scope.defs),
+            &crate::proof_kernel::aver_generated::kernel::check::sigNames(&scope.sigs),
+        );
+        {
+            let __arg18 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg19 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(58)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("step "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(
+                        ": definition and signature share name"
+                    ));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::types::unique(
+                    &__arg17, __arg18, __arg19,
+                )
+            }
+        }
+    }?;
+    {
+        let __arg20 @ _ =
             crate::proof_kernel::aver_generated::kernel::check::constNames(&scope.consts);
         {
-            let __arg13 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            let __arg21 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg14 @ _ = aver_rt::AverStr::from({
+                let __arg22 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -1611,7 +1712,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::types::unique(
-                    &__arg12, __arg13, __arg14,
+                    &__arg20, __arg21, __arg22,
                 )
             }
         }
@@ -1623,12 +1724,12 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
         path.clone(),
     )?;
     {
-        let __arg15 @ _ =
+        let __arg23 @ _ =
             crate::proof_kernel::aver_generated::kernel::check::typeNames(&scope.sums, &scope.recs);
         {
-            let __arg16 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            let __arg24 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg17 @ _ = aver_rt::AverStr::from({
+                let __arg25 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
                             let mut __b = aver_rt::Buffer::with_capacity(
@@ -1644,7 +1745,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::types::unique(
-                    &__arg15, __arg16, __arg17,
+                    &__arg23, __arg24, __arg25,
                 )
             }
         }
@@ -1676,6 +1777,29 @@ pub fn defNames(
                 aver_rt::AverList::prepend(
                     d.name.clone(),
                     &crate::proof_kernel::aver_generated::kernel::check::defNames(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
+    }
+}
+
+/// The names the script's external signatures declare, in order.
+#[inline(always)]
+pub fn sigNames(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::FnSig>,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = ss;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    s.name.clone(),
+                    &crate::proof_kernel::aver_generated::kernel::check::sigNames(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2653,10 +2777,34 @@ pub fn transFrom(
                             {
                                 let __list_subject = __pat1;
                                 if __list_subject.is_empty() {
-                                    Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
-                                        lhs: a.clone(),
-                                        rhs: a.clone(),
-                                    })
+                                    {
+                                        let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() };
+                                        {
+                                            let __arg15 @ _ = aver_rt::AverStr::from({
+                                                let mut __b = {
+                                                    let mut __b = {
+                                                        let mut __b =
+                                                            aver_rt::Buffer::with_capacity(
+                                                                (aver_rt::AverInt::from_i64(39))
+                                                                    .to_usize()
+                                                                    .unwrap_or(0),
+                                                            );
+                                                        __b.push_str(&aver_rt::AverStr::from(
+                                                            aver_rt::aver_display(&(path)),
+                                                        ));
+                                                        __b
+                                                    };
+                                                    __b.push_str(&::aver_rt::str_lit!("/trans."));
+                                                    __b
+                                                };
+                                                __b.push_str(&aver_rt::AverStr::from(
+                                                    aver_rt::aver_display(&(i)),
+                                                ));
+                                                __b
+                                            });
+                                            crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15)
+                                        }
+                                    }
                                 } else {
                                     crate::proof_kernel::aver_generated::kernel::check::refuse(
                                         path,
@@ -2706,8 +2854,18 @@ pub fn transLink(
         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
         __b
     });
-    let e @ _ =
-        crate::proof_kernel::aver_generated::kernel::check::conclude(p, env.clone(), here.clone())?;
+    let e @ _ = {
+        let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::check::conclude(
+            p,
+            env.clone(),
+            here.clone(),
+        )?;
+        crate::proof_kernel::aver_generated::kernel::check::typedEquation(
+            __arg10,
+            env,
+            here.clone(),
+        )
+    }?;
     if (e
         == crate::proof_kernel::aver_generated::kernel::term::Eqn {
             lhs: a.clone(),
@@ -2715,14 +2873,14 @@ pub fn transLink(
         })
     {
         {
-            let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::check::transFrom(
+            let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::check::transFrom(
                 rest,
                 steps,
                 env,
                 path,
                 i.add(&aver_rt::AverInt::from_i64(1)),
             )?;
-            crate::proof_kernel::aver_generated::kernel::check::joinRest(a, __arg10)
+            crate::proof_kernel::aver_generated::kernel::check::joinRest(a, __arg11)
         }
     } else {
         crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -2749,7 +2907,7 @@ pub fn joinRest(
 pub fn congr(
     mut c @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut q @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    mut env @ _: Env,
+    env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
@@ -2757,21 +2915,54 @@ pub fn congr(
         == aver_rt::AverInt::from_i64(1))
     {
         {
-            let __arg5 @ _ = {
-                let __arg4 @ _ = aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
-                        __b
-                    };
-                    __b.push_str(&::aver_rt::str_lit!("/congr"));
-                    __b
-                });
-                crate::proof_kernel::aver_generated::kernel::check::conclude(q, env, __arg4)
+            let __arg8 @ _ = {
+                let __arg7 @ _ = {
+                    let __arg5 @ _ = {
+                        let __arg4 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(path),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!("/congr"));
+                            __b
+                        });
+                        crate::proof_kernel::aver_generated::kernel::check::conclude(
+                            q,
+                            env.clone(),
+                            __arg4,
+                        )
+                    }?;
+                    {
+                        let __arg6 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(path),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!("/congr"));
+                            __b
+                        });
+                        crate::proof_kernel::aver_generated::kernel::check::typedEquation(
+                            __arg5, env, __arg6,
+                        )
+                    }
+                }?;
+                crate::proof_kernel::aver_generated::kernel::check::plugBoth(
+                    c,
+                    __arg7,
+                    path.clone(),
+                )
             }?;
-            crate::proof_kernel::aver_generated::kernel::check::plugBoth(c, __arg5, path)
+            crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg8, env, path)
         }
     } else {
         crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -5978,9 +6169,26 @@ pub fn checkScript(
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::induct::refuseMutualRecursion(&s.defs)?;
     {
-        let __arg7 @ _ =
+        let __arg9 @ _ = {
+            let __arg8 @ _ = aver_rt::AverList::concat(
+                &s.laws.clone(),
+                &crate::proof_kernel::aver_generated::kernel::check::factLaws(&s.facts),
+            );
+            crate::proof_kernel::aver_generated::kernel::check::lawKeys(&__arg8)
+        };
+        {
+            let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            crate::proof_kernel::aver_generated::kernel::types::unique(
+                &__arg9,
+                __arg10,
+                ::aver_rt::str_lit!("step proof: cited laws repeat key"),
+            )
+        }
+    }?;
+    {
+        let __arg11 @ _ =
             <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>>::empty();
-        crate::proof_kernel::aver_generated::kernel::check::checkFacts(s.facts.clone(), __arg7)
+        crate::proof_kernel::aver_generated::kernel::check::checkFacts(s.facts.clone(), __arg11)
     }?;
     let env @ _ = Box::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
@@ -6020,6 +6228,29 @@ pub fn checkScript(
         Err(::aver_rt::str_lit!(
             "step proof: the proof ends at a different equation than the claim"
         ))
+    }
+}
+
+/// The keys of cited laws and checked facts, in order.
+#[inline(always)]
+pub fn lawKeys(
+    ls @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = ls;
+        if __list_subject.is_empty() {
+            aver_rt::AverList::empty()
+        } else {
+            if let (Some(l), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                aver_rt::AverList::prepend(
+                    l.key.clone(),
+                    &crate::proof_kernel::aver_generated::kernel::check::lawKeys(&rest),
+                )
+            } else {
+                panic!("Aver Rust codegen: non-exhaustive list match")
+            }
+        }
     }
 }
 

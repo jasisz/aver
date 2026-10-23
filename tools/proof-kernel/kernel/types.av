@@ -743,13 +743,24 @@ fn patVars(p: Pat, subject: Ty, e: TyEnv) -> Result<List<TypedVar>, String>
         (Pat.PNil, "List") -> Result.Ok([])
         (Pat.PCons(h, t), "List") -> Result.Ok(namedVars([h, t], ctorFields("cons", subject, e)?))
         (Pat.PTuple(ps), "tuple") -> patVarsAll(ps, partsOf(subject), e)
-        (Pat.PCtor(c, ns), _) -> Result.Ok(namedVars(ns, ctorFields(c, subject, e)?))
+        (Pat.PCtor(c, ns), _) -> ctorPatVars(c, ns, subject, e)
         _ -> Result.Err("the pattern does not fit {show(subject)}")
 
 verify patVars
     patVars(Pat.PCons("h", "t"), Ty.TyList(Ty.TyInt), empty()) => Result.Ok([Kernel.Term.typed("h", Ty.TyInt), Kernel.Term.typed("t", Ty.TyList(Ty.TyInt))])
     patVars(Pat.PNil, Ty.TyInt, empty()) => Result.Err("the pattern does not fit Int")
     patVars(Pat.PCtor("Option.Some", ["_"]), Ty.TyOption(Ty.TyInt), empty()) => Result.Ok([])
+
+fn ctorPatVars(c: String, ns: List<String>, subject: Ty, e: TyEnv) -> Result<List<TypedVar>, String>
+    ? "A constructor pattern binds exactly one name, including _, for each constructor field."
+    fs = ctorFields(c, subject, e)?
+    match List.len(ns) == List.len(fs)
+        true -> Result.Ok(namedVars(ns, fs))
+        false -> Result.Err("constructor pattern {c} binds {List.len(ns)} names for {List.len(fs)} fields")
+
+verify ctorPatVars
+    ctorPatVars("Option.Some", [], Ty.TyOption(Ty.TyInt), empty()) => Result.Err("constructor pattern Option.Some binds 0 names for 1 fields")
+    ctorPatVars("Option.Some", ["x"], Ty.TyOption(Ty.TyInt), empty()) => Result.Ok([Kernel.Term.typed("x", Ty.TyInt)])
 
 fn litFits(k: Ty, subject: Ty) -> Result<List<TypedVar>, String>
     ? "A literal pattern has the subject's type and binds nothing."
