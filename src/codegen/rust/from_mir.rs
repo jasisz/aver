@@ -594,7 +594,9 @@ impl MirFnEmitPolicy {
             // `format!("{ty:?}")` Debug string (`Vector(Int)`), fragile to
             // parse.
             let rust_name = aver_name_to_rust(&param.name);
-            let Some(ty) = self.local_types.get(&rust_name) else {
+            // `local_types` and `borrowed_params` hold source names (`as`,
+            // not `r#as`).
+            let Some(ty) = self.local_types.get(&param.name) else {
                 continue;
             };
             let hands_on = param_handed_on(ty, mir_fn, i, consumed);
@@ -615,7 +617,7 @@ impl MirFnEmitPolicy {
             // no-borrow path it was never borrowed (already `mut`-owned),
             // but it still needs to land in `owned_params` so the body's
             // clone-skip fires.
-            self.borrowed_params.remove(&rust_name);
+            self.borrowed_params.remove(&param.name);
             self.owned_params.insert(rust_name);
         }
     }
@@ -686,12 +688,14 @@ fn param_handed_on(
     index: usize,
     consumed: Option<&Vec<bool>>,
 ) -> bool {
-    (matches!(ty, Type::Named { .. }) || is_owned_collection_candidate(ty))
-        && (mir_fn
-            .params
-            .get(index)
-            .is_some_and(|param| result_hands_on(&mir_fn.body.node, param.local))
-            || consumed.and_then(|owned| owned.get(index)).copied() == Some(true))
+    let consumed = consumed.and_then(|owned| owned.get(index)).copied() == Some(true);
+    ((matches!(ty, Type::Named { .. }) || is_owned_collection_candidate(ty))
+        && (consumed
+            || mir_fn
+                .params
+                .get(index)
+                .is_some_and(|param| result_hands_on(&mir_fn.body.node, param.local))))
+        || (matches!(ty, Type::List(_)) && consumed)
 }
 
 /// Does a function result hand on the value in `slot`: the local itself at
@@ -807,13 +811,142 @@ pub(super) fn owned_collection_param_names(
 /// self-tail-recursive function borrows the params it only reads, as any
 /// other function does (see [`self_loop_lends`]); a mutual tail-call group
 /// keeps its borrowing wrappers and is never a by-value callee here.
+///
+/// A `List` param is taken by value only when every call site hands over a
+/// list it no longer needs (see [`list_param_fed_owned`]): then a match at
+/// its last use takes the list apart in place (`aver_list_match!`) instead
+/// of copying its head and rest. A caller that keeps the list would have to
+/// count a copy for the call and the match would copy both parts anyway, so
+/// such a param stays borrowed. Dropping a param changes what its own
+/// callers pass on, so the set of such params shrinks until it holds.
 pub(super) fn compute_owned_record_params(
     ctx: &CodegenContext,
 ) -> HashMap<crate::ir::FnId, Vec<bool>> {
-    let mut owned: HashMap<crate::ir::FnId, Vec<bool>> = HashMap::new();
     let Some(program) = ctx.mir_program.as_ref() else {
-        return owned;
+        return HashMap::new();
     };
+    let mut lists = handed_list_candidates(ctx, program);
+    loop {
+        let owned = owned_params_with(ctx, program, &lists);
+        let before = lists.len();
+        lists.retain(|&(id, index)| list_param_fed_owned(program, &owned, id, index));
+        if lists.len() == before {
+            return owned;
+        }
+    }
+}
+
+/// The `List` params that may be taken by value: those of a function every
+/// caller reaches by a direct call, which excludes `main`, a guest entry, a
+/// function used as a value and a mutual tail-call member (whose wrappers
+/// keep their own ABI, see [`mutual_tco_value_params`]).
+fn handed_list_candidates(
+    ctx: &CodegenContext,
+    program: &crate::ir::mir::MirProgram,
+) -> HashSet<(crate::ir::FnId, usize)> {
+    let mut values = HashSet::new();
+    for (_, mir_fn) in program.iter() {
+        collect_fn_values(&mir_fn.body.node, &mut values);
+    }
+    let mut out = HashSet::new();
+    for (id, mir_fn) in program.iter() {
+        let Some(resolved) = ctx.resolved_program.fn_by_id(*id) else {
+            continue;
+        };
+        let as_value = values
+            .iter()
+            .any(|v| *v == mir_fn.name || v.rsplit('.').next() == Some(mir_fn.name.as_str()));
+        if as_value
+            || mir_fn.name == "main"
+            || ctx.guest_entry.as_deref() == Some(resolved.name.as_str())
+            || ctx.mutual_tco_members.contains(id)
+        {
+            continue;
+        }
+        for (i, (_, ty)) in resolved.params.iter().enumerate() {
+            if matches!(ty, Type::List(_)) && i < mir_fn.params.len() {
+                out.insert((*id, i));
+            }
+        }
+    }
+    out
+}
+
+fn collect_fn_values(expr: &MirExpr, out: &mut HashSet<String>) {
+    if let MirExpr::FnValue(name) = expr {
+        out.insert(name.clone());
+    }
+    crate::ir::mir::expr::walk_children(expr, &mut |child| collect_fn_values(child, out));
+}
+
+/// Whether every direct call of `id` passes, at param `index`, a value the
+/// call can move: one just computed, a list's rest bound by `[h, ..t]` or a
+/// local bound by a `let` to a computed value, read for the last time, or the
+/// caller's own param at its last use when `owned` takes that by value. A
+/// field read, a still-live local and a borrowed param would be copied.
+fn list_param_fed_owned(
+    program: &crate::ir::mir::MirProgram,
+    owned: &HashMap<crate::ir::FnId, Vec<bool>>,
+    id: crate::ir::FnId,
+    index: usize,
+) -> bool {
+    fn sites<'e>(
+        expr: &'e MirExpr,
+        id: crate::ir::FnId,
+        out: &mut Vec<&'e [Spanned<MirExpr>]>,
+    ) {
+        match expr {
+            MirExpr::Call(call) if call.node.callee == MirCallee::Fn(id) => out.push(&call.node.args),
+            MirExpr::TailCall(call) if call.node.target == id => out.push(&call.node.args),
+            _ => {}
+        }
+        crate::ir::mir::expr::walk_children(expr, &mut |child| sites(child, id, out));
+    }
+    fn computed(expr: &MirExpr, out: &mut HashSet<LocalId>) {
+        match expr {
+            MirExpr::Let(binding)
+                if !matches!(binding.node.value.node, MirExpr::Local(_) | MirExpr::Project(_)) =>
+            {
+                out.insert(binding.node.binding);
+            }
+            MirExpr::Match(m) => out.extend(m.node.arms.iter().filter_map(|arm| match arm.pattern {
+                MirPattern::Cons { tail, .. } => Some(tail),
+                _ => None,
+            })),
+            _ => {}
+        }
+        crate::ir::mir::expr::walk_children(expr, &mut |child| computed(child, out));
+    }
+    program.iter().all(|(caller, mir_fn)| {
+        let mut calls = Vec::new();
+        sites(&mir_fn.body.node, id, &mut calls);
+        if calls.is_empty() {
+            return true;
+        }
+        let mut fresh = HashSet::new();
+        computed(&mir_fn.body.node, &mut fresh);
+        calls.iter().all(|args| match args.get(index).map(|arg| &arg.node) {
+            Some(MirExpr::Project(_)) | None => false,
+            Some(MirExpr::Local(local)) => {
+                local.node.last_use
+                    && match mir_fn.params.iter().position(|p| p.local == local.node.slot) {
+                        Some(j) => owned.get(caller).and_then(|abi| abi.get(j)) == Some(&true),
+                        None => fresh.contains(&local.node.slot),
+                    }
+            }
+            Some(_) => true,
+        })
+    })
+}
+
+/// [`compute_owned_record_params`] for one set of `List` params allowed to be
+/// taken by value.
+fn owned_params_with(
+    ctx: &CodegenContext,
+    program: &crate::ir::mir::MirProgram,
+    lists: &HashSet<(crate::ir::FnId, usize)>,
+) -> HashMap<crate::ir::FnId, Vec<bool>> {
+    let mut owned: HashMap<crate::ir::FnId, Vec<bool>> = HashMap::new();
     owned.extend(mutual_tco_value_params(ctx));
     let mut candidates: Vec<(crate::ir::FnId, Vec<usize>)> = Vec::new();
     // A tail-call loop takes its params by value whether or not it consumes
@@ -867,7 +1000,9 @@ pub(super) fn compute_owned_record_params(
         for (i, (name, ty)) in resolved.params.iter().enumerate() {
             let taken = !should_borrow_param(ty) || by_value.contains(&aver_name_to_rust(name));
             if !taken
-                && (matches!(ty, Type::Named { .. }) || is_owned_collection_candidate(ty))
+                && (matches!(ty, Type::Named { .. })
+                    || is_owned_collection_candidate(ty)
+                    || lists.contains(&(*id, i)))
                 && mir_fn.params.get(i).is_some()
             {
                 open.push(i);
@@ -924,6 +1059,7 @@ pub(super) fn compute_owned_record_params(
                     movable: &movable[id],
                     in_place: &in_place,
                     builtins: &program.builtins,
+                    takes_list_apart: lists.contains(&(*id, i)),
                 };
                 if consumes_local(&mir_fn.body.node, &consumption) {
                     graduated.push((*id, i));
@@ -1171,6 +1307,10 @@ struct Consumption<'a> {
     movable: &'a HashSet<usize>,
     in_place: &'a HashMap<crate::ir::FnId, Vec<bool>>,
     builtins: &'a [String],
+    /// Whether a `List` local taken apart at its last use (see
+    /// [`list_match_takes_apart`]) counts as consumed: only for a param
+    /// [`list_param_fed_owned`] admits.
+    takes_list_apart: bool,
 }
 
 /// Whether `expr` consumes the local in `slot`: updates it as the base of a
@@ -1297,8 +1437,11 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
         }
         // A match on the local at its last use moves the parts its arms
         // bind out of it: a Map or Vector part updated in place there
-        // consumes the local, as a field moved out of it would.
-        MirExpr::Match(m) if last_use_of(&m.node.subject.node) => m.node.arms.iter().any(|arm| {
+        // consumes the local, as a field moved out of it would. A list it
+        // takes apart is consumed as a whole.
+        MirExpr::Match(m) if last_use_of(&m.node.subject.node) => {
+            (cx.takes_list_apart && list_match_takes_apart(&m.node))
+                || m.node.arms.iter().any(|arm| {
             let mut binders = Vec::new();
             moved_parts(&arm.pattern, cx.codegen, &mut binders);
             binders.into_iter().any(|binder| {
@@ -1313,7 +1456,8 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
                     },
                 )
             }) || consumes_local(&arm.body.node, cx)
-        }),
+        })
+        }
         MirExpr::RecordUpdate(update) => {
             (local_of(&update.node.base.node).is_some_and(|base| base.slot == slot)
                 && crate::ir::mir::field_moves::update_base_is_final(&update.node))
@@ -4539,8 +4683,16 @@ fn lent_tuple_parts(pattern: &MirPattern, body: &Spanned<MirExpr>) -> HashSet<St
 /// node it alone holds. A list that lives on lends its head instead (see
 /// [`lent_head`]).
 fn takes_list_apart(m: &MirMatch, ctx: &MirEmitCtx<'_>) -> bool {
+    list_match_takes_apart(m)
+        && !mir_expr_is_borrowed_param_read(&m.subject.node, ctx)
+        && !owned_read_clones(&m.subject.node, ctx)
+}
+
+/// Whether a list match has the shape `aver_list_match!` takes: `[]` and
+/// `[h, ..t]` with both parts named.
+fn list_match_takes_apart(m: &MirMatch) -> bool {
     let named = |name: &str| !name.is_empty() && name != "_";
-    let shape = match m.arms.as_slice() {
+    match m.arms.as_slice() {
         [first, second] => match (&first.pattern, &second.pattern) {
             (
                 MirPattern::EmptyList,
@@ -4561,10 +4713,7 @@ fn takes_list_apart(m: &MirMatch, ctx: &MirEmitCtx<'_>) -> bool {
             _ => false,
         },
         _ => false,
-    };
-    shape
-        && !mir_expr_is_borrowed_param_read(&m.subject.node, ctx)
-        && !owned_read_clones(&m.subject.node, ctx)
+    }
 }
 
 /// The head a list arm binds, which it borrows from the list instead of
