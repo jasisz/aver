@@ -3098,74 +3098,140 @@ pub fn patVars(
 {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __subject = (
+        let (__pat0, __pat1) = (
             p,
             crate::proof_kernel::aver_generated::kernel::types::headOf(&subject),
         );
-        match __subject {
-            (crate::proof_kernel::aver_generated::kernel::term::Pat::PWild, _) => {
+        match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::term::Pat::PWild => {
                 Ok(aver_rt::AverList::empty())
             }
-            (crate::proof_kernel::aver_generated::kernel::term::Pat::PVar(n), _) => Ok({
-                let __arg10 @ _ = aver_rt::AverList::from_vec(vec![n]);
+            crate::proof_kernel::aver_generated::kernel::term::Pat::PVar(n) => Ok({
+                let __arg15 @ _ = aver_rt::AverList::from_vec(vec![n]);
                 {
-                    let __arg11 @ _ = aver_rt::AverList::from_vec(vec![subject]);
+                    let __arg16 @ _ = aver_rt::AverList::from_vec(vec![subject]);
                     crate::proof_kernel::aver_generated::kernel::types::namedVars(
-                        &__arg10, &__arg11,
+                        &__arg15, &__arg16,
                     )
                 }
             }),
-            (crate::proof_kernel::aver_generated::kernel::term::Pat::PLit(k), _) => {
-                let __arg12 @ _ =
-                    crate::proof_kernel::aver_generated::kernel::types::typeOf(&k, e)?;
-                crate::proof_kernel::aver_generated::kernel::types::litFits(__arg12, &subject)
+            crate::proof_kernel::aver_generated::kernel::term::Pat::PLit(k) => {
+                let __t = k;
+                match __t.view() {
+                    crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(
+                        __n_fields,
+                    ) => {
+                        let n = __n_fields.0.clone();
+                        {
+                            let __arg17 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt;
+                            crate::proof_kernel::aver_generated::kernel::types::litFits(
+                                __arg17, &subject,
+                            )
+                        }
+                    }
+                    crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(
+                        __b_fields,
+                    ) => {
+                        let b = __b_fields.0.clone();
+                        {
+                            let __arg18 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::term::Ty::TyBool;
+                            crate::proof_kernel::aver_generated::kernel::types::litFits(
+                                __arg18, &subject,
+                            )
+                        }
+                    }
+                    crate::proof_kernel::aver_generated::kernel::term::Term__view::TStr(
+                        __s_fields,
+                    ) => {
+                        let s = __s_fields.0.clone();
+                        {
+                            let __arg19 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::term::Ty::TyStr;
+                            crate::proof_kernel::aver_generated::kernel::types::litFits(
+                                __arg19, &subject,
+                            )
+                        }
+                    }
+                    crate::proof_kernel::aver_generated::kernel::term::Term__view::TUnit => {
+                        let __arg20 @ _ =
+                            crate::proof_kernel::aver_generated::kernel::term::Ty::TyUnit;
+                        crate::proof_kernel::aver_generated::kernel::types::litFits(
+                            __arg20, &subject,
+                        )
+                    }
+                    _ => Err(::aver_rt::str_lit!("a literal pattern is not a literal")),
+                }
             }
-            (crate::proof_kernel::aver_generated::kernel::term::Pat::PNil, __str_lit0)
-                if str::eq(&__str_lit0, "List") =>
-            {
-                Ok(aver_rt::AverList::empty())
-            }
-            (crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t), __str_lit0)
-                if str::eq(&__str_lit0, "List") =>
-            {
-                Ok({
-                    let __arg13 @ _ = aver_rt::AverList::from_vec(vec![h, t]);
+            crate::proof_kernel::aver_generated::kernel::term::Pat::PNil => match &*__pat1 {
+                "List" => Ok(aver_rt::AverList::empty()),
+                _ => Err(aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("the pattern does not fit "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(crate::proof_kernel::aver_generated::kernel::types::show(&subject)),
+                    )));
+                    __b
+                })),
+            },
+            crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t) => match &*__pat1 {
+                "List" => Ok({
+                    let __arg21 @ _ = aver_rt::AverList::from_vec(vec![h, t]);
                     {
-                        let __arg14 @ _ =
+                        let __arg22 @ _ =
                             crate::proof_kernel::aver_generated::kernel::types::ctorFields(
                                 ::aver_rt::str_lit!("cons"),
                                 &subject,
                                 e,
                             )?;
                         crate::proof_kernel::aver_generated::kernel::types::namedVars(
-                            &__arg13, &__arg14,
+                            &__arg21, &__arg22,
                         )
                     }
-                })
-            }
-            (crate::proof_kernel::aver_generated::kernel::term::Pat::PTuple(ps), __str_lit0)
-                if str::eq(&__str_lit0, "tuple") =>
-            {
-                let __arg15 @ _ =
-                    crate::proof_kernel::aver_generated::kernel::types::partsOf(&subject);
-                crate::proof_kernel::aver_generated::kernel::types::patVarsAll(&ps, &__arg15, e)
-            }
-            (crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, ns), _) => {
+                }),
+                _ => Err(aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("the pattern does not fit "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(crate::proof_kernel::aver_generated::kernel::types::show(&subject)),
+                    )));
+                    __b
+                })),
+            },
+            crate::proof_kernel::aver_generated::kernel::term::Pat::PTuple(ps) => match &*__pat1 {
+                "tuple" => {
+                    let __arg23 @ _ =
+                        crate::proof_kernel::aver_generated::kernel::types::partsOf(&subject);
+                    crate::proof_kernel::aver_generated::kernel::types::patVarsAll(&ps, &__arg23, e)
+                }
+                _ => Err(aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("the pattern does not fit "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(crate::proof_kernel::aver_generated::kernel::types::show(&subject)),
+                    )));
+                    __b
+                })),
+            },
+            crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
                 crate::proof_kernel::aver_generated::kernel::types::ctorPatVars(c, &ns, &subject, e)
             }
-            _ => Err(aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
-                    );
-                    __b.push_str(&::aver_rt::str_lit!("the pattern does not fit "));
-                    __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(crate::proof_kernel::aver_generated::kernel::types::show(&subject)),
-                )));
-                __b
-            })),
         }
     }
 }
