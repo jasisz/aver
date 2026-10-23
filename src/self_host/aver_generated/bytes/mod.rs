@@ -642,42 +642,29 @@ pub fn hexParts__buffered(
 #[inline(always)]
 pub fn parseHexChars__cursor(
     mut __cur_s @ _: AverStr,
-    mut __cur_i @ _: aver_rt::AverInt,
+    mut __cur_i @ _: i64,
     mut acc @ _: aver_rt::AverIntList,
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        if aver_rt::str_cursor_end(&__cur_s, (__cur_i).to_usize().unwrap_or(usize::MAX)) {
+        if aver_rt::str_cursor_end(&__cur_s, (__cur_i) as usize) {
             return Ok(acc.reverse());
         } else {
             {
-                let __cur_c2 =
-                    aver_rt::str_cursor_code(&__cur_s, (__cur_i).to_usize().unwrap_or(usize::MAX));
+                let __cur_c2 = aver_rt::str_cursor_code(&__cur_s, (__cur_i) as usize);
                 {
-                    let __cur_i1 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_next(
-                        &__cur_s,
-                        (__cur_i).to_usize().unwrap_or(usize::MAX),
-                    ) as i64);
-                    if aver_rt::str_cursor_end(
-                        &__cur_s,
-                        (__cur_i1).to_usize().unwrap_or(usize::MAX),
-                    ) {
+                    let __cur_i1 = (aver_rt::str_cursor_next(&__cur_s, (__cur_i) as usize) as i64);
+                    if aver_rt::str_cursor_end(&__cur_s, (__cur_i1) as usize) {
                         return Err(::aver_rt::str_lit!(
                             "Bytes.fromHex: expected an even number of hex characters"
                         ));
                     } else {
                         {
-                            let __cur_c1 = aver_rt::str_cursor_code(
-                                &__cur_s,
-                                (__cur_i1).to_usize().unwrap_or(usize::MAX),
-                            );
+                            let __cur_c1 = aver_rt::str_cursor_code(&__cur_s, (__cur_i1) as usize);
                             {
-                                let __cur_i2 = aver_rt::AverInt::from_i64(
-                                    aver_rt::str_cursor_next(
-                                        &__cur_s,
-                                        (__cur_i1).to_usize().unwrap_or(usize::MAX),
-                                    ) as i64,
-                                );
+                                let __cur_i2 =
+                                    (aver_rt::str_cursor_next(&__cur_s, (__cur_i1) as usize)
+                                        as i64);
                                 match crate::aver_generated::bytes::hexDigitValue__code(__cur_c2) {
                                     None => {
                                         return Err(aver_rt::AverStr::from({
@@ -696,9 +683,7 @@ pub fn parseHexChars__cursor(
                                                         &(aver_rt::AverStr::from(
                                                             aver_rt::str_cursor_head(
                                                                 &__cur_s,
-                                                                (__cur_i)
-                                                                    .to_usize()
-                                                                    .unwrap_or(usize::MAX),
+                                                                (__cur_i) as usize,
                                                             ),
                                                         )),
                                                     ),
@@ -733,9 +718,7 @@ pub fn parseHexChars__cursor(
                                                                 &(aver_rt::AverStr::from(
                                                                     aver_rt::str_cursor_head(
                                                                         &__cur_s,
-                                                                        (__cur_i1)
-                                                                            .to_usize()
-                                                                            .unwrap_or(usize::MAX),
+                                                                        (__cur_i1) as usize,
                                                                     ),
                                                                 )),
                                                             ),
@@ -857,7 +840,10 @@ pub fn parseHexChars__cursor__collected(
 ) -> Result<Bytes, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        if aver_rt::str_cursor_end(&__cur_s, (__cur_i).to_usize().unwrap_or(usize::MAX)) {
+        if aver_rt::str_cursor_end(
+            &__cur_s,
+            (__cur_i.to_i64().expect("Int out of i64 range")) as usize,
+        ) {
             match aver_rt::byte_builder_finalize(acc) {
                 Ok(__byt_vals @ _) => {
                     return Ok(crate::aver_generated::bytes::Bytes {
@@ -871,32 +857,26 @@ pub fn parseHexChars__cursor__collected(
             }
         } else {
             {
-                let __cur_c2 =
-                    aver_rt::str_cursor_code(&__cur_s, (__cur_i).to_usize().unwrap_or(usize::MAX));
+                let __cur_c2 = aver_rt::str_cursor_code(
+                    &__cur_s,
+                    (__cur_i.to_i64().expect("Int out of i64 range")) as usize,
+                );
                 {
-                    let __cur_i1 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_next(
+                    let __cur_i1 = (aver_rt::str_cursor_next(
                         &__cur_s,
-                        (__cur_i).to_usize().unwrap_or(usize::MAX),
+                        (__cur_i.to_i64().expect("Int out of i64 range")) as usize,
                     ) as i64);
-                    if aver_rt::str_cursor_end(
-                        &__cur_s,
-                        (__cur_i1).to_usize().unwrap_or(usize::MAX),
-                    ) {
+                    if aver_rt::str_cursor_end(&__cur_s, (__cur_i1) as usize) {
                         return Err(::aver_rt::str_lit!(
                             "Bytes.fromHex: expected an even number of hex characters"
                         ));
                     } else {
                         {
-                            let __cur_c1 = aver_rt::str_cursor_code(
-                                &__cur_s,
-                                (__cur_i1).to_usize().unwrap_or(usize::MAX),
-                            );
+                            let __cur_c1 = aver_rt::str_cursor_code(&__cur_s, (__cur_i1) as usize);
                             {
                                 let __cur_i2 = aver_rt::AverInt::from_i64(
-                                    aver_rt::str_cursor_next(
-                                        &__cur_s,
-                                        (__cur_i1).to_usize().unwrap_or(usize::MAX),
-                                    ) as i64,
+                                    (aver_rt::str_cursor_next(&__cur_s, (__cur_i1) as usize)
+                                        as i64),
                                 );
                                 match crate::aver_generated::bytes::hexDigitValue__code(__cur_c2) {
                                     None => {
@@ -916,9 +896,10 @@ pub fn parseHexChars__cursor__collected(
                                                         &(aver_rt::AverStr::from(
                                                             aver_rt::str_cursor_head(
                                                                 &__cur_s,
-                                                                (__cur_i)
-                                                                    .to_usize()
-                                                                    .unwrap_or(usize::MAX),
+                                                                (__cur_i
+                                                                    .to_i64()
+                                                                    .expect("Int out of i64 range"))
+                                                                    as usize,
                                                             ),
                                                         )),
                                                     ),
@@ -953,9 +934,7 @@ pub fn parseHexChars__cursor__collected(
                                                                 &(aver_rt::AverStr::from(
                                                                     aver_rt::str_cursor_head(
                                                                         &__cur_s,
-                                                                        (__cur_i1)
-                                                                            .to_usize()
-                                                                            .unwrap_or(usize::MAX),
+                                                                        (__cur_i1) as usize,
                                                                     ),
                                                                 )),
                                                             ),

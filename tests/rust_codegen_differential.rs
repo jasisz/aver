@@ -1071,6 +1071,12 @@ fn walk(text: String, pos: Int, seen: Int) -> String
         Option.None -> "{seen}:{String.slice(text, 1, 3)}"
         Option.Some(_) -> walk(text, pos + 1, seen + 1)
 
+fn walkFar(text: String, pos: Int, seen: Int) -> String
+    ? "The same walk, sliced across the edge of the index's first block of 64."
+    match String.charAt(text, pos)
+        Option.None -> "{seen}:{String.slice(text, 62, 67)}"
+        Option.Some(_) -> walkFar(text, pos + 1, seen + 1)
+
 fn scoreChar(c: String) -> Int
     match c
         "a" -> 1
@@ -1099,11 +1105,13 @@ fn main() -> Unit
     ? "Print the indexed result for backend parity."
     ! [Console.print]
     Console.print("{walk("aą😀z", 0, 0)}|{score("aą😀z")}|{mutualEven("aą😀z", 0, 0)}")
-"#;
-    let expected = "4:ą😀|211|211";
-    let vm = run_vm_inline("string_index", src).expect("VM run");
+    Console.print("{walkFar("LONG", 0, 0)}|{score("LONG")}|{mutualEven("LONG", 0, 0)}")
+"#
+    .replace("LONG", &"aą😀z".repeat(40));
+    let expected = "4:ą😀|211|211\n160:😀zaą😀|8440|8440";
+    let vm = run_vm_inline("string_index", &src).expect("VM run");
     let rust =
-        build_run_rust_inline("string_index", src).expect("Rust compile + cargo build + run");
+        build_run_rust_inline("string_index", &src).expect("Rust compile + cargo build + run");
     assert_eq!(vm, expected, "VM indexed String contract changed");
     assert_eq!(
         rust, expected,

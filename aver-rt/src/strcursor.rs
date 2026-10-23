@@ -26,8 +26,12 @@ pub fn str_cursor_end(s: &str, i: usize) -> bool {
 /// guarded by a [`str_cursor_end`] test on the same offset.
 #[inline]
 pub fn str_cursor_head(s: &str, i: usize) -> &str {
-    match char_at(s, i) {
-        Some((c, start)) => &s[start..start + c.len_utf8()],
+    match s.as_bytes().get(i) {
+        Some(b) if b.is_ascii() => &s[i..i + 1],
+        Some(_) => match char_at(s, i) {
+            Some((c, start)) => &s[start..start + c.len_utf8()],
+            None => "",
+        },
         None => "",
     }
 }
@@ -35,10 +39,15 @@ pub fn str_cursor_head(s: &str, i: usize) -> &str {
 /// The cursor one character on. Saturates at the end of the string, so
 /// a cursor can never step past `s.len()` and the end test stays
 /// monotone.
+///
+/// An ASCII byte is a whole character, so the common step is `i + 1`
+/// without decoding; [`str_cursor_code`] reads the same byte, so once
+/// both are inlined into a loop the two share one load.
 #[inline]
 pub fn str_cursor_next(s: &str, i: usize) -> usize {
-    match char_at(s, i) {
-        Some((c, start)) => start + c.len_utf8(),
+    match s.as_bytes().get(i) {
+        Some(b) if b.is_ascii() => i + 1,
+        Some(_) => next_multibyte(s, i),
         None => s.len(),
     }
 }
@@ -49,6 +58,26 @@ pub fn str_cursor_next(s: &str, i: usize) -> usize {
 /// building the one-character string and decoding it again.
 #[inline]
 pub fn str_cursor_code(s: &str, i: usize) -> i64 {
+    match s.as_bytes().get(i) {
+        Some(b) if b.is_ascii() => i64::from(*b),
+        Some(_) => code_multibyte(s, i),
+        None => -1,
+    }
+}
+
+/// [`str_cursor_next`] off the ASCII path, kept out of line so the fast
+/// path stays small enough to inline into every loop.
+#[inline(never)]
+fn next_multibyte(s: &str, i: usize) -> usize {
+    match char_at(s, i) {
+        Some((c, start)) => start + c.len_utf8(),
+        None => s.len(),
+    }
+}
+
+/// [`str_cursor_code`] off the ASCII path.
+#[inline(never)]
+fn code_multibyte(s: &str, i: usize) -> i64 {
     match char_at(s, i) {
         Some((c, _)) => i64::from(u32::from(c)),
         None => -1,

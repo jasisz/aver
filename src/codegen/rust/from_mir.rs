@@ -7446,37 +7446,31 @@ fn emit_mir_intrinsic_call(
         // Codepoint cursor (chars fusion). Each one is a call into
         // `aver_rt::strcursor` — the VM executes the same routines, so
         // a fused loop cannot answer differently on the two backends.
-        // A negative or out-of-`usize` offset is past the end of every
-        // string, which is exactly where the end test stops the loop,
-        // so `unwrap_or(usize::MAX)` is a saturation and not a silent
-        // wrong index.
+        // The offset arrives as a raw `i64`: it is a compiler-owned
+        // carrier (`bare_i64::carrier_param_interval`), the representation
+        // rewrite unboxes it at every one of these arguments, and its range
+        // is a byte offset, so `as usize` is exact.
         BuiltinIntrinsic::StrCursorEnd
         | BuiltinIntrinsic::StrCursorHead
-        | BuiltinIntrinsic::StrCursorNext => {
+        | BuiltinIntrinsic::StrCursorNext
+        | BuiltinIntrinsic::StrCursorCode => {
             let s = emit_mir_expr(&args[0], ctx)?;
-            let i = emit_mir_expr(&args[1], ctx)?;
-            let call =
-                |f: &str| format!("aver_rt::{f}(&{s}, ({i}).to_usize().unwrap_or(usize::MAX))");
+            let i = emit_bare_i64(&args[1]).or_else(|| emit_mir_expr(&args[1], ctx))?;
+            let call = |f: &str| format!("aver_rt::{f}(&{s}, ({i}) as usize)");
             Some(match intrinsic {
                 BuiltinIntrinsic::StrCursorEnd => call("str_cursor_end"),
                 BuiltinIntrinsic::StrCursorHead => {
                     format!("aver_rt::AverStr::from({})", call("str_cursor_head"))
                 }
-                _ => format!(
+                BuiltinIntrinsic::StrCursorNext if raw_result => {
+                    format!("({} as i64)", call("str_cursor_next"))
+                }
+                BuiltinIntrinsic::StrCursorNext => format!(
                     "aver_rt::AverInt::from_i64({} as i64)",
                     call("str_cursor_next")
                 ),
-            })
-        }
-        BuiltinIntrinsic::StrCursorCode => {
-            let s = emit_mir_expr(&args[0], ctx)?;
-            let i = emit_mir_expr(&args[1], ctx)?;
-            let call =
-                format!("aver_rt::str_cursor_code(&{s}, ({i}).to_usize().unwrap_or(usize::MAX))");
-            Some(if raw_result {
-                call
-            } else {
-                format!("aver_rt::AverInt::from_i64({call})")
+                _ if raw_result => call("str_cursor_code"),
+                _ => format!("aver_rt::AverInt::from_i64({})", call("str_cursor_code")),
             })
         }
         // Codepoint-level case fold. A code outside i64 is outside the
