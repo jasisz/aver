@@ -921,7 +921,7 @@ fn both_kernels_split_a_list_given_into_its_two_cases_and_refuse_mutations() {
         (
             "a split of a given that is not a list",
             script.replace("((xs (list int)))", "((xs _))"),
-            "? is not List<",
+            "the pattern does not fit ?",
         ),
         (
             "a head named like the variable split",
