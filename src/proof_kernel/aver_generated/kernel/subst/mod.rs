@@ -168,8 +168,7 @@ pub fn patNames(
             crate::proof_kernel::aver_generated::kernel::subst::dropWild(ns)
         }
         crate::proof_kernel::aver_generated::kernel::term::Pat::PTuple(ps) => {
-            let ps = ps.clone();
-            crate::proof_kernel::aver_generated::kernel::subst::patNamesAll(&ps)
+            crate::proof_kernel::aver_generated::kernel::subst::patNamesAll(ps)
         }
         _ => aver_rt::AverList::empty(),
     }
@@ -219,9 +218,9 @@ pub fn dropWild(ns @ _: &aver_rt::AverList<AverStr>) -> aver_rt::AverList<AverSt
                             continue;
                         }
                     } else {
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             n,
-                            &crate::proof_kernel::aver_generated::kernel::subst::dropWild(&rest),
+                            crate::proof_kernel::aver_generated::kernel::subst::dropWild(&rest),
                         );
                     }
                 } else {
@@ -251,10 +250,10 @@ pub fn freeVars(
                     return aver_rt::AverList::from_vec(vec![::aver_rt::str_lit!("□")]);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
-                    let o = __o_fields.0.clone();
+                    let o = &__o_fields.0;
                     let f = __o_fields.1.clone();
                     {
-                        let __tco0 = o;
+                        let __tco0 = o.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -264,13 +263,13 @@ pub fn freeVars(
                     __f_fields,
                 ) => {
                     let f = __f_fields.0.clone();
-                    let xs = __f_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(&xs);
+                    let xs = &__f_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
                     let f = __f_fields.0.clone();
-                    let xs = __f_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(&xs);
+                    let xs = &__f_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
                     let o = __o_fields.0.clone();
@@ -282,9 +281,9 @@ pub fn freeVars(
                     );
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                    let a = __a_fields.0.clone();
+                    let a = &__a_fields.0;
                     {
-                        let __tco0 = a;
+                        let __tco0 = a.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -294,8 +293,8 @@ pub fn freeVars(
                     __c_fields,
                 ) => {
                     let c = __c_fields.0.clone();
-                    let xs = __c_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(&xs);
+                    let xs = &__c_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TMatch(
                     __s_fields,
@@ -310,25 +309,25 @@ pub fn freeVars(
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TParts(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(&xs);
+                    let xs = &__xs_fields.0;
+                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TList(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(&xs);
+                    let xs = &__xs_fields.0;
+                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TTuple(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(&xs);
+                    let xs = &__xs_fields.0;
+                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TRec(__n_fields) => {
                     let n = __n_fields.0.clone();
-                    let fs = __n_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsFields(&fs);
+                    let fs = &__n_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::subst::freeVarsFields(fs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__n_fields) => {
                     let n = __n_fields.0.clone();
@@ -452,9 +451,9 @@ pub fn without(
                             continue;
                         }
                     } else {
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             n,
-                            &crate::proof_kernel::aver_generated::kernel::subst::without(
+                            crate::proof_kernel::aver_generated::kernel::subst::without(
                                 &rest, drop,
                             ),
                         );
@@ -482,10 +481,10 @@ pub fn holeCount(
                     return aver_rt::AverInt::from_i64(1);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
-                    let o = __o_fields.0.clone();
+                    let o = &__o_fields.0;
                     let f = __o_fields.1.clone();
                     {
-                        let __tco0 = o;
+                        let __tco0 = o.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -495,13 +494,13 @@ pub fn holeCount(
                     __f_fields,
                 ) => {
                     let f = __f_fields.0.clone();
-                    let xs = __f_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(&xs);
+                    let xs = &__f_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
                     let f = __f_fields.0.clone();
-                    let xs = __f_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(&xs);
+                    let xs = &__f_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
                     let o = __o_fields.0.clone();
@@ -511,9 +510,9 @@ pub fn holeCount(
                         .add(&crate::proof_kernel::aver_generated::kernel::subst::holeCount(b));
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                    let a = __a_fields.0.clone();
+                    let a = &__a_fields.0;
                     {
-                        let __tco0 = a;
+                        let __tco0 = a.clone();
                         __hold0 = __tco0;
                         t = &__hold0;
                         continue;
@@ -523,8 +522,8 @@ pub fn holeCount(
                     __c_fields,
                 ) => {
                     let c = __c_fields.0.clone();
-                    let xs = __c_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(&xs);
+                    let xs = &__c_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TMatch(
                     __s_fields,
@@ -538,27 +537,25 @@ pub fn holeCount(
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TParts(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(&xs);
+                    let xs = &__xs_fields.0;
+                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TList(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(&xs);
+                    let xs = &__xs_fields.0;
+                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TTuple(
                     __xs_fields,
                 ) => {
-                    let xs = __xs_fields.0.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(&xs);
+                    let xs = &__xs_fields.0;
+                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountAll(xs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TRec(__n_fields) => {
                     let n = __n_fields.0.clone();
-                    let fs = __n_fields.1.clone();
-                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountFields(
-                        &fs,
-                    );
+                    let fs = &__n_fields.1;
+                    return crate::proof_kernel::aver_generated::kernel::subst::holeCountFields(fs);
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__n_fields) => {
                     let n = __n_fields.0.clone();
@@ -661,12 +658,15 @@ pub fn subst(
                 .unwrap_or(t))
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
-                let o = __o_fields.0.clone();
+                let o = &__o_fields.0;
                 let f = __o_fields.1.clone();
                 Ok(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TGet(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TGet(
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(o, bs)?,
+                            crate::proof_kernel::aver_generated::kernel::subst::subst(
+                                o.clone(),
+                                bs,
+                            )?,
                             f,
                         ),
                     ),
@@ -698,24 +698,33 @@ pub fn subst(
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
                 let o = __o_fields.0.clone();
-                let a = __o_fields.1.clone();
-                let b = __o_fields.2.clone();
+                let a = &__o_fields.1;
+                let b = &__o_fields.2;
                 Ok(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
                             o,
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(a, bs)?,
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(b, bs)?,
+                            crate::proof_kernel::aver_generated::kernel::subst::subst(
+                                a.clone(),
+                                bs,
+                            )?,
+                            crate::proof_kernel::aver_generated::kernel::subst::subst(
+                                b.clone(),
+                                bs,
+                            )?,
                         ),
                     ),
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 Ok(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TNeg(
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(a, bs)?,
+                            crate::proof_kernel::aver_generated::kernel::subst::subst(
+                                a.clone(),
+                                bs,
+                            )?,
                         ),
                     ),
                 )
@@ -733,12 +742,15 @@ pub fn subst(
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TMatch(__s_fields) => {
-                let s = __s_fields.0.clone();
+                let s = &__s_fields.0;
                 let arms = &__s_fields.1;
                 Ok(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(s, bs)?,
+                            crate::proof_kernel::aver_generated::kernel::subst::subst(
+                                s.clone(),
+                                bs,
+                            )?,
                             crate::proof_kernel::aver_generated::kernel::subst::substArms(
                                 arms, bs,
                             )?,
@@ -792,13 +804,16 @@ pub fn subst(
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__n_fields) => {
                 let n = __n_fields.0.clone();
-                let b = __n_fields.1.clone();
+                let b = &__n_fields.1;
                 let fs = &__n_fields.2;
                 Ok(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TUpd(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TUpd(
                             n,
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(b, bs)?,
+                            crate::proof_kernel::aver_generated::kernel::subst::subst(
+                                b.clone(),
+                                bs,
+                            )?,
                             crate::proof_kernel::aver_generated::kernel::subst::substFields(
                                 fs, bs,
                             )?,
@@ -824,9 +839,9 @@ pub fn substAll(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::subst::subst(x.clone(), bs)?,
-                    &crate::proof_kernel::aver_generated::kernel::subst::substAll(&rest, bs)?,
+                    crate::proof_kernel::aver_generated::kernel::subst::substAll(&rest, bs)?,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -848,7 +863,7 @@ pub fn substFields(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::term::Field {
                         name: f.name.clone(),
                         value: crate::proof_kernel::aver_generated::kernel::subst::subst(
@@ -856,7 +871,7 @@ pub fn substFields(
                             bs,
                         )?,
                     },
-                    &crate::proof_kernel::aver_generated::kernel::subst::substFields(&rest, bs)?,
+                    crate::proof_kernel::aver_generated::kernel::subst::substFields(&rest, bs)?,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -878,9 +893,9 @@ pub fn substArms(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::subst::substArm(a.clone(), bs)?,
-                    &crate::proof_kernel::aver_generated::kernel::subst::substArms(&rest, bs)?,
+                    crate::proof_kernel::aver_generated::kernel::subst::substArms(&rest, bs)?,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -932,9 +947,9 @@ pub fn unbind(
                             continue;
                         }
                     } else {
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             b.clone(),
-                            &crate::proof_kernel::aver_generated::kernel::subst::unbind(
+                            crate::proof_kernel::aver_generated::kernel::subst::unbind(
                                 &rest, names,
                             ),
                         );

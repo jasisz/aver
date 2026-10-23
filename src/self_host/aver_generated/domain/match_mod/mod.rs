@@ -141,8 +141,7 @@ pub fn matchPattern(
             )
         }
         crate::aver_generated::domain::ast::Pattern::PatTuple(pats) => {
-            let pats = pats.clone();
-            crate::aver_generated::domain::match_mod::matchPatTuple(&pats, &v)
+            crate::aver_generated::domain::match_mod::matchPatTuple(pats, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatVar(name) => {
             let name = name.clone();
@@ -357,8 +356,8 @@ pub fn matchPatTuple(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValTuple(__items_fields) => {
-                let items = __items_fields.0.clone();
-                crate::aver_generated::domain::match_mod::matchPatTupleItems(pats, &items)
+                let items = &__items_fields.0;
+                crate::aver_generated::domain::match_mod::matchPatTupleItems(pats, items)
             }
             _ => Err(::aver_rt::str_lit!("no match")),
         }
@@ -480,9 +479,9 @@ pub fn matchWrapperPatDirect(
                 let __t = v;
                 match __t.view() {
                     crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
-                        let inner = __inner_fields.0.clone();
+                        let inner = &__inner_fields.0;
                         Ok({
-                            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![inner]);
+                            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
                             crate::aver_generated::domain::match_mod::zipBindings(bindings, &__arg6)
                         })
                     }
@@ -495,9 +494,9 @@ pub fn matchWrapperPatDirect(
                     let __t = v;
                     match __t.view() {
                         crate::aver_generated::domain::value::Val__view::ValErr(__inner_fields) => {
-                            let inner = __inner_fields.0.clone();
+                            let inner = &__inner_fields.0;
                             Ok({
-                                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![inner]);
+                                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
                                 crate::aver_generated::domain::match_mod::zipBindings(
                                     bindings, &__arg7,
                                 )
@@ -514,9 +513,10 @@ pub fn matchWrapperPatDirect(
                             crate::aver_generated::domain::value::Val__view::ValSome(
                                 __inner_fields,
                             ) => {
-                                let inner = __inner_fields.0.clone();
+                                let inner = &__inner_fields.0;
                                 Ok({
-                                    let __arg8 @ _ = aver_rt::AverList::from_vec(vec![inner]);
+                                    let __arg8 @ _ =
+                                        aver_rt::AverList::from_vec(vec![inner.clone()]);
                                     crate::aver_generated::domain::match_mod::zipBindings(
                                         bindings, &__arg8,
                                     )
@@ -596,9 +596,9 @@ pub fn matchWrapperPat(
                 let __t = v;
                 match __t.view() {
                     crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
-                        let inner = __inner_fields.0.clone();
+                        let inner = &__inner_fields.0;
                         Ok({
-                            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![inner]);
+                            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
                             crate::aver_generated::domain::match_mod::zipBindings(bindings, &__arg6)
                         })
                     }
@@ -611,9 +611,9 @@ pub fn matchWrapperPat(
                     let __t = v;
                     match __t.view() {
                         crate::aver_generated::domain::value::Val__view::ValErr(__inner_fields) => {
-                            let inner = __inner_fields.0.clone();
+                            let inner = &__inner_fields.0;
                             Ok({
-                                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![inner]);
+                                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
                                 crate::aver_generated::domain::match_mod::zipBindings(
                                     bindings, &__arg7,
                                 )
@@ -630,9 +630,10 @@ pub fn matchWrapperPat(
                             crate::aver_generated::domain::value::Val__view::ValSome(
                                 __inner_fields,
                             ) => {
-                                let inner = __inner_fields.0.clone();
+                                let inner = &__inner_fields.0;
                                 Ok({
-                                    let __arg8 @ _ = aver_rt::AverList::from_vec(vec![inner]);
+                                    let __arg8 @ _ =
+                                        aver_rt::AverList::from_vec(vec![inner.clone()]);
                                     crate::aver_generated::domain::match_mod::zipBindings(
                                         bindings, &__arg8,
                                     )
@@ -692,7 +693,8 @@ pub fn zipBindingsAcc(
                                 {
                                     let __tco0 = ns;
                                     let __tco1 = vs;
-                                    let __tco2 = aver_rt::AverList::prepend((n, v.clone()), &acc);
+                                    let __tco2 =
+                                        aver_rt::AverList::prepend_owned((n, v.clone()), acc);
                                     __hold0 = __tco0;
                                     names = &__hold0;
                                     __hold1 = __tco1;

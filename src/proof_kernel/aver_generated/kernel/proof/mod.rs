@@ -2266,9 +2266,9 @@ pub fn givenNames(
             aver_rt::AverList::empty()
         } else {
             if let (Some(g), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     g.name.clone(),
-                    &crate::proof_kernel::aver_generated::kernel::proof::givenNames(&rest),
+                    crate::proof_kernel::aver_generated::kernel::proof::givenNames(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -2318,9 +2318,9 @@ pub fn variantNames(vs @ _: &aver_rt::AverList<Variant>) -> aver_rt::AverList<Av
             aver_rt::AverList::empty()
         } else {
             if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     v.name.clone(),
-                    &crate::proof_kernel::aver_generated::kernel::proof::variantNames(&rest),
+                    crate::proof_kernel::aver_generated::kernel::proof::variantNames(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")

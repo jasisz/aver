@@ -1,0 +1,180 @@
+module LentPayloads
+    intent =
+        "Fixture: a bucket entry and a map value matched through a borrow, a list prepended at its last use and one taken apart as it dies, the element at an index, and a trampoline that calls itself reading what it passes on."
+    effects [Console.print]
+
+type Expr
+    Var(Int)
+    App(Expr, Expr)
+    Lam(String, Expr)
+
+type Bucket
+    NoEntry
+    OneEntry(Tuple<Expr, Expr>)
+    Entries(List<Tuple<Expr, Expr>>)
+
+fn mk(i: Int) -> Expr
+    ? "A small term from a number."
+    Expr.App(Expr.Var(Int.mod(i, 97)), Expr.Lam("x", Expr.Var(i)))
+
+fn getB(m: Map<Int, Bucket>, key: Int) -> Bucket
+    ? "The bucket under key."
+    match Map.get(m, key)
+        Option.Some(b) -> b
+        Option.None -> Bucket.NoEntry
+
+fn joined(entry: Tuple<Expr, Expr>, b: Bucket) -> Bucket
+    ? "A bucket with entry in front."
+    match b
+        Bucket.NoEntry -> Bucket.OneEntry(entry)
+        Bucket.OneEntry(first) -> Bucket.Entries([entry, first])
+        Bucket.Entries(es) -> Bucket.Entries(List.prepend(entry, es))
+
+fn addB(m: Map<Int, Bucket>, key: Int, entry: Tuple<Expr, Expr>) -> Map<Int, Bucket>
+    ? "Prepends entry to key's bucket."
+    b = getB(m, key)
+    Map.set(m, key, joined(entry, b))
+
+fn findInList(es: List<Tuple<Expr, Expr>>, e: Expr) -> Option<Expr>
+    ? "Linear search of a bucket's entries."
+    match es
+        [] -> Option.None
+        [(k, v), ..rest] -> match k == e
+            true -> Option.Some(v)
+            false -> findInList(rest, e)
+
+fn findIn(bucket: Bucket, e: Expr) -> Option<Expr>
+    ? "The value paired with e in a bucket."
+    match bucket
+        Bucket.NoEntry -> Option.None
+        Bucket.OneEntry((k, v)) -> match k == e
+            true -> Option.Some(v)
+            false -> Option.None
+        Bucket.Entries(es) -> findInList(es, e)
+
+fn findDirect(m: Map<Int, Bucket>, key: Int, e: Expr) -> Option<Expr>
+    ? "Lookup that only reads the bucket it gets from the map."
+    match Map.get(m, key)
+        Option.Some(b) -> findIn(b, e)
+        Option.None -> Option.None
+
+fn slot(i: Int, n: Int) -> Int
+    ? "The hash of entry i among n: n / 3 + 1 buckets."
+    Result.withDefault(Int.mod(i, Int.div(n, 3) + 1), 0)
+
+fn fill(m: Map<Int, Bucket>, i: Int, n: Int) -> Map<Int, Bucket>
+    ? "n entries over n / 3 hashes."
+    match i >= n
+        true -> m
+        false -> fill(addB(m, slot(i, n), (mk(i), mk(i + 1))), i + 1, n)
+
+fn hits(m: Map<Int, Bucket>, i: Int, n: Int, acc: Int) -> Int
+    ? "Looks up every entry and as many misses."
+    match i >= n
+        true -> acc
+        false -> hits(m, i + 1, n, acc + score(findDirect(m, slot(i, n), mk(i))) + score(findIn(getB(m, slot(i, n)), mk(i + 7))))
+
+fn score(o: Option<Expr>) -> Int
+    ? "1 for a hit."
+    match o
+        Option.Some(_) -> 1
+        Option.None -> 0
+
+fn build(i: Int, acc: List<Expr>) -> List<Expr>
+    ? "i terms prepended at the accumulator's last use."
+    match i <= 0
+        true -> acc
+        false -> build(i - 1, List.prepend(mk(i), acc))
+
+fn sizes(xs: List<Expr>, acc: Int) -> Int
+    ? "Walks a list it owns, which dies with the walk."
+    match xs
+        [] -> acc
+        [x, ..rest] -> sizes(rest, acc + weight(x))
+
+fn weight(e: Expr) -> Int
+    ? "Size of a term."
+    match e
+        Expr.Var(_) -> 1
+        Expr.App(f, a) -> weight(f) + weight(a)
+        Expr.Lam(_, b) -> 1 + weight(b)
+
+fn nth(xs: List<Expr>, k: Int) -> Expr
+    ? "The k-th element; callers keep k in range."
+    match List.drop(xs, k)
+        [x, .._] -> x
+        [] -> Expr.Var(0)
+
+fn nths(xs: List<Expr>, i: Int, n: Int, acc: Int) -> Int
+    ? "Reads n elements by index."
+    match i >= n
+        true -> acc
+        false -> nths(xs, i + 1, n, acc + weight(nth(xs, Int.mod(i * 7, 64))))
+
+fn lists(round: Int, acc: Int) -> Int
+    ? "Builds and walks lists."
+    match round <= 0
+        true -> acc
+        false -> lists(round - 1, acc + sizes(build(200, []), 0) + nths(build(64, []), 0, 200, 0))
+
+fn headAndRest(n: Int) -> Int
+    ? "Takes apart a list it just built, which dies with the match."
+    match build(n, [])
+        [] -> 0
+        [x, ..rest] -> weight(x) + sizes(rest, 0)
+
+fn buildI(i: Int, acc: List<Int>) -> List<Int>
+    ? "i numbers prepended at the accumulator's last use."
+    match i <= 0
+        true -> acc
+        false -> buildI(i - 1, List.prepend(i * 3, acc))
+
+fn sumOwned(xs: List<Int>, acc: Int) -> Int
+    ? "Walks a list of numbers it owns, taking each node apart."
+    match xs
+        [] -> acc
+        [x, ..rest] -> sumOwned(rest, acc + x)
+
+fn headAndRestI(n: Int) -> Int
+    ? "Takes apart a list of numbers it just built."
+    match buildI(n, [])
+        [] -> 0
+        [x, ..rest] -> x + sumOwned(rest, 0)
+
+fn envOf(env: List<Expr>, n: Int) -> Expr
+    ? "Reads the environment."
+    match env
+        [] -> mk(n)
+        [e, .._] -> Expr.App(e, mk(n))
+
+fn ev(env: List<Expr>, stack: List<Expr>, n: Int) -> Int
+    ? "A trampoline member that calls itself, reading env in a computed argument."
+    match n <= 0
+        true -> od(env, stack, List.len(stack))
+        false -> ev(env, List.prepend(envOf(env, n), stack), n - 1)
+
+fn od(env: List<Expr>, stack: List<Expr>, k: Int) -> Int
+    ? "The other member: walks the stack back into env."
+    match stack
+        [] -> match List.len(env) > 200
+            true -> List.len(env) + k
+            false -> ev(env, [], 7)
+        [s, ..rest] -> od(List.prepend(s, env), rest, k + 1)
+
+fn tramp(round: Int, acc: Int) -> Int
+    ? "Runs the trampoline."
+    match round <= 0
+        true -> acc
+        false -> tramp(round - 1, acc + ev([mk(round)], [], 10) + headAndRest(100) + headAndRestI(100))
+
+fn found(o: Option<Expr>) -> Int
+    ? "The size of what a lookup found, 0 for nothing."
+    match o
+        Option.Some(e) -> weight(e)
+        Option.None -> 0
+
+fn main()
+    ! [Console.print]
+    n = 300
+    m = fill({}, 0, n)
+    Console.print("hits {hits(m, 0, n, 0)} lists {lists(30, 0)} tramp {tramp(30, 0)} nth {weight(nth(build(64, []), 70))} found {found(findDirect(m, 5, mk(5)))}")

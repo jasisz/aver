@@ -80,8 +80,8 @@ pub fn lookupVar(
     name @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match env.get(&name).cloned() {
-        Some(v @ _) => Ok(v),
+    match (env).get(&name) {
+        Some(v @ _) => Ok(v.clone()),
         None => Err((::aver_rt::str_lit!("undefined variable: ") + &name)),
     }
 }
@@ -125,8 +125,11 @@ pub fn lookupGlobal(
 #[inline(always)]
 pub fn lookupFnId(fns @ _: &FnStore, name @ _: AverStr) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
-    match fns.nameToId.get(&name).cloned() {
-        Some(id @ _) => Ok(id),
+    match (fns.nameToId).get(&name) {
+        Some(id @ _) => {
+            let id = id.clone();
+            Ok(id)
+        }
         None => Err((::aver_rt::str_lit!("undefined function: ") + &name)),
     }
 }

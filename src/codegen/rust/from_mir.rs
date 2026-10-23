@@ -3781,17 +3781,15 @@ fn emit_mir_match_with(
         let keeps_subject = super::ownership::projection_root_local(&m.subject.node)
             .is_none_or(|root| reads_only_borrow(&arm.body.node, root.slot, emit_ctx));
         let parts = match (path, emit_ctx.codegen) {
+            // `lends_wrapper` has checked that nothing moves what the
+            // payload borrows from.
+            (MatchPath::LentWrapper, Some(_)) => lent_payload(&arm.pattern, &arm.body),
             _ if !keeps_subject => HashSet::new(),
-            (MatchPath::Generic { by_ref }, Some(codegen)) => lent_parts(
-                &arm.pattern,
-                &resolved.pattern,
-                &arm.body,
-                by_ref,
-                codegen,
-                emit_ctx,
-            ),
+            (MatchPath::Generic { by_ref }, Some(codegen)) => {
+                lent_parts(&arm.pattern, &resolved.pattern, &arm.body, by_ref, codegen)
+            }
             (MatchPath::List, Some(_)) => lent_head(&arm.pattern, &arm.body),
-            (MatchPath::LentTuple, Some(_)) => lent_tuple_parts(&arm.pattern, &arm.body, emit_ctx),
+            (MatchPath::LentTuple, Some(_)) => lent_tuple_parts(&arm.pattern, &arm.body),
             _ => HashSet::new(),
         };
         let mut binders = Vec::new();
@@ -3808,6 +3806,28 @@ fn emit_mir_match_with(
             let mut arm_ctx = *emit_ctx;
             arm_ctx.borrowed_params = &borrowed;
             render_arm(&arm.body, &arm_ctx)?
+        };
+        // A payload of a matched borrow that is not lent is a borrow too; the
+        // arm owns its copy.
+        let arm_body = match (path, &arm.pattern) {
+            (
+                MatchPath::LentWrapper,
+                MirPattern::Ctor {
+                    bindings,
+                    binding_names,
+                    ..
+                },
+            ) => bindings
+                .iter()
+                .zip(binding_names)
+                .filter(|(slot, name)| {
+                    !parts.contains(*name) && reads_local(&arm.body.node, **slot)
+                })
+                .map(|(_, name)| aver_name_to_rust(name))
+                .fold(arm_body, |body, name| {
+                    format!("{{ let {name} = {name}.clone(); {body} }}")
+                }),
+            _ => arm_body,
         };
         arm_bodies.push(arm_body);
         lent.push(parts);
@@ -3947,19 +3967,26 @@ fn emit_mir_match_with(
     let generic = !any_int_literal_pattern
         && !has_list_patterns(&arms)
         && !matches!(dispatch_plan.as_ref(), Some(MatchDispatchPlan::Table(_)));
-    let borrowed_subject = ((no_bindings && !any_int_literal_pattern) || generic)
+    let lent_wrapper = path == MatchPath::LentWrapper;
+    let borrowed_subject = ((no_bindings && !any_int_literal_pattern) || generic || lent_wrapper)
         && mir_expr_is_borrowed_param_read(&m.subject.node, emit_ctx);
     let kept_subject = generic
         && !has_string_literal_patterns(&arms)
         && owned_read_clones(&m.subject.node, emit_ctx);
-    let match_on_ref = borrowed_subject || kept_subject;
+    let match_on_ref = borrowed_subject || kept_subject || lent_wrapper;
 
     // Int unboxing: a bare-`i64` subject (a proven-bare counter) is `Copy`,
     // so it is read by value WITHOUT `.clone()` and the Int-literal guards
     // compare against raw `{N}i64` rather than `AverInt::from_i64(N)`.
     let subject_is_bare = any_int_literal_pattern && mir_expr_is_bare_i64(&m.subject, emit_ctx);
 
-    let subj = if subject_is_bare {
+    let subj = if let Some((map, key)) = lent_wrapper.then(|| lent_map_get(m, emit_ctx)).flatten() {
+        format!(
+            "({}).get(&{})",
+            emit_mir_expr(map, emit_ctx)?,
+            emit_mir_expr(key, emit_ctx)?
+        )
+    } else if subject_is_bare {
         // A bare i64 subject: emit the plain value (no clone — Copy).
         emit_bare_i64(&m.subject).or_else(|| emit_mir_expr(&m.subject, emit_ctx))?
     } else if borrowed_subject {
@@ -4001,6 +4028,9 @@ fn emit_mir_match_with(
     }
 
     // ── 3. List match. ──
+    if let Some(code) = emit_dropped_head_match(m, &arms, &lent, &arm_bodies, emit_ctx) {
+        return Some(code);
+    }
     if has_list_patterns(&arms) {
         let list_shape = match dispatch_plan.as_ref() {
             Some(MatchDispatchPlan::List(shape)) => Some(*shape),
@@ -4114,6 +4144,67 @@ fn emit_mir_match_with(
     }))
 }
 
+/// `match List.drop(xs, k)` with arms `[x, .._]` and `[]` (or `_`) reads
+/// element `k` of `xs` in place, `match xs.get(k)`, instead of making the
+/// rest of the list to read its head. A head the arm only reads stays a
+/// borrow of `xs`, so no arm may hand `xs` on.
+fn emit_dropped_head_match(
+    m: &MirMatch,
+    arms: &[ResolvedMatchArm],
+    lent: &[HashSet<String>],
+    arm_bodies: &[String],
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let (name, args) = mir_builtin_call_parts(&m.subject.node, ctx)?;
+    let ([list, count], [first, second]) = (args, arms) else {
+        return None;
+    };
+    if name != "List.drop" {
+        return None;
+    }
+    let cons = |arm: &ResolvedMatchArm| matches!(&arm.pattern, ResolvedPattern::Cons(_, tail) if tail == "_");
+    let rest = |arm: &ResolvedMatchArm| {
+        matches!(
+            arm.pattern,
+            ResolvedPattern::EmptyList | ResolvedPattern::Wildcard
+        )
+    };
+    let keeps_list = projection_root_local(&list.node).is_none_or(|root| {
+        m.arms
+            .iter()
+            .all(|arm| reads_only_borrow(&arm.body.node, root.slot, ctx))
+    });
+    if !keeps_list || !((cons(first) && rest(second)) || (rest(first) && cons(second))) {
+        return None;
+    }
+    let int_list = type_is_int_list(list.ty());
+    let rendered: Vec<String> = arms
+        .iter()
+        .enumerate()
+        .map(|(idx, arm)| {
+            let body = &arm_bodies[idx];
+            match &arm.pattern {
+                ResolvedPattern::Cons(head, _) if head == "_" => format!("Some(_) => {{ {body} }}"),
+                ResolvedPattern::Cons(head, _) if int_list || lent[idx].contains(head) => {
+                    format!("Some({}) => {{ {body} }}", aver_name_to_rust(head))
+                }
+                ResolvedPattern::Cons(head, _) => {
+                    let head = aver_name_to_rust(head);
+                    format!("Some({head}) => {{ let {head} = {head}.clone(); {body} }}")
+                }
+                ResolvedPattern::EmptyList => format!("None => {{ {body} }}"),
+                _ => format!("_ => {{ {body} }}"),
+            }
+        })
+        .collect();
+    Some(format!(
+        "match ({}).get(aver_rt::clamp_list_count(&({}))) {{ {} }}",
+        emit_mir_expr(list, ctx)?,
+        emit_mir_expr(count, ctx)?,
+        rendered.join(", ")
+    ))
+}
+
 /// Whether evaluating a match subject leaves temporaries behind: a call (or
 /// `?` over one) with an argument that is computed rather than read.
 fn makes_temporaries(subject: &MirExpr) -> bool {
@@ -4197,6 +4288,9 @@ enum MatchPath {
     /// One tuple pattern of plain names over a borrowed tuple whose parts
     /// all take a borrow: `let (k, v) = pair;` binds borrows of the parts.
     LentTuple,
+    /// `Option` / `Result` arms over a borrow, a borrowed param or a value
+    /// in a map (`Map.get(m, k)`): each payload is a borrow too.
+    LentWrapper,
     /// Any other shape.
     Other,
 }
@@ -4225,6 +4319,12 @@ fn match_path(m: &MirMatch, arms: &[ResolvedMatchArm], emit_ctx: &MirEmitCtx<'_>
     }
     if has_list_patterns(arms) {
         return MatchPath::List;
+    }
+    if let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref()
+        && !any_int_literal_pattern
+        && lends_wrapper(m, shape, emit_ctx)
+    {
+        return MatchPath::LentWrapper;
     }
     if any_int_literal_pattern
         || matches!(dispatch_plan.as_ref(), Some(MatchDispatchPlan::Table(_)))
@@ -4262,20 +4362,81 @@ fn lends_tuple(m: &MirMatch, ctx: &MirEmitCtx<'_>) -> bool {
         })
 }
 
-/// The parts of a borrowed tuple a single arm binds and only reads (see
-/// [`reads_only_borrow`]); the others are cloned out of the borrow.
-fn lent_tuple_parts(
-    pattern: &MirPattern,
-    body: &Spanned<MirExpr>,
+/// Whether a match of only `Option` / `Result` tags (`Some(x)`, `None`, `_`)
+/// can look at its subject through a borrow: the subject is a borrowed
+/// param, or a `Map.get` whose map is a place no arm hands on, read with a
+/// key that is a place or a literal (so the match keeps no temporary).
+fn lends_wrapper(
+    m: &MirMatch,
+    shape: &crate::ir::DispatchTableShape,
     ctx: &MirEmitCtx<'_>,
-) -> HashSet<String> {
+) -> bool {
+    let tags = shape.entries.iter().all(|entry| {
+        matches!(
+            entry.pattern,
+            crate::ir::SemanticDispatchPattern::WrapperTag(_)
+                | crate::ir::SemanticDispatchPattern::NoneValue
+        )
+    });
+    tags && shape
+        .default_arm
+        .as_ref()
+        .is_none_or(|arm| arm.binding_name.is_none())
+        && (mir_expr_is_borrowed_param_read(&m.subject.node, ctx) || lent_map_get(m, ctx).is_some())
+}
+
+/// The map and key of a `match Map.get(m, k)` that can borrow the value in
+/// the map (see [`lends_wrapper`]).
+fn lent_map_get<'a>(
+    m: &'a MirMatch,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<(&'a Spanned<MirExpr>, &'a Spanned<MirExpr>)> {
+    let (name, [map, key]) = mir_builtin_call_parts(&m.subject.node, ctx)? else {
+        return None;
+    };
+    let root = projection_root_local(&map.node)?;
+    let key_kept =
+        matches!(key.node, MirExpr::Literal(_)) || projection_root_local(&key.node).is_some();
+    (name == "Map.get"
+        && key_kept
+        && m.arms
+            .iter()
+            .all(|arm| reads_only_borrow(&arm.body.node, root.slot, ctx)))
+    .then_some((map, key))
+}
+
+/// The payload of a wrapper arm, lent when it has a type a borrow serves.
+fn lent_payload(pattern: &MirPattern, body: &Spanned<MirExpr>) -> HashSet<String> {
+    match pattern {
+        MirPattern::Ctor {
+            bindings,
+            binding_names,
+            ..
+        } => bindings
+            .iter()
+            .zip(binding_names)
+            .filter(|(slot, name)| {
+                name.as_str() != "_"
+                    && read_type(&body.node, **slot).is_some_and(should_borrow_param)
+            })
+            .map(|(_, name)| name.clone())
+            .collect(),
+        _ => HashSet::new(),
+    }
+}
+
+/// The parts of a borrowed tuple a single arm binds, all of which it reads
+/// through the borrow; a read that needs one owned copies it there.
+fn lent_tuple_parts(pattern: &MirPattern, body: &Spanned<MirExpr>) -> HashSet<String> {
     let MirPattern::Tuple(items) = pattern else {
         return HashSet::new();
     };
     items
         .iter()
         .filter_map(|item| match item {
-            MirPattern::Bind(slot, name) if reads_only_borrow(&body.node, *slot, ctx) => {
+            MirPattern::Bind(slot, name)
+                if read_type(&body.node, *slot).is_none_or(should_borrow_param) =>
+            {
                 Some(name.clone())
             }
             _ => None,
@@ -4313,13 +4474,12 @@ fn lent_parts(
     body: &Spanned<MirExpr>,
     by_ref: bool,
     codegen: &CodegenContext,
-    ctx: &MirEmitCtx<'_>,
 ) -> HashSet<String> {
     let mut out = HashSet::new();
     match (pattern, resolved) {
         (MirPattern::Tuple(items), ResolvedPattern::Tuple(resolved_items)) => {
             for (item, resolved_item) in items.iter().zip(resolved_items) {
-                out.extend(lent_parts(item, resolved_item, body, by_ref, codegen, ctx));
+                out.extend(lent_parts(item, resolved_item, body, by_ref, codegen));
             }
         }
         (
@@ -4338,9 +4498,7 @@ fn lent_parts(
                 if name.is_empty() || name == "_" {
                     continue;
                 }
-                let lendable = read_type(&body.node, *slot).is_some_and(should_borrow_param)
-                    && reads_only_borrow(&body.node, *slot, ctx);
-                if lendable {
+                if read_type(&body.node, *slot).is_some_and(should_borrow_param) {
                     out.insert(name.clone());
                 }
             }
@@ -6878,7 +7036,18 @@ fn emit_mir_builtin_call(
             } else {
                 "aver_rt::AverList"
             };
-            format!("{list_type}::prepend({}, &{})", clone!(0), clone!(1))
+            // A list handed over (its last read, or a computed one) goes into
+            // the node as it is; any other is borrowed, and the node counts
+            // its one copy.
+            let head = clone!(0);
+            let list = emit_operand(&args[1])?;
+            match super::ownership::moves_when_owned(&args[1].node, ctx) {
+                true => format!("{list_type}::prepend_owned({head}, {list})"),
+                false => format!(
+                    "{list_type}::prepend({head}, {})",
+                    mir_borrow_arg(list, &args[1].node, ctx)
+                ),
+            }
         }
         "List.take" => {
             let list = arg!(0);

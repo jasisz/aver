@@ -35,8 +35,8 @@ fn __mutual_tco_trampoline_1(
                                     crate::aver_generated::domain::value::Val__view::ValTuple(
                                         __parts_fields,
                                     ) => {
-                                        let parts = __parts_fields.0.clone();
-                                        __MutualTco1::TuplesToMapOne(parts, rest, acc)
+                                        let parts = &__parts_fields.0;
+                                        __MutualTco1::TuplesToMapOne(parts.clone(), rest, acc)
                                     }
                                     _ => __MutualTco1::TuplesToMap(rest, acc),
                                 }
@@ -568,11 +568,11 @@ pub fn stringsToVals(
                 if let Some((s, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::value::Val::ValStr(
                                 crate::aver_generated::domain::value::Val__ValStr(s),
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         strs = &__hold0;
@@ -597,7 +597,7 @@ pub fn builtinMapEntries(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = __m_fields.0.clone();
+                let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList({
                         let __arg3 @ _ = {
@@ -643,7 +643,7 @@ pub fn mapEntriesToTuples(
                         let (k, v) = pair.clone();
                         {
                             let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(
+                            let __tco1 = aver_rt::AverList::prepend_owned(
                                 crate::aver_generated::domain::value::Val::ValTuple(
                                     crate::aver_generated::domain::value::Val__ValTuple(
                                         aver_rt::AverList::from_vec(vec![
@@ -656,7 +656,7 @@ pub fn mapEntriesToTuples(
                                         ]),
                                     ),
                                 ),
-                                &acc,
+                                acc,
                             );
                             __hold0 = __tco0;
                             entries = &__hold0;
@@ -682,7 +682,7 @@ pub fn builtinMapKeys(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = __m_fields.0.clone();
+                let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList({
                         let __arg3 @ _ = {
@@ -716,7 +716,7 @@ pub fn builtinMapValues(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = __m_fields.0.clone();
+                let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList({
                         let mut es: Vec<_> =
@@ -793,10 +793,11 @@ pub fn builtinMapRemoveInner(
         let __t = mapV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = __m_fields.0.clone();
+                let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValMap(
                     crate::aver_generated::domain::value::Val__ValMap(
-                        m.remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(keyV)),
+                        m.clone()
+                            .remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(keyV)),
                     ),
                 ))
             }
@@ -2015,9 +2016,9 @@ pub fn builtinMapSetInner(
         let __t = mapV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = __m_fields.0.clone();
+                let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValMap(
-                    crate::aver_generated::domain::value::Val__ValMap(m.insert_owned(
+                    crate::aver_generated::domain::value::Val__ValMap(m.clone().insert_owned(
                         crate::aver_generated::domain::value::mapKeyRepr(keyV),
                         valV.clone(),
                     )),
@@ -2433,7 +2434,7 @@ pub fn httpResponseToVal(
     result @ _: &Result<crate::aver_generated::http::Response, AverStr>,
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
-    match result.clone() {
+    match result {
         Ok(resp @ _) => crate::aver_generated::domain::value::Val::ValOk(
             crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValRecord(
@@ -2443,13 +2444,17 @@ pub fn httpResponseToVal(
                             (
                                 ::aver_rt::str_lit!("status"),
                                 crate::aver_generated::domain::value::Val::ValInt(
-                                    crate::aver_generated::domain::value::Val__ValInt(resp.status),
+                                    crate::aver_generated::domain::value::Val__ValInt(
+                                        resp.status.clone(),
+                                    ),
                                 ),
                             ),
                             (
                                 ::aver_rt::str_lit!("body"),
                                 crate::aver_generated::domain::value::Val::ValStr(
-                                    crate::aver_generated::domain::value::Val__ValStr(resp.body),
+                                    crate::aver_generated::domain::value::Val__ValStr(
+                                        resp.body.clone(),
+                                    ),
                                 ),
                             ),
                             (
@@ -2463,13 +2468,16 @@ pub fn httpResponseToVal(
                 ),
             ),
         ),
-        Err(e @ _) => crate::aver_generated::domain::value::Val::ValErr(
-            crate::aver_generated::domain::value::Val__ValErr(
-                crate::aver_generated::domain::value::Val::ValStr(
-                    crate::aver_generated::domain::value::Val__ValStr(e),
+        Err(e @ _) => {
+            let e = e.clone();
+            crate::aver_generated::domain::value::Val::ValErr(
+                crate::aver_generated::domain::value::Val__ValErr(
+                    crate::aver_generated::domain::value::Val::ValStr(
+                        crate::aver_generated::domain::value::Val__ValStr(e),
+                    ),
                 ),
-            ),
-        ),
+            )
+        }
     }
 }
 
@@ -2562,11 +2570,11 @@ pub fn stringsToValStrs(
                 if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::value::Val::ValStr(
                                 crate::aver_generated::domain::value::Val__ValStr(v),
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         values = &__hold0;
@@ -2816,8 +2824,8 @@ pub fn valToTcpConn(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValTcpConnection(__conn_fields) => {
-                let conn = __conn_fields.0.clone();
-                Ok(conn)
+                let conn = &__conn_fields.0;
+                Ok(conn.clone())
             }
             _ => Err(::aver_rt::str_lit!("expected Tcp.Connection resource")),
         }
@@ -2897,8 +2905,8 @@ pub fn valToTcpDial(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValTcpDial(__dial_fields) => {
-                let dial = __dial_fields.0.clone();
-                Ok(dial)
+                let dial = &__dial_fields.0;
+                Ok(dial.clone())
             }
             _ => Err(::aver_rt::str_lit!("expected Tcp.Dial resource")),
         }
@@ -3037,8 +3045,8 @@ pub fn valToTcpListener(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValTcpListener(__listener_fields) => {
-                let listener = __listener_fields.0.clone();
-                Ok(listener)
+                let listener = &__listener_fields.0;
+                Ok(listener.clone())
             }
             _ => Err(::aver_rt::str_lit!("expected Tcp.Listener resource")),
         }
@@ -3283,11 +3291,11 @@ pub fn tcpReadyKeysToVals(
                 if let Some((key, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::value::Val::ValInt(
                                 crate::aver_generated::domain::value::Val__ValInt(key),
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         keys = &__hold0;
@@ -3314,8 +3322,11 @@ pub fn builtinTcpPoll(
             let __t = socketsV;
             match __t.view() {
                 crate::aver_generated::domain::value::Val__view::ValMap(__sockets_fields) => {
-                    let sockets = __sockets_fields.0.clone();
-                    crate::aver_generated::domain::builtins::builtinTcpPollInner(sockets, &timeoutV)
+                    let sockets = &__sockets_fields.0;
+                    crate::aver_generated::domain::builtins::builtinTcpPollInner(
+                        sockets.clone(),
+                        &timeoutV,
+                    )
                 }
                 _ => Err(::aver_rt::str_lit!(
                     "Tcp.poll requires a Map as its first argument"

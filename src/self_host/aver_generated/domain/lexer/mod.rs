@@ -41,9 +41,9 @@ fn __mutual_tco_trampoline_1(
                 crate::cancel_checkpoint();
                 let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
                 if (c == crate::aver_generated::domain::lexer::openBrace()) {
-                    return aver_rt::AverList::prepend(
+                    return aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::token::Token::TkLBrace,
-                        &crate::aver_generated::domain::lexer::tokenize__indexed(
+                        crate::aver_generated::domain::lexer::tokenize__indexed(
                             src,
                             nextPos,
                             &*__str_index,
@@ -51,9 +51,9 @@ fn __mutual_tco_trampoline_1(
                     );
                 } else {
                     if (c == crate::aver_generated::domain::lexer::closeBrace()) {
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::token::Token::TkRBrace,
-                            &crate::aver_generated::domain::lexer::tokenize__indexed(
+                            crate::aver_generated::domain::lexer::tokenize__indexed(
                                 src,
                                 nextPos,
                                 &*__str_index,
@@ -83,9 +83,9 @@ fn __mutual_tco_trampoline_1(
                                 return crate::aver_generated::domain::lexer::tokenizeSlashOrComment__indexed(src, pos, (*__str_index).clone());
                             } else {
                                 if __dispatch_subject == aver_rt::AverInt::from_i64(43) {
-                                    return aver_rt::AverList::prepend(
+                                    return aver_rt::AverList::prepend_owned(
                                         crate::aver_generated::domain::token::Token::TkPlus,
-                                        &crate::aver_generated::domain::lexer::tokenize__indexed(
+                                        crate::aver_generated::domain::lexer::tokenize__indexed(
                                             src,
                                             nextPos,
                                             &*__str_index,
@@ -93,7 +93,14 @@ fn __mutual_tco_trampoline_1(
                                     );
                                 } else {
                                     if __dispatch_subject == aver_rt::AverInt::from_i64(42) {
-                                        return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkStar, &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
+                                        return aver_rt::AverList::prepend_owned(
+                                            crate::aver_generated::domain::token::Token::TkStar,
+                                            crate::aver_generated::domain::lexer::tokenize__indexed(
+                                                src,
+                                                nextPos,
+                                                &*__str_index,
+                                            ),
+                                        );
                                     } else {
                                         if __dispatch_subject == aver_rt::AverInt::from_i64(60) {
                                             return crate::aver_generated::domain::lexer::tokenizeLt__indexed(src, pos, &*__str_index);
@@ -110,7 +117,7 @@ fn __mutual_tco_trampoline_1(
                                                     if __dispatch_subject
                                                         == aver_rt::AverInt::from_i64(63)
                                                     {
-                                                        return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkQuestion, &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
+                                                        return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkQuestion, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
                                                     } else {
                                                         if __dispatch_subject
                                                             == aver_rt::AverInt::from_i64(34)
@@ -120,16 +127,16 @@ fn __mutual_tco_trampoline_1(
                                                             if __dispatch_subject
                                                                 == aver_rt::AverInt::from_i64(40)
                                                             {
-                                                                return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkLParen, &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
+                                                                return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkLParen, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
                                                             } else {
                                                                 if __dispatch_subject
                                                                     == aver_rt::AverInt::from_i64(
                                                                         41,
                                                                     )
                                                                 {
-                                                                    return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkRParen, &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
+                                                                    return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkRParen, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
                                                                 } else {
-                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(91) { return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkLBracket, &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(93) { return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkRBracket, &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(46) { return crate::aver_generated::domain::lexer::tokenizeDot__indexed(src, pos, &*__str_index) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(44) { return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkComma, &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(58) { return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkColon, &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(61) { return crate::aver_generated::domain::lexer::tokenizeEq__indexed(src, pos, &*__str_index) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(45) { return crate::aver_generated::domain::lexer::tokenizeMinus__indexed(src, pos, &*__str_index) } else { __MutualTco1::TokenizeDefault__indexed(c, src, pos) } } } } } } }
+                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(91) { return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkLBracket, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(93) { return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkRBracket, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(46) { return crate::aver_generated::domain::lexer::tokenizeDot__indexed(src, pos, &*__str_index) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(44) { return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkComma, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(58) { return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkColon, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(61) { return crate::aver_generated::domain::lexer::tokenizeEq__indexed(src, pos, &*__str_index) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(45) { return crate::aver_generated::domain::lexer::tokenizeMinus__indexed(src, pos, &*__str_index) } else { __MutualTco1::TokenizeDefault__indexed(c, src, pos) } } } } } } }
                                                                 }
                                                             }
                                                         }
@@ -385,9 +392,9 @@ fn __mutual_tco_trampoline_2(
             ) => {
                 crate::cancel_checkpoint();
                 if (&*c == "\"") {
-                    return aver_rt::AverList::prepend(
+                    return aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::token::Token::TkStr(acc),
-                        &crate::aver_generated::domain::lexer::tokenize__indexed(
+                        crate::aver_generated::domain::lexer::tokenize__indexed(
                             src,
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                             &*__str_index,
@@ -615,9 +622,9 @@ fn __mutual_tco_trampoline_3(
             __MutualTco3::TokenizeInterpExprC__indexed(mut src @ _, mut pos @ _, mut c @ _) => {
                 crate::cancel_checkpoint();
                 if (c == crate::aver_generated::domain::lexer::closeBrace()) {
-                    return aver_rt::AverList::prepend(
+                    return aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::token::Token::TkInterpEnd,
-                        &crate::aver_generated::domain::lexer::tokenizeString__indexed(
+                        crate::aver_generated::domain::lexer::tokenizeString__indexed(
                             src,
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                             ::aver_rt::str_lit!(""),
@@ -657,9 +664,9 @@ fn __mutual_tco_trampoline_3(
                         __MutualTco3::TokenizeInterpExpr__indexed(src, nextPos)
                     } else {
                         if __dispatch_subject == aver_rt::AverInt::from_i64(40) {
-                            return aver_rt::AverList::prepend(
+                            return aver_rt::AverList::prepend_owned(
                                 crate::aver_generated::domain::token::Token::TkLParen,
-                                &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                                crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                                     src,
                                     nextPos,
                                     &*__str_index,
@@ -667,35 +674,35 @@ fn __mutual_tco_trampoline_3(
                             );
                         } else {
                             if __dispatch_subject == aver_rt::AverInt::from_i64(41) {
-                                return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkRParen, &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkRParen, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
                             } else {
                                 if __dispatch_subject == aver_rt::AverInt::from_i64(43) {
-                                    return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkPlus, &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                    return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkPlus, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
                                 } else {
                                     if __dispatch_subject == aver_rt::AverInt::from_i64(45) {
-                                        return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkMinus, &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                        return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkMinus, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
                                     } else {
                                         if __dispatch_subject == aver_rt::AverInt::from_i64(42) {
-                                            return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkStar, &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                            return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkStar, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
                                         } else {
                                             if __dispatch_subject == aver_rt::AverInt::from_i64(44)
                                             {
-                                                return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkComma, &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                                return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkComma, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
                                             } else {
                                                 if __dispatch_subject
                                                     == aver_rt::AverInt::from_i64(46)
                                                 {
-                                                    return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkDot, &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                                    return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkDot, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
                                                 } else {
                                                     if __dispatch_subject
                                                         == aver_rt::AverInt::from_i64(91)
                                                     {
-                                                        return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkLBracket, &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                                        return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkLBracket, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
                                                     } else {
                                                         if __dispatch_subject
                                                             == aver_rt::AverInt::from_i64(93)
                                                         {
-                                                            return aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkRBracket, &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                                            return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkRBracket, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
                                                         } else {
                                                             if __dispatch_subject
                                                                 == aver_rt::AverInt::from_i64(34)
@@ -730,9 +737,9 @@ fn __mutual_tco_trampoline_3(
                                 __arg6,
                             )
                         };
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::lexer::chars::keywordOrIdent(word),
-                            &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                            crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                                 src,
                                 newPos,
                                 &*__str_index,
@@ -1556,9 +1563,9 @@ pub fn processIndentToken(
             &crate::aver_generated::domain::lexer::emitFinalDedents(stack),
             &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::token::Token::TkEof]),
         ),
-        _ => aver_rt::AverList::prepend(
+        _ => aver_rt::AverList::prepend_owned(
             t.clone(),
-            &crate::aver_generated::domain::lexer::processIndentation(rest, stack),
+            crate::aver_generated::domain::lexer::processIndentation(rest, stack),
         ),
     }
 }
@@ -1573,9 +1580,9 @@ pub fn processAfterNewline(
     {
         let __list_subject = tokens;
         if __list_subject.is_empty() {
-            aver_rt::AverList::prepend(
+            aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkNewline,
-                &crate::aver_generated::domain::lexer::emitFinalDedents(stack),
+                crate::aver_generated::domain::lexer::emitFinalDedents(stack),
             )
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
@@ -1606,20 +1613,20 @@ pub fn processAfterNewlineToken(
                     stack,
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkNewline,
-                    &aver_rt::AverList::prepend(
+                    aver_rt::AverList::prepend_owned(
                         t.clone(),
-                        &crate::aver_generated::domain::lexer::processIndentation(rest, stack),
+                        crate::aver_generated::domain::lexer::processIndentation(rest, stack),
                     ),
                 )
             }
         }
-        _ => aver_rt::AverList::prepend(
+        _ => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkNewline,
-            &aver_rt::AverList::prepend(
+            aver_rt::AverList::prepend_owned(
                 t.clone(),
-                &crate::aver_generated::domain::lexer::processIndentation(rest, stack),
+                crate::aver_generated::domain::lexer::processIndentation(rest, stack),
             ),
         ),
     }
@@ -1635,20 +1642,23 @@ pub fn emitIndentChange(
     crate::cancel_checkpoint();
     let currentIndent @ _ = crate::aver_generated::domain::lexer::stackTop(stack);
     if (indent > currentIndent) {
-        aver_rt::AverList::prepend(
+        aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkNewline,
-            &aver_rt::AverList::prepend(crate::aver_generated::domain::token::Token::TkIndent, &{
-                let __arg4 @ _ = aver_rt::AverIntList::prepend(indent, &stack.clone());
-                crate::aver_generated::domain::lexer::processIndentation(rest, &__arg4)
-            }),
+            aver_rt::AverList::prepend_owned(
+                crate::aver_generated::domain::token::Token::TkIndent,
+                {
+                    let __arg4 @ _ = aver_rt::AverIntList::prepend(indent, stack);
+                    crate::aver_generated::domain::lexer::processIndentation(rest, &__arg4)
+                },
+            ),
         )
     } else {
         if (indent < currentIndent) {
             crate::aver_generated::domain::lexer::emitDedents(indent, rest, stack)
         } else {
-            aver_rt::AverList::prepend(
+            aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkNewline,
-                &crate::aver_generated::domain::lexer::processIndentation(rest, stack),
+                crate::aver_generated::domain::lexer::processIndentation(rest, stack),
             )
         }
     }
@@ -1691,9 +1701,9 @@ pub fn emitDedentsAcc(
                     if (top > targetIndent) {
                         {
                             let __tco2 = below;
-                            let __tco3 = aver_rt::AverList::prepend(
+                            let __tco3 = aver_rt::AverList::prepend_owned(
                                 crate::aver_generated::domain::token::Token::TkDedent,
-                                &acc,
+                                acc,
                             );
                             __hold2 = __tco2;
                             stack = &__hold2;
@@ -1703,9 +1713,9 @@ pub fn emitDedentsAcc(
                     } else {
                         return aver_rt::AverList::concat(
                             &reversed,
-                            &aver_rt::AverList::prepend(
+                            &aver_rt::AverList::prepend_owned(
                                 crate::aver_generated::domain::token::Token::TkNewline,
-                                &crate::aver_generated::domain::lexer::processIndentation(
+                                crate::aver_generated::domain::lexer::processIndentation(
                                     rest, stack,
                                 ),
                             ),
@@ -1749,9 +1759,9 @@ pub fn emitFinalDedentsAcc(
                     if (top > aver_rt::AverInt::from_i64(0)) {
                         {
                             let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(
+                            let __tco1 = aver_rt::AverList::prepend_owned(
                                 crate::aver_generated::domain::token::Token::TkDedent,
-                                &acc,
+                                acc,
                             );
                             __hold0 = __tco0;
                             stack = &__hold0;
@@ -1823,15 +1833,15 @@ pub fn tokenizeAfterInt__indexed(
                     __str_index,
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkInt(n),
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
+                    crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkInt(n),
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
         ),
     }
 }
@@ -1856,15 +1866,15 @@ pub fn tokenizeAfterIntDot__indexed(
                     __str_index,
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkInt(n),
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
+                    crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkInt(n),
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
         ),
     }
 }
@@ -1906,9 +1916,9 @@ pub fn buildFloat__indexed(
     crate::cancel_checkpoint();
     let f @ _ = (intPart.to_f64()
         + (decPart.to_f64() / crate::aver_generated::domain::lexer::pow10(decDigits)));
-    aver_rt::AverList::prepend(
+    aver_rt::AverList::prepend_owned(
         crate::aver_generated::domain::token::Token::TkFloat(f),
-        &crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
+        crate::aver_generated::domain::lexer::tokenize__indexed(src, pos, __str_index),
     )
 }
 
@@ -1951,9 +1961,9 @@ pub fn tokenizeAlphaWith__indexed(
             ::aver_rt::str_lit!(""),
             dotted,
         );
-        aver_rt::AverList::prepend(
+        aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::lexer::chars::keywordOrIdent(word),
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, newPos, __str_index),
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, newPos, __str_index),
         )
     }
 }
@@ -1970,18 +1980,18 @@ pub fn tokenizeMinus__indexed(
     match aver_rt::string_index_char_at(&src, &__str_index, &nextPos) {
         Some(c @ _) => {
             if crate::aver_generated::domain::lexer::isGreaterThan(c) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkArrow,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         pos.add(&aver_rt::AverInt::from_i64(2)),
                         __str_index,
                     ),
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkMinus,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         nextPos,
                         __str_index,
@@ -1989,9 +1999,9 @@ pub fn tokenizeMinus__indexed(
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkMinus,
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
         ),
     }
 }
@@ -2005,11 +2015,11 @@ pub fn tokenizeInterp__indexed(
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    aver_rt::AverList::prepend(
+    aver_rt::AverList::prepend_owned(
         crate::aver_generated::domain::token::Token::TkStr(acc),
-        &aver_rt::AverList::prepend(
+        aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkInterpStart,
-            &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+            crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                 src,
                 pos.add(&aver_rt::AverInt::from_i64(1)),
                 __str_index,
@@ -2033,9 +2043,9 @@ pub fn tokenizeInterpString__indexed(
             match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
                 Some(c @ _) => {
                     if (&*c == "\"") {
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::token::Token::TkStr(acc),
-                            &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                            crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                                 src,
                                 nextPos,
                                 &__str_index,
@@ -2052,9 +2062,9 @@ pub fn tokenizeInterpString__indexed(
                     }
                 }
                 None => {
-                    return aver_rt::AverList::prepend(
+                    return aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::token::Token::TkStr(acc),
-                        &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                        crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                             src,
                             pos,
                             &__str_index,
@@ -2063,9 +2073,9 @@ pub fn tokenizeInterpString__indexed(
                 }
             }
         } else {
-            return aver_rt::AverList::prepend(
+            return aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkStr(acc),
-                &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                     src,
                     pos,
                     &__str_index,
@@ -2116,9 +2126,9 @@ pub fn tokenizeInterpAfterInt__indexed(
                     __str_index,
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkInt(n),
-                    &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                    crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                         src,
                         pos,
                         __str_index,
@@ -2126,9 +2136,9 @@ pub fn tokenizeInterpAfterInt__indexed(
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkInt(n),
-            &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+            crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                 src,
                 pos,
                 __str_index,
@@ -2157,9 +2167,9 @@ pub fn tokenizeInterpAfterIntDot__indexed(
                     __str_index,
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkInt(n),
-                    &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                    crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                         src,
                         pos,
                         __str_index,
@@ -2167,9 +2177,9 @@ pub fn tokenizeInterpAfterIntDot__indexed(
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkInt(n),
-            &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+            crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
                 src,
                 pos,
                 __str_index,
@@ -2215,9 +2225,9 @@ pub fn tokenizeInterpBuildFloat__indexed(
     crate::cancel_checkpoint();
     let f @ _ = (intPart.to_f64()
         + (decPart.to_f64() / crate::aver_generated::domain::lexer::pow10(decDigits)));
-    aver_rt::AverList::prepend(
+    aver_rt::AverList::prepend_owned(
         crate::aver_generated::domain::token::Token::TkFloat(f),
-        &crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, pos, __str_index),
+        crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, pos, __str_index),
     )
 }
 
@@ -2239,9 +2249,9 @@ pub fn tokenizeSlashOrComment__indexed(
                     __str_index,
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkSlash,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         nextPos,
                         &__str_index,
@@ -2249,9 +2259,9 @@ pub fn tokenizeSlashOrComment__indexed(
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkSlash,
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &__str_index),
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &__str_index),
         ),
     }
 }
@@ -2309,18 +2319,18 @@ pub fn tokenizeDot__indexed(
     match aver_rt::string_index_char_at(&src, &__str_index, &nextPos) {
         Some(c @ _) => {
             if (&*c == ".") {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkDotDot,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         pos.add(&aver_rt::AverInt::from_i64(2)),
                         __str_index,
                     ),
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkDot,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         nextPos,
                         __str_index,
@@ -2328,9 +2338,9 @@ pub fn tokenizeDot__indexed(
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkDot,
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
         ),
     }
 }
@@ -2347,18 +2357,18 @@ pub fn tokenizeLt__indexed(
     match aver_rt::string_index_char_at(&src, &__str_index, &nextPos) {
         Some(c @ _) => {
             if (&*c == "=") {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkLte,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         pos.add(&aver_rt::AverInt::from_i64(2)),
                         __str_index,
                     ),
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkLt,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         nextPos,
                         __str_index,
@@ -2366,9 +2376,9 @@ pub fn tokenizeLt__indexed(
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkLt,
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
         ),
     }
 }
@@ -2385,18 +2395,18 @@ pub fn tokenizeGt__indexed(
     match aver_rt::string_index_char_at(&src, &__str_index, &nextPos) {
         Some(c @ _) => {
             if (&*c == "=") {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkGte,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         pos.add(&aver_rt::AverInt::from_i64(2)),
                         __str_index,
                     ),
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkGt,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         nextPos,
                         __str_index,
@@ -2404,9 +2414,9 @@ pub fn tokenizeGt__indexed(
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkGt,
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
         ),
     }
 }
@@ -2423,18 +2433,18 @@ pub fn tokenizeBang__indexed(
     match aver_rt::string_index_char_at(&src, &__str_index, &nextPos) {
         Some(c @ _) => {
             if (&*c == "=") {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkNeq,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         pos.add(&aver_rt::AverInt::from_i64(2)),
                         __str_index,
                     ),
                 )
             } else {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkBang,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
+                    crate::aver_generated::domain::lexer::tokenize__indexed(
                         src,
                         nextPos,
                         __str_index,
@@ -2442,9 +2452,9 @@ pub fn tokenizeBang__indexed(
                 )
             }
         }
-        None => aver_rt::AverList::prepend(
+        None => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkBang,
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
         ),
     }
 }
@@ -2461,18 +2471,18 @@ pub fn tokenizeEq__indexed(
     {
         let __int_match_subject = aver_rt::string_index_code_at(&src, &__str_index, &nextPos);
         if __int_match_subject == -1i64 {
-            aver_rt::AverList::prepend(
+            aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkEq,
-                &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
+                crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
             )
         } else {
             let __str_ix_c1 = __int_match_subject;
             {
                 let __dispatch_subject = __str_ix_c1;
                 if __dispatch_subject == 61i64 {
-                    aver_rt::AverList::prepend(
+                    aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::token::Token::TkEqEq,
-                        &crate::aver_generated::domain::lexer::tokenize__indexed(
+                        crate::aver_generated::domain::lexer::tokenize__indexed(
                             src,
                             pos2,
                             __str_index,
@@ -2480,18 +2490,18 @@ pub fn tokenizeEq__indexed(
                     )
                 } else {
                     if __dispatch_subject == 62i64 {
-                        aver_rt::AverList::prepend(
+                        aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::token::Token::TkFatArrow,
-                            &crate::aver_generated::domain::lexer::tokenize__indexed(
+                            crate::aver_generated::domain::lexer::tokenize__indexed(
                                 src,
                                 pos2,
                                 __str_index,
                             ),
                         )
                     } else {
-                        aver_rt::AverList::prepend(
+                        aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::token::Token::TkEq,
-                            &crate::aver_generated::domain::lexer::tokenize__indexed(
+                            crate::aver_generated::domain::lexer::tokenize__indexed(
                                 src,
                                 nextPos,
                                 __str_index,
@@ -2519,15 +2529,15 @@ pub fn tokenizeNewline__indexed(
     );
     {
         let (indent, newPos) = r;
-        aver_rt::AverList::prepend(
+        aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkNewline,
-            &aver_rt::AverList::prepend(
+            aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkInt(
                     aver_rt::AverInt::from_i64(0)
                         .sub(&indent)
                         .sub(&aver_rt::AverInt::from_i64(1)),
                 ),
-                &crate::aver_generated::domain::lexer::tokenize__indexed(src, newPos, __str_index),
+                crate::aver_generated::domain::lexer::tokenize__indexed(src, newPos, __str_index),
             ),
         )
     }

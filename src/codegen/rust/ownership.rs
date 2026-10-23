@@ -186,6 +186,13 @@ pub(super) fn materialize_scoped_thread_capture(
     }
 }
 
+/// Whether an owning consumer takes this value without a clone: an owned
+/// place at its final use, or a computed value.
+pub(super) fn moves_when_owned(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    let facts = value_facts(expr, ctx);
+    facts.mode == RustValueMode::Owned && facts.can_move
+}
+
 /// Whether an owning consumer of this owned place (a local or a field read)
 /// clones it, because the place is read again later.
 pub(super) fn owned_read_clones(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {

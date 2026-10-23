@@ -473,7 +473,7 @@ pub fn extractStrings(
                                 let s = __s_fields.0.clone();
                                 {
                                     let __tco0 = rest;
-                                    let __tco1 = aver_rt::AverList::prepend(s, &acc);
+                                    let __tco1 = aver_rt::AverList::prepend_owned(s, acc);
                                     __hold0 = __tco0;
                                     items = &__hold0;
                                     acc = __tco1;
@@ -1297,11 +1297,11 @@ pub fn strPartsToVals(
                 if let Some((s, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend(
+                        let __tco1 = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::value::Val::ValStr(
                                 crate::aver_generated::domain::value::Val__ValStr(s),
                             ),
-                            &acc,
+                            acc,
                         );
                         __hold0 = __tco0;
                         parts = &__hold0;
@@ -1454,11 +1454,11 @@ pub fn stringToCharList__indexed(
             match aver_rt::string_index_char_at(&s, &__str_index, &pos) {
                 Some(c @ _) => {
                     let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
-                    let __tco3 = aver_rt::AverList::prepend(
+                    let __tco3 = aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::value::Val::ValStr(
                             crate::aver_generated::domain::value::Val__ValStr(c),
                         ),
-                        &acc,
+                        acc,
                     );
                     pos = __tco1;
                     acc = __tco3;

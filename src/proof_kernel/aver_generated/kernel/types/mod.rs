@@ -305,9 +305,9 @@ pub fn showAll(
             aver_rt::AverList::empty()
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::types::show(t),
-                    &crate::proof_kernel::aver_generated::kernel::types::showAll(&rest),
+                    crate::proof_kernel::aver_generated::kernel::types::showAll(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -487,30 +487,30 @@ pub fn partsOf(
         let __t = t;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
-                let a = __a_fields.0.clone();
-                aver_rt::AverList::from_vec(vec![a])
+                let a = &__a_fields.0;
+                aver_rt::AverList::from_vec(vec![a.clone()])
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
-                let a = __a_fields.0.clone();
-                aver_rt::AverList::from_vec(vec![a])
+                let a = &__a_fields.0;
+                aver_rt::AverList::from_vec(vec![a.clone()])
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
-                let a = __a_fields.0.clone();
-                aver_rt::AverList::from_vec(vec![a])
+                let a = &__a_fields.0;
+                aver_rt::AverList::from_vec(vec![a.clone()])
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
-                aver_rt::AverList::from_vec(vec![a, b])
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                aver_rt::AverList::from_vec(vec![a.clone(), b.clone()])
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
-                aver_rt::AverList::from_vec(vec![a, b])
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                aver_rt::AverList::from_vec(vec![a.clone(), b.clone()])
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
-                let xs = __xs_fields.0.clone();
-                xs
+                let xs = &__xs_fields.0;
+                xs.clone()
             }
             _ => aver_rt::AverList::empty(),
         }
@@ -709,9 +709,9 @@ pub fn joinEach(
             let Some((y, yr)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
                 unreachable!("Aver Rust codegen: tuple element list mismatch")
             };
-            Ok(aver_rt::AverList::prepend(
+            Ok(aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::types::join(x, y)?,
-                &crate::proof_kernel::aver_generated::kernel::types::joinEach(&xr, &yr)?,
+                crate::proof_kernel::aver_generated::kernel::types::joinEach(&xr, &yr)?,
             ))
         } else {
             Ok(aver_rt::AverList::empty())
@@ -851,9 +851,9 @@ pub fn rigidAll(
             aver_rt::AverList::empty()
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::types::rigid(t.clone()),
-                    &crate::proof_kernel::aver_generated::kernel::types::rigidAll(&rest),
+                    crate::proof_kernel::aver_generated::kernel::types::rigidAll(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -874,7 +874,7 @@ pub fn rigidVars(
             aver_rt::AverList::empty()
         } else {
             if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     {
                         let __arg3 @ _ =
                             crate::proof_kernel::aver_generated::kernel::types::rigid(v.ty.clone());
@@ -883,7 +883,7 @@ pub fn rigidVars(
                             __arg3,
                         )
                     },
-                    &crate::proof_kernel::aver_generated::kernel::types::rigidVars(&rest),
+                    crate::proof_kernel::aver_generated::kernel::types::rigidVars(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -907,7 +907,7 @@ pub fn namedHasEq(n @ _: AverStr, e @ _: &TyEnv, seen @ _: &aver_rt::AverList<Av
             match __subject {
                 (Some(s), _) => {
                     (s.eq && {
-                        let __arg5 @ _ = aver_rt::AverList::prepend(n, &seen.clone());
+                        let __arg5 @ _ = aver_rt::AverList::prepend(n, seen);
                         crate::proof_kernel::aver_generated::kernel::types::variantsHaveEq(
                             &s.variants,
                             e,
@@ -922,7 +922,7 @@ pub fn namedHasEq(n @ _: AverStr, e @ _: &TyEnv, seen @ _: &aver_rt::AverList<Av
                                 &r.fields,
                             );
                         {
-                            let __arg7 @ _ = aver_rt::AverList::prepend(n, &seen.clone());
+                            let __arg7 @ _ = aver_rt::AverList::prepend(n, seen);
                             crate::proof_kernel::aver_generated::kernel::types::allEqSeen(
                                 &__arg6, e, &__arg7,
                             )
@@ -1008,9 +1008,9 @@ pub fn typesOfVars(
             aver_rt::AverList::empty()
         } else {
             if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     v.ty.clone(),
-                    &crate::proof_kernel::aver_generated::kernel::types::typesOfVars(&rest),
+                    crate::proof_kernel::aver_generated::kernel::types::typesOfVars(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1302,8 +1302,8 @@ pub fn elemOf(
         let __t = t;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
-                let a = __a_fields.0.clone();
-                Some(a)
+                let a = &__a_fields.0;
+                Some(a.clone())
             }
             _ => None,
         }
@@ -1458,9 +1458,9 @@ pub fn typeOf(
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TMatch(__s_fields) => {
                 let s = &__s_fields.0;
-                let arms = __s_fields.1.clone();
+                let arms = &__s_fields.1;
                 {
-                    let __list_subject = arms.clone();
+                    let __list_subject = arms;
                     if __list_subject.is_empty() {
                         Err(::aver_rt::str_lit!("a match with no arms has no type"))
                     } else {
@@ -1471,7 +1471,7 @@ pub fn typeOf(
                                 let __arg37 @ _ =
                                     crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny;
                                 crate::proof_kernel::aver_generated::kernel::types::armsType(
-                                    __arg36, &arms, __arg37, e,
+                                    __arg36, arms, __arg37, e,
                                 )
                             }
                         }
@@ -1516,13 +1516,13 @@ pub fn typeOf(
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TRec(__n_fields) => {
                 let n = __n_fields.0.clone();
-                let fs = __n_fields.1.clone();
-                crate::proof_kernel::aver_generated::kernel::types::recordLiteralType(n, &fs, e)
+                let fs = &__n_fields.1;
+                crate::proof_kernel::aver_generated::kernel::types::recordLiteralType(n, fs, e)
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__n_fields) => {
                 let n = __n_fields.0.clone();
                 let b = &__n_fields.1;
-                let fs = __n_fields.2.clone();
+                let fs = &__n_fields.2;
                 {
                     let __arg44 @ _ = {
                         let __arg41 @ _ =
@@ -1556,9 +1556,7 @@ pub fn typeOf(
                             }
                         }
                     }?;
-                    crate::proof_kernel::aver_generated::kernel::types::fieldsFit(
-                        n, &fs, __arg44, e,
-                    )
+                    crate::proof_kernel::aver_generated::kernel::types::fieldsFit(n, fs, __arg44, e)
                 }
             }
         }
@@ -1609,9 +1607,9 @@ pub fn typesOf(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::types::typeOf(t, e)?,
-                    &crate::proof_kernel::aver_generated::kernel::types::typesOf(&rest, e)?,
+                    crate::proof_kernel::aver_generated::kernel::types::typesOf(&rest, e)?,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1796,9 +1794,9 @@ pub fn fieldNames(
             aver_rt::AverList::empty()
         } else {
             if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     f.name.clone(),
-                    &crate::proof_kernel::aver_generated::kernel::types::fieldNames(&rest),
+                    crate::proof_kernel::aver_generated::kernel::types::fieldNames(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1906,7 +1904,7 @@ pub fn unique(
                     } else {
                         {
                             let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend(n, &seen);
+                            let __tco1 = aver_rt::AverList::prepend_owned(n, seen);
                             __hold0 = __tco0;
                             names = &__hold0;
                             seen = __tco1;
@@ -2513,13 +2511,13 @@ pub fn bindVar(
         match crate::proof_kernel::aver_generated::kernel::types::find(n.clone(), bound) {
             None => Ok(aver_rt::AverList::prepend(
                 crate::proof_kernel::aver_generated::kernel::term::typed(n, actual),
-                &bound.clone(),
+                bound,
             )),
             Some(prev @ _) => {
                 match crate::proof_kernel::aver_generated::kernel::types::join(prev, actual) {
                     Ok(t @ _) => Ok(aver_rt::AverList::prepend(
                         crate::proof_kernel::aver_generated::kernel::term::typed(n, t),
-                        &bound.clone(),
+                        bound,
                     )),
                     Err(why @ _) => Err(aver_rt::AverStr::from({
                         let mut __b = {
@@ -2560,46 +2558,67 @@ pub fn instantiate(
                     .unwrap_or(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
+                            a.clone(),
+                            bound,
+                        ),
                     ),
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
+                            a.clone(),
+                            bound,
+                        ),
                     ),
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let a = &__a_fields.0;
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
+                            a.clone(),
+                            bound,
+                        ),
                     ),
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(b, bound),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
+                            a.clone(),
+                            bound,
+                        ),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
+                            b.clone(),
+                            bound,
+                        ),
                     ),
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(b, bound),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
+                            a.clone(),
+                            bound,
+                        ),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
+                            b.clone(),
+                            bound,
+                        ),
                     ),
                 )
             }
@@ -2631,12 +2650,12 @@ pub fn instantiateAll(
             aver_rt::AverList::empty()
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::types::instantiate(
                         t.clone(),
                         bound,
                     ),
-                    &crate::proof_kernel::aver_generated::kernel::types::instantiateAll(
+                    crate::proof_kernel::aver_generated::kernel::types::instantiateAll(
                         &rest, bound,
                     ),
                 )
@@ -3136,7 +3155,7 @@ pub fn namedOne(
     } else {
         aver_rt::AverList::prepend(
             crate::proof_kernel::aver_generated::kernel::term::typed(n, t),
-            &rest.clone(),
+            rest,
         )
     }
 }
@@ -3425,8 +3444,10 @@ pub fn finTuple(
     parts @ _: &Option<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Fin>>,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::term::Fin> {
     crate::proof_kernel::cancel_checkpoint();
-    match parts.clone() {
-        Some(fs @ _) => Some(crate::proof_kernel::aver_generated::kernel::term::Fin::FTuple(fs)),
+    match parts {
+        Some(fs @ _) => {
+            Some(crate::proof_kernel::aver_generated::kernel::term::Fin::FTuple(fs.clone()))
+        }
         None => None,
     }
 }
@@ -3443,7 +3464,7 @@ pub fn finSeen(
         None
     } else {
         {
-            let __arg3 @ _ = aver_rt::AverList::prepend(n.clone(), &seen.clone());
+            let __arg3 @ _ = aver_rt::AverList::prepend(n.clone(), seen);
             crate::proof_kernel::aver_generated::kernel::types::finNamed(n, e, &__arg3)
         }
     }
@@ -3500,8 +3521,10 @@ pub fn finRec(
     >,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::term::Fin> {
     crate::proof_kernel::cancel_checkpoint();
-    match fields.clone() {
-        Some(fs @ _) => Some(crate::proof_kernel::aver_generated::kernel::term::Fin::FRec(n, fs)),
+    match fields {
+        Some(fs @ _) => {
+            Some(crate::proof_kernel::aver_generated::kernel::term::Fin::FRec(n, fs.clone()))
+        }
         None => None,
     }
 }
@@ -3548,7 +3571,7 @@ pub fn finAll(
                         crate::proof_kernel::aver_generated::kernel::types::finAll(&rest, e, seen),
                     );
                     match __subject {
-                        (Some(f), Some(fs)) => Some(aver_rt::AverList::prepend(f, &fs)),
+                        (Some(f), Some(fs)) => Some(aver_rt::AverList::prepend_owned(f, fs)),
                         _ => None,
                     }
                 }
@@ -3581,12 +3604,12 @@ pub fn finFields(
                         ),
                     );
                     match __subject {
-                        (Some(fin), Some(more)) => Some(aver_rt::AverList::prepend(
+                        (Some(fin), Some(more)) => Some(aver_rt::AverList::prepend_owned(
                             crate::proof_kernel::aver_generated::kernel::term::FinField {
                                 name: f.name.clone(),
                                 fin: fin,
                             },
-                            &more,
+                            more,
                         )),
                         _ => None,
                     }

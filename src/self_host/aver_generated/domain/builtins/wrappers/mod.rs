@@ -82,8 +82,8 @@ pub fn builtinResultWithDefault(
             let __t = resV;
             match __t.view() {
                 crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
-                    let inner = __inner_fields.0.clone();
-                    Ok(inner)
+                    let inner = &__inner_fields.0;
+                    Ok(inner.clone())
                 }
                 crate::aver_generated::domain::value::Val__view::ValErr(_) => Ok(defV),
                 _ => Err(::aver_rt::str_lit!(
@@ -117,8 +117,8 @@ pub fn builtinOptionWithDefault(
             let __t = optV;
             match __t.view() {
                 crate::aver_generated::domain::value::Val__view::ValSome(__inner_fields) => {
-                    let inner = __inner_fields.0.clone();
-                    Ok(inner)
+                    let inner = &__inner_fields.0;
+                    Ok(inner.clone())
                 }
                 crate::aver_generated::domain::value::Val__view::ValNone => Ok(defV),
                 _ => Err(::aver_rt::str_lit!(
@@ -141,9 +141,9 @@ pub fn callResultFromOption(
             let __t = optV;
             match __t.view() {
                 crate::aver_generated::domain::value::Val__view::ValSome(__inner_fields) => {
-                    let inner = __inner_fields.0.clone();
+                    let inner = &__inner_fields.0;
                     Ok(crate::aver_generated::domain::value::Val::ValOk(
-                        crate::aver_generated::domain::value::Val__ValOk(inner),
+                        crate::aver_generated::domain::value::Val__ValOk(inner.clone()),
                     ))
                 }
                 crate::aver_generated::domain::value::Val__view::ValNone => {

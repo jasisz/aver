@@ -743,14 +743,14 @@ fn __mutual_tco_trampoline_1(
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Cases(
                             __next_fields,
                         ) => {
-                            let next = __next_fields.0.clone();
+                            let next = &__next_fields.0;
                             {
                                 let __arg23 @ _ =
                                     crate::proof_std::aver_generated::kernel::std::down(
                                         n,
                                         ::aver_rt::str_lit!("Cases"),
                                     );
-                                __MutualTco1::CasesAt(__arg23, next)
+                                __MutualTco1::CasesAt(__arg23, next.clone())
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Induction(
@@ -759,8 +759,8 @@ fn __mutual_tco_trampoline_1(
                             let v = __v_fields.0.clone();
                             let h = __v_fields.1.clone();
                             let tl = __v_fields.2.clone();
-                            let nil = __v_fields.3.clone();
-                            let cons = __v_fields.4.clone();
+                            let nil = &__v_fields.3;
+                            let cons = &__v_fields.4;
                             {
                                 let __arg25 @ _ = {
                                     let __arg24 @ _ = aver_rt::AverStr::from({
@@ -785,7 +785,14 @@ fn __mutual_tco_trampoline_1(
                                     crate::proof_std::aver_generated::kernel::std::down(n, __arg24)
                                 };
                                 return crate::proof_std::aver_generated::kernel::std::listStep(
-                                    __arg25, v, h, tl, nil, cons, true, &*answers,
+                                    __arg25,
+                                    v,
+                                    h,
+                                    tl,
+                                    nil.clone(),
+                                    cons.clone(),
+                                    true,
+                                    &*answers,
                                 );
                             }
                         }
@@ -795,8 +802,8 @@ fn __mutual_tco_trampoline_1(
                             let v = __v_fields.0.clone();
                             let h = __v_fields.1.clone();
                             let tl = __v_fields.2.clone();
-                            let nil = __v_fields.3.clone();
-                            let cons = __v_fields.4.clone();
+                            let nil = &__v_fields.3;
+                            let cons = &__v_fields.4;
                             {
                                 let __arg27 @ _ = {
                                     let __arg26 @ _ = aver_rt::AverStr::from({
@@ -821,16 +828,23 @@ fn __mutual_tco_trampoline_1(
                                     crate::proof_std::aver_generated::kernel::std::down(n, __arg26)
                                 };
                                 return crate::proof_std::aver_generated::kernel::std::listStep(
-                                    __arg27, v, h, tl, nil, cons, false, &*answers,
+                                    __arg27,
+                                    v,
+                                    h,
+                                    tl,
+                                    nil.clone(),
+                                    cons.clone(),
+                                    false,
+                                    &*answers,
                                 );
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::SplitBool(
                             __c_fields,
                         ) => {
-                            let c = __c_fields.0.clone();
-                            let yes = __c_fields.1.clone();
-                            let no = __c_fields.2.clone();
+                            let c = &__c_fields.0;
+                            let yes = &__c_fields.1;
+                            let no = &__c_fields.2;
                             {
                                 let __arg28 @ _ =
                                     crate::proof_std::aver_generated::kernel::std::down(
@@ -838,19 +852,23 @@ fn __mutual_tco_trampoline_1(
                                         ::aver_rt::str_lit!("SplitBool"),
                                     );
                                 return crate::proof_std::aver_generated::kernel::std::boolStep(
-                                    &__arg28, c, yes, no, &*answers,
+                                    &__arg28,
+                                    c.clone(),
+                                    yes.clone(),
+                                    no.clone(),
+                                    &*answers,
                                 );
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::First(
                             __ts_fields,
                         ) => {
-                            let ts = __ts_fields.0.clone();
+                            let ts = &__ts_fields.0;
                             {
                                 let __arg29 @ _ = <aver_rt::AverList<AverStr>>::empty();
                                 return crate::proof_std::aver_generated::kernel::std::first(
                                     &n,
-                                    &ts,
+                                    ts,
                                     aver_rt::AverInt::from_i64(1),
                                     __arg29,
                                     &*answers,
@@ -1186,7 +1204,7 @@ pub fn eachValue(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(x), Some(xs)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     {
                         let __arg6 @ _ = crate::proof_std::aver_generated::kernel::std::at(
                             goal.clone(),
@@ -1195,7 +1213,7 @@ pub fn eachValue(
                         )?;
                         crate::proof_std::aver_generated::kernel::std::splitAll(&__arg6, rest)
                     }?,
-                    &crate::proof_std::aver_generated::kernel::std::eachValue(goal, v, &xs, rest)?,
+                    crate::proof_std::aver_generated::kernel::std::eachValue(goal, v, &xs, rest)?,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1292,9 +1310,9 @@ pub fn withoutGiven(
                             continue;
                         }
                     } else {
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             g.clone(),
-                            &crate::proof_std::aver_generated::kernel::std::withoutGiven(&rest, v),
+                            crate::proof_std::aver_generated::kernel::std::withoutGiven(&rest, v),
                         );
                     }
                 } else {
@@ -1319,13 +1337,13 @@ pub fn substAll(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::lib::substitute(
                         t.clone(),
                         v.clone(),
                         x.clone(),
                     )?,
-                    &crate::proof_std::aver_generated::kernel::std::substAll(&rest, v, x)?,
+                    crate::proof_std::aver_generated::kernel::std::substAll(&rest, v, x)?,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1348,7 +1366,7 @@ pub fn substHyps(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::proof::Hyp {
                         name: h.name.clone(),
                         eqn: crate::proof_std::aver_generated::kernel::term::Eqn {
@@ -1364,7 +1382,7 @@ pub fn substHyps(
                             )?,
                         },
                     },
-                    &crate::proof_std::aver_generated::kernel::std::substHyps(&rest, v, x)?,
+                    crate::proof_std::aver_generated::kernel::std::substHyps(&rest, v, x)?,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -1382,12 +1400,12 @@ pub fn assume(
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
     crate::proof_std::cancel_checkpoint();
     {
-        goal.hyps = aver_rt::AverList::prepend(
+        goal.hyps = aver_rt::AverList::prepend_owned(
             crate::proof_std::aver_generated::kernel::proof::Hyp {
                 name: name,
                 eqn: crate::proof_std::aver_generated::kernel::term::Eqn { lhs: lhs, rhs: rhs },
             },
-            &goal.hyps,
+            goal.hyps,
         );
         goal
     }
@@ -1679,12 +1697,18 @@ pub fn holeBelow(
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
                 let o = __o_fields.0.clone();
-                let a = __o_fields.1.clone();
-                let b = __o_fields.2.clone();
+                let a = &__o_fields.1;
+                let b = &__o_fields.2;
                 {
                     let __arg26 @ _ =
-                        crate::proof_std::aver_generated::kernel::std::holeAt(&a, target);
-                    crate::proof_std::aver_generated::kernel::std::opWith(o, a, b, &__arg26, target)
+                        crate::proof_std::aver_generated::kernel::std::holeAt(a, target);
+                    crate::proof_std::aver_generated::kernel::std::opWith(
+                        o,
+                        a.clone(),
+                        b.clone(),
+                        &__arg26,
+                        target,
+                    )
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
@@ -1716,7 +1740,7 @@ pub fn mapSome(
     shape @ _: &crate::proof_std::aver_generated::kernel::term::Term,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
-    match xs.clone() {
+    match xs {
         None => None,
         Some(ys @ _) => {
             let __t = shape;
@@ -1724,28 +1748,28 @@ pub fn mapSome(
                 crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
                     let f = __f_fields.0.clone();
                     Some(crate::proof_std::aver_generated::kernel::term::Term::TCall(
-                        crate::proof_std::aver_generated::kernel::term::Term__TCall(f, ys),
+                        crate::proof_std::aver_generated::kernel::term::Term__TCall(f, ys.clone()),
                     ))
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
                     let f = __f_fields.0.clone();
                     Some(crate::proof_std::aver_generated::kernel::term::Term::TBi(
-                        crate::proof_std::aver_generated::kernel::term::Term__TBi(f, ys),
+                        crate::proof_std::aver_generated::kernel::term::Term__TBi(f, ys.clone()),
                     ))
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
                     let c = __c_fields.0.clone();
                     Some(crate::proof_std::aver_generated::kernel::term::Term::TCtor(
-                        crate::proof_std::aver_generated::kernel::term::Term__TCtor(c, ys),
+                        crate::proof_std::aver_generated::kernel::term::Term__TCtor(c, ys.clone()),
                     ))
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TTuple(_) => Some(
                     crate::proof_std::aver_generated::kernel::term::Term::TTuple(
-                        crate::proof_std::aver_generated::kernel::term::Term__TTuple(ys),
+                        crate::proof_std::aver_generated::kernel::term::Term__TTuple(ys.clone()),
                     ),
                 ),
                 _ => Some(crate::proof_std::aver_generated::kernel::term::Term::TList(
-                    crate::proof_std::aver_generated::kernel::term::Term__TList(ys),
+                    crate::proof_std::aver_generated::kernel::term::Term__TList(ys.clone()),
                 )),
             }
         }
@@ -1758,9 +1782,9 @@ pub fn negWith(
     a @ _: &Option<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
-    match a.clone() {
+    match a {
         Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TNeg(
-            crate::proof_std::aver_generated::kernel::term::Term__TNeg(c),
+            crate::proof_std::aver_generated::kernel::term::Term__TNeg(c.clone()),
         )),
         None => None,
     }
@@ -1773,9 +1797,9 @@ pub fn getWith(
     f @ _: AverStr,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
-    match a.clone() {
+    match a {
         Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TGet(
-            crate::proof_std::aver_generated::kernel::term::Term__TGet(c, f),
+            crate::proof_std::aver_generated::kernel::term::Term__TGet(c.clone(), f),
         )),
         None => None,
     }
@@ -1791,9 +1815,9 @@ pub fn opWith(
     target @ _: &crate::proof_std::aver_generated::kernel::term::Term,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
-    match left.clone() {
+    match left {
         Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TOp(
-            crate::proof_std::aver_generated::kernel::term::Term__TOp(o, c, b),
+            crate::proof_std::aver_generated::kernel::term::Term__TOp(o, c.clone(), b),
         )),
         None => match crate::proof_std::aver_generated::kernel::std::holeAt(&b, target) {
             Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TOp(
@@ -1818,7 +1842,7 @@ pub fn holeInList(
         } else {
             if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 match crate::proof_std::aver_generated::kernel::std::holeAt(x, target) {
-                    Some(c @ _) => Some(aver_rt::AverList::prepend(c, &rest)),
+                    Some(c @ _) => Some(aver_rt::AverList::prepend_owned(c, rest)),
                     None => {
                         let __arg5 @ _ = crate::proof_std::aver_generated::kernel::std::holeInList(
                             &rest, target,
@@ -1840,8 +1864,8 @@ pub fn prependTo(
     xs @ _: &Option<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>>,
 ) -> Option<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>> {
     crate::proof_std::cancel_checkpoint();
-    match xs.clone() {
-        Some(ys @ _) => Some(aver_rt::AverList::prepend(x.clone(), &ys)),
+    match xs {
+        Some(ys @ _) => Some(aver_rt::AverList::prepend(x.clone(), ys)),
         None => None,
     }
 }
@@ -2093,7 +2117,7 @@ pub fn first(
                                 ) => {
                                     let __tco1 = rest;
                                     let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
-                                    let __tco3 = aver_rt::AverList::prepend(
+                                    let __tco3 = aver_rt::AverList::prepend_owned(
                                         aver_rt::AverStr::from({
                                             let mut __b = {
                                                 let mut __b = {
@@ -2115,7 +2139,7 @@ pub fn first(
                                             ));
                                             __b
                                         }),
-                                        &whys,
+                                        whys,
                                     );
                                     __hold1 = __tco1;
                                     ts = &__hold1;
@@ -2151,7 +2175,7 @@ pub fn eachCase(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(x), Some(xs)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     {
                         let __arg8 @ _ = crate::proof_std::aver_generated::kernel::std::caseNode(
                             n.clone(),
@@ -2165,7 +2189,7 @@ pub fn eachCase(
                             answers,
                         )
                     }?,
-                    &crate::proof_std::aver_generated::kernel::std::eachCase(
+                    crate::proof_std::aver_generated::kernel::std::eachCase(
                         n, v, &xs, rest, next, answers,
                     )?,
                 ))
@@ -2429,11 +2453,11 @@ pub fn hypTerms(
             aver_rt::AverList::empty()
         } else {
             if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     h.eqn.lhs.clone(),
-                    &aver_rt::AverList::prepend(
+                    aver_rt::AverList::prepend_owned(
                         h.eqn.rhs.clone(),
-                        &crate::proof_std::aver_generated::kernel::std::hypTerms(&rest),
+                        crate::proof_std::aver_generated::kernel::std::hypTerms(&rest),
                     ),
                 )
             } else {
@@ -2527,19 +2551,19 @@ pub fn listCases(
             __arg26,
         )
     }?;
-    let cells @ _ = aver_rt::AverList::prepend(
+    let cells @ _ = aver_rt::AverList::prepend_owned(
         crate::proof_std::aver_generated::kernel::std::Origin {
             name: tl.clone(),
             part: ::aver_rt::str_lit!("tail"),
             list: v.clone(),
         },
-        &aver_rt::AverList::prepend(
+        aver_rt::AverList::prepend(
             crate::proof_std::aver_generated::kernel::std::Origin {
                 name: h.clone(),
                 part: ::aver_rt::str_lit!("head"),
                 list: v.clone(),
             },
-            &n.from.clone(),
+            &n.from,
         ),
     );
     let nilProof @ _ = {
@@ -2608,25 +2632,32 @@ pub fn substituted(
     r @ _: &Result<crate::proof_std::aver_generated::kernel::proof::Goal, AverStr>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Goal, Stop> {
     crate::proof_std::cancel_checkpoint();
-    match r.clone() {
-        Ok(g @ _) => Ok(g),
-        Err(why @ _) => Err(
-            crate::proof_std::aver_generated::kernel::std::Stop::Refused(aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(34)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n.path))));
+    match r {
+        Ok(g @ _) => Ok(g.clone()),
+        Err(why @ _) => {
+            let why = why.clone();
+            Err(
+                crate::proof_std::aver_generated::kernel::std::Stop::Refused(
+                    aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(34)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(n.path),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!(": "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
                         __b
-                    };
-                    __b.push_str(&::aver_rt::str_lit!(": "));
-                    __b
-                };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
-                __b
-            })),
-        ),
+                    }),
+                ),
+            )
+        }
     }
 }
 
@@ -2722,9 +2753,9 @@ pub fn withoutVar(
                             continue;
                         }
                     } else {
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             g.clone(),
-                            &crate::proof_std::aver_generated::kernel::std::withoutVar(&rest, v),
+                            crate::proof_std::aver_generated::kernel::std::withoutVar(&rest, v),
                         );
                     }
                 } else {
@@ -2819,9 +2850,9 @@ pub fn without(
                             continue;
                         }
                     } else {
-                        return aver_rt::AverList::prepend(
+                        return aver_rt::AverList::prepend_owned(
                             n,
-                            &crate::proof_std::aver_generated::kernel::std::without(&rest, v),
+                            crate::proof_std::aver_generated::kernel::std::without(&rest, v),
                         );
                     }
                 } else {
@@ -3073,7 +3104,7 @@ pub fn givenTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(g), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -3103,7 +3134,7 @@ pub fn givenTexts(
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::std::givenTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::std::givenTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -3122,7 +3153,7 @@ pub fn originTexts(os @ _: &aver_rt::AverList<Origin>) -> aver_rt::AverList<Aver
             aver_rt::AverList::empty()
         } else {
             if let (Some(o), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -3160,7 +3191,7 @@ pub fn originTexts(os @ _: &aver_rt::AverList<Origin>) -> aver_rt::AverList<Aver
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::std::originTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::std::originTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -3181,7 +3212,7 @@ pub fn hypTexts(
             aver_rt::AverList::empty()
         } else {
             if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -3225,7 +3256,7 @@ pub fn hypTexts(
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     }),
-                    &crate::proof_std::aver_generated::kernel::std::hypTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::std::hypTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -3736,9 +3767,9 @@ pub fn tacticTexts(ts @ _: &aver_rt::AverList<Tactic>) -> aver_rt::AverList<Aver
             aver_rt::AverList::empty()
         } else {
             if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend(
+                aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::std::tacticText(t),
-                    &crate::proof_std::aver_generated::kernel::std::tacticTexts(&rest),
+                    crate::proof_std::aver_generated::kernel::std::tacticTexts(&rest),
                 )
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -3974,9 +4005,9 @@ pub fn readTactics(
             Ok(aver_rt::AverList::empty())
         } else {
             if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                Ok(aver_rt::AverList::prepend(
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::std::readTactic(s)?,
-                    &crate::proof_std::aver_generated::kernel::std::readTactics(&rest)?,
+                    crate::proof_std::aver_generated::kernel::std::readTactics(&rest)?,
                 ))
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
@@ -4047,7 +4078,7 @@ pub fn answersOf(
                                                     match __pat5 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Text(k) => {
             let k = k.clone();
-            { let __list_subject = __pat6; if let (Some(r), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend(crate::proof_std::aver_generated::kernel::std::Answer { key: k, reply: crate::proof_std::aver_generated::kernel::std::replyOf(r)? }, &crate::proof_std::aver_generated::kernel::std::answersOf(&rest)?)) } else { Err(::aver_rt::str_lit!("malformed answer")) } } } else { Err(::aver_rt::str_lit!("malformed answer")) } }
+            { let __list_subject = __pat6; if let (Some(r), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::std::Answer { key: k, reply: crate::proof_std::aver_generated::kernel::std::replyOf(r)? }, crate::proof_std::aver_generated::kernel::std::answersOf(&rest)?)) } else { Err(::aver_rt::str_lit!("malformed answer")) } } } else { Err(::aver_rt::str_lit!("malformed answer")) } }
         },
         _ => {
             Err(::aver_rt::str_lit!("malformed answer"))
@@ -4227,7 +4258,7 @@ pub fn outcome(
     r @ _: &Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop>,
 ) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    match r.clone() {
+    match r {
         Ok(p @ _) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
@@ -4237,12 +4268,13 @@ pub fn outcome(
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::proof_std::aver_generated::kernel::wire::proofText(&p)),
+                &(crate::proof_std::aver_generated::kernel::wire::proofText(p)),
             )));
             __b
         }),
         Err(__pat0 @ _) => match __pat0 {
             crate::proof_std::aver_generated::kernel::std::Stop::Refused(why) => {
+                let why = why.clone();
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = aver_rt::Buffer::with_capacity(
@@ -4256,6 +4288,7 @@ pub fn outcome(
                 })
             }
             crate::proof_std::aver_generated::kernel::std::Stop::Ask(key) => {
+                let key = key.clone();
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = aver_rt::Buffer::with_capacity(
@@ -4276,7 +4309,7 @@ pub fn outcome(
 #[inline(always)]
 pub fn scriptAnswer(r @ _: &Result<Tactic, AverStr>) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    match r.clone() {
+    match r {
         Ok(t @ _) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
@@ -4286,21 +4319,24 @@ pub fn scriptAnswer(r @ _: &Result<Tactic, AverStr>) -> AverStr {
                 __b
             };
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::proof_std::aver_generated::kernel::std::tacticText(&t)),
+                &(crate::proof_std::aver_generated::kernel::std::tacticText(t)),
             )));
             __b
         }),
-        Err(why @ _) => aver_rt::AverStr::from({
-            let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
-                );
-                __b.push_str(&::aver_rt::str_lit!("refused\n"));
+        Err(why @ _) => {
+            let why = why.clone();
+            aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
+                    );
+                    __b.push_str(&::aver_rt::str_lit!("refused\n"));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
                 __b
-            };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
-            __b
-        }),
+            })
+        }
     }
 }
 

@@ -139,7 +139,7 @@ fn __mutual_tco_trampoline_2(
                         __MutualTco2::ParseConstructorPatternTail(
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                             name,
-                            aver_rt::AverList::prepend(binding, &acc),
+                            aver_rt::AverList::prepend_owned(binding, acc),
                         )
                     }
                     _ => {
@@ -264,7 +264,7 @@ fn __mutual_tco_trampoline_3(
                 {
                     let (pat, pos2) = pr;
                     {
-                        let __arg6 @ _ = aver_rt::AverList::prepend(pat, &acc);
+                        let __arg6 @ _ = aver_rt::AverList::prepend_owned(pat, acc);
                         __MutualTco3::ParseTuplePatternElementTail(pos2, __arg6)
                     }
                 }
@@ -440,7 +440,7 @@ fn __mutual_tco_trampoline_5(
                                 pos.add(&aver_rt::AverInt::from_i64(1)),
                             );
                         {
-                            let __arg5 @ _ = aver_rt::AverList::prepend(name, &acc);
+                            let __arg5 @ _ = aver_rt::AverList::prepend_owned(name, acc);
                             __MutualTco5::ParseParamListTail(__arg4, __arg5)
                         }
                     }
@@ -1285,7 +1285,7 @@ pub fn collectDependsNames(
                 }
                 crate::aver_generated::domain::token::Token::TkIdent(name) => {
                     let __tco1 = nextPos;
-                    let __tco3 = aver_rt::AverList::prepend(name, &acc);
+                    let __tco3 = aver_rt::AverList::prepend_owned(name, acc);
                     pos = __tco1;
                     acc = __tco3;
                     continue;

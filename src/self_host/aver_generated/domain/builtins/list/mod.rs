@@ -93,9 +93,9 @@ pub fn builtinListPrependInner(
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        crate::aver_generated::domain::value::Val__ValList(aver_rt::AverList::prepend(
+        crate::aver_generated::domain::value::Val__ValList(aver_rt::AverList::prepend_owned(
             v.clone(),
-            &items,
+            items,
         )),
     ))
 }
@@ -155,9 +155,9 @@ pub fn listTake(
                 aver_rt::AverList::empty()
             } else {
                 if let (Some(item), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    aver_rt::AverList::prepend(
+                    aver_rt::AverList::prepend_owned(
                         item.clone(),
-                        &crate::aver_generated::domain::builtins::list::listTake(
+                        crate::aver_generated::domain::builtins::list::listTake(
                             &rest,
                             count.sub(&aver_rt::AverInt::from_i64(1)),
                         ),
@@ -391,7 +391,7 @@ pub fn zipListsAcc(
                                 {
                                     let __tco0 = xs;
                                     let __tco1 = ys;
-                                    let __tco2 = aver_rt::AverList::prepend(
+                                    let __tco2 = aver_rt::AverList::prepend_owned(
                                         crate::aver_generated::domain::value::Val::ValTuple(
                                             crate::aver_generated::domain::value::Val__ValTuple(
                                                 aver_rt::AverList::from_vec(vec![
@@ -400,7 +400,7 @@ pub fn zipListsAcc(
                                                 ]),
                                             ),
                                         ),
-                                        &acc,
+                                        acc,
                                     );
                                     __hold0 = __tco0;
                                     a = &__hold0;
