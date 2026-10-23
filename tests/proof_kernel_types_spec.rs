@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 46] = [
+const REFUSED: [(&str, &str, bool); 47] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -285,6 +285,13 @@ const REFUSED: [(&str, &str, bool); 46] = [
         "constructor pattern Option.None binds 1 names for 0 fields",
         true,
     ),
+    // A typed trans conclusion could pass through an intermediate projection
+    // with no type because only the written links were compared syntactically.
+    (
+        "untyped_intermediate_equation_in_trans",
+        "Missing is not a declared record",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -320,8 +327,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Twenty-eight scripts were accepted before their corresponding kernel gates.
+/// Twenty-nine scripts were accepted before their corresponding kernel gates.
 #[test]
-fn twenty_eight_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 28);
+fn twenty_nine_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 29);
 }

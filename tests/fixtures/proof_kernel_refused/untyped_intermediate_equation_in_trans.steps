@@ -1,0 +1,18 @@
+(steps 16
+ (obligation untypedIntermediateEquationInTrans () (none)
+  (i 0)
+  (i 0))
+ (defs)
+ (consts)
+ (sums)
+ (recs)
+ (sigs)
+ (laws)
+ (proof
+  (trans
+   ((i 0)
+    (get (rec Missing (a (i 0))) a)
+    (i 0))
+   (symm
+    (proj (get (rec Missing (a (i 0))) a)))
+   (proj (get (rec Missing (a (i 0))) a)))))

@@ -101,7 +101,7 @@ fn __mutual_tco_trampoline_1(
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCongr(__c_fields) => {
             let c = __c_fields.0.clone();
             let q = __c_fields.1.clone();
-            return crate::proof_kernel::aver_generated::kernel::check::congr(c, q, env, path)
+            return crate::proof_kernel::aver_generated::kernel::check::congr(c, q, &env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PUnfold(__f_fields) => {
             let f = __f_fields.0.clone();
@@ -1437,6 +1437,50 @@ pub fn typeOf(
     }
 }
 
+/// The same equation after checking that its two sides have one type.
+#[inline(always)]
+pub fn typedEquation(
+    mut e @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    env @ _: &Env,
+    path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __subject = {
+            let __arg5 @ _ = crate::proof_kernel::aver_generated::kernel::check::typeOf(
+                &e.lhs,
+                env,
+                path.clone(),
+            )?;
+            {
+                let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::check::typeOf(
+                    &e.rhs,
+                    env,
+                    path.clone(),
+                )?;
+                crate::proof_kernel::aver_generated::kernel::types::join(__arg5, __arg6)
+            }
+        };
+        match __subject {
+            Ok(ty @ _) => Ok(e),
+            Err(why @ _) => {
+                let __arg7 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("the equation compares "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg7)
+            }
+        }
+    }
+}
+
 /// The one check of every substitution a proof writes: each term fits the declared type of the variable it stands for.
 #[inline(always)]
 pub fn bound(
@@ -2653,10 +2697,34 @@ pub fn transFrom(
                             {
                                 let __list_subject = __pat1;
                                 if __list_subject.is_empty() {
-                                    Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
-                                        lhs: a.clone(),
-                                        rhs: a.clone(),
-                                    })
+                                    {
+                                        let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() };
+                                        {
+                                            let __arg15 @ _ = aver_rt::AverStr::from({
+                                                let mut __b = {
+                                                    let mut __b = {
+                                                        let mut __b =
+                                                            aver_rt::Buffer::with_capacity(
+                                                                (aver_rt::AverInt::from_i64(39))
+                                                                    .to_usize()
+                                                                    .unwrap_or(0),
+                                                            );
+                                                        __b.push_str(&aver_rt::AverStr::from(
+                                                            aver_rt::aver_display(&(path)),
+                                                        ));
+                                                        __b
+                                                    };
+                                                    __b.push_str(&::aver_rt::str_lit!("/trans."));
+                                                    __b
+                                                };
+                                                __b.push_str(&aver_rt::AverStr::from(
+                                                    aver_rt::aver_display(&(i)),
+                                                ));
+                                                __b
+                                            });
+                                            crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15)
+                                        }
+                                    }
                                 } else {
                                     crate::proof_kernel::aver_generated::kernel::check::refuse(
                                         path,
@@ -2706,8 +2774,18 @@ pub fn transLink(
         __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
         __b
     });
-    let e @ _ =
-        crate::proof_kernel::aver_generated::kernel::check::conclude(p, env.clone(), here.clone())?;
+    let e @ _ = {
+        let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::check::conclude(
+            p,
+            env.clone(),
+            here.clone(),
+        )?;
+        crate::proof_kernel::aver_generated::kernel::check::typedEquation(
+            __arg10,
+            env,
+            here.clone(),
+        )
+    }?;
     if (e
         == crate::proof_kernel::aver_generated::kernel::term::Eqn {
             lhs: a.clone(),
@@ -2715,14 +2793,14 @@ pub fn transLink(
         })
     {
         {
-            let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::check::transFrom(
+            let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::check::transFrom(
                 rest,
                 steps,
                 env,
                 path,
                 i.add(&aver_rt::AverInt::from_i64(1)),
             )?;
-            crate::proof_kernel::aver_generated::kernel::check::joinRest(a, __arg10)
+            crate::proof_kernel::aver_generated::kernel::check::joinRest(a, __arg11)
         }
     } else {
         crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -2749,7 +2827,7 @@ pub fn joinRest(
 pub fn congr(
     mut c @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut q @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    mut env @ _: Env,
+    env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
@@ -2757,21 +2835,54 @@ pub fn congr(
         == aver_rt::AverInt::from_i64(1))
     {
         {
-            let __arg5 @ _ = {
-                let __arg4 @ _ = aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
-                        __b
-                    };
-                    __b.push_str(&::aver_rt::str_lit!("/congr"));
-                    __b
-                });
-                crate::proof_kernel::aver_generated::kernel::check::conclude(q, env, __arg4)
+            let __arg8 @ _ = {
+                let __arg7 @ _ = {
+                    let __arg5 @ _ = {
+                        let __arg4 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(path),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!("/congr"));
+                            __b
+                        });
+                        crate::proof_kernel::aver_generated::kernel::check::conclude(
+                            q,
+                            env.clone(),
+                            __arg4,
+                        )
+                    }?;
+                    {
+                        let __arg6 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(path),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!("/congr"));
+                            __b
+                        });
+                        crate::proof_kernel::aver_generated::kernel::check::typedEquation(
+                            __arg5, env, __arg6,
+                        )
+                    }
+                }?;
+                crate::proof_kernel::aver_generated::kernel::check::plugBoth(
+                    c,
+                    __arg7,
+                    path.clone(),
+                )
             }?;
-            crate::proof_kernel::aver_generated::kernel::check::plugBoth(c, __arg5, path)
+            crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg8, env, path)
         }
     } else {
         crate::proof_kernel::aver_generated::kernel::check::refuse(

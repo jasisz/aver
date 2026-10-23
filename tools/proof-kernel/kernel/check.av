@@ -47,6 +47,16 @@ fn typeOf(t: Term, env: Env, path: String) -> Result<Ty, String>
 verify typeOf
     typeOf(Term.TVar("x"), emptyEnv(), "p") => Result.Err("step p: x is not a variable in scope")
 
+fn typedEquation(e: Eqn, env: Env, path: String) -> Result<Eqn, String>
+    ? "The same equation after checking that its two sides have one type."
+    match Kernel.Types.join(typeOf(e.lhs, env, path)?, typeOf(e.rhs, env, path)?)
+        Result.Ok(ty) -> Result.Ok(e)
+        Result.Err(why) -> refuse(path, "the equation compares {why}")
+
+verify typedEquation
+    typedEquation(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(2)), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(2)))
+    typedEquation(Eqn(lhs = Term.TInt(1), rhs = Term.TStr("a")), emptyEnv(), "p") => Result.Err("step p: the equation compares Int is not String")
+
 fn bound(bs: List<Binding>, declared: List<TypedVar>, env: Env, what: String, path: String) -> Result<Unit, String>
     ? "The one check of every substitution a proof writes: each term fits the declared type of the variable it stands for."
     match Kernel.Types.bindTyped(bs, declared, [], tyEnv(env), what)
@@ -363,7 +373,7 @@ fn transFrom(ts: List<Term>, ps: List<Proof>, env: Env, path: String, i: Int) ->
     ? "Check link i and those after it; the result spans the whole chain."
     match (ts, ps)
         ([a, b, ..moreTerms], [p, ..moreSteps]) -> transLink(a, b, p, List.prepend(b, moreTerms), moreSteps, env, path, i)
-        ([a], []) -> Result.Ok(Eqn(lhs = a, rhs = a))
+        ([a], []) -> typedEquation(Eqn(lhs = a, rhs = a), env, "{path}/trans.{i}")
         _ -> refuse(path, "trans needs at least one step")
 
 verify transFrom
@@ -372,7 +382,7 @@ verify transFrom
 fn transLink(a: Term, b: Term, p: Proof, rest: List<Term>, steps: List<Proof>, env: Env, path: String, i: Int) -> Result<Eqn, String>
     ? "One link of a chain, then the rest."
     here = "{path}/trans.{i}"
-    e = conclude(p, env, here)?
+    e = typedEquation(conclude(p, env, here)?, env, here)?
     match e == Eqn(lhs = a, rhs = b)
         false -> refuse(here, "the step does not join the written terms")
         true -> joinRest(a, transFrom(rest, steps, env, path, i + 1)?)
@@ -391,10 +401,12 @@ fn congr(c: Term, q: Proof, env: Env, path: String) -> Result<Eqn, String>
     ? "From a = b, c[a] = c[b]; the context holds exactly one hole."
     match Kernel.Subst.holeCount(c) == 1
         false -> refuse(path, "a congruence context needs exactly one hole")
-        true -> plugBoth(c, conclude(q, env, "{path}/congr")?, path)
+        true -> typedEquation(plugBoth(c, typedEquation(conclude(q, env, "{path}/congr")?, env, "{path}/congr")?, path)?, env, path)
 
 verify congr
     congr(Term.TVar("x"), Proof.PRefl(Term.TInt(1)), emptyEnv(), "p") => Result.Err("step p: a congruence context needs exactly one hole")
+    congr(Term.THole, Proof.PRefl(Term.TGet(Term.TRec("Missing", [Field(name = "a", value = Term.TInt(1))]), "a")), emptyEnv(), "p") => Result.Err("step p/congr: Missing is not a declared record")
+    congr(Term.TOp("+", Term.THole, Term.TInt(1)), Proof.PRefl(Term.TStr("a")), emptyEnv(), "p") => Result.Err("step p: + takes two values of one type: String is not Int")
 
 fn plugBoth(c: Term, e: Eqn, path: String) -> Result<Eqn, String>
     ? "Put both sides of an equation into the hole."
