@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 53] = [
+const REFUSED: [(&str, &str, bool); 55] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -206,12 +206,12 @@ const REFUSED: [(&str, &str, bool); 53] = [
         "duplicate definition f",
         true,
     ),
-    // A theorem given shadowed a module constant, but the const step ignored
-    // lexical scope and asserted that the arbitrary given had the constant's
-    // value.
+    // A theorem given shadowed a module constant. The direct const step used
+    // to assert that the arbitrary given had the constant's value; the shared
+    // declaration boundary now rejects the ambiguous script first.
     (
         "constant_shadowed_by_given",
-        "module-level binding n is shadowed by a variable",
+        "module-level binding and variable share name n",
         true,
     ),
     // A sum and a record shared TyNamed("R"). Equality validation inspected
@@ -327,6 +327,21 @@ const REFUSED: [(&str, &str, bool); 53] = [
         "definition and signature share name f",
         true,
     ),
+    // A `pl` pattern is a literal, not an arbitrary term. Hiding a recursive
+    // call there kept it outside the termination scan; contradictory choices
+    // of the same match then proved `0 = 1`.
+    (
+        "nonliteral_pattern_hides_recursion",
+        "a literal pattern is not a literal",
+        true,
+    ),
+    // A definition body was typed with `a` as a module constant, but after
+    // unfolding under a given also named `a`, the same term denoted the given.
+    (
+        "definition_constant_captured_by_given",
+        "module-level binding and variable share name a",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -362,8 +377,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Thirty-five scripts were accepted before their corresponding kernel gates.
+/// Thirty-seven scripts were accepted before their corresponding kernel gates.
 #[test]
-fn thirty_five_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 35);
+fn thirty_seven_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 37);
 }

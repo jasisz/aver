@@ -766,7 +766,11 @@ fn patVars(p: Pat, subject: Ty, e: TyEnv) -> Result<List<TypedVar>, String>
     match (p, headOf(subject))
         (Pat.PWild, _) -> Result.Ok([])
         (Pat.PVar(n), _) -> Result.Ok(namedVars([n], [subject]))
-        (Pat.PLit(k), _) -> litFits(typeOf(k, e)?, subject)
+        (Pat.PLit(Term.TInt(n)), _) -> litFits(Ty.TyInt, subject)
+        (Pat.PLit(Term.TBool(b)), _) -> litFits(Ty.TyBool, subject)
+        (Pat.PLit(Term.TStr(s)), _) -> litFits(Ty.TyStr, subject)
+        (Pat.PLit(Term.TUnit), _) -> litFits(Ty.TyUnit, subject)
+        (Pat.PLit(k), _) -> Result.Err("a literal pattern is not a literal")
         (Pat.PNil, "List") -> Result.Ok([])
         (Pat.PCons(h, t), "List") -> Result.Ok(namedVars([h, t], ctorFields("cons", subject, e)?))
         (Pat.PTuple(ps), "tuple") -> patVarsAll(ps, partsOf(subject), e)
@@ -777,6 +781,8 @@ verify patVars
     patVars(Pat.PCons("h", "t"), Ty.TyList(Ty.TyInt), empty()) => Result.Ok([Kernel.Term.typed("h", Ty.TyInt), Kernel.Term.typed("t", Ty.TyList(Ty.TyInt))])
     patVars(Pat.PNil, Ty.TyInt, empty()) => Result.Err("the pattern does not fit Int")
     patVars(Pat.PCtor("Option.Some", ["_"]), Ty.TyOption(Ty.TyInt), empty()) => Result.Ok([])
+    patVars(Pat.PLit(Term.TInt(1)), Ty.TyInt, empty()) => Result.Ok([])
+    patVars(Pat.PLit(Term.TCall("f", [])), Ty.TyInt, TyEnv(vars = [], defs = [], consts = [], sums = [], recs = [], sigs = [FnSig(name = "f", params = [], ret = Ty.TyInt)])) => Result.Err("a literal pattern is not a literal")
 
 fn ctorPatVars(c: String, ns: List<String>, subject: Ty, e: TyEnv) -> Result<List<TypedVar>, String>
     ? "A constructor pattern binds exactly one name, including _, for each constructor field."
