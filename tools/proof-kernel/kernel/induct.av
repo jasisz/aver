@@ -527,13 +527,25 @@ verify orOn
     Kernel.Proof.givenNames(orOn(Term.TUnit).params) => ["first", "rest"]
 
 fn armsShrink(arms: List<Arm>, d: Def, ds: List<Def>, j: Int) -> Result<Bool, String>
-    ? "Every arm passes, at place j of each recursive call, a name its pattern binds and no inner arm rebinds."
+    ? "Every arm passes, at place j of each recursive call, a proper part bound below a constructor and no inner arm rebinds."
     match arms
         [] -> Result.Ok(true)
-        [a, ..rest] -> Result.Ok(Bool.and(callsShrink(calls(a.body, d, ds)?, Kernel.Subst.patNames(a.pattern), j, List.len(d.params)), armsShrink(rest, d, ds, j)?))
+        [a, ..rest] -> Result.Ok(Bool.and(callsShrink(calls(a.body, d, ds)?, structuralParts(a.pattern), j, List.len(d.params)), armsShrink(rest, d, ds, j)?))
 
 verify armsShrink
     armsShrink([], listAny(), [], 0) => Result.Ok(true)
+
+fn structuralParts(p: Pat) -> List<String>
+    ? "Names bound below a constructor, list cell or tuple; a catch-all binds the whole value, not a smaller part."
+    match p
+        Pat.PCons(h, t) -> Kernel.Subst.patNames(p)
+        Pat.PCtor(c, ns) -> Kernel.Subst.patNames(p)
+        Pat.PTuple(ps) -> Kernel.Subst.patNames(p)
+        _ -> []
+
+verify structuralParts
+    structuralParts(Pat.PVar("whole")) => []
+    structuralParts(Pat.PCtor("N.S", ["part"])) => ["part"]
 
 fn callsShrink(cs: List<Call>, parts: List<String>, j: Int, n: Int) -> Bool
     ? "Each call passes one of the parts at place j."

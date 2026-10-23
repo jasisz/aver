@@ -2201,7 +2201,7 @@ pub fn orOn(
     }
 }
 
-/// Every arm passes, at place j of each recursive call, a name its pattern binds and no inner arm rebinds.
+/// Every arm passes, at place j of each recursive call, a proper part bound below a constructor and no inner arm rebinds.
 #[inline(always)]
 pub fn armsShrink(
     arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
@@ -2221,7 +2221,7 @@ pub fn armsShrink(
                         crate::proof_kernel::aver_generated::kernel::induct::calls(&a.body, d, ds)?;
                     {
                         let __arg7 @ _ =
-                            crate::proof_kernel::aver_generated::kernel::subst::patNames(
+                            crate::proof_kernel::aver_generated::kernel::induct::structuralParts(
                                 &a.pattern,
                             );
                         {
@@ -2241,6 +2241,30 @@ pub fn armsShrink(
                 panic!("Aver Rust codegen: non-exhaustive list match")
             }
         }
+    }
+}
+
+/// Names bound below a constructor, list cell or tuple; a catch-all binds the whole value, not a smaller part.
+pub fn structuralParts(
+    p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat,
+) -> aver_rt::AverList<AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match p {
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t) => {
+            let h = h.clone();
+            let t = t.clone();
+            crate::proof_kernel::aver_generated::kernel::subst::patNames(p)
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
+            let c = c.clone();
+            let ns = ns.clone();
+            crate::proof_kernel::aver_generated::kernel::subst::patNames(p)
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Pat::PTuple(ps) => {
+            let ps = ps.clone();
+            crate::proof_kernel::aver_generated::kernel::subst::patNames(p)
+        }
+        _ => aver_rt::AverList::empty(),
     }
 }
 

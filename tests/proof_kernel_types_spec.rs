@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// (script, what the kernel says, whether an untyped kernel accepted it)
-const REFUSED: [(&str, &str, bool); 38] = [
+const REFUSED: [(&str, &str, bool); 39] = [
     // A law about a sum, cited at an Int: `x = One.Only` for every `x` of
     // the one-value type `One`, read at 0 and at 1, gives `0 = 1`.
     (
@@ -230,6 +230,13 @@ const REFUSED: [(&str, &str, bool); 38] = [
         "definition f has duplicate parameter n",
         true,
     ),
+    // A catch-all pattern binds the whole matched value, not a proper part.
+    // Treating that binder as smaller admitted f(xs) = f(xs) + 1.
+    (
+        "catchall_spoofs_structural_termination",
+        "f recurses on something that is not a part of the value it matches",
+        true,
+    ),
 ];
 
 fn fixtures() -> PathBuf {
@@ -265,8 +272,8 @@ fn every_refused_script_is_listed() {
     assert_eq!(on_disk, listed);
 }
 
-/// Twenty scripts were accepted before their corresponding kernel gates.
+/// Twenty-one scripts were accepted before their corresponding kernel gates.
 #[test]
-fn twenty_of_them_were_accepted_before() {
-    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 20);
+fn twenty_one_of_them_were_accepted_before() {
+    assert_eq!(REFUSED.iter().filter(|(_, _, before)| *before).count(), 21);
 }
