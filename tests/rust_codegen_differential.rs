@@ -1017,6 +1017,18 @@ fn zeros(chars: List<String>, n: Int) -> Int
             "k" -> zeros(rest, n + 100)
             _ -> zeros(rest, n)
 
+fn codes(chars: List<String>, acc: List<Int>) -> List<Int>
+    ? "Built in order, so list building specializes the cursor loop once more."
+    match chars
+        [] -> List.reverse(acc)
+        [head, ..tail] -> codes(tail, List.prepend(value(head), acc))
+
+fn ordered(xs: List<Int>, acc: Int) -> Int
+    ? "The list as one number, so an element out of order changes it."
+    match xs
+        [] -> acc
+        [x, ..rest] -> ordered(rest, acc * 100 + x + 1)
+
 fn foldedZeros(chars: List<String>, n: Int) -> Int
     ? "The same, matched behind a case fold of the code."
     match chars
@@ -1034,6 +1046,7 @@ fn main() -> Unit
     Console.print("{total("09af")}|{total("")}|{total("0x9")}|{total("\u{e9}0")}|{total("9\u{1F980}")}|{total("\u{212A}")}")
     mixed = "a0\u{212A}0\u{e9}\u{1F980}k\u{130}"
     Console.print("{zeros(String.chars(mixed), 0)}/{foldedZeros(String.chars(mixed), 0)}/{zeros(String.chars(""), 0)}")
+    Console.print("{ordered(codes(String.chars(mixed), []), 0)}")
 "#
     .replace("\\u{e9}", "\u{e9}")
     .replace("\\u{1F980}", "\u{1F980}")
@@ -1047,7 +1060,7 @@ fn main() -> Unit
     // error message still prints the character the loop was on —
     // multibyte characters included — so a cursor that re-read the
     // wrong offset shows up as a changed message.
-    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1\nok:34|ok:0|bad 'x' after 0|bad 'é' after 0|bad '🦀' after 9|ok:20\n102/22/0";
+    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1\nok:34|ok:0|bad 'x' after 0|bad 'é' after 0|bad '🦀' after 9|ok:20\n102/22/0\n1101210100002100";
     let vm = run_vm_inline("chars_fusion", &src).expect("vm run");
     let rust =
         build_run_rust_inline("chars_fusion", &src).expect("rust compile + cargo build + run");
@@ -1070,6 +1083,12 @@ fn walk(text: String, pos: Int, seen: Int) -> String
     match String.charAt(text, pos)
         Option.None -> "{seen}:{String.slice(text, 1, 3)}"
         Option.Some(_) -> walk(text, pos + 1, seen + 1)
+
+fn walkFar(text: String, pos: Int, seen: Int) -> String
+    ? "The same walk, sliced across the edge of the index's first block of 64."
+    match String.charAt(text, pos)
+        Option.None -> "{seen}:{String.slice(text, 62, 67)}"
+        Option.Some(_) -> walkFar(text, pos + 1, seen + 1)
 
 fn scoreChar(c: String) -> Int
     match c
@@ -1099,11 +1118,13 @@ fn main() -> Unit
     ? "Print the indexed result for backend parity."
     ! [Console.print]
     Console.print("{walk("aą😀z", 0, 0)}|{score("aą😀z")}|{mutualEven("aą😀z", 0, 0)}")
-"#;
-    let expected = "4:ą😀|211|211";
-    let vm = run_vm_inline("string_index", src).expect("VM run");
+    Console.print("{walkFar("LONG", 0, 0)}|{score("LONG")}|{mutualEven("LONG", 0, 0)}")
+"#
+    .replace("LONG", &"aą😀z".repeat(40));
+    let expected = "4:ą😀|211|211\n160:😀zaą😀|8440|8440";
+    let vm = run_vm_inline("string_index", &src).expect("VM run");
     let rust =
-        build_run_rust_inline("string_index", src).expect("Rust compile + cargo build + run");
+        build_run_rust_inline("string_index", &src).expect("Rust compile + cargo build + run");
     assert_eq!(vm, expected, "VM indexed String contract changed");
     assert_eq!(
         rust, expected,

@@ -124,11 +124,7 @@ pub fn readAll(text @ _: AverStr) -> Result<Sexp, AverStr> {
     let __arg2 @ _ = <aver_rt::AverList<Sexp>>::empty();
     let __arg3 @ _ = <aver_rt::AverList<aver_rt::AverList<Sexp>>>::empty();
     crate::proof_kernel::aver_generated::kernel::sexp::scan__cursor(
-        text,
-        aver_rt::AverInt::from_i64(0),
-        &__arg1,
-        __arg2,
-        __arg3,
+        text, 0i64, &__arg1, __arg2, __arg3,
     )
 }
 
@@ -792,7 +788,7 @@ pub fn withinAll(
 #[inline(always)]
 pub fn scan__cursor(
     mut __cur_s @ _: AverStr,
-    mut __cur_i @ _: aver_rt::AverInt,
+    mut __cur_i @ _: i64,
     mode @ _: &ReadMode,
     mut current @ _: aver_rt::AverList<Sexp>,
     mut parents @ _: aver_rt::AverList<aver_rt::AverList<Sexp>>,
@@ -801,7 +797,7 @@ pub fn scan__cursor(
     let mut mode @ _: &ReadMode = mode;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        if aver_rt::str_cursor_end(&__cur_s, (__cur_i).to_usize().unwrap_or(usize::MAX)) {
+        if aver_rt::str_cursor_end(&__cur_s, (__cur_i) as usize) {
             match mode {
                 crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(acc) => {
                     let acc = acc.clone();
@@ -831,15 +827,10 @@ pub fn scan__cursor(
             }
         } else {
             {
-                let c = aver_rt::AverStr::from(aver_rt::str_cursor_head(
-                    &__cur_s,
-                    (__cur_i).to_usize().unwrap_or(usize::MAX),
-                ));
+                let c =
+                    aver_rt::AverStr::from(aver_rt::str_cursor_head(&__cur_s, (__cur_i) as usize));
                 {
-                    let __cur_i1 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_next(
-                        &__cur_s,
-                        (__cur_i).to_usize().unwrap_or(usize::MAX),
-                    ) as i64);
+                    let __cur_i1 = (aver_rt::str_cursor_next(&__cur_s, (__cur_i) as usize) as i64);
                     match mode {
                         crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready => {
                             let __dispatch_subject =

@@ -11,10 +11,8 @@ use crate::{AverInt, AverStr, StaticStr};
 
 /// UTF-8 byte boundaries for one immutable string.
 ///
-/// The common representation is packed `u32`: Rust strings larger than 4 GiB
-/// graduate to `usize` rather than making a valid Aver value unindexable. The
-/// final boundary is always the source byte length, so a string containing
-/// `n` Unicode scalar values has `n + 1` entries.
+/// A string containing `n` Unicode scalar values has `n + 1` boundaries,
+/// the last one its byte length.
 #[derive(Clone, Debug)]
 pub struct StringIndex {
     boundaries: Boundaries,
@@ -24,36 +22,47 @@ pub struct StringIndex {
 enum Boundaries {
     /// Every scalar value is one byte, so position `i` is byte `i`.
     Ascii(usize),
-    U32(Arc<[u32]>),
-    Usize(Arc<[usize]>),
+    Blocks(Arc<Blocks>),
+}
+
+/// Scalars per block of [`Blocks`]. Sixty-four of them are at most 256
+/// bytes, so a boundary's distance from the start of its block fits a byte.
+const BLOCK: usize = 64;
+
+/// The boundaries in two levels: the byte offset of every [`BLOCK`]-th
+/// scalar, and every boundary's distance from the start of its block. About
+/// one byte per scalar, a quarter of a full table of `u32` offsets, and a
+/// read is still two loads.
+#[derive(Debug)]
+struct Blocks {
+    starts: Vec<usize>,
+    within: Vec<u8>,
 }
 
 impl StringIndex {
-    /// Build the codepoint-to-byte table in one UTF-8 pass; an ASCII string
-    /// needs no table.
+    /// Build the boundary table in one UTF-8 pass; an ASCII string needs no
+    /// table.
     pub fn new(text: &str) -> Self {
         if text.is_ascii() {
-            Self {
+            return Self {
                 boundaries: Boundaries::Ascii(text.len()),
+            };
+        }
+        let chars = text.chars().count();
+        let mut starts = Vec::with_capacity(chars / BLOCK + 1);
+        let mut within = Vec::with_capacity(chars + 1);
+        let bytes = text.char_indices().map(|(byte, _)| byte);
+        let mut start = 0;
+        for (position, byte) in bytes.chain(std::iter::once(text.len())).enumerate() {
+            if position % BLOCK == 0 {
+                start = byte;
+                starts.push(byte);
             }
-        } else if u32::try_from(text.len()).is_ok() {
-            let mut boundaries = Vec::with_capacity(text.len() + 1);
-            boundaries.extend(text.char_indices().map(|(byte, _)| {
-                u32::try_from(byte).expect("byte offset is bounded by the checked string length")
-            }));
-            boundaries.push(
-                u32::try_from(text.len()).expect("string length was checked before indexing"),
-            );
-            Self {
-                boundaries: Boundaries::U32(boundaries.into()),
-            }
-        } else {
-            let mut boundaries = Vec::with_capacity(text.len() + 1);
-            boundaries.extend(text.char_indices().map(|(byte, _)| byte));
-            boundaries.push(text.len());
-            Self {
-                boundaries: Boundaries::Usize(boundaries.into()),
-            }
+            // At most `BLOCK - 1` scalars of four bytes since `start`.
+            within.push((byte - start) as u8);
+        }
+        Self {
+            boundaries: Boundaries::Blocks(Arc::new(Blocks { starts, within })),
         }
     }
 
@@ -61,8 +70,7 @@ impl StringIndex {
     pub fn char_len(&self) -> usize {
         match &self.boundaries {
             Boundaries::Ascii(len) => *len,
-            Boundaries::U32(items) => items.len().saturating_sub(1),
-            Boundaries::Usize(items) => items.len().saturating_sub(1),
+            Boundaries::Blocks(blocks) => blocks.within.len() - 1,
         }
     }
 
@@ -70,8 +78,9 @@ impl StringIndex {
     fn boundary(&self, index: usize) -> usize {
         match &self.boundaries {
             Boundaries::Ascii(_) => index,
-            Boundaries::U32(items) => items[index] as usize,
-            Boundaries::Usize(items) => items[index],
+            Boundaries::Blocks(blocks) => {
+                blocks.starts[index / BLOCK] + usize::from(blocks.within[index])
+            }
         }
     }
 }
@@ -115,9 +124,7 @@ pub fn string_index_code_at(text: &AverStr, index: &StringIndex, position: &Aver
     if let Boundaries::Ascii(_) = index.boundaries {
         return i64::from(text.as_bytes()[position]);
     }
-    let from = index.boundary(position);
-    let to = index.boundary(position + 1);
-    text[from..to]
+    text[index.boundary(position)..]
         .chars()
         .next()
         .map_or(-1, |ch| i64::from(u32::from(ch)))
@@ -195,31 +202,48 @@ mod tests {
         );
     }
 
-    /// The table of ASCII boundaries gives what the UTF-8 one gives.
-    fn utf8_index(text: &str) -> StringIndex {
-        let mut boundaries: Vec<u32> = text.char_indices().map(|(byte, _)| byte as u32).collect();
-        boundaries.push(text.len() as u32);
-        StringIndex {
-            boundaries: Boundaries::U32(boundaries.into()),
-        }
-    }
-
+    /// The two indexes agree with the boundaries `char_indices` gives, at
+    /// every position, on ASCII, on text with multibyte scalars, on blocks
+    /// of four-byte scalars, and at block edges.
     #[test]
-    fn ascii_fast_path_matches_utf8_boundaries() {
+    fn every_index_reads_the_boundaries_of_the_text() {
         let ascii: String = (0u8..128).map(char::from).collect();
-        for text in [ascii.as_str(), "", "a(b) x\n", "aą😀z"] {
+        let mixed: String = (0..300).map(|i| ['a', 'ą', '→', '😀'][i % 4]).collect();
+        let wide: String = std::iter::repeat_n('😀', BLOCK * 2).collect();
+        let edge: String = "a".repeat(BLOCK - 1) + "é" + &"b".repeat(BLOCK);
+        for text in [
+            ascii.as_str(),
+            "",
+            "a(b) x\n",
+            "aą😀z",
+            "é",
+            &mixed,
+            &wide,
+            &edge,
+        ] {
+            let index = StringIndex::new(text);
+            let expected: Vec<usize> = text
+                .char_indices()
+                .map(|(byte, _)| byte)
+                .chain(std::iter::once(text.len()))
+                .collect();
+            assert_eq!(index.char_len() + 1, expected.len(), "{text:?}");
+            for (position, byte) in expected.iter().enumerate() {
+                assert_eq!(index.boundary(position), *byte, "{text:?} at {position}");
+            }
             let text = AverStr::from(text);
-            let fast = string_index_build(&text);
-            let slow = utf8_index(&text);
-            for position in -3..=(text.len() as i64 + 3) {
-                let position = AverInt::from_i64(position);
+            for position in -3..=(expected.len() as i64 + 3) {
+                let at = AverInt::from_i64(position);
+                let expected_char = usize::try_from(position)
+                    .ok()
+                    .and_then(|p| text.chars().nth(p));
                 assert_eq!(
-                    string_index_char_at(&text, &fast, &position),
-                    string_index_char_at(&text, &slow, &position)
+                    string_index_char_at(&text, &index, &at),
+                    expected_char.map(|c| AverStr::from(c.to_string().as_str()))
                 );
                 assert_eq!(
-                    string_index_code_at(&text, &fast, &position),
-                    string_index_code_at(&text, &slow, &position)
+                    string_index_code_at(&text, &index, &at),
+                    expected_char.map_or(-1, |c| i64::from(u32::from(c)))
                 );
             }
         }

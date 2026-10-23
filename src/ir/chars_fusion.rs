@@ -101,11 +101,11 @@ use crate::ast::{
 const CURSOR_STR_PARAM: &str = "__cur_s";
 
 /// The synthesized cursor variant's byte-offset parameter.
-const CURSOR_IDX_PARAM: &str = "__cur_i";
+pub(super) const CURSOR_IDX_PARAM: &str = "__cur_i";
 
 /// Suffix distinguishing the synthesized variant from the loop it was
 /// built from.
-const CURSOR_SUFFIX: &str = "__cursor";
+pub(super) const CURSOR_SUFFIX: &str = "__cursor";
 
 /// Suffix of the classifier variant that takes the character's
 /// codepoint instead of its one-character string.

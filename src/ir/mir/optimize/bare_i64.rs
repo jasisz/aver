@@ -54,50 +54,75 @@ fn index_code_interval() -> Interval {
     Interval::between(-1, char::MAX as u32 as i128)
 }
 
+/// The range of the chars-fusion cursor: a byte offset into a string, so
+/// never negative and never past the largest string the host can hold.
+fn cursor_offset_interval() -> Interval {
+    Interval::between(0, isize::MAX as i128)
+}
+
+/// The range of a compiler-owned carrier a call returns: a character code,
+/// or the cursor's next byte offset. `None` for every other call.
+fn carrier_call_interval(e: &MirExpr) -> Option<Interval> {
+    use crate::ir::hir::BuiltinIntrinsic as I;
+    let MirExpr::Call(c) = e else {
+        return None;
+    };
+    match c.node.callee {
+        MirCallee::Intrinsic(
+            I::StrIndexCodeAt | I::StrCursorCode | I::StrFoldLower | I::StrFoldUpper,
+        ) => Some(index_code_interval()),
+        MirCallee::Intrinsic(I::StrCursorNext) => Some(cursor_offset_interval()),
+        _ => None,
+    }
+}
+
 fn is_code_carrier_call(e: &MirExpr) -> bool {
-    matches!(
-        e,
-        MirExpr::Call(c)
-            if matches!(
-                c.node.callee,
-                MirCallee::Intrinsic(
-                    crate::ir::hir::BuiltinIntrinsic::StrIndexCodeAt
-                        | crate::ir::hir::BuiltinIntrinsic::StrCursorCode
-                        | crate::ir::hir::BuiltinIntrinsic::StrFoldLower
-                        | crate::ir::hir::BuiltinIntrinsic::StrFoldUpper
-                )
-            )
-    )
+    carrier_call_interval(e).is_some()
 }
 
-/// Does intrinsic argument `i` consume the compiler-owned character carrier
-/// directly as an `i64`? The fold helpers are the only such boundary: they
-/// map one scalar/sentinel to another without ever entering general `Int`.
-/// Keeping this predicate beside [`is_code_carrier_call`] makes the analysis
-/// and explicit MIR boundary rewrite agree about both sides of that call.
+/// Does intrinsic argument `i` consume a compiler-owned carrier directly as
+/// an `i64`? The fold helpers map one scalar/sentinel to another, and the
+/// cursor reads take the cursor's byte offset; neither ever enters general
+/// `Int`. Keeping this predicate beside [`is_code_carrier_call`] makes the
+/// analysis and explicit MIR boundary rewrite agree about both sides of
+/// that call.
 pub(super) fn intrinsic_accepts_raw_code_arg(callee: &MirCallee, i: usize) -> bool {
-    i == 0
-        && matches!(
-            callee,
-            MirCallee::Intrinsic(
-                crate::ir::hir::BuiltinIntrinsic::StrFoldLower
-                    | crate::ir::hir::BuiltinIntrinsic::StrFoldUpper
-            )
-        )
+    use crate::ir::hir::BuiltinIntrinsic as I;
+    match callee {
+        MirCallee::Intrinsic(I::StrFoldLower | I::StrFoldUpper) => i == 0,
+        MirCallee::Intrinsic(
+            I::StrCursorEnd | I::StrCursorHead | I::StrCursorNext | I::StrCursorCode,
+        ) => i == 1,
+        _ => false,
+    }
 }
 
-/// Compiler-synthesized `__code` functions are unnameable from Aver source,
-/// and these reserved parameters are populated only from `StrIndexCodeAt`,
-/// `StrCursorCode`, or another such parameter. Their range is therefore a
-/// construction invariant, not a guess based on an ordinary user `Int`.
+/// Compiler-synthesized `__code` and `__cursor` functions (and their own
+/// specializations) are unnameable from Aver source. Their reserved
+/// parameters are populated only from
+/// `StrIndexCodeAt` / `StrCursorCode` (the code), from the literal start or
+/// `StrCursorNext` (the cursor offset), or from another such parameter.
+/// Their range is therefore a construction invariant, not a guess based on
+/// an ordinary user `Int`.
+fn carrier_param_interval(f: &MirFn, i: usize) -> Option<Interval> {
+    let p = f.params.get(i).filter(|p| ty_str_is_int(&p.ty))?;
+    if f.name.ends_with(crate::ir::chars_fusion::CODE_SUFFIX)
+        && matches!(
+            p.name.as_str(),
+            crate::ir::string_index::INDEX_CODE_PARAM | crate::ir::chars_fusion::CODE_PARAM
+        )
+    {
+        return Some(index_code_interval());
+    }
+    // `contains`: a cursor loop that a later pass specializes again (the
+    // list-build `__cursor__collected`) keeps the same offset parameter.
+    (f.name.contains(crate::ir::chars_fusion::CURSOR_SUFFIX)
+        && p.name == crate::ir::chars_fusion::CURSOR_IDX_PARAM)
+        .then(cursor_offset_interval)
+}
+
 fn is_code_carrier_param(f: &MirFn, i: usize) -> bool {
-    f.name.ends_with(crate::ir::chars_fusion::CODE_SUFFIX)
-        && f.params.get(i).is_some_and(|p| {
-            matches!(
-                p.name.as_str(),
-                crate::ir::string_index::INDEX_CODE_PARAM | crate::ir::chars_fusion::CODE_PARAM
-            ) && ty_str_is_int(&p.ty)
-        })
+    carrier_param_interval(f, i).is_some()
 }
 
 /// ETAP-2 SLICE 0+1 — per-carrier-type proven bound, keyed by the opaque
@@ -415,8 +440,9 @@ impl FnBareFacts {
             // leaf carrying the carrier's proven bound.
             MirExpr::Project(_) => self.carrier_project_interval(e),
             // Indexed dispatch returns either the `-1` sentinel or a Unicode
-            // scalar, directly as the backend's native i64 carrier.
-            MirExpr::Call(_) if is_code_carrier_call(e) => Some(index_code_interval()),
+            // scalar, and the cursor step a byte offset, directly as the
+            // backend's native i64 carrier.
+            MirExpr::Call(_) => carrier_call_interval(e),
             MirExpr::Neg(inner) => {
                 let r = Interval::point(0).sub(self.bare_expr_interval(&inner.node)?);
                 r.fits_i64().then_some(r)
@@ -1259,8 +1285,8 @@ fn compute_bare_param_intervals(
         let fl = &floors[id];
         let ivs: Vec<Option<Interval>> = (0..f.params.len())
             .map(|i| {
-                if is_code_carrier_param(f, i) {
-                    return Some(index_code_interval());
+                if let Some(iv) = carrier_param_interval(f, i) {
+                    return Some(iv);
                 }
                 let iv = cells[i];
                 if fl[i] != top && iv.fits_i64() {
@@ -2099,7 +2125,7 @@ fn eval_interval(
         MirExpr::Project(_) => facts
             .carrier_project_interval(e)
             .unwrap_or_else(Interval::unbounded),
-        MirExpr::Call(_) if is_code_carrier_call(e) => index_code_interval(),
+        MirExpr::Call(_) => carrier_call_interval(e).unwrap_or_else(Interval::unbounded),
         MirExpr::Neg(inner) => {
             let r = Interval::point(0).sub(eval_interval(&inner.node, env, worst, facts));
             *worst = worst.hull(r);
@@ -2496,10 +2522,25 @@ fn main() -> Int
             .map(LocalId)
             .filter(|slot| local_is_code_carrier_binder(&cursor.body.node, *slot))
             .collect();
-        assert_eq!(code_binders.len(), 1, "one cursor-code binder: {cursor:?}");
+        assert_eq!(
+            code_binders.len(),
+            2,
+            "a cursor-code and a next-offset binder: {cursor:?}"
+        );
+        for binder in code_binders {
+            assert!(
+                cursor_facts.is_bare(binder),
+                "the StrCursorCode / StrCursorNext result stays raw in its local slot"
+            );
+        }
+        let offset = cursor
+            .params
+            .iter()
+            .position(|p| p.name == crate::ir::chars_fusion::CURSOR_IDX_PARAM)
+            .expect("cursor offset parameter");
         assert!(
-            cursor_facts.is_bare(code_binders[0]),
-            "the StrCursorCode result stays raw in its local slot"
+            cursor_facts.param_is_bare(offset),
+            "the cursor's byte offset crosses as raw i64"
         );
     }
 

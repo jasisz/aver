@@ -457,7 +457,7 @@ pub fn quote(s @ _: AverStr) -> AverStr {
             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                 &(crate::proof_std::aver_generated::kernel::wire::escaped__cursor(
                     s,
-                    aver_rt::AverInt::from_i64(0),
+                    0i64,
                     ::aver_rt::str_lit!(""),
                 )),
             )));
@@ -2904,24 +2904,19 @@ pub fn ihAtBody(ih @ _: &crate::proof_std::aver_generated::kernel::proof::IhAt) 
 #[inline(always)]
 pub fn escaped__cursor(
     mut __cur_s @ _: AverStr,
-    mut __cur_i @ _: aver_rt::AverInt,
+    mut __cur_i @ _: i64,
     mut acc @ _: AverStr,
 ) -> AverStr {
     loop {
         crate::proof_std::cancel_checkpoint();
-        if aver_rt::str_cursor_end(&__cur_s, (__cur_i).to_usize().unwrap_or(usize::MAX)) {
+        if aver_rt::str_cursor_end(&__cur_s, (__cur_i) as usize) {
             return acc;
         } else {
             {
-                let c = aver_rt::AverStr::from(aver_rt::str_cursor_head(
-                    &__cur_s,
-                    (__cur_i).to_usize().unwrap_or(usize::MAX),
-                ));
+                let c =
+                    aver_rt::AverStr::from(aver_rt::str_cursor_head(&__cur_s, (__cur_i) as usize));
                 {
-                    let __cur_i1 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_next(
-                        &__cur_s,
-                        (__cur_i).to_usize().unwrap_or(usize::MAX),
-                    ) as i64);
+                    let __cur_i1 = (aver_rt::str_cursor_next(&__cur_s, (__cur_i) as usize) as i64);
                     {
                         let __tco1 = __cur_i1;
                         let __tco2 =

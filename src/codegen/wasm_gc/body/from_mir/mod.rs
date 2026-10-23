@@ -313,6 +313,7 @@ fn mir_is_raw_code_call(e: &MirExpr) -> bool {
                 MirCallee::Intrinsic(
                     BuiltinIntrinsic::StrIndexCodeAt
                         | BuiltinIntrinsic::StrCursorCode
+                        | BuiltinIntrinsic::StrCursorNext
                         | BuiltinIntrinsic::StrFoldLower
                         | BuiltinIntrinsic::StrFoldUpper
                 )
