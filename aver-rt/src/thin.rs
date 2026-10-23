@@ -188,8 +188,13 @@ impl<S: ThinSum> Thin<S> {
     /// The node was made by `new::<P>` and its count is 0.
     #[inline]
     pub unsafe fn free_node<P: HandOver>(node: NonNull<Header>, pending: Pending<'_>) {
-        let Node { fields, .. } = *unsafe { Box::from_raw(node.cast::<Node<P>>().as_ptr()) };
-        fields.hand_over(pending);
+        let node = node.cast::<Node<P>>().as_ptr();
+        // The fields are handed over before the memory is given back, so they
+        // are read from the node where they are used rather than first copied
+        // out of it. SAFETY: they are moved out once, and the box is then
+        // freed without dropping them.
+        unsafe { std::ptr::read(&raw const (*node).fields) }.hand_over(pending);
+        drop(unsafe { Box::from_raw(node.cast::<ManuallyDrop<Node<P>>>()) });
     }
 
     /// The last owner's part of `drop`, kept out of line as
@@ -453,7 +458,9 @@ macro_rules! thin_sum {
             $vis fn view(&self) -> $view<'_> {
                 match self.0.tag() {
                     $( $tag => $view::$ctor $( (unsafe { self.0.fields::<$fields>() }) )?, )+
-                    tag => unreachable!("no constructor has tag {tag}"),
+                    // Safe code makes a value only through the constructors
+                    // above, whose tags are these, checked at compile time.
+                    _ => unsafe { ::std::hint::unreachable_unchecked() },
                 }
             }
 
@@ -466,7 +473,8 @@ macro_rules! thin_sum {
                 }
                 Some(match tag {
                     $( $tag => $pair::$ctor $( (unsafe { a.0.fields::<$fields>() }, unsafe { b.0.fields::<$fields>() }) )?, )+
-                    tag => unreachable!("no constructor has tag {tag}"),
+                    // As in `view`.
+                    _ => unsafe { ::std::hint::unreachable_unchecked() },
                 })
             }
 

@@ -375,14 +375,20 @@ fn map_hash_state() -> AHashRandomState {
     STATE.get_or_init(AHashRandomState::new).clone()
 }
 
+/// How many entries a map's first table holds: a written map starts here
+/// rather than growing from nothing through 3, 7 and 14 slots.
+const MAP_FIRST_CAPACITY: usize = 16;
+
 pub struct AverMap<K, V> {
-    inner: Rc<AverHashMap<K, V>>,
+    /// The table, or none for a map never written: `{}` allocates nothing,
+    /// and its clones and drops touch no count.
+    inner: Option<Rc<AverHashMap<K, V>>>,
 }
 
 impl<K, V> Clone for AverMap<K, V> {
     fn clone(&self) -> Self {
         Self {
-            inner: Rc::clone(&self.inner),
+            inner: self.inner.clone(),
         }
     }
 }
@@ -393,17 +399,25 @@ where
     V: Clone,
 {
     pub fn new() -> Self {
-        Self {
-            inner: Rc::new(AverHashMap::with_hasher(map_hash_state())),
-        }
+        Self { inner: None }
+    }
+
+    /// The table to write, made at the first write. Shared, it is copied.
+    fn table_mut(&mut self) -> &mut AverHashMap<K, V> {
+        Rc::make_mut(self.inner.get_or_insert_with(|| {
+            Rc::new(AverHashMap::with_capacity_and_hasher(
+                MAP_FIRST_CAPACITY,
+                map_hash_state(),
+            ))
+        }))
     }
 
     pub fn get(&self, key: &K) -> Option<&V> {
-        self.inner.get(key)
+        self.inner.as_ref()?.get(key)
     }
 
     pub fn contains_key(&self, key: &K) -> bool {
-        self.inner.contains_key(key)
+        self.inner.as_ref().is_some_and(|map| map.contains_key(key))
     }
 
     /// O(n) because `&self` preserves the original map.
@@ -419,21 +433,26 @@ where
     /// caller count copy-on-write duplication exactly, instead of inferring it
     /// from which method it believes it called. The address cannot be reused
     /// while the old table is still alive, and `insert` keeps it alive across
-    /// the clone, so a duplication can never be missed.
+    /// the clone, so a duplication can never be missed. A map never written
+    /// has no table and answers 0; its first write duplicates nothing.
     pub fn table_id(&self) -> usize {
-        Rc::as_ptr(&self.inner) as usize
+        self.inner
+            .as_ref()
+            .map_or(0, |map| Rc::as_ptr(map) as usize)
     }
 
     /// O(1) amortized if unique owner, O(n) clone if shared.
     pub fn insert_owned(mut self, key: K, value: V) -> Self {
-        Rc::make_mut(&mut self.inner).insert(key, value);
+        self.table_mut().insert(key, value);
         self
     }
 
     /// Rewrite values in place using `Rc::make_mut` (zero-copy when sole owner).
     pub fn rewrite_values_in_place(&mut self, mut f: impl FnMut(&mut V)) {
-        let inner = Rc::make_mut(&mut self.inner);
-        for value in inner.values_mut() {
+        let Some(map) = &mut self.inner else {
+            return;
+        };
+        for value in Rc::make_mut(map).values_mut() {
             f(value);
         }
     }
@@ -443,8 +462,10 @@ where
     /// Returns `false` when the key is absent, so remembered-set consumers can
     /// safely discard a stale key left behind by a removal.
     pub fn rewrite_value_in_place(&mut self, key: &K, f: impl FnOnce(&mut V)) -> bool {
-        let inner = Rc::make_mut(&mut self.inner);
-        let Some(value) = inner.get_mut(key) else {
+        let Some(map) = &mut self.inner else {
+            return false;
+        };
+        let Some(value) = Rc::make_mut(map).get_mut(key) else {
             return false;
         };
         f(value);
@@ -458,28 +479,30 @@ where
 
     /// O(1) amortized if unique owner, O(n) clone if shared.
     pub fn remove_owned(mut self, key: &K) -> Self {
-        Rc::make_mut(&mut self.inner).remove(key);
+        if let Some(map) = &mut self.inner {
+            Rc::make_mut(map).remove(key);
+        }
         self
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &K> {
-        self.inner.keys()
+        self.inner.iter().flat_map(|map| map.keys())
     }
 
     pub fn values(&self) -> impl Iterator<Item = &V> {
-        self.inner.values()
+        self.inner.iter().flat_map(|map| map.values())
     }
 
     pub fn len(&self) -> usize {
-        self.inner.len()
+        self.inner.as_ref().map_or(0, |map| map.len())
     }
 
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.len() == 0
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
-        self.inner.iter()
+        self.inner.iter().flat_map(|map| map.iter())
     }
 }
 
@@ -495,7 +518,11 @@ where
 
 impl<K: Eq + Hash + Clone + PartialEq, V: PartialEq + Clone> PartialEq for AverMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
-        self.inner == other.inner
+        match (&self.inner, &other.inner) {
+            (Some(a), Some(b)) => a == b,
+            // A map with no table is empty, as a table emptied by removals.
+            _ => self.len() == other.len(),
+        }
     }
 }
 
@@ -504,19 +531,19 @@ impl<K: Eq + Hash + Clone, V: Eq + Clone> Eq for AverMap<K, V> {}
 impl<K: Eq + Hash + Clone + Hash + Ord, V: Hash + Clone> Hash for AverMap<K, V> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Deterministic: sort keys for stable hash
-        let mut keys: Vec<&K> = self.inner.keys().collect();
-        keys.sort();
-        keys.len().hash(state);
-        for k in keys {
+        let mut entries: Vec<(&K, &V)> = self.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+        entries.len().hash(state);
+        for (k, v) in entries {
             k.hash(state);
-            self.inner[k].hash(state);
+            v.hash(state);
         }
     }
 }
 
 impl<K: fmt::Debug + Eq + Hash + Clone, V: fmt::Debug + Clone> fmt::Debug for AverMap<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inner.fmt(f)
+        f.debug_map().entries(self.iter()).finish()
     }
 }
 
@@ -527,7 +554,7 @@ where
 {
     type Output = V;
     fn index(&self, key: &K) -> &V {
-        &self.inner[key]
+        self.get(key).expect("key not found")
     }
 }
 
@@ -540,7 +567,7 @@ where
         let mut inner = AverHashMap::with_hasher(map_hash_state());
         inner.extend(iter);
         Self {
-            inner: Rc::new(inner),
+            inner: (!inner.is_empty()).then(|| Rc::new(inner)),
         }
     }
 }
@@ -843,8 +870,28 @@ enum ListCursor<'a, T> {
 }
 
 pub struct AverListIter<'a, T> {
+    /// The top of the cursor stack, kept out of `stack` so a walk that never
+    /// holds two cursors (an empty or a one-node list, a chain of prepends)
+    /// does not allocate.
+    top: Option<ListCursor<'a, T>>,
     stack: Vec<ListCursor<'a, T>>,
     remaining: usize,
+}
+
+impl<'a, T> AverListIter<'a, T> {
+    #[inline]
+    fn push(&mut self, cursor: ListCursor<'a, T>) {
+        if let Some(previous) = self.top.replace(cursor) {
+            self.stack.push(previous);
+        }
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<ListCursor<'a, T>> {
+        let cursor = self.top.take()?;
+        self.top = self.stack.pop();
+        Some(cursor)
+    }
 }
 
 impl<T> Clone for AverList<T> {
@@ -1355,7 +1402,8 @@ impl<T> AverList<T> {
 
     pub fn iter(&self) -> AverListIter<'_, T> {
         AverListIter {
-            stack: vec![ListCursor::Node(self)],
+            top: Some(ListCursor::Node(self)),
+            stack: Vec::new(),
             remaining: self.len(),
         }
     }
@@ -1455,11 +1503,11 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(cursor) = self.stack.pop() {
+        while let Some(cursor) = self.pop() {
             match cursor {
                 ListCursor::Slice(items, index) => {
                     if let Some(item) = items.get(index) {
-                        self.stack.push(ListCursor::Slice(items, index + 1));
+                        self.push(ListCursor::Slice(items, index + 1));
                         self.remaining = self.remaining.saturating_sub(1);
                         return Some(item);
                     }
@@ -1469,17 +1517,17 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
                     Some(AverListInner::Flat { items }) => {
                         let slice = items.get(list.start..).unwrap_or(&[]);
                         if !slice.is_empty() {
-                            self.stack.push(ListCursor::Slice(slice, 0));
+                            self.push(ListCursor::Slice(slice, 0));
                         }
                     }
                     Some(AverListInner::Prepend { head, tail, .. }) => {
-                        self.stack.push(ListCursor::Node(tail));
+                        self.push(ListCursor::Node(tail));
                         self.remaining = self.remaining.saturating_sub(1);
                         return Some(head);
                     }
                     Some(AverListInner::Concat { left, right, .. }) => {
-                        self.stack.push(ListCursor::Node(right));
-                        self.stack.push(ListCursor::Node(left));
+                        self.push(ListCursor::Node(right));
+                        self.push(ListCursor::Node(left));
                     }
                     Some(AverListInner::Segments {
                         current,
@@ -1489,9 +1537,9 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
                     }) => {
                         let slice = rest.get(*start..).unwrap_or(&[]);
                         if !slice.is_empty() {
-                            self.stack.push(ListCursor::ListSlice(slice, 0));
+                            self.push(ListCursor::ListSlice(slice, 0));
                         }
-                        self.stack.push(ListCursor::Node(current));
+                        self.push(ListCursor::Node(current));
                     }
                     Some(AverListInner::Indexed { parts, .. }) => {
                         let previous_end = list
@@ -1500,30 +1548,26 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
                             .map_or(0, |index| parts[index].end);
                         let offset = list.start.saturating_sub(previous_end);
                         if let Some(segment) = parts.get(list.segment_index) {
-                            self.stack
-                                .push(ListCursor::TraversalSlice(parts, list.segment_index + 1));
-                            self.stack
-                                .push(ListCursor::TraversalSegment(segment, offset));
+                            self.push(ListCursor::TraversalSlice(parts, list.segment_index + 1));
+                            self.push(ListCursor::TraversalSegment(segment, offset));
                         }
                     }
                 },
                 ListCursor::ListSlice(items, index) => {
                     if let Some(item) = items.get(index) {
-                        self.stack.push(ListCursor::ListSlice(items, index + 1));
-                        self.stack.push(ListCursor::Node(item));
+                        self.push(ListCursor::ListSlice(items, index + 1));
+                        self.push(ListCursor::Node(item));
                     }
                 }
                 ListCursor::TraversalSlice(items, index) => {
                     if let Some(item) = items.get(index) {
-                        self.stack
-                            .push(ListCursor::TraversalSlice(items, index + 1));
-                        self.stack.push(ListCursor::TraversalSegment(item, 0));
+                        self.push(ListCursor::TraversalSlice(items, index + 1));
+                        self.push(ListCursor::TraversalSegment(item, 0));
                     }
                 }
                 ListCursor::TraversalSegment(segment, index) => {
                     if let Some(item) = segment.get(index) {
-                        self.stack
-                            .push(ListCursor::TraversalSegment(segment, index + 1));
+                        self.push(ListCursor::TraversalSegment(segment, index + 1));
                         self.remaining = self.remaining.saturating_sub(1);
                         return Some(item);
                     }
@@ -1572,7 +1616,19 @@ impl<T: fmt::Debug> fmt::Debug for AverList<T> {
 
 impl<T: PartialEq> PartialEq for AverList<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().zip(other.iter()).all(|(a, b)| a == b)
+        let len = self.len();
+        if len != other.len() {
+            return false;
+        }
+        if len == 0 {
+            return true;
+        }
+        // No shortcut for one node seen twice: a list of `Float` holding NaN
+        // is not equal to itself.
+        if let (Some(a), Some(b)) = (self.as_slice(), other.as_slice()) {
+            return a == b;
+        }
+        self.iter().zip(other.iter()).all(|(a, b)| a == b)
     }
 }
 
@@ -1729,14 +1785,108 @@ mod tests {
     /// however it is built, copies that one key rather than drawing its own.
     #[test]
     fn aver_map_uses_keyed_ahash_state() {
-        let map = AverMap::<u64, u64>::new();
-        let _: &ahash::RandomState = map.inner.hasher();
+        let map = AverMap::<u64, u64>::new().insert_owned(1, 2);
+        let hasher = |map: &AverMap<u64, u64>| map.inner.as_ref().unwrap().hasher().clone();
+        let _: ahash::RandomState = hasher(&map);
         let collected: AverMap<u64, u64> = [(1, 2)].into_iter().collect();
         let same_key = |other: &AverMap<u64, u64>| {
-            map.inner.hasher().hash_one(42u64) == other.inner.hasher().hash_one(42u64)
+            hasher(&map).hash_one(42u64) == hasher(other).hash_one(42u64)
         };
-        assert!(same_key(&AverMap::new()));
+        assert!(same_key(&AverMap::new().insert_owned(3, 4)));
         assert!(same_key(&collected));
+    }
+
+    /// `{}` has no table until its first write, which makes one of
+    /// `MAP_FIRST_CAPACITY`; every operation reads the missing table as empty.
+    #[test]
+    fn an_empty_map_has_no_table_until_written() {
+        let empty = AverMap::<u64, u64>::new();
+        assert!(empty.inner.is_none());
+        assert!(AverMap::<u64, u64>::default().inner.is_none());
+        assert!(
+            Vec::<(u64, u64)>::new()
+                .into_iter()
+                .collect::<AverMap<_, _>>()
+                .inner
+                .is_none()
+        );
+        assert_eq!(empty.get(&1), None);
+        assert!(!empty.contains_key(&1));
+        assert_eq!(empty.len(), 0);
+        assert!(empty.is_empty());
+        assert_eq!(empty.keys().count(), 0);
+        assert_eq!(empty.values().count(), 0);
+        assert_eq!(empty.iter().count(), 0);
+        assert_eq!(empty.table_id(), 0);
+        assert_eq!(format!("{empty:?}"), "{}");
+        assert!(empty.remove(&1).inner.is_none());
+        assert!(empty.clone().remove_owned(&1).inner.is_none());
+        let mut rewritten = empty.clone();
+        rewritten.rewrite_values_in_place(|v| *v += 1);
+        assert!(!rewritten.rewrite_value_in_place(&1, |v| *v += 1));
+        assert!(rewritten.inner.is_none());
+
+        let one = empty.insert(1, 10);
+        assert!(empty.inner.is_none());
+        assert!(one.inner.as_ref().unwrap().capacity() >= super::MAP_FIRST_CAPACITY);
+        assert_eq!(one[&1], 10);
+        assert_eq!(one.len(), 1);
+
+        // A table emptied by removal equals, and hashes as, a map with none.
+        let emptied = one.remove(&1);
+        assert!(emptied.inner.is_some());
+        assert_eq!(emptied, empty);
+        assert_eq!(empty, emptied);
+        assert_ne!(one, empty);
+        let hash = |m: &AverMap<u64, u64>| ahash::RandomState::with_seeds(1, 2, 3, 4).hash_one(m);
+        assert_eq!(hash(&emptied), hash(&empty));
+        assert_eq!(
+            hash(&[(2, 3), (1, 2)].into_iter().collect()),
+            hash(&empty.insert(1, 2).insert(2, 3))
+        );
+    }
+
+    /// `==` on lists of every shape: empty, one node seen twice, flat bodies
+    /// read as slices, mixed shapes and long ones.
+    #[test]
+    fn list_equality_over_shapes() {
+        let flat = |v: &[i64]| AverList::from_vec(v.to_vec());
+        let empty = AverList::<i64>::empty();
+        assert_eq!(empty, AverList::from_vec(Vec::new()));
+        assert_eq!(empty, flat(&[1]).tail().unwrap());
+        assert_ne!(empty, flat(&[1]));
+
+        let abc = flat(&[1, 2, 3]);
+        assert_eq!(abc, abc.clone());
+        assert_eq!(abc.tail().unwrap(), flat(&[2, 3]));
+        assert_ne!(abc.tail().unwrap(), flat(&[2, 4]));
+        assert_eq!(AverList::prepend(1, &flat(&[2, 3])), abc);
+        assert_eq!(AverList::concat(&flat(&[1]), &flat(&[2, 3])), abc);
+        assert_eq!(abc, AverList::append(&flat(&[1, 2]), 3));
+        assert_ne!(AverList::concat(&flat(&[1]), &flat(&[2, 4])), abc);
+
+        // A list of `Float` holding NaN is not equal to itself, even shared.
+        let nan = AverList::from_vec(vec![f64::NAN]);
+        assert_ne!(nan, nan.clone());
+        assert_ne!(AverList::prepend(f64::NAN, &AverList::empty()), nan);
+
+        let n = 10_000;
+        let long = (0..n)
+            .rev()
+            .fold(AverList::empty(), |l, i| AverList::prepend(i, &l));
+        let mut items: Vec<i64> = (0..n).collect();
+        assert_eq!(long, AverList::from_vec(items.clone()));
+        items[n as usize - 1] = -1;
+        assert_ne!(long, AverList::from_vec(items));
+        let halves = AverList::concat(
+            &flat(&(0..n / 2).collect::<Vec<_>>()),
+            &long.drop_first(n as usize / 2),
+        );
+        assert_eq!(halves, long);
+        assert_eq!(
+            halves.iter().copied().collect::<Vec<_>>(),
+            (0..n).collect::<Vec<_>>()
+        );
     }
 
     /// `[]` is no node at all, and a one-element list is one `Prepend` node
