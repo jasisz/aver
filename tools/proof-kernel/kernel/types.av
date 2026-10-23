@@ -8,7 +8,7 @@ module Types
         "Option.None, Map.empty) leaves a hole, which fits any type; a variable ?t marked as"
         "needing equality takes only a type whose == is equality: which types those are is data, the"
         "shapes in Kernel.Builtins and what each declared type's declaration says."
-    exposes [TyEnv, typeOf, typesOf, join, fits, bindTyped, finOf, ctorFields, ctorsOf, elemOf, sumOf, hasEq, rigidVars, show, withVars, patVars, paramsOf, namedVars, typesOfVars, empty]
+    exposes [TyEnv, unique, typeOf, typesOf, join, fits, bindTyped, finOf, ctorFields, ctorsOf, elemOf, sumOf, hasEq, rigidVars, show, withVars, patVars, paramsOf, namedVars, typesOfVars, empty]
     depends [Kernel.Term, Kernel.Proof, Kernel.Builtins]
     effects []
 
@@ -491,7 +491,7 @@ verify recField
 fn recordLiteralType(n: String, fs: List<Field>, e: TyEnv) -> Result<Ty, String>
     ? "The type of a complete record literal: every declared field exactly once, at its declared type."
     r = recordDecl(n, e)?
-    fieldsUnique(n, fs, [])?
+    unique(fieldNames(fs), [], "record {n} repeats field")?
     requiredFieldsPresent(n, r.fields, fieldNames(fs))?
     fieldsFit(n, fs, Ty.TyNamed(n), e)
 
@@ -528,16 +528,17 @@ fn requiredFieldsPresent(n: String, required: List<TypedVar>, actual: List<Strin
 verify requiredFieldsPresent
     requiredFieldsPresent("R", [Kernel.Term.typed("a", Ty.TyInt)], []) => Result.Err("record R is missing field a")
 
-fn fieldsUnique(n: String, fs: List<Field>, seen: List<String>) -> Result<Unit, String>
-    ? "No field is written twice in one record literal."
-    match fs
+fn unique(names: List<String>, seen: List<String>, what: String) -> Result<Unit, String>
+    ? "The one check that a namespace gives each name one identity: a repeated name is refused as what, then the name."
+    match names
         [] -> Result.Ok(Unit)
-        [f, ..rest] -> match List.contains(seen, f.name)
-            true -> Result.Err("record {n} repeats field {f.name}")
-            false -> fieldsUnique(n, rest, List.prepend(f.name, seen))
+        [n, ..rest] -> match List.contains(seen, n)
+            true -> Result.Err("{what} {n}")
+            false -> unique(rest, List.prepend(n, seen), what)
 
-verify fieldsUnique
-    fieldsUnique("R", [Field(name = "a", value = Term.TInt(1)), Field(name = "a", value = Term.TInt(2))], []) => Result.Err("record R repeats field a")
+verify unique
+    unique(["a", "b", "a"], [], "record R repeats field") => Result.Err("record R repeats field a")
+    unique(["a", "b"], [], "duplicate definition") => Result.Ok(Unit)
 
 fn fieldsFit(n: String, fs: List<Field>, result: Ty, e: TyEnv) -> Result<Ty, String>
     ? "A record's fields each fit their declared type."

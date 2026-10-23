@@ -1748,21 +1748,41 @@ pub fn recordLiteralType(
     crate::proof_kernel::cancel_checkpoint();
     let r @ _ = crate::proof_kernel::aver_generated::kernel::types::recordDecl(n.clone(), e)?;
     {
-        let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
-        crate::proof_kernel::aver_generated::kernel::types::fieldsUnique(n.clone(), fs, __arg6)
+        let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::types::fieldNames(fs);
+        {
+            let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty();
+            {
+                let __arg8 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("record "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(" repeats field"));
+                    __b
+                });
+                crate::proof_kernel::aver_generated::kernel::types::unique(&__arg6, __arg7, __arg8)
+            }
+        }
     }?;
     {
-        let __arg7 @ _ = crate::proof_kernel::aver_generated::kernel::types::fieldNames(fs);
+        let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::types::fieldNames(fs);
         crate::proof_kernel::aver_generated::kernel::types::requiredFieldsPresent(
             n.clone(),
             &r.fields,
-            __arg7,
+            __arg9,
         )
     }?;
-    let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
+    let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
         crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(n.clone()),
     );
-    crate::proof_kernel::aver_generated::kernel::types::fieldsFit(n, fs, __arg8, e)
+    crate::proof_kernel::aver_generated::kernel::types::fieldsFit(n, fs, __arg10, e)
 }
 
 /// The declaration of a record literal's named type.
@@ -1872,55 +1892,48 @@ pub fn requiredFieldsPresent(
     }
 }
 
-/// No field is written twice in one record literal.
+/// The one check that a namespace gives each name one identity: a repeated name is refused as what, then the name.
 #[inline(always)]
-pub fn fieldsUnique(
-    mut n @ _: AverStr,
-    fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
+pub fn unique(
+    names @ _: &aver_rt::AverList<AverStr>,
     mut seen @ _: aver_rt::AverList<AverStr>,
+    mut what @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>;
-    let mut fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field> =
-        fs;
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut names @ _: &aver_rt::AverList<AverStr> = names;
     loop {
         crate::proof_kernel::cancel_checkpoint();
         {
-            let __list_subject = fs;
+            let __list_subject = names;
             if __list_subject.is_empty() {
                 return Ok(());
             } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if seen.contains(&f.name) {
+                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+                    if seen.contains(&n) {
                         return Err(aver_rt::AverStr::from({
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(54))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("record "));
-                                        __b
-                                    };
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
+                                    );
                                     __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(n),
+                                        &(what),
                                     )));
                                     __b
                                 };
-                                __b.push_str(&::aver_rt::str_lit!(" repeats field "));
+                                __b.push_str(&::aver_rt::str_lit!(" "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f.name))));
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
                             __b
                         }));
                     } else {
                         {
-                            let __tco1 = rest;
-                            let __tco2 = aver_rt::AverList::prepend(f.name.clone(), &seen);
-                            __hold1 = __tco1;
-                            fs = &__hold1;
-                            seen = __tco2;
+                            let __tco0 = rest;
+                            let __tco1 = aver_rt::AverList::prepend(n, &seen);
+                            __hold0 = __tco0;
+                            names = &__hold0;
+                            seen = __tco1;
                             continue;
                         }
                     }

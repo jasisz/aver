@@ -69,86 +69,44 @@ verify argsFit
 fn declarationsTyped(env: Env, path: String) -> Result<Unit, String>
     ? "Every definition body and constant value fits the type its declaration gives it; theorem givens are not in their scope."
     scope = Env(defs = env.defs, consts = env.consts, laws = [], hyps = [], vars = [], sums = env.sums, recs = env.recs, sigs = env.sigs)
-    uniqueDefs(scope.defs, [], path)?
-    uniqueConsts(scope.consts, [], path)?
-    constsAcyclic(scope.consts, scope.consts, path)?
+    Kernel.Types.unique(defNames(scope.defs), [], "step {path}: duplicate definition")?
+    Kernel.Types.unique(constNames(scope.consts), [], "step {path}: duplicate module-level binding")?
     declarationsAcyclic(scope.consts, scope.defs, scope.consts, path)?
-    uniqueTypeDecls(scope.sums, scope.recs, path)?
+    Kernel.Types.unique(typeNames(scope.sums, scope.recs), [], "step {path}: duplicate type declaration")?
     defsTyped(scope.defs, scope, path)?
     constsTyped(scope.consts, scope, path)
 
 verify declarationsTyped
     declarationsTyped(Env(defs = [Def(name = "cast", params = [Kernel.Term.typed("x", Ty.TyStr)], ret = Ty.TyInt, lets = [], body = Term.TVar("x"))], consts = [], laws = [], hyps = [], vars = [], sums = [], recs = [], sigs = []), "proof") => Result.Err("step proof: definition cast has type String, declared Int")
 
-fn uniqueDefs(ds: List<Def>, seen: List<String>, path: String) -> Result<Unit, String>
-    ? "No second definition may borrow the first one's identity, type or termination evidence."
+fn defNames(ds: List<Def>) -> List<String>
+    ? "The names the script's definitions declare, in order."
     match ds
-        [] -> Result.Ok(Unit)
-        [d, ..rest] -> match List.contains(seen, d.name)
-            true -> Result.Err("step {path}: duplicate definition {d.name}")
-            false -> uniqueDefs(rest, List.prepend(d.name, seen), path)
+        [] -> []
+        [d, ..rest] -> List.prepend(d.name, defNames(rest))
 
-verify uniqueDefs
-    uniqueDefs([Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(0)), Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(1))], [], "proof") => Result.Err("step proof: duplicate definition f")
+verify defNames
+    defNames([Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TInt(0))]) => ["f"]
 
-fn uniqueConsts(cs: List<Const>, seen: List<String>, path: String) -> Result<Unit, String>
-    ? "Each module-level binding has one identity and one defining equation."
+fn constNames(cs: List<Const>) -> List<String>
+    ? "The names the script's module-level bindings declare, in order."
     match cs
-        [] -> Result.Ok(Unit)
-        [c, ..rest] -> match List.contains(seen, c.name)
-            true -> Result.Err("step {path}: duplicate module-level binding {c.name}")
-            false -> uniqueConsts(rest, List.prepend(c.name, seen), path)
-
-verify uniqueConsts
-    uniqueConsts([Const(name = "a", ty = Ty.TyInt, value = Term.TInt(0)), Const(name = "a", ty = Ty.TyInt, value = Term.TInt(1))], [], "proof") => Result.Err("step proof: duplicate module-level binding a")
-
-fn constsAcyclic(todo: List<Const>, all: List<Const>, path: String) -> Result<Unit, String>
-    ? "No module-level binding depends on itself, directly or through other bindings."
-    match todo
-        [] -> Result.Ok(Unit)
-        [c, ..rest] -> match constCycle(constDeps(c.name, all, all), c.name, all, [], List.len(all))
-            true -> Result.Err("step {path}: cyclic module-level binding {c.name}")
-            false -> constsAcyclic(rest, all, path)
-
-verify constsAcyclic
-    constsAcyclic([Const(name = "a", ty = Ty.TyInt, value = Term.TOp("+", Term.TVar("a"), Term.TInt(1)))], [Const(name = "a", ty = Ty.TyInt, value = Term.TOp("+", Term.TVar("a"), Term.TInt(1)))], "proof") => Result.Err("step proof: cyclic module-level binding a")
-    constsAcyclic([Const(name = "a", ty = Ty.TyInt, value = Term.TInt(1)), Const(name = "b", ty = Ty.TyInt, value = Term.TOp("+", Term.TVar("a"), Term.TInt(1)))], [Const(name = "a", ty = Ty.TyInt, value = Term.TInt(1)), Const(name = "b", ty = Ty.TyInt, value = Term.TOp("+", Term.TVar("a"), Term.TInt(1)))], "proof") => Result.Ok(Unit)
-
-fn constCycle(frontier: List<String>, target: String, cs: List<Const>, seen: List<String>, fuel: Int) -> Bool
-    ? "Whether following module-level binding references reaches target."
-    match (frontier, fuel > 0)
-        ([], _) -> false
-        (_, false) -> false
-        ([n, ..rest], true) -> match n == target
-            true -> true
-            false -> match List.contains(seen, n)
-                true -> constCycle(rest, target, cs, seen, fuel)
-                false -> constCycle(List.concat(rest, constDeps(n, cs, cs)), target, cs, List.prepend(n, seen), fuel - 1)
-
-verify constCycle
-    constCycle(["b"], "a", [Const(name = "a", ty = Ty.TyInt, value = Term.TVar("b")), Const(name = "b", ty = Ty.TyInt, value = Term.TVar("a"))], [], 2) => true
-
-fn constDeps(name: String, todo: List<Const>, all: List<Const>) -> List<String>
-    ? "The module-level bindings referenced by the binding named name."
-    match todo
         [] -> []
-        [c, ..rest] -> match c.name == name
-            true -> constNames(Kernel.Subst.freeVars(c.value), all)
-            false -> constDeps(name, rest, all)
-
-verify constDeps
-    constDeps("a", [Const(name = "a", ty = Ty.TyInt, value = Term.TOp("+", Term.TVar("b"), Term.TInt(1))), Const(name = "b", ty = Ty.TyInt, value = Term.TInt(0))], [Const(name = "a", ty = Ty.TyInt, value = Term.TOp("+", Term.TVar("b"), Term.TInt(1))), Const(name = "b", ty = Ty.TyInt, value = Term.TInt(0))]) => ["b"]
-
-fn constNames(names: List<String>, cs: List<Const>) -> List<String>
-    ? "Only names that denote module-level bindings."
-    match names
-        [] -> []
-        [n, ..rest] -> match isConst(n, cs)
-            true -> List.prepend(n, constNames(rest, cs))
-            false -> constNames(rest, cs)
+        [c, ..rest] -> List.prepend(c.name, constNames(rest))
 
 verify constNames
-    constNames(["x", "a"], [Const(name = "a", ty = Ty.TyInt, value = Term.TInt(0))]) => ["a"]
+    constNames([Const(name = "a", ty = Ty.TyInt, value = Term.TInt(0))]) => ["a"]
+
+fn typeNames(ss: List<Sum>, rs: List<Rec>) -> List<String>
+    ? "The names declared by sums, then by records: one namespace of named types."
+    match ss
+        [s, ..rest] -> List.prepend(s.name, typeNames(rest, rs))
+        [] -> match rs
+            [] -> []
+            [r, ..more] -> List.prepend(r.name, typeNames([], more))
+
+verify typeNames
+    typeNames([Sum(name = "S", eq = true, variants = [])], [Rec(name = "R", eq = true, fields = [])]) => ["S", "R"]
 
 fn declarationsAcyclic(todo: List<Const>, ds: List<Def>, cs: List<Const>, path: String) -> Result<Unit, String>
     ? "No module-level binding depends on itself through any mixture of bindings and definitions."
@@ -162,10 +120,10 @@ verify declarationsAcyclic
     declarationsAcyclic([Const(name = "a", ty = Ty.TyInt, value = Term.TCall("f", []))], [Def(name = "f", params = [], ret = Ty.TyInt, lets = [], body = Term.TOp("+", Term.TVar("a"), Term.TInt(1)))], [Const(name = "a", ty = Ty.TyInt, value = Term.TCall("f", []))], "proof") => Result.Err("step proof: cyclic declaration through module-level binding a")
 
 fn declarationCycle(frontier: List<Term>, target: Term, ds: List<Def>, cs: List<Const>, seen: List<Term>, fuel: Int) -> Bool
-    ? "Whether following definition and binding references reaches the target declaration."
+    ? "Whether following definition and binding references reaches the target declaration; running out of fuel counts as a cycle."
     match (frontier, fuel > 0)
         ([], _) -> false
-        (_, false) -> false
+        (_, false) -> true
         ([n, ..rest], true) -> match n == target
             true -> true
             false -> match List.contains(seen, n)
@@ -174,6 +132,7 @@ fn declarationCycle(frontier: List<Term>, target: Term, ds: List<Def>, cs: List<
 
 verify declarationCycle
     declarationCycle([Term.TVar("a")], Term.TVar("a"), [], [], [], 1) => true
+    declarationCycle([Term.TVar("b")], Term.TVar("a"), [], [], [], 0) => true
 
 fn declarationDeps(node: Term, ds: List<Def>, cs: List<Const>) -> List<Term>
     ? "The declarations directly read by one constant or definition node."
@@ -253,35 +212,6 @@ fn definitionDependencyNodes(names: List<String>, ds: List<Def>) -> List<Term>
 verify definitionDependencyNodes
     definitionDependencyNodes([], []) => []
 
-fn uniqueTypeDecls(ss: List<Sum>, rs: List<Rec>, path: String) -> Result<Unit, String>
-    ? "A named type has exactly one declaration: never two sums, two records, or one of each."
-    uniqueRecNames(rs, uniqueSumNames(ss, [], path)?, path)
-
-verify uniqueTypeDecls
-    uniqueTypeDecls([Sum(name = "R", eq = true, variants = [])], [Rec(name = "R", eq = true, fields = [])], "proof") => Result.Err("step proof: duplicate type declaration R")
-
-fn uniqueSumNames(ss: List<Sum>, seen: List<String>, path: String) -> Result<List<String>, String>
-    ? "Collect distinct sum names."
-    match ss
-        [] -> Result.Ok(seen)
-        [s, ..rest] -> match List.contains(seen, s.name)
-            true -> Result.Err("step {path}: duplicate type declaration {s.name}")
-            false -> uniqueSumNames(rest, List.prepend(s.name, seen), path)
-
-verify uniqueSumNames
-    uniqueSumNames([], [], "proof") => Result.Ok([])
-
-fn uniqueRecNames(rs: List<Rec>, seen: List<String>, path: String) -> Result<Unit, String>
-    ? "Every record name is distinct from earlier records and every sum."
-    match rs
-        [] -> Result.Ok(Unit)
-        [r, ..rest] -> match List.contains(seen, r.name)
-            true -> Result.Err("step {path}: duplicate type declaration {r.name}")
-            false -> uniqueRecNames(rest, List.prepend(r.name, seen), path)
-
-verify uniqueRecNames
-    uniqueRecNames([], [], "proof") => Result.Ok(Unit)
-
 fn defsTyped(ds: List<Def>, env: Env, path: String) -> Result<Unit, String>
     ? "Every definition in the script is well typed."
     match ds
@@ -295,23 +225,12 @@ verify defsTyped
 
 fn definitionTyped(d: Def, env: Env, path: String) -> Result<Unit, String>
     ? "A definition body has its declared result type under its parameters and local bindings."
-    uniqueParams(d.params, [], d.name, path)?
+    Kernel.Types.unique(Kernel.Proof.givenNames(d.params), [], "step {path}: definition {d.name} has duplicate parameter")?
     scope = letsTyped(d.lets, withVars(env, d.params), path)?
     declaredFits(typeOf(d.body, scope, path)?, d.ret, "definition {d.name}", path)
 
 verify definitionTyped
     definitionTyped(Def(name = "id", params = [Kernel.Term.typed("x", Ty.TyInt)], ret = Ty.TyInt, lets = [], body = Term.TVar("x")), emptyEnv(), "proof") => Result.Ok(Unit)
-
-fn uniqueParams(ps: List<TypedVar>, seen: List<String>, owner: String, path: String) -> Result<Unit, String>
-    ? "Each parameter of a definition has one identity for typing, substitution and termination."
-    match ps
-        [] -> Result.Ok(Unit)
-        [p, ..rest] -> match List.contains(seen, p.name)
-            true -> Result.Err("step {path}: definition {owner} has duplicate parameter {p.name}")
-            false -> uniqueParams(rest, List.prepend(p.name, seen), owner, path)
-
-verify uniqueParams
-    uniqueParams([Kernel.Term.typed("n", Ty.TyInt), Kernel.Term.typed("n", Ty.TyInt)], [], "f", "proof") => Result.Err("step proof: definition f has duplicate parameter n")
 
 fn letsTyped(bs: List<Binding>, env: Env, path: String) -> Result<Env, String>
     ? "Infer local bindings in source order, making each one visible to those after it and to the body."

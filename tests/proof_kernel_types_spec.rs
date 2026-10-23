@@ -241,11 +241,11 @@ const REFUSED: [(&str, &str, bool); 43] = [
     // a = a + 1 without passing through the function termination gate.
     (
         "recursive_constant_proves_zero_is_one",
-        "cyclic module-level binding a",
+        "cyclic declaration through module-level binding a",
         true,
     ),
     // The same cycle crossed namespaces: a = f() and f() = a + 1. Neither
-    // the function-only nor the constant-only cycle check could see it.
+    // the function-only cycle check nor a constant-only one could see it.
     (
         "constant_function_cycle_proves_zero_is_one",
         "cyclic declaration through module-level binding a",
