@@ -247,7 +247,7 @@ pub fn builtinVectorFromList(
                 let items = &__items_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValVector(
                     crate::aver_generated::domain::value::Val__ValVector(
-                        aver_rt::AverVector::from_vec(items.to_vec()),
+                        aver_rt::AverVector::from_list(items),
                     ),
                 ))
             }

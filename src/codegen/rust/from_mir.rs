@@ -2616,6 +2616,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 return Some(projected);
             };
             match packed_u8_carrier(*id, name, emit_ctx) {
+                // A field read at its last use hands its carrier over, so a
+                // body no one else holds stays unshared (`Bytes.concat` onto
+                // an accumulator grows it in place).
+                Some(true) if super::ownership::moves_when_owned(&expr.node, emit_ctx) => {
+                    Some(format!("aver_rt::AverIntList::from_packed({projected})"))
+                }
                 Some(true) => Some(format!("({projected}).to_int_list()")),
                 Some(false) => Some(projected),
                 None => Some(unresolved_packed_carrier(name, emit_ctx)),
@@ -7401,10 +7407,16 @@ fn try_emit_mir_fusion(
             let list = emit_mir_expr(&inner_args[0], ctx)?;
             let index = emit_mir_expr(&args[1], ctx)?;
             let index_temp = generated_ident("i");
-            // Index lookup: out-of-`usize` index → `None` (matches the
-            // unfused `Vector.get`).
+            // Index lookup in place: out-of-`usize` index → `None` (matches
+            // the unfused `Vector.get`). A `List<Int>` gives its element by
+            // value.
+            let cloned = if type_is_int_list(inner_args[0].ty()) {
+                ""
+            } else {
+                ".cloned()"
+            };
             Some(format!(
-                "({index}).to_usize().and_then(|{index_temp}| {list}.to_vec().get({index_temp}).cloned())"
+                "({index}).to_usize().and_then(|{index_temp}| ({list}).get({index_temp}){cloned})"
             ))
         }
         _ => None,
@@ -7803,6 +7815,18 @@ fn emit_mir_builtin_call(
             )
         }
         "List.concat" => {
+            // A `List<Int>` handed over (its last read, or a computed one)
+            // can grow in place: an accumulator joined with a chunk per step
+            // copies the chunk, not the whole accumulator.
+            if type_is_int_list(args[0].ty())
+                && super::ownership::moves_when_owned(&args[0].node, ctx)
+            {
+                let left = emit_operand(&args[0])?;
+                let right = mir_borrow_arg(emit_operand(&args[1])?, &args[1].node, ctx);
+                return Some(format!(
+                    "aver_rt::AverIntList::concat_owned({left}, {right})"
+                ));
+            }
             let list_type = if type_is_int_list(args[0].ty()) {
                 "aver_rt::AverIntList"
             } else {
@@ -7810,7 +7834,10 @@ fn emit_mir_builtin_call(
             };
             format!("{list_type}::concat(&{}, &{})", clone!(0), clone!(1))
         }
-        "List.reverse" => format!("{}.reverse()", arg!(0)),
+        "List.reverse" => match super::ownership::moves_when_owned(&args[0].node, ctx) {
+            true => format!("({}).reverse_owned()", emit_operand(&args[0])?),
+            false => format!("{}.reverse()", arg!(0)),
+        },
         "List.contains" => {
             let list = arg!(0);
             let item = arg!(1);
@@ -7892,8 +7919,10 @@ fn emit_mir_builtin_call(
             } else {
                 "aver_rt::AverList"
             };
+            // The entries are sorted as borrows; only the values are cloned.
+            let map = generated_ident("map");
             format!(
-                "{{ let mut es: Vec<_> = {}.iter().map(|(k, v)| (k.clone(), v.clone())).collect(); es.sort_by(|a, b| a.0.cmp(&b.0)); {list_type}::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>()) }}",
+                "{{ let {map} = &({}); let mut es: Vec<_> = {map}.iter().collect(); es.sort_by(|a, b| a.0.cmp(b.0)); {list_type}::from_vec(es.into_iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()) }}",
                 arg!(0)
             )
         }
@@ -8013,6 +8042,11 @@ fn emit_mir_builtin_call(
             format!("({idx}).to_usize().and_then(|{index}| {vec}.set_owned({index}, {val}))")
         }
         "Vector.len" => format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0)),
+        // A flat list's body is shared with the vector, not copied.
+        "Vector.fromList" if !type_is_int_list(args[0].ty()) => format!(
+            "aver_rt::AverVector::from_list({})",
+            mir_borrow_arg(emit_operand(&args[0])?, &args[0].node, ctx)
+        ),
         "Vector.fromList" => format!("aver_rt::AverVector::from_vec({}.to_vec())", arg!(0)),
 
         // ---- BranchPath ----

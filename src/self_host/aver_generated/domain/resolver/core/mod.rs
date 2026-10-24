@@ -345,7 +345,7 @@ pub fn resolveFns(
         {
             let __list_subject = fns;
             if __list_subject.is_empty() {
-                return acc.reverse();
+                return (acc).reverse_owned();
             } else {
                 if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
@@ -664,7 +664,7 @@ pub fn resolveStmts(
         {
             let __list_subject = stmts;
             if __list_subject.is_empty() {
-                return (acc.reverse(), next, slots);
+                return ((acc).reverse_owned(), next, slots);
             } else {
                 if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match s {
@@ -1627,7 +1627,7 @@ pub fn resolveExprs(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [e, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(exprs, [] => { return (acc).reverse_owned(); }, [e, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::core::resolveExprSimple(e, slots.clone()), acc);
             exprs = __tco0;
@@ -1646,7 +1646,7 @@ pub fn resolveFields(
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
+        ::aver_rt::aver_list_match_reuse!(fields, [] => { return (acc).reverse_owned(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, slots.clone())), acc);
             fields = __tco0;
@@ -1673,7 +1673,7 @@ pub fn resolveArms(
         {
             let __list_subject = arms;
             if __list_subject.is_empty() {
-                return (acc.reverse(), slots);
+                return ((acc).reverse_owned(), slots);
             } else {
                 if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
@@ -1959,9 +1959,10 @@ pub fn addPatternSlots(
 pub fn mapMaxVal(m @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let vals @ _ = {
-        let mut es: Vec<_> = m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        es.sort_by(|a, b| a.0.cmp(&b.0));
-        aver_rt::AverIntList::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>())
+        let __map = &(m);
+        let mut es: Vec<_> = __map.iter().collect();
+        es.sort_by(|a, b| a.0.cmp(b.0));
+        aver_rt::AverIntList::from_vec(es.into_iter().map(|(_, v)| v.clone()).collect::<Vec<_>>())
     };
     crate::aver_generated::domain::resolver::core::maxInList(&vals, aver_rt::AverInt::from_i64(-1))
 }

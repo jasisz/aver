@@ -240,8 +240,8 @@ fn __mutual_tco_trampoline_3(
                     crate::aver_generated::domain::token::Token::TkEof => {
                         return Ok(crate::aver_generated::domain::ast::Program {
                             deps: deps,
-                            fns: fns.reverse(),
-                            stmts: stmts.reverse(),
+                            fns: (fns).reverse_owned(),
+                            stmts: (stmts).reverse_owned(),
                         });
                     }
                     crate::aver_generated::domain::token::Token::TkFn => {
@@ -772,7 +772,7 @@ pub fn parseFnDefBodyIndented(
             Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
                 name: name,
                 params: params.clone(),
-                body: stmts.reverse(),
+                body: (stmts).reverse_owned(),
                 slotCount: aver_rt::AverInt::from_i64(0),
                 slotMap: HashMap::new(),
                 fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
@@ -802,7 +802,7 @@ pub fn parseFnDefBodyFlat(
             Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
                 name: name,
                 params: params.clone(),
-                body: stmts.reverse(),
+                body: (stmts).reverse_owned(),
                 slotCount: aver_rt::AverInt::from_i64(0),
                 slotMap: HashMap::new(),
                 fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,

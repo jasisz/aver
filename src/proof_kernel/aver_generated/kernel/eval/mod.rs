@@ -172,17 +172,17 @@ pub fn sameCtor(c @ _: AverStr, d @ _: AverStr, fields @ _: aver_rt::AverInt) ->
 pub fn typeOf(c @ _: &AverStr) -> AverStr {
     crate::proof_kernel::cancel_checkpoint();
     (aver_rt::string_join(
-        &{
+        &({
             let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)));
-            (aver_rt::AverList::from_vec(
+            ((aver_rt::AverList::from_vec(
                 c.split(&*::aver_rt::str_lit!("."))
                     .map(aver_rt::AverStr::from)
                     .collect::<Vec<_>>(),
-            )
-            .reverse())
+            ))
+            .reverse_owned())
             .drop_first(__n)
-        }
-        .reverse(),
+        })
+        .reverse_owned(),
         &::aver_rt::str_lit!("."),
     ))
     .into_aver()
@@ -1026,7 +1026,9 @@ pub fn reversed(l @ _: &Option<Val>) -> Option<Val> {
             let __pat0 = __pat0.clone();
             match __pat0 {
                 crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
-                    crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs.reverse()),
+                    crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
+                        (vs).reverse_owned(),
+                    ),
                 ),
                 _ => None,
             }

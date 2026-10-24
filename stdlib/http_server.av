@@ -89,9 +89,7 @@ fn absorb(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], key: 
     ! [Tcp.writeBytes, Tcp.close]
     match Bytes.octets(chunk)
         [] -> dropSession(server, key, session)
-        [_, .._] -> match Bytes.fromList(List.concat(Bytes.octets(session.buffer), Bytes.octets(chunk)))
-            Result.Err(_) -> dropSession(server, key, session)
-            Result.Ok(buffer) -> frame(server, handler, key, Session(connection = session.connection, buffer = buffer))
+        [_, .._] -> frame(server, handler, key, Session(connection = session.connection, buffer = Bytes.concat(session.buffer, chunk)))
 
 fn frame(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], key: Int, session: Session) -> Result<Server, String>
     ? "Pipelined complete requests are drained immediately; partial requests return to Tcp.poll."
@@ -115,9 +113,7 @@ fn afterAnswer(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], 
     ! [Tcp.writeBytes, Tcp.close]
     match Bool.or(HttpWire.requestCloses(request), HttpWire.responseCloses(response))
         true -> dropSession(server, key, session)
-        false -> match Bytes.fromList(List.drop(Bytes.octets(session.buffer), used))
-            Result.Err(_) -> dropSession(server, key, session)
-            Result.Ok(buffer) -> frame(server, handler, key, Session(connection = session.connection, buffer = buffer))
+        false -> frame(server, handler, key, Session(connection = session.connection, buffer = Bytes.drop(session.buffer, used)))
 
 fn refuse(server: Server, key: Int, session: Session, reason: String) -> Result<Server, String>
     ? "Malformed framing receives one bounded 400 response and the unsynchronizable stream closes."

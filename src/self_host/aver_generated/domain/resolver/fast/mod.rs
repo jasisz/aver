@@ -15,7 +15,7 @@ pub fn annotateFastFns(
         {
             let __list_subject = fns;
             if __list_subject.is_empty() {
-                return acc.reverse();
+                return (acc).reverse_owned();
             } else {
                 if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
@@ -1246,7 +1246,7 @@ pub fn classifyFastForwardSlots(
 ) -> Option<aver_rt::AverIntList> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(args, [] => { return Some(acc.reverse()); }, [arg, rest] => { { let __t = arg; match __t.view() {
+        aver_list_match!(args, [] => { return Some((acc).reverse_owned()); }, [arg, rest] => { { let __t = arg; match __t.view() {
         crate::aver_generated::domain::ast::Expr__view::ExprSlot(__slot_fields) => {
             let slot = __slot_fields.0.clone();
             {

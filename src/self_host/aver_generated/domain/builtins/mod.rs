@@ -511,7 +511,7 @@ pub fn stringsToVals(
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(strs, [] => { return acc.reverse(); }, [s, rest] => { {
+        aver_list_match!(strs, [] => { return (acc).reverse_owned(); }, [s, rest] => { {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(s)), acc);
             strs = __tco0;
@@ -564,7 +564,7 @@ pub fn mapEntriesToTuples(
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(entries, [] => { return acc.reverse(); }, [pair, rest] => { { let (k, v) = pair; {
+        aver_list_match!(entries, [] => { return (acc).reverse_owned(); }, [pair, rest] => { { let (k, v) = pair; {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(k)), v]))), acc);
             entries = __tco0;
@@ -621,11 +621,11 @@ pub fn builtinMapValues(
                 let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList({
-                        let mut es: Vec<_> =
-                            m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                        es.sort_by(|a, b| a.0.cmp(&b.0));
+                        let __map = &(m);
+                        let mut es: Vec<_> = __map.iter().collect();
+                        es.sort_by(|a, b| a.0.cmp(b.0));
                         aver_rt::AverList::from_vec(
-                            es.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
+                            es.into_iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(),
                         )
                     }),
                 ))
@@ -2462,7 +2462,7 @@ pub fn stringsToValStrs(
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(values, [] => { return acc.reverse(); }, [v, rest] => { {
+        aver_list_match!(values, [] => { return (acc).reverse_owned(); }, [v, rest] => { {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(v)), acc);
             values = __tco0;
@@ -3164,7 +3164,7 @@ pub fn tcpReadyKeysToVals(
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(keys, [] => { return acc.reverse(); }, [key, rest] => { {
+        aver_list_match!(keys, [] => { return (acc).reverse_owned(); }, [key, rest] => { {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValInt(crate::aver_generated::domain::value::Val__ValInt(key)), acc);
             keys = __tco0;

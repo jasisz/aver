@@ -23,8 +23,9 @@
 use core::cmp::Ordering;
 use core::fmt;
 use core::str::FromStr;
+use std::borrow::Cow;
 
-use num_bigint::{BigInt, Sign};
+use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{FromPrimitive, ToPrimitive};
 
@@ -391,12 +392,13 @@ impl AverInt {
         }
     }
 
-    /// Borrow as a `BigInt` for an operation that cannot stay in `i64`.
+    /// The value as a `BigInt` for an operation that cannot stay in `i64`:
+    /// a heap integer is borrowed where it lies, never copied.
     #[inline]
-    fn to_bigint(&self) -> BigInt {
+    fn to_bigint(&self) -> Cow<'_, BigInt> {
         match self.view() {
-            View::Small(n) => BigInt::from(n),
-            View::Big(b) => b.clone(),
+            View::Small(n) => Cow::Owned(BigInt::from(n)),
+            View::Big(b) => Cow::Borrowed(b),
         }
     }
 
@@ -502,7 +504,7 @@ impl AverInt {
         if let (View::Small(a), View::Small(b)) = (self.view(), rhs.view()) {
             return Some(AverInt::from_i64(a / b));
         }
-        Some(AverInt::from_bigint(self.to_bigint() / rhs.to_bigint()))
+        Some(AverInt::from_bigint(&*self.to_bigint() / &*rhs.to_bigint()))
     }
 
     /// Truncating remainder (sign follows the dividend), the semantics of the
@@ -514,7 +516,7 @@ impl AverInt {
         if let (View::Small(a), View::Small(b)) = (self.view(), rhs.view()) {
             return Some(AverInt::inline(a % b));
         }
-        Some(AverInt::from_bigint(self.to_bigint() % rhs.to_bigint()))
+        Some(AverInt::from_bigint(&*self.to_bigint() % &*rhs.to_bigint()))
     }
 
     /// `|self|` over ℤ (never wraps; `|-2^62|` leaves the inline range).
@@ -621,7 +623,7 @@ impl AverInt {
                 return Ok(AverInt::from_i64(shifted));
             }
         }
-        Ok(AverInt::from_bigint(self.to_bigint() << count))
+        Ok(AverInt::from_bigint(&*self.to_bigint() << count))
     }
 
     /// `floor(self / 2^n)` — the bit sequence moved `n` places toward the
@@ -682,9 +684,7 @@ impl AverInt {
             };
             return Ok(AverInt::from_i64(a & mask));
         }
-        let modulus = BigInt::from(1u8) << count;
-        let (_, r) = euclid_div_rem(&self.to_bigint(), &modulus);
-        Ok(AverInt::from_bigint(r))
+        Ok(AverInt::from_bigint(low_bits_of(&self.to_bigint(), count)))
     }
 
     /// The number of one bits among the lowest `width` bits — exactly the
@@ -795,6 +795,26 @@ fn from_i64_slow(n: i64) -> AverInt {
     AverInt(Repr::from_big(BigInt::from(n)))
 }
 
+/// The lowest `count` bits of `value` in two's complement, read as a
+/// non-negative integer: `value mod 2^count`. The window is cut out of the
+/// magnitude's digits, so it costs the window, with no division.
+fn low_bits_of(value: &BigInt, count: usize) -> BigInt {
+    let words = count.div_ceil(32);
+    let mut digits: Vec<u32> = value.magnitude().iter_u32_digits().take(words).collect();
+    digits.resize(words, 0);
+    if value.sign() == Sign::Minus {
+        // `-m` is `!m + 1`; whatever carries out of the window is dropped.
+        let mut carry = true;
+        for digit in &mut digits {
+            (*digit, carry) = (!*digit).overflowing_add(u32::from(carry));
+        }
+    }
+    if let (Some(top), bits @ 1..) = (digits.last_mut(), count % 32) {
+        *top &= (1u32 << bits) - 1;
+    }
+    BigInt::from_biguint(Sign::Plus, BigUint::new(digits))
+}
+
 /// Euclidean `(quotient, remainder)` for `BigInt` operands, value-identical to
 /// `i64::div_euclid` / `i64::rem_euclid` across every sign combination: the
 /// unique pair with `a == b*q + r` and `0 <= r < |b|`.
@@ -851,25 +871,25 @@ fn eq_slow(a: &AverInt, b: &AverInt) -> bool {
 #[cold]
 #[inline(never)]
 fn add_slow(a: &AverInt, b: &AverInt) -> AverInt {
-    AverInt::from_bigint(a.to_bigint() + b.to_bigint())
+    AverInt::from_bigint(&*a.to_bigint() + &*b.to_bigint())
 }
 
 #[cold]
 #[inline(never)]
 fn sub_slow(a: &AverInt, b: &AverInt) -> AverInt {
-    AverInt::from_bigint(a.to_bigint() - b.to_bigint())
+    AverInt::from_bigint(&*a.to_bigint() - &*b.to_bigint())
 }
 
 #[cold]
 #[inline(never)]
 fn mul_slow(a: &AverInt, b: &AverInt) -> AverInt {
-    AverInt::from_bigint(a.to_bigint() * b.to_bigint())
+    AverInt::from_bigint(&*a.to_bigint() * &*b.to_bigint())
 }
 
 #[cold]
 #[inline(never)]
-fn bitwise_slow(a: &AverInt, b: &AverInt, op: fn(BigInt, BigInt) -> BigInt) -> AverInt {
-    AverInt::from_bigint(op(a.to_bigint(), b.to_bigint()))
+fn bitwise_slow(a: &AverInt, b: &AverInt, op: fn(&BigInt, &BigInt) -> BigInt) -> AverInt {
+    AverInt::from_bigint(op(&a.to_bigint(), &b.to_bigint()))
 }
 
 #[cold]
@@ -884,7 +904,7 @@ fn shift_right_slow(a: &AverInt, n: &AverInt) -> Result<AverInt, ShiftCountError
     let count = n
         .to_usize()
         .expect("a count below a resident integer's bit length fits usize");
-    Ok(AverInt::from_bigint(a.to_bigint() >> count))
+    Ok(AverInt::from_bigint(&*a.to_bigint() >> count))
 }
 
 #[cold]
@@ -897,7 +917,7 @@ fn pop_count_slow(x: &AverInt, width: &AverInt) -> Result<AverInt, ShiftCountErr
     if value.sign() == Sign::Minus {
         // The low bits of a negative `x` are the complement of the low bits
         // of `-x - 1`, which is non-negative.
-        let zeros = low_ones(&(-value - 1u8), width);
+        let zeros = low_ones(&(-&*value - 1u8), width);
         return Ok(width.sub(&AverInt::from_i64(zeros as i64)));
     }
     Ok(AverInt::from_i64(low_ones(&value, width) as i64))
@@ -1501,9 +1521,55 @@ mod tests {
         {
             for w in [0usize, 1, 8, 16, 32, 63, 64, 65, 100, 101, 128, 200] {
                 let width = AverInt::from_i64(w as i64);
-                let low = x.low_bits(&width).unwrap().to_bigint();
+                let low = x.low_bits(&width).unwrap().to_bigint().into_owned();
                 let expected = AverInt::from_i64(low.magnitude().count_ones() as i64);
                 assert_eq!(x.pop_count(&width).unwrap(), expected, "popCount {x} {w}");
+            }
+        }
+    }
+
+    /// `low_bits` is the Euclidean remainder mod `2^width` (Int = ℤ), and so
+    /// are the window cut out of the digits and the arithmetic on borrowed
+    /// heap integers, at every word boundary and on a spread of values.
+    #[test]
+    fn low_bits_and_big_arithmetic_agree_with_the_definition() {
+        let mut values: Vec<BigInt> = Vec::new();
+        for k in [
+            0usize, 1, 31, 32, 33, 62, 63, 64, 65, 96, 127, 128, 129, 200,
+        ] {
+            let p = BigInt::from(1u8) << k;
+            for d in [-1i64, 0, 1] {
+                values.push(&p + d);
+                values.push(-&p + d);
+            }
+        }
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..200 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let high = BigInt::from(seed) << (seed % 150) as usize;
+            values.push(&high + seed % 1000);
+            values.push(-high - seed % 7);
+        }
+        for x in &values {
+            let a = AverInt::from_bigint(x.clone());
+            for w in [
+                0usize, 1, 7, 8, 31, 32, 33, 62, 63, 64, 65, 100, 128, 129, 300,
+            ] {
+                let modulus = BigInt::from(1u8) << w;
+                let (_, expected) = euclid_div_rem(x, &modulus);
+                let got = a.low_bits(&AverInt::from_i64(w as i64)).unwrap();
+                assert_eq!(*got.to_bigint(), expected, "low_bits({x}, {w})");
+            }
+            for y in values.iter().step_by(7) {
+                let b = AverInt::from_bigint(y.clone());
+                canonical(a.add(&b), &(x + y), "add");
+                canonical(a.sub(&b), &(x - y), "sub");
+                canonical(a.mul(&b), &(x * y), "mul");
+                canonical(a.bit_and(&b), &(x & y), "and");
+                canonical(a.bit_or(&b), &(x | y), "or");
+                canonical(a.bit_xor(&b), &(x ^ y), "xor");
             }
         }
     }
@@ -1591,7 +1657,7 @@ mod tests {
     fn canonical(v: AverInt, expected: &BigInt, what: &str) -> AverInt {
         let inline = expected >= &BigInt::from(INLINE_MIN) && expected <= &BigInt::from(INLINE_MAX);
         assert_eq!(v.0.is_inline(), inline, "{what}: form of {expected}");
-        assert_eq!(v.to_bigint(), *expected, "{what}");
+        assert_eq!(*v.to_bigint(), *expected, "{what}");
         v
     }
 

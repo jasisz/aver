@@ -423,6 +423,21 @@ fn deferred_calls_that_know_a_value_match_vm() {
 /// A law `--trust-laws` lets through unproved is checked every time a call
 /// that knows a value from it is made: a false one stops the program with
 /// the law's name, though the value it gave was read before.
+/// Lists and integers the Rust runtime takes over where the VM copies: a
+/// `List<Int>` and a `Bytes` accumulator grown by `concat` while a list it
+/// started from is still read, `reverse` of a list handed over and of one
+/// still held, a long chain dropped over a tail that is printed after,
+/// 64-bit rotations and `Bits.low` around every word boundary on large and
+/// negative values, `Vector.fromList` and `Map.values`, all read as the VM.
+#[test]
+fn lists_handed_over_and_large_integers_match_vm() {
+    assert_plain_parity(
+        "tests/fixtures/runtime_lists_ints/main.av",
+        Some("tests/fixtures/runtime_lists_ints"),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 #[test]
 fn a_trusted_law_that_does_not_hold_stops_the_program_when_the_call_is_made() {
     const SOURCE: &str = "module Trusted\n    intent = \"a deferred call knows a value from a law that does not hold\"\n    effects [Console.print]\n\ntype Term\n    Var(Int, Int)\n    App(Term, Term, Int)\n\nfn wordOf(t: Term) -> Int\n    ? \"The word a term carries.\"\n    match t\n        Term.Var(_, w) -> w\n        Term.App(_, _, w) -> w\n\nfn shift(t: Term, by: Int) -> Term\n    ? \"Every variable moved by `by`.\"\n    match t\n        Term.Var(n, _) -> Term.Var(n + by, wordOf(t) * 31 + by)\n        Term.App(f, a, _) -> Term.App(shift(f, by), shift(a, by), wordOf(t) * 31 + by)\n\nverify shift law wordGuess\n    given t: Term = [Term.Var(0, 5)]\n    given by: Int = [0]\n    wordOf(shift(t, by)) => wordOf(t) * 31\n\nfn main() -> Unit\n    ! [Console.print]\n    t = Term.Var(0, 1)\n    later = lazy shift(t, 2) knowing shift.wordGuess(t, 2)\n    Console.print(\"known {wordOf(later)}\")\n    Console.print(\"made {wordOf(shift(later, 0))}\")\n";

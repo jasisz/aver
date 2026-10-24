@@ -265,9 +265,9 @@ pub fn len(bytes @ _: &Bytes) -> aver_rt::AverInt {
 pub fn concat(mut left @ _: Bytes, right @ _: &Bytes) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
-        values: aver_rt::into_packed_u8(aver_rt::AverIntList::concat(
-            &(left.values).to_int_list(),
-            &(right.values).to_int_list().clone(),
+        values: aver_rt::into_packed_u8(aver_rt::AverIntList::concat_owned(
+            aver_rt::AverIntList::from_packed(left.values),
+            &(right.values).to_int_list(),
         ))
         .expect("proof-packed U8 construction escaped its refinement gate"),
     }
@@ -279,7 +279,7 @@ pub fn take(mut bytes @ _: Bytes, count @ _: aver_rt::AverInt) -> Bytes {
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8({
             let __n = aver_rt::clamp_list_count(&(count));
-            ((bytes.values).to_int_list()).take_first(__n)
+            (aver_rt::AverIntList::from_packed(bytes.values)).take_first(__n)
         })
         .expect("proof-packed U8 construction escaped its refinement gate"),
     }
@@ -291,7 +291,7 @@ pub fn drop(mut bytes @ _: Bytes, count @ _: aver_rt::AverInt) -> Bytes {
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8({
             let __n = aver_rt::clamp_list_count(&(count));
-            ((bytes.values).to_int_list()).drop_first(__n)
+            (aver_rt::AverIntList::from_packed(bytes.values)).drop_first(__n)
         })
         .expect("proof-packed U8 construction escaped its refinement gate"),
     }
@@ -305,7 +305,7 @@ pub fn parseHexChars(
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(chars, [] => { return Ok(acc.reverse()); }, [highChar, afterHigh] => { aver_list_match!(afterHigh, [] => { return Err(::aver_rt::str_lit!("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(highChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(highChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(lowChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(lowChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(low @ _) => { {
+        aver_list_match!(chars, [] => { return Ok((acc).reverse_owned()); }, [highChar, afterHigh] => { aver_list_match!(afterHigh, [] => { return Err(::aver_rt::str_lit!("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(highChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(highChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(lowChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(lowChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(low @ _) => { {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverIntList::prepend_owned(high.mul(&aver_rt::AverInt::from_i64(16)).add(&low), acc);
             chars = __tco0;
@@ -531,7 +531,7 @@ pub fn hexParts(
 ) -> aver_rt::AverList<AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(values, [] => { return acc.reverse(); }, [head, tail] => { {
+        aver_list_match!(values, [] => { return (acc).reverse_owned(); }, [head, tail] => { {
             let __tco0 = tail;
             let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::bytes::byteToHex(head), acc);
             values = __tco0;
@@ -613,7 +613,7 @@ pub fn parseHexChars__cursor(
     loop {
         crate::cancel_checkpoint();
         if aver_rt::str_cursor_end(&__cur_s, (__cur_i) as usize) {
-            return Ok(acc.reverse());
+            return Ok((acc).reverse_owned());
         } else {
             {
                 let __cur_c2 = aver_rt::str_cursor_code(&__cur_s, (__cur_i) as usize);

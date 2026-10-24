@@ -130,7 +130,7 @@ fn __mutual_tco_trampoline_2(
                         return Ok((
                             crate::aver_generated::domain::ast::Pattern::PatConstructor(
                                 name,
-                                acc.reverse(),
+                                (acc).reverse_owned(),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
@@ -163,7 +163,7 @@ fn __mutual_tco_trampoline_2(
                         return Ok((
                             crate::aver_generated::domain::ast::Pattern::PatConstructor(
                                 name,
-                                acc.reverse(),
+                                (acc).reverse_owned(),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
@@ -250,7 +250,9 @@ fn __mutual_tco_trampoline_3(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
-                            crate::aver_generated::domain::ast::Pattern::PatTuple(acc.reverse()),
+                            crate::aver_generated::domain::ast::Pattern::PatTuple(
+                                (acc).reverse_owned(),
+                            ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
@@ -280,7 +282,9 @@ fn __mutual_tco_trampoline_3(
                     }
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
-                            crate::aver_generated::domain::ast::Pattern::PatTuple(acc.reverse()),
+                            crate::aver_generated::domain::ast::Pattern::PatTuple(
+                                (acc).reverse_owned(),
+                            ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
@@ -431,7 +435,10 @@ fn __mutual_tco_trampoline_5(
                 crate::cancel_checkpoint();
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkRParen => {
-                        return Ok((acc.reverse(), pos.add(&aver_rt::AverInt::from_i64(1))));
+                        return Ok((
+                            (acc).reverse_owned(),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                        ));
                     }
                     crate::aver_generated::domain::token::Token::TkIdent(name) => {
                         let __arg4 @ _ =
@@ -451,7 +458,10 @@ fn __mutual_tco_trampoline_5(
                 crate::cancel_checkpoint();
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkRParen => {
-                        return Ok((acc.reverse(), pos.add(&aver_rt::AverInt::from_i64(1))));
+                        return Ok((
+                            (acc).reverse_owned(),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                        ));
                     }
                     crate::aver_generated::domain::token::Token::TkComma => {
                         __MutualTco5::ParseParamList(pos.add(&aver_rt::AverInt::from_i64(1)), acc)
@@ -1281,7 +1291,7 @@ pub fn collectDependsNames(
         if (pos < endPos) {
             match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkRBracket => {
-                    return acc.reverse();
+                    return (acc).reverse_owned();
                 }
                 crate::aver_generated::domain::token::Token::TkIdent(name) => {
                     let __tco1 = nextPos;
@@ -1297,7 +1307,7 @@ pub fn collectDependsNames(
                 }
             }
         } else {
-            return acc.reverse();
+            return (acc).reverse_owned();
         }
     }
 }
