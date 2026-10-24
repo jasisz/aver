@@ -2239,6 +2239,59 @@ fn main() -> Unit
     );
 }
 
+/// A mutual tail-call group keeps a param every member hands on unchanged
+/// (an invariant) out of the trampoline's state. Two shapes used to break
+/// the build: a member that names the invariant differently (`o` for `op`),
+/// and a bounce that passes the invariant at a second, ordinary position
+/// too (`walkB(op, op, ..)`).
+#[test]
+fn mutual_tail_group_invariant_renamed_or_passed_twice_matches_vm() {
+    let src = r#"module MutualInvariant
+    intent = "Invariants of mutual tail-call groups, renamed and passed twice"
+    effects [Console.print]
+
+record Op
+    shift: Int
+    label: String
+
+fn walkA(op: Op, n: Int, acc: Int) -> Int
+    ? "Hands the op on unchanged."
+    match n == 0
+        true -> acc
+        false -> walkB(op, n - 1, acc + op.shift)
+
+fn walkB(o: Op, n: Int, acc: Int) -> Int
+    ? "The same op under another name."
+    match n == 0
+        true -> acc + 1
+        false -> walkA(o, n - 1, acc - 1)
+
+fn twiceA(op: Op, x: Op, n: Int) -> Int
+    ? "Hands the op on unchanged, and in place of x as well."
+    match n == 0
+        true -> x.shift
+        false -> twiceB(op, op, n - 1)
+
+fn twiceB(op: Op, x: Op, n: Int) -> Int
+    ? "Builds a fresh x."
+    match n == 0
+        true -> x.shift + 1
+        false -> twiceA(op, Op(shift = x.shift + 1, label = x.label), n - 1)
+
+fn main() -> Unit
+    ? "Runs both groups deep."
+    ! [Console.print]
+    op = Op(shift = 3, label = "op")
+    Console.print("{walkA(op, 1000001, 0)} {walkB(op, 10, 0)}")
+    Console.print("{twiceA(op, op, 1000001)} {twiceB(op, op, 10)}")
+"#;
+    let expected = "1000004 11\n4 4";
+    let vm = run_vm_inline("mutual_invariant", src).expect("vm run");
+    assert_eq!(vm, expected, "VM contract changed");
+    let rust = build_run_rust_inline("mutual_invariant", src).expect("rust build + run");
+    assert_eq!(rust, expected, "Rust diverged from the VM");
+}
+
 /// The reported shape, which is a two-file one: the keyword-named mutual
 /// pair lives in a DEPENDENCY module and the entry module only calls into
 /// it. That is how the bug stayed hidden — the dep module had been
