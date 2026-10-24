@@ -153,7 +153,7 @@ pub fn callBuiltinByIdValues(
                                                                 {
                                                                     crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Option.withDefault"), args)
                                                                 } else {
-                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(16) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Ok"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(17) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Err"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(18) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.withDefault"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(19) { crate::aver_generated::domain::builtins::primitives::callInt(::aver_rt::str_lit!("String.fromInt"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(20) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.take"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(21) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Unknown builtin ID: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&((id.to_string()).into_aver())))); __b })) } } } } } }
+                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(16) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Ok"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(17) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Err"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(18) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.withDefault"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(19) { crate::aver_generated::domain::builtins::primitives::callInt(::aver_rt::str_lit!("String.fromInt"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(20) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.take"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(21) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Unknown builtin ID: ")); __b }; __b.push_display(&(aver_rt::display_str(&(id)))); __b })) } } } } } }
                                                                 }
                                                             }
                                                         }
@@ -3925,9 +3925,7 @@ pub fn builtinTerminalNoArg__indexed(
                                             ));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(name)),
-                                        ));
+                                        __b.push_display(&(name));
                                         __b
                                     }))
                                 }
@@ -3964,7 +3962,7 @@ pub fn tryVariantConstructor__indexed(
                 __b.push_str(&::aver_rt::str_lit!("undefined function: "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+            __b.push_display(&(name));
             __b
         })),
     }

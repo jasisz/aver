@@ -282,29 +282,76 @@ impl<T: Clone> From<Shared<T>> for Arc<T> {
 
 impl From<&str> for Shared<str> {
     /// As `Arc::from(&str)`: one node holding the count and a copy of the
-    /// bytes, laid out as `Node<str>`, so dropping it through a `Box` frees
-    /// it with the layout it was allocated with.
+    /// bytes.
     fn from(text: &str) -> Self {
-        let layout = Layout::new::<AtomicUsize>()
-            .extend(Layout::array::<u8>(text.len()).expect("a str fits in isize"))
-            .expect("a str fits in isize")
-            .0
-            .pad_to_align();
+        Self::from_parts(|| std::iter::once(text))
+    }
+}
+
+/// The layout of the node of a `len`-byte string, laid out as `Node<str>`
+/// so dropping it through a `Box` frees it with the layout it was allocated
+/// with, and the offset of its bytes.
+fn str_node_layout(len: usize) -> (Layout, usize) {
+    let (layout, offset) = Layout::new::<AtomicUsize>()
+        .extend(Layout::array::<u8>(len).expect("a str fits in isize"))
+        .expect("a str fits in isize");
+    (layout.pad_to_align(), offset)
+}
+
+impl Shared<str> {
+    /// One node holding the count and the parts `parts()` walks, end to
+    /// end: one allocation and one copy of each part, however many there
+    /// are. `parts` is walked twice, once to size the node.
+    pub fn from_parts<'a, I: Iterator<Item = &'a str>>(parts: impl Fn() -> I) -> Self {
+        let len = parts().map(str::len).sum::<usize>();
+        let (layout, offset) = str_node_layout(len);
         unsafe {
             let memory = alloc::alloc(layout);
             if memory.is_null() {
                 alloc::handle_alloc_error(layout);
             }
-            let node = std::ptr::slice_from_raw_parts_mut(memory, text.len()) as *mut Node<str>;
-            (&raw mut (*node).count).write(AtomicUsize::new(1));
-            let bytes = (&raw mut (*node).value).cast::<u8>();
-            std::ptr::copy_nonoverlapping(text.as_ptr(), bytes, text.len());
+            let mut written = 0;
+            for part in parts() {
+                // A second walk that differs from the first leaks the
+                // memory rather than writing past it.
+                assert!(part.len() <= len - written, "parts changed length");
+                let at = memory.add(offset + written);
+                std::ptr::copy_nonoverlapping(part.as_ptr(), at, part.len());
+                written += part.len();
+            }
+            assert!(written == len, "parts changed length");
+            (memory as *mut AtomicUsize).write(AtomicUsize::new(1));
+            let node = std::ptr::slice_from_raw_parts_mut(memory, len) as *mut Node<str>;
             Self::from_node(NonNull::new_unchecked(node))
         }
     }
-}
 
-impl Shared<str> {
+    /// Appends `tail` to the string in place when this is the only owner
+    /// of a heap node: the node grows (`realloc`, which copies only when
+    /// the allocator cannot extend it), so a string built by repeated
+    /// appends costs what it holds, not the sum of every step. False, and
+    /// nothing changes, when the node is shared or static. No other owner
+    /// can see the change: there is none.
+    pub fn append(this: &mut Self, tail: &str) -> bool {
+        if !Self::is_unique(this) {
+            return false;
+        }
+        let len = this.len();
+        let (old, offset) = str_node_layout(len);
+        let (new, _) = str_node_layout(len.checked_add(tail.len()).expect("a str fits in isize"));
+        unsafe {
+            let memory = alloc::realloc(this.ptr.as_ptr().cast::<u8>(), old, new.size());
+            if memory.is_null() {
+                alloc::handle_alloc_error(new);
+            }
+            std::ptr::copy_nonoverlapping(tail.as_ptr(), memory.add(offset + len), tail.len());
+            let node =
+                std::ptr::slice_from_raw_parts_mut(memory, len + tail.len()) as *mut Node<str>;
+            this.ptr = NonNull::new_unchecked(node);
+        }
+        true
+    }
+
     /// The string a static holds, with no allocation or copy. The node is
     /// never freed (see [`STATIC_COUNT`]).
     #[inline]
@@ -527,6 +574,30 @@ mod tests {
             }
         });
         assert!(texts.iter().all(|t| Shared::strong_count(t) == 1));
+    }
+
+    #[test]
+    fn a_str_grows_in_place_only_with_one_owner() {
+        let mut a: Shared<str> = Shared::from_parts(|| ["ab", "", "c"].into_iter());
+        assert_eq!(&*a, "abc");
+        for _ in 0..if cfg!(miri) { 40 } else { 4000 } {
+            assert!(Shared::append(&mut a, "xyz"));
+        }
+        assert_eq!(a.len(), 3 + 3 * if cfg!(miri) { 40 } else { 4000 });
+        assert!(a.starts_with("abcxyzxyz") && a.ends_with("xyzxyz"));
+        let b = a.clone();
+        assert!(!Shared::append(&mut a, "!"), "a shared node is not changed");
+        assert_eq!(&*a, &*b);
+        drop(b);
+        assert!(Shared::append(&mut a, "!"));
+        assert!(a.ends_with("xyz!"));
+        static NODE: super::StaticStr<2> = super::StaticStr::new("hi");
+        let mut c = Shared::<str>::from_static(&NODE);
+        assert!(!Shared::append(&mut c, "!"), "a static node is not changed");
+        assert_eq!(&*c, "hi");
+        let mut empty = Shared::<str>::from("");
+        assert!(Shared::append(&mut empty, "é"));
+        assert_eq!(&*empty, "é");
     }
 
     #[test]

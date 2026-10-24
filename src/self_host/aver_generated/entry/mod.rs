@@ -822,7 +822,7 @@ pub fn runRepr(source @ _: AverStr) -> AverStr {
                 __b.push_str(&::aver_rt::str_lit!("ERROR: "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(e))));
+            __b.push_display(&(e));
             __b
         }),
     }
@@ -1178,9 +1178,7 @@ pub fn runDemo() -> Result<(), AverStr> {
                 __b.push_str(&::aver_rt::str_lit!("  x=3+4; x*2 = "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(demoArithmetic),
-            )));
+            __b.push_display(&(demoArithmetic));
             __b
         });
         crate::cancel_checkpoint();
@@ -1212,9 +1210,7 @@ pub fn runDemo() -> Result<(), AverStr> {
                 __b.push_str(&::aver_rt::str_lit!("  double(21) = "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(demoDouble),
-            )));
+            __b.push_display(&(demoDouble));
             __b
         });
         crate::cancel_checkpoint();
@@ -1246,7 +1242,7 @@ pub fn runDemo() -> Result<(), AverStr> {
                 __b.push_str(&::aver_rt::str_lit!("  fib(10) = "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(demoFib))));
+            __b.push_display(&(demoFib));
             __b
         });
         crate::cancel_checkpoint();
@@ -1438,7 +1434,7 @@ pub fn dotToSlash__indexed(
                     } else {
                         {
                             let __tco1 = nextPos;
-                            let __tco3 = (acc + &(c.to_lowercase()).into_aver());
+                            let __tco3 = (acc + &aver_rt::string_case(&c, false));
                             pos = __tco1;
                             acc = __tco3;
                             continue;

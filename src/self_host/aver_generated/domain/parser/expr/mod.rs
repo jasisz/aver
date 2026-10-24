@@ -1749,9 +1749,7 @@ pub fn parseAtom(
                 __b.push_str(&::aver_rt::str_lit!("Expected expression, got "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::aver_generated::domain::token::tokenRepr(&t)),
-            )));
+            __b.push_display(&(crate::aver_generated::domain::token::tokenRepr(&t)));
             __b
         })),
     }

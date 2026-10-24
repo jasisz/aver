@@ -654,7 +654,7 @@ pub fn valListRepr(
                             __b.push_str(&::aver_rt::str_lit!("["));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc))));
+                        __b.push_display(&(acc));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!("]"));
@@ -702,11 +702,11 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValInt(__n_fields) => {
                 let n = __n_fields.0.clone();
-                (n.to_string()).into_aver()
+                aver_rt::display_str(&(n))
             }
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
                 let f = __f_fields.0.clone();
-                (f.to_string()).into_aver()
+                aver_rt::display_str(&(f))
             }
             crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
                 let s = __s_fields.0.clone();
@@ -714,7 +714,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
             }
             crate::aver_generated::domain::value::Val__view::ValBool(__b_fields) => {
                 let b = __b_fields.0.clone();
-                (b.to_string()).into_aver()
+                aver_rt::bool_str(b)
             }
             crate::aver_generated::domain::value::Val__view::ValFnRef(__name_fields) => {
                 let name = __name_fields.0.clone();
@@ -727,7 +727,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                             __b.push_str(&::aver_rt::str_lit!("<fn "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                        __b.push_display(&(name));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(">"));
@@ -765,9 +765,9 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                             __b.push_str(&::aver_rt::str_lit!("Result.Ok("));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::aver_generated::domain::value::valReprInner(inner)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -785,9 +785,9 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                             __b.push_str(&::aver_rt::str_lit!("Result.Err("));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::aver_generated::domain::value::valReprInner(inner)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -805,13 +805,13 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                             __b.push_str(&::aver_rt::str_lit!("("));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::aver_generated::domain::value::valFieldsRepr(
                                 items,
                                 ::aver_rt::str_lit!(""),
                                 true,
                             )),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -829,9 +829,9 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                             __b.push_str(&::aver_rt::str_lit!("Option.Some("));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::aver_generated::domain::value::valReprInner(inner)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -848,7 +848,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                        __b.push_display(&(name));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!("(...)"));
@@ -913,7 +913,7 @@ pub fn valReprInner(v @ _: &Val) -> AverStr {
                             __b.push_str(&::aver_rt::str_lit!("<fn "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                        __b.push_display(&(name));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(">"));
@@ -931,13 +931,13 @@ pub fn valReprInner(v @ _: &Val) -> AverStr {
                             __b.push_str(&::aver_rt::str_lit!("("));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::aver_generated::domain::value::valFieldsRepr(
                                 items,
                                 ::aver_rt::str_lit!(""),
                                 true,
                             )),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -992,7 +992,7 @@ pub fn valMapRepr(
                             __b.push_str(&::aver_rt::str_lit!("{"));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc))));
+                        __b.push_display(&(acc));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!("}"));
@@ -1048,11 +1048,11 @@ pub fn mapKeyRepr(v @ _: &Val) -> AverStr {
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValInt(__n_fields) => {
                 let n = __n_fields.0.clone();
-                (n.to_string()).into_aver()
+                aver_rt::display_str(&(n))
             }
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
                 let f = __f_fields.0.clone();
-                (f.to_string()).into_aver()
+                aver_rt::display_str(&(f))
             }
             crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
                 let s = __s_fields.0.clone();
@@ -1060,7 +1060,7 @@ pub fn mapKeyRepr(v @ _: &Val) -> AverStr {
             }
             crate::aver_generated::domain::value::Val__view::ValBool(__b_fields) => {
                 let b = __b_fields.0.clone();
-                (b.to_string()).into_aver()
+                aver_rt::bool_str(b)
             }
             _ => crate::aver_generated::domain::value::valRepr(v),
         }
@@ -1082,21 +1082,19 @@ pub fn valVariantReprTagged(fullName @ _: AverStr, fields @ _: &aver_rt::AverLis
                             let mut __b = aver_rt::Buffer::with_capacity(
                                 (aver_rt::AverInt::from_i64(34)).to_usize().unwrap_or(0),
                             );
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                &(fullName),
-                            )));
+                            __b.push_display(&(fullName));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!("("));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &(crate::aver_generated::domain::value::valFieldsRepr(
                             fields,
                             ::aver_rt::str_lit!(""),
                             true,
                         )),
-                    )));
+                    );
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));

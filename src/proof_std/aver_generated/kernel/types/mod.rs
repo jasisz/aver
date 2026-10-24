@@ -117,9 +117,9 @@ pub fn show(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> AverS
                             __b.push_str(&::aver_rt::str_lit!("List<"));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::types::show(a)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(">"));
@@ -137,9 +137,9 @@ pub fn show(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> AverS
                             __b.push_str(&::aver_rt::str_lit!("Option<"));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::types::show(a)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(">"));
@@ -160,17 +160,17 @@ pub fn show(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> AverS
                                     __b.push_str(&::aver_rt::str_lit!("Result<"));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::types::show(a)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(", "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::types::show(b)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(">"));
@@ -191,17 +191,17 @@ pub fn show(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> AverS
                                     __b.push_str(&::aver_rt::str_lit!("Map<"));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::types::show(k)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(", "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::types::show(v)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(">"));
@@ -219,9 +219,9 @@ pub fn show(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> AverS
                             __b.push_str(&::aver_rt::str_lit!("Vector<"));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::types::show(a)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(">"));
@@ -239,13 +239,12 @@ pub fn show(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> AverS
                             __b.push_str(&::aver_rt::str_lit!("("));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &((aver_rt::string_join(
+                        __b.push_display(
+                            &(aver_rt::string_join(
                                 &crate::proof_std::aver_generated::kernel::types::showAll(xs),
                                 &::aver_rt::str_lit!(", "),
-                            ))
-                            .into_aver()),
-                        )));
+                            )),
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -270,7 +269,7 @@ pub fn show(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> AverS
                         __b.push_str(&::aver_rt::str_lit!("?"));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b.push_display(&(n));
                     __b
                 })
             }
@@ -285,7 +284,7 @@ pub fn show(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> AverS
                         __b.push_str(&::aver_rt::str_lit!("?"));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b.push_display(&(n));
                     __b
                 })
             }
@@ -427,7 +426,7 @@ pub fn headOf(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                         __b.push_str(&::aver_rt::str_lit!("named "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b.push_display(&(n));
                     __b
                 })
             }
@@ -442,7 +441,7 @@ pub fn headOf(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                         __b.push_str(&::aver_rt::str_lit!("var "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b.push_display(&(n));
                     __b
                 })
             }
@@ -459,13 +458,13 @@ pub fn headOf(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                                 __b.push_str(&::aver_rt::str_lit!("unknown "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(eq))));
+                            __b.push_display(&(eq));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b.push_display(&(n));
                     __b
                 })
             }
@@ -669,17 +668,15 @@ pub fn join(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::types::show(&a)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" is not "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(crate::proof_std::aver_generated::kernel::types::show(&b)),
-                )));
+                __b.push_display(&(crate::proof_std::aver_generated::kernel::types::show(&b)));
                 __b
             })),
         }
@@ -1076,7 +1073,7 @@ pub fn sumOf(
 #[inline(always)]
 pub fn typeName(c @ _: &AverStr) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    (aver_rt::string_join(
+    aver_rt::string_join(
         &({
             let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)));
             ((aver_rt::AverList::from_vec(
@@ -1089,8 +1086,7 @@ pub fn typeName(c @ _: &AverStr) -> AverStr {
         })
         .reverse_owned(),
         &::aver_rt::str_lit!("."),
-    ))
-    .into_aver()
+    )
 }
 
 /// The field types of a constructor among a sum's variants.
@@ -1220,7 +1216,7 @@ pub fn ctorFields(
                         __b.push_str(&::aver_rt::str_lit!("unknown constructor "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                    __b.push_display(&(c));
                     __b
                 })),
                 Some(s @ _) => {
@@ -1241,7 +1237,7 @@ pub fn ctorFields(
                                     __b.push_str(&::aver_rt::str_lit!("unknown constructor "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                                __b.push_display(&(c));
                                 __b
                             })),
                             Some(fs @ _) => Ok(fs),
@@ -1259,17 +1255,15 @@ pub fn ctorFields(
                                         __b.push_str(&::aver_rt::str_lit!("constructor "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(c),
-                                    )));
+                                    __b.push_display(&(c));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" does not fit "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_std::aver_generated::kernel::types::show(subject)),
-                            )));
+                            );
                             __b
                         }))
                     }
@@ -1522,9 +1516,7 @@ pub fn typeOf(
                                         __b.push_str(&::aver_rt::str_lit!("an update of "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(n),
-                                    )));
+                                    __b.push_display(&(n));
                                     __b
                                 });
                                 crate::proof_std::aver_generated::kernel::types::must(
@@ -1557,7 +1549,7 @@ pub fn varType(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(43)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b.push_display(&(n));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" is not a variable in scope"));
@@ -1611,23 +1603,21 @@ pub fn must(
                             let mut __b = aver_rt::Buffer::with_capacity(
                                 (aver_rt::AverInt::from_i64(61)).to_usize().unwrap_or(0),
                             );
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what))));
+                            __b.push_display(&(what));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" takes "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &(crate::proof_std::aver_generated::kernel::types::show(&expected)),
-                    )));
+                    );
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(", not "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::proof_std::aver_generated::kernel::types::show(actual)),
-            )));
+            __b.push_display(&(crate::proof_std::aver_generated::kernel::types::show(actual)));
             __b
         }))
     }
@@ -1653,15 +1643,15 @@ pub fn fieldType(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::types::show(r)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" has no field "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                __b.push_display(&(f));
                 __b
             })),
         }
@@ -1682,7 +1672,7 @@ pub fn recField(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                __b.push_display(&(n));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" is not a declared record"));
@@ -1696,13 +1686,13 @@ pub fn recField(
                             let mut __b = aver_rt::Buffer::with_capacity(
                                 (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
                             );
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                            __b.push_display(&(n));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" has no field "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                    __b.push_display(&(f));
                     __b
                 })),
                 Some(t @ _) => Ok(t),
@@ -1746,7 +1736,7 @@ pub fn recordDecl(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                __b.push_display(&(n));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" is not a declared record"));
@@ -1818,15 +1808,13 @@ pub fn requiredFieldsPresent(
                                         __b.push_str(&::aver_rt::str_lit!("record "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(n),
-                                    )));
+                                    __b.push_display(&(n));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" is missing field "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f.name))));
+                            __b.push_display(&(f.name));
                             __b
                         }));
                     }
@@ -1847,7 +1835,7 @@ pub fn unique(
 ) -> Result<(), AverStr> {
     loop {
         crate::proof_std::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(names, [] => { return Ok(()); }, [n, rest, __list_slot] => { if seen.contains(&n) { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(" ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n)))); __b })); } else { {
+        ::aver_rt::aver_list_match_reuse!(names, [] => { return Ok(()); }, [n, rest, __list_slot] => { if seen.contains(&n) { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0)); __b.push_display(&(what)); __b }; __b.push_str(&::aver_rt::str_lit!(" ")); __b }; __b.push_display(&(n)); __b })); } else { {
             let __tco0 = rest;
             let __tco1 = __list_slot.prepend(n, seen);
             names = __tco0;
@@ -1865,7 +1853,7 @@ pub fn recordFieldsUnique(
 ) -> Result<(), AverStr> {
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(rs, [] => { return Ok(()); }, [r, rest] => { { let __subject = { let __arg6 @ _ = crate::proof_std::aver_generated::kernel::proof::givenNames(&r.fields); { let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty(); { let __arg8 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(60)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": record ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(r.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" repeats field")); __b }); crate::proof_std::aver_generated::kernel::types::unique(__arg6, __arg7, __arg8) } } }; match __subject { Err(why @ _) => { return Err(why); }, Ok(done @ _) => { {
+        aver_list_match!(rs, [] => { return Ok(()); }, [r, rest] => { { let __subject = { let __arg6 @ _ = crate::proof_std::aver_generated::kernel::proof::givenNames(&r.fields); { let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty(); { let __arg8 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(60)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": record ")); __b }; __b.push_display(&(r.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" repeats field")); __b }); crate::proof_std::aver_generated::kernel::types::unique(__arg6, __arg7, __arg8) } } }; match __subject { Err(why @ _) => { return Err(why); }, Ok(done @ _) => { {
             let __tco0 = rest;
             rs = __tco0;
             continue;
@@ -1882,7 +1870,7 @@ pub fn sumVariantsTyped(
 ) -> Result<(), AverStr> {
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(ss, [] => { return Ok(()); }, [s, rest] => { { let __subject = { let __arg9 @ _ = crate::proof_std::aver_generated::kernel::proof::variantNames(&s.variants); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); { let __arg11 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": sum ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" repeats constructor")); __b }); crate::proof_std::aver_generated::kernel::types::unique(__arg9, __arg10, __arg11) } } }; match __subject { Err(why @ _) => { return Err(why); }, Ok(done @ _) => { match crate::proof_std::aver_generated::kernel::types::variantsProduce(s.name, &s.variants, e, path.clone()) { Err(why @ _) => { return Err(why); }, Ok(valid @ _) => { {
+        aver_list_match!(ss, [] => { return Ok(()); }, [s, rest] => { { let __subject = { let __arg9 @ _ = crate::proof_std::aver_generated::kernel::proof::variantNames(&s.variants); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); { let __arg11 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": sum ")); __b }; __b.push_display(&(s.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" repeats constructor")); __b }); crate::proof_std::aver_generated::kernel::types::unique(__arg9, __arg10, __arg11) } } }; match __subject { Err(why @ _) => { return Err(why); }, Ok(done @ _) => { match crate::proof_std::aver_generated::kernel::types::variantsProduce(s.name, &s.variants, e, path.clone()) { Err(why @ _) => { return Err(why); }, Ok(valid @ _) => { {
             let __tco0 = rest;
             ss = __tco0;
             continue;
@@ -1937,23 +1925,19 @@ pub fn variantsProduce(
                                                 __b.push_str(&::aver_rt::str_lit!("step "));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(path)),
-                                            ));
+                                            __b.push_display(&(path));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(": constructor "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(v.name),
-                                    )));
+                                    __b.push_display(&(v.name));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" does not produce "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(sum))));
+                            __b.push_display(&(sum));
                             __b
                         }));
                     }
@@ -1987,7 +1971,7 @@ pub fn fieldsFit(
                             __b.push_str(&::aver_rt::str_lit!("record "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b.push_display(&(n));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" repeats field"));
@@ -2058,15 +2042,13 @@ pub fn fieldTypesFit(
                                             __b.push_str(&::aver_rt::str_lit!("field "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(f.name)),
-                                        ));
+                                        __b.push_display(&(f.name));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" of "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                                __b.push_display(&(n));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" does not fit its type"));
@@ -2107,7 +2089,7 @@ pub fn callType(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                                __b.push_display(&(f));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(":"));
@@ -2155,7 +2137,7 @@ pub fn sigType(
                         __b.push_str(&::aver_rt::str_lit!("no signature of "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                    __b.push_display(&(f));
                     __b
                 }));
             } else {
@@ -2174,9 +2156,7 @@ pub fn sigType(
                                                     .to_usize()
                                                     .unwrap_or(0),
                                             );
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(f)),
-                                            ));
+                                            __b.push_display(&(f));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(":"));
@@ -2228,7 +2208,7 @@ pub fn builtinType(
                 __b.push_str(&::aver_rt::str_lit!("unknown builtin "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+            __b.push_display(&(n));
             __b
         })),
         Some(s @ _) => Ok({
@@ -2244,7 +2224,7 @@ pub fn builtinType(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                                __b.push_display(&(n));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(":"));
@@ -2314,17 +2294,13 @@ pub fn bindEach(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(49)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(what),
-                                )));
+                                __b.push_display(&(what));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" takes "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(aver_rt::AverInt::from_i64(expected.len() as i64)),
-                        )));
+                        __b.push_display(&(aver_rt::AverInt::from_i64(expected.len() as i64)));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" arguments"));
@@ -2406,25 +2382,23 @@ pub fn bindShape(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(57)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(what),
-                                )));
+                                __b.push_display(&(what));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::types::show(actual)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" is not "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                __b.push_display(
                     &(crate::proof_std::aver_generated::kernel::types::show(expected)),
-                )));
+                );
                 __b
             })),
         }
@@ -2450,15 +2424,13 @@ pub fn bindVar(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(55)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what))));
+                        __b.push_display(&(what));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" == on "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(crate::proof_std::aver_generated::kernel::types::show(&actual)),
-                )));
+                __b.push_display(&(crate::proof_std::aver_generated::kernel::types::show(&actual)));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" is not equality"));
@@ -2482,15 +2454,13 @@ pub fn bindVar(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(what),
-                                )));
+                                __b.push_display(&(what));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                        __b.push_display(&(why));
                         __b
                     })),
                 }
@@ -2661,7 +2631,7 @@ pub fn opType(
                     __b.push_str(&::aver_rt::str_lit!("unknown operator "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(o))));
+                __b.push_display(&(o));
                 __b
             })),
         }
@@ -2684,13 +2654,13 @@ pub fn operands(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(o))));
+                    __b.push_display(&(o));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" takes two values of one type: "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+            __b.push_display(&(why));
             __b
         })),
     }
@@ -2717,15 +2687,13 @@ pub fn numeric(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(o))));
+                        __b.push_display(&(o));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" does not take "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(crate::proof_std::aver_generated::kernel::types::show(t)),
-                )));
+                __b.push_display(&(crate::proof_std::aver_generated::kernel::types::show(t)));
                 __b
             })),
         }
@@ -2767,7 +2735,7 @@ pub fn ctorType(
                                     __b.push_str(&::aver_rt::str_lit!("unknown constructor "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                                __b.push_display(&(c));
                                 __b
                             })),
                             Some(s @ _) => {
@@ -2787,9 +2755,7 @@ pub fn ctorType(
                                             ));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(c)),
-                                        ));
+                                        __b.push_display(&(c));
                                         __b
                                     })),
                                     Some(fs @ _) => {
@@ -2802,11 +2768,7 @@ pub fn ctorType(
                                                         let __arg28 @ _ = aver_rt::AverStr::from({
                                                             let mut __b = {
                                                                 let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0));
-                                                                __b.push_str(
-                                                                    &aver_rt::AverStr::from(
-                                                                        aver_rt::aver_display(&(c)),
-                                                                    ),
-                                                                );
+                                                                __b.push_display(&(c));
                                                                 __b
                                                             };
                                                             __b.push_str(&::aver_rt::str_lit!(":"));
@@ -2836,11 +2798,11 @@ pub fn ctorType(
                                 if __list_subject.is_empty() {
                                     Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyOption(crate::proof_std::aver_generated::kernel::term::Ty__TyOption(a.clone())))
                                 } else {
-                                    match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok({ let __arg33 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg34 @ _ = { let __arg31 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg32 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg31, e, __arg32) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg33, &__arg34) } }) } } } }
+                                    match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(fs @ _) => { Ok({ let __arg33 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg34 @ _ = { let __arg31 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg32 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_display(&(c)); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg31, e, __arg32) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg33, &__arg34) } }) } } } }
                                 }
                             }
                         } else {
-                            match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok({ let __arg37 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg38 @ _ = { let __arg35 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg36 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg35, e, __arg36) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg37, &__arg38) } }) } } } }
+                            match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(fs @ _) => { Ok({ let __arg37 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg38 @ _ = { let __arg35 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg36 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_display(&(c)); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg35, e, __arg36) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg37, &__arg38) } }) } } } }
                         }
                     }
                 } else {
@@ -2855,11 +2817,11 @@ pub fn ctorType(
                                     if __list_subject.is_empty() {
                                         Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyResult(crate::proof_std::aver_generated::kernel::term::Ty__TyResult(a.clone(), crate::proof_std::aver_generated::kernel::term::Ty::TyAny)))
                                     } else {
-                                        match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok({ let __arg41 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg42 @ _ = { let __arg39 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg40 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg39, e, __arg40) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg41, &__arg42) } }) } } } }
+                                        match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(fs @ _) => { Ok({ let __arg41 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg42 @ _ = { let __arg39 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg40 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_display(&(c)); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg39, e, __arg40) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg41, &__arg42) } }) } } } }
                                     }
                                 }
                             } else {
-                                match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok({ let __arg45 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg46 @ _ = { let __arg43 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg44 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg43, e, __arg44) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg45, &__arg46) } }) } } } }
+                                match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(fs @ _) => { Ok({ let __arg45 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg46 @ _ = { let __arg43 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg44 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_display(&(c)); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg43, e, __arg44) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg45, &__arg46) } }) } } } }
                             }
                         }
                     } else {
@@ -2874,15 +2836,15 @@ pub fn ctorType(
                                         if __list_subject.is_empty() {
                                             Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyResult(crate::proof_std::aver_generated::kernel::term::Ty__TyResult(crate::proof_std::aver_generated::kernel::term::Ty::TyAny, a.clone())))
                                         } else {
-                                            match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok({ let __arg49 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg50 @ _ = { let __arg47 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg48 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg47, e, __arg48) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg49, &__arg50) } }) } } } }
+                                            match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(fs @ _) => { Ok({ let __arg49 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg50 @ _ = { let __arg47 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg48 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_display(&(c)); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg47, e, __arg48) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg49, &__arg50) } }) } } } }
                                         }
                                     }
                                 } else {
-                                    match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok({ let __arg53 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg54 @ _ = { let __arg51 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg52 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg51, e, __arg52) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg53, &__arg54) } }) } } } }
+                                    match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(fs @ _) => { Ok({ let __arg53 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg54 @ _ = { let __arg51 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg52 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_display(&(c)); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg51, e, __arg52) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg53, &__arg54) } }) } } } }
                                 }
                             }
                         } else {
-                            match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b })) }, Some(fs @ _) => { Ok({ let __arg57 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg58 @ _ = { let __arg55 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg56 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c)))); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg55, e, __arg56) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg57, &__arg58) } }) } } } }
+                            match crate::proof_std::aver_generated::kernel::types::sumOf(c.clone(), &e.sums) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(s @ _) => { match crate::proof_std::aver_generated::kernel::types::variantFields(c.clone(), &s.variants) { None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown constructor ")); __b }; __b.push_display(&(c)); __b })) }, Some(fs @ _) => { Ok({ let __arg57 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(s.name)); { let __arg58 @ _ = { let __arg55 @ _ = <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty(); { let __arg56 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0)); __b.push_display(&(c)); __b }; __b.push_str(&::aver_rt::str_lit!(":")); __b }); crate::proof_std::aver_generated::kernel::types::bindEach(&fs, args.clone(), __arg55, e, __arg56) } }?; crate::proof_std::aver_generated::kernel::types::instantiate(__arg57, &__arg58) } }) } } } }
                         }
                     }
                 }
@@ -2979,9 +2941,9 @@ pub fn patVars(
                         __b.push_str(&::aver_rt::str_lit!("the pattern does not fit "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &(crate::proof_std::aver_generated::kernel::types::show(&subject)),
-                    )));
+                    );
                     __b
                 })),
             },
@@ -3008,9 +2970,9 @@ pub fn patVars(
                         __b.push_str(&::aver_rt::str_lit!("the pattern does not fit "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &(crate::proof_std::aver_generated::kernel::types::show(&subject)),
-                    )));
+                    );
                     __b
                 })),
             },
@@ -3028,9 +2990,9 @@ pub fn patVars(
                         __b.push_str(&::aver_rt::str_lit!("the pattern does not fit "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &(crate::proof_std::aver_generated::kernel::types::show(&subject)),
-                    )));
+                    );
                     __b
                 })),
             },
@@ -3070,23 +3032,19 @@ pub fn ctorPatVars(
                                     __b.push_str(&::aver_rt::str_lit!("constructor pattern "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                                __b.push_display(&(c));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" binds "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(aver_rt::AverInt::from_i64(ns.len() as i64)),
-                        )));
+                        __b.push_display(&(aver_rt::AverInt::from_i64(ns.len() as i64)));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" names for "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(aver_rt::AverInt::from_i64(fs.len() as i64)),
-                )));
+                __b.push_display(&(aver_rt::AverInt::from_i64(fs.len() as i64)));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" fields"));
@@ -3113,9 +3071,7 @@ pub fn litFits(
                 __b.push_str(&::aver_rt::str_lit!("the pattern does not fit "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::proof_std::aver_generated::kernel::types::show(subject)),
-            )));
+            __b.push_display(&(crate::proof_std::aver_generated::kernel::types::show(subject)));
             __b
         }))
     }
@@ -3153,7 +3109,7 @@ pub fn patVarsAll(
                     __b.push_str(&::aver_rt::str_lit!("the pattern does not fit "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                __b.push_display(
                     &(aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
@@ -3163,19 +3119,18 @@ pub fn patVarsAll(
                                 __b.push_str(&::aver_rt::str_lit!("("));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                &((aver_rt::string_join(
+                            __b.push_display(
+                                &(aver_rt::string_join(
                                     &crate::proof_std::aver_generated::kernel::types::showAll(ts),
                                     &::aver_rt::str_lit!(", "),
-                                ))
-                                .into_aver()),
-                            )));
+                                )),
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
                         __b
                     })),
-                )));
+                );
                 __b
             }))
         }
@@ -3291,9 +3246,9 @@ pub fn bindTyped(
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>, AverStr> {
     loop {
         crate::proof_std::cancel_checkpoint();
-        aver_list_match!(bs, [] => { return { let __arg8 @ _ = crate::proof_std::aver_generated::kernel::types::typesOfVars(declared); crate::proof_std::aver_generated::kernel::types::eqKept(&__arg8, bound, e, what) }; }, [b, rest] => { match crate::proof_std::aver_generated::kernel::types::find(b.name.clone(), declared) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(" does not bind ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(b.name)))); __b })); }, Some(want @ _) => { {
+        aver_list_match!(bs, [] => { return { let __arg8 @ _ = crate::proof_std::aver_generated::kernel::types::typesOfVars(declared); crate::proof_std::aver_generated::kernel::types::eqKept(&__arg8, bound, e, what) }; }, [b, rest] => { match crate::proof_std::aver_generated::kernel::types::find(b.name.clone(), declared) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0)); __b.push_display(&(what)); __b }; __b.push_str(&::aver_rt::str_lit!(" does not bind ")); __b }; __b.push_display(&(b.name)); __b })); }, Some(want @ _) => { {
             let __tco0 = rest;
-            let __tco2 = { let __arg9 @ _ = crate::proof_std::aver_generated::kernel::types::typeOf(&b.value, e)?; { let __arg10 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(": ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(b.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" :=")); __b }); crate::proof_std::aver_generated::kernel::types::bindVars(&want, __arg9, &bound, e, __arg10) } }?;
+            let __tco2 = { let __arg9 @ _ = crate::proof_std::aver_generated::kernel::types::typeOf(&b.value, e)?; { let __arg10 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0)); __b.push_display(&(what)); __b }; __b.push_str(&::aver_rt::str_lit!(": ")); __b }; __b.push_display(&(b.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" :=")); __b }); crate::proof_std::aver_generated::kernel::types::bindVars(&want, __arg9, &bound, e, __arg10) } }?;
             bs = __tco0;
             bound = __tco2;
             continue;
@@ -3351,15 +3306,13 @@ pub fn eqKept(
                                                                     .to_usize()
                                                                     .unwrap_or(0),
                                                             );
-                                                        __b.push_str(&aver_rt::AverStr::from(
-                                                            aver_rt::aver_display(&(what)),
-                                                        ));
+                                                        __b.push_display(&(what));
                                                         __b
                                                     };
                                                     __b.push_str(&::aver_rt::str_lit!(": == on "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg9 @ _ = crate::proof_std::aver_generated::kernel::types::find(n, &bound).unwrap_or(crate::proof_std::aver_generated::kernel::term::Ty::TyAny); crate::proof_std::aver_generated::kernel::types::show(&__arg9) }))));
+                                                __b.push_display(&({ let __arg9 @ _ = crate::proof_std::aver_generated::kernel::types::find(n, &bound).unwrap_or(crate::proof_std::aver_generated::kernel::term::Ty::TyAny); crate::proof_std::aver_generated::kernel::types::show(&__arg9) }));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" is not equality"));

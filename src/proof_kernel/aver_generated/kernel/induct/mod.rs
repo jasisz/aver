@@ -548,21 +548,19 @@ pub fn helperCalls(
                                                 .to_usize()
                                                 .unwrap_or(0),
                                         );
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(f)),
-                                        ));
+                                        __b.push_display(&(f));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" recurses through "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(g))));
+                                __b.push_display(&(g));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(", which reaches itself without "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                        __b.push_display(&(f));
                         __b
                     }))
                 }
@@ -603,15 +601,13 @@ pub fn helperBody(
                             let mut __b = aver_rt::Buffer::with_capacity(
                                 (aver_rt::AverInt::from_i64(49)).to_usize().unwrap_or(0),
                             );
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h.name))));
+                            __b.push_display(&(h.name));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" takes "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(aver_rt::AverInt::from_i64(h.params.len() as i64)),
-                    )));
+                    __b.push_display(&(aver_rt::AverInt::from_i64(h.params.len() as i64)));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" arguments"));
@@ -623,13 +619,13 @@ pub fn helperBody(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(66)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                        __b.push_display(&(f));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" recurses from a local binding of "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h.name))));
+                __b.push_display(&(h.name));
                 __b
             })),
             _ => {
@@ -779,7 +775,7 @@ pub fn readOne(
 #[inline(always)]
 pub fn unread(mut ns @ _: aver_rt::AverList<AverStr>, h @ _: AverStr) -> Result<(), AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(ns, [] => Ok(()), [n, rest] => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(85)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h)))); __b }; __b.push_str(&::aver_rt::str_lit!(" passes ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n)))); __b }; __b.push_str(&::aver_rt::str_lit!(", which it does not bind, to a recursive call")); __b })) })
+    aver_list_match!(ns, [] => Ok(()), [n, rest] => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(85)).to_usize().unwrap_or(0)); __b.push_display(&(h)); __b }; __b.push_str(&::aver_rt::str_lit!(" passes ")); __b }; __b.push_display(&(n)); __b }; __b.push_str(&::aver_rt::str_lit!(", which it does not bind, to a recursive call")); __b })) })
 }
 
 /// Each parameter bound to its argument.
@@ -993,20 +989,20 @@ pub fn recursive(
             { let __t = __pat4; match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(____pat5_fields) => {
             let __pat5 = ____pat5_fields.0.clone();
-            { let __int_match_subject = __pat5; if __int_match_subject == aver_rt::AverInt::from_i64(0) { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(op, crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(p.clone())), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))))); crate::proof_kernel::aver_generated::kernel::induct::towardZero(d, ds, __arg14, p.clone(), { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg13, p, aver_rt::AverInt::from_i64(0)) }, arms) } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b })) } }
+            { let __int_match_subject = __pat5; if __int_match_subject == aver_rt::AverInt::from_i64(0) { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(op, crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(p.clone())), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))))); crate::proof_kernel::aver_generated::kernel::induct::towardZero(d, ds, __arg14, p.clone(), { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg13, p, aver_rt::AverInt::from_i64(0)) }, arms) } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
         }
     } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
         }
     } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0)); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
         }
     }
                             }
@@ -1016,9 +1012,7 @@ pub fn recursive(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(56)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(d.name),
-                                )));
+                                __b.push_display(&(d.name));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(
@@ -1034,7 +1028,7 @@ pub fn recursive(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                        __b.push_display(&(d.name));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" recurses from a local binding"));
@@ -1060,7 +1054,7 @@ pub fn onParts(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(69)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                __b.push_display(&(d.name));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(
@@ -1086,7 +1080,7 @@ pub fn onParts(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(81)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                    __b.push_display(&(d.name));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(
@@ -1150,7 +1144,7 @@ pub fn towardZero(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(69)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                    __b.push_display(&(d.name));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(
@@ -1172,7 +1166,7 @@ pub fn towardZero(
                                 {
                                     let __list_subject = __pat4;
                                     if __list_subject.is_empty() {
-                                        if (crate::proof_kernel::aver_generated::kernel::induct::oneEach(a.pattern.clone(), b.pattern.clone()) && (crate::proof_kernel::aver_generated::kernel::induct::armDescends(a, stop.clone(), d, ds, p.clone(), j.clone())? && crate::proof_kernel::aver_generated::kernel::induct::armDescends(b, stop, d, ds, p.clone(), j.clone())?)) { Ok(crate::proof_kernel::aver_generated::kernel::induct::Recursion { at: j, guard: Some(guard), arms: crate::proof_kernel::aver_generated::kernel::induct::armCalls(arms, d, ds)? }) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(61)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" does not count ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p)))); __b }; __b.push_str(&::aver_rt::str_lit!(" down to zero")); __b })) }
+                                        if (crate::proof_kernel::aver_generated::kernel::induct::oneEach(a.pattern.clone(), b.pattern.clone()) && (crate::proof_kernel::aver_generated::kernel::induct::armDescends(a, stop.clone(), d, ds, p.clone(), j.clone())? && crate::proof_kernel::aver_generated::kernel::induct::armDescends(b, stop, d, ds, p.clone(), j.clone())?)) { Ok(crate::proof_kernel::aver_generated::kernel::induct::Recursion { at: j, guard: Some(guard), arms: crate::proof_kernel::aver_generated::kernel::induct::armCalls(arms, d, ds)? }) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(61)).to_usize().unwrap_or(0)); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" does not count ")); __b }; __b.push_display(&(p)); __b }; __b.push_str(&::aver_rt::str_lit!(" down to zero")); __b })) }
                                     } else {
                                         Err(aver_rt::AverStr::from({
                                             let mut __b = {
@@ -1184,9 +1178,7 @@ pub fn towardZero(
                                                                     .to_usize()
                                                                     .unwrap_or(0),
                                                             );
-                                                        __b.push_str(&aver_rt::AverStr::from(
-                                                            aver_rt::aver_display(&(d.name)),
-                                                        ));
+                                                        __b.push_display(&(d.name));
                                                         __b
                                                     };
                                                     __b.push_str(&::aver_rt::str_lit!(
@@ -1194,9 +1186,7 @@ pub fn towardZero(
                                                     ));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(p)),
-                                                ));
+                                                __b.push_display(&(p));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" down to zero"));
@@ -1214,17 +1204,13 @@ pub fn towardZero(
                                                         .to_usize()
                                                         .unwrap_or(0),
                                                 );
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(d.name)),
-                                                ));
+                                                __b.push_display(&(d.name));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" does not count "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(p)),
-                                        ));
+                                        __b.push_display(&(p));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" down to zero"));
@@ -1242,15 +1228,13 @@ pub fn towardZero(
                                                 .to_usize()
                                                 .unwrap_or(0),
                                         );
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(d.name)),
-                                        ));
+                                        __b.push_display(&(d.name));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" does not count "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p))));
+                                __b.push_display(&(p));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" down to zero"));
@@ -1265,15 +1249,13 @@ pub fn towardZero(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(61)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(d.name),
-                                )));
+                                __b.push_display(&(d.name));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" does not count "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(p))));
+                        __b.push_display(&(p));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" down to zero"));
@@ -2461,9 +2443,7 @@ pub fn eachNotMutual(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(d.name),
-                                )));
+                                __b.push_display(&(d.name));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" is part of a mutual recursion"));

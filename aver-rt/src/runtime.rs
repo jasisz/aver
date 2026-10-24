@@ -118,11 +118,17 @@ pub fn time_sleep(ms: i64) {
     std::thread::sleep(std::time::Duration::from_millis(ms as u64));
 }
 
-pub fn string_slice(s: &str, from: i64, to: i64) -> String {
+/// The characters `from..to` of `s`, clamped to it.
+pub fn string_slice(s: &str, from: i64, to: i64) -> &str {
     let start = from.max(0) as usize;
     let end = to.max(0) as usize;
     if start >= end {
-        return String::new();
+        return "";
+    }
+    // Over ASCII bytes a character is a byte.
+    let prefix = &s.as_bytes()[..end.min(s.len())];
+    if prefix.is_ascii() {
+        return &s[start.min(prefix.len())..prefix.len()];
     }
 
     let mut start_byte = None;
@@ -150,10 +156,10 @@ pub fn string_slice(s: &str, from: i64, to: i64) -> String {
     let start_byte = start_byte.unwrap_or(s.len());
     let end_byte = end_byte.unwrap_or(s.len());
     if start_byte >= end_byte {
-        return String::new();
+        return "";
     }
 
-    s[start_byte..end_byte].to_string()
+    &s[start_byte..end_byte]
 }
 
 pub fn read_text(path: &str) -> Result<String, String> {

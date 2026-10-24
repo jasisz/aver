@@ -644,7 +644,7 @@ pub fn fresh(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b.push_display(&(n));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" is defined twice"));
@@ -662,7 +662,7 @@ pub fn fresh(
                 __b.push_str(&::aver_rt::str_lit!("a shared name starts with #: "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+            __b.push_display(&(n));
             __b
         }))
     }
@@ -699,7 +699,7 @@ pub fn within(
                             let mut __b = aver_rt::Buffer::with_capacity(
                                 (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
                             );
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(a))));
+                            __b.push_display(&(a));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" is not defined before its use"));

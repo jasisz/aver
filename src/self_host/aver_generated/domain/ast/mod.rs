@@ -3623,12 +3623,12 @@ pub fn isTypeVariantTail(typeName @ _: AverStr, variantName @ _: AverStr) -> boo
 #[inline(always)]
 pub fn beginsUppercase(segment @ _: &AverStr) -> bool {
     crate::cancel_checkpoint();
-    match ((aver_rt::AverInt::from_i64(0))
+    match (aver_rt::AverInt::from_i64(0))
         .to_usize()
-        .and_then(|__i| segment.chars().nth(__i).map(|c| c.to_string())))
-    .into_aver()
+        .and_then(|__i| segment.chars().nth(__i))
+        .map(aver_rt::char_str)
     {
-        Some(c @ _) => (c != (c.to_lowercase()).into_aver()),
+        Some(c @ _) => (c != aver_rt::string_case(&c, false)),
         None => false,
     }
 }

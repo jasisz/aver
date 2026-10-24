@@ -1334,7 +1334,7 @@ pub fn lb(
                     __b.push_str(&::aver_rt::str_lit!("List."));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                __b.push_display(&(name));
                 __b
             }),
             args.clone(),
@@ -1717,7 +1717,7 @@ pub fn mb(
                     __b.push_str(&::aver_rt::str_lit!("Map."));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                __b.push_display(&(name));
                 __b
             }),
             args.clone(),
@@ -1999,7 +1999,7 @@ pub fn vb(
                     __b.push_str(&::aver_rt::str_lit!("Vector."));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                __b.push_display(&(name));
                 __b
             }),
             args.clone(),

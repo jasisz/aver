@@ -267,7 +267,7 @@ fn slice_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
     let from = saturate_index(&args[1].as_aver_int(arena));
     let to = saturate_index(&args[2].as_aver_int(arena));
     let result = aver_rt::string_slice(&s, from, to);
-    Ok(NanValue::new_string_value(&result, arena))
+    Ok(NanValue::new_string_value(result, arena))
 }
 
 fn trim_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

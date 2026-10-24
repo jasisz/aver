@@ -1148,12 +1148,11 @@ pub fn tokenizeStringEscape(
 #[inline(always)]
 pub fn openBrace() -> AverStr {
     crate::cancel_checkpoint();
-    ((aver_rt::AverInt::from_i64(123))
+    (aver_rt::AverInt::from_i64(123))
         .to_u32()
         .and_then(char::from_u32)
-        .map(|c| c.to_string()))
-    .into_aver()
-    .unwrap_or(::aver_rt::str_lit!("x"))
+        .map(aver_rt::char_str)
+        .unwrap_or(::aver_rt::str_lit!("x"))
 }
 
 /// Handle one character inside a string literal.
@@ -1250,12 +1249,11 @@ pub fn tokenizeInterpExprAt(
 #[inline(always)]
 pub fn closeBrace() -> AverStr {
     crate::cancel_checkpoint();
-    ((aver_rt::AverInt::from_i64(125))
+    (aver_rt::AverInt::from_i64(125))
         .to_u32()
         .and_then(char::from_u32)
-        .map(|c| c.to_string()))
-    .into_aver()
-    .unwrap_or(::aver_rt::str_lit!("x"))
+        .map(aver_rt::char_str)
+        .unwrap_or(::aver_rt::str_lit!("x"))
 }
 
 /// Dispatch interpolation char.

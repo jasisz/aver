@@ -219,17 +219,13 @@ pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
                             __b.push_str(&::aver_rt::str_lit!("byte "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(crate::aver_generated::bytes::firstOutOfRange(xs)),
-                        )));
+                        __b.push_display(&(crate::aver_generated::bytes::firstOutOfRange(xs)));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" at index "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(crate::aver_generated::bytes::firstOutOfRangeIndex(xs)),
-                )));
+                __b.push_display(&(crate::aver_generated::bytes::firstOutOfRangeIndex(xs)));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" is outside 0..=255"));
@@ -305,7 +301,7 @@ pub fn parseHexChars(
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(chars, [] => { return Ok((acc).reverse_owned()); }, [highChar, afterHigh] => { aver_list_match!(afterHigh, [] => { return Err(::aver_rt::str_lit!("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(highChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(highChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(lowChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(lowChar)))); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(low @ _) => { {
+        aver_list_match!(chars, [] => { return Ok((acc).reverse_owned()); }, [highChar, afterHigh] => { aver_list_match!(afterHigh, [] => { return Err(::aver_rt::str_lit!("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(highChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_display(&(highChar)); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(lowChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_display(&(lowChar)); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(low @ _) => { {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverIntList::prepend_owned(high.mul(&aver_rt::AverInt::from_i64(16)).add(&low), acc);
             chars = __tco0;
@@ -643,16 +639,14 @@ pub fn parseHexChars__cursor(
                                                     __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(
-                                                        &(aver_rt::AverStr::from(
-                                                            aver_rt::str_cursor_head(
-                                                                &__cur_s,
-                                                                (__cur_i) as usize,
-                                                            ),
-                                                        )),
-                                                    ),
-                                                ));
+                                                __b.push_display(
+                                                    &(aver_rt::AverStr::from(
+                                                        aver_rt::str_cursor_head(
+                                                            &__cur_s,
+                                                            (__cur_i) as usize,
+                                                        ),
+                                                    )),
+                                                );
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!("'"));
@@ -678,16 +672,14 @@ pub fn parseHexChars__cursor(
                                                             __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(
-                                                            aver_rt::aver_display(
-                                                                &(aver_rt::AverStr::from(
-                                                                    aver_rt::str_cursor_head(
-                                                                        &__cur_s,
-                                                                        (__cur_i1) as usize,
-                                                                    ),
-                                                                )),
-                                                            ),
-                                                        ));
+                                                        __b.push_display(
+                                                            &(aver_rt::AverStr::from(
+                                                                aver_rt::str_cursor_head(
+                                                                    &__cur_s,
+                                                                    (__cur_i1) as usize,
+                                                                ),
+                                                            )),
+                                                        );
                                                         __b
                                                     };
                                                     __b.push_str(&::aver_rt::str_lit!("'"));
@@ -846,16 +838,14 @@ pub fn parseHexChars__cursor__collected(
                                                     __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(
-                                                        &(aver_rt::AverStr::from(
-                                                            aver_rt::str_cursor_head(
-                                                                &__cur_s,
-                                                                (__cur_i) as usize,
-                                                            ),
-                                                        )),
-                                                    ),
-                                                ));
+                                                __b.push_display(
+                                                    &(aver_rt::AverStr::from(
+                                                        aver_rt::str_cursor_head(
+                                                            &__cur_s,
+                                                            (__cur_i) as usize,
+                                                        ),
+                                                    )),
+                                                );
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!("'"));
@@ -881,16 +871,14 @@ pub fn parseHexChars__cursor__collected(
                                                             __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(
-                                                            aver_rt::aver_display(
-                                                                &(aver_rt::AverStr::from(
-                                                                    aver_rt::str_cursor_head(
-                                                                        &__cur_s,
-                                                                        (__cur_i1) as usize,
-                                                                    ),
-                                                                )),
-                                                            ),
-                                                        ));
+                                                        __b.push_display(
+                                                            &(aver_rt::AverStr::from(
+                                                                aver_rt::str_cursor_head(
+                                                                    &__cur_s,
+                                                                    (__cur_i1) as usize,
+                                                                ),
+                                                            )),
+                                                        );
                                                         __b
                                                     };
                                                     __b.push_str(&::aver_rt::str_lit!("'"));

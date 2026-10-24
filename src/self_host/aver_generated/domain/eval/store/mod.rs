@@ -151,9 +151,7 @@ pub fn lookupFnById(
                 __b.push_str(&::aver_rt::str_lit!("undefined function id: "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &((id.to_string()).into_aver()),
-            )));
+            __b.push_display(&(aver_rt::display_str(&(id))));
             __b
         })),
     }

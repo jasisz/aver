@@ -48,17 +48,13 @@ fn __mutual_tco_trampoline_1(
                                                 __b.push_str(&::aver_rt::str_lit!("substituting "));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(b.name)),
-                                            ));
+                                            __b.push_display(&(b.name));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(" would capture "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(c),
-                                    )));
+                                    __b.push_display(&(c));
                                     __b
                                 }));
                             }

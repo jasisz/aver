@@ -83,9 +83,7 @@ pub fn lookupSlot(
                 __b.push_str(&::aver_rt::str_lit!("slot out of bounds: "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &((slot.to_string()).into_aver()),
-            )));
+            __b.push_display(&(aver_rt::display_str(&(slot))));
             __b
         })),
     }

@@ -533,7 +533,7 @@ pub fn tokenRepr(t @ _: &Token) -> AverStr {
                         __b.push_str(&::aver_rt::str_lit!("Int("));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b.push_display(&(n));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));
@@ -555,7 +555,7 @@ pub fn tokenRepr(t @ _: &Token) -> AverStr {
                         __b.push_str(&::aver_rt::str_lit!("Str("));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
+                    __b.push_display(&(s));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));
@@ -573,7 +573,7 @@ pub fn tokenRepr(t @ _: &Token) -> AverStr {
                         __b.push_str(&::aver_rt::str_lit!("Ident("));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
+                    __b.push_display(&(s));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));

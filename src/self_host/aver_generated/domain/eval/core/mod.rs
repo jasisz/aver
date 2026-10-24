@@ -561,9 +561,9 @@ fn __mutual_tco_trampoline_1(
                                     ));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::aver_generated::domain::eval::core::exprLabel(&expr)),
-                                )));
+                                );
                                 __b
                             }));
                         }
@@ -1877,9 +1877,9 @@ fn __mutual_tco_trampoline_3(
                                     ));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::aver_generated::domain::eval::core::exprLabel(&expr)),
-                                )));
+                                );
                                 __b
                             }));
                         }
