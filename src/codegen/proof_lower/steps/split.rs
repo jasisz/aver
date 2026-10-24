@@ -340,10 +340,10 @@ impl Env<'_> {
         // Only a subject of a sum or list type: a comparison is split on by
         // the Bool splits, and a list variable by the list-variable split.
         // The type must be known: the Lean export reads the split by it.
-        if matches!(on.node, ResolvedExpr::Ident(_)) && !matches!(on.ty(), Some(Type::Named { .. }))
-            || !matches!(on.ty(), Some(Type::List(_) | Type::Named { .. }))
-        {
-            return None;
+        match on.ty() {
+            Some(Type::Named { .. }) => {}
+            Some(Type::List(_)) if !matches!(on.node, ResolvedExpr::Ident(_)) => {}
+            _ => return None,
         }
         let ctors = self.split_ctors(arms, on.ty())?;
         if ctors

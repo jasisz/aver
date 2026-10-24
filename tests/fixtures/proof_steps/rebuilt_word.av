@@ -1,0 +1,117 @@
+module RebuiltWord
+    intent = "A term rebuilt along a plan takes the word the plan gives its top node, its parts rebuilt the same way, one of them put off. What the word of the result is follows from the same cases, without the parts."
+    exposes [Term, Plan, Mode, wordOf, rebuilt, predicted]
+    effects []
+
+type Term
+    Atom(Int)
+    Pair(Int, Term, Term)
+    Tag(Int, Int)
+
+type Plan
+    Keep
+    Swap(Int)
+    Node(Int, List<Plan>)
+
+type Mode
+    Fresh(Int)
+    Whole
+
+fn wordOf(t: Term) -> Int
+    ? "The word a pair or a tag carries, or -1 for an atom, whose word is made on the spot."
+    match t
+        Term.Pair(w, _, _) -> w
+        Term.Tag(w, _) -> w
+        _ -> -1
+
+verify wordOf
+    wordOf(Term.Atom(1)) => -1
+    wordOf(Term.Pair(5, Term.Atom(1), Term.Atom(2))) => 5
+
+fn swapped(t: Term, k: Int) -> Term
+    ? "A leaf of the plan: the term as the atom k, or as it is for a negative k."
+    match k >= 0
+        true -> Term.Atom(k)
+        false -> t
+
+verify swapped
+    swapped(Term.Atom(1), 2) => Term.Atom(2)
+
+fn rebuilt(t: Term, p: Plan, m: Mode) -> Term
+    ? "t rebuilt along p: kept, swapped, or a node given the plan's word with its parts rebuilt; in the mode Whole a node is left whole, and Fresh carries a depth it does not read here."
+    match p
+        Plan.Keep -> t
+        Plan.Swap(k) -> swapped(t, k)
+        Plan.Node(w, kids) -> match m
+            Mode.Fresh(_) -> rebuiltNode(t, w, kids, m)
+            Mode.Whole -> t
+
+verify rebuilt
+    rebuilt(Term.Atom(1), Plan.Keep, Mode.Fresh(0)) => Term.Atom(1)
+
+fn fits(t: Term, k: Int) -> Bool
+    ? "Whether t is a pair and its plan has two parts."
+    match t
+        Term.Pair(_, _, _) -> k == 2
+        _ -> false
+
+verify fits
+    fits(Term.Atom(1), 2) => false
+
+fn rebuiltNode(t: Term, w: Int, kids: List<Plan>, m: Mode) -> Term
+    ? "A pair rebuilt with the word w, its parts along their plans, the second put off; a term that does not fit its plan left as it is."
+    match fits(t, List.len(kids))
+        true -> rebuiltPair(t, w, kids, m)
+        false -> t
+
+verify rebuiltNode
+    rebuiltNode(Term.Atom(1), 5, [], Mode.Fresh(0)) => Term.Atom(1)
+
+fn kidAt(kids: List<Plan>, i: Int) -> Plan
+    ? "The first or the second plan of the parts."
+    match kids
+        [] -> Plan.Keep
+        [k, ..rest] -> match i == 0
+            true -> k
+            false -> match rest
+                [] -> Plan.Keep
+                [k1, .._] -> k1
+
+verify kidAt
+    kidAt([Plan.Swap(1)], 0) => Plan.Swap(1)
+
+fn rebuiltPair(t: Term, w: Int, kids: List<Plan>, m: Mode) -> Term
+    ? "A pair that fits its plan, rebuilt with the word w."
+    match t
+        Term.Pair(_, a, b) -> Term.Pair(w, rebuilt(a, kidAt(kids, 0), m), lazy rebuilt(b, kidAt(kids, 1), m) knowing rebuilt.knowsWord(b, kidAt(kids, 1), m))
+        _ -> t
+
+verify rebuiltPair
+    rebuiltPair(Term.Atom(1), 5, [], Mode.Fresh(0)) => Term.Atom(1)
+
+fn predicted(t: Term, p: Plan, m: Mode) -> Int
+    ? "What wordOf gives for rebuilt(t, p, m), by the same cases."
+    match p
+        Plan.Keep -> wordOf(t)
+        Plan.Swap(k) -> wordOf(swapped(t, k))
+        Plan.Node(w, kids) -> match m
+            Mode.Fresh(_) -> nodePredicted(t, w, List.len(kids))
+            Mode.Whole -> wordOf(t)
+
+verify predicted
+    predicted(Term.Atom(1), Plan.Keep, Mode.Fresh(0)) => -1
+
+fn nodePredicted(t: Term, w: Int, k: Int) -> Int
+    ? "rebuiltNode's word: w when the term fits its plan, its own otherwise."
+    match fits(t, k)
+        true -> w
+        false -> wordOf(t)
+
+verify nodePredicted
+    nodePredicted(Term.Atom(1), 5, 2) => -1
+
+verify rebuilt law knowsWord
+    given t: Term = [Term.Atom(1), Term.Pair(3, Term.Atom(1), Term.Tag(4, 0)), Term.Tag(6, 1)]
+    given p: Plan = [Plan.Keep, Plan.Swap(2), Plan.Swap(-1), Plan.Node(9, [Plan.Keep, Plan.Swap(1)]), Plan.Node(8, [])]
+    given m: Mode = [Mode.Fresh(0), Mode.Fresh(1), Mode.Whole]
+    wordOf(rebuilt(t, p, m)) => predicted(t, p, m)
