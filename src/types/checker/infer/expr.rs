@@ -225,7 +225,7 @@ impl TypeChecker {
         // means the matcher can rely on `id` being the
         // load-bearing signal and reject mixed `(Some, None)`
         // outright.
-        if expr.lazy {
+        if expr.lazy.is_deferred() {
             self.check_lazy_call(expr);
         }
         let raw = self.infer_type_inner(expr);
@@ -281,7 +281,7 @@ impl TypeChecker {
         if let Some(exp) = expected
             && let Some(ty) = self.try_infer_with_expected(expr, exp)
         {
-            if expr.lazy {
+            if expr.lazy.is_deferred() {
                 self.check_lazy_call(expr);
             }
             self.stamp(expr, ty.clone());

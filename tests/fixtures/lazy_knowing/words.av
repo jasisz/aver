@@ -1,0 +1,68 @@
+module Words
+    intent = "Terms that carry a word, and a shift that knows the word of each part it defers."
+    exposes [Term, wordOf, wordUnder, shift, shiftNow, tree, size]
+    effects []
+
+type Term
+    Var(Int, Int)
+    App(Term, Term, Int)
+
+fn wordOf(t: Term) -> Int
+    ? "The word a term carries."
+    match t
+        Term.Var(_, w) -> w
+        Term.App(_, _, w) -> w
+
+verify wordOf
+    wordOf(Term.Var(0, 5)) => 5
+    wordOf(Term.App(Term.Var(0, 5), Term.Var(1, 6), 9)) => 9
+
+fn wordUnder(t: Term, by: Int) -> Int
+    ? "The word of `t` shifted by `by`, from the word of `t` alone."
+    wordOf(t) * 31 + by
+
+verify wordUnder
+    wordUnder(Term.Var(0, 5), 2) => 157
+
+fn shift(t: Term, by: Int) -> Term
+    ? "Every variable moved by `by`, one level at a time: each part below is deferred and knows its word. A variable stays as it is for a negative `by`."
+    match t
+        Term.Var(n, _) -> match by < 0
+            true -> t
+            false -> Term.Var(n + by, wordUnder(t, by))
+        Term.App(f, a, _) -> Term.App(lazy shift(f, by) knowing shift.wordKnown(f, by), lazy shift(a, by) knowing shift.wordKnown(a, by), wordUnder(t, by))
+
+verify shift law wordKnown
+    given t: Term = [Term.Var(0, 5), Term.App(Term.Var(1, 2), Term.Var(2, 3), 9)]
+    given by: Int = [0, 1, 7]
+    when by >= 0
+    wordOf(shift(t, by)) => wordUnder(t, by)
+
+fn shiftNow(t: Term, by: Int) -> Term
+    ? "The same, built at once."
+    match t
+        Term.Var(n, _) -> match by < 0
+            true -> t
+            false -> Term.Var(n + by, wordUnder(t, by))
+        Term.App(f, a, _) -> Term.App(shiftNow(f, by), shiftNow(a, by), wordUnder(t, by))
+
+verify shiftNow
+    shiftNow(Term.Var(1, 5), 2) => Term.Var(3, 157)
+
+fn tree(n: Int, d: Int) -> Term
+    ? "A full tree of applications n deep, its variables numbered from d."
+    match n <= 0
+        true -> Term.Var(d, d + 1)
+        false -> Term.App(tree(n - 1, d + 1), tree(n - 1, d + 2), n * 7 + d)
+
+verify tree
+    tree(0, 3) => Term.Var(3, 4)
+
+fn size(t: Term) -> Int
+    ? "Nodes in the term."
+    match t
+        Term.Var(_, _) -> 1
+        Term.App(f, a, _) -> 1 + size(f) + size(a)
+
+verify size
+    size(Term.App(Term.Var(0, 1), Term.Var(1, 2), 3)) => 3

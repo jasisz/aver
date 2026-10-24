@@ -54,7 +54,7 @@ fn transform_tail_expr(spanned: &mut Spanned<Expr>, scc_members: &HashSet<String
         // (`lazy f(args)`) is not a loop step: compiled Rust returns the
         // deferred call at once, the other backends make an ordinary call.
         Expr::FnCall(fn_expr, args) => {
-            if !spanned.lazy
+            if !spanned.lazy.is_deferred()
                 && let Expr::Ident(name) = &fn_expr.node
                 && scc_members.contains(name)
             {
@@ -158,7 +158,7 @@ fn up(n: Int) -> T
             .expect("down");
         let arms = extract_match_arms(fd);
         assert!(matches!(arms[1].body.node, Expr::FnCall(..)));
-        assert!(arms[1].body.lazy);
+        assert!(arms[1].body.lazy.is_deferred());
     }
 
     #[test]

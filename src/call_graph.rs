@@ -201,64 +201,69 @@ fn expr_to_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
 }
 
 pub(crate) fn walk_expr(expr: &Spanned<Expr>, visit: &mut impl FnMut(&Expr)) {
-    visit(&expr.node);
+    walk_spanned(expr, &mut |e| visit(&e.node));
+}
+
+/// [`walk_expr`] over the nodes with their spans.
+pub(crate) fn walk_spanned<'a>(expr: &'a Spanned<Expr>, visit: &mut impl FnMut(&'a Spanned<Expr>)) {
+    visit(expr);
     match &expr.node {
         Expr::FnCall(func, args) => {
-            walk_expr(func, visit);
+            walk_spanned(func, visit);
             for arg in args {
-                walk_expr(arg, visit);
+                walk_spanned(arg, visit);
             }
         }
         Expr::TailCall(boxed) => {
             for arg in &boxed.args {
-                walk_expr(arg, visit);
+                walk_spanned(arg, visit);
             }
         }
-        Expr::Attr(obj, _) => walk_expr(obj, visit),
+        Expr::Attr(obj, _) => walk_spanned(obj, visit),
         Expr::BinOp(_, l, r) => {
-            walk_expr(l, visit);
-            walk_expr(r, visit);
+            walk_spanned(l, visit);
+            walk_spanned(r, visit);
         }
-        Expr::Neg(inner) => walk_expr(inner, visit),
+        Expr::Neg(inner) => walk_spanned(inner, visit),
         Expr::Match { subject, arms, .. } => {
-            walk_expr(subject, visit);
+            walk_spanned(subject, visit);
             for arm in arms {
-                walk_expr(&arm.body, visit);
+                walk_spanned(&arm.body, visit);
             }
         }
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
-                walk_expr(item, visit);
+                walk_spanned(item, visit);
             }
         }
         Expr::MapLiteral(entries) => {
             for (k, v) in entries {
-                walk_expr(k, visit);
-                walk_expr(v, visit);
+                walk_spanned(k, visit);
+                walk_spanned(v, visit);
             }
         }
         Expr::Constructor(_, maybe) => {
             if let Some(inner) = maybe {
-                walk_expr(inner, visit);
+                walk_spanned(inner, visit);
             }
         }
-        Expr::ErrorProp(inner) => walk_expr(inner, visit),
+        Expr::ErrorProp(inner) => walk_spanned(inner, visit),
         Expr::InterpolatedStr(parts) => {
             for part in parts {
                 if let StrPart::Parsed(e) = part {
-                    walk_expr(e, visit);
+                    walk_spanned(e, visit);
                 }
             }
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
-                walk_expr(e, visit);
+                walk_spanned(e, visit);
             }
         }
         Expr::RecordUpdate { base, updates, .. } => {
-            walk_expr(base, visit);
+            walk_spanned(base, visit);
             for (_, e) in updates {
-                walk_expr(e, visit);
+                walk_spanned(e, visit);
             }
         }
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}

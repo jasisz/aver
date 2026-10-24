@@ -262,6 +262,7 @@ aver context main.av --module-root . --decisions-only --json
 - Error propagation: `expr?` unwraps `Result.Ok` and propagates `Result.Err`. It is **Result-only** and does not work on `Option`. For `Option`, use `Option.withDefault(opt, fallback)` or pattern-match.
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
 - Deferred call: `lazy f(x)` is `f(x)`, made on compiled Rust only when the result is first looked at, and once. Only for a function declared with `fn`, without effects, returning a recursive sum (a tree, a term); anything else is a compile error. See `docs/language.md`, "Deferred calls"
+- Deferred call that knows a value: `lazy f(x) knowing f.law(x)` names a law `P(f(x)) => R` of `f`; compiled Rust keeps `R` in the deferred node and answers `P` from it without making the call. `aver check`/`aver compile` refuse it unless the proof kernel closes the law (`--trust-laws`: its samples pass and the program checks it when the call is made). See `docs/language.md`, "Deferred calls that know a value"
 - String interpolation: `"Hello, {name}!"` takes **primitives only** (`Int`, `Float`, `Bool`, `String`). Embedding a list, record, tuple, `Map`, `Option`/`Result`, `Vector` or any named type is a type error. Write a function returning `String` and interpolate its result.
 
 **These operators do NOT exist.** Do not use them. Writing one is an error that names the function that replaces it (slug `rejected-operator`):

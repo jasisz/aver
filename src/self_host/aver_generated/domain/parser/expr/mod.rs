@@ -1947,7 +1947,7 @@ pub fn parseIdentOrLazy(
     if (&*name == "lazy") {
         match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkIdent(callee) => {
-                crate::aver_generated::domain::parser::expr::parseIdentOrCall(
+                crate::aver_generated::domain::parser::expr::parseLazyCall(
                     tokens,
                     pos.add(&aver_rt::AverInt::from_i64(1)),
                     callee,
@@ -1957,6 +1957,89 @@ pub fn parseIdentOrLazy(
         }
     } else {
         crate::aver_generated::domain::parser::expr::parseIdentOrCall(tokens, pos, name)
+    }
+}
+
+/// The call after `lazy`, and past it `knowing f.law(x)` if it follows: what a law says of the call's result, which a call made at once has no use for.
+pub fn parseLazyCall(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    pos @ _: aver_rt::AverInt,
+    callee @ _: AverStr,
+) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
+    crate::cancel_checkpoint();
+    let parsed @ _ =
+        crate::aver_generated::domain::parser::expr::parseIdentOrCall(tokens, pos, callee)?;
+    {
+        let (call, next) = parsed.clone();
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, next.clone()) {
+            crate::aver_generated::domain::token::Token::TkIdent(word) => {
+                if (&*word == "knowing") {
+                    crate::aver_generated::domain::parser::expr::skipKnowing(
+                        tokens,
+                        next.add(&aver_rt::AverInt::from_i64(1)),
+                        call,
+                    )
+                } else {
+                    Ok(parsed)
+                }
+            }
+            _ => Ok(parsed),
+        }
+    }
+}
+
+/// Reads past the law `knowing` names, keeping the call.
+pub fn skipKnowing(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    pos @ _: aver_rt::AverInt,
+    mut call @ _: crate::aver_generated::domain::ast::Expr,
+) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
+    crate::cancel_checkpoint();
+    match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
+        crate::aver_generated::domain::token::Token::TkIdent(law) => {
+            let __arg4 @ _ = crate::aver_generated::domain::parser::expr::parseIdentOrCall(
+                tokens,
+                pos.add(&aver_rt::AverInt::from_i64(1)),
+                law,
+            )?;
+            crate::aver_generated::domain::parser::expr::skipKnowingArgs(tokens, &__arg4, call)
+        }
+        _ => Err(::aver_rt::str_lit!("Expected a law after `knowing`")),
+    }
+}
+
+/// Reads past the givens of a law named `f.law`, which reads as a field before them.
+pub fn skipKnowingArgs(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    law @ _: &(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt),
+    mut call @ _: crate::aver_generated::domain::ast::Expr,
+) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
+    crate::cancel_checkpoint();
+    {
+        let (_, next) = law.clone();
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, next.clone()) {
+            crate::aver_generated::domain::token::Token::TkLParen => {
+                let __arg4 @ _ = crate::aver_generated::domain::parser::expr::chainFieldAccess(
+                    tokens,
+                    next.add(&aver_rt::AverInt::from_i64(1)),
+                    ::aver_rt::str_lit!("knowing"),
+                )?;
+                crate::aver_generated::domain::parser::expr::skipKnowingLaw(&__arg4, call)
+            }
+            _ => Ok((call, next)),
+        }
+    }
+}
+
+/// The call, with the position past the law.
+pub fn skipKnowingLaw(
+    law @ _: &(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt),
+    mut call @ _: crate::aver_generated::domain::ast::Expr,
+) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
+    crate::cancel_checkpoint();
+    {
+        let (_, next) = law.clone();
+        Ok((call, next))
     }
 }
 

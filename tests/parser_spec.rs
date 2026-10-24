@@ -2462,7 +2462,7 @@ fn lazy_marks_the_call_it_stands_before() {
         .iter()
         .map(|stmt| match stmt {
             Stmt::Binding(_, _, value) | Stmt::Expr(value) => {
-                matches!(value.node, Expr::FnCall(..)) && value.lazy
+                matches!(value.node, Expr::FnCall(..)) && value.lazy.is_deferred()
             }
         })
         .collect();
@@ -2486,5 +2486,53 @@ fn lazy_goes_only_in_front_of_a_call_and_stays_a_name_elsewhere() {
         assert!(parse_error(src).contains("`lazy` goes in front of a function call"));
     }
     let items = parse("fn f(lazy: Int) -> Int\n    lazy + lazy(1)\n");
+    assert_eq!(items.len(), 1);
+}
+
+#[test]
+fn knowing_names_a_law_of_the_deferred_function() {
+    let items = parse("fn f(x: Int) -> Int\n    lazy Mod.g(x, 1) knowing Mod.g.law(x)\n");
+    let TopLevel::FnDef(fd) = &items[0] else {
+        panic!("expected a fn");
+    };
+    let Stmt::Expr(value) = &fd.body.stmts()[0] else {
+        panic!("expected an expression");
+    };
+    let knowing = value.lazy.knowing().expect("a call that knows");
+    assert_eq!(knowing.law, "law");
+    assert_eq!(knowing.givens.len(), 1);
+    // The text parses back to the same call and law.
+    let text = aver::ast::unparse::unparse(&items).unwrap();
+    assert_eq!(
+        text.lines().nth(1).map(str::trim),
+        Some("lazy Mod.g(x, 1) knowing Mod.g.law(x)")
+    );
+    let again = parse(&text);
+    let TopLevel::FnDef(fd) = &again[0] else {
+        panic!("expected a fn");
+    };
+    let Stmt::Expr(value) = &fd.body.stmts()[0] else {
+        panic!("expected an expression");
+    };
+    assert_eq!(value.lazy.knowing().map(|k| k.law.as_str()), Some("law"));
+}
+
+#[test]
+fn knowing_follows_a_deferred_call_and_names_a_law_of_its_function() {
+    assert!(
+        parse_error("fn f(x: Int) -> Int\n    g(x) knowing g.law(x)\n")
+            .contains("`knowing` follows a deferred call")
+    );
+    for src in [
+        "fn f(x: Int) -> Int\n    lazy g(x) knowing h.law(x)\n",
+        "fn f(x: Int) -> Int\n    lazy g(x) knowing g\n",
+        "fn f(x: Int) -> Int\n    lazy g(x) knowing law(x)\n",
+    ] {
+        assert!(
+            parse_error(src).contains("`knowing` names a law of the deferred function"),
+            "{src}"
+        );
+    }
+    let items = parse("fn f(knowing: Int) -> Int\n    knowing + g(knowing)\n");
     assert_eq!(items.len(), 1);
 }

@@ -12,6 +12,7 @@ pub(crate) mod cite_instantiate;
 pub mod common;
 #[cfg(feature = "runtime")]
 pub mod expr_walk;
+pub mod knowing;
 #[cfg(feature = "runtime")]
 pub mod lean;
 #[cfg(feature = "runtime")]
@@ -655,6 +656,14 @@ pub struct CodegenContext {
     /// deferred call (`aver_rt::thin::Lazy`). Computed by the Rust transpile
     /// from the MIR it emits; empty everywhere else.
     pub rust_lazy_sums: HashSet<String>,
+    /// The laws a `knowing` stands on that `--trust-laws` let through
+    /// unproved, by name (`Module.fn.law`): the Rust backend checks each at
+    /// every deferred call that knows a value from it.
+    pub knowing_trusted: HashSet<String>,
+    /// The laws some `lazy f(…) knowing f.law(…)` of the program knows a
+    /// value from, as the deferred function and the law's name. Computed by
+    /// the Rust transpile from the MIR it emits; empty everywhere else.
+    pub rust_knowing: Vec<(crate::ir::FnId, String)>,
     /// Kernel-proved lemmas parsed back from a committed
     /// `DiscoveredLemmas.lean` (the `--discover` artifact), set by the CLI
     /// on a normal `aver proof` run when the discovery-surface hash still
@@ -1098,6 +1107,8 @@ pub fn build_context(
         bare_i64,
         rust_owned_record_params: Default::default(),
         rust_lazy_sums: Default::default(),
+        knowing_trusted: Default::default(),
+        rust_knowing: Default::default(),
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
         // Symbol table threaded through from the pipeline (or
@@ -1623,6 +1634,8 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         bare_i64: Default::default(),
         rust_owned_record_params: Default::default(),
         rust_lazy_sums: Default::default(),
+        knowing_trusted: Default::default(),
+        rust_knowing: Default::default(),
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),

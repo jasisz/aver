@@ -1165,7 +1165,9 @@ fn emit_fn_def_with_visibility(
             visibility, fn_name, params, ret_type
         ));
         let packed_refinement_prologue =
-            packed_refinement_constructor_prologue(resolved_fd, ctx, scope);
+            packed_refinement_constructor_prologue(resolved_fd, ctx, scope).or_else(|| {
+                super::knowing::projection_prologue(resolved_fd, ret_type == "i64", ctx)
+            });
         let body = mir_fn
             .and_then(|mir_fn| {
                 super::from_mir::emit_mir_fn_body_routed(
@@ -2191,6 +2193,8 @@ mod tests {
             bare_i64: Default::default(),
             rust_owned_record_params: Default::default(),
             rust_lazy_sums: Default::default(),
+            knowing_trusted: Default::default(),
+            rust_knowing: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),

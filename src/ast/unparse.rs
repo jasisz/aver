@@ -413,18 +413,30 @@ fn write_expr(out: &mut String, expr: &Spanned<Expr>, indent: usize) -> Result<(
             Ok(())
         }
         Expr::FnCall(callee, args) => {
-            if expr.lazy {
+            // `lazy` reads only a name after it: a deferred call's callee is
+            // written as the dotted name it is, not as a parenthesised field.
+            let named = match expr.lazy.is_deferred() {
+                true => crate::ir::expr_to_dotted_name(&callee.node),
+                false => None,
+            };
+            let write_callee = |out: &mut String| match &named {
+                Some(name) => {
+                    out.push_str(name);
+                    Ok(())
+                }
+                None => write_expr(out, callee, indent),
+            };
+            if expr.lazy.is_deferred() {
                 out.push_str("lazy ");
             }
-            write_expr(out, callee, indent)?;
-            out.push('(');
-            for (i, arg) in args.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                write_expr(out, arg, indent)?;
+            write_callee(out)?;
+            write_args(out, args, indent)?;
+            if let Some(knowing) = expr.lazy.knowing() {
+                out.push_str(" knowing ");
+                write_callee(out)?;
+                write!(out, ".{}", knowing.law)?;
+                write_args(out, &knowing.givens, indent)?;
             }
-            out.push(')');
             Ok(())
         }
         Expr::BinOp(op, lhs, rhs) => {
@@ -615,6 +627,18 @@ fn write_literal(out: &mut String, lit: &Literal) -> Result<()> {
 }
 
 /// A match pattern spelled as source, for diagnostics.
+fn write_args(out: &mut String, args: &[Spanned<Expr>], indent: usize) -> Result<()> {
+    out.push('(');
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        write_expr(out, arg, indent)?;
+    }
+    out.push(')');
+    Ok(())
+}
+
 pub fn pattern_to_source(pattern: &Pattern) -> String {
     let mut out = String::new();
     match write_pattern(&mut out, pattern) {

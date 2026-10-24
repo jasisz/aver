@@ -42,7 +42,7 @@ fn dce_in_place(expr: &mut Spanned<MirExpr>) {
             node: Literal::Unit,
             line: expr.line,
             ty: std::sync::OnceLock::new(),
-            lazy: false,
+            lazy: crate::ast::Lazy::Not,
         });
         let original = std::mem::replace(&mut expr.node, placeholder);
         if let MirExpr::Let(spanned_let) = original {

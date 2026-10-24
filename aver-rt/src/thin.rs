@@ -384,11 +384,32 @@ struct Calls<S> {
 }
 
 #[repr(C)]
-struct Deferred<S: 'static, A, F> {
+struct Deferred<S: 'static, A, F, K> {
     lazy: Lazy<S>,
+    /// `()`, or for a call that knows a value, the [`Known`] value.
+    known: K,
     /// Moved out by the call.
     args: ManuallyDrop<A>,
     run: F,
+}
+
+/// What a deferred call made by [`Thin::deferred_knowing`] knows of what
+/// it will return: the value of the projection `projection` of it, which a
+/// law gives (see `docs/language.md`, "Deferred calls that know a value").
+/// It follows the [`Lazy`] at the start of the node, in the part the call's
+/// result is written over.
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct Known {
+    projection: u32,
+    value: i64,
+}
+
+/// Where a node made by [`Thin::deferred_knowing`] keeps its [`Known`].
+#[repr(C)]
+struct Knowing<S: 'static> {
+    lazy: Lazy<S>,
+    known: Known,
 }
 
 /// The constructor's part of the tag of a node a call was deferred in.
@@ -397,6 +418,14 @@ const BUSY: u32 = 1 << 8;
 const WAITED: u32 = 1 << 9;
 const FAILED: u32 = 1 << 10;
 const FORWARD: u32 = 1 << 11;
+/// The node was made by [`Thin::deferred_knowing`]: a [`Known`] follows its
+/// [`Lazy`] until the call is made.
+const KNOWS: u32 = 1 << 12;
+/// How many threads read the [`Known`] of a call not yet made, in the bits
+/// from here to [`WORDS_SHIFT`]. A thread makes the call only when none
+/// does, so none reads while the result is written over it.
+const READER: u32 = 1 << 13;
+const READERS: u32 = 0b111 << 13;
 /// Where the size in 8-byte words of a node a call was deferred in starts in
 /// its tag. Every other node has 0 there.
 pub const WORDS_SHIFT: u32 = 16;
@@ -425,7 +454,7 @@ unsafe fn free_room(node: NonNull<Header>, words: u32) {
     unsafe { std::alloc::dealloc(node.as_ptr().cast(), layout) }
 }
 
-impl<S: ThinSum + HandOver, A: HandOver, F: FnOnce(A) -> S + Copy> Deferred<S, A, F> {
+impl<S: ThinSum + HandOver, A: HandOver, F: FnOnce(A) -> S + Copy, K> Deferred<S, A, F, K> {
     const CALLS: &'static Calls<S> = &Calls {
         make: Self::make,
         drop_args: Self::drop_args,
@@ -512,15 +541,52 @@ impl<S: ThinSum + HandOver> Thin<S> {
         A: HandOver + Send + Sync + 'static,
         F: FnOnce(A) -> S + Copy + Send + Sync + 'static,
     {
+        unsafe { Self::deferred_with(tag, args, run, ()) }
+    }
+
+    /// [`Thin::deferred`] for a call a law says the projection `projection`
+    /// of whose result is `value`: [`Thin::deferred_known`] gives it without
+    /// making the call.
+    ///
+    /// # Safety
+    /// As `Thin::deferred`.
+    #[inline]
+    pub unsafe fn deferred_knowing<A, F>(
+        tag: u32,
+        args: A,
+        run: F,
+        projection: u32,
+        value: i64,
+    ) -> Self
+    where
+        A: HandOver + Send + Sync + 'static,
+        F: FnOnce(A) -> S + Copy + Send + Sync + 'static,
+    {
+        const {
+            assert!(
+                std::mem::offset_of!(Deferred<S, A, F, Known>, known)
+                    == std::mem::offset_of!(Knowing<S>, known)
+            )
+        };
+        let known = Known { projection, value };
+        unsafe { Self::deferred_with(tag | KNOWS, args, run, known) }
+    }
+
+    #[inline]
+    unsafe fn deferred_with<A, F, K>(tag: u32, args: A, run: F, known: K) -> Self
+    where
+        A: HandOver + Send + Sync + 'static,
+        F: FnOnce(A) -> S + Copy + Send + Sync + 'static,
+    {
         // `force` reads a `Lazy` at the start of the fields, wherever the
         // whole `Deferred` puts its fields.
         const {
             assert!(
-                std::mem::offset_of!(Node<Deferred<S, A, F>>, fields)
+                std::mem::offset_of!(Node<Deferred<S, A, F, K>>, fields)
                     == std::mem::offset_of!(Node<Lazy<S>>, fields)
             )
         };
-        let words = Deferred::<S, A, F>::WORDS;
+        let words = Deferred::<S, A, F, K>::WORDS;
         let layout = unsafe { Layout::from_size_align_unchecked(words as usize * 8, 8) };
         let Some(ptr) = NonNull::new(unsafe { std::alloc::alloc(layout) }) else {
             std::alloc::handle_alloc_error(layout)
@@ -532,16 +598,72 @@ impl<S: ThinSum + HandOver> Thin<S> {
             },
             fields: Deferred {
                 lazy: Lazy {
-                    calls: Deferred::<S, A, F>::CALLS,
+                    calls: Deferred::<S, A, F, K>::CALLS,
                 },
+                known,
                 args: ManuallyDrop::new(args),
                 run,
             },
         };
-        unsafe { ptr.cast::<Node<Deferred<S, A, F>>>().write(node) };
+        unsafe { ptr.cast::<Node<Deferred<S, A, F, K>>>().write(node) };
         let ptr = ptr.cast::<Header>();
         assert!(ptr.as_ptr().addr() > MAX_TAGS);
         Self::from_ptr(ptr)
+    }
+
+    /// The value a law gives for the projection `projection` of a call not
+    /// yet made, which was made by [`Thin::deferred_knowing`] with it, in a
+    /// sum whose hidden constructor is `lazy`; `None` for any other value,
+    /// and while another thread makes the call. Never makes the call.
+    #[inline]
+    pub fn deferred_known(&self, lazy: u32, projection: u32) -> Option<i64> {
+        self.known(lazy)
+            .and_then(|known| (known.projection == projection).then_some(known.value))
+    }
+
+    /// For `==`: whether `a` and `b` are both calls not yet made that know
+    /// the same projection of what they return, and know different values of
+    /// it, so are not equal.
+    #[inline]
+    pub fn known_apart(a: &Self, b: &Self, lazy: u32) -> bool {
+        match (a.known(lazy), b.known(lazy)) {
+            (Some(x), Some(y)) => x.projection == y.projection && x.value != y.value,
+            _ => false,
+        }
+    }
+
+    fn known(&self, lazy: u32) -> Option<Known> {
+        if self.is_empty_ctor() {
+            return None;
+        }
+        let header = self.header();
+        let mut tag = header.tag.load(Ordering::Relaxed);
+        loop {
+            if tag & (CTOR | KNOWS) != lazy | KNOWS {
+                return None;
+            }
+            if tag & FORWARD != 0 {
+                // SAFETY: a forwarding node holds the value it stands for.
+                return unsafe { self.fields::<Thin<S>>() }.known(lazy);
+            }
+            if tag & (BUSY | FAILED) != 0 || tag & READERS == READERS {
+                return None;
+            }
+            match header.tag.compare_exchange_weak(
+                tag,
+                tag + READER,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(now) => tag = now,
+            }
+        }
+        // SAFETY: the node was made by `deferred_knowing`, and no thread
+        // makes the call while this one reads (see `READERS`).
+        let known = unsafe { (*self.ptr.cast::<Node<Knowing<S>>>().as_ptr()).fields.known };
+        header.tag.fetch_sub(READER, Ordering::Release);
+        Some(known)
     }
 
     /// The tag of the value's constructor, in a sum some `lazy f(…)`
@@ -582,6 +704,12 @@ impl<S: ThinSum + HandOver> Thin<S> {
                 tag = wait(header, tag);
                 continue;
             }
+            // A thread reads what the call knows; it is done in a moment.
+            if tag & READERS != 0 {
+                std::hint::spin_loop();
+                tag = header.tag.load(Ordering::Acquire);
+                continue;
+            }
             match header.tag.compare_exchange_weak(
                 tag,
                 tag | BUSY,
@@ -619,7 +747,8 @@ impl<S: ThinSum + HandOver> Thin<S> {
         // the place of this one.
         while !value.is_empty_ctor() {
             // The hidden constructor and no mark: a call no one has begun.
-            let unmade = value.header().tag.load(Ordering::Acquire) & !(!0 << WORDS_SHIFT) == lazy;
+            let unmade =
+                value.header().tag.load(Ordering::Acquire) & !(KNOWS | !0 << WORDS_SHIFT) == lazy;
             if !unmade || value.header().count.load(Ordering::Acquire) != 1 {
                 break;
             }
@@ -893,6 +1022,26 @@ macro_rules! thin_sum {
                 {
                     $name(unsafe { $crate::thin::Thin::deferred($lazy, args, run) })
                 }
+
+                /// The call `run(args)`, which a law says the projection
+                /// `projection` of whose result is `value`.
+                #[inline]
+                $vis fn deferred_knowing<A, F>(args: A, run: F, projection: u32, value: i64) -> Self
+                where
+                    A: $crate::thin::HandOver + Send + Sync + 'static,
+                    F: FnOnce(A) -> Self + Copy + Send + Sync + 'static,
+                {
+                    $name(unsafe {
+                        $crate::thin::Thin::deferred_knowing($lazy, args, run, projection, value)
+                    })
+                }
+
+                /// What a call not yet made knows of the projection
+                /// `projection` of its result (`aver_rt::thin::Thin::deferred_known`).
+                #[inline]
+                $vis fn deferred_known(&self, projection: u32) -> ::std::option::Option<i64> {
+                    self.0.deferred_known($lazy, projection)
+                }
             )?
 
             /// The constructor and its fields, to match on.
@@ -910,6 +1059,11 @@ macro_rules! thin_sum {
             /// Both values' fields when they are of the same constructor.
             #[inline]
             $vis fn view_pair<'a>(a: &'a Self, b: &'a Self) -> ::std::option::Option<$pair<'a>> {
+                // Two calls not yet made that know different values of one
+                // projection of what they return are not equal.
+                $( if $crate::thin::Thin::known_apart(&a.0, &b.0, $lazy) {
+                    return None;
+                } )?
                 let ((a, tag), (b, other)) = (a.made(), b.made());
                 if tag != other {
                     return None;
@@ -1460,6 +1614,69 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         drop(lazy);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    /// A call that knows the value 7 of the projection 1 of its result, the
+    /// leaf `n`, counting the calls made into `made`.
+    fn knowing_leaf(n: u64, made: &'static AtomicUsize) -> L {
+        L::deferred_knowing(
+            (super::Kept(n), (super::Kept(made), ())),
+            |(super::Kept(n), (super::Kept(made), ()))| {
+                made.fetch_add(1, Ordering::SeqCst);
+                l_leaf(n)
+            },
+            1,
+            n as i64 * 7,
+        )
+    }
+
+    #[test]
+    fn a_deferred_call_gives_the_value_it_knows_without_being_made() {
+        static MADE: AtomicUsize = AtomicUsize::new(0);
+        let lazy = knowing_leaf(3, &MADE);
+        let shared = lazy.clone();
+        for _ in 0..3 {
+            assert_eq!(shared.deferred_known(1), Some(21));
+        }
+        assert_eq!(lazy.deferred_known(2), None, "only for its own projection");
+        assert_eq!(MADE.load(Ordering::SeqCst), 0);
+        assert!(!walk_eq(&lazy, &knowing_leaf(4, &MADE)), "known apart");
+        assert_eq!(MADE.load(Ordering::SeqCst), 0);
+        assert!(walk_eq(&lazy, &knowing_leaf(3, &MADE)));
+        assert_eq!(MADE.load(Ordering::SeqCst), 2);
+        assert_eq!(lazy.deferred_known(1), None, "made: the fields say it");
+        assert!(matches!(lazy.view(), L__View::Leaf(leaf) if leaf.0 == 3));
+        assert_eq!(MADE.load(Ordering::SeqCst), 2);
+        // One that returned another call that knows: it stands for that one.
+        let outer = L::deferred((super::Kept(()), ()), |_| knowing_leaf(5, &MADE));
+        assert_eq!(outer.deferred_known(1), None);
+        assert!(matches!(outer.view(), L__View::Leaf(leaf) if leaf.0 == 5));
+        drop(knowing_leaf(9, &MADE));
+        assert_eq!(MADE.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn threads_reading_what_a_call_knows_and_making_it_agree() {
+        static MADE: AtomicUsize = AtomicUsize::new(0);
+        let rounds = if cfg!(miri) { 4 } else { 200 };
+        let threads = if cfg!(miri) { 3 } else { 8 };
+        for round in 0..rounds {
+            let shared = knowing_leaf(round, &MADE);
+            std::thread::scope(|scope| {
+                for i in 0..threads {
+                    let mine = shared.clone();
+                    scope.spawn(move || {
+                        if i % 2 == 0 {
+                            assert!(matches!(mine.view(), L__View::Leaf(leaf) if leaf.0 == round));
+                        } else {
+                            let known = mine.deferred_known(1);
+                            assert!(known.is_none_or(|v| v == round as i64 * 7));
+                        }
+                    });
+                }
+            });
+        }
+        assert_eq!(MADE.load(Ordering::SeqCst), rounds as usize);
     }
 
     #[test]

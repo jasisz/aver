@@ -546,6 +546,34 @@ Three things to know:
 - Making a deferred call whose function looks into an argument that is itself deferred makes that one first, inside it. A chain of a million calls each looking into the one before goes a million calls deep, as the same recursion without `lazy` would. Chains through results and through parts of a result are made one at a time, without nesting.
 - A call that is never made never fails: a deferred call that would run out of stack does not, if nothing looks at its result.
 
+## Deferred calls that know a value
+
+A deferred call can know one value of what it will return, from a law, and give it without being made. Here each term carries a word, and the shift defers the parts below the one it makes, each knowing its word:
+
+```aver
+fn shift(t: Term, by: Int) -> Term
+    ? "Every variable moved by `by`, the parts below deferred. A variable stays as it is for a negative `by`."
+    match t
+        Term.Var(n, _) -> match by < 0
+            true -> t
+            false -> Term.Var(n + by, wordUnder(t, by))
+        Term.App(f, a, _) -> Term.App(lazy shift(f, by) knowing shift.wordKnown(f, by), lazy shift(a, by) knowing shift.wordKnown(a, by), wordUnder(t, by))
+
+verify shift law wordKnown
+    given t: Term = [Term.Var(0, 5), Term.App(Term.Var(1, 2), Term.Var(2, 3), 9)]
+    given by: Int = [0, 1, 7]
+    when by >= 0
+    wordOf(shift(t, by)) => wordUnder(t, by)
+```
+
+`knowing f.law(x…)` names a law of the deferred function, through the name the call uses, and gives the law's givens their values, in the law's order. The law says what one function of one argument, `wordOf` here, gives on the call's result: its claim is `P(f(a1, …)) => R`, `P` returns an `Int`, and each given is one of the `ai` as it is. The call must be the one the law is about with those values: each argument is the law's argument there with the givens in place, written the same way. When the call is deferred, `R` is computed with those values and kept in the node, and `P` of the value gives it without making the call. A `when` on the law is computed at the same time; when it does not hold, the call is made at once and nothing is kept.
+
+The program means the same as without `knowing`, since the law says `P` gives that value anyway. That holds only if the law holds for every value, not only for its samples, so `aver check` and `aver compile` prove each law a `knowing` names, with the proof-step producers and the proof kernel, as `aver proof --backend aver` does, and refuse the program when one is not closed, saying why. A law of another shape, a law of another function, or a call that is not the one the law is about is refused too.
+
+`--trust-laws` on `aver check` or `aver compile` lets a law that is not proved through, once its samples pass (they are run then, as `aver verify` runs them). `aver compile` says which laws the build trusts, and the compiled Rust program checks each one every time it makes a call that knows a value from it: it computes `P` of what the call returned and stops with a message naming the law when that is not the value kept. `--certify` is refused with `--trust-laws`.
+
+`==` on two deferred calls not yet made that know different values of the same `P` says they differ without making either call. Otherwise it makes them and compares, as for any value. Only compiled Rust keeps values; every other backend makes the call at once, as it does any deferred call.
+
 ## Processes
 
 A function is a process when it requests something its program answers. The program answers a capability when one of its modules says so in its header with `answers [<Capability>]`; see [Capabilities the program answers](services.md#capabilities-the-program-answers--answers-runwake-and-the-generated-loop). Every operation of such a capability is a request. Precisely, a function is a process when its effect list names an operation of a capability that a module of its own module's dependencies answers (the module itself and every module it `depends` on, transitively), or names `Run.turn`, or when it calls a process of its own module or one a dependency exposes. Nothing marks a process: the set is derived from the program as written, and `aver check` lists it, one line per process with the reason (`process loop: requests Pool.claim, answered by Pooled`, `process walk: calls process fetch`, `process ticking: requests Run.turn`).

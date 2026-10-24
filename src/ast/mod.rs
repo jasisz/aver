@@ -44,7 +44,41 @@ pub struct Spanned<T> {
     /// backend acts on it; everywhere else the call is an ordinary one. A
     /// pass that rebuilds the node and drops the mark makes the call eager,
     /// which changes how fast the program runs, never what it computes.
-    pub lazy: bool,
+    pub lazy: Lazy,
+}
+
+/// How a call is marked deferred (see [`Spanned::lazy`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum Lazy {
+    #[default]
+    Not,
+    /// `lazy f(…)`.
+    Deferred,
+    /// `lazy f(…) knowing f.law(…)`.
+    Knowing(Shared<Knowing>),
+}
+
+impl Lazy {
+    pub fn is_deferred(&self) -> bool {
+        !matches!(self, Lazy::Not)
+    }
+
+    pub fn knowing(&self) -> Option<&Knowing> {
+        match self {
+            Lazy::Knowing(knowing) => Some(knowing),
+            _ => None,
+        }
+    }
+}
+
+/// `knowing f.law(x…)` after `lazy f(…)` (see `docs/language.md`,
+/// "Deferred calls that know a value"): the law of `f` that gives the value
+/// of one projection of the call's result, and the values of its givens, in
+/// the law's order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Knowing {
+    pub law: String,
+    pub givens: Vec<Spanned<Expr>>,
 }
 
 // `OnceLock` does not derive `Clone` (the cell is invariant over `T`), so the
@@ -59,7 +93,7 @@ impl<T: Clone> Clone for Spanned<T> {
             node: self.node.clone(),
             line: self.line,
             ty,
-            lazy: self.lazy,
+            lazy: self.lazy.clone(),
         }
     }
 }
@@ -76,7 +110,7 @@ impl<T> Spanned<T> {
             node,
             line,
             ty: std::sync::OnceLock::new(),
-            lazy: false,
+            lazy: Lazy::Not,
         }
     }
 

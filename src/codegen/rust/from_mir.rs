@@ -2373,14 +2373,20 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     // `clone_arg` (owned), and the module-qualified
                     // head is path-mangled via `resolve_module_call`.
                     let name = emit_ctx.symbol_table.fn_entry(*fn_id).key.canonical();
-                    if spanned_call.lazy
+                    if spanned_call.lazy.is_deferred()
                         && let Some(codegen) = emit_ctx.codegen
                         && let Some(sum) = super::representation::deferred_sum(*fn_id, codegen)
                         && codegen
                             .rust_lazy_sums
                             .contains(&crate::codegen::common::backend_type_def_key(codegen, sum))
                     {
-                        return emit_deferred_call(&name, *fn_id, &call.args, codegen, emit_ctx);
+                        let knows = spanned_call
+                            .lazy
+                            .knowing()
+                            .and_then(|k| super::knowing::used(codegen, *fn_id, &k.law));
+                        return emit_deferred_call(
+                            &name, *fn_id, &call.args, knows, codegen, emit_ctx,
+                        );
                     }
                     emit_named_call_to(&name, Some(*fn_id), &call.args, emit_ctx)
                 }
@@ -3436,20 +3442,40 @@ pub(super) fn emit_mir_verify_expr(
     resolved: &Spanned<crate::ir::hir::ResolvedExpr>,
     ctx: &CodegenContext,
 ) -> Option<String> {
+    // The enclosing `#[test]` fn returns `Result<(), String>`; generated
+    // fns error with generated types, so `?` must Debug-format the error
+    // into a `String` at each propagation site (see `try_err_to_string`).
+    emit_mir_program_level(resolved, &mut |_| {}, true, ctx)
+}
+
+/// A free expression, as [`emit_mir_verify_expr`] renders one, with `bind`
+/// applied to its MIR first and `?` left as it is.
+pub(super) fn emit_mir_value(
+    resolved: &Spanned<crate::ir::hir::ResolvedExpr>,
+    bind: &mut dyn FnMut(&mut Spanned<MirExpr>),
+    ctx: &CodegenContext,
+) -> Option<String> {
+    emit_mir_program_level(resolved, bind, false, ctx)
+}
+
+fn emit_mir_program_level(
+    resolved: &Spanned<crate::ir::hir::ResolvedExpr>,
+    bind: &mut dyn FnMut(&mut Spanned<MirExpr>),
+    try_err_to_string: bool,
+    ctx: &CodegenContext,
+) -> Option<String> {
     let base = ctx.mir_program.as_ref()?;
     // Clone so the lowerer's builtin / instantiation table growth stays
     // local to this expression (mirrors the VM top-level path #338).
     let mut prog = base.clone();
-    let lowered = crate::ir::mir::lower_top_level_value(resolved, &mut prog).ok()?;
+    let mut lowered = crate::ir::mir::lower_top_level_value(resolved, &mut prog).ok()?;
+    bind(&mut lowered);
     let policy = MirFnEmitPolicy::empty();
     // Lend the grown clone's builtin table (it backs `Call(Builtin(id))`
     // resolution and may carry a builtin the lowering just interned) plus
     // the full `ctx` for the borrow / ctor helpers.
     let mut emit_ctx = MirEmitCtx::program_level(ctx, &policy, &prog.builtins);
-    // The enclosing `#[test]` fn returns `Result<(), String>`; generated
-    // fns error with generated types, so `?` must Debug-format the error
-    // into a `String` at each propagation site (see `try_err_to_string`).
-    emit_ctx.try_err_to_string = true;
+    emit_ctx.try_err_to_string = try_err_to_string;
     emit_mir_expr(&lowered, &emit_ctx)
 }
 
@@ -4140,7 +4166,7 @@ fn synthetic_arm(pattern: ResolvedPattern) -> ResolvedMatchArm {
             node: crate::ir::hir::ResolvedExpr::Literal(crate::ast::Literal::Unit),
             line: 0,
             ty: std::sync::OnceLock::new(),
-            lazy: false,
+            lazy: crate::ast::Lazy::Not,
         }),
         binding_slots: std::sync::OnceLock::new(),
     }
@@ -6981,10 +7007,17 @@ fn emit_named_call_to(
 /// hands them over, any other in `aver_rt::thin::Kept` — and the call made
 /// from them when the value is first looked at, with each one passed as the
 /// callee's signature takes it.
+///
+/// With `knows`, the law of a `knowing`: the arguments are computed first,
+/// the law's function of the givens says whether its `when` holds, and the
+/// node keeps the value of the law's projection when it does; when it does
+/// not, the call is made at once. A law `--trust-laws` let through unproved
+/// is checked when the call is made.
 fn emit_deferred_call(
     name: &str,
     callee: crate::ir::FnId,
     args: &[Spanned<MirExpr>],
+    knows: Option<crate::codegen::knowing::Law<'_>>,
     codegen: &crate::codegen::CodegenContext,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
@@ -6994,12 +7027,19 @@ fn emit_deferred_call(
     let bare = codegen.bare_i64.for_fn(callee);
     let (mut values, mut pattern) = ("()".to_string(), "()".to_string());
     let mut passed = Vec::with_capacity(args.len());
+    // With a law, each argument is computed into its own variable first.
+    let arg_var = |i: usize| generated_ident(&format!("arg{i}"));
+    let mut computed = Vec::new();
     for (i, arg) in args.iter().enumerate().rev() {
         let is_bare = bare.is_some_and(|f| f.param_is_bare(i));
-        let value = match is_bare {
+        let mut value = match is_bare {
             true => emit_bare_i64(arg).or_else(|| emit_mir_expr(arg, ctx))?,
             false => mir_clone_arg(emit_mir_expr(arg, ctx)?, &arg.node, ctx),
         };
+        if knows.is_some() {
+            computed.push(format!("let {} = {value};", arg_var(i)));
+            value = arg_var(i);
+        }
         let held = !is_bare
             && resolved
                 .params
@@ -7030,9 +7070,71 @@ fn emit_deferred_call(
     };
     let sum =
         super::types::type_to_rust_scoped(&resolved.return_type, codegen, ctx.current_module_scope);
+    let call = format!("{head}({})", passed.join(", "));
+    let Some(law) = knows else {
+        return Some(format!("<{sum}>::deferred({values}, |{pattern}| {call})"));
+    };
+    computed.reverse();
+    let kept = generated_ident("kept");
+    let givens = law
+        .given_args
+        .iter()
+        .map(|&i| match bare.is_some_and(|f| f.param_is_bare(i)) {
+            true => format!("aver_rt::AverInt::from_i64({})", arg_var(i)),
+            false => format!("{}.clone()", arg_var(i)),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let eager = (0..args.len())
+        .map(|i| match borrowed.get(i).copied().unwrap_or(false) {
+            true => format!("&{}", arg_var(i)),
+            false => arg_var(i),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let (values, pattern, call) = match codegen.knowing_trusted.contains(&law.key) {
+        false => (values, pattern, call),
+        true => {
+            let made = generated_ident("made");
+            let projected = generated_ident("projected");
+            let projection = super::knowing::fn_path(law.projection, codegen);
+            let projection_name = codegen
+                .symbol_table
+                .fn_entry(law.projection)
+                .key
+                .canonical();
+            let of_made = match callee_borrow_mask(&projection_name, 1, codegen)[0] {
+                true => format!("&{made}"),
+                false => format!("{made}.clone()"),
+            };
+            let holds = match codegen
+                .bare_i64
+                .for_fn(law.projection)
+                .is_some_and(|f| f.bare_return)
+            {
+                true => format!("{projected} == {kept}"),
+                false => format!("aver_rt::AverInt::to_i64(&{projected}) == Some({kept})"),
+            };
+            (
+                format!("(aver_rt::thin::Kept({kept}), {values})"),
+                format!("(aver_rt::thin::Kept({kept}), {pattern})"),
+                format!(
+                    "{{ let {made} = {call}; let {projected} = {projection}({of_made}); if !({holds}) {{ panic!(\"law `{}` of module {} does not hold: it says `{}` of the call is {{}}, and it is {{:?}}\", {kept}, {projected}); }} {made} }}",
+                    law.key,
+                    law.scope
+                        .clone()
+                        .or_else(|| codegen.entry_module_name())
+                        .unwrap_or_default(),
+                    projection_name,
+                ),
+            )
+        }
+    };
     Some(format!(
-        "<{sum}>::deferred({values}, |{pattern}| {head}({}))",
-        passed.join(", ")
+        "{{ {} match {}({givens}) {{ Some({kept}) => <{sum}>::deferred_knowing({values}, |{pattern}| {call}, {}, {kept}), None => {head}({eager}) }} }}",
+        computed.join(" "),
+        super::knowing::helper_path(&law),
+        super::knowing::projection_id(&law),
     ))
 }
 
@@ -7041,7 +7143,7 @@ fn emit_deferred_call(
 pub(super) fn compute_lazy_sums(ctx: &crate::codegen::CodegenContext) -> HashSet<String> {
     fn visit(expr: &MirExpr, ctx: &crate::codegen::CodegenContext, out: &mut HashSet<String>) {
         if let MirExpr::Call(call) = expr
-            && call.lazy
+            && call.lazy.is_deferred()
             && let MirCallee::Fn(callee) = call.node.callee
             && let Some(sum) = super::representation::deferred_sum(callee, ctx)
         {
@@ -8254,7 +8356,7 @@ mod tests {
             node,
             line: 0,
             ty: OnceLock::new(),
-            lazy: false,
+            lazy: crate::ast::Lazy::Not,
         }
     }
 
@@ -8265,7 +8367,7 @@ mod tests {
             node,
             line: 0,
             ty: stamp,
-            lazy: false,
+            lazy: crate::ast::Lazy::Not,
         }
     }
 

@@ -282,6 +282,11 @@ pub(super) enum Commands {
         /// Output diagnostics as JSON (one object per line)
         #[arg(long)]
         json: bool,
+        /// Let a `knowing` stand on a law the proof kernel does not close,
+        /// once the law's samples pass (see `docs/language.md`, "Deferred
+        /// calls that know a value")
+        #[arg(long)]
+        trust_laws: bool,
     },
     /// Show the target-total capability binding manifest
     Capabilities {
@@ -554,6 +559,11 @@ pub(super) enum Commands {
         /// only the laws and what the laws reach are included.
         #[arg(long, requires = "certify")]
         examples: bool,
+        /// Let a `knowing` stand on a law the proof kernel does not close,
+        /// once the law's samples pass; the compiled program checks the law
+        /// at every deferred call it makes. Refused with `--certify`.
+        #[arg(long, conflicts_with = "certify")]
+        trust_laws: bool,
         /// Internal representation-differential hook used by wasm-gc backend tests.
         #[arg(long = "test-boxed-sequences", hide = true)]
         test_boxed_sequences: bool,

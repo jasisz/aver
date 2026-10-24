@@ -1,0 +1,63 @@
+module LazyKnowingApp
+    intent =
+        "Deferred calls that know a value: the word of a deferred part reads as the call returns, whether the part is never made, made later, compared with another, or deferred under a `when` that does not hold."
+    depends [Words, Inst]
+    effects [Console]
+
+fn words(t: Words.Term) -> String
+    ? "The words of the two parts below the top, which are deferred."
+    match t
+        Words.Term.App(f, a, w) -> "{w} {Words.wordOf(f)} {Words.wordOf(a)}"
+        Words.Term.Var(_, w) -> "{w}"
+
+verify words
+    words(Words.Term.Var(0, 4)) => "4"
+
+fn form(n: Int) -> Inst.Form
+    ? "A full form n deep."
+    match n <= 0
+        true -> Inst.Form.Leaf(n + 2)
+        false -> Inst.Form.Node(n, form(n - 1), form(n - 2))
+
+verify form
+    form(0) => Inst.Form.Leaf(2)
+
+fn term(n: Int) -> Inst.Expr
+    ? "A term n deep with bound variables at its leaves."
+    match n <= 0
+        true -> Inst.Expr.BVar(0)
+        false -> Inst.Expr.Lam(0, term(n - 1), Inst.Expr.App(0, Inst.Expr.BVar(1), term(n - 2)))
+
+verify term
+    term(0) => Inst.Expr.BVar(0)
+
+fn parts(e: Inst.Expr) -> String
+    ? "The words of the two parts below the top."
+    match e
+        Inst.Expr.App(w, f, a) -> "{w} {Inst.packedOf(f)} {Inst.packedOf(a)}"
+        Inst.Expr.Lam(w, t, b) -> "{w} {Inst.packedOf(t)} {Inst.packedOf(b)}"
+        _ -> "leaf"
+
+verify parts
+    parts(Inst.Expr.BVar(0)) => "leaf"
+
+fn main() -> Unit
+    ! [Console.print]
+    big = Words.tree(12, 0)
+    later = Words.shift(big, 3)
+    Console.print("words {words(later)}")
+    Console.print("size {Words.size(later)} = {Words.size(Words.shiftNow(big, 3))}")
+    Console.print("same {later == Words.shiftNow(big, 3)} {Words.shiftNow(big, 3) == later}")
+    Console.print("differs {Words.shift(big, 4) == Words.shift(big, 5)}")
+    there = lazy Words.shift(big, 2) knowing Words.shift.wordKnown(big, 2)
+    Console.print("from here {Words.wordOf(there)} {Words.wordUnder(big, 2)}")
+    leaf = Words.Term.Var(3, 4)
+    back = lazy Words.shift(leaf, -1) knowing Words.shift.wordKnown(leaf, -1)
+    Console.print("when not {Words.wordOf(back)} {Words.wordUnder(leaf, -1)}")
+    env = [Inst.Expr.App(4, Inst.Expr.FVar(0), Inst.Expr.FVar(1))]
+    e = term(14)
+    ft = form(14)
+    made = Inst.instLazy(env, e, ft, 0)
+    Console.print("inst {parts(made)}")
+    Console.print("inst size {Inst.size(made)} = {Inst.size(Inst.instNow(env, e, ft, 0))}")
+    Console.print("inst same {made == Inst.instNow(env, e, ft, 0)}")
