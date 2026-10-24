@@ -594,105 +594,54 @@ pub fn rewriteInternalExprAfterArith(
 /// Rewrite a list of expressions recursively.
 #[inline(always)]
 pub fn rewriteInternalExprs(
-    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
-    let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                expr.clone(),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        exprs = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        ::aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [expr, rest, __list_slot] => { {
+            let __tco0 = rest;
+            let __tco1 = __list_slot.prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr), acc);
+            exprs = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 
 /// Rewrite record field expressions recursively.
 #[inline(always)]
 pub fn rewriteInternalFields(
-    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
-    let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
-        fields;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (name, expr) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend_owned((name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr)), acc);
-                            __hold0 = __tco0;
-                            fields = &__hold0;
-                            acc = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        ::aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
+            let __tco0 = rest;
+            let __tco1 = __list_slot.prepend((name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr)), acc);
+            fields = __tco0;
+            acc = __tco1;
+            continue;
+        } } })
     }
 }
 
 /// Rewrite match arm bodies and resolve PatConstructor to PatConstructorId using constructor tags.
 #[inline(always)]
 pub fn rewriteInternalArms(
-    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
-    let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = arms;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern.clone()), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body.clone()), bindingSlots: arm.bindingSlots.clone() }, acc);
-                        __hold0 = __tco0;
-                        arms = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        ::aver_rt::aver_list_match_reuse!(arms, [] => { return acc.reverse(); }, [arm, rest, __list_slot] => { {
+            let __tco0 = rest;
+            let __tco1 = __list_slot.prepend(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body), bindingSlots: arm.bindingSlots }, acc);
+            arms = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 
@@ -734,37 +683,18 @@ pub fn rewritePatConstructor(
 /// Rewrite a list of patterns.
 #[inline(always)]
 pub fn rewritePatterns(
-    pats @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    mut pats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Pattern> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>;
-    let mut pats @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern> = pats;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = pats;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::rewrite::rewritePattern(
-                                p.clone(),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        pats = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        ::aver_rt::aver_list_match_reuse!(pats, [] => { return acc.reverse(); }, [p, rest, __list_slot] => { {
+            let __tco0 = rest;
+            let __tco1 = __list_slot.prepend(crate::aver_generated::domain::resolver::rewrite::rewritePattern(p), acc);
+            pats = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 

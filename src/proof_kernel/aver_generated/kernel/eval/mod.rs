@@ -122,7 +122,7 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
                 {
                     let __arg21 @ _ =
                         crate::proof_kernel::aver_generated::kernel::eval::evalAll(xs);
-                    crate::proof_kernel::aver_generated::kernel::eval::listOf(&__arg21)
+                    crate::proof_kernel::aver_generated::kernel::eval::listOf(__arg21)
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__name_fields) => {
@@ -213,34 +213,16 @@ pub fn evalAll(
 
 /// A list value when every element is closed.
 #[inline(always)]
-pub fn listOf(vs @ _: &aver_rt::AverList<Option<Val>>) -> Option<Val> {
+pub fn listOf(mut vs @ _: aver_rt::AverList<Option<Val>>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
-    {
-        let __list_subject = vs;
-        if __list_subject.is_empty() {
-            Some(
-                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
-                    aver_rt::AverList::empty(),
-                ),
-            )
-        } else {
-            if let (Some(__pat0), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                match __pat0 {
-                    Some(v) => {
-                        let v = v.clone();
-                        {
-                            let __arg4 @ _ =
-                                crate::proof_kernel::aver_generated::kernel::eval::listOf(&rest);
-                            crate::proof_kernel::aver_generated::kernel::eval::consOnto(&v, &__arg4)
-                        }
-                    }
-                    _ => None,
-                }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+    aver_list_match!(vs, [] => Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VList(aver_rt::AverList::empty())), [__pat0, rest] => { match __pat0 {
+        Some(v) => {
+            { let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::eval::listOf(rest); crate::proof_kernel::aver_generated::kernel::eval::consOnto(&v, &__arg4) }
+        },
+        _ => {
+            None
         }
-    }
+    } })
 }
 
 /// v in front of a list value.

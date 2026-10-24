@@ -3912,13 +3912,42 @@ fn dying_lists_and_read_strings_match_vm() {
     let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
     let emitted = emitted_entry_module("dying_lists_read_strings", &src);
     for expected in [
-        "aver_list_match!(stack, [] =>",
-        "[c, others] => { { let __arg",
+        "::aver_rt::aver_list_match_reuse!(stack, [] =>",
+        "[c, others, __list_slot] => { { let __arg",
         "fn digitAt__indexed(s @ _: &AverStr,",
         "digitAt__indexed(&s, ",
         "fn sameAt(s @ _: &AverStr, i @ _: aver_rt::AverInt, t @ _: &AverStr)",
         "sameAt(&s, ",
         ".split(&*::aver_rt::str_lit!(\"\\n\")).map(aver_rt::AverStr::from)",
+    ] {
+        assert!(
+            emitted.contains(expected),
+            "missing `{expected}`:\n{emitted}"
+        );
+    }
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A `List` param every caller hands over (a list just built, or the rest of
+/// one taken apart) is taken by value, so a match takes it apart in place,
+/// and a cons arm that builds one list onto another builds it in the node it
+/// took apart. A list read again after the call, or read by another argument
+/// of the same call, stays borrowed. A stack the caller keeps has shared
+/// nodes, which are copied as before. The compiled program must print what
+/// the VM does.
+#[test]
+fn handed_lists_are_taken_apart_and_reuse_their_nodes_like_vm() {
+    let relative = "tests/fixtures/handed_lists_reuse_nodes_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("handed_lists_reuse_nodes", &src);
+    for expected in [
+        "pub fn spill(mut stack @ _: aver_rt::AverList<Clo>, mut env @ _: aver_rt::AverList<Clo>)",
+        "::aver_rt::aver_list_match_reuse!(stack, [] => { return env; }, [c, rest, __list_slot] =>",
+        "let __tco1 = __list_slot.prepend(c, env);",
+        "pub fn keepEven(mut stack @ _: aver_rt::AverList<Clo>,",
+        "[c, others, __list_slot] => { { let __arg5 @ _ = __list_slot.prepend(c, env);",
+        "pub fn ids(xs @ _: &aver_rt::AverList<Clo>,",
+        "pub fn sharedStack(stack @ _: &aver_rt::AverList<Clo>)",
     ] {
         assert!(
             emitted.contains(expected),

@@ -453,45 +453,26 @@ pub fn builtinStringJoinInner(
 /// Convert list of ValStr to list of String.
 #[inline(always)]
 pub fn extractStrings(
-    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<AverStr>, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
-    let mut items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = items;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = items;
-            if __list_subject.is_empty() {
-                return Ok(acc.reverse());
-            } else {
-                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __t = v;
-                        match __t.view() {
-                            crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
-                                let s = __s_fields.0.clone();
-                                {
-                                    let __tco0 = rest;
-                                    let __tco1 = aver_rt::AverList::prepend_owned(s, acc);
-                                    __hold0 = __tco0;
-                                    items = &__hold0;
-                                    acc = __tco1;
-                                    continue;
-                                }
-                            }
-                            _ => {
-                                return Err(::aver_rt::str_lit!(
-                                    "String.join requires list of strings"
-                                ));
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
+        aver_list_match!(items, [] => { return Ok(acc.reverse()); }, [v, rest] => { { let __t = v; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
+            let s = __s_fields.0.clone();
+            {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend_owned(s, acc);
+            items = __tco0;
+            acc = __tco1;
+            continue;
         }
+        },
+        _ => {
+            return Err(::aver_rt::str_lit!("String.join requires list of strings"));
+        }
+    } } })
     }
 }
 
@@ -760,7 +741,7 @@ pub fn builtinStringChars(
                     s,
                     aver_rt::AverInt::from_i64(0),
                     __arg3,
-                    &__arg4,
+                    __arg4,
                 )
             }
         }),
@@ -773,16 +754,12 @@ pub fn stringToCharList(
     s @ _: AverStr,
     pos @ _: aver_rt::AverInt,
     total @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     let __arg4 @ _ = aver_rt::string_index_build(&s);
     crate::aver_generated::domain::builtins::primitives::stringToCharList__indexed(
-        s,
-        pos,
-        total,
-        acc.clone(),
-        __arg4,
+        s, pos, total, acc, __arg4,
     )
 }
 
@@ -1284,37 +1261,18 @@ pub fn builtinStringSplitInner(
 /// Convert string list to ValStr list.
 #[inline(always)]
 pub fn strPartsToVals(
-    parts @ _: &aver_rt::AverList<AverStr>,
+    mut parts @ _: aver_rt::AverList<AverStr>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut parts @ _: &aver_rt::AverList<AverStr> = parts;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = parts;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let Some((s, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::value::Val::ValStr(
-                                crate::aver_generated::domain::value::Val__ValStr(s),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        parts = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(parts, [] => { return acc.reverse(); }, [s, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(s)), acc);
+            parts = __tco0;
+            acc = __tco1;
+            continue;
+        } })
     }
 }
 

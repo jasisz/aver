@@ -1,0 +1,97 @@
+module HandedListsReuseNodes
+    intent =
+        "Fixture: list params every caller hands over, taken apart in place, with the next node built in the one taken apart; a list read again after the call, and one handed over and read in the same call, which stay borrowed; and a stack the caller keeps, whose nodes are shared."
+    effects [Console.print]
+
+type Clo
+    Clo(Int, String)
+
+type Term
+    Push(Int, Term)
+    Pop(Term)
+    Stop
+
+fn closures(n: Int, acc: List<Clo>) -> List<Clo>
+    ? "n closures."
+    match n == 0
+        true -> acc
+        false -> closures(n - 1, List.prepend(Clo.Clo(n, "c{n}"), acc))
+
+verify closures
+    List.len(closures(3, [])) => 3
+
+fn spill(stack: List<Clo>, env: List<Clo>) -> List<Clo>
+    ? "Moves every closure of the stack to the environment."
+    match stack
+        [] -> env
+        [c, ..rest] -> spill(rest, List.prepend(c, env))
+
+verify spill
+    List.len(spill(closures(2, []), [])) => 2
+
+fn isEven(c: Clo) -> Bool
+    ? "Whether the number of the closure is even."
+    match c
+        Clo.Clo(n, _) -> Int.mod(n, 2) == 0
+
+verify isEven
+    isEven(Clo.Clo(2, "b")) => true
+
+fn keepEven(stack: List<Clo>, env: List<Clo>) -> List<Clo>
+    ? "Moves the closures with an even number; the others are dropped."
+    match stack
+        [] -> env
+        [c, ..rest] -> match isEven(c)
+            true -> keepEven(rest, List.prepend(c, env))
+            false -> keepEven(rest, env)
+
+verify keepEven
+    List.len(keepEven(closures(5, []), [])) => 2
+
+fn ids(xs: List<Clo>, acc: Int) -> Int
+    ? "The numbers of the closures, each digit shifted in."
+    match xs
+        [] -> acc
+        [c, ..rest] -> match c
+            Clo.Clo(n, _) -> ids(rest, Int.mod(acc * 10 + n, 1000003))
+
+verify ids
+    ids(closures(3, []), 0) => 123
+
+fn measured(xs: List<Clo>) -> Int
+    ? "The list handed over and read in the same call."
+    ids(xs, List.len(xs))
+
+fn kept(xs: List<Clo>) -> Int
+    ? "A caller that reads the list again after the call."
+    ids(xs, 0) + List.len(xs)
+
+fn walk(t: Term, env: List<Clo>, stack: List<Clo>) -> Int
+    ? "Pushes closures on the stack and moves the top one to the environment at each pop."
+    match t
+        Term.Push(n, rest) -> walk(rest, env, List.prepend(Clo.Clo(n, "w{n}"), stack))
+        Term.Pop(rest) -> pop(rest, env, stack)
+        Term.Stop -> ids(env, 0) * 1000 + List.len(stack)
+
+fn pop(t: Term, env: List<Clo>, stack: List<Clo>) -> Int
+    ? "Moves the top of the stack to the environment."
+    match stack
+        [c, ..others] -> walk(t, List.prepend(c, env), others)
+        [] -> walk(t, env, [])
+
+verify walk
+    walk(Term.Push(1, Term.Pop(Term.Stop)), [], []) => 1000
+
+fn sharedStack(stack: List<Clo>) -> Int
+    ? "Runs the machine on a stack the caller keeps, so its nodes are shared."
+    walk(Term.Pop(Term.Pop(Term.Stop)), [], stack) + ids(stack, 0)
+
+fn main() -> Unit
+    ? "Prints every part."
+    ! [Console.print]
+    Console.print("spill {ids(spill(closures(2000, []), []), 0)}")
+    Console.print("even {ids(keepEven(closures(2000, []), []), 0)}")
+    Console.print("measured {measured(closures(50, []))}")
+    Console.print("kept {kept(closures(50, []))}")
+    Console.print("walk {walk(Term.Push(1, Term.Push(2, Term.Pop(Term.Push(3, Term.Pop(Term.Pop(Term.Stop)))))), [], [])}")
+    Console.print("shared {sharedStack(closures(4, []))}")

@@ -1621,76 +1621,38 @@ pub fn resolveVar(
 /// Resolve a list of expressions.
 #[inline(always)]
 pub fn resolveExprs(
-    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
-    let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                e.clone(),
-                                slots.clone(),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        exprs = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        ::aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [e, rest, __list_slot] => { {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::core::resolveExprSimple(e, slots.clone()), acc);
+            exprs = __tco0;
+            acc = __tco2;
+            continue;
+        } })
     }
 }
 
 /// Resolve record field expressions.
 #[inline(always)]
 pub fn resolveFields(
-    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
-    let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
-        fields;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return acc.reverse();
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (name, expr) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend_owned((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, slots.clone())), acc);
-                            __hold0 = __tco0;
-                            fields = &__hold0;
-                            acc = __tco2;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        ::aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
+            let __tco0 = rest;
+            let __tco2 = __list_slot.prepend((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, slots.clone())), acc);
+            fields = __tco0;
+            acc = __tco2;
+            continue;
+        } } })
     }
 }
 

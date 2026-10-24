@@ -1241,45 +1241,26 @@ pub fn classifyFastForwardCall(
 /// Extract slot numbers from a direct call argument list.
 #[inline(always)]
 pub fn classifyFastForwardSlots(
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut acc @ _: aver_rt::AverIntList,
 ) -> Option<aver_rt::AverIntList> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
-    let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = args;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = args;
-            if __list_subject.is_empty() {
-                return Some(acc.reverse());
-            } else {
-                if let (Some(arg), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __t = arg;
-                        match __t.view() {
-                            crate::aver_generated::domain::ast::Expr__view::ExprSlot(
-                                __slot_fields,
-                            ) => {
-                                let slot = __slot_fields.0.clone();
-                                {
-                                    let __tco0 = rest;
-                                    let __tco1 = aver_rt::AverIntList::prepend_owned(slot, acc);
-                                    __hold0 = __tco0;
-                                    args = &__hold0;
-                                    acc = __tco1;
-                                    continue;
-                                }
-                            }
-                            _ => {
-                                return None;
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
+        aver_list_match!(args, [] => { return Some(acc.reverse()); }, [arg, rest] => { { let __t = arg; match __t.view() {
+        crate::aver_generated::domain::ast::Expr__view::ExprSlot(__slot_fields) => {
+            let slot = __slot_fields.0.clone();
+            {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverIntList::prepend_owned(slot, acc);
+            args = __tco0;
+            acc = __tco1;
+            continue;
         }
+        },
+        _ => {
+            return None;
+        }
+    } } })
     }
 }
 

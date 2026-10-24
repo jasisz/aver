@@ -3536,64 +3536,38 @@ pub fn finishIndependentVals(
 /// Unwrap all Result values in an independent product (?!).
 #[inline(always)]
 pub fn unwrapProductResults(
-    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
-    let mut items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = items;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = items;
-            if __list_subject.is_empty() {
-                return Ok(crate::aver_generated::domain::value::Val::ValTuple(
-                    crate::aver_generated::domain::value::Val__ValTuple(acc.reverse()),
-                ));
-            } else {
-                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __t = v;
-                        match __t.view() {
-                            crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
-                                let x = &__x_fields.0;
-                                {
-                                    let __tco0 = rest;
-                                    let __tco1 = aver_rt::AverList::prepend_owned(x.clone(), acc);
-                                    __hold0 = __tco0;
-                                    items = &__hold0;
-                                    acc = __tco1;
-                                    continue;
-                                }
-                            }
-                            crate::aver_generated::domain::value::Val__view::ValErr(__e_fields) => {
-                                let e = &__e_fields.0;
-                                {
-                                    let __t = e;
-                                    match __t.view() {
-                                        crate::aver_generated::domain::value::Val__view::ValStr(
-                                            __msg_fields,
-                                        ) => {
-                                            let msg = __msg_fields.0.clone();
-                                            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(msg));
-                                        }
-                                        _ => {
-                                            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(::aver_rt::str_lit!("propagated error")));
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {
-                                return Err(::aver_rt::str_lit!(
-                                    "?! operator requires all elements to be Result values"
-                                ));
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
+        ::aver_rt::aver_list_match_reuse!(items, [] => { return Ok(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(acc.reverse()))); }, [v, rest, __list_slot] => { { let __t = v; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
+            let x = &__x_fields.0;
+            {
+            let __tco0 = rest;
+            let __tco1 = __list_slot.prepend(x.clone(), acc);
+            items = __tco0;
+            acc = __tco1;
+            continue;
         }
+        },
+        crate::aver_generated::domain::value::Val__view::ValErr(__e_fields) => {
+            let e = &__e_fields.0;
+            { let __t = e; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValStr(__msg_fields) => {
+            let msg = __msg_fields.0.clone();
+            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(msg));
+        },
+        _ => {
+            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(::aver_rt::str_lit!("propagated error")));
+        }
+    } }
+        },
+        _ => {
+            return Err(::aver_rt::str_lit!("?! operator requires all elements to be Result values"));
+        }
+    } } })
     }
 }
 
@@ -4560,38 +4534,19 @@ pub fn fastForwardCall(
 /// Collect forwarded slot arguments in call order.
 #[inline(always)]
 pub fn collectFastForwardArgs(
-    slotArgs @ _: &aver_rt::AverIntList,
+    mut slotArgs @ _: aver_rt::AverIntList,
     calleeEnv @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
-    let mut __hold0: aver_rt::AverIntList;
-    let mut slotArgs @ _: &aver_rt::AverIntList = slotArgs;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = slotArgs;
-            if __list_subject.is_empty() {
-                return Ok(acc.reverse());
-            } else {
-                if let Some((slot, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot) {
-                        Ok(v @ _) => {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend_owned(v, acc);
-                            __hold0 = __tco0;
-                            slotArgs = &__hold0;
-                            acc = __tco2;
-                            continue;
-                        }
-                        Err(e @ _) => {
-                            return Err(e);
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(slotArgs, [] => { return Ok(acc.reverse()); }, [slot, rest] => { match crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot) { Ok(v @ _) => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend_owned(v, acc);
+            slotArgs = __tco0;
+            acc = __tco2;
+            continue;
+        } }, Err(e @ _) => { return Err(e); } } })
     }
 }
 

@@ -2088,7 +2088,7 @@ pub fn termDeclarationDeps(
                 let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::subst::freeVars(t);
                 crate::proof_kernel::aver_generated::kernel::subst::without(&__arg4, locals.clone())
             };
-            crate::proof_kernel::aver_generated::kernel::check::constDependencyNodes(&__arg5, cs)
+            crate::proof_kernel::aver_generated::kernel::check::constDependencyNodes(__arg5, cs)
         },
         &{
             let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::induct::namesCalled(t);
@@ -2102,34 +2102,16 @@ pub fn termDeclarationDeps(
 /// References whose names denote module-level bindings, as graph nodes.
 #[inline(always)]
 pub fn constDependencyNodes(
-    names @ _: &aver_rt::AverList<AverStr>,
+    mut names @ _: aver_rt::AverList<AverStr>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut names @ _: &aver_rt::AverList<AverStr> = names;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = names;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::empty();
-            } else {
-                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    if crate::proof_kernel::aver_generated::kernel::check::isConst(n.clone(), cs) {
-                        return aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n)), crate::proof_kernel::aver_generated::kernel::check::constDependencyNodes(&rest, cs));
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            __hold0 = __tco0;
-                            names = &__hold0;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(names, [] => { return aver_rt::AverList::empty(); }, [n, rest] => { if crate::proof_kernel::aver_generated::kernel::check::isConst(n.clone(), cs) { return aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n)), crate::proof_kernel::aver_generated::kernel::check::constDependencyNodes(rest, cs)); } else { {
+            let __tco0 = rest;
+            names = __tco0;
+            continue;
+        } } })
     }
 }
 
@@ -2641,7 +2623,7 @@ pub fn transFrom(
         {
             let __list_subject = __pat0;
             if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_list_match!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/trans.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i)))); __b }); crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms] => { { let __list_subject = __pat1; if let (Some(p), Some(moreSteps)) = (__list_subject.first(), __list_subject.tail()) { { let __arg13 @ _ = aver_rt::AverList::prepend_owned(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } })
+                ::aver_rt::aver_list_match_reuse!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/trans.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i)))); __b }); crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms, __list_slot] => { { let __list_subject = __pat1; if let (Some(p), Some(moreSteps)) = (__list_subject.first(), __list_subject.tail()) { { let __arg13 @ _ = __list_slot.prepend(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } })
             } else {
                 crate::proof_kernel::aver_generated::kernel::check::refuse(
                     path,
@@ -4003,7 +3985,7 @@ pub fn linear(
             crate::proof_kernel::aver_generated::kernel::check::lhsOf(&facts),
         );
         crate::proof_kernel::aver_generated::kernel::check::intComparisons(
-            &__arg9,
+            __arg9,
             env,
             path.clone(),
         )
@@ -4014,92 +3996,34 @@ pub fn linear(
 /// Each term compares two Int terms: what linear arithmetic may read as a row.
 #[inline(always)]
 pub fn intComparisons(
-    ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     env @ _: &Env,
     mut path @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
-    let mut ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
-        ts;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = ts;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let (Some(__pat0), Some(rest)) = (__list_subject.first(), __list_subject.tail())
-                {
-                    {
-                        let __t = __pat0;
-                        match __t.view() {
-                            crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(
-                                __o_fields,
-                            ) => {
-                                let o = __o_fields.0.clone();
-                                let a = &__o_fields.1;
-                                let b = &__o_fields.2;
-                                {
-                                    let __subject = (
-                                        crate::proof_kernel::aver_generated::kernel::check::typeOf(
-                                            a,
-                                            env,
-                                            path.clone(),
-                                        )?,
-                                        crate::proof_kernel::aver_generated::kernel::check::typeOf(
-                                            b,
-                                            env,
-                                            path.clone(),
-                                        )?,
-                                    );
-                                    {
-                                        let __t = __subject;
-                                        match (__t.0.view(), __t.1.view(),) {
+        aver_list_match!(ts, [] => { return Ok(()); }, [__pat0, rest] => { { let __t = __pat0; match __t.view() {
+        crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
+            let o = __o_fields.0.clone();
+            let a = &__o_fields.1;
+            let b = &__o_fields.2;
+            { let __subject = (crate::proof_kernel::aver_generated::kernel::check::typeOf(a, env, path.clone())?, crate::proof_kernel::aver_generated::kernel::check::typeOf(b, env, path.clone())?); { let __t = __subject; match (__t.0.view(), __t.1.view(),) {
         (crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyInt, crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyInt) => {
             {
             let __tco0 = rest;
-            __hold0 = __tco0;
-            ts = &__hold0;
+            ts = __tco0;
             continue;
         }
         },
         _ => {
             return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(71)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": linear arithmetic reads comparisons of Int terms")); __b }));
         }
-    }
-                                    }
-                                }
-                            }
-                            _ => {
-                                return Err(aver_rt::AverStr::from({
-                                    let mut __b = {
-                                        let mut __b = {
-                                            let mut __b = aver_rt::Buffer::with_capacity(
-                                                (aver_rt::AverInt::from_i64(71))
-                                                    .to_usize()
-                                                    .unwrap_or(0),
-                                            );
-                                            __b.push_str(&::aver_rt::str_lit!("step "));
-                                            __b
-                                        };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(path)),
-                                        ));
-                                        __b
-                                    };
-                                    __b.push_str(&::aver_rt::str_lit!(
-                                        ": linear arithmetic reads comparisons of Int terms"
-                                    ));
-                                    __b
-                                }));
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
+    } } }
+        },
+        _ => {
+            return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(71)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": linear arithmetic reads comparisons of Int terms")); __b }));
         }
+    } } })
     }
 }
 
@@ -5279,7 +5203,7 @@ pub fn armEquation(
         };
         {
             let __arg17 @ _ = aver_rt::AverList::from_vec(vec![::aver_rt::str_lit!("_")]);
-            crate::proof_kernel::aver_generated::kernel::check::withoutNames(&__arg16, __arg17)
+            crate::proof_kernel::aver_generated::kernel::check::withoutNames(__arg16, __arg17)
         }
     };
     {
@@ -6285,7 +6209,7 @@ pub fn inductOn(
                 crate::proof_kernel::aver_generated::kernel::induct::varied(
                     xs,
                     r.at.clone(),
-                    &__arg11,
+                    __arg11,
                 )
             },
         );
@@ -6423,7 +6347,7 @@ pub fn measured(
                             let __arg10 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::check::tyEnv(env);
                             crate::proof_kernel::aver_generated::kernel::check::constructorArmsFit(
-                                &__arg9, &t, &__arg10,
+                                __arg9, &t, &__arg10,
                             )
                         }
                     } {
@@ -6678,7 +6602,7 @@ pub fn hypNames(
 /// The arms are a permutation of every constructor of t, without duplicates, and each pattern names exactly the constructor's fields.
 #[inline(always)]
 pub fn constructorArmsFit(
-    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
     env @ _: &crate::proof_kernel::aver_generated::kernel::types::TyEnv,
 ) -> bool {
@@ -6687,7 +6611,7 @@ pub fn constructorArmsFit(
         let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::types::ctorsOf(t, env);
         {
             let __arg4 @ _ =
-                crate::proof_kernel::aver_generated::kernel::check::armConstructorNames(arms);
+                crate::proof_kernel::aver_generated::kernel::check::armConstructorNames(&arms);
             crate::proof_kernel::aver_generated::kernel::check::sameNames(&__arg3, &__arg4)
         }
     } && crate::proof_kernel::aver_generated::kernel::check::constructorFieldsFit(arms, t, env))
@@ -6826,27 +6750,12 @@ pub fn patternConstructorName(
 /// Every arm is constructor-shaped and binds exactly the number of fields that constructor carries.
 #[inline(always)]
 pub fn constructorFieldsFit(
-    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
     env @ _: &crate::proof_kernel::aver_generated::kernel::types::TyEnv,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    {
-        let __list_subject = arms;
-        if __list_subject.is_empty() {
-            true
-        } else {
-            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                (crate::proof_kernel::aver_generated::kernel::check::constructorFieldCountFits(
-                    &a.pattern, t, env,
-                ) && crate::proof_kernel::aver_generated::kernel::check::constructorFieldsFit(
-                    &rest, t, env,
-                ))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
-        }
-    }
+    aver_list_match!(arms, [] => true, [a, rest] => (crate::proof_kernel::aver_generated::kernel::check::constructorFieldCountFits(&a.pattern, t, env) && crate::proof_kernel::aver_generated::kernel::check::constructorFieldsFit(rest, t, env)))
 }
 
 /// A constructor-shaped pattern has one name per declared field.
@@ -7068,7 +6977,7 @@ pub fn inductCaseNamed(
             };
             {
                 let __arg18 @ _ = aver_rt::AverList::from_vec(vec![::aver_rt::str_lit!("_")]);
-                crate::proof_kernel::aver_generated::kernel::check::withoutNames(&__arg17, __arg18)
+                crate::proof_kernel::aver_generated::kernel::check::withoutNames(__arg17, __arg18)
             }
         },
         &{
@@ -7076,7 +6985,7 @@ pub fn inductCaseNamed(
                 let __arg19 @ _ = crate::proof_kernel::aver_generated::kernel::types::paramsOf(d);
                 crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg19, &at.args)
             };
-            crate::proof_kernel::aver_generated::kernel::check::withoutNames(&__arg20, names)
+            crate::proof_kernel::aver_generated::kernel::check::withoutNames(__arg20, names)
         },
     );
     let here @ _ = crate::proof_kernel::aver_generated::kernel::check::caseValue(
@@ -7385,40 +7294,16 @@ pub fn hypsAt(
 /// Bindings for names a pattern does not shadow.
 #[inline(always)]
 pub fn withoutNames(
-    bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    mut bs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     mut names @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>;
-    let mut bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> =
-        bs;
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        {
-            let __list_subject = bs;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::empty();
-            } else {
-                if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if names.contains(&b.name) {
-                        {
-                            let __tco0 = rest;
-                            __hold0 = __tco0;
-                            bs = &__hold0;
-                            continue;
-                        }
-                    } else {
-                        return aver_rt::AverList::prepend_owned(
-                            b.clone(),
-                            crate::proof_kernel::aver_generated::kernel::check::withoutNames(
-                                &rest, names,
-                            ),
-                        );
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        ::aver_rt::aver_list_match_reuse!(bs, [] => { return aver_rt::AverList::empty(); }, [b, rest, __list_slot] => { if names.contains(&b.name) { {
+            let __tco0 = rest;
+            bs = __tco0;
+            continue;
+        } } else { return __list_slot.prepend(b, crate::proof_kernel::aver_generated::kernel::check::withoutNames(rest, names)); } })
     }
 }
 

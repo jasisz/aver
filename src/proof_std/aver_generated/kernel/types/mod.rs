@@ -855,31 +855,10 @@ pub fn rigidAll(
 /// The givens of a statement as its own proof sees them.
 #[inline(always)]
 pub fn rigidVars(
-    vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
+    mut vs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> {
     crate::proof_std::cancel_checkpoint();
-    {
-        let __list_subject = vs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    {
-                        let __arg3 @ _ =
-                            crate::proof_std::aver_generated::kernel::types::rigid(v.ty.clone());
-                        crate::proof_std::aver_generated::kernel::term::typed(
-                            v.name.clone(),
-                            __arg3,
-                        )
-                    },
-                    crate::proof_std::aver_generated::kernel::types::rigidVars(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
-        }
-    }
+    ::aver_rt::aver_list_match_reuse!(vs, [] => aver_rt::AverList::empty(), [v, rest, __list_slot] => { __list_slot.prepend({ let __arg3 @ _ = crate::proof_std::aver_generated::kernel::types::rigid(v.ty); crate::proof_std::aver_generated::kernel::term::typed(v.name, __arg3) }, crate::proof_std::aver_generated::kernel::types::rigidVars(rest)) })
 }
 
 /// A declared name claims equality and all of its fields support it; a recursive return to a name already under that check is sound.
@@ -1862,211 +1841,52 @@ pub fn requiredFieldsPresent(
 /// The one check that a namespace gives each name one identity: a repeated name is refused as what, then the name.
 #[inline(always)]
 pub fn unique(
-    names @ _: &aver_rt::AverList<AverStr>,
+    mut names @ _: aver_rt::AverList<AverStr>,
     mut seen @ _: aver_rt::AverList<AverStr>,
     mut what @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
-    let mut names @ _: &aver_rt::AverList<AverStr> = names;
     loop {
         crate::proof_std::cancel_checkpoint();
-        {
-            let __list_subject = names;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let Some((n, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    if seen.contains(&n) {
-                        return Err(aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
-                                    );
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(what),
-                                    )));
-                                    __b
-                                };
-                                __b.push_str(&::aver_rt::str_lit!(" "));
-                                __b
-                            };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
-                            __b
-                        }));
-                    } else {
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::AverList::prepend_owned(n, seen);
-                            __hold0 = __tco0;
-                            names = &__hold0;
-                            seen = __tco1;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        ::aver_rt::aver_list_match_reuse!(names, [] => { return Ok(()); }, [n, rest, __list_slot] => { if seen.contains(&n) { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(" ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n)))); __b })); } else { {
+            let __tco0 = rest;
+            let __tco1 = __list_slot.prepend(n, seen);
+            names = __tco0;
+            seen = __tco1;
+            continue;
+        } } })
     }
 }
 
 /// Every record declaration gives each field name one identity, using the shared uniqueness check.
 #[inline(always)]
 pub fn recordFieldsUnique(
-    rs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec>,
+    mut rs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec>,
     mut path @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec>;
-    let mut rs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec> = rs;
     loop {
         crate::proof_std::cancel_checkpoint();
-        {
-            let __list_subject = rs;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let (Some(r), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __subject = {
-                            let __arg6 @ _ =
-                                crate::proof_std::aver_generated::kernel::proof::givenNames(
-                                    &r.fields,
-                                );
-                            {
-                                let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty();
-                                {
-                                    let __arg8 @ _ = aver_rt::AverStr::from({
-                                        let mut __b = {
-                                            let mut __b = {
-                                                let mut __b = {
-                                                    let mut __b = {
-                                                        let mut __b =
-                                                            aver_rt::Buffer::with_capacity(
-                                                                (aver_rt::AverInt::from_i64(60))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
-                                                            );
-                                                        __b.push_str(&::aver_rt::str_lit!("step "));
-                                                        __b
-                                                    };
-                                                    __b.push_str(&aver_rt::AverStr::from(
-                                                        aver_rt::aver_display(&(path)),
-                                                    ));
-                                                    __b
-                                                };
-                                                __b.push_str(&::aver_rt::str_lit!(": record "));
-                                                __b
-                                            };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(r.name)),
-                                            ));
-                                            __b
-                                        };
-                                        __b.push_str(&::aver_rt::str_lit!(" repeats field"));
-                                        __b
-                                    });
-                                    crate::proof_std::aver_generated::kernel::types::unique(
-                                        &__arg6, __arg7, __arg8,
-                                    )
-                                }
-                            }
-                        };
-                        match __subject {
-                            Err(why @ _) => {
-                                return Err(why);
-                            }
-                            Ok(done @ _) => {
-                                let __tco0 = rest;
-                                __hold0 = __tco0;
-                                rs = &__hold0;
-                                continue;
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(rs, [] => { return Ok(()); }, [r, rest] => { { let __subject = { let __arg6 @ _ = crate::proof_std::aver_generated::kernel::proof::givenNames(&r.fields); { let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty(); { let __arg8 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(60)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": record ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(r.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" repeats field")); __b }); crate::proof_std::aver_generated::kernel::types::unique(__arg6, __arg7, __arg8) } } }; match __subject { Err(why @ _) => { return Err(why); }, Ok(done @ _) => { {
+            let __tco0 = rest;
+            rs = __tco0;
+            continue;
+        } } } } })
     }
 }
 
 /// Every sum gives each constructor one identity, and applying its declared fields produces that sum rather than another or a builtin type.
 #[inline(always)]
 pub fn sumVariantsTyped(
-    ss @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum>,
+    mut ss @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum>,
     e @ _: &TyEnv,
     mut path @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum>;
-    let mut ss @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum> = ss;
     loop {
         crate::proof_std::cancel_checkpoint();
-        {
-            let __list_subject = ss;
-            if __list_subject.is_empty() {
-                return Ok(());
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __subject = {
-                            let __arg9 @ _ =
-                                crate::proof_std::aver_generated::kernel::proof::variantNames(
-                                    &s.variants,
-                                );
-                            {
-                                let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty();
-                                {
-                                    let __arg11 @ _ = aver_rt::AverStr::from({
-                                        let mut __b = {
-                                            let mut __b = {
-                                                let mut __b = {
-                                                    let mut __b = {
-                                                        let mut __b =
-                                                            aver_rt::Buffer::with_capacity(
-                                                                (aver_rt::AverInt::from_i64(63))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
-                                                            );
-                                                        __b.push_str(&::aver_rt::str_lit!("step "));
-                                                        __b
-                                                    };
-                                                    __b.push_str(&aver_rt::AverStr::from(
-                                                        aver_rt::aver_display(&(path)),
-                                                    ));
-                                                    __b
-                                                };
-                                                __b.push_str(&::aver_rt::str_lit!(": sum "));
-                                                __b
-                                            };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(s.name)),
-                                            ));
-                                            __b
-                                        };
-                                        __b.push_str(&::aver_rt::str_lit!(" repeats constructor"));
-                                        __b
-                                    });
-                                    crate::proof_std::aver_generated::kernel::types::unique(
-                                        &__arg9, __arg10, __arg11,
-                                    )
-                                }
-                            }
-                        };
-                        match __subject { Err(why @ _) => { return Err(why); }, Ok(done @ _) => { match crate::proof_std::aver_generated::kernel::types::variantsProduce(s.name.clone(), &s.variants, e, path.clone()) { Err(why @ _) => { return Err(why); }, Ok(valid @ _) => { {
+        aver_list_match!(ss, [] => { return Ok(()); }, [s, rest] => { { let __subject = { let __arg9 @ _ = crate::proof_std::aver_generated::kernel::proof::variantNames(&s.variants); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); { let __arg11 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": sum ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" repeats constructor")); __b }); crate::proof_std::aver_generated::kernel::types::unique(__arg9, __arg10, __arg11) } } }; match __subject { Err(why @ _) => { return Err(why); }, Ok(done @ _) => { match crate::proof_std::aver_generated::kernel::types::variantsProduce(s.name, &s.variants, e, path.clone()) { Err(why @ _) => { return Err(why); }, Ok(valid @ _) => { {
             let __tco0 = rest;
-            __hold0 = __tco0;
-            ss = &__hold0;
+            ss = __tco0;
             continue;
-        } } } } }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        } } } } } } })
     }
 }
 
@@ -2173,7 +1993,7 @@ pub fn fieldsFit(
                     __b.push_str(&::aver_rt::str_lit!(" repeats field"));
                     __b
                 });
-                crate::proof_std::aver_generated::kernel::types::unique(&__arg5, __arg6, __arg7)
+                crate::proof_std::aver_generated::kernel::types::unique(__arg5, __arg6, __arg7)
             }
         }
     }?;
@@ -3463,103 +3283,21 @@ pub fn armsType(
 /// The one check of a substitution: each bound term's type fits the declared type of its name, the declaration's type variables bound in order; a variable marked as needing equality takes only a type that has one.
 #[inline(always)]
 pub fn bindTyped(
-    bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
+    mut bs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
     declared @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
     mut bound @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
     e @ _: &TyEnv,
     mut what @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>;
-    let mut bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding> =
-        bs;
     loop {
         crate::proof_std::cancel_checkpoint();
-        {
-            let __list_subject = bs;
-            if __list_subject.is_empty() {
-                return {
-                    let __arg8 @ _ =
-                        crate::proof_std::aver_generated::kernel::types::typesOfVars(declared);
-                    crate::proof_std::aver_generated::kernel::types::eqKept(&__arg8, bound, e, what)
-                };
-            } else {
-                if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    match crate::proof_std::aver_generated::kernel::types::find(
-                        b.name.clone(),
-                        declared,
-                    ) {
-                        None => {
-                            return Err(aver_rt::AverStr::from({
-                                let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(47))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(what)),
-                                        ));
-                                        __b
-                                    };
-                                    __b.push_str(&::aver_rt::str_lit!(" does not bind "));
-                                    __b
-                                };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(b.name),
-                                )));
-                                __b
-                            }));
-                        }
-                        Some(want @ _) => {
-                            let __tco0 = rest;
-                            let __tco2 = {
-                                let __arg9 @ _ =
-                                    crate::proof_std::aver_generated::kernel::types::typeOf(
-                                        &b.value, e,
-                                    )?;
-                                {
-                                    let __arg10 @ _ = aver_rt::AverStr::from({
-                                        let mut __b = {
-                                            let mut __b = {
-                                                let mut __b = {
-                                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                                        (aver_rt::AverInt::from_i64(37))
-                                                            .to_usize()
-                                                            .unwrap_or(0),
-                                                    );
-                                                    __b.push_str(&aver_rt::AverStr::from(
-                                                        aver_rt::aver_display(&(what)),
-                                                    ));
-                                                    __b
-                                                };
-                                                __b.push_str(&::aver_rt::str_lit!(": "));
-                                                __b
-                                            };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(b.name)),
-                                            ));
-                                            __b
-                                        };
-                                        __b.push_str(&::aver_rt::str_lit!(" :="));
-                                        __b
-                                    });
-                                    crate::proof_std::aver_generated::kernel::types::bindVars(
-                                        &want, __arg9, &bound, e, __arg10,
-                                    )
-                                }
-                            }?;
-                            __hold0 = __tco0;
-                            bs = &__hold0;
-                            bound = __tco2;
-                            continue;
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
+        aver_list_match!(bs, [] => { return { let __arg8 @ _ = crate::proof_std::aver_generated::kernel::types::typesOfVars(declared); crate::proof_std::aver_generated::kernel::types::eqKept(&__arg8, bound, e, what) }; }, [b, rest] => { match crate::proof_std::aver_generated::kernel::types::find(b.name.clone(), declared) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(" does not bind ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(b.name)))); __b })); }, Some(want @ _) => { {
+            let __tco0 = rest;
+            let __tco2 = { let __arg9 @ _ = crate::proof_std::aver_generated::kernel::types::typeOf(&b.value, e)?; { let __arg10 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what)))); __b }; __b.push_str(&::aver_rt::str_lit!(": ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(b.name)))); __b }; __b.push_str(&::aver_rt::str_lit!(" :=")); __b }); crate::proof_std::aver_generated::kernel::types::bindVars(&want, __arg9, &bound, e, __arg10) } }?;
+            bs = __tco0;
+            bound = __tco2;
+            continue;
+        } } } })
     }
 }
 
