@@ -413,6 +413,9 @@ fn write_expr(out: &mut String, expr: &Spanned<Expr>, indent: usize) -> Result<(
             Ok(())
         }
         Expr::FnCall(callee, args) => {
+            if expr.lazy {
+                out.push_str("lazy ");
+            }
             write_expr(out, callee, indent)?;
             out.push('(');
             for (i, arg) in args.iter().enumerate() {

@@ -1,0 +1,46 @@
+module Terms
+    intent = "Terms and a substitution that defers the parts below the one it makes."
+    exposes [Term, subst, substNow, tree, size, head]
+
+type Term
+    Var(Int)
+    App(Term, Term)
+    Lam(Term)
+
+fn subst(t: Term, by: Term, depth: Int) -> Term
+    ? "Puts `by` in for the variable `depth`, one level at a time: the parts below are deferred."
+    match t
+        Term.Var(n) -> match n == depth
+            true -> by
+            false -> t
+        Term.App(f, a) -> Term.App(lazy subst(f, by, depth), lazy subst(a, by, depth))
+        Term.Lam(b) -> Term.Lam(lazy subst(b, by, depth + 1))
+
+fn substNow(t: Term, by: Term, depth: Int) -> Term
+    ? "The same, built at once."
+    match t
+        Term.Var(n) -> match n == depth
+            true -> by
+            false -> t
+        Term.App(f, a) -> Term.App(substNow(f, by, depth), substNow(a, by, depth))
+        Term.Lam(b) -> Term.Lam(substNow(b, by, depth + 1))
+
+fn tree(n: Int, d: Int) -> Term
+    ? "A full tree of applications n deep under d binders, its variables bound by the outermost one."
+    match n == 0
+        true -> Term.Var(d)
+        false -> Term.Lam(Term.App(tree(n - 1, d + 1), Term.App(Term.Var(d + 1), tree(n - 1, d + 1))))
+
+fn size(t: Term) -> Int
+    ? "Nodes in the term."
+    match t
+        Term.Var(_) -> 1
+        Term.App(f, a) -> 1 + size(f) + size(a)
+        Term.Lam(b) -> 1 + size(b)
+
+fn head(t: Term) -> String
+    ? "The outer constructor only: what lies below is never looked at."
+    match t
+        Term.Var(n) -> "var {n}"
+        Term.App(_, _) -> "app"
+        Term.Lam(_) -> "lam"

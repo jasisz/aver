@@ -225,6 +225,9 @@ impl TypeChecker {
         // means the matcher can rely on `id` being the
         // load-bearing signal and reject mixed `(Some, None)`
         // outright.
+        if expr.lazy {
+            self.check_lazy_call(expr);
+        }
         let raw = self.infer_type_inner(expr);
         let t = self.canonicalize_named(raw);
         // A pin left on the node by an earlier bidirectional pass wins over
@@ -278,6 +281,9 @@ impl TypeChecker {
         if let Some(exp) = expected
             && let Some(ty) = self.try_infer_with_expected(expr, exp)
         {
+            if expr.lazy {
+                self.check_lazy_call(expr);
+            }
             self.stamp(expr, ty.clone());
             return ty;
         }

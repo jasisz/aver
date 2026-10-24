@@ -282,7 +282,7 @@ impl TypeChecker {
         }
     }
 
-    fn named_variant_arg_types(&self, type_name: &str, variant: &str) -> Vec<Type> {
+    pub(super) fn named_variant_arg_types(&self, type_name: &str, variant: &str) -> Vec<Type> {
         let key = crate::visibility::member_key(type_name, variant);
         if let Some(sig) = self.find_fn_sig(&key) {
             return sig.params.clone();

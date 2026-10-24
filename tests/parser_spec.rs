@@ -2449,3 +2449,42 @@ fn nested_patterns_round_trip_through_unparse() {
     );
     assert_eq!(parse(&printed), items);
 }
+
+#[test]
+fn lazy_marks_the_call_it_stands_before() {
+    let items = parse("fn f(x: Int) -> Int\n    y = lazy g(x)\n    lazy Mod.h(y, 1)\n");
+    let TopLevel::FnDef(fd) = &items[0] else {
+        panic!("expected a fn");
+    };
+    let marked: Vec<bool> = fd
+        .body
+        .stmts()
+        .iter()
+        .map(|stmt| match stmt {
+            Stmt::Binding(_, _, value) | Stmt::Expr(value) => {
+                matches!(value.node, Expr::FnCall(..)) && value.lazy
+            }
+        })
+        .collect();
+    assert_eq!(marked, vec![true, true]);
+    assert_eq!(
+        aver::ast::unparse::unparse(&items)
+            .unwrap()
+            .lines()
+            .nth(1)
+            .map(str::trim),
+        Some("y = lazy g(x)")
+    );
+}
+
+#[test]
+fn lazy_goes_only_in_front_of_a_call_and_stays_a_name_elsewhere() {
+    for src in [
+        "fn f(x: Int) -> Int\n    lazy x\n",
+        "fn f(x: Int) -> Int\n    lazy g(x).field\n",
+    ] {
+        assert!(parse_error(src).contains("`lazy` goes in front of a function call"));
+    }
+    let items = parse("fn f(lazy: Int) -> Int\n    lazy + lazy(1)\n");
+    assert_eq!(items.len(), 1);
+}

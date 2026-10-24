@@ -515,6 +515,37 @@ How deep non-tail recursion may go depends on the backend:
 
 The depth those sizes allow depends on how much each frame holds, so it is not the same number on every backend; a chain of a million nested calls fits in all of them. On wasm-gc every garbage collection walks the whole guest stack, so a recursion that allocates on each level gets slower the deeper it is.
 
+## Deferred calls
+
+`lazy` in front of a call defers that call until its result is first looked at:
+
+```aver
+fn argsInto(ft: Expr, pending: List<Expr>, env: List<Expr>) -> Expr
+    match Core.Exprs.looseRange(ft) == 0
+        true -> ft
+        false -> lazy Core.Subst.instantiate(ft, minstAll(pending, env))
+```
+
+The arguments are computed at once; only the call waits. The result has the type the function returns and nothing in the program can tell it from that value: every `match` on it, `==`, a hash, printing it, and handing it to a built-in make the call first. The call is made once. From then on every look, from any place that holds the value and from any thread, reads what it returned. A program means the same with `lazy` as without it, so `lazy` is a hint about speed and memory, not about meaning.
+
+It pays where a program builds large values most of which it never looks into, for example a term built by substitution that is then only compared by identity or thrown away. A call nobody looks at is never made, and what it would have built is never allocated.
+
+What `lazy` may stand before:
+
+- a call of a function declared with `fn` in the program, not a constructor, a built-in or a function passed in as a value;
+- with no effects, since a deferred call is made when its result is first looked at, or never;
+- returning a recursive sum type, one whose values hold values of the same type with no `List`, `Vector` or `Map` in between (a tree, a term). Such a value is a pointer to a node, and the deferred call waits in a node of its own.
+
+Anything else is a compile error that says which rule the call breaks.
+
+Only compiled Rust defers the call. The VM, wasm-gc, wasip2 and the self-hosted interpreter make every call at once, and proofs read `lazy f(x)` as `f(x)`. A recursive call in tail position is a loop step, so `lazy` there is made at once on Rust too. The parts of a value a deferred call returns can be deferred again (`Node(lazy left(t), lazy right(t))`), which is how a large value gets built one level at a time, as it is looked at.
+
+Three things to know:
+
+- A deferred call keeps its arguments alive until it is made. A value that holds many deferred calls nobody looks at holds all their arguments, which can take more memory than the results would have.
+- Making a deferred call whose function looks into an argument that is itself deferred makes that one first, inside it. A chain of a million calls each looking into the one before goes a million calls deep, as the same recursion without `lazy` would. Chains through results and through parts of a result are made one at a time, without nesting.
+- A call that is never made never fails: a deferred call that would run out of stack does not, if nothing looks at its result.
+
 ## Processes
 
 A function is a process when it requests something its program answers. The program answers a capability when one of its modules says so in its header with `answers [<Capability>]`; see [Capabilities the program answers](services.md#capabilities-the-program-answers--answers-runwake-and-the-generated-loop). Every operation of such a capability is a request. Precisely, a function is a process when its effect list names an operation of a capability that a module of its own module's dependencies answers (the module itself and every module it `depends` on, transitively), or names `Run.turn`, or when it calls a process of its own module or one a dependency exposes. Nothing marks a process: the set is derived from the program as written, and `aver check` lists it, one line per process with the reason (`process loop: requests Pool.claim, answered by Pooled`, `process walk: calls process fetch`, `process ticking: requests Run.turn`).

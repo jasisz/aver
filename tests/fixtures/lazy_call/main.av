@@ -1,0 +1,49 @@
+module LazyCallApp
+    intent =
+        "Deferred calls: a value built by `lazy f(…)` reads as the call returns, whether it is never looked at, looked at many times, looked at from two threads at once, compared with a value built at once, deferred from another module, or a million deep."
+    depends [Terms]
+    effects [Console]
+
+fn shift(t: Terms.Term, by: Terms.Term) -> Terms.Term
+    ? "A deferred call of another module's function."
+    lazy Terms.subst(t, by, 0)
+
+fn spine(n: Int) -> Terms.Term
+    ? "n levels, each one below the first deferred."
+    match n == 0
+        true -> Terms.Term.Var(0)
+        false -> Terms.Term.App(Terms.Term.Var(n), lazy spine(n - 1))
+
+fn spineLength(t: Terms.Term, acc: Int) -> Int
+    ? "Levels down the right of a spine."
+    match t
+        Terms.Term.App(_, rest) -> spineLength(rest, acc + 1)
+        Terms.Term.Var(_) -> acc
+        Terms.Term.Lam(b) -> spineLength(b, acc)
+
+fn wrap(t: Terms.Term) -> Terms.Term
+    ? "One level more."
+    Terms.Term.Lam(t)
+
+fn wraps(t: Terms.Term, n: Int) -> Terms.Term
+    ? "n deferred wraps, each holding the one before."
+    match n == 0
+        true -> t
+        false -> wraps(lazy wrap(t), n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    big = Terms.tree(12, 0)
+    by = Terms.Term.App(Terms.Term.Var(5), Terms.Term.Var(6))
+    later = shift(big, by)
+    Console.print("never looked into: {Terms.head(later)}")
+    Console.print("size {Terms.size(later)} = {Terms.size(Terms.substNow(big, by, 0))}")
+    Console.print("again {Terms.size(later)}")
+    Console.print("equal {later == Terms.substNow(big, by, 0)} {Terms.substNow(big, by, 0) == later}")
+    Console.print("differs {later == Terms.substNow(big, Terms.Term.Var(9), 0)}")
+    shared = Terms.subst(Terms.tree(10, 0), by, 0)
+    pair = (Terms.size(shared), Terms.size(shared))!
+    match pair
+        (a, b) -> Console.print("two threads {a} {b}")
+    Console.print("spine {spineLength(spine(1000000), 0)}")
+    Console.print("unseen {Terms.head(wraps(Terms.Term.Var(1), 1000000))}")

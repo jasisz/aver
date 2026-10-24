@@ -420,6 +420,7 @@ mod tests {
             node,
             line: 0,
             ty: cell,
+            lazy: false,
         }
     }
 
@@ -428,6 +429,7 @@ mod tests {
             node,
             line: 0,
             ty: std::sync::OnceLock::new(),
+            lazy: false,
         }
     }
 

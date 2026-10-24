@@ -175,11 +175,37 @@ impl Parser {
                 )));
             }
         }
-        let mut operand = self.parse_postfix()?;
+        let mut operand = match self.lazy_call_ahead() {
+            true => self.parse_lazy_call()?,
+            false => self.parse_postfix()?,
+        };
         for _ in 0..neg_depth {
             operand = self.spanned(Expr::Neg(crate::ast::Shared::new(operand)), first_line);
         }
         Ok(operand)
+    }
+
+    /// True at `lazy f(…)`: the word followed by a name. Nothing else can
+    /// follow a value named `lazy` directly, so a program that names one
+    /// keeps working.
+    fn lazy_call_ahead(&self) -> bool {
+        matches!(&self.current().kind, TokenKind::Ident(word) if word == "lazy")
+            && matches!(&self.peek(1).kind, TokenKind::Ident(_))
+    }
+
+    /// `lazy f(…)`: the call, marked deferred (see `Spanned::lazy`).
+    fn parse_lazy_call(&mut self) -> Result<Spanned<Expr>, ParseError> {
+        let word = self.error(
+            "`lazy` goes in front of a function call, as in `lazy build(x)`: \
+             it defers that one call",
+        );
+        self.advance();
+        let mut call = self.parse_postfix()?;
+        if !matches!(call.node, Expr::FnCall(..)) {
+            return Err(word);
+        }
+        call.lazy = true;
+        Ok(call)
     }
 
     pub(super) fn parse_postfix(&mut self) -> Result<Spanned<Expr>, ParseError> {

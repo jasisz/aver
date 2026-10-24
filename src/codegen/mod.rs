@@ -650,6 +650,11 @@ pub struct CodegenContext {
     /// rewrites, so every signature and every call site read the same
     /// decision; empty (borrow by default) everywhere else.
     pub rust_owned_record_params: HashMap<crate::ir::FnId, Vec<bool>>,
+    /// The recursive sums some `lazy f(…)` of the program returns, by
+    /// backend type key: only these get the hidden constructor that holds a
+    /// deferred call (`aver_rt::thin::Lazy`). Computed by the Rust transpile
+    /// from the MIR it emits; empty everywhere else.
+    pub rust_lazy_sums: HashSet<String>,
     /// Kernel-proved lemmas parsed back from a committed
     /// `DiscoveredLemmas.lean` (the `--discover` artifact), set by the CLI
     /// on a normal `aver proof` run when the discovery-surface hash still
@@ -1092,6 +1097,7 @@ pub fn build_context(
         packed_sequence_layouts: HashMap::new(),
         bare_i64,
         rust_owned_record_params: Default::default(),
+        rust_lazy_sums: Default::default(),
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
         // Symbol table threaded through from the pipeline (or
@@ -1616,6 +1622,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         mir_program: None,
         bare_i64: Default::default(),
         rust_owned_record_params: Default::default(),
+        rust_lazy_sums: Default::default(),
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),

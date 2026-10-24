@@ -70,6 +70,7 @@ fn inline_in_place(expr: &mut Spanned<MirExpr>, candidates: &HashMap<FnId, Liter
             node: lit,
             line: expr.line,
             ty,
+            lazy: false,
         });
     }
 }

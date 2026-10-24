@@ -47,6 +47,7 @@ fn bool_match_in_place(expr: &mut Spanned<MirExpr>) {
             node: Literal::Unit,
             line: expr.line,
             ty: std::sync::OnceLock::new(),
+            lazy: false,
         });
         let original = std::mem::replace(&mut expr.node, placeholder);
         if let MirExpr::Match(spanned_match) = original {
@@ -72,6 +73,7 @@ fn bool_match_in_place(expr: &mut Spanned<MirExpr>) {
                 node: ite,
                 line: expr.line,
                 ty: std::sync::OnceLock::new(),
+                lazy: false,
             });
         } else {
             unreachable!("replacement only set inside the Match branch")
@@ -120,9 +122,11 @@ fn bind_branch_body(
             node: Literal::Bool(branch_value),
             line,
             ty: std::sync::OnceLock::new(),
+            lazy: false,
         }),
         line,
         ty: std::sync::OnceLock::new(),
+        lazy: false,
     };
     Spanned {
         node: MirExpr::Let(Spanned {
@@ -134,9 +138,11 @@ fn bind_branch_body(
             },
             line,
             ty: std::sync::OnceLock::new(),
+            lazy: false,
         }),
         line,
         ty: std::sync::OnceLock::new(),
+        lazy: false,
     }
 }
 

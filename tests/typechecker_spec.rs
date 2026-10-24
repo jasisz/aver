@@ -6730,3 +6730,75 @@ mod no_silent_invalid {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Deferred calls: `lazy f(…)`
+// ---------------------------------------------------------------------------
+
+const LAZY_TYPES: &str = r#"
+type Tree
+    Leaf(Int)
+    Node(Tree, Tree)
+
+record Box
+    n: Int
+
+fn grow(n: Int) -> Tree
+    match n == 0
+        true -> Tree.Leaf(0)
+        false -> Tree.Node(Tree.Leaf(n), lazy grow(n - 1))
+
+fn count(n: Int) -> Int
+    n + 1
+
+fn boxed(n: Int) -> Box
+    Box(n = n)
+
+fn loud(n: Int) -> Tree
+    ! [Console.print]
+    Console.print("{n}")
+    Tree.Leaf(n)
+"#;
+
+#[test]
+fn lazy_defers_a_pure_function_returning_a_recursive_sum() {
+    assert_no_errors(&format!(
+        "{LAZY_TYPES}\nfn main() -> Tree\n    t = lazy grow(3)\n    lazy grow(2)\n"
+    ));
+}
+
+#[test]
+fn lazy_refuses_a_function_returning_anything_else() {
+    assert_error_containing(
+        &format!("{LAZY_TYPES}\nfn main() -> Int\n    lazy count(1)\n"),
+        "`lazy count(…)`: `count` returns Int, and only a call returning a recursive sum",
+    );
+    assert_error_containing(
+        &format!("{LAZY_TYPES}\nfn main() -> Box\n    lazy boxed(1)\n"),
+        "only a call returning a recursive sum",
+    );
+}
+
+#[test]
+fn lazy_refuses_a_function_with_effects() {
+    assert_error_containing(
+        &format!("{LAZY_TYPES}\nfn main() -> Tree\n    ! [Console.print]\n    lazy loud(1)\n"),
+        "`loud` has effects (Console.print)",
+    );
+}
+
+#[test]
+fn lazy_refuses_constructors_builtins_and_function_values() {
+    assert_error_containing(
+        &format!("{LAZY_TYPES}\nfn main() -> Tree\n    lazy Tree.Leaf(1)\n"),
+        "`Tree.Leaf` is a constructor or a built-in",
+    );
+    assert_error_containing(
+        &format!("{LAZY_TYPES}\nfn main() -> Int\n    lazy Int.abs(1)\n"),
+        "`Int.abs` is a constructor or a built-in",
+    );
+    assert_error_containing(
+        &format!("{LAZY_TYPES}\nfn apply(f: Fn(Int) -> Tree) -> Tree\n    lazy f(1)\n"),
+        "`f` is a function passed in as a value",
+    );
+}

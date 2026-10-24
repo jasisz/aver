@@ -390,6 +390,21 @@ fn recursive_sum_as_one_pointer_matches_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// `lazy f(…)` keeps the call in a node until the value is first looked at:
+/// a value never looked into, one looked at many times and from two threads
+/// at once, compared both ways with the value built at once, a spine a
+/// million deep looked at one level at a time, a million calls never made,
+/// each holding the one before, and a call deferred from another module, all
+/// read as the VM, which makes every call at once.
+#[test]
+fn deferred_calls_match_vm() {
+    assert_plain_parity(
+        "tests/fixtures/lazy_call/main.av",
+        Some("tests/fixtures/lazy_call"),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Constant folding can turn `0.0 / 0.0` or `1.0 / 0.0` into NaN or an
 /// infinity, which have no Rust literal; they emit as the `f64` constants.
 #[test]
