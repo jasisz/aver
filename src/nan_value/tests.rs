@@ -537,6 +537,23 @@ fn eq_inline_values() {
     assert!(NanValue::new_float(3.14).eq_in(NanValue::new_float(3.14), &arena));
 }
 
+/// A value holding a NaN is equal to itself under `eq_in`, which the VM
+/// uses for a type with no `Float` in it, and not under `eq_reading_in`,
+/// which it uses for one that may hold one.
+#[test]
+fn a_value_holding_nan_is_not_equal_to_itself_when_read() {
+    let mut arena = Arena::new();
+    let nan = NanValue::new_list(arena.push_list(vec![NanValue::new_float(f64::NAN)]));
+    let one = NanValue::new_list(arena.push_list(vec![NanValue::new_float(1.0)]));
+    let ints = NanValue::new_list(arena.push_list(vec![NanValue::new_int_inline(1)]));
+    assert!(nan.eq_in(nan, &arena));
+    assert!(!nan.eq_reading_in(nan, &arena));
+    assert!(one.eq_reading_in(one, &arena));
+    assert!(ints.eq_reading_in(ints, &arena));
+    assert!(NanValue::TRUE.eq_reading_in(NanValue::TRUE, &arena));
+    assert!(NanValue::new_float(0.0).eq_reading_in(NanValue::new_float(-0.0), &arena));
+}
+
 #[test]
 fn eq_string_by_content() {
     let mut arena = Arena::new();

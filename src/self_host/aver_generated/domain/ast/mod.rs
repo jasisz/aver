@@ -73,7 +73,7 @@ impl aver_rt::thin::HandOver for Expr__ExprBool {}
 pub struct Expr__ExprBoolBranch(pub Expr, pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprBoolBranch {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
             && self.1.walk_eq(&other.1, walk)
             && self.2.walk_eq(&other.2, walk)
@@ -128,7 +128,7 @@ impl PartialEq for Expr__ExprVectorGetOrInt {
 }
 
 impl aver_rt::WalkEq for Expr__ExprVectorGetOrInt {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.2 == other.2 && self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -150,7 +150,7 @@ impl PartialEq for Expr__ExprIntModOrInt {
 }
 
 impl aver_rt::WalkEq for Expr__ExprIntModOrInt {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.2 == other.2 && self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -166,7 +166,7 @@ impl aver_rt::thin::HandOver for Expr__ExprIntModOrInt {
 pub struct Expr__ExprAdd(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprAdd {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -182,7 +182,7 @@ impl aver_rt::thin::HandOver for Expr__ExprAdd {
 pub struct Expr__ExprSub(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprSub {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -198,7 +198,7 @@ impl aver_rt::thin::HandOver for Expr__ExprSub {
 pub struct Expr__ExprMul(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprMul {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -214,7 +214,7 @@ impl aver_rt::thin::HandOver for Expr__ExprMul {
 pub struct Expr__ExprDiv(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprDiv {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -230,7 +230,7 @@ impl aver_rt::thin::HandOver for Expr__ExprDiv {
 pub struct Expr__ExprNeg(pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprNeg {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -245,7 +245,7 @@ impl aver_rt::thin::HandOver for Expr__ExprNeg {
 pub struct Expr__ExprEq(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprEq {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -261,7 +261,7 @@ impl aver_rt::thin::HandOver for Expr__ExprEq {
 pub struct Expr__ExprNeq(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprNeq {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -277,7 +277,7 @@ impl aver_rt::thin::HandOver for Expr__ExprNeq {
 pub struct Expr__ExprLt(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprLt {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -293,7 +293,7 @@ impl aver_rt::thin::HandOver for Expr__ExprLt {
 pub struct Expr__ExprGt(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprGt {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -309,7 +309,7 @@ impl aver_rt::thin::HandOver for Expr__ExprGt {
 pub struct Expr__ExprLte(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprLte {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -325,7 +325,7 @@ impl aver_rt::thin::HandOver for Expr__ExprLte {
 pub struct Expr__ExprGte(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprGte {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -367,7 +367,7 @@ impl PartialEq for Expr__ExprFieldAccess {
 }
 
 impl aver_rt::WalkEq for Expr__ExprFieldAccess {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.1 == other.1 && self.0.walk_eq(&other.0, walk)
     }
 }
@@ -402,7 +402,7 @@ impl aver_rt::thin::HandOver for Expr__ExprCallBuiltinId {}
 pub struct Expr__ExprMatch(pub Expr, pub aver_rt::AverList<MatchArm>);
 
 impl aver_rt::WalkEq for Expr__ExprMatch {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1 == other.1
     }
 }
@@ -417,7 +417,7 @@ impl aver_rt::thin::HandOver for Expr__ExprMatch {
 pub struct Expr__ExprPropagate(pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprPropagate {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -440,7 +440,7 @@ impl PartialEq for Expr__ExprIndependentProduct {
 impl aver_rt::thin::HandOver for Expr__ExprIndependentProduct {}
 
 impl aver_rt::WalkEq for Expr {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         match Expr::view_pair(self, other) {
             Some(Expr__pair::ExprInt(a0, b0)) => a0 == b0,
             Some(Expr__pair::ExprFloat(a0, b0)) => a0 == b0,

@@ -186,7 +186,7 @@ impl PartialEq for Ty__TyList {
 }
 
 impl aver_rt::WalkEq for Ty__TyList {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -207,7 +207,7 @@ impl PartialEq for Ty__TyOption {
 }
 
 impl aver_rt::WalkEq for Ty__TyOption {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -228,7 +228,7 @@ impl PartialEq for Ty__TyResult {
 }
 
 impl aver_rt::WalkEq for Ty__TyResult {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -250,7 +250,7 @@ impl PartialEq for Ty__TyMap {
 }
 
 impl aver_rt::WalkEq for Ty__TyMap {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -272,7 +272,7 @@ impl PartialEq for Ty__TyVector {
 }
 
 impl aver_rt::WalkEq for Ty__TyVector {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -328,7 +328,16 @@ impl PartialEq for Ty__TyRigid {
 impl aver_rt::thin::HandOver for Ty__TyRigid {}
 
 impl aver_rt::WalkEq for Ty {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    #[inline(always)]
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        Ty::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)
+    }
+}
+
+impl Ty {
+    #[inline(never)]
+    fn aver_walk_eq_nodes<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        use ::aver_rt::WalkEq as _;
         match Ty::view_pair(self, other) {
             Some(Ty__pair::TyInt) => true,
             Some(Ty__pair::TyBool) => true,
@@ -336,19 +345,19 @@ impl aver_rt::WalkEq for Ty {
             Some(Ty__pair::TyFloat) => true,
             Some(Ty__pair::TyUnit) => true,
             Some(Ty__pair::TyList(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Ty__pair::TyOption(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Ty__pair::TyResult(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Ty__pair::TyMap(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Ty__pair::TyVector(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Ty__pair::TyTuple(a0, b0)) => a0 == b0,
             Some(Ty__pair::TyNamed(a0, b0)) => a0 == b0,
@@ -789,7 +798,7 @@ impl PartialEq for Term__TGet {
 }
 
 impl aver_rt::WalkEq for Term__TGet {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.1 == other.1 && self.0.walk_eq(&other.0, walk)
     }
 }
@@ -832,7 +841,7 @@ impl PartialEq for Term__TOp {
 }
 
 impl aver_rt::WalkEq for Term__TOp {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0 && self.1.walk_eq(&other.1, walk) && self.2.walk_eq(&other.2, walk)
     }
 }
@@ -854,7 +863,7 @@ impl PartialEq for Term__TNeg {
 }
 
 impl aver_rt::WalkEq for Term__TNeg {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -886,7 +895,7 @@ impl PartialEq for Term__TMatch {
 }
 
 impl aver_rt::WalkEq for Term__TMatch {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1 == other.1
     }
 }
@@ -951,7 +960,7 @@ impl PartialEq for Term__TUpd {
 }
 
 impl aver_rt::WalkEq for Term__TUpd {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0 && self.1.walk_eq(&other.1, walk) && self.2 == other.2
     }
 }
@@ -963,7 +972,16 @@ impl aver_rt::thin::HandOver for Term__TUpd {
 }
 
 impl aver_rt::WalkEq for Term {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    #[inline(always)]
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        Term::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)
+    }
+}
+
+impl Term {
+    #[inline(never)]
+    fn aver_walk_eq_nodes<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        use ::aver_rt::WalkEq as _;
         match Term::view_pair(self, other) {
             Some(Term__pair::TInt(a0, b0)) => a0 == b0,
             Some(Term__pair::TBool(a0, b0)) => a0 == b0,
@@ -972,26 +990,26 @@ impl aver_rt::WalkEq for Term {
             Some(Term__pair::TVar(a0, b0)) => a0 == b0,
             Some(Term__pair::THole) => true,
             Some(Term__pair::TGet(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Term__pair::TCall(a0, b0)) => a0 == b0,
             Some(Term__pair::TBi(a0, b0)) => a0 == b0,
             Some(Term__pair::TOp(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Term__pair::TNeg(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Term__pair::TCtor(a0, b0)) => a0 == b0,
             Some(Term__pair::TMatch(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Term__pair::TParts(a0, b0)) => a0 == b0,
             Some(Term__pair::TList(a0, b0)) => a0 == b0,
             Some(Term__pair::TTuple(a0, b0)) => a0 == b0,
             Some(Term__pair::TRec(a0, b0)) => a0 == b0,
             Some(Term__pair::TUpd(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             None => false,
         }

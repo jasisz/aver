@@ -427,6 +427,12 @@ impl VM {
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(a.eq_in(b, &self.arena)));
                 }
+                EQ_READ => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_bool(a.eq_reading_in(b, &self.arena)));
+                }
                 MATCH_INT_LITERAL => {
                     // Fused `match n { LIT -> ...; _ -> ... }` arm
                     // test. Subject sits on top of stack (left there

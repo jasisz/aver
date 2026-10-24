@@ -142,7 +142,7 @@ impl PartialEq for Tactic__Cases {
 }
 
 impl aver_rt::WalkEq for Tactic__Cases {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -174,7 +174,7 @@ impl PartialEq for Tactic__Induction {
 }
 
 impl aver_rt::WalkEq for Tactic__Induction {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
             && self.1 == other.1
             && self.2 == other.2
@@ -211,7 +211,7 @@ impl PartialEq for Tactic__Split {
 }
 
 impl aver_rt::WalkEq for Tactic__Split {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
             && self.1 == other.1
             && self.2 == other.2
@@ -241,7 +241,7 @@ impl PartialEq for Tactic__SplitBool {
 }
 
 impl aver_rt::WalkEq for Tactic__SplitBool {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
             && self.1.walk_eq(&other.1, walk)
             && self.2.walk_eq(&other.2, walk)
@@ -279,20 +279,29 @@ impl PartialEq for Tactic__Plan {
 impl aver_rt::thin::HandOver for Tactic__Plan {}
 
 impl aver_rt::WalkEq for Tactic {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    #[inline(always)]
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        Tactic::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)
+    }
+}
+
+impl Tactic {
+    #[inline(never)]
+    fn aver_walk_eq_nodes<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        use ::aver_rt::WalkEq as _;
         match Tactic::view_pair(self, other) {
             Some(Tactic__pair::Auto) => true,
             Some(Tactic__pair::Cases(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Tactic__pair::Induction(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Tactic__pair::Split(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Tactic__pair::SplitBool(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Tactic__pair::First(a0, b0)) => a0 == b0,
             Some(Tactic__pair::Plan(a0, b0)) => a0 == b0,

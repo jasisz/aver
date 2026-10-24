@@ -160,10 +160,10 @@ verify applyBoolCmp
     applyBoolCmp(true, false, CmpOp.CmpLt) => Result.Err("bools only support == and !=")
 
 fn evalCmpRepr(va: Val, vb: Val, op: CmpOp) -> Result<Val, String>
-    ? "Fallback comparison using repr (for variants, lists, etc)."
+    ? "Comparison of values that are not scalars (variants, lists, etc): equal part by part."
     match op
-        CmpOp.CmpEq -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) == Domain.Value.valRepr(vb)))
-        CmpOp.CmpNeq -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) != Domain.Value.valRepr(vb)))
+        CmpOp.CmpEq -> Result.Ok(Val.ValBool(Domain.Value.valEq(va, vb)))
+        CmpOp.CmpNeq -> Result.Ok(Val.ValBool(Domain.Value.valEq(va, vb) == false))
         _ -> Result.Err("comparison {cmpOpName(op)} not supported for {Domain.Value.valRepr(va)} and {Domain.Value.valRepr(vb)}")
 
 verify evalCmpRepr

@@ -1222,7 +1222,7 @@ mod tests {
     }
 
     impl WalkEq for T {
-        fn walk_eq(&self, other: &Self, walk: Walk<'_>) -> bool {
+        fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
             match T::view_pair(self, other) {
                 None => false,
                 Some(T__Pairs::Leaf(a, b)) => a == b,
@@ -1450,7 +1450,7 @@ mod tests {
     }
 
     impl WalkEq for L {
-        fn walk_eq(&self, other: &Self, walk: Walk<'_>) -> bool {
+        fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
             match L::view_pair(self, other) {
                 None => false,
                 Some(L__Pairs::Leaf(a, b)) => a == b,

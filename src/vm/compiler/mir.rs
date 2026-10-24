@@ -2238,6 +2238,14 @@ fn emit_binop_typed(
     use crate::ast::Type;
     let both_int = matches!((lhs_ty, rhs_ty), (Some(Type::Int), Some(Type::Int)));
     let both_float = matches!((lhs_ty, rhs_ty), (Some(Type::Float), Some(Type::Float)));
+    // A value that may hold a Float is not equal to itself when it holds a
+    // NaN; a type the compiler cannot name may hold one.
+    let eq_op = match lhs_ty {
+        _ if both_int => EQ_INT,
+        Some(Type::Float) => EQ,
+        Some(ty) if !fc.symbol_table.may_hold_float(ty) => EQ,
+        _ => EQ_READ,
+    };
     let lt_op = if both_int {
         LT_INT
     } else if both_float {
@@ -2282,13 +2290,13 @@ fn emit_binop_typed(
         Sub => fc.emit_op(sub_op),
         Mul => fc.emit_op(mul_op),
         Div => fc.emit_op(div_op),
-        Eq => fc.emit_op(if both_int { EQ_INT } else { EQ }),
+        Eq => fc.emit_op(eq_op),
         Lt => fc.emit_op(lt_op),
         Gt => fc.emit_op(gt_op),
         // `Neq` / `Lte` / `Gte` invert the corresponding
         // comparison (same composition HIR uses).
         Neq => {
-            fc.emit_op(if both_int { EQ_INT } else { EQ });
+            fc.emit_op(eq_op);
             fc.emit_op(NOT);
         }
         Lte => {

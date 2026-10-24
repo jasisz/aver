@@ -21,6 +21,9 @@ const EQ_BUDGET: u32 = 1024;
 struct EqWalk<'a> {
     left: u32,
     equal: Option<&'a mut BTreeSet<(u64, u64)>>,
+    /// Whether one value is equal to itself: false for a type that may hold
+    /// a `Float`, since a NaN is not, and so neither is a value holding one.
+    same: bool,
 }
 
 /// What [`NanValue::eq_open`] makes of a pair.
@@ -106,32 +109,52 @@ struct HashWalk<'a> {
 impl NanValue {
     #[inline]
     pub fn eq_in<T: ArenaTypes>(self, other: Self, arena: &Arena<T>) -> bool {
-        self.eq_top::<T, false>(other, arena)
+        self.eq_top::<T, false>(other, arena, true)
+    }
+
+    /// `==` on a type that may hold a `Float`: one value compared with
+    /// itself is read like any two, because a NaN is not equal to itself,
+    /// and neither is a value holding one.
+    #[inline]
+    pub fn eq_reading_in<T: ArenaTypes>(self, other: Self, arena: &Arena<T>) -> bool {
+        self.eq_top::<T, false>(other, arena, false)
     }
 
     /// A top-level `==`: within [`EQ_BUDGET`] as it always was, from the
     /// start with memory if that runs out. Kept out of line so the VM's
     /// dispatch loop holds one call for `==`, not the comparison.
     #[inline(never)]
-    fn eq_top<T: ArenaTypes, const KEY: bool>(self, other: Self, arena: &Arena<T>) -> bool {
+    fn eq_top<T: ArenaTypes, const KEY: bool>(
+        self,
+        other: Self,
+        arena: &Arena<T>,
+        same: bool,
+    ) -> bool {
         let mut walk = EqWalk {
             left: EQ_BUDGET,
             equal: None,
+            same,
         };
-        let same = self.eq_as::<T, KEY>(other, arena, &mut walk);
+        let equal = self.eq_as::<T, KEY>(other, arena, &mut walk);
         if walk.left > 0 {
-            return same;
+            return equal;
         }
-        self.eq_remembering::<T, KEY>(other, arena)
+        self.eq_remembering::<T, KEY>(other, arena, same)
     }
 
     #[cold]
     #[inline(never)]
-    fn eq_remembering<T: ArenaTypes, const KEY: bool>(self, other: Self, arena: &Arena<T>) -> bool {
+    fn eq_remembering<T: ArenaTypes, const KEY: bool>(
+        self,
+        other: Self,
+        arena: &Arena<T>,
+        same: bool,
+    ) -> bool {
         let mut equal = BTreeSet::new();
         let mut walk = EqWalk {
             left: 0,
             equal: Some(&mut equal),
+            same,
         };
         self.eq_as::<T, KEY>(other, arena, &mut walk)
     }
@@ -146,7 +169,7 @@ impl NanValue {
     /// the runtime is handed from outside the language.
     #[inline]
     pub fn key_eq_in<T: ArenaTypes>(self, other: Self, arena: &Arena<T>) -> bool {
-        self.eq_top::<T, true>(other, arena)
+        self.eq_top::<T, true>(other, arena, true)
     }
 
     /// Compare on a work list rather than the Rust call stack, so a value of
@@ -239,7 +262,9 @@ impl NanValue {
             let (a, b) = (self.as_float(), other.as_float());
             return EqOpen::Same(a == b || (KEY && a.to_bits() == b.to_bits()));
         }
-        if self.0 == other.0 {
+        // One value is equal to itself, unless it may hold a NaN; a value
+        // held in no arena entry holds none.
+        if self.0 == other.0 && (walk.same || !self.may_hold_heap_index()) {
             return EqOpen::Same(true);
         }
         let mut remember = None;

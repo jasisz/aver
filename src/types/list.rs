@@ -185,7 +185,8 @@ fn contains_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
     }
     let items = arena.list_to_vec_value(args[0]);
     let target = args[1];
-    let found = items.iter().any(|item| item.eq_in(target, arena));
+    // The element type is not known here, and an element may hold a NaN.
+    let found = items.iter().any(|item| item.eq_reading_in(target, arena));
     Ok(NanValue::new_bool(found))
 }
 

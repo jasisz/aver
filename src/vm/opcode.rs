@@ -116,6 +116,12 @@ pub const GT: u8 = 0x22;
 /// shows `eq_in` at 10–12% self-time in newtype/match scenarios.
 pub const EQ_INT: u8 = 0x23;
 
+/// Pop b, pop a, push a == b, for operands of a type that may hold a
+/// `Float`: one value compared with itself is read like any two
+/// (`NanValue::eq_reading_in`), because a NaN is not equal to itself, and
+/// neither is a value holding one.
+pub const EQ_READ: u8 = 0x29;
+
 /// Typed `<` for two `Int` operands. `as_int` decode on both sides
 /// (folds the inline path inline), raw i64 compare, push bool. Skips
 /// `compare_lt`'s tag-dispatch (`is_int`/`is_float`/`is_string` chain
@@ -668,6 +674,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         NOT => "NOT",
         EQ => "EQ",
         EQ_INT => "EQ_INT",
+        EQ_READ => "EQ_READ",
         LT_INT => "LT_INT",
         GT_INT => "GT_INT",
         LT_FLOAT => "LT_FLOAT",
@@ -789,6 +796,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | NOT
         | EQ
         | EQ_INT
+        | EQ_READ
         | LT
         | LT_INT
         | LT_FLOAT

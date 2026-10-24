@@ -390,6 +390,27 @@ fn recursive_sum_as_one_pointer_matches_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// `==` on a recursive sum compares two pointers before it reads either
+/// node: terms rebuilt above shared leaves, equal or apart at each level, a
+/// sum holding a `Float` (which does not take that shortcut), deferred calls
+/// (which do not either), two threads at once, and chains a million
+/// applications deep leaning either way, compared with no stack overflow.
+#[test]
+fn equality_of_terms_with_shared_subterms_matches_vm() {
+    assert_plain_parity_then("tests/fixtures/equal_terms_app.av", None, |bin, vm| {
+        let out = Command::new(bin)
+            .arg("1000000")
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        let deep = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        match out.status.success() && deep == vm {
+            true => Ok(()),
+            false => Err(format!("at a million levels:\n{}", format_output(&out))),
+        }
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// `lazy f(…)` keeps the call in a node until the value is first looked at:
 /// a value never looked into, one looked at many times and from two threads
 /// at once, compared both ways with the value built at once, a spine a
