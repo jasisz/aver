@@ -2180,6 +2180,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         }
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
+            if let Some(fused) = mir_emit_slice_equality(bop, emit_ctx) {
+                return Some(fused);
+            }
             let typed = matches!(bop.op, BinOp::Eq | BinOp::Neq)
                 .then(|| {
                     Some((
@@ -5581,28 +5584,119 @@ fn mir_emit_equality(
     op_str: &str,
     emit_ctx: &MirEmitCtx<'_>,
 ) -> String {
-    // `AverStr` (Rc<str>) does not implement `PartialEq<&str>`: deref the
-    // non-literal side when the other side is a string literal, once more
-    // when that side is a borrow.
-    let deref = |side: &MirExpr| match emits_direct_borrow(side, emit_ctx) {
-        true => "&**",
-        false => "&*",
-    };
-    if let MirExpr::Literal(lit) = &bop.rhs.node
-        && let crate::ast::Literal::Str(s) = &lit.node
-    {
-        return format!("({}{} {} {:?})", deref(&bop.lhs.node), l, op_str, s);
-    }
-    if let MirExpr::Literal(lit) = &bop.lhs.node
-        && let crate::ast::Literal::Str(s) = &lit.node
-    {
-        return format!("({:?} {} {}{})", s, op_str, deref(&bop.rhs.node), r);
+    // `AverStr` (Rc<str>) does not implement `PartialEq<&str>`, so next to
+    // a string literal both sides compare as `&str`.
+    if mir_str_literal(&bop.lhs.node).is_some() || mir_str_literal(&bop.rhs.node).is_some() {
+        let lhs = mir_as_str(&bop.lhs.node, l, emit_ctx);
+        let rhs = mir_as_str(&bop.rhs.node, r, emit_ctx);
+        return format!("({lhs} {op_str} {rhs})");
     }
     // All non-string equality sites align through the same explicit value
     // modes as calls and returns. When either side emits `&T`, compare two
     // borrows; otherwise retain `T op T`.
     let (left, right) = align_equality_operands(l, &bop.lhs.node, r, &bop.rhs.node, emit_ctx);
     format!("({left} {op_str} {right})")
+}
+
+fn mir_str_literal(expr: &MirExpr) -> Option<&str> {
+    match expr {
+        MirExpr::Literal(lit) => match &lit.node {
+            crate::ast::Literal::Str(s) => Some(s),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A string operand emitted as `code`, as the `&str` it reads: a literal as
+/// itself, an `AverStr` derefed, once more when it is a borrow.
+fn mir_as_str(expr: &MirExpr, code: &str, ctx: &MirEmitCtx<'_>) -> String {
+    match mir_str_literal(expr) {
+        Some(s) => format!("{s:?}"),
+        None if emits_direct_borrow(expr, ctx) => format!("&**{code}"),
+        None => format!("&*{code}"),
+    }
+}
+
+/// The arguments of a `String.slice` call, and whether it reads through the
+/// hidden index of a loop (`__str_index_slice(s, index, from, to)`).
+fn mir_slice_args<'a>(
+    expr: &'a MirExpr,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<(&'a [Spanned<MirExpr>], bool)> {
+    let MirExpr::Call(call) = expr else {
+        return None;
+    };
+    match &call.node.callee {
+        MirCallee::Builtin(id)
+            if ctx
+                .mir_builtins
+                .get(id.0 as usize)
+                .is_some_and(|name| name == "String.slice") =>
+        {
+            Some((&call.node.args, false))
+        }
+        MirCallee::Intrinsic(BuiltinIntrinsic::StrIndexSlice) => Some((&call.node.args, true)),
+        _ => None,
+    }
+}
+
+/// Whether `==` or `!=` has a `String.slice` on a side.
+fn mir_compares_slice(bop: &crate::ir::mir::MirBinOp, ctx: &MirEmitCtx<'_>) -> bool {
+    matches!(bop.op, BinOp::Eq | BinOp::Neq)
+        && (mir_slice_args(&bop.lhs.node, ctx).is_some()
+            || mir_slice_args(&bop.rhs.node, ctx).is_some())
+}
+
+/// `String.slice(s, from, to) == t`, either way round and with `!=`,
+/// compared in place: the slice is the `&str` it reads out of `s` (the bytes
+/// `String.slice` would copy), so comparing it builds no string. `None` for
+/// any other comparison, and when the right side moves what the left one
+/// borrows; the plain path detaches that borrow.
+fn mir_emit_slice_equality(bop: &crate::ir::mir::MirBinOp, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    if !mir_compares_slice(bop, ctx) {
+        return None;
+    }
+    let lhs = mir_slice_args(&bop.lhs.node, ctx);
+    let rhs = mir_slice_args(&bop.rhs.node, ctx);
+    let borrowed = lhs.map_or(&*bop.lhs, |(args, _)| &args[0]);
+    if !matches!(bop.rhs.node, MirExpr::Local(_))
+        && projection_root_local(&borrowed.node)
+            .is_some_and(|local| mir_last_use_moves_slot(&bop.rhs, local.slot, ctx))
+    {
+        return None;
+    }
+    let side = |side: &Spanned<MirExpr>, slice: Option<(&[Spanned<MirExpr>], bool)>| {
+        let Some((args, indexed)) = slice else {
+            return Some(mir_as_str(&side.node, &emit_mir_expr(side, ctx)?, ctx));
+        };
+        let text = emit_mir_expr(&args[0], ctx)?;
+        if indexed {
+            let index = emit_mir_expr(&args[1], ctx)?;
+            let from = emit_string_position(&args[2], ctx)?;
+            let to = emit_string_position(&args[3], ctx)?;
+            return Some(format!(
+                "aver_rt::string_index_slice_str(&{text}, &{index}, {from}, {to})"
+            ));
+        }
+        // The same bounds as the `String.slice` arm of `emit_mir_builtin_call`.
+        let text = detach_borrow_before_later_move(text, &args[0], &[&args[1], &args[2]], ctx);
+        let from = emit_mir_expr(&args[1], ctx)?;
+        let to = emit_mir_expr(&args[2], ctx)?;
+        Some(format!(
+            "aver_rt::string_slice(&{text}, crate::aver_int_clamp_i64(&{from}), crate::aver_int_clamp_i64(&{to}))"
+        ))
+    };
+    let op = if matches!(bop.op, BinOp::Eq) {
+        "=="
+    } else {
+        "!="
+    };
+    Some(format!(
+        "({} {op} {})",
+        side(&bop.lhs, lhs)?,
+        side(&bop.rhs, rhs)?
+    ))
 }
 
 /// Is this expression a direct read whose emitted Rust representation is `&T`?
@@ -6359,7 +6453,11 @@ fn mir_if_cond_and_branches<'a>(
         }
     };
     match &ite.cond.node {
-        MirExpr::BinOp(spanned_binop) if canonical_compare(spanned_binop.node.op).is_some() => {
+        // A slice compared in place goes through `emit_mir_expr`.
+        MirExpr::BinOp(spanned_binop)
+            if canonical_compare(spanned_binop.node.op).is_some()
+                && !mir_compares_slice(&spanned_binop.node, ctx) =>
+        {
             let bop = &spanned_binop.node;
             let (op_str, invert) = canonical_compare(bop.op).expect("checked by guard");
             // Int unboxing: a comparison between two bare `i64` operands
