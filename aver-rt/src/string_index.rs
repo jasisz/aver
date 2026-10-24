@@ -15,14 +15,10 @@ use crate::{AverInt, AverStr, StaticStr};
 /// the last one its byte length.
 #[derive(Clone, Debug)]
 pub struct StringIndex {
-    boundaries: Boundaries,
-}
-
-#[derive(Clone, Debug)]
-enum Boundaries {
-    /// Every scalar value is one byte, so position `i` is byte `i`.
-    Ascii(usize),
-    Blocks(Arc<Blocks>),
+    chars: usize,
+    /// None when every scalar value is one byte, so position `i` is byte
+    /// `i`.
+    blocks: Option<Arc<Blocks>>,
 }
 
 /// Scalars per block of [`Blocks`]. Sixty-four of them are at most 256
@@ -32,56 +28,74 @@ const BLOCK: usize = 64;
 /// The boundaries in two levels: the byte offset of every [`BLOCK`]-th
 /// scalar, and every boundary's distance from the start of its block. About
 /// one byte per scalar, a quarter of a full table of `u32` offsets, and a
-/// read is still two loads.
+/// read is still two loads. A block of ASCII scalars reads in one: there
+/// the distance is the position within the block.
 #[derive(Debug)]
 struct Blocks {
+    /// The start of each block shifted left by one, its low bit set when
+    /// every scalar of the block is one byte.
     starts: Vec<usize>,
     within: Vec<u8>,
 }
 
 impl StringIndex {
-    /// Build the boundary table in one UTF-8 pass; an ASCII string needs no
-    /// table.
+    /// Build the boundary table; an ASCII string needs no table, and a
+    /// block of ASCII scalars is checked a word at a time.
     pub fn new(text: &str) -> Self {
         if text.is_ascii() {
             return Self {
-                boundaries: Boundaries::Ascii(text.len()),
+                chars: text.len(),
+                blocks: None,
             };
         }
         let chars = text.chars().count();
         let mut starts = Vec::with_capacity(chars / BLOCK + 1);
         let mut within = Vec::with_capacity(chars + 1);
-        let bytes = text.char_indices().map(|(byte, _)| byte);
         let mut start = 0;
-        for (position, byte) in bytes.chain(std::iter::once(text.len())).enumerate() {
-            if position % BLOCK == 0 {
-                start = byte;
-                starts.push(byte);
-            }
-            // At most `BLOCK - 1` scalars of four bytes since `start`.
-            within.push((byte - start) as u8);
+        for block in 0..=chars / BLOCK {
+            let scalars = (chars - block * BLOCK).min(BLOCK);
+            let ascii = text.as_bytes()[start..start + scalars].is_ascii();
+            starts.push(start << 1 | usize::from(ascii));
+            let span = match ascii {
+                true => {
+                    within.extend_from_slice(&IOTA[..scalars]);
+                    scalars
+                }
+                // At most `BLOCK - 1` scalars of four bytes since `start`.
+                false => text[start..]
+                    .char_indices()
+                    .take(scalars)
+                    .fold(0, |_, (offset, c)| {
+                        within.push(offset as u8);
+                        offset + c.len_utf8()
+                    }),
+            };
+            start += span;
         }
+        // The end of the text, in the last block.
+        within.push((text.len() - (starts[chars / BLOCK] >> 1)) as u8);
         Self {
-            boundaries: Boundaries::Blocks(Arc::new(Blocks { starts, within })),
+            chars,
+            blocks: Some(Arc::new(Blocks { starts, within })),
         }
     }
 
     /// Number of Unicode scalar values in the indexed string.
     pub fn char_len(&self) -> usize {
-        match &self.boundaries {
-            Boundaries::Ascii(len) => *len,
-            Boundaries::Blocks(blocks) => blocks.within.len() - 1,
-        }
+        self.chars
     }
 
     /// UTF-8 byte boundary for a clamped codepoint position.
     fn boundary(&self, index: usize) -> usize {
-        match &self.boundaries {
-            Boundaries::Ascii(_) => index,
-            Boundaries::Blocks(blocks) => {
-                blocks.starts[index / BLOCK] + usize::from(blocks.within[index])
+        let Some(blocks) = &self.blocks else {
+            return index;
+        };
+        let start = blocks.starts[index / BLOCK];
+        (start >> 1)
+            + match start & 1 {
+                1 => index % BLOCK,
+                _ => usize::from(blocks.within[index]),
             }
-        }
     }
 }
 
@@ -123,12 +137,16 @@ pub fn string_index_char_at_i64(
     if position >= index.char_len() {
         return None;
     }
-    if let Boundaries::Ascii(_) = index.boundaries {
+    if index.blocks.is_none() {
         return Some(AverStr::from_static(
             &ASCII_CHARS[usize::from(text.as_bytes()[position])],
         ));
     }
     let from = index.boundary(position);
+    let lead = text.as_bytes()[from];
+    if lead.is_ascii() {
+        return Some(AverStr::from_static(&ASCII_CHARS[usize::from(lead)]));
+    }
     let to = index.boundary(position + 1);
     Some(AverStr::from(&text[from..to]))
 }
@@ -148,18 +166,34 @@ pub fn string_index_code_at_i64(text: &AverStr, index: &StringIndex, position: i
     if position >= index.char_len() {
         return -1;
     }
-    if let Boundaries::Ascii(_) = index.boundaries {
+    if index.blocks.is_none() {
         return i64::from(text.as_bytes()[position]);
     }
-    text[index.boundary(position)..]
+    let byte = index.boundary(position);
+    let lead = text.as_bytes()[byte];
+    if lead.is_ascii() {
+        return i64::from(lead);
+    }
+    text[byte..]
         .chars()
         .next()
         .map_or(-1, |ch| i64::from(u32::from(ch)))
 }
 
+/// The distances of the boundaries of a block of ASCII scalars.
+static IOTA: [u8; BLOCK] = {
+    let mut iota = [0; BLOCK];
+    let mut i = 0;
+    while i < BLOCK {
+        iota[i] = i as u8;
+        i += 1;
+    }
+    iota
+};
+
 /// The one-character strings of ASCII, in statics: `charAt` on an ASCII
 /// string neither slices nor allocates.
-static ASCII_CHARS: [StaticStr<1>; 128] = {
+pub(crate) static ASCII_CHARS: [StaticStr<1>; 128] = {
     let mut chars = [const { StaticStr::new("\0") }; 128];
     let mut byte = 0;
     while byte < 128 {
@@ -191,7 +225,7 @@ pub fn string_index_slice_i64(text: &AverStr, index: &StringIndex, from: i64, to
     if from >= to {
         return AverStr::from("");
     }
-    AverStr::from(&text[index.boundary(from)..index.boundary(to)])
+    crate::string_part(text, &text[index.boundary(from)..index.boundary(to)])
 }
 
 fn clamp_position(position: i64, len: usize) -> usize {
@@ -239,6 +273,15 @@ mod tests {
         let mixed: String = (0..300).map(|i| ['a', 'ą', '→', '😀'][i % 4]).collect();
         let wide: String = std::iter::repeat_n('😀', BLOCK * 2).collect();
         let edge: String = "a".repeat(BLOCK - 1) + "é" + &"b".repeat(BLOCK);
+        // Sparse: ASCII blocks around one multibyte scalar at each edge of a
+        // block, and a last block that is not full.
+        let sparse: String = "a".repeat(BLOCK)
+            + "😀"
+            + &"b".repeat(2 * BLOCK - 2)
+            + "é"
+            + &"c".repeat(BLOCK + 5)
+            + "→";
+        let block_end: String = "x".repeat(2 * BLOCK);
         for text in [
             ascii.as_str(),
             "",
@@ -248,6 +291,10 @@ mod tests {
             &mixed,
             &wide,
             &edge,
+            &sparse,
+            &sparse[..sparse.len() - "→".len()],
+            &block_end,
+            &(block_end.clone() + "é"),
         ] {
             let index = StringIndex::new(text);
             let expected: Vec<usize> = text
@@ -275,6 +322,19 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_block_of_ascii_scalars_is_marked() {
+        let text = "a".repeat(BLOCK)
+            + "😀"
+            + &"b".repeat(2 * BLOCK - 2)
+            + "é"
+            + &"c".repeat(BLOCK + 5)
+            + "→";
+        let blocks = StringIndex::new(&text).blocks.expect("not ASCII");
+        let marks: Vec<usize> = blocks.starts.iter().map(|start| start & 1).collect();
+        assert_eq!(marks, [1, 0, 0, 1, 0]);
     }
 
     #[test]

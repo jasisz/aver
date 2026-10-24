@@ -7186,8 +7186,8 @@ fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String 
 //   `clone_arg(&args[i].node, …)`  → `mir_clone_arg(emit_mir_expr(…)?, …)`
 //   `emit_str_arg_or_deref(…)`     → `mir_str_arg_or_deref(&args[i], ctx)?`
 // then runs the `builtin_needs_str_conversion` `.into_aver()` post-step
-// that `emit_builtin_call` applies (Int.mod, Int/Float.fromString,
-// String.* returning String). The byte-parity
+// that `emit_builtin_call` applies (Int.mod, Int/Float.fromString; the
+// String builtins build their `AverStr` directly). The byte-parity
 // gate is the safety net: any arm whose output diverges from HIR blocks
 // graduation and the fn falls back to HIR.
 
@@ -7633,9 +7633,10 @@ fn emit_mir_builtin_call(
         // ---- String ----
         // `AverInt: Display` renders Small and Big byte-identically to the
         // VM's `Value::Int` formatting.
-        "String.fromInt" => format!("{}.to_string()", arg!(0)),
-        "String.fromFloat" => format!("{}.to_string()", arg!(0)),
-        "String.fromBool" => format!("{}.to_string()", arg!(0)),
+        "String.fromInt" | "String.fromFloat" => {
+            format!("aver_rt::display_str(&({}))", arg!(0))
+        }
+        "String.fromBool" => format!("aver_rt::bool_str({})", arg!(0)),
         "String.charAt" => {
             let s = arg!(0);
             let idx = arg!(1);
@@ -7644,7 +7645,7 @@ fn emit_mir_builtin_call(
             // (charAt already returns `Option<String>`), never a wrapped
             // index. `to_usize()` is the checked conversion.
             format!(
-                "({idx}).to_usize().and_then(|{index}| {s}.chars().nth({index}).map(|c| c.to_string()))"
+                "({idx}).to_usize().and_then(|{index}| {s}.chars().nth({index})).map(aver_rt::char_str)"
             )
         }
         // Producer: wrap the `usize` length in `AverInt`.
@@ -7663,7 +7664,7 @@ fn emit_mir_builtin_call(
             // string end, a huge negative clamps to 0 — behaviorally identical
             // to the VM.
             format!(
-                "aver_rt::string_slice(&{}, crate::aver_int_clamp_i64(&{}), crate::aver_int_clamp_i64(&{}))",
+                "aver_rt::string_slice_part(&{}, crate::aver_int_clamp_i64(&{}), crate::aver_int_clamp_i64(&{}))",
                 s, from, to
             )
         }
@@ -7682,9 +7683,9 @@ fn emit_mir_builtin_call(
             let suffix = mir_str_arg_or_deref(&args[1], ctx)?;
             format!("{}.ends_with({})", s, suffix)
         }
-        "String.trim" => format!("{}.trim().to_string()", arg!(0)),
-        "String.toUpper" => format!("{}.to_uppercase()", arg!(0)),
-        "String.toLower" => format!("{}.to_lowercase()", arg!(0)),
+        "String.trim" => format!("aver_rt::string_trim(&{})", arg!(0)),
+        "String.toUpper" => format!("aver_rt::string_case(&{}, true)", arg!(0)),
+        "String.toLower" => format!("aver_rt::string_case(&{}, false)", arg!(0)),
         "String.split" => {
             let s = arg!(0);
             let delim = arg!(1);
@@ -7702,12 +7703,9 @@ fn emit_mir_builtin_call(
             let s = arg!(0);
             let from = arg!(1);
             let to = arg!(2);
-            format!("{}.replace(&*{}, &*{})", s, from, to)
+            format!("aver_rt::string_replace(&{}, &{}, &{})", s, from, to)
         }
-        "String.chars" => format!(
-            "aver_rt::AverList::from_vec({}.chars().map(|c| c.to_string()).collect::<Vec<_>>())",
-            arg!(0)
-        ),
+        "String.chars" => format!("aver_rt::string_chars(&{})", arg!(0)),
         "String.byteLength" => {
             format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0))
         }
@@ -8010,7 +8008,7 @@ fn emit_mir_builtin_call(
         ),
         // Index-like lookup: an out-of-`u32` (or invalid) code → `None`.
         "String.fromCodePoint" => format!(
-            "({}).to_u32().and_then(char::from_u32).map(|c| c.to_string())",
+            "({}).to_u32().and_then(char::from_u32).map(aver_rt::char_str)",
             arg!(0)
         ),
 
@@ -8078,9 +8076,9 @@ fn emit_mir_builtin_call(
         _ => return None,
     };
 
-    // Mirror of `emit_builtin_call`'s `.into_aver()` post-step for
-    // String-returning pure builtins (and Int.mod / Int.fromString /
-    // Float.fromString / String.fromCodePoint).
+    // Mirror of `emit_builtin_call`'s `.into_aver()` post-step for the
+    // pure builtins whose Rust answer holds a `String` (Int.mod /
+    // Int.fromString / Float.fromString, ...).
     if super::builtins::builtin_needs_str_conversion(name) {
         Some(format!("({}).into_aver()", result))
     } else {
@@ -8116,8 +8114,19 @@ fn emit_mir_intrinsic_call(
         }
         BuiltinIntrinsic::BufAppend => {
             let buf = emit_mir_expr(&args[0], ctx)?;
-            let s = emit_mir_expr(&args[1], ctx)?;
             let buffer = generated_ident("b");
+            // An interpolated value is written straight into the buffer,
+            // without a string of its own.
+            if let MirExpr::Call(call) = &args[1].node
+                && let MirCallee::Intrinsic(BuiltinIntrinsic::ToStr) = &call.node.callee
+                && let [value] = call.node.args.as_slice()
+            {
+                let value = emit_mir_expr(value, ctx)?;
+                return Some(format!(
+                    "{{ let mut {buffer} = {buf}; {buffer}.push_display(&({value})); {buffer} }}"
+                ));
+            }
+            let s = emit_mir_expr(&args[1], ctx)?;
             Some(format!(
                 "{{ let mut {buffer} = {buf}; {buffer}.push_str(&{s}); {buffer} }}"
             ))

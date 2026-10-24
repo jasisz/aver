@@ -41,7 +41,7 @@ pub fn evalVarFallbackNamed(
                     __b.push_str(&::aver_rt::str_lit!("undefined variable: "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                __b.push_display(&(name));
                 __b
             })),
         },
@@ -66,16 +66,11 @@ pub fn unwrapPropagatedError(err @ _: &AverStr) -> Option<AverStr> {
     crate::cancel_checkpoint();
     let prefix @ _ = ::aver_rt::str_lit!("__aver_prop__:");
     if err.starts_with(&*prefix) {
-        Some(
-            (aver_rt::string_slice(
-                &err,
-                crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(
-                    prefix.chars().count() as i64
-                )),
-                crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(err.chars().count() as i64)),
-            ))
-            .into_aver(),
-        )
+        Some(aver_rt::string_slice_part(
+            &err,
+            crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(prefix.chars().count() as i64)),
+            crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(err.chars().count() as i64)),
+        ))
     } else {
         None
     }

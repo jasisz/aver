@@ -413,26 +413,22 @@ pub fn trans(
                                 __b.push_str(&::aver_rt::str_lit!("a chain of "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                &(aver_rt::AverInt::from_i64(proofs.len() as i64)),
-                            )));
+                            __b.push_display(&(aver_rt::AverInt::from_i64(proofs.len() as i64)));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" steps lists "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &(aver_rt::AverInt::from_i64(proofs.len() as i64)
                             .add(&aver_rt::AverInt::from_i64(1))),
-                    )));
+                    );
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" terms, not "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(aver_rt::AverInt::from_i64(terms.len() as i64)),
-            )));
+            __b.push_display(&(aver_rt::AverInt::from_i64(terms.len() as i64)));
             __b
         }))
     }
@@ -1759,15 +1755,13 @@ pub fn letBindings(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(49)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                        __b.push_display(&(d.name));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" takes "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(aver_rt::AverInt::from_i64(d.params.len() as i64)),
-                )));
+                __b.push_display(&(aver_rt::AverInt::from_i64(d.params.len() as i64)));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" arguments"));
@@ -2382,10 +2376,10 @@ pub fn freshFrom(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(32)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(base))));
+                __b.push_display(&(base));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+            __b.push_display(&(k));
             __b
         });
         if used.contains(&name) {

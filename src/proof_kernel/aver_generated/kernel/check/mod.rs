@@ -183,7 +183,7 @@ fn __mutual_tco_trampoline_1(
             let q = &__q_fields.0;
             let l = &__q_fields.1;
             let r = &__q_fields.2;
-            { let __arg91 @ _ = { let __arg90 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/absurd")); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(q.clone(), env, __arg90) }?; return crate::proof_kernel::aver_generated::kernel::check::absurd(__arg91, l.clone(), r.clone(), path) }
+            { let __arg91 @ _ = { let __arg90 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0)); __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!("/absurd")); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(q.clone(), env, __arg90) }?; return crate::proof_kernel::aver_generated::kernel::check::absurd(__arg91, l.clone(), r.clone(), path) }
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PInduct(__f_fields) => {
             let f = __f_fields.0.clone();
@@ -261,15 +261,13 @@ fn __mutual_tco_trampoline_1(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!("/have."));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                        __b.push_display(&(h));
                         __b
                     });
                     crate::proof_kernel::aver_generated::kernel::check::conclude(
@@ -304,7 +302,7 @@ fn __mutual_tco_trampoline_1(
                                     __b.push_str(&::aver_rt::str_lit!("the proof of "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                                __b.push_display(&(h));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(
@@ -386,7 +384,7 @@ fn __mutual_tco_trampoline_2(
                 mut path @ _,
             ) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::splitDone(&before, path) }, [c, rest] => { if { let __arg9 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::freeVars(&*on), &crate::proof_kernel::aver_generated::kernel::check::hypNames(&env.hyps)); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(&c.binders, &__arg9, &*env, &__arg10) } } { { let __arg16 @ _ = { let __arg14 @ _ = { let __arg12 @ _ = { let __arg11 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone()); crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &__arg11) }; { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss); crate::proof_kernel::aver_generated::kernel::check::withVars(&__arg12, &__arg13) } }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), __arg14, __arg15) } }?; { let __arg17 @ _ = { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (hss).drop_first(__n) }; { let __arg18 @ _ = { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (vss).drop_first(__n) }; __MutualTco2::SplitNext(__arg16, c, rest, __arg17, __arg18, before, path) } } } } else { { let __arg19 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("the names of case ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }; __b.push_str(&::aver_rt::str_lit!(" are not fresh")); __b }); return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19) } } })
+                aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::splitDone(&before, path) }, [c, rest] => { if { let __arg9 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::freeVars(&*on), &crate::proof_kernel::aver_generated::kernel::check::hypNames(&env.hyps)); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(&c.binders, &__arg9, &*env, &__arg10) } } { { let __arg16 @ _ = { let __arg14 @ _ = { let __arg12 @ _ = { let __arg11 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone()); crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &__arg11) }; { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss); crate::proof_kernel::aver_generated::kernel::check::withVars(&__arg12, &__arg13) } }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_display(&(c.ctor)); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), __arg14, __arg15) } }?; { let __arg17 @ _ = { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (hss).drop_first(__n) }; { let __arg18 @ _ = { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (vss).drop_first(__n) }; __MutualTco2::SplitNext(__arg16, c, rest, __arg17, __arg18, before, path) } } } } else { { let __arg19 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("the names of case ")); __b }; __b.push_display(&(c.ctor)); __b }; __b.push_str(&::aver_rt::str_lit!(" are not fresh")); __b }); return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19) } } })
             }
             __MutualTco2::SplitNext(
                 mut e @ _,
@@ -430,9 +428,7 @@ fn __mutual_tco_trampoline_2(
                                         __b.push_str(&::aver_rt::str_lit!("case "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(c.ctor),
-                                    )));
+                                    __b.push_display(&(c.ctor));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(
@@ -565,7 +561,7 @@ fn __mutual_tco_trampoline_3(
                                     ));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                                __b.push_display(&(v));
                                 __b
                             });
                             return crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -594,13 +590,13 @@ fn __mutual_tco_trampoline_3(
                             let mut __b = aver_rt::Buffer::with_capacity(
                                 (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
                             );
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                            __b.push_display(&(path));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!("/enum."));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
+                    __b.push_display(&(i));
                     __b
                 });
                 let got @ _ = {
@@ -727,9 +723,7 @@ fn __mutual_tco_trampoline_4(
                                     __b.push_str(&::aver_rt::str_lit!("step "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(": wrong number of premises"));
@@ -759,15 +753,13 @@ fn __mutual_tco_trampoline_4(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!("/premise."));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
+                        __b.push_display(&(i));
                         __b
                     });
                     crate::proof_kernel::aver_generated::kernel::check::conclude(
@@ -797,15 +789,13 @@ fn __mutual_tco_trampoline_4(
                                         __b.push_str(&::aver_rt::str_lit!("step "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
+                                    __b.push_display(&(path));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(": premise "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
+                            __b.push_display(&(i));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" does not match"));
@@ -899,17 +889,13 @@ fn __mutual_tco_trampoline_5(
                                                     .to_usize()
                                                     .unwrap_or(0),
                                             );
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(path)),
-                                            ));
+                                            __b.push_display(&(path));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!("/case."));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(i),
-                                    )));
+                                    __b.push_display(&(i));
                                     __b
                                 });
                                 crate::proof_kernel::aver_generated::kernel::check::inductCase(
@@ -1057,17 +1043,13 @@ fn __mutual_tco_trampoline_6(
                                                         .to_usize()
                                                         .unwrap_or(0),
                                                 );
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(path)),
-                                                ));
+                                                __b.push_display(&(path));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!("/carry."));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(c.name)),
-                                        ));
+                                        __b.push_display(&(c.name));
                                         __b
                                     });
                                     crate::proof_kernel::aver_generated::kernel::check::caseProves(
@@ -1170,15 +1152,13 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<(), AverStr> {
                                         __b.push_str(&::aver_rt::str_lit!("fact "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(law.key),
-                                    )));
+                                    __b.push_display(&(law.key));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(": "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                            __b.push_display(&(why));
                             __b
                         }));
                     }
@@ -1283,13 +1263,13 @@ pub fn typeOf(
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(": "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                __b.push_display(&(why));
                 __b
             })),
         }
@@ -1331,7 +1311,7 @@ pub fn typedEquation(
                         __b.push_str(&::aver_rt::str_lit!("the equation compares "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                    __b.push_display(&(why));
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg7)
@@ -1374,13 +1354,13 @@ pub fn bound(
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(": "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                __b.push_display(&(why));
                 __b
             })),
         }
@@ -1426,23 +1406,19 @@ pub fn argsFit(
                                     __b.push_str(&::aver_rt::str_lit!("step "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(": "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                        __b.push_display(&(d.name));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" takes "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(aver_rt::AverInt::from_i64(d.params.len() as i64)),
-                )));
+                __b.push_display(&(aver_rt::AverInt::from_i64(d.params.len() as i64)));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" arguments"));
@@ -1480,7 +1456,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(": duplicate definition"));
@@ -1506,7 +1482,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(": duplicate signature"));
@@ -1535,7 +1511,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(
@@ -1564,7 +1540,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(": duplicate module-level binding"));
@@ -1593,7 +1569,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(
@@ -1628,7 +1604,7 @@ pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(": duplicate type declaration"));
@@ -1826,9 +1802,7 @@ pub fn declarationsAcyclic(
                                         __b.push_str(&::aver_rt::str_lit!("step "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
+                                    __b.push_display(&(path));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(
@@ -1836,7 +1810,7 @@ pub fn declarationsAcyclic(
                                 ));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.name))));
+                            __b.push_display(&(c.name));
                             __b
                         }));
                     } else {
@@ -2215,15 +2189,13 @@ pub fn definitionTyped(
                                     __b.push_str(&::aver_rt::str_lit!("step "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(": definition "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+                        __b.push_display(&(d.name));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" has duplicate parameter"));
@@ -2248,7 +2220,7 @@ pub fn definitionTyped(
             __b.push_str(&::aver_rt::str_lit!("definition "));
             __b
         };
-        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(d.name))));
+        __b.push_display(&(d.name));
         __b
     });
     crate::proof_kernel::aver_generated::kernel::check::declaredFits(&__arg9, &d.ret, __arg10, path)
@@ -2341,9 +2313,7 @@ pub fn constsTyped(
                                         __b.push_str(&::aver_rt::str_lit!("constant "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(c.name),
-                                    )));
+                                    __b.push_display(&(c.name));
                                     __b
                                 });
                                 crate::proof_kernel::aver_generated::kernel::check::declaredFits(
@@ -2402,31 +2372,27 @@ pub fn declaredFits(
                                         __b.push_str(&::aver_rt::str_lit!("step "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
+                                    __b.push_display(&(path));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(": "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(what))));
+                            __b.push_display(&(what));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" has type "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &(crate::proof_kernel::aver_generated::kernel::types::show(actual)),
-                    )));
+                    );
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(", declared "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::proof_kernel::aver_generated::kernel::types::show(declared)),
-            )));
+            __b.push_display(&(crate::proof_kernel::aver_generated::kernel::types::show(declared)));
             __b
         }))
     }
@@ -2459,13 +2425,13 @@ pub fn patTypes(
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(": "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                __b.push_display(&(why));
                 __b
             })),
         }
@@ -2530,13 +2496,13 @@ pub fn refuse(
                     __b.push_str(&::aver_rt::str_lit!("step "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                __b.push_display(&(path));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(": "));
             __b
         };
-        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+        __b.push_display(&(why));
         __b
     }))
 }
@@ -2561,7 +2527,7 @@ pub fn namesStep(
                         __b.push_str(&::aver_rt::str_lit!("step "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b.push_display(&(path));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(": "));
@@ -2623,7 +2589,7 @@ pub fn transFrom(
         {
             let __list_subject = __pat0;
             if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail()) {
-                ::aver_rt::aver_list_match_reuse!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/trans.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i)))); __b }); crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms, __list_slot] => { { let __list_subject = __pat1; if let (Some(p), Some(moreSteps)) = (__list_subject.first(), __list_subject.tail()) { { let __arg13 @ _ = __list_slot.prepend(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } })
+                ::aver_rt::aver_list_match_reuse!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!("/trans.")); __b }; __b.push_display(&(i)); __b }); crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms, __list_slot] => { { let __list_subject = __pat1; if let (Some(p), Some(moreSteps)) = (__list_subject.first(), __list_subject.tail()) { { let __arg13 @ _ = __list_slot.prepend(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } })
             } else {
                 crate::proof_kernel::aver_generated::kernel::check::refuse(
                     path,
@@ -2652,13 +2618,13 @@ pub fn transLink(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                __b.push_display(&(path));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!("/trans."));
             __b
         };
-        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
+        __b.push_display(&(i));
         __b
     });
     let e @ _ = {
@@ -2730,9 +2696,7 @@ pub fn congr(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!("/congr"));
@@ -2750,9 +2714,7 @@ pub fn congr(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!("/congr"));
@@ -2999,7 +2961,7 @@ pub fn projField(
                             __b.push_str(&::aver_rt::str_lit!("the record has no field "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                        __b.push_display(&(f));
                         __b
                     });
                     crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg6)
@@ -3052,7 +3014,7 @@ pub fn hyp(
                                 __b.push_str(&::aver_rt::str_lit!("hypothesis "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                            __b.push_display(&(h));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" is not in scope"));
@@ -3166,7 +3128,7 @@ pub fn casesOfBool(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(27)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b.push_display(&(path));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!("/cases.true"));
@@ -3184,7 +3146,7 @@ pub fn casesOfBool(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(28)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b.push_display(&(path));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!("/cases.false"));
@@ -3370,9 +3332,9 @@ pub fn splitConstructors(
                         ));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &(crate::proof_kernel::aver_generated::kernel::types::show(t)),
-                    )));
+                    );
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg9)
@@ -3506,31 +3468,25 @@ pub fn caseVars(
                                                             ));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(
-                                                            aver_rt::aver_display(&(c.ctor)),
-                                                        ));
+                                                        __b.push_display(&(c.ctor));
                                                         __b
                                                     };
                                                     __b.push_str(&::aver_rt::str_lit!(" binds "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(
-                                                        &(aver_rt::AverInt::from_i64(
-                                                            c.binders.len() as i64,
-                                                        )),
-                                                    ),
-                                                ));
+                                                __b.push_display(
+                                                    &(aver_rt::AverInt::from_i64(
+                                                        c.binders.len() as i64
+                                                    )),
+                                                );
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" names for "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(
-                                                &(aver_rt::AverInt::from_i64(fs.len() as i64)),
-                                            ),
-                                        ));
+                                        __b.push_display(
+                                            &(aver_rt::AverInt::from_i64(fs.len() as i64)),
+                                        );
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" fields"));
@@ -4016,12 +3972,12 @@ pub fn intComparisons(
         }
         },
         _ => {
-            return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(71)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": linear arithmetic reads comparisons of Int terms")); __b }));
+            return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(71)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": linear arithmetic reads comparisons of Int terms")); __b }));
         }
     } } }
         },
         _ => {
-            return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(71)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": linear arithmetic reads comparisons of Int terms")); __b }));
+            return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(71)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": linear arithmetic reads comparisons of Int terms")); __b }));
         }
     } } })
     }
@@ -4209,7 +4165,7 @@ pub fn enumStep(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                    __b.push_display(&(v));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" is not a given of finite type"));
@@ -4337,7 +4293,7 @@ pub fn constant(
                         __b.push_str(&::aver_rt::str_lit!("module-level binding "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b.push_display(&(n));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" is shadowed by a variable"));
@@ -4374,7 +4330,7 @@ pub fn constantIn(
                             __b.push_str(&::aver_rt::str_lit!("no module-level binding "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b.push_display(&(n));
                         __b
                     });
                     crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg5)
@@ -4452,7 +4408,7 @@ pub fn unfold(
                     __b.push_str(&::aver_rt::str_lit!("no definition of "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                __b.push_display(&(f));
                 __b
             });
             crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg10)
@@ -4676,7 +4632,7 @@ pub fn selected(
                         __b.push_str(&::aver_rt::str_lit!("there is no arm "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+                    __b.push_display(&(k));
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg13)
@@ -4796,7 +4752,7 @@ pub fn selectedWith(
                             ));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+                        __b.push_display(&(k));
                         __b
                     });
                     crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg14)
@@ -4869,7 +4825,7 @@ pub fn catchAllArm(
                         __b.push_str(&::aver_rt::str_lit!("arm "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+                    __b.push_display(&(k));
                     __b
                 });
                 crate::proof_kernel::aver_generated::kernel::check::bound(
@@ -4915,9 +4871,7 @@ pub fn catchAllArm(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!("/premise"));
@@ -4943,7 +4897,7 @@ pub fn catchAllArm(
                     __b.push_str(&::aver_rt::str_lit!("an earlier arm can also match arm "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+                __b.push_display(&(k));
                 __b
             });
             crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg25)
@@ -5239,7 +5193,7 @@ pub fn armEquation(
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
                 );
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                __b.push_display(&(path));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!("/premise"));
@@ -5379,7 +5333,7 @@ pub fn patTerm(
                                 __b.push_str(&::aver_rt::str_lit!("step "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                            __b.push_display(&(path));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(
@@ -5409,7 +5363,7 @@ pub fn patTerm(
                                 __b.push_str(&::aver_rt::str_lit!("step "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                            __b.push_display(&(path));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(
@@ -5443,9 +5397,7 @@ pub fn patTerm(
                                                 __b.push_str(&::aver_rt::str_lit!("step "));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(path)),
-                                            ));
+                                            __b.push_display(&(path));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(
@@ -5467,9 +5419,7 @@ pub fn patTerm(
                                         __b.push_str(&::aver_rt::str_lit!("step "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
+                                    __b.push_display(&(path));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(
@@ -5489,7 +5439,7 @@ pub fn patTerm(
                                 __b.push_str(&::aver_rt::str_lit!("step "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                            __b.push_display(&(path));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(
@@ -5511,7 +5461,7 @@ pub fn patTerm(
                         __b.push_str(&::aver_rt::str_lit!("step "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b.push_display(&(path));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(
@@ -5550,7 +5500,7 @@ pub fn ctorTerm(
                     __b.push_str(&::aver_rt::str_lit!("step "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                __b.push_display(&(path));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(
@@ -5647,7 +5597,7 @@ pub fn rule(
                     __b.push_str(&::aver_rt::str_lit!("unknown rule "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(id))));
+                __b.push_display(&(id));
                 __b
             });
             crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg6)
@@ -5666,7 +5616,7 @@ pub fn rule(
                                 __b.push_str(&::aver_rt::str_lit!("rule "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(id))));
+                            __b.push_display(&(id));
                             __b
                         });
                         crate::proof_kernel::aver_generated::kernel::check::bound(
@@ -5699,13 +5649,13 @@ pub fn rule(
                                     __b.push_str(&::aver_rt::str_lit!("rule "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(id))));
+                                __b.push_display(&(id));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" binds "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &({
                                 let __arg9 @ _ =
                                     crate::proof_kernel::aver_generated::kernel::proof::givenNames(
@@ -5715,7 +5665,7 @@ pub fn rule(
                                     &__arg9,
                                 )
                             }),
-                        )));
+                        );
                         __b
                     });
                     crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg10)
@@ -5804,7 +5754,7 @@ pub fn lawStep(
                         __b.push_str(&::aver_rt::str_lit!("law "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(key))));
+                    __b.push_display(&(key));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" is not cited"));
@@ -5826,7 +5776,7 @@ pub fn lawStep(
                                 __b.push_str(&::aver_rt::str_lit!("law "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(key))));
+                            __b.push_display(&(key));
                             __b
                         });
                         crate::proof_kernel::aver_generated::kernel::check::bound(
@@ -5864,15 +5814,13 @@ pub fn lawStep(
                                     __b.push_str(&::aver_rt::str_lit!("law "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(key),
-                                )));
+                                __b.push_display(&(key));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" quantifies "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &({
                                 let __arg11 @ _ =
                                     crate::proof_kernel::aver_generated::kernel::proof::givenNames(
@@ -5882,7 +5830,7 @@ pub fn lawStep(
                                     &__arg11,
                                 )
                             }),
-                        )));
+                        );
                         __b
                     });
                     crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg12)
@@ -6049,7 +5997,7 @@ pub fn statementTyped(
                     __b.push_str(&::aver_rt::str_lit!("step proof: the claim compares "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                __b.push_display(&(why));
                 __b
             })),
             _ => {
@@ -6129,7 +6077,7 @@ pub fn lawHyps(
 #[inline(always)]
 pub fn commaJoined(ns @ _: &aver_rt::AverList<AverStr>) -> AverStr {
     crate::proof_kernel::cancel_checkpoint();
-    (aver_rt::string_join(&ns, &::aver_rt::str_lit!(","))).into_aver()
+    aver_rt::string_join(&ns, &::aver_rt::str_lit!(","))
 }
 
 /// Induction along the recursion of f at arguments xs, as its gate checked it: one case per arm of its match, each with one hypothesis per recursive call in the arm. The hypotheses named in carry hold in each case; a call's hypothesis holds once they are proved at the call's arguments.
@@ -6154,7 +6102,7 @@ pub fn induct(
                     __b.push_str(&::aver_rt::str_lit!("no definition of "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                __b.push_display(&(f));
                 __b
             });
             crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg11)
@@ -6171,7 +6119,7 @@ pub fn induct(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                                __b.push_display(&(f));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" does not recurse"));
@@ -6262,17 +6210,15 @@ pub fn inductChecked(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(45)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(aver_rt::AverInt::from_i64(r.arms.len() as i64)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" arms, "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(aver_rt::AverInt::from_i64(cs.len() as i64)),
-                        )));
+                        __b.push_display(&(aver_rt::AverInt::from_i64(cs.len() as i64)));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" cases"));
@@ -6363,9 +6309,9 @@ pub fn measured(
                                 ));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_kernel::aver_generated::kernel::types::show(&t)),
-                            )));
+                            );
                             __b
                         }))
                     }
@@ -6396,7 +6342,7 @@ pub fn measured(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(43)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                                __b.push_display(&(v));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" is not a given of type Int"));
@@ -6409,7 +6355,7 @@ pub fn measured(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(43)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                        __b.push_display(&(v));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" is not a given of type Int"));
@@ -6859,13 +6805,13 @@ pub fn refuseCase(path @ _: AverStr, why @ _: AverStr) -> Result<(), AverStr> {
                     __b.push_str(&::aver_rt::str_lit!("step "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                __b.push_display(&(path));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(": "));
             __b
         };
-        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+        __b.push_display(&(why));
         __b
     }))
 }
@@ -7049,17 +6995,15 @@ pub fn inductCaseNamed(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(61)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(aver_rt::AverInt::from_i64(a.calls.len() as i64)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" recursive calls, "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                            &(aver_rt::AverInt::from_i64(c.ihs.len() as i64)),
-                        )));
+                        __b.push_display(&(aver_rt::AverInt::from_i64(c.ihs.len() as i64)));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" hypotheses"));
@@ -7229,10 +7173,10 @@ pub fn caseGuard(
                         match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(__b_fields) => {
             let b = __b_fields.0.clone();
-            { let __list_subject = __pat2; if let Some((h, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat4; if __list_subject.is_empty() { Ok(aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::proof::Hyp { name: h, eqn: { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: g, rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(b)) }; crate::proof_kernel::aver_generated::kernel::check::instantiate(__arg13, rename, path) }? }])) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b })) } }
+            { let __list_subject = __pat2; if let Some((h, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat4; if __list_subject.is_empty() { Ok(aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::proof::Hyp { name: h, eqn: { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: g, rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(b)) }; crate::proof_kernel::aver_generated::kernel::check::instantiate(__arg13, rename, path) }? }])) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b }))
         }
     }
                     }
@@ -7245,7 +7189,7 @@ pub fn caseGuard(
                                 __b.push_str(&::aver_rt::str_lit!("step "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                            __b.push_display(&(path));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(
@@ -7403,15 +7347,13 @@ pub fn moreHyps(
                                         __b.push_str(&::aver_rt::str_lit!("step "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
+                                    __b.push_display(&(path));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(": no recursive call "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(m.call))));
+                            __b.push_display(&(m.call));
                             __b
                         })),
                         (_, false, _) => {
@@ -7430,37 +7372,29 @@ pub fn moreHyps(
                                                                 ));
                                                                 __b
                                                             };
-                                                            __b.push_str(&aver_rt::AverStr::from(
-                                                                aver_rt::aver_display(&(path)),
-                                                            ));
+                                                            __b.push_display(&(path));
                                                             __b
                                                         };
                                                         __b.push_str(&::aver_rt::str_lit!(": "));
                                                         __b
                                                     };
-                                                    __b.push_str(&aver_rt::AverStr::from(
-                                                        aver_rt::aver_display(&(m.ih.name)),
-                                                    ));
+                                                    __b.push_display(&(m.ih.name));
                                                     __b
                                                 };
                                                 __b.push_str(&::aver_rt::str_lit!(" gives "));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(
-                                                    &(aver_rt::AverInt::from_i64(
-                                                        m.ih.at.len() as i64
-                                                    )),
-                                                ),
-                                            ));
+                                            __b.push_display(
+                                                &(aver_rt::AverInt::from_i64(m.ih.at.len() as i64)),
+                                            );
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(" values for "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    __b.push_display(
                                         &(aver_rt::AverInt::from_i64(vr.general.len() as i64)),
-                                    )));
+                                    );
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" varied givens"));
@@ -7476,9 +7410,7 @@ pub fn moreHyps(
                                     __b.push_str(&::aver_rt::str_lit!("step "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(
@@ -7591,7 +7523,7 @@ pub fn partBinding(
                             __b.push_str(&::aver_rt::str_lit!("step "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(": a recursive call binds nothing"));
@@ -7635,7 +7567,7 @@ pub fn ihTaken(
                         __b.push_str(&::aver_rt::str_lit!("step "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b.push_display(&(path));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(": one proof per carried hypothesis"));
@@ -7677,7 +7609,7 @@ pub fn ihHolds(
                 __b.push_str(&::aver_rt::str_lit!("hypothesis "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+            __b.push_display(&(h));
             __b
         });
         crate::proof_kernel::aver_generated::kernel::check::bound(
@@ -7695,13 +7627,13 @@ pub fn ihHolds(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b.push_display(&(path));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!("/"));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+            __b.push_display(&(h));
             __b
         });
         crate::proof_kernel::aver_generated::kernel::check::carriedHold(
@@ -7752,7 +7684,7 @@ pub fn ihAt(
                     __b.push_str(&::aver_rt::str_lit!("step "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                __b.push_display(&(path));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(
@@ -7863,7 +7795,7 @@ pub fn ihBindings(
                     __b.push_str(&::aver_rt::str_lit!("step "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                __b.push_display(&(path));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(
@@ -7941,7 +7873,7 @@ pub fn caseProves(
                     __b.push_str(&::aver_rt::str_lit!("step "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                __b.push_display(&(path));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(
@@ -7984,7 +7916,7 @@ pub fn listInduct(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(44)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                        __b.push_display(&(v));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" is not a given of list type"));
@@ -7998,7 +7930,7 @@ pub fn listInduct(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(52)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                        __b.push_display(&(v));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" is both inducted on and generalised"));
@@ -8079,7 +8011,7 @@ pub fn lenInduct(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(44)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                        __b.push_display(&(v));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" is not a given of list type"));
@@ -8095,7 +8027,7 @@ pub fn lenInduct(
                                 let mut __b = aver_rt::Buffer::with_capacity(
                                     (aver_rt::AverInt::from_i64(52)).to_usize().unwrap_or(0),
                                 );
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                                __b.push_display(&(v));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(
@@ -8248,7 +8180,7 @@ pub fn lenCase(
                     let mut __b = aver_rt::Buffer::with_capacity(
                         (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
                     );
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b.push_display(&(path));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!("/below"));
@@ -8341,15 +8273,13 @@ pub fn factsOf(
                                         __b.push_str(&::aver_rt::str_lit!("step "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(path),
-                                    )));
+                                    __b.push_display(&(path));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(": "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h.name))));
+                            __b.push_display(&(h.name));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" is not a fact"));
@@ -8521,7 +8451,7 @@ pub fn listCases(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!("/nil"));
@@ -8599,7 +8529,7 @@ pub fn listCases(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b.push_display(&(path));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!("/cons"));
@@ -8659,7 +8589,7 @@ pub fn splitList(
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                        __b.push_display(&(v));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" is not a variable of list type"));
@@ -8769,31 +8699,29 @@ pub fn smallerHyps(
                                                                 ));
                                                                 __b
                                                             };
-                                                            __b.push_str(&aver_rt::AverStr::from(
-                                                                aver_rt::aver_display(&(path)),
-                                                            ));
+                                                            __b.push_display(&(path));
                                                             __b
                                                         };
                                                         __b.push_str(&::aver_rt::str_lit!(": "));
                                                         __b
                                                     };
-                                                    __b.push_str(&aver_rt::AverStr::from(
-                                                        aver_rt::aver_display(&(i.name)),
-                                                    ));
+                                                    __b.push_display(&(i.name));
                                                     __b
                                                 };
                                                 __b.push_str(&::aver_rt::str_lit!(" gives "));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(aver_rt::AverInt::from_i64(i.at.len() as i64)))));
+                                            __b.push_display(
+                                                &(aver_rt::AverInt::from_i64(i.at.len() as i64)),
+                                            );
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(" values for "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    __b.push_display(
                                         &(aver_rt::AverInt::from_i64(general.len() as i64)),
-                                    )));
+                                    );
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" generalised givens"));
@@ -8809,9 +8737,7 @@ pub fn smallerHyps(
                                     __b.push_str(&::aver_rt::str_lit!("step "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(path),
-                                )));
+                                __b.push_display(&(path));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(

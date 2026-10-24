@@ -1329,6 +1329,66 @@ fn main() -> Unit
     );
 }
 
+/// Strings on the Rust runtime: a long `acc + piece` loop that grows one
+/// string in place, with copies of it that must stay as they were;
+/// `String.chars`; interpolated Int, Float, Bool and String; the builtins
+/// whose answer is their whole text, or empty, or one character; and an
+/// indexed walk over a long ASCII string with a multibyte character at a
+/// block edge.
+#[test]
+fn rust_string_runtime_shapes_match_vm() {
+    let src = r#"module StringRuntimeDifferential
+    intent = "String appends, characters, interpolation and builtins that keep or empty their text"
+    effects [Console.print]
+
+fn grow(n: Int, acc: String) -> String
+    ? "Append n pieces, ASCII and multibyte in turn."
+    match n <= 0
+        true -> acc
+        false -> match Int.mod(n, 2) == 0
+            true -> grow(n - 1, acc + "ab")
+            false -> grow(n - 1, acc + "é")
+
+fn spell(chars: List<String>, acc: String) -> String
+    ? "Join characters with a bar, one append each."
+    match chars
+        [] -> acc
+        [c, ..rest] -> spell(rest, acc + c + "|")
+
+fn codes(text: String, pos: Int, acc: Int) -> Int
+    ? "Read every character by position and sum the codes, weighted by position."
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> codes(text, pos + 1, acc + pos * Option.withDefault(String.firstCodePoint(c), 0))
+
+fn main() -> Unit
+    ? "Print each shape so a drifting backend shows a diff."
+    ! [Console.print]
+    base = grow(3000, "")
+    kept = base
+    left = base + "L"
+    right = kept + "R"
+    Console.print("{String.len(base)}:{String.len(left)}:{String.len(right)}:{String.slice(left, 4494, 4510)}:{String.slice(right, 4494, 4510)}:{String.slice(base, 0, 6)}")
+    Console.print(spell(String.chars("aé😀 z"), "") + spell(String.chars(""), "") + "{List.len(String.chars(base))}")
+    Console.print("{0 - 7}/{123456789012345678901234567890 * 3}/{0.1}/{Float.fromInt(3)}/{1.5 * 0.0 - 2.25}/{1 < 2}/{2 < 1}/{"s"}/{""}/{base == left}")
+    Console.print("[{String.trim("")}][{String.trim("   ")}][{String.trim("x")}][{String.trim(" é ")}][{String.slice("hello", 0 - 3, 99)}][{String.slice("hello", 3, 3)}][{String.slice("zażółć", 1, 4)}]")
+    Console.print("[{String.replace("hello", "zz", "y")}][{String.replace("ab", "", "-")}][{String.replace("aaa", "a", "bb")}][{String.toLower("abc")}][{String.toUpper("abc")}][{String.toLower("ŻÓŁĆ K")}][{String.toUpper("straße")}]")
+    Console.print("[{String.fromInt(0 - 12)}][{String.fromFloat(2.5)}][{String.fromBool(true)}][{String.fromBool(false)}][{Option.withDefault(String.charAt("aé", 1), "?")}][{Option.withDefault(String.charAt("aé", 2), "?")}][{Option.withDefault(String.fromCodePoint(128512), "?")}][{Option.withDefault(String.fromCodePoint(65), "?")}][{String.join(["", "b", "cd"], ", ")}][{String.join([], ",")}]")
+    sparse = String.join(["a", "b", "c"], "SPARSE")
+    Console.print("{codes(sparse, 0, 0)}|{codes("ascii only text", 0, 0)}|{String.len(sparse)}")
+"#
+    .replace(
+        "SPARSE",
+        &("x".repeat(62) + "\u{e9}" + &"y".repeat(70) + "\u{1F600}" + "zzzzz"),
+    );
+    let expected = "4500:4501:4501:abéabéL:abéabéR:abéabé\na|é|😀| |z|4500\n-7/370370367037037036703703703670/0.1/3/-2.25/true/false/s//false\n[][][x][é][hello][][ażó]\n[hello][-a-b-][bbbbbb][abc][ABC][żółć k][STRASSE]\n[-12][2.5][true][false][é][?][😀][A][, b, cd][]\n57153564|10589|281";
+    let vm = run_vm_inline("string_runtime", &src).expect("VM run");
+    let rust =
+        build_run_rust_inline("string_runtime", &src).expect("Rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM string contract changed");
+    assert_eq!(rust, expected, "Rust strings diverged from the VM");
+}
+
 /// List build, on the shapes where the two backends could disagree.
 ///
 /// ORDER is the claim: `prepend` then `reverse` yields traversal order,

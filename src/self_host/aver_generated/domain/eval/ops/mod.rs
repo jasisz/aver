@@ -427,25 +427,21 @@ pub fn evalCmpRepr(
                                 __b.push_str(&::aver_rt::str_lit!("comparison "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::aver_generated::domain::eval::ops::cmpOpName(op)),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" not supported for "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::aver_generated::domain::value::valRepr(va)),
-                    )));
+                    __b.push_display(&(crate::aver_generated::domain::value::valRepr(va)));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" and "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::aver_generated::domain::value::valRepr(vb)),
-            )));
+            __b.push_display(&(crate::aver_generated::domain::value::valRepr(vb)));
             __b
         })),
     }

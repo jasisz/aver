@@ -639,17 +639,13 @@ pub fn expect(
                         __b.push_str(&::aver_rt::str_lit!("Expected "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::aver_generated::domain::token::tokenRepr(expected)),
-                    )));
+                    __b.push_display(&(crate::aver_generated::domain::token::tokenRepr(expected)));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(", got "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::aver_generated::domain::token::tokenRepr(&t)),
-            )));
+            __b.push_display(&(crate::aver_generated::domain::token::tokenRepr(&t)));
             __b
         }))
     }
@@ -763,9 +759,7 @@ pub fn parsePattern(
                 __b.push_str(&::aver_rt::str_lit!("Expected pattern, got "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::aver_generated::domain::token::tokenRepr(&t)),
-            )));
+            __b.push_display(&(crate::aver_generated::domain::token::tokenRepr(&t)));
             __b
         })),
     }

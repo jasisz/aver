@@ -108,6 +108,13 @@ impl Buffer {
         self.has_parts = true;
     }
 
+    /// Appends the text of an interpolated value, written straight into
+    /// the buffer.
+    pub fn push_display<T: AverDisplay + ?Sized>(&mut self, value: &T) {
+        value.push_display(&mut self.bytes);
+        self.has_parts = true;
+    }
+
     /// Internal "is first fragment" predicate retained under the old method
     /// name so already-generated self-host code shares the corrected contract.
     pub fn is_empty(&self) -> bool {
@@ -207,19 +214,25 @@ impl std::borrow::Borrow<str> for AverStr {
 
 impl From<String> for AverStr {
     fn from(s: String) -> Self {
-        Self::new(Rc::from(s.as_str()))
+        Self::from(s.as_str())
     }
 }
 
 impl From<Buffer> for AverStr {
     fn from(buffer: Buffer) -> Self {
-        Self::new(Rc::from(buffer.bytes.as_str()))
+        Self::from(buffer.bytes.as_str())
     }
 }
 
+/// One copy of the text; none for the empty string or one ASCII
+/// character, which are statics.
 impl From<&str> for AverStr {
     fn from(s: &str) -> Self {
-        Self::new(Rc::from(s))
+        match s.as_bytes() {
+            [] => str_lit!(""),
+            [byte] => Self::from_static(&string_index::ASCII_CHARS[usize::from(*byte)]),
+            _ => Self::new(Rc::from(s)),
+        }
     }
 }
 
@@ -248,23 +261,131 @@ impl fmt::Debug for AverStr {
     }
 }
 
+/// `acc + part`: `part` is appended to `acc`'s own node when `acc` is its
+/// only owner, so a loop that grows one string by appending costs what the
+/// string holds, not the sum of every step; a shared `acc` is left as it is
+/// and the sum is one new node.
 impl std::ops::Add<&AverStr> for AverStr {
     type Output = AverStr;
-    fn add(self, other: &AverStr) -> AverStr {
-        let mut s = String::with_capacity(self.len() + other.len());
-        s.push_str(&self);
-        s.push_str(other);
-        AverStr::from(s)
+    fn add(mut self, other: &AverStr) -> AverStr {
+        if self.is_empty() {
+            return other.clone();
+        }
+        if other.is_empty() || Rc::append(&mut self.0, other) {
+            return self;
+        }
+        aver_str_concat(&self, other)
     }
 }
 
-/// Concatenate two AverStr values.
+/// Concatenate two AverStr values into one new node.
 #[inline]
 pub fn aver_str_concat(a: &AverStr, b: &AverStr) -> AverStr {
-    let mut s = String::with_capacity(a.len() + b.len());
-    s.push_str(a);
-    s.push_str(b);
-    AverStr::from(s)
+    AverStr::new(Rc::from_parts(|| [&**a, &**b].into_iter()))
+}
+
+/// The one-character string of `c`; a static for an ASCII character.
+#[inline]
+pub fn char_str(c: char) -> AverStr {
+    AverStr::from(&*c.encode_utf8(&mut [0; 4]))
+}
+
+/// `String.chars`: one string per character, built in one pass.
+pub fn string_chars(text: &str) -> AverList<AverStr> {
+    AverList::from_vec(text.chars().map(char_str).collect())
+}
+
+/// `part`, a piece of `whole`, as a string: `whole` itself when it is all
+/// of it, so a `trim` or `slice` that keeps everything copies nothing.
+#[inline]
+pub fn string_part(whole: &AverStr, part: &str) -> AverStr {
+    if part.len() == whole.len() {
+        whole.clone()
+    } else {
+        AverStr::from(part)
+    }
+}
+
+/// `String.slice` (see [`string_slice`]).
+pub fn string_slice_part(text: &AverStr, from: i64, to: i64) -> AverStr {
+    string_part(text, string_slice(text, from, to))
+}
+
+/// `String.trim`.
+pub fn string_trim(text: &AverStr) -> AverStr {
+    string_part(text, text.trim())
+}
+
+/// `String.replace`; the text itself when `from` does not occur in it.
+pub fn string_replace(text: &AverStr, from: &str, to: &str) -> AverStr {
+    if text.contains(from) {
+        AverStr::from(text.replace(from, to))
+    } else {
+        text.clone()
+    }
+}
+
+/// `String.toUpper` (`upper`) or `String.toLower`: the text itself when no
+/// character changes, and one copy cased in place for ASCII text.
+pub fn string_case(text: &AverStr, upper: bool) -> AverStr {
+    if !text.is_ascii() {
+        return AverStr::from(if upper {
+            text.to_uppercase()
+        } else {
+            text.to_lowercase()
+        });
+    }
+    let changes = |byte: &u8| match upper {
+        true => byte.is_ascii_lowercase(),
+        false => byte.is_ascii_uppercase(),
+    };
+    if !text.as_bytes().iter().any(changes) {
+        return text.clone();
+    }
+    let mut cased = Rc::<str>::from(&**text);
+    let bytes = Rc::get_mut(&mut cased).expect("a new node has one owner");
+    match upper {
+        true => bytes.make_ascii_uppercase(),
+        false => bytes.make_ascii_lowercase(),
+    }
+    AverStr::new(cased)
+}
+
+/// `String.fromBool`.
+#[inline]
+pub fn bool_str(value: bool) -> AverStr {
+    match value {
+        true => str_lit!("true"),
+        false => str_lit!("false"),
+    }
+}
+
+/// The text `value` displays, in one allocation: short text is written on
+/// the stack first. `String.fromInt` and `String.fromFloat`.
+pub fn display_str(value: &impl fmt::Display) -> AverStr {
+    struct Stack {
+        bytes: [u8; 64],
+        len: usize,
+    }
+    impl fmt::Write for Stack {
+        fn write_str(&mut self, text: &str) -> fmt::Result {
+            let end = self.len + text.len();
+            let room = self.bytes.get_mut(self.len..end).ok_or(fmt::Error)?;
+            room.copy_from_slice(text.as_bytes());
+            self.len = end;
+            Ok(())
+        }
+    }
+    let mut stack = Stack {
+        bytes: [0; 64],
+        len: 0,
+    };
+    match fmt::write(&mut stack, format_args!("{value}")) {
+        Ok(()) => {
+            AverStr::from(std::str::from_utf8(&stack.bytes[..stack.len]).expect("written as str"))
+        }
+        Err(_) => AverStr::from(value.to_string()),
+    }
 }
 /// Every node the runtime's values share (lists, vectors, maps, strings).
 use crate::shared::Shared as Rc;
@@ -1843,17 +1964,15 @@ macro_rules! aver_list_match_reuse {
     }};
 }
 
-pub fn string_join<S: AsRef<str>>(parts: &AverList<S>, sep: &str) -> String {
-    let mut iter = parts.iter();
-    let Some(first) = iter.next() else {
-        return String::new();
-    };
-    let mut out = first.as_ref().to_string();
-    for part in iter {
-        out.push_str(sep);
-        out.push_str(part.as_ref());
-    }
-    out
+/// `String.join`, in one allocation.
+pub fn string_join(parts: &AverList<AverStr>, sep: &str) -> AverStr {
+    AverStr::new(Rc::from_parts(|| {
+        let mut parts = parts.iter().map(|part| &**part);
+        let first = parts.next();
+        first
+            .into_iter()
+            .chain(parts.flat_map(move |part| [sep, part]))
+    }))
 }
 
 #[cfg(test)]
@@ -2694,6 +2813,74 @@ mod tests {
     fn aver_display_quotes_strings_inside_lists() {
         let parts = AverList::from_vec(vec!["a".to_string(), "b".to_string()]);
         assert_eq!(aver_display(&parts), "[\"a\", \"b\"]");
+    }
+
+    #[test]
+    fn appending_changes_only_a_string_with_one_owner() {
+        let mut acc = AverStr::from("");
+        for i in 0..200 {
+            acc = acc + &AverStr::from(if i % 2 == 0 { "ab" } else { "é" });
+        }
+        assert_eq!(acc.len(), 100 * 2 + 100 * 2);
+        let kept = acc.clone();
+        let grown = acc + &AverStr::from("!");
+        assert!(grown.ends_with("é!") && !kept.ends_with('!'));
+        assert_eq!(kept.len() + 1, grown.len());
+        let literal = crate::str_lit!("lit");
+        assert_eq!(&*(literal.clone() + &AverStr::from("eral")), "literal");
+        assert_eq!(&*literal, "lit");
+        let part = AverStr::from("part");
+        let whole = AverStr::from("") + &part;
+        assert!(crate::shared::Shared::ptr_eq(&whole.0, &part.0));
+    }
+
+    #[test]
+    fn string_builtins_keep_the_text_they_do_not_change() {
+        use super::{
+            bool_str, char_str, display_str, string_case, string_chars, string_join,
+            string_replace, string_slice_part, string_trim,
+        };
+        let text = AverStr::from("hello world");
+        let same = |a: &AverStr| crate::shared::Shared::ptr_eq(&a.0, &text.0);
+        assert!(same(&string_trim(&text)));
+        assert!(same(&string_slice_part(&text, -4, 99)));
+        assert!(same(&string_replace(&text, "zz", "y")));
+        assert!(same(&string_case(&text, false)));
+        assert_eq!(&*string_trim(&AverStr::from("  a b \n")), "a b");
+        assert_eq!(&*string_slice_part(&text, 6, 8), "wo");
+        assert_eq!(&*string_slice_part(&AverStr::from("zażółć"), 2, 9), "żółć");
+        assert_eq!(&*string_replace(&text, "o", "0"), "hell0 w0rld");
+        assert_eq!(&*string_replace(&AverStr::from("ab"), "", "-"), "-a-b-");
+        assert_eq!(&*string_case(&text, true), "HELLO WORLD");
+        assert_eq!(
+            &*string_case(&AverStr::from("Straße \u{212A}"), true),
+            "STRASSE \u{212A}"
+        );
+        assert_eq!(&*string_case(&AverStr::from("\u{212A}"), false), "k");
+        assert_eq!(&*bool_str(true), "true");
+        assert_eq!(&*bool_str(false), "false");
+        assert_eq!(&*display_str(&-42i64), "-42");
+        assert_eq!(&*display_str(&0.1f64), "0.1");
+        let big = crate::AverInt::from_i64(i64::MAX).mul(&crate::AverInt::from_i64(i64::MAX));
+        let big = big.mul(&big).mul(&big);
+        assert_eq!(
+            &*display_str(&big),
+            big.to_string(),
+            "past the stack buffer"
+        );
+        assert_eq!(&*char_str('é'), "é");
+        let chars: Vec<String> = string_chars("aé😀").iter().map(|c| c.to_string()).collect();
+        assert_eq!(chars, ["a", "é", "😀"]);
+        let parts = AverList::from_vec(vec![
+            AverStr::from(""),
+            AverStr::from("b"),
+            AverStr::from("cd"),
+        ]);
+        assert_eq!(&*string_join(&parts, ", "), ", b, cd");
+        assert_eq!(
+            &*string_join(&AverList::<AverStr>::from_vec(vec![]), ","),
+            ""
+        );
     }
 
     #[test]

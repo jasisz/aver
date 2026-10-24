@@ -1,4 +1,5 @@
 use crate::AverList;
+use std::fmt::Write;
 
 pub fn aver_display<T: AverDisplay>(val: &T) -> String {
     val.aver_display()
@@ -6,6 +7,12 @@ pub fn aver_display<T: AverDisplay>(val: &T) -> String {
 
 pub trait AverDisplay {
     fn aver_display(&self) -> String;
+
+    /// Appends what [`AverDisplay::aver_display`] returns to `out`; the
+    /// scalars and strings write it there without a `String` of their own.
+    fn push_display(&self, out: &mut String) {
+        out.push_str(&self.aver_display());
+    }
 
     fn aver_display_inner(&self) -> String {
         self.aver_display()
@@ -16,6 +23,10 @@ impl AverDisplay for i64 {
     fn aver_display(&self) -> String {
         self.to_string()
     }
+
+    fn push_display(&self, out: &mut String) {
+        let _ = write!(out, "{self}");
+    }
 }
 
 impl AverDisplay for crate::AverInt {
@@ -24,17 +35,29 @@ impl AverDisplay for crate::AverInt {
         // byte-identical to the VM's `Value::Int` display.
         self.to_string()
     }
+
+    fn push_display(&self, out: &mut String) {
+        let _ = write!(out, "{self}");
+    }
 }
 
 impl AverDisplay for f64 {
     fn aver_display(&self) -> String {
         self.to_string()
     }
+
+    fn push_display(&self, out: &mut String) {
+        let _ = write!(out, "{self}");
+    }
 }
 
 impl AverDisplay for String {
     fn aver_display(&self) -> String {
         self.clone()
+    }
+
+    fn push_display(&self, out: &mut String) {
+        out.push_str(self);
     }
 
     fn aver_display_inner(&self) -> String {
@@ -45,6 +68,10 @@ impl AverDisplay for String {
 impl AverDisplay for crate::AverStr {
     fn aver_display(&self) -> String {
         self.to_string()
+    }
+
+    fn push_display(&self, out: &mut String) {
+        out.push_str(self);
     }
 
     fn aver_display_inner(&self) -> String {
@@ -59,6 +86,10 @@ impl AverDisplay for bool {
         } else {
             "false".to_string()
         }
+    }
+
+    fn push_display(&self, out: &mut String) {
+        out.push_str(if *self { "true" } else { "false" });
     }
 }
 

@@ -15,7 +15,7 @@ pub fn run(plan @ _: AverStr, text @ _: AverStr) -> AverStr {
                 __b.push_str(&::aver_rt::str_lit!("goal\n"));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+            __b.push_display(&(why));
             __b
         }),
         Ok(g @ _) => {
@@ -41,7 +41,7 @@ pub fn byName(
                 __b.push_str(&::aver_rt::str_lit!("Kernel.Std has no plan "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(plan))));
+            __b.push_display(&(plan));
             __b
         })),
     }

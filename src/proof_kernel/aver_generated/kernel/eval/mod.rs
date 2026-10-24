@@ -171,7 +171,7 @@ pub fn sameCtor(c @ _: AverStr, d @ _: AverStr, fields @ _: aver_rt::AverInt) ->
 #[inline(always)]
 pub fn typeOf(c @ _: &AverStr) -> AverStr {
     crate::proof_kernel::cancel_checkpoint();
-    (aver_rt::string_join(
+    aver_rt::string_join(
         &({
             let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)));
             ((aver_rt::AverList::from_vec(
@@ -184,8 +184,7 @@ pub fn typeOf(c @ _: &AverStr) -> AverStr {
         })
         .reverse_owned(),
         &::aver_rt::str_lit!("."),
-    ))
-    .into_aver()
+    )
 }
 
 /// The value of each term.

@@ -55,9 +55,7 @@ pub fn call(
                                                         ));
                                                         __b
                                                     };
-                                                    __b.push_str(&aver_rt::AverStr::from(
-                                                        aver_rt::aver_display(&(name)),
-                                                    ));
+                                                    __b.push_display(&(name));
                                                     __b
                                                 }))
                                             }

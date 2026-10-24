@@ -201,7 +201,7 @@ pub fn termOf(
                                                                             {
                                                                                 crate::proof_kernel::aver_generated::kernel::decode::updTerm(args)
                                                                             } else {
-                                                                                Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown term ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b }))
+                                                                                Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown term ")); __b }; __b.push_display(&(tag)); __b }))
                                                                             }
                                                                         }
                                                                     }
@@ -442,7 +442,7 @@ pub fn headed(
                         __b.push_str(&::aver_rt::str_lit!("malformed "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(kind))));
+                    __b.push_display(&(kind));
                     __b
                 })),
             }
@@ -455,7 +455,7 @@ pub fn headed(
                     __b.push_str(&::aver_rt::str_lit!("malformed "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(kind))));
+                __b.push_display(&(kind));
                 __b
             }))
         }
@@ -739,9 +739,7 @@ pub fn patOf(
                                             __b.push_str(&::aver_rt::str_lit!("unknown pattern "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(tag)),
-                                        ));
+                                        __b.push_display(&(tag));
                                         __b
                                     }))
                                 }
@@ -1210,7 +1208,7 @@ pub fn proofOf(
                                                                             {
                                                                                 crate::proof_kernel::aver_generated::kernel::decode::absurdProof(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "induct" { crate::proof_kernel::aver_generated::kernel::decode::inductProof(args) } else { if &*__dispatch_subject == "listinduct" { crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args) } else { if &*__dispatch_subject == "listcases" { crate::proof_kernel::aver_generated::kernel::decode::listCasesProof(args) } else { if &*__dispatch_subject == "leninduct" { crate::proof_kernel::aver_generated::kernel::decode::lenInductProof(args) } else { if &*__dispatch_subject == "ring" { crate::proof_kernel::aver_generated::kernel::decode::ringProof(args) } else { if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) } } } } } }
+                                                                                if &*__dispatch_subject == "induct" { crate::proof_kernel::aver_generated::kernel::decode::inductProof(args) } else { if &*__dispatch_subject == "listinduct" { crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args) } else { if &*__dispatch_subject == "listcases" { crate::proof_kernel::aver_generated::kernel::decode::listCasesProof(args) } else { if &*__dispatch_subject == "leninduct" { crate::proof_kernel::aver_generated::kernel::decode::lenInductProof(args) } else { if &*__dispatch_subject == "ring" { crate::proof_kernel::aver_generated::kernel::decode::ringProof(args) } else { if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown rule ")); __b }; __b.push_display(&(tag)); __b })) } } } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -1499,9 +1497,7 @@ pub fn instanceProof(
                                     __b.push_str(&::aver_rt::str_lit!("malformed "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                    &(kind),
-                                )));
+                                __b.push_display(&(kind));
                                 __b
                             }))
                         }
@@ -1515,7 +1511,7 @@ pub fn instanceProof(
                         __b.push_str(&::aver_rt::str_lit!("malformed "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(kind))));
+                    __b.push_display(&(kind));
                     __b
                 })),
             }
@@ -1528,7 +1524,7 @@ pub fn instanceProof(
                     __b.push_str(&::aver_rt::str_lit!("malformed "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(kind))));
+                __b.push_display(&(kind));
                 __b
             }))
         }
@@ -3277,10 +3273,10 @@ pub fn law(
                                 match __pat3 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(k) => {
             let k = k.clone();
-            { let __list_subject = __pat4; if let (Some(gs), Some(__pat5)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat5; if let (Some(p), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(l), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(r), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if __list_subject.is_empty() { { let __arg18 @ _ = (h == head); { let __arg19 @ _ = { let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(gs)?; crate::proof_kernel::aver_generated::kernel::decode::typedVars(&__arg17, true) }?; { let __arg20 @ _ = crate::proof_kernel::aver_generated::kernel::decode::premise(p)?; { let __arg21 @ _ = crate::proof_kernel::aver_generated::kernel::decode::term(l)?; { let __arg22 @ _ = crate::proof_kernel::aver_generated::kernel::decode::term(r)?; crate::proof_kernel::aver_generated::kernel::decode::lawOf(__arg18, k, &__arg19, &__arg20, __arg21, __arg22) } } } } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b })) } }
+            { let __list_subject = __pat4; if let (Some(gs), Some(__pat5)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat5; if let (Some(p), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if let (Some(l), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(r), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if __list_subject.is_empty() { { let __arg18 @ _ = (h == head); { let __arg19 @ _ = { let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(gs)?; crate::proof_kernel::aver_generated::kernel::decode::typedVars(&__arg17, true) }?; { let __arg20 @ _ = crate::proof_kernel::aver_generated::kernel::decode::premise(p)?; { let __arg21 @ _ = crate::proof_kernel::aver_generated::kernel::decode::term(l)?; { let __arg22 @ _ = crate::proof_kernel::aver_generated::kernel::decode::term(r)?; crate::proof_kernel::aver_generated::kernel::decode::lawOf(__arg18, k, &__arg19, &__arg20, __arg21, __arg22) } } } } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(26)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b }))
         }
     }
                             } else {
@@ -3294,9 +3290,7 @@ pub fn law(
                                         __b.push_str(&::aver_rt::str_lit!("malformed "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(head),
-                                    )));
+                                    __b.push_display(&(head));
                                     __b
                                 }))
                             }
@@ -3310,7 +3304,7 @@ pub fn law(
                             __b.push_str(&::aver_rt::str_lit!("malformed "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head))));
+                        __b.push_display(&(head));
                         __b
                     })),
                 }
@@ -3323,7 +3317,7 @@ pub fn law(
                         __b.push_str(&::aver_rt::str_lit!("malformed "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head))));
+                    __b.push_display(&(head));
                     __b
                 }))
             }
@@ -3336,7 +3330,7 @@ pub fn law(
                 __b.push_str(&::aver_rt::str_lit!("malformed "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head))));
+            __b.push_display(&(head));
             __b
         })),
     }
@@ -3370,7 +3364,7 @@ pub fn lawOf(
                 __b.push_str(&::aver_rt::str_lit!("unexpected head for "));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+            __b.push_display(&(k));
             __b
         }))
     }
@@ -3948,115 +3942,115 @@ pub fn script(
             let __pat41 = __pat41.clone();
             match &*__pat41 {
         "proof" => {
-            { let __list_subject = __pat40; if let (Some(p), Some(__pat42)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat42; if __list_subject.is_empty() { { let __list_subject = __pat37; if __list_subject.is_empty() { { let __arg54 @ _ = crate::proof_kernel::aver_generated::kernel::decode::law(o, ::aver_rt::str_lit!("obligation"))?; { let __arg55 @ _ = crate::proof_kernel::aver_generated::kernel::decode::defs(&ds)?; { let __arg56 @ _ = crate::proof_kernel::aver_generated::kernel::decode::consts(&cs)?; { let __arg57 @ _ = crate::proof_kernel::aver_generated::kernel::decode::sums(&ss)?; { let __arg58 @ _ = crate::proof_kernel::aver_generated::kernel::decode::recs(&rs)?; { let __arg59 @ _ = crate::proof_kernel::aver_generated::kernel::decode::sigs(&gs)?; { let __arg60 @ _ = crate::proof_kernel::aver_generated::kernel::decode::laws(&ls)?; { let __arg61 @ _ = crate::proof_kernel::aver_generated::kernel::decode::proof(p)?; crate::proof_kernel::aver_generated::kernel::decode::scriptOf(__arg54, &__arg55, &__arg56, &__arg57, &__arg58, &__arg59, &__arg60, __arg61) } } } } } } } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+            { let __list_subject = __pat40; if let (Some(p), Some(__pat42)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat42; if __list_subject.is_empty() { { let __list_subject = __pat37; if __list_subject.is_empty() { { let __arg54 @ _ = crate::proof_kernel::aver_generated::kernel::decode::law(o, ::aver_rt::str_lit!("obligation"))?; { let __arg55 @ _ = crate::proof_kernel::aver_generated::kernel::decode::defs(&ds)?; { let __arg56 @ _ = crate::proof_kernel::aver_generated::kernel::decode::consts(&cs)?; { let __arg57 @ _ = crate::proof_kernel::aver_generated::kernel::decode::sums(&ss)?; { let __arg58 @ _ = crate::proof_kernel::aver_generated::kernel::decode::recs(&rs)?; { let __arg59 @ _ = crate::proof_kernel::aver_generated::kernel::decode::sigs(&gs)?; { let __arg60 @ _ = crate::proof_kernel::aver_generated::kernel::decode::laws(&ls)?; { let __arg61 @ _ = crate::proof_kernel::aver_generated::kernel::decode::proof(p)?; crate::proof_kernel::aver_generated::kernel::decode::scriptOf(__arg54, &__arg55, &__arg56, &__arg57, &__arg58, &__arg59, &__arg60, __arg61) } } } } } } } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
     }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
     }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
     }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
-        }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
     }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
-    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b }))
         }
     }
         },

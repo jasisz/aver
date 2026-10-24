@@ -193,9 +193,9 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                             __b.push_str(&::aver_rt::str_lit!("(list "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -213,9 +213,9 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                             __b.push_str(&::aver_rt::str_lit!("(option "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -233,9 +233,9 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                             __b.push_str(&::aver_rt::str_lit!("(vector "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -256,17 +256,17 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                                     __b.push_str(&::aver_rt::str_lit!("(result "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::tyText(b)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -287,17 +287,17 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                                     __b.push_str(&::aver_rt::str_lit!("(map "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::tyText(a)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::tyText(b)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -325,7 +325,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                             __b.push_str(&::aver_rt::str_lit!("(named "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b.push_display(&(n));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -350,7 +350,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                                 __b.push_str(&::aver_rt::str_lit!("(var "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                            __b.push_display(&(n));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" eq)"));
@@ -366,7 +366,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                                 __b.push_str(&::aver_rt::str_lit!("(var "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                            __b.push_display(&(n));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -419,9 +419,7 @@ pub fn answer(
                 __b.push_str(&::aver_rt::str_lit!("proof\n"));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                &(crate::proof_std::aver_generated::kernel::wire::proofText(p)),
-            )));
+            __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(p)));
             __b
         }),
         Err(why @ _) => {
@@ -434,7 +432,7 @@ pub fn answer(
                     __b.push_str(&::aver_rt::str_lit!("refused\n"));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                __b.push_display(&(why));
                 __b
             })
         }
@@ -454,13 +452,13 @@ pub fn quote(s @ _: AverStr) -> AverStr {
                 __b.push_str(&::aver_rt::str_lit!("\""));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+            __b.push_display(
                 &(crate::proof_std::aver_generated::kernel::wire::escaped__cursor(
                     s,
                     0i64,
                     ::aver_rt::str_lit!(""),
                 )),
-            )));
+            );
             __b
         };
         __b.push_str(&::aver_rt::str_lit!("\""));
@@ -509,7 +507,7 @@ pub fn escapeOne(c @ _: AverStr) -> AverStr {
 #[inline(always)]
 pub fn spaced(xs @ _: &aver_rt::AverList<AverStr>) -> AverStr {
     crate::proof_std::cancel_checkpoint();
-    (aver_rt::string_join(&xs, &::aver_rt::str_lit!(" "))).into_aver()
+    aver_rt::string_join(&xs, &::aver_rt::str_lit!(" "))
 }
 
 /// (HEAD X…), or (HEAD) when there is nothing after the head.
@@ -527,7 +525,7 @@ pub fn headed(head @ _: AverStr, xs @ _: &aver_rt::AverList<AverStr>) -> AverStr
                         __b.push_str(&::aver_rt::str_lit!("("));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head))));
+                    __b.push_display(&(head));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));
@@ -545,15 +543,13 @@ pub fn headed(head @ _: AverStr, xs @ _: &aver_rt::AverList<AverStr>) -> AverStr
                                 __b.push_str(&::aver_rt::str_lit!("("));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(head))));
+                            __b.push_display(&(head));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::proof_std::aver_generated::kernel::wire::spaced(xs)),
-                    )));
+                    __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(xs)));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));
@@ -580,7 +576,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("(i "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
+                        __b.push_display(&(i));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -598,7 +594,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("(b "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(b))));
+                        __b.push_display(&(b));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -616,9 +612,9 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("(s "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::quote(s)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -639,7 +635,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("(v "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b.push_display(&(n));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -663,15 +659,15 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                                     __b.push_str(&::aver_rt::str_lit!("(get "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::termText(o)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                        __b.push_display(&(f));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -690,7 +686,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("call "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                        __b.push_display(&(f));
                         __b
                     });
                     {
@@ -712,7 +708,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("bi "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(f))));
+                        __b.push_display(&(f));
                         __b
                     });
                     {
@@ -734,7 +730,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("ctor "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                        __b.push_display(&(c));
                         __b
                     });
                     {
@@ -763,25 +759,23 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                                             __b.push_str(&::aver_rt::str_lit!("(op "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(o)),
-                                        ));
+                                        __b.push_display(&(o));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::termText(a)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(b)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -799,9 +793,9 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("(neg "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(a)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -820,9 +814,9 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("match "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(s)),
-                        )));
+                        );
                         __b
                     });
                     {
@@ -874,7 +868,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                             __b.push_str(&::aver_rt::str_lit!("rec "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(ty))));
+                        __b.push_display(&(ty));
                         __b
                     });
                     {
@@ -899,15 +893,15 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                                     __b.push_str(&::aver_rt::str_lit!("upd "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(ty))));
+                                __b.push_display(&(ty));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(b)),
-                        )));
+                        );
                         __b
                     });
                     {
@@ -970,19 +964,17 @@ pub fn fieldTexts(
                                         __b.push_str(&::aver_rt::str_lit!("("));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(f.name),
-                                    )));
+                                    __b.push_display(&(f.name));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::termText(
                                     &f.value,
                                 )),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1023,21 +1015,21 @@ pub fn armTexts(
                                         __b.push_str(&::aver_rt::str_lit!("(arm "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    __b.push_display(
                                         &(crate::proof_std::aver_generated::kernel::wire::patText(
                                             &a.pattern,
                                         )),
-                                    )));
+                                    );
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::termText(
                                     &a.body,
                                 )),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1070,7 +1062,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
                         __b.push_str(&::aver_rt::str_lit!("(pv "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                    __b.push_display(&(n));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1086,9 +1078,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
                     __b.push_str(&::aver_rt::str_lit!("(pl "));
                     __b
                 };
-                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                    &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
-                )));
+                __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(t)));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1111,13 +1101,13 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
                                 __b.push_str(&::aver_rt::str_lit!("(pcons "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                            __b.push_display(&(h));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(t))));
+                    __b.push_display(&(t));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1134,13 +1124,13 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
                         __b.push_str(&::aver_rt::str_lit!("(pt "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &({
                             let __arg8 @ _ =
                                 crate::proof_std::aver_generated::kernel::wire::patTexts(ps);
                             crate::proof_std::aver_generated::kernel::wire::spaced(&__arg8)
                         }),
-                    )));
+                    );
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1158,7 +1148,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
                         __b.push_str(&::aver_rt::str_lit!("pc "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                    __b.push_display(&(c));
                     __b
                 });
                 crate::proof_std::aver_generated::kernel::wire::headed(__arg9, ns)
@@ -1205,13 +1195,13 @@ pub fn bindingsText(
                 __b.push_str(&::aver_rt::str_lit!("("));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+            __b.push_display(
                 &({
                     let __arg1 @ _ =
                         crate::proof_std::aver_generated::kernel::wire::bindingTexts(bs);
                     crate::proof_std::aver_generated::kernel::wire::spaced(&__arg1)
                 }),
-            )));
+            );
             __b
         };
         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1245,19 +1235,17 @@ pub fn bindingTexts(
                                         __b.push_str(&::aver_rt::str_lit!("("));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(b.name),
-                                    )));
+                                    __b.push_display(&(b.name));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::termText(
                                     &b.value,
                                 )),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1289,9 +1277,9 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b.push_str(&::aver_rt::str_lit!("(refl "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1309,9 +1297,9 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b.push_str(&::aver_rt::str_lit!("(symm "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::proofText(q)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1331,7 +1319,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                 __b.push_str(&::aver_rt::str_lit!("trans ("));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &({
                                     let __arg86 @ _ =
                                         crate::proof_std::aver_generated::kernel::wire::termTexts(
@@ -1339,7 +1327,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                         );
                                     crate::proof_std::aver_generated::kernel::wire::spaced(&__arg86)
                                 }),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1366,17 +1354,17 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b.push_str(&::aver_rt::str_lit!("(congr "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::termText(c)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::proofText(q)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1410,29 +1398,25 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                         ));
                                                         __b
                                                     };
-                                                    __b.push_str(&aver_rt::AverStr::from(
-                                                        aver_rt::aver_display(&(f)),
-                                                    ));
+                                                    __b.push_display(&(f));
                                                     __b
                                                 };
                                                 __b.push_str(&::aver_rt::str_lit!(" "));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(k)),
-                                            ));
+                                            __b.push_display(&(k));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(" ("));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg89 @ _ = crate::proof_std::aver_generated::kernel::wire::termTexts(xs); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg89) }))));
+                                    __b.push_display(&({ let __arg89 @ _ = crate::proof_std::aver_generated::kernel::wire::termTexts(xs); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg89) }));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(") ("));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &({
                                     let __arg90 @ _ =
                                         crate::proof_std::aver_generated::kernel::wire::termTexts(
@@ -1440,7 +1424,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                         );
                                     crate::proof_std::aver_generated::kernel::wire::spaced(&__arg90)
                                 }),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1464,7 +1448,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b.push_str(&::aver_rt::str_lit!("(const "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                        __b.push_display(&(n));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1493,31 +1477,29 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                     __b.push_str(&::aver_rt::str_lit!("(arm "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(k)),
-                                                ));
+                                                __b.push_display(&(k));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" ("));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg93 @ _ = crate::proof_std::aver_generated::kernel::wire::termTexts(ys); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg93) }))));
+                                        __b.push_display(&({ let __arg93 @ _ = crate::proof_std::aver_generated::kernel::wire::termTexts(ys); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg93) }));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(") "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::proofText(q)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1535,9 +1517,9 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b.push_str(&::aver_rt::str_lit!("(proj "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1555,9 +1537,9 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b.push_str(&::aver_rt::str_lit!("(cell "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(t)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1575,7 +1557,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                             __b.push_str(&::aver_rt::str_lit!("(hyp "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                        __b.push_display(&(h));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1597,15 +1579,15 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b.push_str(&::aver_rt::str_lit!("rule "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(id))));
+                                __b.push_display(&(id));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::bindingsText(bs)),
-                        )));
+                        );
                         __b
                     });
                     {
@@ -1630,15 +1612,15 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b.push_str(&::aver_rt::str_lit!("law "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+                                __b.push_display(&(k));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::bindingsText(bs)),
-                        )));
+                        );
                         __b
                     });
                     {
@@ -1662,17 +1644,17 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b.push_str(&::aver_rt::str_lit!("(compute "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::termText(a)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(b)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1701,31 +1683,29 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                     __b.push_str(&::aver_rt::str_lit!("(cases "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(on)))));
+                                                __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(on)));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(h)),
-                                        ));
+                                        __b.push_display(&(h));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::proofText(t)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::proofText(f)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1753,21 +1733,19 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                 __b.push_str(&::aver_rt::str_lit!("split "));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(on)))));
+                                            __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(on)));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(" "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(h),
-                                    )));
+                                    __b.push_display(&(h));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" ("));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &({
                                     let __arg98 @ _ =
                                         crate::proof_std::aver_generated::kernel::wire::termTexts(
@@ -1775,7 +1753,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                         );
                                     crate::proof_std::aver_generated::kernel::wire::spaced(&__arg98)
                                 }),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1810,31 +1788,29 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                     __b.push_str(&::aver_rt::str_lit!("(have "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(n)),
-                                                ));
+                                                __b.push_display(&(n));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(fact)))));
+                                        __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(fact)));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::proofText(q)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::proofText(body)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1861,25 +1837,23 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                             __b.push_str(&::aver_rt::str_lit!("enum "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(v)),
-                                        ));
+                                        __b.push_display(&(v));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::termText(l)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(r)),
-                        )));
+                        );
                         __b
                     });
                     {
@@ -1908,23 +1882,23 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                             __b.push_str(&::aver_rt::str_lit!("(absurd "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(q)))));
+                                        __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(q)));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::termText(l)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(r)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -1959,38 +1933,36 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                         ));
                                                         __b
                                                     };
-                                                    __b.push_str(&aver_rt::AverStr::from(
-                                                        aver_rt::aver_display(&(f)),
-                                                    ));
+                                                    __b.push_display(&(f));
                                                     __b
                                                 };
                                                 __b.push_str(&::aver_rt::str_lit!(" ("));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg103 @ _ = crate::proof_std::aver_generated::kernel::wire::termTexts(xs); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg103) }))));
+                                            __b.push_display(&({ let __arg103 @ _ = crate::proof_std::aver_generated::kernel::wire::termTexts(xs); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg103) }));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(") "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    __b.push_display(
                                         &(crate::proof_std::aver_generated::kernel::wire::termText(
                                             l,
                                         )),
-                                    )));
+                                    );
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::termText(r)),
-                            )));
+                            );
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::carryText(carried)),
-                        )));
+                        );
                         __b
                     });
                     {
@@ -2038,22 +2010,22 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                                                 __b.push_str(&::aver_rt::str_lit!("(listinduct "));
                                                                                                 __b
                                                                                             };
-                                                                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                                                                                            __b.push_display(&(v));
                                                                                             __b
                                                                                         };
                                                                                         __b.push_str(&::aver_rt::str_lit!(" "));
                                                                                         __b
                                                                                     };
-                                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(l)))));
+                                                                                    __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(l)));
                                                                                     __b
                                                                                 };
                                                                                 __b.push_str(&::aver_rt::str_lit!(" "));
                                                                                 __b
                                                                             };
-                                                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(r)))));
+                                                                            __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(r)));
                                                                             __b
                                                                         };
-                                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::carryText(carried)))));
+                                                                        __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::carryText(carried)));
                                                                         __b
                                                                     };
                                                                     __b.push_str(
@@ -2061,7 +2033,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                     );
                                                                     __b
                                                                 };
-                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(n)))));
+                                                                __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(n)));
                                                                 __b
                                                             };
                                                             __b.push_str(&::aver_rt::str_lit!(
@@ -2069,37 +2041,33 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                             ));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(
-                                                            aver_rt::aver_display(&(h)),
-                                                        ));
+                                                        __b.push_display(&(h));
                                                         __b
                                                     };
                                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(t)),
-                                                ));
+                                                __b.push_display(&(t));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(") ("));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(general)))));
+                                        __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(general)));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(") ("));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg106 @ _ = crate::proof_std::aver_generated::kernel::wire::ihAtTexts(ihs); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg106) }))));
+                                __b.push_display(&({ let __arg106 @ _ = crate::proof_std::aver_generated::kernel::wire::ihAtTexts(ihs); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg106) }));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(") "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::proofText(c)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2135,7 +2103,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                             __b.push_str(&::aver_rt::str_lit!("(listcases "));
                                                                             __b
                                                                         };
-                                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                                                                        __b.push_display(&(v));
                                                                         __b
                                                                     };
                                                                     __b.push_str(
@@ -2143,41 +2111,39 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                     );
                                                                     __b
                                                                 };
-                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(l)))));
+                                                                __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(l)));
                                                                 __b
                                                             };
                                                             __b.push_str(&::aver_rt::str_lit!(" "));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(r)))));
+                                                        __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(r)));
                                                         __b
                                                     };
                                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(n)))));
+                                                __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::proofText(n)));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" ("));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(h)),
-                                        ));
+                                        __b.push_display(&(h));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(t))));
+                                __b.push_display(&(t));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(") "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::proofText(c)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2218,13 +2184,13 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                                         __b.push_str(&::aver_rt::str_lit!("(leninduct "));
                                                                                         __b
                                                                                     };
-                                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                                                                                    __b.push_display(&(v));
                                                                                     __b
                                                                                 };
                                                                                 __b.push_str(&::aver_rt::str_lit!(" "));
                                                                                 __b
                                                                             };
-                                                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(l)))));
+                                                                            __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(l)));
                                                                             __b
                                                                         };
                                                                         __b.push_str(
@@ -2234,10 +2200,10 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                         );
                                                                         __b
                                                                     };
-                                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(r)))));
+                                                                    __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(r)));
                                                                     __b
                                                                 };
-                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::carryText(carried)))));
+                                                                __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::carryText(carried)));
                                                                 __b
                                                             };
                                                             __b.push_str(&::aver_rt::str_lit!(
@@ -2245,37 +2211,33 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                             ));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(general)))));
+                                                        __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(general)));
                                                         __b
                                                     };
                                                     __b.push_str(&::aver_rt::str_lit!(") ("));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(n)),
-                                                ));
+                                                __b.push_display(&(n));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" "));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(hn)),
-                                        ));
+                                        __b.push_display(&(hn));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(ih))));
+                                __b.push_display(&(ih));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(") "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::proofText(c)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2296,17 +2258,17 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     __b.push_str(&::aver_rt::str_lit!("(ring "));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                __b.push_display(
                                     &(crate::proof_std::aver_generated::kernel::wire::termText(l)),
-                                )));
+                                );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::termText(r)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2343,35 +2305,33 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                             ));
                                                             __b
                                                         };
-                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::termText(g)))));
+                                                        __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::termText(g)));
                                                         __b
                                                     };
                                                     __b.push_str(&::aver_rt::str_lit!(" "));
                                                     __b
                                                 };
-                                                __b.push_str(&aver_rt::AverStr::from(
-                                                    aver_rt::aver_display(&(v)),
-                                                ));
+                                                __b.push_display(&(v));
                                                 __b
                                             };
                                             __b.push_str(&::aver_rt::str_lit!(" ("));
                                             __b
                                         };
-                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(hs)))));
+                                        __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(hs)));
                                         __b
                                     };
                                     __b.push_str(&::aver_rt::str_lit!(") ("));
                                     __b
                                 };
-                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg107 @ _ = crate::proof_std::aver_generated::kernel::wire::intTexts(ws); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg107) }))));
+                                __b.push_display(&({ let __arg107 @ _ = crate::proof_std::aver_generated::kernel::wire::intTexts(ws); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg107) }));
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(")"));
                             __b
                         };
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        __b.push_display(
                             &(crate::proof_std::aver_generated::kernel::wire::cutTexts(cs)),
-                        )));
+                        );
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2408,15 +2368,13 @@ pub fn cutTexts(
                                         __b.push_str(&::aver_rt::str_lit!(" (cut "));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(c.divisor),
-                                    )));
+                                    __b.push_display(&(c.divisor));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" ("));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &({
                                     let __arg3 @ _ =
                                         crate::proof_std::aver_generated::kernel::wire::intTexts(
@@ -2424,15 +2382,15 @@ pub fn cutTexts(
                                         );
                                     crate::proof_std::aver_generated::kernel::wire::spaced(&__arg3)
                                 }),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!("))"));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &(crate::proof_std::aver_generated::kernel::wire::cutTexts(&rest)),
-                    )));
+                    );
                     __b
                 })
             } else {
@@ -2480,7 +2438,7 @@ pub fn intTexts(ws @ _: &aver_rt::AverIntList) -> aver_rt::AverList<AverStr> {
                         let mut __b = aver_rt::Buffer::with_capacity(
                             (aver_rt::AverInt::from_i64(16)).to_usize().unwrap_or(0),
                         );
-                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(w))));
+                        __b.push_display(&(w));
                         __b
                     }),
                     crate::proof_std::aver_generated::kernel::wire::intTexts(&rest),
@@ -2520,29 +2478,27 @@ pub fn splitCaseTexts(
                                                 __b.push_str(&::aver_rt::str_lit!("(case "));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(c.ctor)),
-                                            ));
+                                            __b.push_display(&(c.ctor));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(" ("));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    __b.push_display(
                                         &(crate::proof_std::aver_generated::kernel::wire::spaced(
                                             &c.binders,
                                         )),
-                                    )));
+                                    );
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(") "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::proofText(
                                     &c.proof,
                                 )),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2574,9 +2530,7 @@ pub fn carryText(ns @ _: &aver_rt::AverList<AverStr>) -> AverStr {
                         __b.push_str(&::aver_rt::str_lit!(" (carry "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                        &(crate::proof_std::aver_generated::kernel::wire::spaced(ns)),
-                    )));
+                    __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(ns)));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2619,29 +2573,29 @@ pub fn inductCaseTexts(
                                                         ));
                                                         __b
                                                     };
-                                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&c.binders)))));
+                                                    __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&c.binders)));
                                                     __b
                                                 };
                                                 __b.push_str(&::aver_rt::str_lit!(") ("));
                                                 __b
                                             };
-                                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg3 @ _ = crate::proof_std::aver_generated::kernel::wire::ihTexts(&c.ihs, &c.carry); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg3) }))));
+                                            __b.push_display(&({ let __arg3 @ _ = crate::proof_std::aver_generated::kernel::wire::ihTexts(&c.ihs, &c.carry); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg3) }));
                                             __b
                                         };
                                         __b.push_str(&::aver_rt::str_lit!(") ("));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&({ let __arg4 @ _ = crate::proof_std::aver_generated::kernel::wire::moreTexts(&c.more); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg4) }))));
+                                    __b.push_display(&({ let __arg4 @ _ = crate::proof_std::aver_generated::kernel::wire::moreTexts(&c.more); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg4) }));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(") "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::proofText(
                                     &c.proof,
                                 )),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2726,19 +2680,19 @@ pub fn ihText(
                                 __b.push_str(&::aver_rt::str_lit!("("));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                            __b.push_display(&(h));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" "));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &({
                             let __arg2 @ _ =
                                 crate::proof_std::aver_generated::kernel::wire::proofTexts(ps);
                             crate::proof_std::aver_generated::kernel::wire::spaced(&__arg2)
                         }),
-                    )));
+                    );
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2774,17 +2728,15 @@ pub fn moreTexts(
                                         __b.push_str(&::aver_rt::str_lit!("("));
                                         __b
                                     };
-                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                        &(m.call),
-                                    )));
+                                    __b.push_display(&(m.call));
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" "));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::ihAtBody(&m.ih)),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2821,9 +2773,9 @@ pub fn ihAtTexts(
                                 __b.push_str(&::aver_rt::str_lit!("("));
                                 __b
                             };
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                            __b.push_display(
                                 &(crate::proof_std::aver_generated::kernel::wire::ihAtBody(ih)),
-                            )));
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(")"));
@@ -2851,33 +2803,31 @@ pub fn ihAtBody(ih @ _: &crate::proof_std::aver_generated::kernel::proof::IhAt) 
                             let mut __b = aver_rt::Buffer::with_capacity(
                                 (aver_rt::AverInt::from_i64(54)).to_usize().unwrap_or(0),
                             );
-                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
-                                &(ih.name),
-                            )));
+                            __b.push_display(&(ih.name));
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" ("));
                         __b
                     };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    __b.push_display(
                         &({
                             let __arg1 @ _ =
                                 crate::proof_std::aver_generated::kernel::wire::termTexts(&ih.at);
                             crate::proof_std::aver_generated::kernel::wire::spaced(&__arg1)
                         }),
-                    )));
+                    );
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(") ("));
                 __b
             };
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+            __b.push_display(
                 &({
                     let __arg2 @ _ =
                         crate::proof_std::aver_generated::kernel::wire::proofTexts(&ih.carry);
                     crate::proof_std::aver_generated::kernel::wire::spaced(&__arg2)
                 }),
-            )));
+            );
             __b
         };
         __b.push_str(&::aver_rt::str_lit!(")"));
