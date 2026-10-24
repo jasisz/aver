@@ -215,7 +215,12 @@ pub fn read_bytes_at(
     let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
     file.seek(std::io::SeekFrom::Start(offset as u64))
         .map_err(|error| error.to_string())?;
-    let mut bytes = Vec::new();
+    // Room for what the read can return: `length`, or less when the file ends
+    // sooner, so a large `length` reserves no more than the file holds.
+    let left = file
+        .metadata()
+        .map_or(0, |meta| meta.len().saturating_sub(offset as u64));
+    let mut bytes = Vec::with_capacity(left.min(length as u64) as usize);
     file.take(length as u64)
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;

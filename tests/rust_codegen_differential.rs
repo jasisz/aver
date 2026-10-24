@@ -1329,6 +1329,117 @@ fn main() -> Unit
     );
 }
 
+/// `String.slice(s, a, b) == t` compares the slice where it stands in `s`
+/// instead of building it: either way round, with `!=`, a literal or a
+/// variable or another slice on the other side, positions out of range,
+/// negative or reversed, and through the hidden index of a loop, with boxed
+/// and raw positions. A right side that takes `s` keeps the built slice.
+#[test]
+fn rust_slice_compared_in_place_matches_vm() {
+    let src = r#"module SliceCompare
+    intent = "Compare slices with strings without building the slices"
+    effects [Console.print]
+
+fn at(s: String, i: Int, t: String) -> Bool
+    ? "Whether t stands in s at i: the slice on the left, a variable on the right."
+    String.slice(s, i, i + String.len(t)) == t
+
+fn differs(s: String, a: Int, b: Int, t: String) -> Bool
+    ? "The variable on the left, with not-equal."
+    t != String.slice(s, a, b)
+
+fn literal(s: String, a: Int, b: Int) -> String
+    ? "Literals on either side, and a match on the comparison."
+    match String.slice(s, a, b) == "żó"
+        true -> "L"
+        false -> match "" == String.slice(s, a, b)
+            true -> "E"
+            false -> "-"
+
+fn both(s: String, t: String) -> Bool
+    ? "A slice on each side."
+    String.slice(s, 1, 3) == String.slice(t, 0, 2)
+
+fn keep(s: String) -> String
+    ? "Takes the string and hands it on."
+    "{s}"
+
+fn moved(s: String) -> Bool
+    ? "The right side takes s."
+    String.slice(s, 0, 2) == keep(s)
+
+fn hits(text: String, pos: Int, word: String, acc: Int) -> Int
+    ? "Walk the text; count where word stands, through the hidden index."
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(_) -> hits(text, pos + 1, word, acc + hit(text, pos, word))
+
+fn hit(text: String, pos: Int, word: String) -> Int
+    ? "One indexed comparison per position, out of range near the ends."
+    match String.slice(text, pos - 1, pos + String.len(word) - 1) == word
+        true -> 1
+        false -> match String.slice(text, pos + 1, pos) != ""
+            true -> 100
+            false -> 0
+
+fn pairs(text: String, pos: Int, acc: Int) -> Int
+    ? "A position bounded by a length test reaches the slice raw."
+    match pos < String.len(text)
+        true -> pairs(text, pos + 1, acc + pairAt(String.slice(text, pos, pos + 2) == "ąb"))
+        false -> acc
+
+fn pairAt(found: Bool) -> Int
+    match found
+        true -> 1
+        false -> 0
+
+fn main() -> Unit
+    ? "Print every answer for backend parity."
+    ! [Console.print]
+    s = "zażółć gęślą"
+    Console.print("{at(s, 2, "żó")}|{at(s, 2, "żo")}|{at(s, 0 - 1, "za")}|{at(s, 11, "ą")}|{at(s, 11, "ą!")}|{at(s, 12, "")}|{at("", 0, "")}")
+    Console.print("{differs(s, 7, 99, "gęślą")}|{differs(s, 7, 12, "gęśla")}|{differs(s, 5, 2, "")}|{differs(s, 0 - 9, 2, "za")}|{differs("abc", 1, 2, "b")}")
+    Console.print("{literal(s, 2, 4)}|{literal(s, 2, 5)}|{literal(s, 4, 4)}|{literal(s, 40, 50)}|{literal(s, 0 - 5, 0 - 1)}|{literal(s, 3, 1)}")
+    Console.print("{both(s, "aż")}|{both(s, "ażó")}|{both("x", "")}|{both("xab", "bad")}|{moved("ab")}|{moved("abc")}")
+    Console.print("{hits("ąbąbaąb", 0, "ąb", 0)}|{hits("aaaa", 0, "aa", 0)}|{hits("ąb😀ąb", 0, "😀ą", 0)}|{hits("ab", 0, "", 0)}")
+    Console.print("{pairs("ąbąbaąb", 0, 0)}|{pairs("xyz", 0, 0)}")
+"#;
+    let expected = "true|false|false|true|false|true|true\nfalse|true|false|false|false\nL|-|E|E|E|E\ntrue|true|true|false|true|false\n3|3|1|2\n3|0";
+    assert_eq!(
+        run_vm_inline("slice_compare", src).expect("VM run"),
+        expected,
+        "VM String.slice contract changed"
+    );
+    let ws = temp_dir("slice_compare");
+    let file = ws.join("slice_compare.av");
+    fs::write(&file, src).expect("write source");
+    let project = ws.join("project");
+    let result = (|| {
+        compile_rust(&file, &project, "slice_compare", None, &[])?;
+        let entry = generated_entry(&project)?;
+        let bin = cargo_build(&project, "slice_compare")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run the compiled binary: {e}"))?;
+        Ok::<_, String>((
+            entry,
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        ))
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    let (entry, rust) = result.unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(rust, expected, "Rust slice comparison diverged from the VM");
+    assert_eq!(
+        entry.matches("string_slice_part(").count(),
+        1,
+        "only `moved` builds its slice:\n{entry}"
+    );
+    assert!(
+        entry.contains("aver_rt::string_index_slice_str(&text, &__str_index, pos, (pos + 2i64))"),
+        "the indexed loop compares in place with raw positions:\n{entry}"
+    );
+}
+
 /// Strings on the Rust runtime: a long `acc + piece` loop that grows one
 /// string in place, with copies of it that must stay as they were;
 /// `String.chars`; interpolated Int, Float, Bool and String; the builtins

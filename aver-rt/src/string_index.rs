@@ -219,13 +219,24 @@ pub fn string_index_slice(
 
 /// [`string_index_slice`] over raw positions.
 pub fn string_index_slice_i64(text: &AverStr, index: &StringIndex, from: i64, to: i64) -> AverStr {
+    crate::string_part(text, string_index_slice_str(text, index, from, to))
+}
+
+/// The text [`string_index_slice_i64`] cuts out, read in place: a slice that
+/// is only compared builds no string.
+pub fn string_index_slice_str<'a>(
+    text: &'a str,
+    index: &StringIndex,
+    from: i64,
+    to: i64,
+) -> &'a str {
     let len = index.char_len();
     let from = clamp_position(from, len);
     let to = clamp_position(to, len);
     if from >= to {
-        return AverStr::from("");
+        return "";
     }
-    crate::string_part(text, &text[index.boundary(from)..index.boundary(to)])
+    &text[index.boundary(from)..index.boundary(to)]
 }
 
 fn clamp_position(position: i64, len: usize) -> usize {
@@ -320,6 +331,19 @@ mod tests {
                     string_index_code_at(&text, &index, &at),
                     expected_char.map_or(-1, |c| i64::from(u32::from(c)))
                 );
+                for to in [
+                    position - 1,
+                    position,
+                    position + 2,
+                    position + 65,
+                    i64::MAX,
+                ] {
+                    assert_eq!(
+                        string_index_slice_str(&text, &index, position, to),
+                        crate::string_slice(&text, position, to),
+                        "{text:?} at {position}..{to}"
+                    );
+                }
             }
         }
     }
