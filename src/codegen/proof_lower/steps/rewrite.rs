@@ -203,6 +203,9 @@ impl Env<'_> {
         {
             return Some(p);
         }
+        if let Some(p) = self.discharge_by_picking(&t) {
+            return Some(p);
+        }
         // Last, a comparison evaluated, within a short budget:
         // `List.len(List.prepend(x, l)) > 0` is `List.len(l) + 1 > 0`,
         // which linear arithmetic settles.
