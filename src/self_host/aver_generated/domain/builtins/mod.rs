@@ -3992,33 +3992,36 @@ pub fn splitDottedLoop__indexed(
     mut total @ _: aver_rt::AverInt,
     mut __str_index @ _: aver_rt::StringIndex,
 ) -> Option<(AverStr, AverStr)> {
+    let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
+    {
+        Some(__start) => __start,
+        None => {
+            crate::cancel_checkpoint();
+            if (pos < total) {
+                return None;
+            } else {
+                return None;
+            }
+        }
+    };
     loop {
         crate::cancel_checkpoint();
-        if (pos < total) {
-            match aver_rt::string_index_char_at_i64(
-                &name,
-                &__str_index,
-                aver_rt::string_position(&pos),
-            ) {
+        if (aver_rt::AverInt::from_i64(pos) < total) {
+            match aver_rt::string_index_char_at_i64(&name, &__str_index, pos) {
                 Some(c @ _) => {
                     if (&*c == ".") {
                         return Some((
+                            aver_rt::string_index_slice_i64(&name, &__str_index, 0i64, pos),
                             aver_rt::string_index_slice_i64(
                                 &name,
                                 &__str_index,
-                                0i64,
-                                aver_rt::string_position(&pos),
-                            ),
-                            aver_rt::string_index_slice_i64(
-                                &name,
-                                &__str_index,
-                                aver_rt::string_position(&pos.add(&aver_rt::AverInt::from_i64(1))),
+                                (pos + 1i64),
                                 aver_rt::string_position(&total),
                             ),
                         ));
                     } else {
                         {
-                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco1 = (pos + 1i64);
                             pos = __tco1;
                             continue;
                         }

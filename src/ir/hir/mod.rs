@@ -626,6 +626,11 @@ pub enum BuiltinIntrinsic {
     /// `__str_index_slice(<s>, <index>, <from>, <to>)` — the public
     /// `String.slice` answer using the same codepoint index.
     StrIndexSlice,
+    /// `__str_index_position(<i>)` — `Int -> i64`, a string position as the
+    /// raw `i64` the indexed reads take, saturated outside `i64` (which
+    /// keeps every answer of the reads). Only the Rust representation
+    /// rewrite inserts it, for a param only read at as a position.
+    StrIndexPosition,
     /// `__lst_new(<capacity>)` — `Int -> List<T>`, a fresh builder for a
     /// loop that collected with `List.prepend` and reversed on the way
     /// out. The list-build pass emits it where the call site wrote `[]`.
@@ -696,6 +701,7 @@ impl BuiltinIntrinsic {
             Self::StrIndexCharAt => "__str_index_char_at",
             Self::StrIndexCodeAt => "__str_index_code_at",
             Self::StrIndexSlice => "__str_index_slice",
+            Self::StrIndexPosition => "__str_index_position",
             Self::LstNew => "__lst_new",
             Self::LstPush => "__lst_push",
             Self::LstFinalize => "__lst_finalize",
@@ -737,6 +743,7 @@ impl BuiltinIntrinsic {
             "__str_index_char_at" => Some(Self::StrIndexCharAt),
             "__str_index_code_at" => Some(Self::StrIndexCodeAt),
             "__str_index_slice" => Some(Self::StrIndexSlice),
+            "__str_index_position" => Some(Self::StrIndexPosition),
             "__lst_new" => Some(Self::LstNew),
             "__lst_push" => Some(Self::LstPush),
             "__lst_finalize" => Some(Self::LstFinalize),

@@ -246,6 +246,22 @@ pub struct MirFnRepr {
     /// rewrite left raw. Empty on the Rust backend (carriers stay structs) and
     /// whenever no eligible carrier is in scope — the byte-identical default.
     pub carrier_slots: std::collections::HashSet<LocalId>,
+    /// A string-walk position whose start is not bounded, checked once on
+    /// entry (Rust only): the signature keeps it boxed and the loop holds it
+    /// in `bare_slots`. `None` everywhere else.
+    pub entry_check: Option<MirEntryCheck>,
+}
+
+/// The entry check of a position param: a start in `[lo, hi]` enters the
+/// loop as an `i64`; any other start makes every read of the position fail,
+/// and the fn's result is `fallback` (the body's failure path, which never
+/// steps the loop) on the boxed start.
+#[derive(Debug, Clone)]
+pub struct MirEntryCheck {
+    pub param: usize,
+    pub lo: i64,
+    pub hi: i64,
+    pub fallback: Spanned<MirExpr>,
 }
 
 impl MirFnRepr {

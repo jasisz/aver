@@ -1350,6 +1350,168 @@ fn main() -> Unit
     );
 }
 
+/// A string walk whose start is not bounded (a record field) is checked
+/// once on entry: a start a read can succeed at runs the raw `i64` loop, any
+/// other — negative, past `i64`, right at its edge — runs the failure path
+/// on the boxed start. Covers a classifier guarding each step and handing
+/// on a start, a sentinel matched by an arm, a returned and a stored
+/// position, a failure arm that binds the classifier's answer, a prefix
+/// before the read and a length test around it, on a Unicode text; and
+/// params only read at as positions (the classifiers, the ends of a
+/// slice), handed raw positions by the loops and saturated ones by the rest.
+#[test]
+fn rust_positions_checked_on_entry_match_vm() {
+    let src = r#"module EntryChecked
+    intent = "Walk positions whose start is not bounded, checked once on entry"
+    effects [Console.print]
+
+record NumAt
+    value: Int
+    end: Int
+
+fn digitAt(s: String, i: Int) -> Int
+    ? "The digit at i, or -1."
+    match String.charAt(s, i)
+        Option.Some("0") -> 0
+        Option.Some("1") -> 1
+        Option.Some("2") -> 2
+        Option.Some("3") -> 3
+        Option.Some("4") -> 4
+        Option.Some("5") -> 5
+        Option.Some("6") -> 6
+        Option.Some("7") -> 7
+        Option.Some("8") -> 8
+        Option.Some("9") -> 9
+        Option.Some -> -1
+        Option.None -> -1
+
+fn numberAt(s: String, i: Int, acc: Int) -> NumAt
+    ? "Digits matched in the loop."
+    match String.charAt(s, i)
+        Option.Some("0") -> numberAt(s, i + 1, acc * 10 + 0)
+        Option.Some("1") -> numberAt(s, i + 1, acc * 10 + 1)
+        Option.Some("2") -> numberAt(s, i + 1, acc * 10 + 2)
+        Option.Some("3") -> numberAt(s, i + 1, acc * 10 + 3)
+        Option.Some("4") -> numberAt(s, i + 1, acc * 10 + 4)
+        Option.Some("5") -> numberAt(s, i + 1, acc * 10 + 5)
+        Option.Some("6") -> numberAt(s, i + 1, acc * 10 + 6)
+        Option.Some("7") -> numberAt(s, i + 1, acc * 10 + 7)
+        Option.Some("8") -> numberAt(s, i + 1, acc * 10 + 8)
+        Option.Some("9") -> numberAt(s, i + 1, acc * 10 + 9)
+        Option.Some -> NumAt(value = acc, end = i)
+        Option.None -> NumAt(value = acc, end = i)
+
+fn canonAt(s: String, i: Int) -> NumAt
+    ? "A digit through the classifier, then the loop."
+    d = digitAt(s, i)
+    match d < 0
+        true -> NumAt(value = 0, end = -1)
+        false -> numberAt(s, i + 1, d)
+
+fn walkAt(s: String, i: Int, acc: Int) -> NumAt
+    ? "Each step guarded through the classifier."
+    d = digitAt(s, i)
+    match d < 0
+        true -> NumAt(value = acc, end = i)
+        false -> walkAt(s, i + 1, acc * 10 + d)
+
+fn bitAt(s: String, i: Int) -> Int
+    ? "1 or 0, or 9 for anything else."
+    match String.charAt(s, i)
+        Option.Some("1") -> 1
+        Option.Some("0") -> 0
+        Option.Some -> 9
+        Option.None -> 9
+
+fn bits(s: String, i: Int, n: Int) -> Int
+    ? "A match on the classifier's sentinel; the result mixes in the position."
+    match bitAt(s, i)
+        9 -> n * 1000 + i
+        b -> bits(s, i + 1, n * 2 + b)
+
+fn spaceAt(s: String, i: Int) -> Int
+    ? "Returns the raw position."
+    match String.charAt(s, i)
+        Option.None -> i
+        Option.Some(" ") -> i
+        Option.Some(_) -> spaceAt(s, i + 1)
+
+fn describe(c: Option<String>, i: Int) -> String
+    ? "What stopped the walk."
+    match c
+        Option.None -> "end@{i}"
+        Option.Some(x) -> "{x}@{i}"
+
+fn untilX(s: String, i: Int) -> String
+    ? "A read the walk binds before matching it: the start stays boxed."
+    match String.charAt(s, i)
+        Option.Some("x") -> untilX(s, i + 1)
+        other -> describe(other, i)
+
+fn ones(s: String, i: Int, n: Int) -> Int
+    ? "The failure takes an arm that binds the classifier's answer."
+    match bitAt(s, i)
+        1 -> ones(s, i + 1, n + 1)
+        b -> n * 100 + b * 10 + i
+
+fn doubled(s: String, i: Int, n: Int) -> Int
+    ? "A prefix before the read uses the start."
+    k = i * 2
+    match String.charAt(s, i)
+        Option.None -> k + n
+        Option.Some(_) -> doubled(s, i + 1, n + 1)
+
+fn bounded(s: String, i: Int) -> Int
+    ? "A length test before the read: the failure path keeps both branches."
+    match i < String.len(s)
+        true -> match String.charAt(s, i)
+            Option.Some(_) -> bounded(s, i + 1)
+            Option.None -> 0 - 1
+        false -> i
+
+fn cut(s: String, a: Int, b: Int) -> String
+    ? "Positions only read at, as the ends of a slice."
+    String.slice(s, a, b)
+
+fn cuts(s: String, i: Int, acc: String) -> String
+    ? "Slices from the walk's position, and around it once the walk ends."
+    match String.charAt(s, i)
+        Option.None -> "{acc}|{cut(s, i - 2, i + 9)}"
+        Option.Some(_) -> cuts(s, i + 1, "{acc}{cut(s, i, i + 1)}")
+
+record Start
+    at: Int
+
+fn show(n: NumAt) -> String
+    ? "A number and where it ends."
+    "{n.value}/{n.end}"
+
+fn tryAll(s: String, starts: List<Start>, acc: String) -> String
+    ? "Every reader from every start."
+    match starts
+        [] -> acc
+        [st, ..rest] -> tryAll(s, rest, "{acc} {show(canonAt(s, st.at))},{show(walkAt(s, st.at, 0))},{bits(s, st.at, 0)},{spaceAt(s, st.at)},{untilX(s, st.at)},{ones(s, st.at, 0)},{doubled(s, st.at, 0)},{bounded(s, st.at)},{cuts(s, st.at, "")}")
+
+fn main() -> Unit
+    ? "Print every reader for backend parity."
+    ! [Console.print]
+    big = String.len("ab") * 1000000000000 * 1000000000000
+    top = 9223372036854775807
+    starts = [Start(at = 0), Start(at = 1), Start(at = 2), Start(at = 7), Start(at = 9), Start(at = 30), Start(at = 0 - 1), Start(at = 0 - 7), Start(at = big), Start(at = 0 - big), Start(at = top), Start(at = top - 9), Start(at = top - 8), Start(at = 0 - top - 1)]
+    Console.print(tryAll("x12ą😀 1011xx3", starts, ""))
+    Console.print(tryAll("10x", [Start(at = 0), Start(at = 2)], ""))
+"#;
+    let expected = "0/-1,0/0,0,5,1@1,90,39,13,x12ą😀 1011xx3|x3 12/3,12/3,1002,5,1@1,192,38,13,12ą😀 1011xx3|x3 2/3,2/3,2,5,2@2,92,37,13,2ą😀 1011xx3|x3 11/10,11/10,3010,13,0@7,7,32,13,011xx3|x3 1/10,1/10,1010,13,1@9,200,30,13,1xx3|x3 0/-1,0/30,30,30,end@30,120,60,30,| 0/-1,0/-1,-1,-1,end@-1,89,-2,-1,|x12ą😀 10 0/-1,0/-7,-7,-7,end@-7,83,-14,-1,|x1 0/-1,0/2000000000000000000000000,2000000000000000000000000,2000000000000000000000000,end@2000000000000000000000000,2000000000000000000000090,4000000000000000000000000,2000000000000000000000000,| 0/-1,0/-2000000000000000000000000,-2000000000000000000000000,-2000000000000000000000000,end@-2000000000000000000000000,-1999999999999999999999910,-4000000000000000000000000,-1,| 0/-1,0/9223372036854775807,9223372036854775807,9223372036854775807,end@9223372036854775807,9223372036854775897,18446744073709551614,9223372036854775807,| 0/-1,0/9223372036854775798,9223372036854775798,9223372036854775798,end@9223372036854775798,9223372036854775888,18446744073709551596,9223372036854775798,| 0/-1,0/9223372036854775799,9223372036854775799,9223372036854775799,end@9223372036854775799,9223372036854775889,18446744073709551598,9223372036854775799,| 0/-1,0/-9223372036854775808,-9223372036854775808,-9223372036854775808,end@-9223372036854775808,-9223372036854775718,-18446744073709551616,-1,|\n 10/2,10/2,2002,3,1@0,101,9,3,10x|0x 0/-1,0/2,2,3,end@3,92,7,3,x|0x";
+    let vm = run_vm_inline("entry_checked", src).expect("VM run");
+    let rust =
+        build_run_rust_inline("entry_checked", src).expect("Rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM contract changed");
+    assert_eq!(
+        rust, expected,
+        "Rust entry-checked walk diverged from the VM"
+    );
+}
+
 /// `String.slice(s, a, b) == t` compares the slice where it stands in `s`
 /// instead of building it: either way round, with `!=`, a literal or a
 /// variable or another slice on the other side, positions out of range,

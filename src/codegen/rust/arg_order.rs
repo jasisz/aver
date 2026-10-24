@@ -84,12 +84,17 @@ fn rewrite(
 }
 
 /// Whether `expr` only reads: a variable, a field of one, a literal or a
-/// function named as a value.
+/// function named as a value, or one of them as a saturated position.
 fn read(expr: &MirExpr) -> bool {
     match expr {
         MirExpr::Literal(_) | MirExpr::FnValue(_) | MirExpr::Local(_) => true,
         MirExpr::Project(project) => read(&project.node.base.node),
         MirExpr::Box(inner) | MirExpr::Unbox(inner) => read(&inner.node),
+        MirExpr::Call(call) => {
+            call.node.callee
+                == MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::StrIndexPosition)
+                && call.node.args.iter().all(|a| read(&a.node))
+        }
         _ => false,
     }
 }
