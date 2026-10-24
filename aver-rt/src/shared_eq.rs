@@ -8,6 +8,14 @@
 //! runs as it always did for at most [`BUDGET`] constructor pairs; one that
 //! needs more goes on from where it is, remembering from then on the pairs of
 //! shared nodes it finds equal, and does not compare them again.
+//!
+//! A comparison that goes on past its budget may also go deep: a value a
+//! million constructors deep is compared a million calls deep. Once such a
+//! comparison is [`DEEP`] bytes of stack below where it began to remember,
+//! it leaves each pair it meets for later, and the `==` that began it
+//! compares the pairs left, each from its own stack again, once all the rest
+//! is equal. `==` is true when every pair is equal, so the order the pairs
+//! are compared in does not change what it answers.
 
 use crate::Shared;
 use std::cell::Cell;
@@ -16,36 +24,55 @@ use std::cell::Cell;
 /// remember. A comparison within it pays a counter.
 pub const BUDGET: u32 = 1024;
 
-/// The pairs of shared nodes found equal by a comparison with memory. It
-/// lives on the stack of the `==` that began the comparison, so the values
-/// compared keep every remembered node alive, and it is gone when that `==`
-/// returns or unwinds.
+/// How many bytes of stack a comparison with memory goes down before it
+/// leaves the pairs it meets for later.
+pub const DEEP: usize = 256 * 1024;
+
+/// What a comparison keeps once its budget is spent. It lives on the stack
+/// of the `==` that began the comparison, so the values compared keep every
+/// remembered node alive, and it is gone when that `==` returns or unwinds.
 #[derive(Default)]
-struct Memory {
-    equal: Cell<Option<Box<Pairs>>>,
+struct Memory<'v> {
+    /// The address on the stack the comparison measures how deep it is
+    /// from, 0 until its budget is spent.
+    top: Cell<usize>,
+    /// Empty until a pair is remembered or left for later.
+    spent: Cell<Option<Box<Spent<'v>>>>,
+}
+
+#[derive(Default)]
+struct Spent<'v> {
+    /// The pairs of shared nodes found equal.
+    equal: Pairs,
+    /// The pairs left for later.
+    later: Vec<Later<'v>>,
 }
 
 /// Addresses of pairs of nodes, the left one first.
 type Pairs = ahash::AHashSet<(usize, usize)>;
 
+/// A pair left for later: the `==` of two values `'v` borrows.
+type Later<'v> = Box<dyn for<'w> FnOnce(Walk<'w, 'v>) -> bool + 'v>;
+
 /// How a comparison goes on: within its budget while `left` is above zero,
-/// with memory once it is spent.
+/// with memory once it is spent. `'v` is how long the values compared are
+/// borrowed for, which every pair left for later lives as long as.
 #[derive(Clone, Copy)]
-pub struct Walk<'a> {
-    left: &'a Cell<u32>,
-    memory: &'a Memory,
+pub struct Walk<'w, 'v> {
+    left: &'w Cell<u32>,
+    memory: &'w Memory<'v>,
 }
 
 /// `==` that carries the [`Walk`] it is part of: what the Rust backend
 /// generates for a recursive sum, for the payload of each of its
 /// constructors, and for a record holding one.
 pub trait WalkEq {
-    fn walk_eq(&self, other: &Self, walk: Walk<'_>) -> bool;
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool;
 }
 
 impl<T: WalkEq> WalkEq for Option<T> {
     #[inline]
-    fn walk_eq(&self, other: &Self, walk: Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
         match (self, other) {
             (Some(a), Some(b)) => a.walk_eq(b, walk),
             (None, None) => true,
@@ -58,15 +85,13 @@ impl<T: WalkEq> WalkEq for Option<T> {
 #[inline]
 pub fn walk_eq<T: WalkEq>(a: &T, b: &T) -> bool {
     let left = Cell::new(BUDGET);
-    // Empty until the budget is spent: no table is made before then.
+    // Nothing is made before the budget is spent.
     let memory = Memory::default();
-    a.walk_eq(
-        b,
-        Walk {
-            left: &left,
-            memory: &memory,
-        },
-    )
+    let walk = Walk {
+        left: &left,
+        memory: &memory,
+    };
+    a.walk_eq(b, walk) && walk.rest()
 }
 
 /// A node of a recursive sum, as a comparison sees it: its address, which
@@ -88,23 +113,45 @@ impl<T> NodeId for Shared<T> {
     }
 }
 
-impl Walk<'_> {
-    /// The payloads of one constructor of a recursive sum. `reflexive` says
-    /// their `==` is (they hold no `Float`), so one object is equal to itself
-    /// without being read.
-    #[inline]
-    pub fn shared<T: WalkEq>(self, a: &Shared<T>, b: &Shared<T>, reflexive: bool) -> bool {
-        self.node(a, b, reflexive, |walk| (**a).walk_eq(&**b, walk))
-    }
+/// Where the stack of the caller is: its stack pointer, read without
+/// making room on the stack, so a call in tail position stays one.
+#[cfg(all(target_arch = "aarch64", not(miri)))]
+#[inline(always)]
+fn stack_here() -> usize {
+    let sp: usize;
+    // SAFETY: reads a register.
+    unsafe { std::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags)) };
+    sp
+}
 
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[inline(always)]
+fn stack_here() -> usize {
+    let sp: usize;
+    // SAFETY: reads a register.
+    unsafe {
+        std::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags))
+    };
+    sp
+}
+
+/// Where the stack of the caller is: the address of a local of its own.
+#[cfg(any(miri, not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
+#[inline(never)]
+fn stack_here() -> usize {
+    let marker = 0u8;
+    std::hint::black_box(&marker) as *const u8 as usize
+}
+
+impl<'v> Walk<'_, 'v> {
     /// Two nodes of one constructor of a recursive sum, `fields_eq` comparing
     /// their fields. `reflexive` says their `==` is (they hold no `Float`),
     /// so one node is equal to itself without being read.
     #[inline]
-    pub fn node<N: NodeId>(
+    pub fn node<N: NodeId + WalkEq>(
         self,
-        a: &N,
-        b: &N,
+        a: &'v N,
+        b: &'v N,
         reflexive: bool,
         fields_eq: impl FnOnce(Self) -> bool,
     ) -> bool {
@@ -115,47 +162,93 @@ impl Walk<'_> {
         if left == 0 {
             // The pairs under way go on where they are; only the ones met
             // from now on are remembered.
-            return self.remembering(self.memory, a, b, fields_eq);
+            return self.remembering(a, b, fields_eq);
         }
         self.left.set(left - 1);
         fields_eq(self)
     }
 
-    /// [`Walk::node`] with memory: a pair of nodes both held in several
-    /// places is looked up, and remembered once found equal. A node held in
-    /// one place is reached by one path only.
+    /// [`Walk::node`] with memory: a pair met [`DEEP`] bytes below where
+    /// the memory began is left for later; a pair of nodes both held in
+    /// several places is looked up, and remembered once found equal. A node
+    /// held in one place is reached by one path only.
     #[cold]
     #[inline(never)]
-    fn remembering<N: NodeId>(
+    fn remembering<N: NodeId + WalkEq>(
         self,
-        memory: &Memory,
-        a: &N,
-        b: &N,
+        a: &'v N,
+        b: &'v N,
         fields_eq: impl FnOnce(Self) -> bool,
     ) -> bool {
+        let (here, top) = (stack_here(), self.memory.top.get());
+        if top == 0 {
+            self.memory.top.set(here);
+        } else if top.saturating_sub(here) > DEEP {
+            return self.leave(a, b);
+        }
         if a.count() == 1 || b.count() == 1 {
             return fields_eq(self);
         }
         let pair = (a.addr(), b.addr());
-        let seen = memory.equal.take();
-        let known = seen.as_ref().is_some_and(|seen| seen.contains(&pair));
-        memory.equal.set(seen);
+        let spent = self.memory.spent.take();
+        let known = spent
+            .as_ref()
+            .is_some_and(|spent| spent.equal.contains(&pair));
+        self.memory.spent.set(spent);
         if known {
             return true;
         }
         let same = fields_eq(self);
         if same {
-            let mut seen = memory.equal.take().unwrap_or_default();
-            seen.insert(pair);
-            memory.equal.set(Some(seen));
+            let mut spent = self.memory.spent.take().unwrap_or_default();
+            spent.equal.insert(pair);
+            self.memory.spent.set(Some(spent));
         }
         same
+    }
+
+    /// Leaves the pair for later (see [`Walk::rest`]): equal for now.
+    #[cold]
+    #[inline(never)]
+    fn leave<N: WalkEq>(self, a: &'v N, b: &'v N) -> bool {
+        let mut spent = self.memory.spent.take().unwrap_or_default();
+        spent
+            .later
+            .push(Box::new(move |walk: Walk<'_, 'v>| a.walk_eq(b, walk)));
+        self.memory.spent.set(Some(spent));
+        true
+    }
+
+    /// The pairs left for later, once the rest of the comparison is equal.
+    #[inline]
+    fn rest(self) -> bool {
+        self.memory.top.get() == 0 || self.later()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn later(self) -> bool {
+        // Each pair is compared from here, and goes as deep again.
+        self.memory.top.set(stack_here());
+        loop {
+            let mut spent = self.memory.spent.take().unwrap_or_default();
+            let next = spent.later.pop();
+            self.memory.spent.set(Some(spent));
+            match next {
+                None => return true,
+                Some(pair) => {
+                    if !pair(self) {
+                        return false;
+                    }
+                }
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BUDGET, Memory, Walk, WalkEq, walk_eq};
+    use super::{BUDGET, Memory, NodeId, Walk, WalkEq, walk_eq};
     use crate::Shared;
     use std::cell::Cell;
 
@@ -178,23 +271,43 @@ mod tests {
     struct Pair(Node, Node);
 
     impl WalkEq for Leaf {
-        fn walk_eq(&self, other: &Self, _: Walk<'_>) -> bool {
+        fn walk_eq<'v>(&'v self, other: &'v Self, _: Walk<'_, 'v>) -> bool {
             self == other
         }
     }
 
     impl WalkEq for Pair {
-        fn walk_eq(&self, other: &Self, walk: Walk<'_>) -> bool {
+        fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
             VISITS.with(|v| v.set(v.get() + 1));
             self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
         }
     }
 
+    impl NodeId for Node {
+        fn addr(&self) -> usize {
+            match self {
+                Node::Leaf(a) => a.addr(),
+                Node::Pair(a) => a.addr(),
+            }
+        }
+
+        fn count(&self) -> usize {
+            match self {
+                Node::Leaf(a) => a.count(),
+                Node::Pair(a) => a.count(),
+            }
+        }
+    }
+
     impl WalkEq for Node {
-        fn walk_eq(&self, other: &Self, walk: Walk<'_>) -> bool {
+        fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
             match (self, other) {
-                (Node::Leaf(a), Node::Leaf(b)) => walk.shared(a, b, false),
-                (Node::Pair(a), Node::Pair(b)) => walk.shared(a, b, false),
+                (Node::Leaf(a), Node::Leaf(b)) => {
+                    walk.node(self, other, false, |walk| (**a).walk_eq(&**b, walk))
+                }
+                (Node::Pair(a), Node::Pair(b)) => {
+                    walk.node(self, other, false, |walk| (**a).walk_eq(&**b, walk))
+                }
                 _ => false,
             }
         }
@@ -279,17 +392,58 @@ mod tests {
         assert!(twice(12, 1.0) != twice(13, 1.0));
     }
 
+    /// `n` pairs deep, each holding the one below on its left and a leaf
+    /// on its right, the deepest leaf `last`.
+    fn chain(n: usize, last: f64) -> Node {
+        (0..n).fold(leaf(last), |below, i| pair(below, leaf(i as f64)))
+    }
+
+    /// Lets a chain go one pair at a time: dropping it whole would take a
+    /// call per pair.
+    fn let_go(mut node: Node) {
+        while let Node::Pair(p) = node {
+            match Shared::try_unwrap(p) {
+                Ok(Pair(below, _)) => node = below,
+                Err(_) => return,
+            }
+        }
+    }
+
+    /// A chain far deeper than a test thread's stack takes one call per
+    /// pair for is compared: past [`super::DEEP`] bytes of stack the pairs
+    /// are left for later, and a difference at the very bottom is found.
+    #[test]
+    fn a_deep_value_is_compared_on_a_stack_of_fixed_size() {
+        let n = if cfg!(miri) { 3_000 } else { 200_000 };
+        let (a, b, c) = (chain(n, 1.0), chain(n, 1.0), chain(n, 2.0));
+        let (same, visits) = compare(&a, &b);
+        assert!(same);
+        assert_eq!(visits, n);
+        assert!(a != c && c != b);
+        assert!(pair(a.clone(), leaf(0.0)) == pair(b.clone(), leaf(0.0)));
+        assert!(pair(a.clone(), leaf(0.0)) != pair(b.clone(), leaf(1.0)));
+        for value in [a, b, c] {
+            let_go(value);
+        }
+    }
+
     #[test]
     fn one_object_is_equal_to_itself_only_when_its_payload_is() {
         VISITS.with(|v| v.set(0));
-        let pair = Shared::new(Pair(leaf(1.0), leaf(1.0)));
+        let one = pair(leaf(1.0), leaf(1.0));
+        let again = one.clone();
         let left = Cell::new(BUDGET);
         let memory = Memory::default();
         let walk = Walk {
             left: &left,
             memory: &memory,
         };
-        assert!(walk.shared(&pair, &pair.clone(), true));
+        let Node::Pair(payload) = &one else {
+            unreachable!()
+        };
+        assert!(walk.node(&one, &again, true, |walk| {
+            (**payload).walk_eq(payload, walk)
+        }));
         assert_eq!(VISITS.with(Cell::get), 0);
         let nan = leaf(f64::NAN);
         assert!(nan != nan.clone());

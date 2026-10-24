@@ -156,7 +156,16 @@ fn fields_equal(
 /// one, or of a record holding one: `==` that carries the comparison's walk.
 fn walk_eq_impl(name: &str, test: &str) -> String {
     format!(
-        "\nimpl aver_rt::WalkEq for {name} {{\n    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {{\n        {test}\n    }}\n}}\n"
+        "\nimpl aver_rt::WalkEq for {name} {{\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {{\n        {test}\n    }}\n}}\n"
+    )
+}
+
+/// The `aver_rt::WalkEq` of a thin sum whose `==` is reflexive: one node is
+/// equal to itself at once, in the caller, and two nodes are compared by
+/// `test` out of line.
+fn walk_eq_by_node(name: &str, test: &str) -> String {
+    format!(
+        "\nimpl aver_rt::WalkEq for {name} {{\n    #[inline(always)]\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {{\n        {name}::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)\n    }}\n}}\n\nimpl {name} {{\n    #[inline(never)]\n    fn aver_walk_eq_nodes<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {{\n        use ::aver_rt::WalkEq as _;\n        {test}\n    }}\n}}\n"
     )
 }
 
@@ -469,6 +478,12 @@ fn emit_sum_type(
         writeln!(out, "{derived}\n{visibility}enum {name} {{\n{body}}}").unwrap();
     }
     out.push_str(&payloads);
+    // A thin sum whose `==` is reflexive and that no `lazy f(…)` returns
+    // compares the two pointers before it reads either node: in a term
+    // built by substitution most subterms are shared, so most pairs a
+    // comparison meets are one node, equal with no call and no load (see
+    // `walk_eq_by_node`).
+    let one_first = recursive && capabilities.eq && !lazy;
     if inline_eq {
         let mut arms = String::new();
         for (i, ((v, &shared), order)) in variants.iter().zip(&shared).zip(&eq_orders).enumerate() {
@@ -493,7 +508,7 @@ fn emit_sum_type(
                 // one node and `==` is reflexive.
                 _ if walks_on(i) => format!(
                     "walk.node(self, other, {}, |walk| a0.walk_eq(b0, walk))",
-                    capabilities.eq
+                    capabilities.eq && !one_first
                 ),
                 _ => fields_equal(&order, &[], |i| format!("a{i}"), |i| format!("b{i}")),
             };
@@ -520,7 +535,10 @@ fn emit_sum_type(
             let test = format!(
                 "match {name}::view_pair(self, other) {{\n{arms}            None => false,\n        }}"
             );
-            out.push_str(&walk_eq_impl(name, &test));
+            match one_first {
+                true => out.push_str(&walk_eq_by_node(name, &test)),
+                false => out.push_str(&walk_eq_impl(name, &test)),
+            }
             write!(
                 out,
                 "\nimpl PartialEq for {name} {{\n    #[inline]\n    fn eq(&self, other: &Self) -> bool {{\n        aver_rt::walk_eq(self, other)\n    }}\n}}\n"
@@ -2295,6 +2313,42 @@ mod tests {
         ));
         assert!(emitted.contains("impl PartialEq for Tree"));
         assert!(emitted.contains("aver_rt::walk_eq(self, other)"));
+        // One node is equal to itself before either is read.
+        assert!(
+            emitted.contains("Tree::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)")
+        );
+    }
+
+    #[test]
+    fn recursive_sum_holding_a_float_reads_one_node_twice() {
+        // NaN is not equal to itself, so neither is a node that holds it:
+        // `==` reads both sides even when they are one node.
+        let td = TypeDef::Sum {
+            name: "Weights".to_string(),
+            variants: vec![
+                TypeVariant {
+                    name: "Weight".to_string(),
+                    fields: vec!["Float".to_string()],
+                },
+                TypeVariant {
+                    name: "Both".to_string(),
+                    fields: vec!["Weights".to_string(), "Weights".to_string()],
+                },
+            ],
+            line: 1,
+        };
+        let mut ctx = empty_ctx();
+        ctx.type_defs.push(td.clone());
+        let emitted = emit_public_type_def(&td, &ctx);
+        assert!(
+            emitted.contains("aver_rt::walk_eq(self, other)"),
+            "{emitted}"
+        );
+        assert!(!emitted.contains("ptr_eq(self, other) ||"), "{emitted}");
+        assert!(
+            emitted.contains("walk.node(self, other, false,"),
+            "{emitted}"
+        );
     }
 
     #[test]

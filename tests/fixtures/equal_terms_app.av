@@ -1,0 +1,145 @@
+module EqualTermsApp
+    intent =
+        "Fixture: == on recursive sums whose values share subterms: the Rust backend compares two pointers before reading either node, and every answer must stay the VM's."
+        "Terms rebuilt above shared leaves and equal or apart at each level, a sum holding a Float, deferred calls, two threads at once, and chains as deep as the first argument says."
+    effects [Console.print, Args.get]
+
+type Term
+    Var(Int)
+    Hole
+    App(Int, Term, Term)
+    Lam(Int, Term)
+
+type Weights
+    Weight(Float)
+    Both(Weights, Weights)
+
+type Tree
+    Tip
+    Fork(Int, Tree, Tree)
+
+fn word(t: Term) -> Int
+    ? "The word a term carries first."
+    match t
+        Term.Var(i) -> i
+        Term.Hole -> 0
+        Term.App(w, _, _) -> w
+        Term.Lam(w, _) -> w
+
+fn app(f: Term, a: Term) -> Term
+    ? "An application."
+    Term.App(Int.mod(word(f) * 31 + word(a) + 3, 1000003), f, a)
+
+fn lam(b: Term) -> Term
+    ? "An abstraction."
+    Term.Lam(Int.mod(word(b) * 37 + 5, 1000003), b)
+
+fn tree(depth: Int, seed: Int) -> Term
+    ? "A term of about 2^depth nodes, built anew on each call."
+    match depth == 0
+        true -> match Int.mod(seed, 4) == 0
+            true -> Term.Hole
+            false -> Term.Var(seed)
+        false -> match Int.mod(depth, 3) == 0
+            true -> lam(tree(depth - 1, seed * 3 + 1))
+            false -> app(tree(depth - 1, seed * 5 + 2), tree(depth - 1, seed * 7 + 3))
+
+fn respine(t: Term) -> Term
+    ? "The term with every compound node built anew and every leaf kept, as substitution leaves one."
+    match t
+        Term.App(_, f, a) -> app(respine(f), respine(a))
+        Term.Lam(_, b) -> lam(respine(b))
+        _ -> t
+
+fn changed(t: Term, depth: Int) -> Term
+    ? "The term with its leftmost subterm at the given depth replaced by a new leaf, every other node kept."
+    match depth == 0
+        true -> Term.Var(999)
+        false -> match t
+            Term.App(_, f, a) -> app(changed(f, depth - 1), a)
+            Term.Lam(_, b) -> lam(changed(b, depth - 1))
+            _ -> Term.Var(999)
+
+fn rewordedAt(t: Term, depth: Int) -> Term
+    ? "The term with the word of its leftmost node at the given depth changed and its children kept: equal to no other term."
+    match depth == 0
+        true -> match t
+            Term.App(w, f, a) -> Term.App(w + 1, f, a)
+            Term.Lam(w, b) -> Term.Lam(w + 1, b)
+            _ -> Term.Var(998)
+        false -> match t
+            Term.App(_, f, a) -> app(rewordedAt(f, depth - 1), a)
+            Term.Lam(_, b) -> lam(rewordedAt(b, depth - 1))
+            _ -> t
+
+fn yes(b: Bool) -> String
+    ? "1 for true, 0 for false."
+    match b
+        true -> "1"
+        false -> "0"
+
+fn levels(t: Term, other: Term, depth: Int, top: Int, acc: String) -> String
+    ? "For each depth up to top: whether the term equals itself changed there, its word changed there, and a respined copy changed there."
+    match depth > top
+        true -> acc
+        false -> levels(t, other, depth + 1, top, "{acc} {yes(t == changed(t, depth))}{yes(changed(t, depth) == changed(other, depth))}{yes(t == rewordedAt(t, depth))}{yes(rewordedAt(t, depth) == rewordedAt(other, depth))}")
+
+fn equalCount(a: Term, b: Term, n: Int, acc: Int) -> Int
+    ? "How many of n comparisons of a and b say equal."
+    match n == 0
+        true -> acc
+        false -> match a == b
+            true -> equalCount(a, b, n - 1, acc + 1)
+            false -> equalCount(a, b, n - 1, acc)
+
+fn grow(depth: Int, seed: Int) -> Tree
+    ? "A full tree of the given depth, built anew on each call."
+    match depth == 0
+        true -> Tree.Tip
+        false -> Tree.Fork(seed, grow(depth - 1, seed * 3 + 1), grow(depth - 1, seed * 3 + 2))
+
+fn later(depth: Int, seed: Int) -> Tree
+    ? "The same tree, its call deferred."
+    lazy grow(depth, seed)
+
+fn chainLeft(n: Int, acc: Term, leaf: Int) -> Term
+    ? "n applications deep, each holding the one below on its left."
+    match n <= 0
+        true -> app(acc, Term.Var(leaf))
+        false -> chainLeft(n - 1, app(acc, Term.Hole), leaf)
+
+fn chainRight(n: Int, acc: Term) -> Term
+    ? "n applications deep, each holding the one below on its right."
+    match n <= 0
+        true -> acc
+        false -> chainRight(n - 1, app(Term.Hole, acc))
+
+fn chainLength() -> Int
+    ? "The first argument as a number, 300 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 300)
+        Option.None -> 300
+
+fn main()
+    ! [Console.print, Args.get]
+    a = tree(7, 1)
+    b = respine(a)
+    c = tree(7, 2)
+    Console.print("same {yes(a == a)}{yes(a == b)}{yes(b == a)}{yes(a == tree(7, 1))}{yes(a == c)}{yes(c == b)}")
+    Console.print("levels{levels(a, b, 0, 8, "")}")
+    Console.print("leaves {yes(Term.Hole == Term.Hole)}{yes(Term.Var(1) == Term.Var(1))}{yes(Term.Hole == Term.Var(0))}{yes(lam(Term.Hole) == lam(Term.Hole))}{yes(lam(Term.Hole) == lam(Term.Var(0)))}")
+    zero = Float.fromInt(word(Term.Hole))
+    one = Weights.Weight(1.5)
+    Console.print("floats {yes(Weights.Both(one, one) == Weights.Both(one, Weights.Weight(1.5)))}{yes(Weights.Weight(zero / zero) == Weights.Weight(zero / zero))}{yes(Weights.Both(one, Weights.Weight(zero / zero)) == Weights.Both(one, Weights.Weight(zero / zero)))}")
+    g = grow(7, 1)
+    d = later(7, 1)
+    e = later(7, 2)
+    Console.print("deferred {yes(d == d)}{yes(d == g)}{yes(g == d)}{yes(d == grow(7, 1))}{yes(e == g)}{yes(e == grow(7, 2))}{yes(later(7, 1) == later(7, 1))}{yes(d == d)}")
+    counts = (equalCount(a, b, 2000, 0), equalCount(b, a, 2000, 0), equalCount(a, c, 2000, 0))!
+    match counts
+        (x, y, z) -> Console.print("threads {x} {y} {z}")
+    n = chainLength()
+    left = chainLeft(n, Term.Hole, 1)
+    right = chainRight(n, Term.Var(1))
+    Console.print("deep {yes(left == chainLeft(n, Term.Hole, 1))}{yes(left == chainLeft(n, Term.Hole, 2))}{yes(right == chainRight(n, Term.Var(1)))}{yes(right == chainRight(n, Term.Var(2)))}")

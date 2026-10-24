@@ -71,7 +71,7 @@ impl aver_rt::thin::HandOver for Val__ValVector {}
 pub struct Val__ValOk(pub Val);
 
 impl aver_rt::WalkEq for Val__ValOk {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -86,7 +86,7 @@ impl aver_rt::thin::HandOver for Val__ValOk {
 pub struct Val__ValErr(pub Val);
 
 impl aver_rt::WalkEq for Val__ValErr {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -101,7 +101,7 @@ impl aver_rt::thin::HandOver for Val__ValErr {
 pub struct Val__ValSome(pub Val);
 
 impl aver_rt::WalkEq for Val__ValSome {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -152,7 +152,7 @@ pub struct Val__ValMap(pub aver_rt::AverMap<AverStr, Val>);
 impl aver_rt::thin::HandOver for Val__ValMap {}
 
 impl aver_rt::WalkEq for Val {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         match Val::view_pair(self, other) {
             Some(Val__pair::ValInt(a0, b0)) => a0 == b0,
             Some(Val__pair::ValFloat(a0, b0)) => a0 == b0,

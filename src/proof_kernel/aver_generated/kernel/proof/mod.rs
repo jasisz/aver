@@ -454,7 +454,7 @@ impl PartialEq for Proof__PRefl {
 }
 
 impl aver_rt::WalkEq for Proof__PRefl {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -475,7 +475,7 @@ impl PartialEq for Proof__PSymm {
 }
 
 impl aver_rt::WalkEq for Proof__PSymm {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -513,7 +513,7 @@ impl PartialEq for Proof__PCongr {
 }
 
 impl aver_rt::WalkEq for Proof__PCongr {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -574,7 +574,7 @@ impl PartialEq for Proof__PArm {
 }
 
 impl aver_rt::WalkEq for Proof__PArm {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
             && self.1 == other.1
             && self.2.walk_eq(&other.2, walk)
@@ -599,7 +599,7 @@ impl PartialEq for Proof__PProj {
 }
 
 impl aver_rt::WalkEq for Proof__PProj {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -620,7 +620,7 @@ impl PartialEq for Proof__PCell {
 }
 
 impl aver_rt::WalkEq for Proof__PCell {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
     }
 }
@@ -685,7 +685,7 @@ impl PartialEq for Proof__PCompute {
 }
 
 impl aver_rt::WalkEq for Proof__PCompute {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -713,7 +713,7 @@ impl PartialEq for Proof__PCases {
 }
 
 impl aver_rt::WalkEq for Proof__PCases {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.1 == other.1
             && self.0.walk_eq(&other.0, walk)
             && self.2.walk_eq(&other.2, walk)
@@ -745,7 +745,7 @@ impl PartialEq for Proof__PSplit {
 }
 
 impl aver_rt::WalkEq for Proof__PSplit {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.1 == other.1
             && self.0.walk_eq(&other.0, walk)
             && self.2 == other.2
@@ -775,7 +775,7 @@ impl PartialEq for Proof__PHave {
 }
 
 impl aver_rt::WalkEq for Proof__PHave {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
             && self.1.walk_eq(&other.1, walk)
             && self.2.walk_eq(&other.2, walk)
@@ -807,7 +807,7 @@ impl PartialEq for Proof__PEnum {
 }
 
 impl aver_rt::WalkEq for Proof__PEnum {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
             && self.1.walk_eq(&other.1, walk)
             && self.2.walk_eq(&other.2, walk)
@@ -836,7 +836,7 @@ impl PartialEq for Proof__PAbsurd {
 }
 
 impl aver_rt::WalkEq for Proof__PAbsurd {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk)
             && self.1.walk_eq(&other.1, walk)
             && self.2.walk_eq(&other.2, walk)
@@ -874,7 +874,7 @@ impl PartialEq for Proof__PInduct {
 }
 
 impl aver_rt::WalkEq for Proof__PInduct {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
             && self.1 == other.1
             && self.2.walk_eq(&other.2, walk)
@@ -922,7 +922,7 @@ impl PartialEq for Proof__PListInduct {
 }
 
 impl aver_rt::WalkEq for Proof__PListInduct {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
             && self.5 == other.5
             && self.6 == other.6
@@ -970,7 +970,7 @@ impl PartialEq for Proof__PListCases {
 }
 
 impl aver_rt::WalkEq for Proof__PListCases {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
             && self.4 == other.4
             && self.5 == other.5
@@ -1019,7 +1019,7 @@ impl PartialEq for Proof__PLenInduct {
 }
 
 impl aver_rt::WalkEq for Proof__PLenInduct {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
             && self.5 == other.5
             && self.6 == other.6
@@ -1053,7 +1053,7 @@ impl PartialEq for Proof__PRing {
 }
 
 impl aver_rt::WalkEq for Proof__PRing {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)
     }
 }
@@ -1086,7 +1086,7 @@ impl PartialEq for Proof__PLinear {
 }
 
 impl aver_rt::WalkEq for Proof__PLinear {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.1 == other.1
             && self.0.walk_eq(&other.0, walk)
             && self.2 == other.2
@@ -1102,67 +1102,76 @@ impl aver_rt::thin::HandOver for Proof__PLinear {
 }
 
 impl aver_rt::WalkEq for Proof {
-    fn walk_eq(&self, other: &Self, walk: aver_rt::Walk<'_>) -> bool {
+    #[inline(always)]
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        Proof::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)
+    }
+}
+
+impl Proof {
+    #[inline(never)]
+    fn aver_walk_eq_nodes<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        use ::aver_rt::WalkEq as _;
         match Proof::view_pair(self, other) {
             Some(Proof__pair::PRefl(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PSymm(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PTrans(a0, b0)) => a0 == b0,
             Some(Proof__pair::PCongr(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PUnfold(a0, b0)) => a0 == b0,
             Some(Proof__pair::PConst(a0, b0)) => a0 == b0,
             Some(Proof__pair::PArm(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PProj(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PCell(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PHyp(a0, b0)) => a0 == b0,
             Some(Proof__pair::PRule(a0, b0)) => a0 == b0,
             Some(Proof__pair::PLaw(a0, b0)) => a0 == b0,
             Some(Proof__pair::PCompute(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PCases(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PSplit(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PHave(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PEnum(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PAbsurd(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PInduct(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PListInduct(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PListCases(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PLenInduct(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PRing(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PLinear(a0, b0)) => {
-                walk.node(self, other, true, |walk| a0.walk_eq(b0, walk))
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             None => false,
         }
