@@ -290,6 +290,62 @@ pub fn main_exit_status(code: &AverInt) -> i32 {
     }
 }
 
+static EXIT_AFTER_MAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Lets the entry `main` end the process itself (see [`exit_after_main`]).
+/// The generated `fn main` of a program that runs `main` once calls this; a
+/// benchmark loop, which calls `main` many times, does not.
+pub fn allow_exit_after_main() {
+    EXIT_AFTER_MAIN.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// What the entry `main` returns, read as the outcome of the process.
+pub trait MainOutcome {
+    /// The exit status, saying on stderr what the generated `fn main` says.
+    fn exit_status(&self) -> i32;
+}
+
+impl MainOutcome for () {
+    fn exit_status(&self) -> i32 {
+        0
+    }
+}
+
+impl MainOutcome for AverInt {
+    fn exit_status(&self) -> i32 {
+        main_exit_status(self)
+    }
+}
+
+impl<E: std::fmt::Display> MainOutcome for Result<(), E> {
+    fn exit_status(&self) -> i32 {
+        match self {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("{error}");
+                1
+            }
+        }
+    }
+}
+
+/// The tail of the entry `main`. Once [`allow_exit_after_main`] was called,
+/// the output is flushed and the process ends here with `main`'s status,
+/// before the values `main` still holds are freed one by one: the system
+/// takes all the memory back at once. Otherwise the outcome is returned.
+pub fn exit_after_main<T: MainOutcome>(outcome: T) -> T {
+    if !EXIT_AFTER_MAIN.load(std::sync::atomic::Ordering::Relaxed) {
+        return outcome;
+    }
+    let status = outcome.exit_status();
+    #[cfg(feature = "terminal")]
+    let _ = terminal::flush();
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    std::process::exit(status)
+}
+
 /// Spawn a scoped thread with [`THREAD_STACK_BYTES`] of stack instead of
 /// Rust's default of 2 MB.
 pub fn spawn_scoped<'scope, 'env, T: Send + 'scope>(
