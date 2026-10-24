@@ -324,23 +324,423 @@ fn __mutual_tco_trampoline_1(
 
 /// The equation a step proves, or the refusal of the first wrong step under it.
 pub fn conclude(
-    p @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    env @ _: Env,
-    path @ _: AverStr,
+    mut p @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    mut env @ _: Env,
+    mut path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::Conclude(p, env, path))
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __t = p;
+        match __t.view() {
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PRefl(__t_fields) => {
+                let t = &__t_fields.0;
+                return Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                    lhs: t.clone(),
+                    rhs: t.clone(),
+                });
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PSymm(__q_fields) => {
+                let q = &__q_fields.0;
+                {
+                    let __arg89 @ _ = {
+                        let __arg88 @ _ = (path + &::aver_rt::str_lit!("/symm"));
+                        crate::proof_kernel::aver_generated::kernel::check::conclude(
+                            q.clone(),
+                            env,
+                            __arg88,
+                        )
+                    }?;
+                    return crate::proof_kernel::aver_generated::kernel::check::flip(__arg89);
+                }
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PTrans(
+                __ts_fields,
+            ) => {
+                let ts = &__ts_fields.0;
+                let ps = &__ts_fields.1;
+                return crate::proof_kernel::aver_generated::kernel::check::trans(
+                    ts, ps, &env, path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCongr(__c_fields) => {
+                let c = &__c_fields.0;
+                let q = &__c_fields.1;
+                return crate::proof_kernel::aver_generated::kernel::check::congr(
+                    c.clone(),
+                    q.clone(),
+                    &env,
+                    path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PUnfold(
+                __f_fields,
+            ) => {
+                let f = __f_fields.0.clone();
+                let k = __f_fields.1.clone();
+                let xs = &__f_fields.2;
+                let ys = &__f_fields.3;
+                let pre = &__f_fields.4;
+                return crate::proof_kernel::aver_generated::kernel::check::unfold(
+                    f, k, xs, ys, pre, env, path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PConst(__n_fields) => {
+                let n = __n_fields.0.clone();
+                return crate::proof_kernel::aver_generated::kernel::check::constant(n, &env, path);
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PArm(__k_fields) => {
+                let k = __k_fields.0.clone();
+                let ys = &__k_fields.1;
+                let t = &__k_fields.2;
+                let q = &__k_fields.3;
+                return crate::proof_kernel::aver_generated::kernel::check::armStep(
+                    k,
+                    ys,
+                    t.clone(),
+                    q.clone(),
+                    env,
+                    path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PProj(__t_fields) => {
+                let t = &__t_fields.0;
+                return crate::proof_kernel::aver_generated::kernel::check::proj(
+                    t.clone(),
+                    &env,
+                    path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCell(__t_fields) => {
+                let t = &__t_fields.0;
+                return crate::proof_kernel::aver_generated::kernel::check::cell(t.clone(), path);
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PHyp(__h_fields) => {
+                let h = __h_fields.0.clone();
+                return crate::proof_kernel::aver_generated::kernel::check::hyp(h, &env.hyps, path);
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PRule(__id_fields) => {
+                let id = __id_fields.0.clone();
+                let bs = &__id_fields.1;
+                let ps = &__id_fields.2;
+                return crate::proof_kernel::aver_generated::kernel::check::rule(
+                    id, bs, ps, &env, path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PLaw(__k_fields) => {
+                let k = __k_fields.0.clone();
+                let bs = &__k_fields.1;
+                let ps = &__k_fields.2;
+                return crate::proof_kernel::aver_generated::kernel::check::lawStep(
+                    k, bs, ps, &env, path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCompute(
+                __a_fields,
+            ) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return crate::proof_kernel::aver_generated::kernel::check::compute(
+                    a.clone(),
+                    b.clone(),
+                    path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCases(
+                __on_fields,
+            ) => {
+                let on = &__on_fields.0;
+                let h = __on_fields.1.clone();
+                let t = &__on_fields.2;
+                let f = &__on_fields.3;
+                return crate::proof_kernel::aver_generated::kernel::check::cases(
+                    on.clone(),
+                    h,
+                    t.clone(),
+                    f.clone(),
+                    &env,
+                    path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PSplit(
+                __on_fields,
+            ) => {
+                let on = &__on_fields.0;
+                let h = __on_fields.1.clone();
+                let lits = &__on_fields.2;
+                let cs = &__on_fields.3;
+                return crate::proof_kernel::aver_generated::kernel::check::split(
+                    on, h, lits, cs, &env, path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PHave(__h_fields) => {
+                let h = __h_fields.0.clone();
+                let fact = &__h_fields.1;
+                let q = &__h_fields.2;
+                let body = &__h_fields.3;
+                return __mutual_tco_trampoline_1(__MutualTco1::Have(
+                    h,
+                    fact.clone(),
+                    q.clone(),
+                    body.clone(),
+                    env,
+                    path,
+                ));
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PEnum(__v_fields) => {
+                let v = __v_fields.0.clone();
+                let l = &__v_fields.1;
+                let r = &__v_fields.2;
+                let cs = &__v_fields.3;
+                return crate::proof_kernel::aver_generated::kernel::check::enumStep(
+                    v,
+                    l.clone(),
+                    r.clone(),
+                    cs,
+                    &env,
+                    path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PAbsurd(
+                __q_fields,
+            ) => {
+                let q = &__q_fields.0;
+                let l = &__q_fields.1;
+                let r = &__q_fields.2;
+                {
+                    let __arg91 @ _ = {
+                        let __arg90 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(path),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!("/absurd"));
+                            __b
+                        });
+                        crate::proof_kernel::aver_generated::kernel::check::conclude(
+                            q.clone(),
+                            env,
+                            __arg90,
+                        )
+                    }?;
+                    return crate::proof_kernel::aver_generated::kernel::check::absurd(
+                        __arg91,
+                        l.clone(),
+                        r.clone(),
+                        path,
+                    );
+                }
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PInduct(
+                __f_fields,
+            ) => {
+                let f = __f_fields.0.clone();
+                let xs = &__f_fields.1;
+                let l = &__f_fields.2;
+                let r = &__f_fields.3;
+                let carry = &__f_fields.4;
+                let cs = &__f_fields.5;
+                {
+                    let __arg92 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                        lhs: l.clone(),
+                        rhs: r.clone(),
+                    };
+                    return crate::proof_kernel::aver_generated::kernel::check::induct(
+                        f, xs, &__arg92, carry, cs, &env, path,
+                    );
+                }
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PListInduct(
+                __v_fields,
+            ) => {
+                let v = __v_fields.0.clone();
+                let l = &__v_fields.1;
+                let r = &__v_fields.2;
+                let carry = &__v_fields.3;
+                let n = &__v_fields.4;
+                let h = __v_fields.5.clone();
+                let t = __v_fields.6.clone();
+                let general = &__v_fields.7;
+                let ihs = &__v_fields.8;
+                let c = &__v_fields.9;
+                {
+                    let __arg93 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                        lhs: l.clone(),
+                        rhs: r.clone(),
+                    };
+                    return crate::proof_kernel::aver_generated::kernel::check::listInduct(
+                        v,
+                        __arg93,
+                        carry,
+                        n.clone(),
+                        h,
+                        t,
+                        general,
+                        ihs,
+                        c.clone(),
+                        &env,
+                        path,
+                    );
+                }
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PListCases(
+                __v_fields,
+            ) => {
+                let v = __v_fields.0.clone();
+                let l = &__v_fields.1;
+                let r = &__v_fields.2;
+                let n = &__v_fields.3;
+                let h = __v_fields.4.clone();
+                let t = __v_fields.5.clone();
+                let c = &__v_fields.6;
+                {
+                    let __arg94 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                        lhs: l.clone(),
+                        rhs: r.clone(),
+                    };
+                    return crate::proof_kernel::aver_generated::kernel::check::splitList(
+                        v,
+                        __arg94,
+                        n.clone(),
+                        h,
+                        t,
+                        c.clone(),
+                        &env,
+                        path,
+                    );
+                }
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PLenInduct(
+                __v_fields,
+            ) => {
+                let v = __v_fields.0.clone();
+                let l = &__v_fields.1;
+                let r = &__v_fields.2;
+                let carry = &__v_fields.3;
+                let general = &__v_fields.4;
+                let n = __v_fields.5.clone();
+                let hn = __v_fields.6.clone();
+                let ih = __v_fields.7.clone();
+                let c = &__v_fields.8;
+                {
+                    let __arg95 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                        lhs: l.clone(),
+                        rhs: r.clone(),
+                    };
+                    {
+                        let __arg96 @ _ = aver_rt::AverList::from_vec(vec![n, hn, ih]);
+                        return crate::proof_kernel::aver_generated::kernel::check::lenInduct(
+                            v,
+                            __arg95,
+                            carry,
+                            general,
+                            &__arg96,
+                            c.clone(),
+                            &env,
+                            path,
+                        );
+                    }
+                }
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PRing(__l_fields) => {
+                let l = &__l_fields.0;
+                let r = &__l_fields.1;
+                return crate::proof_kernel::aver_generated::kernel::check::ring(
+                    l.clone(),
+                    r.clone(),
+                    &env,
+                    path,
+                );
+            }
+            crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PLinear(
+                __g_fields,
+            ) => {
+                let g = &__g_fields.0;
+                let v = __g_fields.1.clone();
+                let hs = &__g_fields.2;
+                let ws = &__g_fields.3;
+                let cs = &__g_fields.4;
+                return crate::proof_kernel::aver_generated::kernel::check::linear(
+                    g.clone(),
+                    v,
+                    hs,
+                    ws,
+                    cs,
+                    &env,
+                    path,
+                );
+            }
+        }
+    }
 }
 
 /// A cut: q proves fact = true in the current scope, then body is checked with it as hypothesis h.
 pub fn have(
-    h @ _: AverStr,
-    fact @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    q @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    body @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    env @ _: Env,
-    path @ _: AverStr,
+    mut h @ _: AverStr,
+    mut fact @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
+    mut q @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    mut body @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    mut env @ _: Env,
+    mut path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::Have(h, fact, q, body, env, path))
+    crate::proof_kernel::cancel_checkpoint();
+    let proved @ _ = {
+        let __arg7 @ _ = aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
+                    );
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b
+                };
+                __b.push_str(&::aver_rt::str_lit!("/have."));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+            __b
+        });
+        crate::proof_kernel::aver_generated::kernel::check::conclude(q, env.clone(), __arg7)
+    }?;
+    if (proved
+        == crate::proof_kernel::aver_generated::kernel::term::Eqn {
+            lhs: fact.clone(),
+            rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
+                crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true),
+            ),
+        })
+    {
+        {
+            let __arg8 @ _ =
+                crate::proof_kernel::aver_generated::kernel::check::withHyp(&env, h, fact, true);
+            return __mutual_tco_trampoline_1(__MutualTco1::Conclude(body, __arg8, path));
+        }
+    } else {
+        {
+            let __arg9 @ _ = aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(72)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("the proof of "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(h))));
+                    __b
+                };
+                __b.push_str(&::aver_rt::str_lit!(
+                    " ends at a different equation than its fact"
+                ));
+                __b
+            });
+            return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg9);
+        }
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -463,46 +863,88 @@ fn __mutual_tco_trampoline_2(
 
 /// Each case under its hypotheses and its typed names, fresh for on, the hypotheses, the variables and the constants; every case proves the same equation, which names none of them.
 pub fn splitCases(
-    cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
-    hss @ _: aver_rt::AverList<
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
+    mut hss @ _: aver_rt::AverList<
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     >,
-    vss @ _: aver_rt::AverList<
+    mut vss @ _: aver_rt::AverList<
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
     >,
     on @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
-    before @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    mut before @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
     env @ _: &Env,
-    path @ _: AverStr,
+    mut path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::SplitCases(cs, hss, vss, before, path),
-        &on,
-        &env,
-    )
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::splitDone(&before, path) }, [c, rest] => { if { let __arg9 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::freeVars(&*on), &crate::proof_kernel::aver_generated::kernel::check::hypNames(&env.hyps)); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(&c.binders, &__arg9, &*env, &__arg10) } } { { let __arg16 @ _ = { let __arg14 @ _ = { let __arg12 @ _ = { let __arg11 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone()); crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &__arg11) }; { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss); crate::proof_kernel::aver_generated::kernel::check::withVars(&__arg12, &__arg13) } }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0)); __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path)))); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), __arg14, __arg15) } }?; { let __arg17 @ _ = { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (hss).drop_first(__n) }; { let __arg18 @ _ = { let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1))); (vss).drop_first(__n) }; return __mutual_tco_trampoline_2(__MutualTco2::SplitNext(__arg16, c, rest, __arg17, __arg18, before, path), on, env) } } } } else { { let __arg19 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("the names of case ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor)))); __b }; __b.push_str(&::aver_rt::str_lit!(" are not fresh")); __b }); return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19) } } })
 }
 
 /// One case's equation: it names none of the case's names, and it is the one every earlier case proved.
 pub fn splitNext(
-    e @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
-    c @ _: crate::proof_kernel::aver_generated::kernel::proof::SplitCase,
-    rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
-    hss @ _: aver_rt::AverList<
+    mut e @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    mut c @ _: crate::proof_kernel::aver_generated::kernel::proof::SplitCase,
+    mut rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
+    mut hss @ _: aver_rt::AverList<
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     >,
-    vss @ _: aver_rt::AverList<
+    mut vss @ _: aver_rt::AverList<
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
     >,
     on @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
-    before @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    mut before @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
     env @ _: &Env,
-    path @ _: AverStr,
+    mut path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::SplitNext(e, c, rest, hss, vss, before, path),
-        &on,
-        &env,
-    )
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __subject = (
+            {
+                let __arg9 @ _ = aver_rt::AverList::concat(
+                    &crate::proof_kernel::aver_generated::kernel::subst::freeVars(&e.lhs),
+                    &crate::proof_kernel::aver_generated::kernel::subst::freeVars(&e.rhs),
+                );
+                crate::proof_kernel::aver_generated::kernel::check::anyIn(&__arg9, &c.binders)
+            },
+            ((aver_rt::AverInt::from_i64(before.len() as i64) == aver_rt::AverInt::from_i64(0))
+                || (before == aver_rt::AverList::from_vec(vec![e.clone()]))),
+        );
+        match __subject {
+            (true, _) => {
+                let __arg10 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(60)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("case "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.ctor))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(
+                        " proves an equation about its own names"
+                    ));
+                    __b
+                });
+                return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg10);
+            }
+            (_, false) => {
+                return crate::proof_kernel::aver_generated::kernel::check::refuse(
+                    path,
+                    ::aver_rt::str_lit!("the cases prove different equations"),
+                );
+            }
+            _ => {
+                let __arg11 @ _ = aver_rt::AverList::from_vec(vec![e]);
+                return __mutual_tco_trampoline_2(
+                    __MutualTco2::SplitCases(rest, hss, vss, __arg11, path),
+                    on,
+                    env,
+                );
+            }
+        }
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -647,34 +1089,112 @@ fn __mutual_tco_trampoline_3(
 
 /// One case per value, in order, and nothing else.
 pub fn enumCases(
-    v @ _: AverStr,
+    mut v @ _: AverStr,
     claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
-    vals @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut vals @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
-    path @ _: AverStr,
-    i @ _: aver_rt::AverInt,
+    mut path @ _: AverStr,
+    mut i @ _: aver_rt::AverInt,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    __mutual_tco_trampoline_3(__MutualTco3::EnumCases(v, vals, cs, path, i), &claim, &env)
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __int_match_subject = (vals, cs);
+        let (__lit0, __lit1) = &__int_match_subject;
+        if (*__lit0).is_empty() && (*__lit1).is_empty() {
+            return Ok((*claim).clone());
+        } else if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
+            let Some((x, xs)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                unreachable!("Aver Rust codegen: tuple element list mismatch")
+            };
+            let Some((c, rest)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
+                unreachable!("Aver Rust codegen: tuple element list mismatch")
+            };
+            return __mutual_tco_trampoline_3(
+                __MutualTco3::EnumCase(v, x, c, xs, rest, path, i),
+                claim,
+                env,
+            );
+        } else {
+            {
+                let __arg11 @ _ = aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(53)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!(
+                            "the cases do not match the values of "
+                        ));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                    __b
+                });
+                return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg11);
+            }
+        }
+    }
 }
 
 /// The claim at one value, under the hypotheses at that value.
 pub fn enumCase(
-    v @ _: AverStr,
+    mut v @ _: AverStr,
     claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
-    x @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    c @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut x @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
+    mut c @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    mut xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
-    path @ _: AverStr,
-    i @ _: aver_rt::AverInt,
+    mut path @ _: AverStr,
+    mut i @ _: aver_rt::AverInt,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::EnumCase(v, x, c, xs, rest, path, i),
-        &claim,
-        &env,
-    )
+    crate::proof_kernel::cancel_checkpoint();
+    let at @ _ = aver_rt::AverList::from_vec(vec![
+        crate::proof_kernel::aver_generated::kernel::term::bind(v.clone(), x),
+    ]);
+    let here @ _ = aver_rt::AverStr::from({
+        let mut __b = {
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity(
+                    (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
+                );
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                __b
+            };
+            __b.push_str(&::aver_rt::str_lit!("/enum."));
+            __b
+        };
+        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
+        __b
+    });
+    let got @ _ = {
+        let __arg14 @ _ = {
+            let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::substHyps(
+                &env.hyps,
+                &at,
+                path.clone(),
+            )?;
+            crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &__arg13)
+        };
+        crate::proof_kernel::aver_generated::kernel::check::conclude(c, __arg14, here.clone())
+    }?;
+    let want @ _ = crate::proof_kernel::aver_generated::kernel::check::instantiate(
+        (*claim).clone(),
+        &at,
+        path.clone(),
+    )?;
+    if (got == want) {
+        return __mutual_tco_trampoline_3(
+            __MutualTco3::EnumCases(v, xs, rest, path, i.add(&aver_rt::AverInt::from_i64(1))),
+            claim,
+            env,
+        );
+    } else {
+        return crate::proof_kernel::aver_generated::kernel::check::refuse(
+            here,
+            ::aver_rt::str_lit!("the case proves a different equation"),
+        );
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -819,32 +1339,114 @@ fn __mutual_tco_trampoline_4(
 
 /// Each premise proof proves its premise at the substitution.
 pub fn premisesHold(
-    wanted @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
-    ps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut wanted @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    mut ps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     env @ _: &Env,
-    path @ _: AverStr,
-    i @ _: aver_rt::AverInt,
+    mut path @ _: AverStr,
+    mut i @ _: aver_rt::AverInt,
 ) -> Result<(), AverStr> {
-    __mutual_tco_trampoline_4(__MutualTco4::PremisesHold(wanted, ps, path, i), &bs, &env)
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __int_match_subject = (wanted, ps);
+        let (__lit0, __lit1) = &__int_match_subject;
+        if (*__lit0).is_empty() && (*__lit1).is_empty() {
+            return Ok(());
+        } else if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
+            let Some((w, ws)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                unreachable!("Aver Rust codegen: tuple element list mismatch")
+            };
+            let Some((p, rest)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
+                unreachable!("Aver Rust codegen: tuple element list mismatch")
+            };
+            return __mutual_tco_trampoline_4(
+                __MutualTco4::PremiseHolds(w, p, ws, rest, path, i),
+                bs,
+                env,
+            );
+        } else {
+            return Err(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&::aver_rt::str_lit!("step "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b
+                };
+                __b.push_str(&::aver_rt::str_lit!(": wrong number of premises"));
+                __b
+            }));
+        }
+    }
 }
 
 /// One premise, then the rest.
 pub fn premiseHolds(
-    w @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
-    p @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    ws @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
-    rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut w @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    mut p @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
+    mut ws @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    mut rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     env @ _: &Env,
-    path @ _: AverStr,
-    i @ _: aver_rt::AverInt,
+    mut path @ _: AverStr,
+    mut i @ _: aver_rt::AverInt,
 ) -> Result<(), AverStr> {
-    __mutual_tco_trampoline_4(
-        __MutualTco4::PremiseHolds(w, p, ws, rest, path, i),
-        &bs,
-        &env,
-    )
+    crate::proof_kernel::cancel_checkpoint();
+    let want @ _ =
+        crate::proof_kernel::aver_generated::kernel::check::instantiate(w, &*bs, path.clone())?;
+    let got @ _ = {
+        let __arg10 @ _ = aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity(
+                        (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
+                    );
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                    __b
+                };
+                __b.push_str(&::aver_rt::str_lit!("/premise."));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
+            __b
+        });
+        crate::proof_kernel::aver_generated::kernel::check::conclude(p, (*env).clone(), __arg10)
+    }?;
+    if (got == want) {
+        return __mutual_tco_trampoline_4(
+            __MutualTco4::PremisesHold(ws, rest, path, i.add(&aver_rt::AverInt::from_i64(1))),
+            bs,
+            env,
+        );
+    } else {
+        return Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(62)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("step "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(path))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(": premise "));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
+                __b
+            };
+            __b.push_str(&::aver_rt::str_lit!(" does not match"));
+            __b
+        }));
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -958,57 +1560,114 @@ fn __mutual_tco_trampoline_5(
 pub fn inductCases(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
-    acs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::ArmCalls>,
-    cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
+    mut acs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::ArmCalls>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     at @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
     claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
     taken @ _: &aver_rt::AverList<AverStr>,
     carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     env @ _: &Env,
-    path @ _: AverStr,
-    i @ _: aver_rt::AverInt,
+    mut path @ _: AverStr,
+    mut i @ _: aver_rt::AverInt,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    __mutual_tco_trampoline_5(
-        __MutualTco5::InductCases(acs, cs, path, i),
-        &d,
-        &r,
-        &at,
-        &claim,
-        &vr,
-        &taken,
-        &carried,
-        &env,
-    )
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __int_match_subject = (acs, cs);
+        let (__lit0, __lit1) = &__int_match_subject;
+        if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
+            let Some((a, moreArms)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                unreachable!("Aver Rust codegen: tuple element list mismatch")
+            };
+            let Some((c, moreCases)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
+                unreachable!("Aver Rust codegen: tuple element list mismatch")
+            };
+            {
+                let __arg17 @ _ = {
+                    let __arg16 @ _ = aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(path),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!("/case."));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(i))));
+                        __b
+                    });
+                    crate::proof_kernel::aver_generated::kernel::check::inductCase(
+                        &*d,
+                        &*r,
+                        a,
+                        c,
+                        &*at,
+                        (*claim).clone(),
+                        &*vr,
+                        &*taken,
+                        &*carried,
+                        &*env,
+                        __arg16,
+                    )
+                };
+                return __mutual_tco_trampoline_5(
+                    __MutualTco5::InductNext(
+                        __arg17,
+                        moreArms,
+                        moreCases,
+                        path,
+                        i.add(&aver_rt::AverInt::from_i64(1)),
+                    ),
+                    d,
+                    r,
+                    at,
+                    claim,
+                    vr,
+                    taken,
+                    carried,
+                    env,
+                );
+            }
+        } else {
+            return Ok((*claim).clone());
+        }
+    }
 }
 
 /// The rest of the cases, once this one checked.
 pub fn inductNext(
-    done @ _: Result<(), AverStr>,
+    mut done @ _: Result<(), AverStr>,
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
-    acs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::ArmCalls>,
-    cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
+    mut acs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::ArmCalls>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     at @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
     claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
     taken @ _: &aver_rt::AverList<AverStr>,
     carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     env @ _: &Env,
-    path @ _: AverStr,
-    i @ _: aver_rt::AverInt,
+    mut path @ _: AverStr,
+    mut i @ _: aver_rt::AverInt,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    __mutual_tco_trampoline_5(
-        __MutualTco5::InductNext(done, acs, cs, path, i),
-        &d,
-        &r,
-        &at,
-        &claim,
-        &vr,
-        &taken,
-        &carried,
-        &env,
-    )
+    crate::proof_kernel::cancel_checkpoint();
+    done?;
+    return __mutual_tco_trampoline_5(
+        __MutualTco5::InductCases(acs, cs, path, i),
+        d,
+        r,
+        at,
+        claim,
+        vr,
+        taken,
+        carried,
+        env,
+    );
 }
 
 #[allow(non_camel_case_types)]
@@ -1096,29 +1755,81 @@ fn __mutual_tco_trampoline_6(
 
 /// Each carried hypothesis, at v - 1, proved by its proof.
 pub fn carriedHold(
-    cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
-    proofs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    mut proofs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     down @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     env @ _: &Env,
-    path @ _: AverStr,
+    mut path @ _: AverStr,
 ) -> Result<(), AverStr> {
-    __mutual_tco_trampoline_6(__MutualTco6::CarriedHold(cs, proofs, path), &down, &env)
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __int_match_subject = (cs, proofs);
+        let (__lit0, __lit1) = &__int_match_subject;
+        if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
+            let Some((c, more)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                unreachable!("Aver Rust codegen: tuple element list mismatch")
+            };
+            let Some((q, qs)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
+                unreachable!("Aver Rust codegen: tuple element list mismatch")
+            };
+            {
+                let __arg11 @ _ = {
+                    let __arg9 @ _ =
+                        crate::proof_kernel::aver_generated::kernel::check::instantiate(
+                            c.eqn,
+                            &*down,
+                            path.clone(),
+                        )?;
+                    {
+                        let __arg10 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(path),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!("/carry."));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c.name))));
+                            __b
+                        });
+                        crate::proof_kernel::aver_generated::kernel::check::caseProves(
+                            q,
+                            &__arg9,
+                            (*env).clone(),
+                            __arg10,
+                        )
+                    }
+                };
+                return __mutual_tco_trampoline_6(
+                    __MutualTco6::CarriedThen(__arg11, more, qs, path),
+                    down,
+                    env,
+                );
+            }
+        } else {
+            return Ok(());
+        }
+    }
 }
 
 /// The rest of the carried hypotheses, once this one held.
 pub fn carriedThen(
-    done @ _: Result<(), AverStr>,
-    cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
-    proofs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut done @ _: Result<(), AverStr>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    mut proofs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     down @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     env @ _: &Env,
-    path @ _: AverStr,
+    mut path @ _: AverStr,
 ) -> Result<(), AverStr> {
-    __mutual_tco_trampoline_6(
-        __MutualTco6::CarriedThen(done, cs, proofs, path),
-        &down,
-        &env,
-    )
+    crate::proof_kernel::cancel_checkpoint();
+    done?;
+    return __mutual_tco_trampoline_6(__MutualTco6::CarriedHold(cs, proofs, path), down, env);
 }
 
 #[allow(non_camel_case_types)]
@@ -1190,20 +1901,49 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<(), AverStr> {
 
 /// Each builtin fact proves its statement over builtins and the facts before it: no definitions, no other laws, no when.
 pub fn checkFacts(
-    fs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>,
-    earlier @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
+    mut fs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>,
+    mut earlier @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
 ) -> Result<(), AverStr> {
-    __mutual_tco_trampoline_7(__MutualTco7::CheckFacts(fs, earlier))
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => { { let __arg5 @ _ = { let __arg4 @ _ = Box::new(crate::proof_kernel::aver_generated::kernel::proof::Script__Fields { obligation: f.law.clone(), defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), sums: aver_rt::AverList::empty(), recs: aver_rt::AverList::empty(), sigs: aver_rt::AverList::empty(), laws: earlier.clone(), facts: aver_rt::AverList::empty(), proof: f.proof }); crate::proof_kernel::aver_generated::kernel::check::checkScript(__arg4) }; return __mutual_tco_trampoline_7(__MutualTco7::CheckFactThen(__arg5, f.law, rest, earlier)) } })
 }
 
 /// The rest of the facts, once this one checked; they may cite it.
 pub fn checkFactThen(
-    done @ _: Result<AverStr, AverStr>,
-    law @ _: crate::proof_kernel::aver_generated::kernel::proof::Law,
-    rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>,
-    earlier @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
+    mut done @ _: Result<AverStr, AverStr>,
+    mut law @ _: crate::proof_kernel::aver_generated::kernel::proof::Law,
+    mut rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>,
+    mut earlier @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
 ) -> Result<(), AverStr> {
-    __mutual_tco_trampoline_7(__MutualTco7::CheckFactThen(done, law, rest, earlier))
+    crate::proof_kernel::cancel_checkpoint();
+    match done {
+        Ok(k @ _) => {
+            let __arg6 @ _ =
+                aver_rt::AverList::concat(&earlier, &aver_rt::AverList::from_vec(vec![law]));
+            return __mutual_tco_trampoline_7(__MutualTco7::CheckFacts(rest, __arg6));
+        }
+        Err(why @ _) => {
+            return Err(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(
+                                (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
+                            );
+                            __b.push_str(&::aver_rt::str_lit!("fact "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(law.key))));
+                        __b
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(": "));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                __b
+            }));
+        }
+    }
 }
 
 /// No definitions, laws or hypotheses.

@@ -506,9 +506,7 @@ pub fn highNibble(value @ _: aver_rt::AverInt) -> aver_rt::AverInt {
 #[inline(always)]
 pub fn lowNibble(value @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    (value)
-        .rem_euclid(&(aver_rt::AverInt::from_i64(16)))
-        .unwrap()
+    (value).rem_euclid_by(16)
 }
 
 /// Encode one validated octet as two lowercase hexadecimal characters.

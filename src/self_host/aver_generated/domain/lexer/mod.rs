@@ -186,72 +186,237 @@ fn __mutual_tco_trampoline_1(
 
 /// Synthesized indexed worker of `tokenizeDefault`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeDefault__indexed(
-    c @ _: AverStr,
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
+    mut c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_1(
-        __MutualTco1::TokenizeDefault__indexed(c, src, pos),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
+        return crate::aver_generated::domain::lexer::tokenizeDigit__indexed(
+            src,
+            pos,
+            &*__str_index,
+        );
+    } else {
+        if crate::aver_generated::domain::lexer::chars::isAlpha(c.clone()) {
+            return crate::aver_generated::domain::lexer::tokenizeAlpha__indexed(
+                src,
+                pos,
+                &*__str_index,
+            );
+        } else {
+            return __mutual_tco_trampoline_1(
+                __MutualTco1::TokenizeBraceOrSkip__indexed(c, src, pos),
+                __str_index,
+            );
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeBraceOrSkip`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeBraceOrSkip__indexed(
-    c @ _: AverStr,
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
+    mut c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_1(
-        __MutualTco1::TokenizeBraceOrSkip__indexed(c, src, pos),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+    if (c == crate::aver_generated::domain::lexer::openBrace()) {
+        return aver_rt::AverList::prepend_owned(
+            crate::aver_generated::domain::token::Token::TkLBrace,
+            crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index),
+        );
+    } else {
+        if (c == crate::aver_generated::domain::lexer::closeBrace()) {
+            return aver_rt::AverList::prepend_owned(
+                crate::aver_generated::domain::token::Token::TkRBrace,
+                crate::aver_generated::domain::lexer::tokenize__indexed(
+                    src,
+                    nextPos,
+                    &*__str_index,
+                ),
+            );
+        } else {
+            return __mutual_tco_trampoline_1(
+                __MutualTco1::Tokenize__indexed(src, nextPos),
+                __str_index,
+            );
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeChar`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeChar__indexed(
-    c @ _: AverStr,
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
+    mut c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_1(
-        __MutualTco1::TokenizeChar__indexed(c, src, pos),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+    {
+        let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+        if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
+            return __mutual_tco_trampoline_1(
+                __MutualTco1::Tokenize__indexed(src, nextPos),
+                __str_index,
+            );
+        } else {
+            if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
+                return crate::aver_generated::domain::lexer::tokenizeNewline__indexed(
+                    src,
+                    nextPos,
+                    &*__str_index,
+                );
+            } else {
+                if __dispatch_subject == aver_rt::AverInt::from_i64(47) {
+                    return crate::aver_generated::domain::lexer::tokenizeSlashOrComment__indexed(
+                        src,
+                        pos,
+                        (*__str_index).clone(),
+                    );
+                } else {
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(43) {
+                        return aver_rt::AverList::prepend_owned(
+                            crate::aver_generated::domain::token::Token::TkPlus,
+                            crate::aver_generated::domain::lexer::tokenize__indexed(
+                                src,
+                                nextPos,
+                                &*__str_index,
+                            ),
+                        );
+                    } else {
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(42) {
+                            return aver_rt::AverList::prepend_owned(
+                                crate::aver_generated::domain::token::Token::TkStar,
+                                crate::aver_generated::domain::lexer::tokenize__indexed(
+                                    src,
+                                    nextPos,
+                                    &*__str_index,
+                                ),
+                            );
+                        } else {
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(60) {
+                                return crate::aver_generated::domain::lexer::tokenizeLt__indexed(
+                                    src,
+                                    pos,
+                                    &*__str_index,
+                                );
+                            } else {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(62) {
+                                    return crate::aver_generated::domain::lexer::tokenizeGt__indexed(src, pos, &*__str_index);
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(33) {
+                                        return crate::aver_generated::domain::lexer::tokenizeBang__indexed(src, pos, &*__str_index);
+                                    } else {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(63) {
+                                            return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkQuestion, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
+                                        } else {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(34)
+                                            {
+                                                return crate::aver_generated::domain::lexer::tokenizeString__indexed(src, nextPos, ::aver_rt::str_lit!(""), &*__str_index);
+                                            } else {
+                                                if __dispatch_subject
+                                                    == aver_rt::AverInt::from_i64(40)
+                                                {
+                                                    return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkLParen, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
+                                                } else {
+                                                    if __dispatch_subject
+                                                        == aver_rt::AverInt::from_i64(41)
+                                                    {
+                                                        return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkRParen, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
+                                                    } else {
+                                                        if __dispatch_subject
+                                                            == aver_rt::AverInt::from_i64(91)
+                                                        {
+                                                            return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkLBracket, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
+                                                        } else {
+                                                            if __dispatch_subject
+                                                                == aver_rt::AverInt::from_i64(93)
+                                                            {
+                                                                return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkRBracket, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index));
+                                                            } else {
+                                                                if __dispatch_subject
+                                                                    == aver_rt::AverInt::from_i64(
+                                                                        46,
+                                                                    )
+                                                                {
+                                                                    return crate::aver_generated::domain::lexer::tokenizeDot__indexed(src, pos, &*__str_index);
+                                                                } else {
+                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(44) { return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkComma, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(58) { return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkColon, crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, &*__str_index)) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(61) { return crate::aver_generated::domain::lexer::tokenizeEq__indexed(src, pos, &*__str_index) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(45) { return crate::aver_generated::domain::lexer::tokenizeMinus__indexed(src, pos, &*__str_index) } else { return __mutual_tco_trampoline_1(__MutualTco1::TokenizeDefault__indexed(c, src, pos), __str_index) } } } }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeSome`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeSome__indexed(
-    c @ _: AverStr,
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
+    mut c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_1(
-        __MutualTco1::TokenizeSome__indexed(c, src, pos),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    return __mutual_tco_trampoline_1(
+        __MutualTco1::TokenizeChar__indexed(c, src, pos),
+        __str_index,
+    );
 }
 
 /// Synthesized indexed worker of `tokenizeAtPos`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeAtPos__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_1(__MutualTco1::TokenizeAtPos__indexed(src, pos), &__str_index)
+    crate::cancel_checkpoint();
+    match aver_rt::string_index_char_at_i64(&src, &__str_index, aver_rt::string_position(&pos)) {
+        None => {
+            return aver_rt::AverList::from_vec(vec![
+                crate::aver_generated::domain::token::Token::TkEof,
+            ]);
+        }
+        Some(c @ _) => {
+            return __mutual_tco_trampoline_1(
+                __MutualTco1::TokenizeSome__indexed(c, src, pos),
+                __str_index,
+            );
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenize`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenize__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_1(__MutualTco1::Tokenize__indexed(src, pos), &__str_index)
+    crate::cancel_checkpoint();
+    if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+        return __mutual_tco_trampoline_1(
+            __MutualTco1::TokenizeAtPos__indexed(src, pos),
+            __str_index,
+        );
+    } else {
+        return aver_rt::AverList::from_vec(vec![
+            crate::aver_generated::domain::token::Token::TkEof,
+        ]);
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -508,95 +673,303 @@ fn __mutual_tco_trampoline_2(
 
 /// Synthesized indexed worker of `tokenizeString`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeString__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    acc @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::TokenizeString__indexed(src, pos, acc),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+        return __mutual_tco_trampoline_2(
+            __MutualTco2::TokenizeStringAt__indexed(src, pos, acc),
+            __str_index,
+        );
+    } else {
+        return aver_rt::AverList::from_vec(vec![
+            crate::aver_generated::domain::token::Token::TkStr(acc),
+            crate::aver_generated::domain::token::Token::TkEof,
+        ]);
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeStringAt`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeStringAt__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    acc @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::TokenizeStringAt__indexed(src, pos, acc),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    match aver_rt::string_index_char_at_i64(&src, &__str_index, aver_rt::string_position(&pos)) {
+        Some(c @ _) => {
+            if (&*c == "\\") {
+                return __mutual_tco_trampoline_2(
+                    __MutualTco2::TokenizeStringEscape__indexed(
+                        src,
+                        pos.add(&aver_rt::AverInt::from_i64(1)),
+                        acc,
+                    ),
+                    __str_index,
+                );
+            } else {
+                return __mutual_tco_trampoline_2(
+                    __MutualTco2::TokenizeStringChar__indexed(src, pos, acc, c),
+                    __str_index,
+                );
+            }
+        }
+        None => {
+            return aver_rt::AverList::from_vec(vec![
+                crate::aver_generated::domain::token::Token::TkStr(acc),
+                crate::aver_generated::domain::token::Token::TkEof,
+            ]);
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeStringEscape`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeStringEscape__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    acc @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::TokenizeStringEscape__indexed(src, pos, acc),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+    match aver_rt::string_index_char_at_i64(&src, &__str_index, aver_rt::string_position(&pos)) {
+        Some(c @ _) => {
+            let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+            if __dispatch_subject == aver_rt::AverInt::from_i64(110) {
+                {
+                    let __arg6 @ _ = (acc + &::aver_rt::str_lit!("\n"));
+                    return __mutual_tco_trampoline_2(
+                        __MutualTco2::TokenizeString__indexed(src, nextPos, __arg6),
+                        __str_index,
+                    );
+                }
+            } else {
+                if __dispatch_subject == aver_rt::AverInt::from_i64(116) {
+                    {
+                        let __arg7 @ _ = (acc + &::aver_rt::str_lit!("\t"));
+                        return __mutual_tco_trampoline_2(
+                            __MutualTco2::TokenizeString__indexed(src, nextPos, __arg7),
+                            __str_index,
+                        );
+                    }
+                } else {
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(114) {
+                        {
+                            let __arg8 @ _ = (acc + &::aver_rt::str_lit!("\r"));
+                            return __mutual_tco_trampoline_2(
+                                __MutualTco2::TokenizeString__indexed(src, nextPos, __arg8),
+                                __str_index,
+                            );
+                        }
+                    } else {
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(98) {
+                            {
+                                let __arg9 @ _ = (acc + &::aver_rt::str_lit!("\u{8}"));
+                                return __mutual_tco_trampoline_2(
+                                    __MutualTco2::TokenizeString__indexed(src, nextPos, __arg9),
+                                    __str_index,
+                                );
+                            }
+                        } else {
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(102) {
+                                {
+                                    let __arg10 @ _ = (acc + &::aver_rt::str_lit!("\u{c}"));
+                                    return __mutual_tco_trampoline_2(
+                                        __MutualTco2::TokenizeString__indexed(
+                                            src, nextPos, __arg10,
+                                        ),
+                                        __str_index,
+                                    );
+                                }
+                            } else {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
+                                    {
+                                        let __arg11 @ _ = (acc + &::aver_rt::str_lit!("\""));
+                                        return __mutual_tco_trampoline_2(
+                                            __MutualTco2::TokenizeString__indexed(
+                                                src, nextPos, __arg11,
+                                            ),
+                                            __str_index,
+                                        );
+                                    }
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(92) {
+                                        {
+                                            let __arg12 @ _ = (acc + &::aver_rt::str_lit!("\\"));
+                                            return __mutual_tco_trampoline_2(
+                                                __MutualTco2::TokenizeString__indexed(
+                                                    src, nextPos, __arg12,
+                                                ),
+                                                __str_index,
+                                            );
+                                        }
+                                    } else {
+                                        {
+                                            let __arg13 @ _ = (acc + &c);
+                                            return __mutual_tco_trampoline_2(
+                                                __MutualTco2::TokenizeString__indexed(
+                                                    src, nextPos, __arg13,
+                                                ),
+                                                __str_index,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None => {
+            return aver_rt::AverList::from_vec(vec![
+                crate::aver_generated::domain::token::Token::TkStr(acc),
+                crate::aver_generated::domain::token::Token::TkEof,
+            ]);
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeStringChar`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeStringChar__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    acc @ _: AverStr,
-    c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
+    mut c @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::TokenizeStringChar__indexed(src, pos, acc, c),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    if (&*c == "\"") {
+        return aver_rt::AverList::prepend_owned(
+            crate::aver_generated::domain::token::Token::TkStr(acc),
+            crate::aver_generated::domain::lexer::tokenize__indexed(
+                src,
+                pos.add(&aver_rt::AverInt::from_i64(1)),
+                &*__str_index,
+            ),
+        );
+    } else {
+        return __mutual_tco_trampoline_2(
+            __MutualTco2::TokenizeStringCharInner__indexed(src, pos, acc, c),
+            __str_index,
+        );
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeStringCharInner`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeStringCharInner__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    acc @ _: AverStr,
-    c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
+    mut c @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::TokenizeStringCharInner__indexed(src, pos, acc, c),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    if (c == crate::aver_generated::domain::lexer::openBrace()) {
+        return __mutual_tco_trampoline_2(
+            __MutualTco2::TokenizeStringMaybeEscapedBrace__indexed(src, pos, acc),
+            __str_index,
+        );
+    } else {
+        if (c == crate::aver_generated::domain::lexer::closeBrace()) {
+            return __mutual_tco_trampoline_2(
+                __MutualTco2::TokenizeStringMaybeEscapedClose__indexed(src, pos, acc),
+                __str_index,
+            );
+        } else {
+            return __mutual_tco_trampoline_2(
+                __MutualTco2::TokenizeString__indexed(
+                    src,
+                    pos.add(&aver_rt::AverInt::from_i64(1)),
+                    (acc + &c),
+                ),
+                __str_index,
+            );
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeStringMaybeEscapedBrace`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeStringMaybeEscapedBrace__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    acc @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::TokenizeStringMaybeEscapedBrace__indexed(src, pos, acc),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+    match aver_rt::string_index_char_at_i64(&src, &__str_index, aver_rt::string_position(&nextPos))
+    {
+        Some(next @ _) => {
+            if (next == crate::aver_generated::domain::lexer::openBrace()) {
+                return __mutual_tco_trampoline_2(
+                    __MutualTco2::TokenizeString__indexed(
+                        src,
+                        pos.add(&aver_rt::AverInt::from_i64(2)),
+                        (acc + &crate::aver_generated::domain::lexer::openBrace()),
+                    ),
+                    __str_index,
+                );
+            } else {
+                return crate::aver_generated::domain::lexer::tokenizeInterp__indexed(
+                    src,
+                    pos,
+                    acc,
+                    &*__str_index,
+                );
+            }
+        }
+        None => {
+            return crate::aver_generated::domain::lexer::tokenizeInterp__indexed(
+                src,
+                pos,
+                acc,
+                &*__str_index,
+            );
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeStringMaybeEscapedClose`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeStringMaybeEscapedClose__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    acc @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::TokenizeStringMaybeEscapedClose__indexed(src, pos, acc),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+    let accBrace @ _ = (acc + &crate::aver_generated::domain::lexer::closeBrace());
+    match aver_rt::string_index_char_at_i64(&src, &__str_index, aver_rt::string_position(&nextPos))
+    {
+        Some(next @ _) => {
+            if (next == crate::aver_generated::domain::lexer::closeBrace()) {
+                return __mutual_tco_trampoline_2(
+                    __MutualTco2::TokenizeString__indexed(
+                        src,
+                        pos.add(&aver_rt::AverInt::from_i64(2)),
+                        accBrace,
+                    ),
+                    __str_index,
+                );
+            } else {
+                return __mutual_tco_trampoline_2(
+                    __MutualTco2::TokenizeString__indexed(src, nextPos, accBrace),
+                    __str_index,
+                );
+            }
+        }
+        None => {
+            return __mutual_tco_trampoline_2(
+                __MutualTco2::TokenizeString__indexed(src, nextPos, accBrace),
+                __str_index,
+            );
+        }
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -783,90 +1156,248 @@ fn __mutual_tco_trampoline_3(
 
 /// Synthesized indexed worker of `tokenizeInterpExpr`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeInterpExpr__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::TokenizeInterpExpr__indexed(src, pos),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+        return __mutual_tco_trampoline_3(
+            __MutualTco3::TokenizeInterpExprAt__indexed(src, pos),
+            __str_index,
+        );
+    } else {
+        return aver_rt::AverList::from_vec(vec![
+            crate::aver_generated::domain::token::Token::TkInterpEnd,
+            crate::aver_generated::domain::token::Token::TkEof,
+        ]);
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeInterpExprAt`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeInterpExprAt__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::TokenizeInterpExprAt__indexed(src, pos),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    match aver_rt::string_index_char_at_i64(&src, &__str_index, aver_rt::string_position(&pos)) {
+        Some(c @ _) => {
+            return __mutual_tco_trampoline_3(
+                __MutualTco3::TokenizeInterpExprC__indexed(src, pos, c),
+                __str_index,
+            );
+        }
+        None => {
+            return aver_rt::AverList::from_vec(vec![
+                crate::aver_generated::domain::token::Token::TkInterpEnd,
+                crate::aver_generated::domain::token::Token::TkEof,
+            ]);
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeInterpExprC`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeInterpExprC__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut c @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::TokenizeInterpExprC__indexed(src, pos, c),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    if (c == crate::aver_generated::domain::lexer::closeBrace()) {
+        return aver_rt::AverList::prepend_owned(
+            crate::aver_generated::domain::token::Token::TkInterpEnd,
+            crate::aver_generated::domain::lexer::tokenizeString__indexed(
+                src,
+                pos.add(&aver_rt::AverInt::from_i64(1)),
+                ::aver_rt::str_lit!(""),
+                &*__str_index,
+            ),
+        );
+    } else {
+        return __mutual_tco_trampoline_3(
+            __MutualTco3::TokenizeInterpExprChar__indexed(src, pos, c),
+            __str_index,
+        );
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeInterpExprChar`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeInterpExprChar__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut c @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::TokenizeInterpExprChar__indexed(src, pos, c),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
+        return crate::aver_generated::domain::lexer::tokenizeInterpDigit__indexed(
+            src,
+            pos,
+            &*__str_index,
+        );
+    } else {
+        return __mutual_tco_trampoline_3(
+            __MutualTco3::TokenizeInterpNonDigit__indexed(src, pos, c),
+            __str_index,
+        );
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeInterpNonDigit`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeInterpNonDigit__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut c @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::TokenizeInterpNonDigit__indexed(src, pos, c),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    if crate::aver_generated::domain::lexer::chars::isAlpha(c.clone()) {
+        return __mutual_tco_trampoline_3(
+            __MutualTco3::TokenizeInterpAlpha__indexed(src, pos),
+            __str_index,
+        );
+    } else {
+        return __mutual_tco_trampoline_3(
+            __MutualTco3::TokenizeInterpPunct__indexed(src, pos, c),
+            __str_index,
+        );
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeInterpPunct`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeInterpPunct__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    c @ _: AverStr,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut c @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::TokenizeInterpPunct__indexed(src, pos, c),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+    {
+        let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+        if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
+            return __mutual_tco_trampoline_3(
+                __MutualTco3::TokenizeInterpExpr__indexed(src, nextPos),
+                __str_index,
+            );
+        } else {
+            if __dispatch_subject == aver_rt::AverInt::from_i64(40) {
+                return aver_rt::AverList::prepend_owned(
+                    crate::aver_generated::domain::token::Token::TkLParen,
+                    crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                        src,
+                        nextPos,
+                        &*__str_index,
+                    ),
+                );
+            } else {
+                if __dispatch_subject == aver_rt::AverInt::from_i64(41) {
+                    return aver_rt::AverList::prepend_owned(
+                        crate::aver_generated::domain::token::Token::TkRParen,
+                        crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                            src,
+                            nextPos,
+                            &*__str_index,
+                        ),
+                    );
+                } else {
+                    if __dispatch_subject == aver_rt::AverInt::from_i64(43) {
+                        return aver_rt::AverList::prepend_owned(
+                            crate::aver_generated::domain::token::Token::TkPlus,
+                            crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                                src,
+                                nextPos,
+                                &*__str_index,
+                            ),
+                        );
+                    } else {
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(45) {
+                            return aver_rt::AverList::prepend_owned(
+                                crate::aver_generated::domain::token::Token::TkMinus,
+                                crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                                    src,
+                                    nextPos,
+                                    &*__str_index,
+                                ),
+                            );
+                        } else {
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(42) {
+                                return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkStar, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                            } else {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(44) {
+                                    return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkComma, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(46) {
+                                        return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkDot, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                    } else {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(91) {
+                                            return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkLBracket, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                        } else {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(93)
+                                            {
+                                                return aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkRBracket, crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(src, nextPos, &*__str_index));
+                                            } else {
+                                                if __dispatch_subject
+                                                    == aver_rt::AverInt::from_i64(34)
+                                                {
+                                                    return crate::aver_generated::domain::lexer::tokenizeInterpString__indexed(src, nextPos, ::aver_rt::str_lit!(""), (*__str_index).clone());
+                                                } else {
+                                                    return __mutual_tco_trampoline_3(
+                                                        __MutualTco3::TokenizeInterpExpr__indexed(
+                                                            src, nextPos,
+                                                        ),
+                                                        __str_index,
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Synthesized indexed worker of `tokenizeInterpAlpha`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn tokenizeInterpAlpha__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::TokenizeInterpAlpha__indexed(src, pos),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    match aver_rt::string_index_char_at_i64(&src, &__str_index, aver_rt::string_position(&pos)) {
+        Some(c @ _) => {
+            let (word, newPos) = {
+                let __arg6 @ _ = crate::aver_generated::domain::lexer::chars::isUpper(c);
+                crate::aver_generated::domain::lexer::chars::readIdent(
+                    src.clone(),
+                    pos,
+                    ::aver_rt::str_lit!(""),
+                    __arg6,
+                )
+            };
+            return aver_rt::AverList::prepend_owned(
+                crate::aver_generated::domain::lexer::chars::keywordOrIdent(word),
+                crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                    src,
+                    newPos,
+                    &*__str_index,
+                ),
+            );
+        }
+        None => {
+            return __mutual_tco_trampoline_3(
+                __MutualTco3::TokenizeInterpExpr__indexed(src, pos),
+                __str_index,
+            );
+        }
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -931,28 +1462,66 @@ fn __mutual_tco_trampoline_4(
 
 /// Synthesized indexed worker of `countIndent`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn countIndent__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    spaces @ _: aver_rt::AverInt,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut spaces @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
-    __mutual_tco_trampoline_4(
-        __MutualTco4::CountIndent__indexed(src, pos, spaces),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+        return __mutual_tco_trampoline_4(
+            __MutualTco4::CountIndentChar__indexed(src, pos, spaces),
+            __str_index,
+        );
+    } else {
+        return (spaces, pos);
+    }
 }
 
 /// Synthesized indexed worker of `countIndentChar`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn countIndentChar__indexed(
-    src @ _: AverStr,
-    pos @ _: aver_rt::AverInt,
-    spaces @ _: aver_rt::AverInt,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut spaces @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
-    __mutual_tco_trampoline_4(
-        __MutualTco4::CountIndentChar__indexed(src, pos, spaces),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+    {
+        let __int_match_subject =
+            aver_rt::string_index_code_at_i64(&src, &__str_index, aver_rt::string_position(&pos));
+        if __int_match_subject == -1i64 {
+            return (spaces, pos);
+        } else {
+            let __str_ix_c1 = __int_match_subject;
+            {
+                let __dispatch_subject = __str_ix_c1;
+                if __dispatch_subject == 32i64 {
+                    return __mutual_tco_trampoline_4(
+                        __MutualTco4::CountIndent__indexed(
+                            src,
+                            nextPos,
+                            spaces.add(&aver_rt::AverInt::from_i64(1)),
+                        ),
+                        __str_index,
+                    );
+                } else {
+                    if __dispatch_subject == 10i64 {
+                        return __mutual_tco_trampoline_4(
+                            __MutualTco4::CountIndent__indexed(
+                                src,
+                                nextPos,
+                                aver_rt::AverInt::from_i64(0),
+                            ),
+                            __str_index,
+                        );
+                    } else {
+                        return (spaces, pos);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Tokenize starting from a digit character.

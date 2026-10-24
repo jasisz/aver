@@ -1017,40 +1017,350 @@ fn __mutual_tco_trampoline_1(
 
 /// Run the script t at one node of the proof.
 pub fn within(
-    n @ _: Node,
-    t @ _: Tactic,
+    mut n @ _: Node,
+    mut t @ _: Tactic,
     answers @ _: &aver_rt::AverList<Answer>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
-    __mutual_tco_trampoline_1(__MutualTco1::Within(n, t), &answers)
+    crate::proof_std::cancel_checkpoint();
+    {
+        let __t = t;
+        match __t.view() {
+            crate::proof_std::aver_generated::kernel::std::Tactic__view::Auto => {
+                match crate::proof_std::aver_generated::kernel::std::refutedByWhen(n.goal.clone()) {
+                    Ok(p @ _) => return Ok(p),
+                    Err(_) => {
+                        let __arg20 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&::aver_rt::str_lit!("auto\n"));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::std::subText(&n)),
+                            )));
+                            __b
+                        });
+                        return __mutual_tco_trampoline_1(
+                            __MutualTco1::Asked(n, ::aver_rt::str_lit!("Auto"), __arg20),
+                            answers,
+                        );
+                    }
+                }
+            }
+            crate::proof_std::aver_generated::kernel::std::Tactic__view::Plan(__name_fields) => {
+                let name = __name_fields.0.clone();
+                {
+                    let __arg21 @ _ = aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&::aver_rt::str_lit!("Plan("));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                            __b
+                        };
+                        __b.push_str(&::aver_rt::str_lit!(")"));
+                        __b
+                    });
+                    {
+                        let __arg22 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(38))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&::aver_rt::str_lit!("plan "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(name),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!("\n"));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(crate::proof_std::aver_generated::kernel::std::subText(&n)),
+                            )));
+                            __b
+                        });
+                        return __mutual_tco_trampoline_1(
+                            __MutualTco1::Asked(n, __arg21, __arg22),
+                            answers,
+                        );
+                    }
+                }
+            }
+            crate::proof_std::aver_generated::kernel::std::Tactic__view::Cases(__next_fields) => {
+                let next = &__next_fields.0;
+                {
+                    let __arg23 @ _ = crate::proof_std::aver_generated::kernel::std::down(
+                        n,
+                        ::aver_rt::str_lit!("Cases"),
+                    );
+                    return __mutual_tco_trampoline_1(
+                        __MutualTco1::CasesAt(__arg23, next.clone()),
+                        answers,
+                    );
+                }
+            }
+            crate::proof_std::aver_generated::kernel::std::Tactic__view::Induction(__v_fields) => {
+                let v = __v_fields.0.clone();
+                let h = __v_fields.1.clone();
+                let tl = __v_fields.2.clone();
+                let nil = &__v_fields.3;
+                let cons = &__v_fields.4;
+                {
+                    let __arg25 @ _ = {
+                        let __arg24 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(27)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&::aver_rt::str_lit!("Induction("));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!(")"));
+                            __b
+                        });
+                        crate::proof_std::aver_generated::kernel::std::down(n, __arg24)
+                    };
+                    return crate::proof_std::aver_generated::kernel::std::listStep(
+                        __arg25,
+                        v,
+                        h,
+                        tl,
+                        nil.clone(),
+                        cons.clone(),
+                        true,
+                        &*answers,
+                    );
+                }
+            }
+            crate::proof_std::aver_generated::kernel::std::Tactic__view::Split(__v_fields) => {
+                let v = __v_fields.0.clone();
+                let h = __v_fields.1.clone();
+                let tl = __v_fields.2.clone();
+                let nil = &__v_fields.3;
+                let cons = &__v_fields.4;
+                {
+                    let __arg27 @ _ = {
+                        let __arg26 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&::aver_rt::str_lit!("Split("));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v))));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!(")"));
+                            __b
+                        });
+                        crate::proof_std::aver_generated::kernel::std::down(n, __arg26)
+                    };
+                    return crate::proof_std::aver_generated::kernel::std::listStep(
+                        __arg27,
+                        v,
+                        h,
+                        tl,
+                        nil.clone(),
+                        cons.clone(),
+                        false,
+                        &*answers,
+                    );
+                }
+            }
+            crate::proof_std::aver_generated::kernel::std::Tactic__view::SplitBool(__c_fields) => {
+                let c = &__c_fields.0;
+                let yes = &__c_fields.1;
+                let no = &__c_fields.2;
+                {
+                    let __arg28 @ _ = crate::proof_std::aver_generated::kernel::std::down(
+                        n,
+                        ::aver_rt::str_lit!("SplitBool"),
+                    );
+                    return crate::proof_std::aver_generated::kernel::std::boolStep(
+                        &__arg28,
+                        c.clone(),
+                        yes.clone(),
+                        no.clone(),
+                        &*answers,
+                    );
+                }
+            }
+            crate::proof_std::aver_generated::kernel::std::Tactic__view::First(__ts_fields) => {
+                let ts = &__ts_fields.0;
+                {
+                    let __arg29 @ _ = <aver_rt::AverList<AverStr>>::empty();
+                    return crate::proof_std::aver_generated::kernel::std::first(
+                        &n,
+                        ts,
+                        aver_rt::AverInt::from_i64(1),
+                        __arg29,
+                        &*answers,
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// A node the compiler answers: its proof #N once closed, its refusal, the script a plan gave for it, or the question when it has no answer yet.
 pub fn asked(
-    n @ _: Node,
-    label @ _: AverStr,
-    key @ _: AverStr,
+    mut n @ _: Node,
+    mut label @ _: AverStr,
+    mut key @ _: AverStr,
     answers @ _: &aver_rt::AverList<Answer>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
-    __mutual_tco_trampoline_1(__MutualTco1::Asked(n, label, key), &answers)
+    crate::proof_std::cancel_checkpoint();
+    let here @ _ = crate::proof_std::aver_generated::kernel::std::down(n.clone(), label);
+    match crate::proof_std::aver_generated::kernel::std::lookup(&*answers, key.clone()) {
+        None => {
+            return Err(crate::proof_std::aver_generated::kernel::std::Stop::Ask(
+                key,
+            ));
+        }
+        Some(__pat0 @ _) => match __pat0 {
+            crate::proof_std::aver_generated::kernel::std::Reply::Closed(k) => {
+                return Ok(
+                    crate::proof_std::aver_generated::kernel::proof::Proof::PHyp(
+                        crate::proof_std::aver_generated::kernel::proof::Proof__PHyp(
+                            aver_rt::AverStr::from({
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(17)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&::aver_rt::str_lit!("#"));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+                                __b
+                            }),
+                        ),
+                    ),
+                );
+            }
+            crate::proof_std::aver_generated::kernel::std::Reply::Declined(why) => {
+                return crate::proof_std::aver_generated::kernel::std::refuse(here.path, why);
+            }
+            crate::proof_std::aver_generated::kernel::std::Reply::Script(next) => {
+                if (n.depth < aver_rt::AverInt::from_i64(64)) {
+                    {
+                        let __arg10 @ _ = crate::proof_std::aver_generated::kernel::std::Node {
+                            depth: n.depth.add(&aver_rt::AverInt::from_i64(1)),
+                            ..here
+                        };
+                        return __mutual_tco_trampoline_1(
+                            __MutualTco1::Within(__arg10, next),
+                            answers,
+                        );
+                    }
+                } else {
+                    {
+                        let __arg9 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(55)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&::aver_rt::str_lit!("more than "));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(aver_rt::AverInt::from_i64(64)),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!(" plans run inside one another"));
+                            __b
+                        });
+                        return crate::proof_std::aver_generated::kernel::std::refuse(
+                            here.path, __arg9,
+                        );
+                    }
+                }
+            }
+        },
+    }
 }
 
 /// Split every given of finite type into its values, as the standard plan cases does, and run next in each case.
 pub fn casesAt(
-    n @ _: Node,
-    next @ _: Tactic,
+    mut n @ _: Node,
+    mut next @ _: Tactic,
     answers @ _: &aver_rt::AverList<Answer>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
-    __mutual_tco_trampoline_1(__MutualTco1::CasesAt(n, next), &answers)
+    crate::proof_std::cancel_checkpoint();
+    let count @ _ = crate::proof_std::aver_generated::kernel::std::caseCount(&n.goal.finite);
+    {
+        let __list_subject = n.goal.finite.clone();
+        if __list_subject.is_empty() {
+            return crate::proof_std::aver_generated::kernel::std::refuse(
+                n.path,
+                ::aver_rt::str_lit!("no given of finite type"),
+            );
+        } else {
+            {
+                let gs = __list_subject.clone();
+                if (count > aver_rt::AverInt::from_i64(64)) {
+                    {
+                        let __arg5 @ _ = aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(
+                                    (aver_rt::AverInt::from_i64(53)).to_usize().unwrap_or(0),
+                                );
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(count),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!(
+                                " cases is more than a split may write"
+                            ));
+                            __b
+                        });
+                        return crate::proof_std::aver_generated::kernel::std::refuse(
+                            n.path, __arg5,
+                        );
+                    }
+                } else {
+                    return __mutual_tco_trampoline_1(
+                        __MutualTco1::EachGiven(n, gs, next),
+                        answers,
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Split the first given, the rest inside each of its cases; with none left, run next.
 pub fn eachGiven(
-    n @ _: Node,
-    gs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given>,
-    next @ _: Tactic,
+    mut n @ _: Node,
+    mut gs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given>,
+    mut next @ _: Tactic,
     answers @ _: &aver_rt::AverList<Answer>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
-    __mutual_tco_trampoline_1(__MutualTco1::EachGiven(n, gs, next), &answers)
+    crate::proof_std::cancel_checkpoint();
+    let ob @ _ = n.goal.obligation.clone();
+    aver_list_match!(gs, [] => { return __mutual_tco_trampoline_1(__MutualTco1::Within(n, next), answers) }, [g, rest] => { return Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PEnum(crate::proof_std::aver_generated::kernel::proof::Proof__PEnum(g.name.clone(), ob.lhs, ob.rhs, { let __arg7 @ _ = crate::proof_std::aver_generated::kernel::finite::values(&g.fin); crate::proof_std::aver_generated::kernel::std::eachCase(&n, g.name.clone(), &__arg7, &rest, &next, &*answers) }?))) })
 }
 
 /// Largest number of cases a split may write, over all its givens; the automatic producer's bound.

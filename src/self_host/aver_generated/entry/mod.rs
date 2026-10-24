@@ -54,29 +54,39 @@ fn __mutual_tco_trampoline_1(
 
 /// Synthesized indexed worker of `qualifyFns`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn qualifyFns__indexed(
-    fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    prefix @ _: AverStr,
-    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut prefix @ _: AverStr,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    __mutual_tco_trampoline_1(
-        __MutualTco1::QualifyFns__indexed(fns, prefix, acc),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    aver_list_match!(fns, [] => { return acc.reverse() }, [f, rest] => { return __mutual_tco_trampoline_1(__MutualTco1::QualifyFnsOne__indexed(f, rest, prefix, acc), __str_index) })
 }
 
 /// Synthesized indexed worker of `qualifyFnsOne`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn qualifyFnsOne__indexed(
-    f @ _: crate::aver_generated::domain::ast::FnDef,
-    rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    prefix @ _: AverStr,
-    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut f @ _: crate::aver_generated::domain::ast::FnDef,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut prefix @ _: AverStr,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    __mutual_tco_trampoline_1(
-        __MutualTco1::QualifyFnsOne__indexed(f, rest, prefix, acc),
-        &__str_index,
-    )
+    crate::cancel_checkpoint();
+    let qualified @ _ = Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
+        name: ((prefix.clone() + &::aver_rt::str_lit!(".")) + &f.name),
+        params: f.params.clone(),
+        body: f.body.clone(),
+        slotCount: f.slotCount.clone(),
+        slotMap: f.slotMap.clone(),
+        fastPath: f.fastPath.clone(),
+        tailLoop: f.tailLoop,
+    });
+    let __arg6 @ _ =
+        aver_rt::AverList::prepend_owned(f, aver_rt::AverList::prepend_owned(qualified, acc));
+    return __mutual_tco_trampoline_1(
+        __MutualTco1::QualifyFns__indexed(rest, prefix, __arg6),
+        __str_index,
+    );
 }
 
 /// Lex, parse, resolve, and evaluate an Aver source string (no module loading).

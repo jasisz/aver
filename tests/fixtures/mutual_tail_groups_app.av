@@ -1,0 +1,108 @@
+module Main
+    intent = "Mutual tail-call groups called directly, deep, and lending what they only read"
+    effects [Console.print]
+
+record Op
+    shift: Int
+    label: String
+
+record Ctx
+    step: Int
+    names: List<String>
+
+record Env
+    ctx: Ctx
+    base: Int
+
+type Expr
+    Var(Int)
+    App(Expr, Expr)
+    Lam(Expr)
+    Lit(Int)
+
+type Pair
+    Both(Bool, Int)
+
+fn small(op: Op, e: Expr, depth: Int) -> Expr
+    ? "Substitutes under constructors; free variables bounce through the group."
+    match e
+        Expr.Var(i) -> varCase(op, i, depth)
+        Expr.App(f, a) -> Expr.App(small(op, f, depth), small(op, a, depth))
+        Expr.Lam(b) -> Expr.Lam(small(op, b, depth + 1))
+        Expr.Lit(_) -> e
+
+fn varCase(op: Op, i: Int, depth: Int) -> Expr
+    ? "A bound variable stays, a free one is substituted."
+    match i < depth
+        true -> Expr.Var(i)
+        false -> substituted(i - depth, op, depth)
+
+fn substituted(k: Int, op: Op, depth: Int) -> Expr
+    ? "The op sits at another position here, so it is no invariant of the group."
+    match k < op.shift
+        true -> lifted(op, Expr.Lit(k + op.shift), depth)
+        false -> Expr.Var(k + depth)
+
+fn lifted(op: Op, v: Expr, depth: Int) -> Expr
+    ? "Under binders the value goes through small again."
+    match depth == 0
+        true -> v
+        false -> small(op, v, 0)
+
+fn show(e: Expr) -> String
+    ? "Prints a term."
+    match e
+        Expr.Var(i) -> "v{i}"
+        Expr.App(f, a) -> "({show(f)} {show(a)})"
+        Expr.Lam(b) -> "\\{show(b)}"
+        Expr.Lit(n) -> "{n}"
+
+fn isEven(c: Ctx, n: Int) -> Bool
+    ? "A long chain of tail calls between two members."
+    match n == 0
+        true -> true
+        false -> isOdd(n - 1, c)
+
+fn isOdd(n: Int, c: Ctx) -> Bool
+    ? "The context comes second here."
+    match n == 0
+        true -> false
+        false -> isEven(c, n - c.step)
+
+fn stepA(c: Ctx, n: Int) -> Int
+    ? "Hands a fresh context on, so the context stays by value."
+    match n == 0
+        true -> c.step
+        false -> stepB(Ctx(step = c.step + 1, names = c.names), n - 1)
+
+fn stepB(c: Ctx, n: Int) -> Int
+    ? "Hands it back."
+    match n == 0
+        true -> c.step
+        false -> stepA(c, n - 1)
+
+fn fa(env: Env, n: Int) -> Int
+    ? "Lends a field of the group's invariant."
+    match n == 0
+        true -> env.base
+        false -> fb(env, env.ctx, n - 1)
+
+fn fb(env: Env, c: Ctx, n: Int) -> Int
+    ? "Reads the lent field."
+    match n == 0
+        true -> c.step
+        false -> fa(env, n - 1 + c.step - 1)
+
+fn main() -> Unit
+    ? "Every shape, so a backend that drifts shows a diff."
+    ! [Console.print]
+    op = Op(shift = 5, label = "op")
+    t = Expr.App(Expr.Lam(Expr.App(Expr.Var(0), Expr.Var(2))), Expr.Var(1))
+    Console.print(show(small(op, t, 0)))
+    Console.print(show(Expr.Lam(small(op, Expr.Lam(Expr.Var(3)), 1))))
+    c = Ctx(step = 1, names = ["a", "b"])
+    Console.print("{isEven(c, 1000001)} {isOdd(3000000, c)}")
+    p = Pair.Both(isEven(c, 2000000), List.len(c.names))
+    match p
+        Pair.Both(b, k) -> Console.print("{b} {k}")
+    Console.print("{stepA(c, 1000000)} {fa(Env(ctx = c, base = 7), 1000000)}")

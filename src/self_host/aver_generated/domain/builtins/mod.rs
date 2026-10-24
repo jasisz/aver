@@ -41,19 +41,29 @@ fn __mutual_tco_trampoline_1(
 
 /// Convert list of (key, value) tuples to a Map.
 pub fn tuplesToMap(
-    items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
-    __mutual_tco_trampoline_1(__MutualTco1::TuplesToMap(items, acc))
+    crate::cancel_checkpoint();
+    aver_list_match!(items, [] => { return acc }, [item, rest] => { { let __t = item; match __t.view() {
+        crate::aver_generated::domain::value::Val__view::ValTuple(__parts_fields) => {
+            let parts = &__parts_fields.0;
+            return __mutual_tco_trampoline_1(__MutualTco1::TuplesToMapOne(parts.clone(), rest, acc))
+        },
+        _ => {
+            return __mutual_tco_trampoline_1(__MutualTco1::TuplesToMap(rest, acc))
+        }
+    } } })
 }
 
 /// Extract key-value from tuple parts.
 pub fn tuplesToMapOne(
-    parts @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    rest @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    mut parts @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
-    __mutual_tco_trampoline_1(__MutualTco1::TuplesToMapOne(parts, rest, acc))
+    crate::cancel_checkpoint();
+    aver_list_match!(parts, [] => { return __mutual_tco_trampoline_1(__MutualTco1::TuplesToMap(rest, acc)) }, [kV, tail] => { aver_list_match!(tail, [] => { return __mutual_tco_trampoline_1(__MutualTco1::TuplesToMap(rest, acc)) }, [vV, ignored] => { { let __arg7 @ _ = acc.insert_owned(crate::aver_generated::domain::value::mapKeyRepr(&kV), vV); return __mutual_tco_trampoline_1(__MutualTco1::TuplesToMap(rest, __arg7)) } }) })
 }
 
 /// Dispatch qualified builtin calls to sub-module implementations.

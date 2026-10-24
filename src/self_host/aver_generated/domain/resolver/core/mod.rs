@@ -301,35 +301,283 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
 
 /// Find highest slot index in an expression tree.
 pub fn maxSlotInExpr(
-    expr @ _: crate::aver_generated::domain::ast::Expr,
-    acc @ _: aver_rt::AverInt,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
+    mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(expr, acc))
+    crate::cancel_checkpoint();
+    {
+        let __t = &expr;
+        match __t.view() {
+            crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(__cond_fields) => {
+                let cond = &__cond_fields.0;
+                let thenExpr = &__cond_fields.1;
+                let elseExpr = &__cond_fields.2;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(elseExpr.clone(), {
+                    let __arg12 @ _ = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
+                        cond.clone(),
+                        acc,
+                    );
+                    crate::aver_generated::domain::resolver::core::maxSlotInExpr(
+                        thenExpr.clone(),
+                        __arg12,
+                    )
+                }));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprSlot(__slot_fields) => {
+                let slot = __slot_fields.0.clone();
+                return crate::aver_generated::domain::resolver::core::maxInt(slot, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlotInt(__slot_fields) => {
+                let slot = __slot_fields.1.clone();
+                return crate::aver_generated::domain::resolver::core::maxInt(slot, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlots(__lhs_fields) => {
+                let lhs = __lhs_fields.1.clone();
+                let rhs = __lhs_fields.2.clone();
+                {
+                    let __arg13 @ _ =
+                        crate::aver_generated::domain::resolver::core::maxInt(lhs, acc);
+                    return crate::aver_generated::domain::resolver::core::maxInt(rhs, __arg13);
+                }
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlotInt(__slot_fields) => {
+                let slot = __slot_fields.1.clone();
+                return crate::aver_generated::domain::resolver::core::maxInt(slot, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlots(__lhs_fields) => {
+                let lhs = __lhs_fields.1.clone();
+                let rhs = __lhs_fields.2.clone();
+                {
+                    let __arg14 @ _ =
+                        crate::aver_generated::domain::resolver::core::maxInt(lhs, acc);
+                    return crate::aver_generated::domain::resolver::core::maxInt(rhs, __arg14);
+                }
+            }
+            _ => return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprComposite(expr, acc)),
+        }
+    }
 }
 
 /// Continue max-slot traversal for composite expression forms.
 pub fn maxSlotInExprComposite(
-    expr @ _: crate::aver_generated::domain::ast::Expr,
-    acc @ _: aver_rt::AverInt,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
+    mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprComposite(expr, acc))
+    crate::cancel_checkpoint();
+    {
+        let __t = &expr;
+        match __t.view() {
+            crate::aver_generated::domain::ast::Expr__view::ExprVectorGetOrInt(
+                __vecExpr_fields,
+            ) => {
+                let vecExpr = &__vecExpr_fields.0;
+                let idxExpr = &__vecExpr_fields.1;
+                {
+                    let __arg23 @ _ = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
+                        vecExpr.clone(),
+                        acc,
+                    );
+                    return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(
+                        idxExpr.clone(),
+                        __arg23,
+                    ));
+                }
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprIntModOrInt(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                {
+                    let __arg24 @ _ = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
+                        a.clone(),
+                        acc,
+                    );
+                    return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(
+                        b.clone(),
+                        __arg24,
+                    ));
+                }
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprAdd(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprSub(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprMul(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprDiv(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprNeg(__inner_fields) => {
+                let inner = &__inner_fields.0;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(inner.clone(), acc));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprNeq(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprLt(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            _ => return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprAggregate(expr, acc)),
+        }
+    }
 }
 
 /// Finish max-slot traversal for aggregate and call expression forms.
 pub fn maxSlotInExprAggregate(
-    expr @ _: crate::aver_generated::domain::ast::Expr,
-    acc @ _: aver_rt::AverInt,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
+    mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprAggregate(expr, acc))
+    crate::cancel_checkpoint();
+    {
+        let __t = expr;
+        match __t.view() {
+            crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(
+                    a.clone(),
+                    b.clone(),
+                    acc,
+                ));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprCall(__args_fields) => {
+                let args = &__args_fields.1;
+                return crate::aver_generated::domain::resolver::core::maxSlotInExprs(args, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__args_fields) => {
+                let args = &__args_fields.1;
+                return crate::aver_generated::domain::resolver::core::maxSlotInExprs(args, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__args_fields) => {
+                let args = &__args_fields.1;
+                return crate::aver_generated::domain::resolver::core::maxSlotInExprs(args, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(__args_fields) => {
+                let args = &__args_fields.1;
+                return crate::aver_generated::domain::resolver::core::maxSlotInExprs(args, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprMatch(__subj_fields) => {
+                let subj = &__subj_fields.0;
+                let arms = &__subj_fields.1;
+                {
+                    let __arg19 @ _ = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
+                        subj.clone(),
+                        acc,
+                    );
+                    return crate::aver_generated::domain::resolver::core::maxSlotInArms(
+                        arms, __arg19,
+                    );
+                }
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprPropagate(__inner_fields) => {
+                let inner = &__inner_fields.0;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(inner.clone(), acc));
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprConcat(__parts_fields) => {
+                let parts = &__parts_fields.0;
+                return crate::aver_generated::domain::resolver::core::maxSlotInExprs(parts, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprTuple(__exprs_fields) => {
+                let exprs = &__exprs_fields.0;
+                return crate::aver_generated::domain::resolver::core::maxSlotInExprs(exprs, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprIndependentProduct(
+                __exprs_fields,
+            ) => {
+                let exprs = &__exprs_fields.0;
+                return crate::aver_generated::domain::resolver::core::maxSlotInExprs(exprs, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprList(__exprs_fields) => {
+                let exprs = &__exprs_fields.0;
+                return crate::aver_generated::domain::resolver::core::maxSlotInExprs(exprs, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprRecord(__fields_fields) => {
+                let fields = &__fields_fields.1;
+                return crate::aver_generated::domain::resolver::core::maxSlotInFields(fields, acc);
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(__obj_fields) => {
+                let obj = &__obj_fields.0;
+                return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(obj.clone(), acc));
+            }
+            _ => return acc,
+        }
+    }
 }
 
 /// Visit both sides of a binary expression.
 pub fn maxSlotInExprPair(
-    a @ _: crate::aver_generated::domain::ast::Expr,
-    b @ _: crate::aver_generated::domain::ast::Expr,
-    acc @ _: aver_rt::AverInt,
+    mut a @ _: crate::aver_generated::domain::ast::Expr,
+    mut b @ _: crate::aver_generated::domain::ast::Expr,
+    mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(a, b, acc))
+    crate::cancel_checkpoint();
+    let __arg3 @ _ = crate::aver_generated::domain::resolver::core::maxSlotInExpr(a, acc);
+    return __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(b, __arg3));
 }
 
 /// Resolve each function definition.

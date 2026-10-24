@@ -3569,9 +3569,7 @@ pub fn userCtorTagOffsetLoop(
 pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let next @ _ = acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code);
-    (next)
-        .rem_euclid(&(aver_rt::AverInt::from_i64(1000003)))
-        .unwrap()
+    (next).rem_euclid_by(1000003)
 }
 
 /// One spelling per constructor: drop the declaring-module qualifier from a Module.Type.Variant reference, so a variant a dependency builds as Shade.Dark and its caller writes as Palette.Shade.Dark is the same constructor.

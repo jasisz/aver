@@ -45,24 +45,28 @@ fn __mutual_tco_trampoline_1(
 
 /// Accumulate bindings from tuple pattern matching.
 pub fn matchPatTupleItemsAcc(
-    pats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
-    items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut pats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::MatchPatTupleItemsAcc(pats, items, acc))
+    crate::cancel_checkpoint();
+    aver_list_match!(pats, [] => { return Ok(acc) }, [pat, restPats] => { aver_list_match!(items, [] => { return Err(::aver_rt::str_lit!("no match")) }, [item, restItems] => { return __mutual_tco_trampoline_1(__MutualTco1::MatchPatTupleOne(pat, item, restPats, restItems, acc)) }) })
 }
 
 /// Match one tuple element and continue with accumulated bindings.
 pub fn matchPatTupleOne(
-    pat @ _: crate::aver_generated::domain::ast::Pattern,
-    item @ _: crate::aver_generated::domain::value::Val,
-    restPats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
-    restItems @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut pat @ _: crate::aver_generated::domain::ast::Pattern,
+    mut item @ _: crate::aver_generated::domain::value::Val,
+    mut restPats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    mut restItems @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::MatchPatTupleOne(
-        pat, item, restPats, restItems, acc,
-    ))
+    crate::cancel_checkpoint();
+    let bindings @ _ = crate::aver_generated::domain::match_mod::matchPattern(&pat, item)?;
+    let __arg6 @ _ = aver_rt::AverList::concat(&acc, &bindings);
+    return __mutual_tco_trampoline_1(__MutualTco1::MatchPatTupleItemsAcc(
+        restPats, restItems, __arg6,
+    ));
 }
 
 /// Try to match a value against a pattern. Returns bindings on success.

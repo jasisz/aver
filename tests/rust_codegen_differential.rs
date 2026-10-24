@@ -2239,6 +2239,42 @@ fn main() -> Unit
     );
 }
 
+/// A mutual tail-call group is called like any function: a call from
+/// outside the group, or one under a constructor, runs the member's body
+/// directly and enters the trampoline only at its first bounce, and a param
+/// every bounce fills with a borrow that outlives the loop stays borrowed in
+/// the trampoline's state. Covers a context lent at another position in one
+/// member (`substituted`), chains of millions of bounces (the stack must not
+/// grow), one of them under a constructor, a context replaced by a fresh one
+/// in a bounce (by value) and a field of the group's invariant lent
+/// (`fb(env, env.ctx, ..)`).
+#[test]
+fn mutual_tail_groups_run_direct_and_lend_what_they_read() {
+    let relative = "tests/fixtures/mutual_tail_groups_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("mutual_tail_groups", &src);
+    for shape in [
+        "Substituted(aver_rt::AverInt, &'a Op, aver_rt::AverInt)",
+        "pub fn small(op @ _: &Op, mut e @ _: Expr,",
+        "return Expr::App(Expr__App(small(op, f.clone(), depth.clone()), small(op, a.clone(), depth)))",
+        "IsOdd(aver_rt::AverInt, &'a Ctx)",
+        "StepA(Ctx, aver_rt::AverInt)",
+        "env @ _: &'a Env",
+        "__MutualTco4::Fb(&env.ctx,",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    assert!(
+        !emitted.contains("op.clone()") && !emitted.contains("\n    __mutual_tco_trampoline_1("),
+        "the op must stay borrowed and small must not enter the loop at once:\n{emitted}"
+    );
+    let expected = "(\\(v0 6) 6)\n\\\\6\nfalse false\ntrue 2\n500001 7";
+    let vm = run_vm_inline("mutual_tail_groups", &src).expect("vm run");
+    assert_eq!(vm, expected, "VM contract changed");
+    let rust = build_run_rust_inline("mutual_tail_groups", &src).expect("rust build + run");
+    assert_eq!(rust, expected, "Rust diverged from the VM");
+}
+
 /// The reported shape, which is a two-file one: the keyword-named mutual
 /// pair lives in a DEPENDENCY module and the entry module only calls into
 /// it. That is how the bug stayed hidden — the dep module had been

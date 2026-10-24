@@ -242,30 +242,124 @@ fn __mutual_tco_trampoline_1(
 
 /// selectArm from arm number k on.
 pub fn selectFrom(
-    arms @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
-    value @ _: crate::proof_std::aver_generated::kernel::term::Term,
-    k @ _: aver_rt::AverInt,
+    mut arms @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
+    mut value @ _: crate::proof_std::aver_generated::kernel::term::Term,
+    mut k @ _: aver_rt::AverInt,
 ) -> Option<(
     aver_rt::AverInt,
     crate::proof_std::aver_generated::kernel::term::Arm,
     aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 )> {
-    __mutual_tco_trampoline_1(__MutualTco1::SelectFrom(arms, value, k))
+    crate::proof_std::cancel_checkpoint();
+    aver_list_match!(arms, [] => { return None }, [a, rest] => { { let __arg5 @ _ = crate::proof_std::aver_generated::kernel::lib::shapeOf(&value); return __mutual_tco_trampoline_1(__MutualTco1::SelectOne(a, rest, value, k, __arg5)) } })
 }
 
 /// Arm a when it decides v, the arms after it when it rules v out, none otherwise.
 pub fn selectOne(
-    a @ _: crate::proof_std::aver_generated::kernel::term::Arm,
-    rest @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
-    v @ _: crate::proof_std::aver_generated::kernel::term::Term,
-    k @ _: aver_rt::AverInt,
-    shape @ _: AverStr,
+    mut a @ _: crate::proof_std::aver_generated::kernel::term::Arm,
+    mut rest @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
+    mut v @ _: crate::proof_std::aver_generated::kernel::term::Term,
+    mut k @ _: aver_rt::AverInt,
+    mut shape @ _: AverStr,
 ) -> Option<(
     aver_rt::AverInt,
     crate::proof_std::aver_generated::kernel::term::Arm,
     aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 )> {
-    __mutual_tco_trampoline_1(__MutualTco1::SelectOne(a, rest, v, k, shape))
+    crate::proof_std::cancel_checkpoint();
+    match &a.pattern {
+        crate::proof_std::aver_generated::kernel::term::Pat::PWild => {
+            return Some((k, a, aver_rt::AverList::from_vec(vec![v])));
+        }
+        crate::proof_std::aver_generated::kernel::term::Pat::PVar(n) => {
+            let n = n.clone();
+            return Some((k, a, aver_rt::AverList::from_vec(vec![v])));
+        }
+        crate::proof_std::aver_generated::kernel::term::Pat::PLit(x) => {
+            let x = x.clone();
+            if (x == v) {
+                return Some((k, a, aver_rt::AverList::empty()));
+            } else {
+                if (crate::proof_std::aver_generated::kernel::lib::isLiteral(&x)
+                    && (&*shape == "lit"))
+                {
+                    return __mutual_tco_trampoline_1(__MutualTco1::SelectFrom(
+                        rest,
+                        v,
+                        k.add(&aver_rt::AverInt::from_i64(1)),
+                    ));
+                } else {
+                    return None;
+                }
+            }
+        }
+        crate::proof_std::aver_generated::kernel::term::Pat::PNil => {
+            let __dispatch_subject = shape;
+            if &*__dispatch_subject == "nil" {
+                return Some((k, a, aver_rt::AverList::empty()));
+            } else {
+                if &*__dispatch_subject == "cons" {
+                    return __mutual_tco_trampoline_1(__MutualTco1::SelectFrom(
+                        rest,
+                        v,
+                        k.add(&aver_rt::AverInt::from_i64(1)),
+                    ));
+                } else {
+                    return None;
+                }
+            }
+        }
+        crate::proof_std::aver_generated::kernel::term::Pat::PCons(h, t) => {
+            let h = h.clone();
+            let t = t.clone();
+            {
+                let __dispatch_subject = shape;
+                if &*__dispatch_subject == "cons" {
+                    return Some((
+                        k,
+                        a,
+                        crate::proof_std::aver_generated::kernel::lib::cellParts(&v),
+                    ));
+                } else {
+                    if &*__dispatch_subject == "nil" {
+                        return __mutual_tco_trampoline_1(__MutualTco1::SelectFrom(
+                            rest,
+                            v,
+                            k.add(&aver_rt::AverInt::from_i64(1)),
+                        ));
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+        crate::proof_std::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
+            let c = c.clone();
+            let ns = ns.clone();
+            {
+                let __t = &v;
+                match __t.view() {
+                    crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(
+                        __d_fields,
+                    ) => {
+                        let d = __d_fields.0.clone();
+                        let ys = __d_fields.1.clone();
+                        if (c == d) {
+                            return Some((k, a, ys));
+                        } else {
+                            return __mutual_tco_trampoline_1(__MutualTco1::SelectFrom(
+                                rest,
+                                v,
+                                k.add(&aver_rt::AverInt::from_i64(1)),
+                            ));
+                        }
+                    }
+                    _ => return None,
+                }
+            }
+        }
+        _ => return None,
+    }
 }
 
 /// How deep evaluate nests before it gives up: a bound against a definition that does not shrink.

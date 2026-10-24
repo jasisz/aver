@@ -77,21 +77,62 @@ fn __mutual_tco_trampoline_1(
 
 /// Refuse a binding that is used under the arm and would bring in a bound name.
 pub fn capture(
-    bs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    mut bs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     used @ _: &aver_rt::AverList<AverStr>,
     bound @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<(), AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::Capture(bs), &used, &bound)
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(bs, [] => { return Ok(()) }, [b, rest] => { return __mutual_tco_trampoline_1(__MutualTco1::CaptureOne(b, rest), used, bound) })
 }
 
 /// Check one binding, then the rest.
 pub fn captureOne(
-    b @ _: crate::proof_kernel::aver_generated::kernel::term::Binding,
+    mut b @ _: crate::proof_kernel::aver_generated::kernel::term::Binding,
     used @ _: &aver_rt::AverList<AverStr>,
     bound @ _: &aver_rt::AverList<AverStr>,
-    rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    mut rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
 ) -> Result<(), AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::CaptureOne(b, rest), &used, &bound)
+    crate::proof_kernel::cancel_checkpoint();
+    if used.contains(&b.name) {
+        {
+            let __subject = {
+                let __arg5 @ _ =
+                    crate::proof_kernel::aver_generated::kernel::subst::freeVars(&b.value);
+                crate::proof_kernel::aver_generated::kernel::subst::firstShared(
+                    &__arg5,
+                    (*bound).clone(),
+                )
+            };
+            match __subject {
+                Some(c @ _) => {
+                    return Err(aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(
+                                        (aver_rt::AverInt::from_i64(60)).to_usize().unwrap_or(0),
+                                    );
+                                    __b.push_str(&::aver_rt::str_lit!("substituting "));
+                                    __b
+                                };
+                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                    &(b.name),
+                                )));
+                                __b
+                            };
+                            __b.push_str(&::aver_rt::str_lit!(" would capture "));
+                            __b
+                        };
+                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(c))));
+                        __b
+                    }));
+                }
+                None => return __mutual_tco_trampoline_1(__MutualTco1::Capture(rest), used, bound),
+            }
+        }
+    } else {
+        return __mutual_tco_trampoline_1(__MutualTco1::Capture(rest), used, bound);
+    }
 }
 
 /// The term bound to a name, if any.
