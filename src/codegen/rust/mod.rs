@@ -533,13 +533,17 @@ fn render_root_main(
     // workload below ~1 ms (`fib`, `factorial`, `record`). One env-var
     // read on process start when unset; zero generated complexity in
     // the user's main body.
-    let bench_dispatch_lines = |has_replay: bool| -> Vec<String> {
-        let user_call = if has_replay {
+    //
+    // Past that loop `main` runs once, so its tail may end the process
+    // (`aver_rt::exit_after_main`) instead of freeing what it holds. A
+    // recording run keeps the normal return: the recording is written after.
+    let bench_dispatch_lines = |replay_scope: bool| -> Vec<String> {
+        let user_call = if replay_scope {
             "aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main)"
         } else {
             "aver_generated::entry::main()"
         };
-        vec![
+        let mut lines = vec![
             "    if let Ok(n_str) = std::env::var(\"AVER_BENCH_ITER\") {".to_string(),
             "        let n: usize = n_str.parse().unwrap_or(0);".to_string(),
             "        let warmup: usize = std::env::var(\"AVER_BENCH_WARMUP\").ok().and_then(|s| s.parse().ok()).unwrap_or(0);".to_string(),
@@ -553,7 +557,11 @@ fn render_root_main(
             "        }".to_string(),
             "        std::process::exit(0);".to_string(),
             "    }".to_string(),
-        ]
+        ];
+        if !has_replay {
+            lines.push("    aver_rt::allow_exit_after_main();".to_string());
+        }
+        lines
     };
     if returns_result {
         if result_unit_string {

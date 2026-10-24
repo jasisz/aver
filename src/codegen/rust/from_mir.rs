@@ -3459,6 +3459,12 @@ pub(super) fn emit_mir_verify_expr(
 /// caller to emit a hard codegen diagnostic. The `fn main()` /
 /// `-> Result<…>` signature and the guest/replay wrappers are unaffected;
 /// only the body string moves onto MIR.
+///
+/// The tail of a `main` whose outcome the root `fn main` reads (`Unit`,
+/// `Int`, `Result<Unit, String>`) goes through `aver_rt::exit_after_main`,
+/// so a program run once ends the process there, before the values `main`
+/// still holds are freed one by one. A recording run is left as it is: its
+/// scope writes the recording after `main` returns.
 pub(super) fn emit_mir_main_body(fn_id: crate::ir::FnId, ctx: &CodegenContext) -> Option<String> {
     let mir_fn = ctx.mir_program.as_ref()?.fn_by_id(fn_id)?;
     let resolved = ctx.resolved_program.fn_by_id(fn_id)?;
@@ -3468,7 +3474,19 @@ pub(super) fn emit_mir_main_body(fn_id: crate::ir::FnId, ctx: &CodegenContext) -
         MirFnEmitPolicy::from_resolved(resolved, None, /* borrow_by_default */ true);
     policy.apply_bare_i64(fn_id, ctx);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
-    emit_mir_fn_body(&mir_fn.body, &emit_ctx)
+    let exits = !ctx.emit_replay_runtime
+        && match &resolved.return_type {
+            Type::Unit | Type::Int => true,
+            Type::Result(ok, err) => **ok == Type::Unit && **err == Type::Str,
+            _ => false,
+        };
+    if exits {
+        emit_mir_fn_body_with_tail(&mir_fn.body, &emit_ctx, &|tail| {
+            format!("aver_rt::exit_after_main({tail})")
+        })
+    } else {
+        emit_mir_fn_body(&mir_fn.body, &emit_ctx)
+    }
 }
 
 /// Render a **guest-entry fn's inner body** through the MIR walker. The
@@ -5574,6 +5592,16 @@ pub(super) fn emit_mir_fn_body(
     body: &Spanned<MirExpr>,
     emit_ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
+    emit_mir_fn_body_with_tail(body, emit_ctx, &|tail| tail)
+}
+
+/// [`emit_mir_fn_body`] with the rendered tail expression passed through
+/// `wrap_tail`.
+fn emit_mir_fn_body_with_tail(
+    body: &Spanned<MirExpr>,
+    emit_ctx: &MirEmitCtx<'_>,
+    wrap_tail: &dyn Fn(String) -> String,
+) -> Option<String> {
     // A top-level `Let` is a multi-statement body, emitted as flat
     // statement lines (named binding → `let …;`, discarded intermediate
     // `Stmt::Expr` → bare `…;`) then the final expression on its own
@@ -5581,7 +5609,7 @@ pub(super) fn emit_mir_fn_body(
     // empty-`binding_name` (discarded) bindings, so no first-binding
     // guard is needed.
     if let MirExpr::Let(spanned_let) = &body.node
-        && let Some(lines) = emit_mir_let_chain_flat(&spanned_let.node, emit_ctx)
+        && let Some(lines) = emit_mir_let_chain_flat(&spanned_let.node, emit_ctx, wrap_tail)
     {
         return Some(format!("    crate::cancel_checkpoint();\n    {}", lines));
     }
@@ -5597,7 +5625,10 @@ pub(super) fn emit_mir_fn_body(
     if emit_ctx.bare.bare_return
         && let Some(tail) = emit_bare_return_tail(body, emit_ctx)
     {
-        return Some(format!("    crate::cancel_checkpoint();\n    {}", tail));
+        return Some(format!(
+            "    crate::cancel_checkpoint();\n    {}",
+            wrap_tail(tail)
+        ));
     }
 
     // ETAP-2 SLICE 1: the boxed-return tail boundary (defect Q5 / subj_ret)
@@ -5607,7 +5638,10 @@ pub(super) fn emit_mir_fn_body(
     // correctly without a codegen-side boxing pass.
 
     let code = emit_mir_tail_value(body, emit_ctx)?;
-    Some(format!("    crate::cancel_checkpoint();\n    {}", code))
+    Some(format!(
+        "    crate::cancel_checkpoint();\n    {}",
+        wrap_tail(code)
+    ))
 }
 
 /// Emit a fn body's tail expression as an OWNED value.
@@ -5736,6 +5770,7 @@ fn emit_bare_return_tail(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
 fn emit_mir_let_chain_flat(
     let_node: &crate::ir::mir::MirLet,
     ctx: &MirEmitCtx<'_>,
+    wrap_tail: &dyn Fn(String) -> String,
 ) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut current = let_node;
@@ -5786,7 +5821,7 @@ fn emit_mir_let_chain_flat(
                 } else {
                     emit_mir_tail_value(&current.body, ctx)?
                 };
-                lines.push(final_expr);
+                lines.push(wrap_tail(final_expr));
                 break;
             }
         }

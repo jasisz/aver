@@ -930,6 +930,94 @@ fn main_return_is_the_exit_status_of_the_compiled_binary() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A `main` run once ends the process at its tail without freeing what it
+/// still holds (`aver_rt::exit_after_main`). What the process says does not
+/// change: stdout, stderr and the exit status match the VM and the earlier
+/// Rust output whether the output goes to a pipe or to a file, and the
+/// benchmark loop still runs `main` as many times as it is asked to.
+#[test]
+fn main_that_ends_the_process_at_its_tail_loses_no_output() {
+    const UNIT: &str = "module EndUnit\n    intent = \"main prints many lines while it holds a list\"\n    effects [Console.print, Console.error]\n\nfn build(n: Int, acc: List<String>) -> List<String>\n    ? \"n numbered strings.\"\n    match n == 0\n        true -> acc\n        false -> build(n - 1, List.prepend(\"line \" + String.fromInt(n), acc))\n\nfn emit(xs: List<String>) -> Unit\n    ? \"Prints every string.\"\n    ! [Console.print]\n    match xs\n        [] -> Unit\n        [x, ..rest] -> emitOne(x, rest)\n\nfn emitOne(x: String, rest: List<String>) -> Unit\n    ? \"Prints one string, then the rest.\"\n    ! [Console.print]\n    Console.print(x)\n    emit(rest)\n\nfn main()\n    ! [Console.print, Console.error]\n    xs = build(3000, [])\n    emit(xs)\n    Console.error(\"to stderr\")\n    Console.print(\"last of {List.len(xs)}\")\n";
+    const INT: &str = "module EndInt\n    intent = \"main returns a status while it holds a list\"\n    effects [Console.print]\n\nfn main() -> Int\n    ! [Console.print]\n    xs = [\"a\", \"b\"]\n    Console.print(\"held {List.len(xs)}\")\n    7\n";
+    const ERR: &str = "module EndErr\n    intent = \"main returns an error while it holds a list\"\n    effects [Console.print]\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    xs = [\"a\", \"b\"]\n    Console.print(\"held {List.len(xs)}\")\n    Result.Err(\"boom\")\n";
+    let ws = temp_dir("main_tail_exit");
+    let result = (|| {
+        for (name, source, stderr) in [
+            ("p_end_unit", UNIT, "to stderr\n"),
+            ("p_end_int", INT, ""),
+            ("p_end_err", ERR, "boom\n"),
+        ] {
+            let file = ws.join(format!("{name}.av"));
+            fs::write(&file, source).expect("write program");
+            let vm = Command::new(aver_bin())
+                .arg("run")
+                .arg(&file)
+                .output()
+                .expect("expected `aver run` (VM) to execute");
+            let project = ws.join(name);
+            fs::create_dir_all(&project).expect("create project dir");
+            compile_rust(&file, &project, name, Some(&ws), &[])?;
+            let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+                .expect("read generated entry module");
+            if !entry.contains("aver_rt::exit_after_main(") {
+                return Err(format!("{name}: the tail of main does not end the process"));
+            }
+            let bin = cargo_build(&project, name)?;
+            let piped = Command::new(&bin)
+                .output()
+                .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+            let out_file = ws.join(format!("{name}.out"));
+            let err_file = ws.join(format!("{name}.err"));
+            let to_files = Command::new(&bin)
+                .stdout(fs::File::create(&out_file).expect("create stdout file"))
+                .stderr(fs::File::create(&err_file).expect("create stderr file"))
+                .status()
+                .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+            let runs = [
+                ("pipe", piped.status.code(), piped.stdout, piped.stderr),
+                (
+                    "file",
+                    to_files.code(),
+                    fs::read(&out_file).expect("read stdout file"),
+                    fs::read(&err_file).expect("read stderr file"),
+                ),
+            ];
+            for (how, code, stdout, got_stderr) in runs {
+                if code != vm.status.code()
+                    || stdout != vm.stdout
+                    || got_stderr != stderr.as_bytes()
+                {
+                    return Err(format!(
+                        "{name} to a {how}: exit {code:?}, stdout {} bytes, stderr {:?}; VM: exit {:?}, stdout {} bytes",
+                        stdout.len(),
+                        String::from_utf8_lossy(&got_stderr),
+                        vm.status.code(),
+                        vm.stdout.len(),
+                    ));
+                }
+            }
+            if name == "p_end_unit" {
+                let bench = Command::new(&bin)
+                    .env("AVER_BENCH_ITER", "2")
+                    .output()
+                    .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+                let twice = [vm.stdout.as_slice(), vm.stdout.as_slice()].concat();
+                if !bench.status.success() || bench.stdout != twice {
+                    return Err(format!(
+                        "{name} under AVER_BENCH_ITER=2: exit {:?}, stdout {} bytes, expected {}",
+                        bench.status.code(),
+                        bench.stdout.len(),
+                        twice.len()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Every `.rs` file under `dir`, as (display path, contents).
 fn walk_rust_sources(dir: &Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
