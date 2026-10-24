@@ -719,7 +719,9 @@ struct Searched<'a> {
 /// terms over the claim as stated; 9 a split on an open line of a cited
 /// `when`; 10 an induction along another function of the claim; 11
 /// evaluation again with the hypotheses that what states their value
-/// answered read through their bodies, where an attempt met one.
+/// answered read through their bodies, where an attempt met one; 12
+/// evaluation again with the subject of a recursive call split on where the
+/// split on the call's value does not close, where an attempt met one.
 fn search<'a>(
     fresh: &dyn Fn() -> Env<'a>,
     using: &Option<Vec<LawRef>>,
@@ -743,6 +745,9 @@ fn search<'a>(
     // Whether an attempt met a hypothesis answered by what states its
     // value; a search resumed at the last stage makes that attempt again.
     let mut met_answered = from == 11;
+    // Whether an attempt split on the value of a recursive call; a search
+    // resumed at stage 12 makes that attempt again.
+    let mut met_recursive = from == 12;
     for stage in from..8 {
         if stage == 4 {
             if !met_halving {
@@ -814,6 +819,7 @@ fn search<'a>(
                 }
                 met_halving |= env.met_halving.get();
                 met_answered |= env.met_answered.get();
+                met_recursive |= env.met_recursive.get();
                 env = fresh();
             }
         }
@@ -898,6 +904,20 @@ fn search<'a>(
         if let Ok(proof) = body_env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH) {
             env = body_env;
             found = Some((proof, 11, tables_closed() > before));
+        }
+    }
+    // Last, evaluation again where a split on the value of a call of a
+    // recursive definition did not close: the subject the definition's own
+    // `match` stops at is split on instead, so the call opens in each case
+    // (see `Env::stuck_subject`).
+    if found.is_none() && met_recursive {
+        let mut open_env = fresh();
+        open_env.fuel /= 2;
+        open_env.open_recursive = true;
+        let before = tables_closed();
+        if let Ok(proof) = open_env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH) {
+            env = open_env;
+            found = Some((proof, 12, tables_closed() > before));
         }
     }
     let refusal = match &opened {

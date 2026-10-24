@@ -279,7 +279,10 @@ impl Env<'_> {
             ResolvedExpr::Call(ResolvedCallee::Fn(g), _)
                 if !recursive && self.inputs.recursive_fns.contains(g) =>
             {
-                self.stuck_subject(&on, true)
+                self.met_recursive.set(true);
+                self.open_recursive
+                    .then(|| self.stuck_subject(&on, true))
+                    .flatten()
                     .filter(|inner| inner.fn_id == Some(*g))
                     .map(Box::new)
             }
