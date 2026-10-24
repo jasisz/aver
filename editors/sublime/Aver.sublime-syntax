@@ -91,7 +91,7 @@ contexts:
   keywords:
     - match: '\b(depends|exposes|module|opaque|record|plans|type)\b'
       scope: keyword.declaration.aver
-    - match: '\b(induction|decision|because|effects|verify|given|holds|match|trace|using|when|law|by|fn)\b'
+    - match: '\b(induction|decision|because|effects|verify|given|holds|match|trace|using|lazy|when|law|by|fn)\b'
       scope: keyword.control.aver
     - match: '^(\s*)(intent|reason|date|chosen|rejected|impacts|author|needs)(:)'
       captures:

@@ -267,7 +267,8 @@ fn resolve_stmt(ctx: &ResolveCtx<'_>, stmt: &Stmt) -> ResolvedStmt {
 
 fn resolve_spanned(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> Spanned<ResolvedExpr> {
     let resolved = resolve_expr(ctx, expr);
-    let out = Spanned::new(resolved, expr.line);
+    let mut out = Spanned::new(resolved, expr.line);
+    out.lazy = expr.lazy;
     if let Some(t) = expr.ty.get() {
         out.set_ty(canonicalise_type(ctx, (**t).clone()));
     }

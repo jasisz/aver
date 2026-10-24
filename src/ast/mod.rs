@@ -39,6 +39,12 @@ pub struct Spanned<T> {
     pub node: T,
     pub line: SourceLine,
     pub ty: std::sync::OnceLock<Shared<Type>>,
+    /// The call is written `lazy f(…)` (see `docs/language.md`, "Deferred
+    /// calls"). Only the parser sets it, only on a call, and only the Rust
+    /// backend acts on it; everywhere else the call is an ordinary one. A
+    /// pass that rebuilds the node and drops the mark makes the call eager,
+    /// which changes how fast the program runs, never what it computes.
+    pub lazy: bool,
 }
 
 // `OnceLock` does not derive `Clone` (the cell is invariant over `T`), so the
@@ -53,6 +59,7 @@ impl<T: Clone> Clone for Spanned<T> {
             node: self.node.clone(),
             line: self.line,
             ty,
+            lazy: self.lazy,
         }
     }
 }
@@ -69,6 +76,7 @@ impl<T> Spanned<T> {
             node,
             line,
             ty: std::sync::OnceLock::new(),
+            lazy: false,
         }
     }
 

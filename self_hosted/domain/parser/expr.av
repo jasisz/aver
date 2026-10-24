@@ -164,7 +164,7 @@ fn parseAtom(tokens: List<Token>, pos: Int) -> Result<Tuple<Expr, Int>, String>
         Token.TkLBrace -> parseMapLiteral(tokens, nextPos)
         Token.TkLParen -> parseParenExpr(tokens, nextPos)
         Token.TkMatch -> parseMatchExpr(tokens, nextPos)
-        Token.TkIdent(name) -> parseIdentOrCall(tokens, nextPos, name)
+        Token.TkIdent(name) -> parseIdentOrLazy(tokens, nextPos, name)
         _ -> Result.Err("Expected expression, got {Domain.Token.tokenRepr(t)}")
 
 verify parseAtom
@@ -391,6 +391,19 @@ verify parseTupleAfterComma
     parseTupleAfterComma([Token.TkRParen, Token.TkEof], 0, [Expr.ExprInt(2), Expr.ExprInt(1)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 1))
     parseTupleAfterComma([Token.TkInt(3), Token.TkRParen, Token.TkEof], 0, [Expr.ExprInt(2), Expr.ExprInt(1)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2), Expr.ExprInt(3)]), 2))
     parseTupleAfterComma([Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
+
+fn parseIdentOrLazy(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple<Expr, Int>, String>
+    ? "`lazy f(x)` is the call `f(x)`: this interpreter makes every call at once, which a deferred call means. `lazy` before anything but a name is a name of its own."
+    match name == "lazy"
+        true -> match Domain.ParserMatch.tokenAt(tokens, pos)
+            Token.TkIdent(callee) -> parseIdentOrCall(tokens, pos + 1, callee)
+            _ -> parseIdentOrCall(tokens, pos, name)
+        false -> parseIdentOrCall(tokens, pos, name)
+
+verify parseIdentOrLazy
+    parseIdentOrLazy([Token.TkIdent("f"), Token.TkLParen, Token.TkRParen, Token.TkEof], 0, "lazy") => Result.Ok((Expr.ExprCall("f", []), 3))
+    parseIdentOrLazy([Token.TkEof], 0, "lazy") => Result.Ok((Expr.ExprVar("lazy"), 0))
+    parseIdentOrLazy([Token.TkEof], 0, "x") => Result.Ok((Expr.ExprVar("x"), 0))
 
 fn parseIdentOrCall(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple<Expr, Int>, String>
     ? "After reading an identifier: call, record constructor, field access, or variable?"

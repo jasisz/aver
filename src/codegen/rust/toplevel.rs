@@ -87,6 +87,8 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             representation,
             &shared_variants(td, ctx),
             is_thin_sum(td, ctx),
+            ctx.rust_lazy_sums
+                .contains(&crate::codegen::common::backend_type_def_key(ctx, td)),
         ),
         TypeDef::Product { name, fields, .. } => emit_product_type(
             name,
@@ -277,6 +279,7 @@ fn emit_sum_type(
     representation: RepresentationContract,
     shared: &[bool],
     thin: bool,
+    lazy: bool,
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
@@ -401,9 +404,15 @@ fn emit_sum_type(
         // The macro gives the type its `Clone`; `Debug` reads the view,
         // which is declared in constructor order and so prints as the enum
         // would.
+        // A sum some `lazy f(…)` returns has one more, hidden constructor,
+        // tagged after the declared ones, that holds the call.
+        let deferred = match lazy {
+            true => format!(" lazy {}", variants.len()),
+            false => String::new(),
+        };
         writeln!(
             out,
-            "::aver_rt::thin_sum! {{\n    #[derive(Debug)]\n    {visibility}{name} / {view} / {pair} {{\n{body}    }}\n}}"
+            "::aver_rt::thin_sum! {{\n    #[derive(Debug)]\n    {visibility}{name} / {view} / {pair} {{\n{body}    }}{deferred}\n}}"
         )
         .unwrap();
         write!(
@@ -2181,6 +2190,7 @@ mod tests {
             mir_program: None,
             bare_i64: Default::default(),
             rust_owned_record_params: Default::default(),
+            rust_lazy_sums: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),

@@ -12,6 +12,7 @@
   "control": [
     "fn",
     "match",
+    "lazy",
     "verify",
     "decision",
     "law",

@@ -28,6 +28,7 @@ mod flow;
 pub mod hostile_effects;
 pub mod hostile_values;
 mod infer;
+mod lazy_calls;
 pub(crate) use infer::type_is_fully_concrete;
 mod modules;
 pub mod oracle_subtypes;

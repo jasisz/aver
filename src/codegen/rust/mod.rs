@@ -180,6 +180,7 @@ fn transpile_project(
         );
         arg_order::bind_computed_arguments(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
+        ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;

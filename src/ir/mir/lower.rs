@@ -673,6 +673,7 @@ fn wrap<T, U>(node: T, source: &Spanned<U>) -> Spanned<T> {
         node,
         line: source.line,
         ty,
+        lazy: source.lazy,
     }
 }
 
@@ -719,9 +720,11 @@ fn lower_stmt_chain(
                     node: Literal::Unit,
                     line: value.line,
                     ty: std::sync::OnceLock::new(),
+                    lazy: false,
                 }),
                 line: value.line,
                 ty,
+                lazy: false,
             };
             (unit, stmts)
         }
@@ -795,9 +798,11 @@ fn lower_stmt_chain(
                 },
                 line: span,
                 ty: std::sync::OnceLock::new(),
+                lazy: false,
             }),
             line: span,
             ty: std::sync::OnceLock::new(),
+            lazy: false,
         };
     }
     Ok(body)

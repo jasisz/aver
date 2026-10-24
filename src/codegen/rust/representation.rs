@@ -132,6 +132,20 @@ pub(super) fn hands_over(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -
     }
 }
 
+/// The recursive sum (see [`is_thin_sum`]) `callee` returns, which a
+/// `lazy callee(…)` defers into a node of (`aver_rt::thin::Lazy`); `None`
+/// when it returns anything else.
+pub(super) fn deferred_sum(callee: crate::ir::FnId, ctx: &CodegenContext) -> Option<&TypeDef> {
+    let resolved = ctx.resolved_program.fn_by_id(callee)?;
+    let scope = ctx.symbol_table.fn_entry(callee).key.scope_str();
+    match &resolved.return_type {
+        Type::Named { id, name } => {
+            named_type_def(*id, name, ctx, scope).filter(|td| is_thin_sum(td, ctx))
+        }
+        _ => None,
+    }
+}
+
 /// [`is_thin_sum`] for the type `id`.
 pub(super) fn type_is_thin(id: crate::ir::TypeId, ctx: &CodegenContext) -> bool {
     named_type_def(Some(id), "", ctx, None).is_some_and(|td| is_thin_sum(td, ctx))

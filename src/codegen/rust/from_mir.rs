@@ -2373,6 +2373,15 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     // `clone_arg` (owned), and the module-qualified
                     // head is path-mangled via `resolve_module_call`.
                     let name = emit_ctx.symbol_table.fn_entry(*fn_id).key.canonical();
+                    if spanned_call.lazy
+                        && let Some(codegen) = emit_ctx.codegen
+                        && let Some(sum) = super::representation::deferred_sum(*fn_id, codegen)
+                        && codegen
+                            .rust_lazy_sums
+                            .contains(&crate::codegen::common::backend_type_def_key(codegen, sum))
+                    {
+                        return emit_deferred_call(&name, *fn_id, &call.args, codegen, emit_ctx);
+                    }
                     emit_named_call_to(&name, Some(*fn_id), &call.args, emit_ctx)
                 }
                 // Resolve the interned dotted name and dispatch. Every host
@@ -4131,6 +4140,7 @@ fn synthetic_arm(pattern: ResolvedPattern) -> ResolvedMatchArm {
             node: crate::ir::hir::ResolvedExpr::Literal(crate::ast::Literal::Unit),
             line: 0,
             ty: std::sync::OnceLock::new(),
+            lazy: false,
         }),
         binding_slots: std::sync::OnceLock::new(),
     }
@@ -6963,6 +6973,87 @@ fn emit_named_call_to(
             arg_strs.join(", ")
         ))
     }
+}
+
+/// `lazy name(args)` (see `aver_rt::thin::Lazy`): the arguments computed
+/// now, as owned values in nested pairs ending in `()` — a value holding
+/// nodes of a recursive sum as it is, so that dropping a call never made
+/// hands them over, any other in `aver_rt::thin::Kept` — and the call made
+/// from them when the value is first looked at, with each one passed as the
+/// callee's signature takes it.
+fn emit_deferred_call(
+    name: &str,
+    callee: crate::ir::FnId,
+    args: &[Spanned<MirExpr>],
+    codegen: &crate::codegen::CodegenContext,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let resolved = codegen.resolved_program.fn_by_id(callee)?;
+    let scope = codegen.symbol_table.fn_entry(callee).key.scope_str();
+    let borrowed = callee_borrow_mask(name, args.len(), codegen);
+    let bare = codegen.bare_i64.for_fn(callee);
+    let (mut values, mut pattern) = ("()".to_string(), "()".to_string());
+    let mut passed = Vec::with_capacity(args.len());
+    for (i, arg) in args.iter().enumerate().rev() {
+        let is_bare = bare.is_some_and(|f| f.param_is_bare(i));
+        let value = match is_bare {
+            true => emit_bare_i64(arg).or_else(|| emit_mir_expr(arg, ctx))?,
+            false => mir_clone_arg(emit_mir_expr(arg, ctx)?, &arg.node, ctx),
+        };
+        let held = !is_bare
+            && resolved
+                .params
+                .get(i)
+                .is_some_and(|(_, ty)| super::representation::hands_over(ty, codegen, scope));
+        let (value, bound) = match held {
+            true => (value, format!("a{i}")),
+            false => (
+                format!("aver_rt::thin::Kept({value})"),
+                format!("aver_rt::thin::Kept(a{i})"),
+            ),
+        };
+        values = format!("({value}, {values})");
+        pattern = format!("({bound}, {pattern})");
+        passed.push(match borrowed.get(i).copied().unwrap_or(false) {
+            true => format!("&a{i}"),
+            false => format!("a{i}"),
+        });
+    }
+    passed.reverse();
+    let head = match resolve_module_call(name, ctx.module_prefixes) {
+        Some((prefix, suffix)) => format!(
+            "{}::{}",
+            module_prefix_to_rust_path(prefix),
+            aver_name_to_rust(suffix)
+        ),
+        None => aver_name_to_rust(name),
+    };
+    let sum =
+        super::types::type_to_rust_scoped(&resolved.return_type, codegen, ctx.current_module_scope);
+    Some(format!(
+        "<{sum}>::deferred({values}, |{pattern}| {head}({}))",
+        passed.join(", ")
+    ))
+}
+
+/// The recursive sums some `lazy f(…)` in the MIR returns, by backend type
+/// key (see `CodegenContext::rust_lazy_sums`).
+pub(super) fn compute_lazy_sums(ctx: &crate::codegen::CodegenContext) -> HashSet<String> {
+    fn visit(expr: &MirExpr, ctx: &crate::codegen::CodegenContext, out: &mut HashSet<String>) {
+        if let MirExpr::Call(call) = expr
+            && call.lazy
+            && let MirCallee::Fn(callee) = call.node.callee
+            && let Some(sum) = super::representation::deferred_sum(callee, ctx)
+        {
+            out.insert(crate::codegen::common::backend_type_def_key(ctx, sum));
+        }
+        crate::ir::mir::expr::walk_children(expr, &mut |child| visit(child, ctx, out));
+    }
+    let mut out = HashSet::new();
+    for (_, mir_fn) in ctx.mir_program.iter().flat_map(|program| program.iter()) {
+        visit(&mir_fn.body.node, ctx, &mut out);
+    }
+    out
 }
 
 /// Mirror of HIR's `borrow_arg`: emit an expression for passing to

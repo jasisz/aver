@@ -1733,7 +1733,7 @@ pub fn parseAtom(
         }
         crate::aver_generated::domain::token::Token::TkIdent(name) => {
             let name = name.clone();
-            crate::aver_generated::domain::parser::expr::parseIdentOrCall(tokens, nextPos, name)
+            crate::aver_generated::domain::parser::expr::parseIdentOrLazy(tokens, nextPos, name)
         }
         _ => Err(aver_rt::AverStr::from({
             let mut __b = {
@@ -1933,6 +1933,30 @@ pub fn finishTupleOrProduct(
             ),
             pos,
         )),
+    }
+}
+
+/// `lazy f(x)` is the call `f(x)`: this interpreter makes every call at once, which a deferred call means. `lazy` before anything but a name is a name of its own.
+#[inline(always)]
+pub fn parseIdentOrLazy(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    pos @ _: aver_rt::AverInt,
+    name @ _: AverStr,
+) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
+    crate::cancel_checkpoint();
+    if (&*name == "lazy") {
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
+            crate::aver_generated::domain::token::Token::TkIdent(callee) => {
+                crate::aver_generated::domain::parser::expr::parseIdentOrCall(
+                    tokens,
+                    pos.add(&aver_rt::AverInt::from_i64(1)),
+                    callee,
+                )
+            }
+            _ => crate::aver_generated::domain::parser::expr::parseIdentOrCall(tokens, pos, name),
+        }
+    } else {
+        crate::aver_generated::domain::parser::expr::parseIdentOrCall(tokens, pos, name)
     }
 }
 

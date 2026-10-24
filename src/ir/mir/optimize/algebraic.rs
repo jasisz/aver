@@ -37,6 +37,7 @@ fn algebraic_in_place(expr: &mut Spanned<MirExpr>) {
                         node: Literal::Unit,
                         line: expr.line,
                         ty: std::sync::OnceLock::new(),
+                        lazy: false,
                     }),
                 ) {
                     let bop = spanned_bop.node;
@@ -54,6 +55,7 @@ fn algebraic_in_place(expr: &mut Spanned<MirExpr>) {
                     node: lit,
                     line: expr.line,
                     ty: std::sync::OnceLock::new(),
+                    lazy: false,
                 });
             }
             AlgReplace::UnwrapNeg => {
@@ -63,6 +65,7 @@ fn algebraic_in_place(expr: &mut Spanned<MirExpr>) {
                         node: Literal::Unit,
                         line: expr.line,
                         ty: std::sync::OnceLock::new(),
+                        lazy: false,
                     }),
                 ) {
                     if let MirExpr::Neg(inner) = outer.node {

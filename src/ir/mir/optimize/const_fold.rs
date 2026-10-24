@@ -88,6 +88,7 @@ fn literal_span(lit: Literal, source: &Spanned<MirExpr>) -> Spanned<Literal> {
         node: lit,
         line: source.line,
         ty,
+        lazy: false,
     }
 }
 
