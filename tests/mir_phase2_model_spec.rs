@@ -22,7 +22,7 @@ fn span<T>(node: T) -> Spanned<T> {
         node,
         line: 0,
         ty: std::sync::OnceLock::new(),
-        lazy: false,
+        lazy: aver::ast::Lazy::Not,
     }
 }
 

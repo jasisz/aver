@@ -93,192 +93,17 @@ pub(super) fn run(
     }
     let front = front_started.elapsed();
     let started = std::time::Instant::now();
-    // The time of the kernel's check of each law's scripts, here, after the
-    // producers (whose own checks `LawTheorem::steps_timing` counts).
-    let mut final_kernel: BTreeMap<String, std::time::Duration> = BTreeMap::new();
     let steps_dir = std::path::Path::new(output_dir).join("proof_steps");
-    let mut verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
-    // The obligations of `because` chains, apart from the laws: a law
-    // counts only when all of its obligations close.
-    let mut obligation_verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
-    let mut obligation_cites: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    // What would close a law the producer left open, by law.
-    let mut hints: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    // The laws a project plan proved, and how a report names that proof.
-    let mut by_plan: BTreeMap<String, String> = BTreeMap::new();
-    // The earlier laws the automatic pass applied, by law, and the laws
-    // whose `using` line names what they cite.
-    let mut automatic: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut pinned: Vec<String> = Vec::new();
-    // What each checked script stands on, read off the text the kernel
-    // checked; reported for the laws and obligations that close.
-    let mut trust: BTreeMap<String, aver::ir::proof_steps::trust::Trust> = BTreeMap::new();
-    let mut checked = check_all(&ctx.proof_ir.law_theorems, &ctx.symbol_table).into_iter();
-    for theorem in &ctx.proof_ir.law_theorems {
-        let key = law_key(&ctx.symbol_table, theorem);
-        let Checked {
-            law: law_checked,
-            obligations: mut obligations_checked,
-            spent,
-        } = checked.next().unwrap_or_default();
-        if theorem.steps.is_some() && !theorem.steps_auto_using.is_empty() {
-            automatic.insert(key.clone(), theorem.steps_auto_using.clone());
-        }
-        if theorem.using.as_ref().is_some_and(|u| !u.is_empty()) {
-            pinned.push(key.clone());
-        }
-        if let Some(script) = &theorem.steps
-            && let Some(plan) = &script.plan
-        {
-            by_plan.insert(key.clone(), plan.describe(script.proof.size()));
-        }
-        if !theorem.steps_hints.is_empty() {
-            hints.insert(key.clone(), theorem.steps_hints.clone());
-        }
-        let verdict = match (&theorem.steps, law_checked) {
-            (None, _) | (_, None) => Verdict::Open(theorem.steps_refusal.clone()),
-            (Some(_), Some(found)) => match found {
-                Err(why) => Verdict::Refused(why),
-                Ok((text, judged)) => {
-                    if std::fs::create_dir_all(&steps_dir).is_ok() {
-                        let _ = std::fs::write(steps_dir.join(format!("{key}.steps")), &text);
-                    }
-                    match judged {
-                        Ok(proved) if proved == key => {
-                            if check_json
-                                && let Ok(t) = aver::ir::proof_steps::trust::of_script(&text)
-                            {
-                                trust.insert(key.clone(), t);
-                            }
-                            Verdict::Steps
-                        }
-                        Ok(other) => Verdict::Refused(format!("the script proves {other}")),
-                        Err(why) => Verdict::Refused(why),
-                    }
-                }
-            },
-        };
-        verdicts.insert(key.clone(), verdict);
-        for ob in &theorem.obligation_steps {
-            let found = obligations_checked.next().flatten();
-            let verdict = match (&ob.script, found) {
-                (None, _) | (_, None) => Verdict::Open(ob.refusal.clone()),
-                (Some(_), Some(found)) => match found {
-                    Err(why) => Verdict::Refused(why),
-                    Ok((text, judged)) => {
-                        if std::fs::create_dir_all(&steps_dir).is_ok() {
-                            let _ =
-                                std::fs::write(steps_dir.join(format!("{}.steps", ob.key)), &text);
-                        }
-                        match judged {
-                            Ok(proved) if proved == ob.key => {
-                                if check_json
-                                    && let Ok(t) = aver::ir::proof_steps::trust::of_script(&text)
-                                {
-                                    trust.insert(ob.key.clone(), t);
-                                }
-                                Verdict::Steps
-                            }
-                            Ok(other) => Verdict::Refused(format!("the script proves {other}")),
-                            Err(why) => Verdict::Refused(why),
-                        }
-                    }
-                },
-            };
-            obligation_verdicts.insert(ob.key.clone(), verdict);
-            if let Some(script) = &ob.script {
-                obligation_cites.insert(
-                    ob.key.clone(),
-                    script
-                        .laws
-                        .iter()
-                        .filter(|l| l.fact.is_none())
-                        .map(|l| l.key.clone())
-                        .collect(),
-                );
-            }
-        }
-        final_kernel.insert(key, spent);
-    }
-    // Credit composes: a law whose script cites a law this backend did not
-    // close is not closed either (Lean gets the same from its axiom audit).
-    let cites: BTreeMap<String, Vec<String>> = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .filter_map(|t| {
-            let script = t.steps.as_ref()?;
-            Some((
-                law_key(&ctx.symbol_table, t),
-                // A builtin fact carries its proof, which the kernel just
-                // checked as part of the citing script.
-                script
-                    .laws
-                    .iter()
-                    .filter(|l| l.fact.is_none())
-                    .map(|l| l.key.clone())
-                    .collect(),
-            ))
-        })
-        .collect();
-    // A law with `because` lines cites its own obligations: it closes only
-    // when they do, and stands on what they cite.
-    for (k, cited) in &cites {
-        if !matches!(verdicts.get(k), Some(Verdict::Steps)) {
-            continue;
-        }
-        if let Some(c) = cited.iter().find(|c| {
-            obligation_verdicts.contains_key(*c)
-                && !matches!(obligation_verdicts.get(*c), Some(Verdict::Steps))
-        }) {
-            verdicts.insert(k.clone(), Verdict::CitesOpen(c.clone()));
-        }
-    }
-    let cites: BTreeMap<String, Vec<String>> = cites
-        .into_iter()
-        .map(|(k, cited)| {
-            let through = cited
-                .into_iter()
-                .flat_map(|c| match obligation_cites.get(&c) {
-                    Some(inner) => inner.clone(),
-                    None if obligation_verdicts.contains_key(&c) => Vec::new(),
-                    None => vec![c],
-                })
-                .collect();
-            (k, through)
-        })
-        .collect();
-    loop {
-        let demote: Vec<(String, String)> = verdicts
-            .iter()
-            .filter(|(_, v)| matches!(v, Verdict::Steps))
-            .filter_map(|(k, _)| {
-                cites.get(k)?.iter().find_map(|c| {
-                    (!matches!(verdicts.get(c), Some(Verdict::Steps)))
-                        .then(|| (k.clone(), c.clone()))
-                })
-            })
-            .collect();
-        if demote.is_empty() {
-            break;
-        }
-        for (k, c) in demote {
-            verdicts.insert(k, Verdict::CitesOpen(c));
-        }
-    }
-    credit_bottom_up(&mut verdicts, &cites);
-    // An obligation is closed only when the laws it cites are.
-    for (k, cited) in &obligation_cites {
-        if !matches!(obligation_verdicts.get(k), Some(Verdict::Steps)) {
-            continue;
-        }
-        if let Some(c) = cited
-            .iter()
-            .find(|c| !matches!(verdicts.get(*c), Some(Verdict::Steps)))
-        {
-            obligation_verdicts.insert(k.clone(), Verdict::CitesOpen(c.clone()));
-        }
-    }
+    let Judgement {
+        verdicts,
+        obligation_verdicts,
+        hints,
+        by_plan,
+        automatic,
+        pinned,
+        trust,
+        final_kernel,
+    } = judge(&ctx, Some(&steps_dir), check_json);
     let elapsed = started.elapsed();
     let closed = verdicts
         .values()
@@ -413,20 +238,9 @@ pub(super) fn run(
         println!("{}", serde_json::Value::Object(obj));
     } else {
         for (key, verdict) in &verdicts {
-            let line = match verdict {
-                Verdict::Steps => match by_plan.get(key) {
-                    Some(plan) => format!("closed by steps ({plan})"),
-                    None => "closed by steps".to_string(),
-                },
-                Verdict::Open(None) => "not closed by this backend".to_string(),
-                Verdict::Open(Some(why)) => format!("not closed by this backend (steps: {why})"),
-                Verdict::Refused(why) => format!("not closed by this backend (kernel: {why})"),
-                Verdict::CitesOpen(law) => {
-                    format!("not closed by this backend (it cites {law}, which is not)")
-                }
-                Verdict::CitesCircle(law) => format!(
-                    "not closed by this backend (it cites {law}, whose citations go round in a circle)"
-                ),
+            let line = match (verdict, by_plan.get(key)) {
+                (Verdict::Steps, Some(plan)) => format!("closed by steps ({plan})"),
+                _ => describe(verdict),
             };
             println!("  {key}: {line}");
             let prefix = format!("{key}.");
@@ -476,6 +290,254 @@ pub(super) fn run(
     }
     if checking && !passed {
         std::process::exit(1);
+    }
+}
+
+/// What the kernel made of every law's steps, and what goes with it in a
+/// report.
+pub(super) struct Judgement {
+    verdicts: BTreeMap<String, Verdict>,
+    obligation_verdicts: BTreeMap<String, Verdict>,
+    hints: BTreeMap<String, Vec<String>>,
+    by_plan: BTreeMap<String, String>,
+    automatic: BTreeMap<String, Vec<String>>,
+    pinned: Vec<String>,
+    trust: BTreeMap<String, aver::ir::proof_steps::trust::Trust>,
+    final_kernel: BTreeMap<String, std::time::Duration>,
+}
+
+impl Judgement {
+    /// Whether the law `key` is closed by steps the kernel checked, and why
+    /// not when it is not.
+    pub(super) fn closed(&self, key: &str) -> Result<(), String> {
+        match self.verdicts.get(key) {
+            Some(Verdict::Steps) => Ok(()),
+            Some(verdict) => Err(describe(verdict)),
+            None => Err("not a law of the program".to_string()),
+        }
+    }
+}
+
+/// Every law's steps, checked by the kernel, with credit composed through
+/// what the scripts cite. `steps_dir`, when given, gets each checked script.
+pub(super) fn judge(
+    ctx: &aver::codegen::CodegenContext,
+    steps_dir: Option<&std::path::Path>,
+    check_json: bool,
+) -> Judgement {
+    // The time of the kernel's check of each law's scripts, here, after the
+    // producers (whose own checks `LawTheorem::steps_timing` counts).
+    let mut final_kernel: BTreeMap<String, std::time::Duration> = BTreeMap::new();
+    let mut verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
+    // The obligations of `because` chains, apart from the laws: a law
+    // counts only when all of its obligations close.
+    let mut obligation_verdicts: BTreeMap<String, Verdict> = BTreeMap::new();
+    let mut obligation_cites: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // What would close a law the producer left open, by law.
+    let mut hints: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // The laws a project plan proved, and how a report names that proof.
+    let mut by_plan: BTreeMap<String, String> = BTreeMap::new();
+    // The earlier laws the automatic pass applied, by law, and the laws
+    // whose `using` line names what they cite.
+    let mut automatic: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut pinned: Vec<String> = Vec::new();
+    // What each checked script stands on, read off the text the kernel
+    // checked; reported for the laws and obligations that close.
+    let mut trust: BTreeMap<String, aver::ir::proof_steps::trust::Trust> = BTreeMap::new();
+    let mut checked = check_all(&ctx.proof_ir.law_theorems, &ctx.symbol_table).into_iter();
+    for theorem in &ctx.proof_ir.law_theorems {
+        let key = law_key(&ctx.symbol_table, theorem);
+        let Checked {
+            law: law_checked,
+            obligations: mut obligations_checked,
+            spent,
+        } = checked.next().unwrap_or_default();
+        if theorem.steps.is_some() && !theorem.steps_auto_using.is_empty() {
+            automatic.insert(key.clone(), theorem.steps_auto_using.clone());
+        }
+        if theorem.using.as_ref().is_some_and(|u| !u.is_empty()) {
+            pinned.push(key.clone());
+        }
+        if let Some(script) = &theorem.steps
+            && let Some(plan) = &script.plan
+        {
+            by_plan.insert(key.clone(), plan.describe(script.proof.size()));
+        }
+        if !theorem.steps_hints.is_empty() {
+            hints.insert(key.clone(), theorem.steps_hints.clone());
+        }
+        let verdict = match (&theorem.steps, law_checked) {
+            (None, _) | (_, None) => Verdict::Open(theorem.steps_refusal.clone()),
+            (Some(_), Some(found)) => match found {
+                Err(why) => Verdict::Refused(why),
+                Ok((text, judged)) => {
+                    if let Some(dir) = steps_dir
+                        && std::fs::create_dir_all(dir).is_ok()
+                    {
+                        let _ = std::fs::write(dir.join(format!("{key}.steps")), &text);
+                    }
+                    match judged {
+                        Ok(proved) if proved == key => {
+                            if check_json
+                                && let Ok(t) = aver::ir::proof_steps::trust::of_script(&text)
+                            {
+                                trust.insert(key.clone(), t);
+                            }
+                            Verdict::Steps
+                        }
+                        Ok(other) => Verdict::Refused(format!("the script proves {other}")),
+                        Err(why) => Verdict::Refused(why),
+                    }
+                }
+            },
+        };
+        verdicts.insert(key.clone(), verdict);
+        for ob in &theorem.obligation_steps {
+            let found = obligations_checked.next().flatten();
+            let verdict = match (&ob.script, found) {
+                (None, _) | (_, None) => Verdict::Open(ob.refusal.clone()),
+                (Some(_), Some(found)) => match found {
+                    Err(why) => Verdict::Refused(why),
+                    Ok((text, judged)) => {
+                        if let Some(dir) = steps_dir
+                            && std::fs::create_dir_all(dir).is_ok()
+                        {
+                            let _ = std::fs::write(dir.join(format!("{}.steps", ob.key)), &text);
+                        }
+                        match judged {
+                            Ok(proved) if proved == ob.key => {
+                                if check_json
+                                    && let Ok(t) = aver::ir::proof_steps::trust::of_script(&text)
+                                {
+                                    trust.insert(ob.key.clone(), t);
+                                }
+                                Verdict::Steps
+                            }
+                            Ok(other) => Verdict::Refused(format!("the script proves {other}")),
+                            Err(why) => Verdict::Refused(why),
+                        }
+                    }
+                },
+            };
+            obligation_verdicts.insert(ob.key.clone(), verdict);
+            if let Some(script) = &ob.script {
+                obligation_cites.insert(
+                    ob.key.clone(),
+                    script
+                        .laws
+                        .iter()
+                        .filter(|l| l.fact.is_none())
+                        .map(|l| l.key.clone())
+                        .collect(),
+                );
+            }
+        }
+        final_kernel.insert(key, spent);
+    }
+    // Credit composes: a law whose script cites a law this backend did not
+    // close is not closed either (Lean gets the same from its axiom audit).
+    let cites: BTreeMap<String, Vec<String>> = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .filter_map(|t| {
+            let script = t.steps.as_ref()?;
+            Some((
+                law_key(&ctx.symbol_table, t),
+                // A builtin fact carries its proof, which the kernel just
+                // checked as part of the citing script.
+                script
+                    .laws
+                    .iter()
+                    .filter(|l| l.fact.is_none())
+                    .map(|l| l.key.clone())
+                    .collect(),
+            ))
+        })
+        .collect();
+    // A law with `because` lines cites its own obligations: it closes only
+    // when they do, and stands on what they cite.
+    for (k, cited) in &cites {
+        if !matches!(verdicts.get(k), Some(Verdict::Steps)) {
+            continue;
+        }
+        if let Some(c) = cited.iter().find(|c| {
+            obligation_verdicts.contains_key(*c)
+                && !matches!(obligation_verdicts.get(*c), Some(Verdict::Steps))
+        }) {
+            verdicts.insert(k.clone(), Verdict::CitesOpen(c.clone()));
+        }
+    }
+    let cites: BTreeMap<String, Vec<String>> = cites
+        .into_iter()
+        .map(|(k, cited)| {
+            let through = cited
+                .into_iter()
+                .flat_map(|c| match obligation_cites.get(&c) {
+                    Some(inner) => inner.clone(),
+                    None if obligation_verdicts.contains_key(&c) => Vec::new(),
+                    None => vec![c],
+                })
+                .collect();
+            (k, through)
+        })
+        .collect();
+    loop {
+        let demote: Vec<(String, String)> = verdicts
+            .iter()
+            .filter(|(_, v)| matches!(v, Verdict::Steps))
+            .filter_map(|(k, _)| {
+                cites.get(k)?.iter().find_map(|c| {
+                    (!matches!(verdicts.get(c), Some(Verdict::Steps)))
+                        .then(|| (k.clone(), c.clone()))
+                })
+            })
+            .collect();
+        if demote.is_empty() {
+            break;
+        }
+        for (k, c) in demote {
+            verdicts.insert(k, Verdict::CitesOpen(c));
+        }
+    }
+    credit_bottom_up(&mut verdicts, &cites);
+    // An obligation is closed only when the laws it cites are.
+    for (k, cited) in &obligation_cites {
+        if !matches!(obligation_verdicts.get(k), Some(Verdict::Steps)) {
+            continue;
+        }
+        if let Some(c) = cited
+            .iter()
+            .find(|c| !matches!(verdicts.get(*c), Some(Verdict::Steps)))
+        {
+            obligation_verdicts.insert(k.clone(), Verdict::CitesOpen(c.clone()));
+        }
+    }
+    Judgement {
+        verdicts,
+        obligation_verdicts,
+        hints,
+        by_plan,
+        automatic,
+        pinned,
+        trust,
+        final_kernel,
+    }
+}
+
+/// How a law the backend did not close is reported.
+fn describe(verdict: &Verdict) -> String {
+    match verdict {
+        Verdict::Steps => "closed by steps".to_string(),
+        Verdict::Open(None) => "not closed by this backend".to_string(),
+        Verdict::Open(Some(why)) => format!("not closed by this backend (steps: {why})"),
+        Verdict::Refused(why) => format!("not closed by this backend (kernel: {why})"),
+        Verdict::CitesOpen(law) => {
+            format!("not closed by this backend (it cites {law}, which is not)")
+        }
+        Verdict::CitesCircle(law) => format!(
+            "not closed by this backend (it cites {law}, whose citations go round in a circle)"
+        ),
     }
 }
 

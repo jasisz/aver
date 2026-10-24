@@ -242,8 +242,9 @@ fn main_impl(
             module_root,
             verbose,
             json,
+            trust_laws,
         } => {
-            commands::cmd_check(file, module_root.as_deref(), *verbose, *json);
+            commands::cmd_check(file, module_root.as_deref(), *verbose, *json, *trust_laws);
         }
         Commands::Capabilities {
             file,
@@ -385,6 +386,7 @@ fn main_impl(
             optimize,
             certify,
             examples,
+            trust_laws,
             test_boxed_sequences,
             emit_ir_after,
             explain_passes,
@@ -496,6 +498,7 @@ fn main_impl(
                 optimize: *optimize,
                 certify: *certify,
                 certify_examples: *examples,
+                trust_laws: *trust_laws,
                 packed_sequences_enabled: !*test_boxed_sequences,
                 provider_bindings,
             });

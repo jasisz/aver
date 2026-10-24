@@ -1,0 +1,139 @@
+module Inst
+    intent = "The shape of a kernel's instantiation that knows the packed word of every node it defers: each node it makes gets the word its form says, so the word of a deferred part is known before the part is made."
+    exposes [Expr, Form, packedOf, wordUnder, root, instLazy, instNow, size, closedAll]
+    effects []
+
+type Expr
+    BVar(Int)
+    FVar(Int)
+    App(Int, Expr, Expr)
+    Lam(Int, Expr, Expr)
+
+type Form
+    Leaf(Int)
+    Node(Int, Form, Form)
+
+fn packedOf(e: Expr) -> Int
+    ? "The packed word of a compound node, or -1 for a leaf."
+    match e
+        Expr.App(m, _, _) -> m
+        Expr.Lam(m, _, _) -> m
+        _ -> -1
+
+verify packedOf
+    packedOf(Expr.BVar(0)) => -1
+    packedOf(Expr.App(7, Expr.BVar(0), Expr.FVar(1))) => 7
+
+fn root(ft: Form) -> Int
+    ? "The word at the root of a form."
+    match ft
+        Form.Leaf(w) -> w
+        Form.Node(w, _, _) -> w
+
+verify root
+    root(Form.Node(3, Form.Leaf(1), Form.Leaf(2))) => 3
+
+fn left(ft: Form) -> Form
+    ? "The form of a node's first part."
+    match ft
+        Form.Leaf(_) -> ft
+        Form.Node(_, l, _) -> l
+
+verify left
+    left(Form.Node(3, Form.Leaf(1), Form.Leaf(2))) => Form.Leaf(1)
+
+fn right(ft: Form) -> Form
+    ? "The form of a node's second part."
+    match ft
+        Form.Leaf(_) -> ft
+        Form.Node(_, _, r) -> r
+
+verify right
+    right(Form.Node(3, Form.Leaf(1), Form.Leaf(2))) => Form.Leaf(2)
+
+fn envWord(env: List<Expr>) -> Int
+    ? "A word of the terms put in, from their own words."
+    match env
+        [] -> 0
+        [x, ..rest] -> Int.max(packedOf(x), 0) * 7 + envWord(rest)
+
+verify envWord
+    envWord([Expr.App(2, Expr.FVar(0), Expr.FVar(1))]) => 14
+
+fn wordUnder(r: Int, env: List<Expr>, off: Int) -> Int
+    ? "The word of an instantiated node from its form's word, the words put in and the depth, without building the node."
+    r * 31 + envWord(env) + off
+
+verify wordUnder
+    wordUnder(1, [], 2) => 33
+
+fn closedAll(env: List<Expr>) -> Bool
+    ? "Whether every term put in has no loose bound variable."
+    match env
+        [] -> true
+        [x, ..rest] -> match x
+            Expr.BVar(_) -> false
+            _ -> closedAll(rest)
+
+verify closedAll
+    closedAll([Expr.FVar(0)]) => true
+    closedAll([Expr.BVar(0)]) => false
+
+fn pick(env: List<Expr>, k: Int, i: Int) -> Expr
+    ? "The k-th term put in, for the bound variable i, or the variable itself past the end."
+    match env
+        [] -> Expr.BVar(i)
+        [x, ..rest] -> match k == 0
+            true -> x
+            false -> pick(rest, k - 1, i)
+
+verify pick
+    pick([Expr.FVar(5)], 0, 1) => Expr.FVar(5)
+    pick([Expr.FVar(5)], 1, 1) => Expr.BVar(1)
+
+fn bound(env: List<Expr>, i: Int, off: Int) -> Expr
+    ? "What the bound variable i under off binders becomes."
+    match i < off
+        true -> Expr.BVar(i)
+        false -> pick(env, i - off, i)
+
+verify bound
+    bound([Expr.FVar(5)], 1, 1) => Expr.FVar(5)
+    bound([Expr.FVar(5)], 0, 1) => Expr.BVar(0)
+
+fn instLazy(env: List<Expr>, e: Expr, ft: Form, off: Int) -> Expr
+    ? "Puts env in for the loose bound variables of e, one level at a time: each node made gets the word its form says, and each compound part below is deferred knowing its word."
+    match e
+        Expr.BVar(i) -> bound(env, i, off)
+        Expr.FVar(_) -> e
+        Expr.App(_, f, a) -> Expr.App(wordUnder(root(ft), env, off), lazy instLazy(env, f, left(ft), off) knowing instLazy.wordKnown(env, f, left(ft), off), lazy instLazy(env, a, right(ft), off) knowing instLazy.wordKnown(env, a, right(ft), off))
+        Expr.Lam(_, t, b) -> Expr.Lam(wordUnder(root(ft), env, off), lazy instLazy(env, t, left(ft), off) knowing instLazy.wordKnown(env, t, left(ft), off), lazy instLazy(env, b, right(ft), off + 1) knowing instLazy.wordKnown(env, b, right(ft), off + 1))
+
+verify instLazy law wordKnown
+    given env: List<Expr> = [[], [Expr.FVar(1)], [Expr.App(4, Expr.FVar(0), Expr.FVar(1))]]
+    given e: Expr = [Expr.BVar(0), Expr.App(0, Expr.BVar(0), Expr.FVar(2)), Expr.Lam(0, Expr.FVar(1), Expr.BVar(1))]
+    given ft: Form = [Form.Leaf(2), Form.Node(5, Form.Leaf(1), Form.Leaf(2))]
+    given off: Int = [0, 1]
+    when Bool.and(closedAll(env), packedOf(e) >= 0)
+    packedOf(instLazy(env, e, ft, off)) => wordUnder(root(ft), env, off)
+
+fn instNow(env: List<Expr>, e: Expr, ft: Form, off: Int) -> Expr
+    ? "The same, built at once."
+    match e
+        Expr.BVar(i) -> bound(env, i, off)
+        Expr.FVar(_) -> e
+        Expr.App(_, f, a) -> Expr.App(wordUnder(root(ft), env, off), instNow(env, f, left(ft), off), instNow(env, a, right(ft), off))
+        Expr.Lam(_, t, b) -> Expr.Lam(wordUnder(root(ft), env, off), instNow(env, t, left(ft), off), instNow(env, b, right(ft), off + 1))
+
+verify instNow
+    instNow([], Expr.FVar(1), Form.Leaf(0), 0) => Expr.FVar(1)
+
+fn size(e: Expr) -> Int
+    ? "Nodes in the term."
+    match e
+        Expr.App(_, f, a) -> 1 + size(f) + size(a)
+        Expr.Lam(_, t, b) -> 1 + size(t) + size(b)
+        _ -> 1
+
+verify size
+    size(Expr.App(0, Expr.BVar(0), Expr.FVar(1))) => 3

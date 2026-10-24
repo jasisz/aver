@@ -179,6 +179,14 @@ impl Parser {
             true => self.parse_lazy_call()?,
             false => self.parse_postfix()?,
         };
+        if matches!(&self.current().kind, TokenKind::Ident(word) if word == "knowing")
+            && !operand.lazy.is_deferred()
+            && matches!(operand.node, Expr::FnCall(..))
+        {
+            return Err(self.error(
+                "`knowing` follows a deferred call, as in `lazy build(x) knowing build.law(x)`",
+            ));
+        }
         for _ in 0..neg_depth {
             operand = self.spanned(Expr::Neg(crate::ast::Shared::new(operand)), first_line);
         }
@@ -201,11 +209,45 @@ impl Parser {
         );
         self.advance();
         let mut call = self.parse_postfix()?;
-        if !matches!(call.node, Expr::FnCall(..)) {
+        let Expr::FnCall(callee, _) = &call.node else {
             return Err(word);
-        }
-        call.lazy = true;
+        };
+        call.lazy = match &self.current().kind {
+            TokenKind::Ident(word) if word == "knowing" => {
+                let callee = crate::ir::expr_to_dotted_name(&callee.node);
+                crate::ast::Lazy::Knowing(crate::ast::Shared::new(self.parse_knowing(callee)?))
+            }
+            _ => crate::ast::Lazy::Deferred,
+        };
         Ok(call)
+    }
+
+    /// `knowing f.law(x…)` after `lazy f(…)`: a law of the deferred
+    /// function, named through the same name the call uses.
+    fn parse_knowing(&mut self, callee: Option<String>) -> Result<crate::ast::Knowing, ParseError> {
+        let shape = self.error(match &callee {
+            Some(name) => format!(
+                "`knowing` names a law of the deferred function and gives its givens, \
+                 as in `knowing {name}.law(x)`"
+            ),
+            None => "`knowing` names a law of the deferred function".to_string(),
+        });
+        self.advance();
+        let named = self.parse_postfix()?;
+        match named.node {
+            Expr::FnCall(law, givens) => match &law.node {
+                Expr::Attr(of, law)
+                    if callee.is_some() && crate::ir::expr_to_dotted_name(&of.node) == callee =>
+                {
+                    Ok(crate::ast::Knowing {
+                        law: law.clone(),
+                        givens: givens.to_vec(),
+                    })
+                }
+                _ => Err(shape),
+            },
+            _ => Err(shape),
+        }
     }
 
     pub(super) fn parse_postfix(&mut self) -> Result<Spanned<Expr>, ParseError> {

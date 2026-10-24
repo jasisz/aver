@@ -371,7 +371,7 @@ fn typed_span<T>(node: T, line: crate::ast::SourceLine, ty: Option<Type>) -> Spa
         node,
         line,
         ty: cell,
-        lazy: false,
+        lazy: crate::ast::Lazy::Not,
     }
 }
 

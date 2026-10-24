@@ -1252,6 +1252,6 @@ pub(crate) fn substitute_idents_in_expr(
         node,
         line: expr.line,
         ty: std::sync::OnceLock::new(),
-        lazy: false,
+        lazy: crate::ast::Lazy::Not,
     }
 }

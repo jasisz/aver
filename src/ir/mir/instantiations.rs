@@ -420,7 +420,7 @@ mod tests {
             node,
             line: 0,
             ty: cell,
-            lazy: false,
+            lazy: crate::ast::Lazy::Not,
         }
     }
 
@@ -429,7 +429,7 @@ mod tests {
             node,
             line: 0,
             ty: std::sync::OnceLock::new(),
-            lazy: false,
+            lazy: crate::ast::Lazy::Not,
         }
     }
 

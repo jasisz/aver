@@ -396,7 +396,7 @@ fn parseIdentOrLazy(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple
     ? "`lazy f(x)` is the call `f(x)`: this interpreter makes every call at once, which a deferred call means. `lazy` before anything but a name is a name of its own."
     match name == "lazy"
         true -> match Domain.ParserMatch.tokenAt(tokens, pos)
-            Token.TkIdent(callee) -> parseIdentOrCall(tokens, pos + 1, callee)
+            Token.TkIdent(callee) -> parseLazyCall(tokens, pos + 1, callee)
             _ -> parseIdentOrCall(tokens, pos, name)
         false -> parseIdentOrCall(tokens, pos, name)
 
@@ -404,6 +404,49 @@ verify parseIdentOrLazy
     parseIdentOrLazy([Token.TkIdent("f"), Token.TkLParen, Token.TkRParen, Token.TkEof], 0, "lazy") => Result.Ok((Expr.ExprCall("f", []), 3))
     parseIdentOrLazy([Token.TkEof], 0, "lazy") => Result.Ok((Expr.ExprVar("lazy"), 0))
     parseIdentOrLazy([Token.TkEof], 0, "x") => Result.Ok((Expr.ExprVar("x"), 0))
+
+fn parseLazyCall(tokens: List<Token>, pos: Int, callee: String) -> Result<Tuple<Expr, Int>, String>
+    ? "The call after `lazy`, and past it `knowing f.law(x)` if it follows: what a law says of the call's result, which a call made at once has no use for."
+    parsed = parseIdentOrCall(tokens, pos, callee)?
+    match parsed
+        (call, next) -> match Domain.ParserMatch.tokenAt(tokens, next)
+            Token.TkIdent(word) -> match word == "knowing"
+                true -> skipKnowing(tokens, next + 1, call)
+                false -> Result.Ok(parsed)
+            _ -> Result.Ok(parsed)
+
+verify parseLazyCall
+    parseLazyCall([Token.TkLParen, Token.TkRParen, Token.TkEof], 0, "f") => Result.Ok((Expr.ExprCall("f", []), 2))
+    parseLazyCall([Token.TkLParen, Token.TkRParen, Token.TkIdent("knowing"), Token.TkIdent("f"), Token.TkDot, Token.TkIdent("law"), Token.TkLParen, Token.TkRParen, Token.TkEof], 0, "f") => Result.Ok((Expr.ExprCall("f", []), 8))
+
+fn skipKnowing(tokens: List<Token>, pos: Int, call: Expr) -> Result<Tuple<Expr, Int>, String>
+    ? "Reads past the law `knowing` names, keeping the call."
+    match Domain.ParserMatch.tokenAt(tokens, pos)
+        Token.TkIdent(law) -> skipKnowingArgs(tokens, parseIdentOrCall(tokens, pos + 1, law)?, call)
+        _ -> Result.Err("Expected a law after `knowing`")
+
+verify skipKnowing
+    skipKnowing([Token.TkIdent("g"), Token.TkEof], 0, Expr.ExprVar("x")) => Result.Ok((Expr.ExprVar("x"), 1))
+    skipKnowing([Token.TkEof], 0, Expr.ExprVar("x")) => Result.Err("Expected a law after `knowing`")
+
+fn skipKnowingArgs(tokens: List<Token>, law: Tuple<Expr, Int>, call: Expr) -> Result<Tuple<Expr, Int>, String>
+    ? "Reads past the givens of a law named `f.law`, which reads as a field before them."
+    match law
+        (_, next) -> match Domain.ParserMatch.tokenAt(tokens, next)
+            Token.TkLParen -> skipKnowingLaw(chainFieldAccess(tokens, next + 1, "knowing")?, call)
+            _ -> Result.Ok((call, next))
+
+verify skipKnowingArgs
+    skipKnowingArgs([Token.TkLParen, Token.TkRParen, Token.TkEof], (Expr.ExprVar("g"), 0), Expr.ExprVar("x")) => Result.Ok((Expr.ExprVar("x"), 2))
+    skipKnowingArgs([Token.TkEof], (Expr.ExprVar("g"), 0), Expr.ExprVar("x")) => Result.Ok((Expr.ExprVar("x"), 0))
+
+fn skipKnowingLaw(law: Tuple<Expr, Int>, call: Expr) -> Result<Tuple<Expr, Int>, String>
+    ? "The call, with the position past the law."
+    match law
+        (_, next) -> Result.Ok((call, next))
+
+verify skipKnowingLaw
+    skipKnowingLaw((Expr.ExprVar("g"), 3), Expr.ExprVar("x")) => Result.Ok((Expr.ExprVar("x"), 3))
 
 fn parseIdentOrCall(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple<Expr, Int>, String>
     ? "After reading an identifier: call, record constructor, field access, or variable?"

@@ -209,6 +209,7 @@ impl LanguageServer for AverBackend {
         let keywords = [
             "fn", "match", "module", "depends", "exposes", "opaque", "intent", "verify",
             "decision", "type", "record", "law", "given", "when", "true", "false", "lazy",
+            "knowing",
         ];
         for kw in &keywords {
             items.push(CompletionItem {

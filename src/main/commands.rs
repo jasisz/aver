@@ -2522,7 +2522,13 @@ fn severity_tag(diag: &aver::diagnostics::Diagnostic) -> colored::ColoredString 
     }
 }
 
-pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose: bool, json: bool) {
+pub(super) fn cmd_check(
+    path: &str,
+    module_root_override: Option<&str>,
+    verbose: bool,
+    json: bool,
+    trust_laws: bool,
+) {
     let module_root = resolve_module_root(module_root_override);
     let config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
         Ok(c) => c,
@@ -2627,11 +2633,23 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
                     &program_answers,
                 );
                 checked_modules += outcomes.len();
+                let failed = failed_modules.len();
                 failed_modules.extend(
                     outcomes
                         .into_iter()
                         .filter_map(|(path, has_errors)| has_errors.then_some(path)),
                 );
+                // A program whose modules check stands on the laws its
+                // `knowing` name.
+                if failed_modules.len() == failed
+                    && let Err(refused) =
+                        knowing_gate::check(file, module_root_override, trust_laws)
+                {
+                    for why in refused {
+                        eprintln!("{}", why.red());
+                    }
+                    failed_modules.push(file.clone());
+                }
             }
             Err(e) => {
                 eprintln!("{}", e.red());
@@ -6738,9 +6756,12 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         optimize,
         certify,
         certify_examples,
+        trust_laws,
         packed_sequences_enabled,
         provider_bindings,
     } = opts;
+    // Every target answers what `knowing` says only from a law that holds.
+    let stands = knowing_gate::check_or_exit(file, module_root_override, trust_laws);
 
     if !matches!(pack, None | Some(super::cli::DeployPack::None))
         && !matches!(target, super::cli::CompileTarget::WasmGc)
@@ -6868,6 +6889,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         false, // run_law_lower — same
         false, // proof_command — no proof plans run
     );
+    ctx.knowing_trusted = stands.trusted.into_iter().collect();
     reject_unsupported_capability_targets(
         &ctx.items,
         &ctx.modules,
@@ -8081,6 +8103,8 @@ pub(super) struct CompileOptions<'a> {
     /// `--examples` beside `--certify`: bridge every certified export, not
     /// only the law cone.
     pub(super) certify_examples: bool,
+    /// `--trust-laws`: a `knowing` may stand on a law not proved.
+    pub(super) trust_laws: bool,
     pub(super) packed_sequences_enabled: bool,
     pub(super) provider_bindings: &'a [aver::provider::ProviderBinding],
 }
@@ -9859,6 +9883,8 @@ struct ProofManifest {
     fingerprints: proof_fingerprints::Recorded,
 }
 
+#[path = "knowing_gate.rs"]
+mod knowing_gate;
 #[path = "law_reason_report.rs"]
 mod law_reason_report;
 #[path = "proof_aver.rs"]
@@ -13575,6 +13601,8 @@ error: build failed";
             bare_i64: Default::default(),
             rust_owned_record_params: Default::default(),
             rust_lazy_sums: Default::default(),
+            knowing_trusted: Default::default(),
+            rust_knowing: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),

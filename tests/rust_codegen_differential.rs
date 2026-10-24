@@ -405,6 +405,54 @@ fn deferred_calls_match_vm() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// `lazy f(…) knowing f.law(…)` keeps the value a proved law gives of the
+/// call's result in the deferred node: its projection read before the call
+/// is made, the call made later, two calls that know different values
+/// compared, a call from another module, a call under a `when` that does not
+/// hold (made at once), and the instantiation shape of a kernel, all read as
+/// the VM, which makes every call at once.
+#[test]
+fn deferred_calls_that_know_a_value_match_vm() {
+    assert_plain_parity(
+        "tests/fixtures/lazy_knowing/main.av",
+        Some("tests/fixtures/lazy_knowing"),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A law `--trust-laws` lets through unproved is checked every time a call
+/// that knows a value from it is made: a false one stops the program with
+/// the law's name, though the value it gave was read before.
+#[test]
+fn a_trusted_law_that_does_not_hold_stops_the_program_when_the_call_is_made() {
+    const SOURCE: &str = "module Trusted\n    intent = \"a deferred call knows a value from a law that does not hold\"\n    effects [Console.print]\n\ntype Term\n    Var(Int, Int)\n    App(Term, Term, Int)\n\nfn wordOf(t: Term) -> Int\n    ? \"The word a term carries.\"\n    match t\n        Term.Var(_, w) -> w\n        Term.App(_, _, w) -> w\n\nfn shift(t: Term, by: Int) -> Term\n    ? \"Every variable moved by `by`.\"\n    match t\n        Term.Var(n, _) -> Term.Var(n + by, wordOf(t) * 31 + by)\n        Term.App(f, a, _) -> Term.App(shift(f, by), shift(a, by), wordOf(t) * 31 + by)\n\nverify shift law wordGuess\n    given t: Term = [Term.Var(0, 5)]\n    given by: Int = [0]\n    wordOf(shift(t, by)) => wordOf(t) * 31\n\nfn main() -> Unit\n    ! [Console.print]\n    t = Term.Var(0, 1)\n    later = lazy shift(t, 2) knowing shift.wordGuess(t, 2)\n    Console.print(\"known {wordOf(later)}\")\n    Console.print(\"made {wordOf(shift(later, 0))}\")\n";
+    let ws = temp_dir("trusted_law");
+    let result = (|| {
+        let file = ws.join("main.av");
+        fs::write(&file, SOURCE).expect("write program");
+        let project = ws.join("p_trusted");
+        fs::create_dir_all(&project).expect("create project dir");
+        compile_rust(&file, &project, "p_trusted", Some(&ws), &["--trust-laws"])?;
+        let bin = cargo_build(&project, "p_trusted")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if out.status.success()
+            || stdout.trim() != "known 31"
+            || !stderr.contains(
+                "law `shift.wordGuess` of module Trusted does not hold: it says `wordOf` of the call is 31, and it is 33",
+            )
+        {
+            return Err(format!("expected a stop naming the law:\n{}", format_output(&out)));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Constant folding can turn `0.0 / 0.0` or `1.0 / 0.0` into NaN or an
 /// infinity, which have no Rust literal; they emit as the `f64` constants.
 #[test]
