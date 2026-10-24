@@ -1,0 +1,62 @@
+module SplitOnOneChar
+    intent =
+        "Fixture: String.split, contains, startsWith and endsWith with a literal of one character, of one multi-byte character, of several characters and an empty one, on texts with separators at the start, at the end and in a row."
+    effects [Console.print]
+
+fn show(parts: List<String>) -> String
+    ? "The parts as a count and the parts between brackets."
+    "{List.len(parts)} [{String.join(parts, "][")}]"
+
+verify show
+    show(["a", ""]) => "2 [a][]"
+
+fn byLine(text: String) -> String
+    ? "The text split on new lines."
+    show(String.split(text, "\n"))
+
+verify byLine
+    byLine("a\nb") => "2 [a][b]"
+
+fn byComma(text: String) -> String
+    ? "The text split on commas."
+    show(String.split(text, ","))
+
+verify byComma
+    byComma(",a,,b,") => "5 [][a][][b][]"
+
+fn byWide(text: String) -> String
+    ? "The text split on two multi-byte characters and a quote."
+    "{show(String.split(text, "é"))} {show(String.split(text, "🙂"))} {show(String.split(text, "'"))}"
+
+verify byWide
+    byWide("aéb") => "2 [a][b] 1 [aéb] 1 [aéb]"
+
+fn byMany(text: String) -> String
+    ? "The text split on two characters and on the empty text."
+    "{show(String.split(text, "ab"))} {show(String.split(text, ""))}"
+
+verify byMany
+    byMany("xaby") => "2 [x][y] 6 [][x][a][b][y][]"
+
+fn tests(text: String) -> String
+    ? "Whether the text contains, starts with and ends with one character."
+    "{String.contains(text, ":")} {String.startsWith(text, "é")} {String.endsWith(text, "🙂")} {String.contains(text, "::")}"
+
+verify tests
+    tests("é:🙂") => "true true true false"
+
+fn main() -> Unit
+    ? "Splits and tests texts with separators at the edges and in a row."
+    ! [Console.print]
+    Console.print(byLine(""))
+    Console.print(byLine("\n"))
+    Console.print(byLine("12\n345\n\n6x7\n"))
+    Console.print(byComma(""))
+    Console.print(byComma(",,a,b,,"))
+    Console.print(byWide("éaé🙂b🙂🙂c'd'"))
+    Console.print(byWide(""))
+    Console.print(byMany("abxabab"))
+    Console.print(byMany(""))
+    Console.print(tests("é:🙂"))
+    Console.print(tests(""))
+    Console.print(tests("a::b"))

@@ -637,7 +637,7 @@ pub fn fresh(
     table @ _: &aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>,
 ) -> Result<AverStr, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    if n.starts_with("#") {
+    if n.starts_with('#') {
         if table.contains_key(&n) {
             Err(aver_rt::AverStr::from({
                 let mut __b = {
@@ -692,7 +692,7 @@ pub fn within(
     match &s {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(a) => {
             let a = a.clone();
-            if a.starts_with("#") {
+            if a.starts_with('#') {
                 table.get(&a).cloned().ok_or_else(|| {
                     aver_rt::AverStr::from({
                         let mut __b = {

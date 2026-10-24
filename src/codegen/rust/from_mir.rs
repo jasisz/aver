@@ -7205,6 +7205,21 @@ fn mir_str_arg_or_deref(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option
     Some(format!("&*{}", code))
 }
 
+/// A search pattern for `str::contains` / `starts_with` / `ends_with` /
+/// `split`: a literal of exactly one character becomes a `char` pattern,
+/// which std serves with `memchr` instead of the substring searcher. Same
+/// matches either way; anything else goes through [`mir_str_arg_or_deref`].
+fn mir_str_pattern_arg(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    if let MirExpr::Literal(lit) = &expr.node
+        && let crate::ast::Literal::Str(s) = &lit.node
+        && let mut chars = s.chars()
+        && let (Some(c), None) = (chars.next(), chars.next())
+    {
+        return Some(format!("{:?}", c));
+    }
+    mir_str_arg_or_deref(expr, ctx)
+}
+
 /// Resolve a nested expression that is itself a `Call(Builtin(id))` to
 /// its canonical dotted name + arg slice. MIR lowering wipes the
 /// syntactic shape the HIR `ResolvedLeafOp` classifiers key off
@@ -7670,17 +7685,17 @@ fn emit_mir_builtin_call(
         }
         "String.contains" => {
             let s = arg!(0);
-            let sub = mir_str_arg_or_deref(&args[1], ctx)?;
+            let sub = mir_str_pattern_arg(&args[1], ctx)?;
             format!("{}.contains({})", s, sub)
         }
         "String.startsWith" => {
             let s = arg!(0);
-            let prefix = mir_str_arg_or_deref(&args[1], ctx)?;
+            let prefix = mir_str_pattern_arg(&args[1], ctx)?;
             format!("{}.starts_with({})", s, prefix)
         }
         "String.endsWith" => {
             let s = arg!(0);
-            let suffix = mir_str_arg_or_deref(&args[1], ctx)?;
+            let suffix = mir_str_pattern_arg(&args[1], ctx)?;
             format!("{}.ends_with({})", s, suffix)
         }
         "String.trim" => format!("aver_rt::string_trim(&{})", arg!(0)),
@@ -7688,9 +7703,9 @@ fn emit_mir_builtin_call(
         "String.toLower" => format!("aver_rt::string_case(&{}, false)", arg!(0)),
         "String.split" => {
             let s = arg!(0);
-            let delim = arg!(1);
+            let delim = mir_str_pattern_arg(&args[1], ctx)?;
             format!(
-                "aver_rt::AverList::from_vec({}.split(&*{}).map(aver_rt::AverStr::from).collect::<Vec<_>>())",
+                "aver_rt::AverList::from_vec({}.split({}).map(aver_rt::AverStr::from).collect::<Vec<_>>())",
                 s, delim
             )
         }
