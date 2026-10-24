@@ -174,10 +174,10 @@ verify builtinListContainsInner
     builtinListContainsInner(Val.ValInt(1), Val.ValInt(1)) => Result.Err("expected list argument")
 
 fn listContainsVal(items: List<Val>, needle: Val) -> Bool
-    ? "Check if a value is in a list by repr comparison."
+    ? "Check if a value is in a list, as == compares them."
     match items
         [] -> false
-        [v, ..rest] -> match Domain.Value.valRepr(v) == Domain.Value.valRepr(needle)
+        [v, ..rest] -> match Domain.Value.valEq(v, needle)
             true -> true
             false -> listContainsVal(rest, needle)
 

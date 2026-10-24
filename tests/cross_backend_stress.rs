@@ -336,6 +336,57 @@ fn main()
 // Columns: div 2 | mod 2 | div -3 | mod -3 | div 4 + dynamic div 4.
 const LITERAL_DIVISOR_OUT: &str = "4 1 -3 0 4\n-5 1 3 0 -6\n0 0 0 0 0\n-4 0 3 1 -4\n5";
 
+/// `==` on values holding a NaN: a NaN is not equal to itself, so neither is
+/// a value holding one, compared with itself or with a copy that holds the
+/// same NaN, at each depth; `0.0` equals `-0.0` inside a value too.
+const NAN_EQUALITY_SRC: &str = r#"module Tmp
+
+type Weights
+    Weight(Float)
+    Both(Weights, Weights)
+
+fn yes(b: Bool) -> String
+    match b
+        true -> "1"
+        false -> "0"
+
+fn weighed(depth: Int, leaf: Weights, other: Weights) -> Weights
+    match depth == 0
+        true -> leaf
+        false -> Weights.Both(weighed(depth - 1, leaf, other), other)
+
+fn level(nan: Weights, one: Weights, depth: Int) -> String
+    w = weighed(depth, nan, one)
+    copy = weighed(depth, nan, one)
+    plain = weighed(depth, one, one)
+    a = yes(w == w)
+    b = yes(w == copy)
+    c = yes(w == plain)
+    d = yes(plain == plain)
+    a + b + c + d
+
+fn main()
+    ! [Console.print]
+    zero = Float.fromInt(List.len([1]) - 1)
+    nan = Float.sqrt(zero - 1.0)
+    one = Weights.Weight(1.5)
+    n = Weights.Weight(nan)
+    Console.print(level(n, one, 0) + " " + level(n, one, 1) + " " + level(n, one, 3))
+    xs = [1.5, nan]
+    o = Option.Some(nan)
+    e = yes(nan == nan)
+    f = yes(xs == xs)
+    g = yes(o == o)
+    h = yes(List.contains(xs, 1.5))
+    i = yes(List.contains([n], n))
+    j = yes(Weights.Weight(0.0 - zero) == Weights.Weight(zero))
+    Console.print(e + f + g + h + i + j)
+"#;
+// Columns: depth 0 | 1 | 3, each `w == w`, `w == copy`, `w == plain`,
+// `plain == plain`; then a NaN, a list, an option, `List.contains` of a
+// number, of a value holding a NaN, and `0.0` against `-0.0`.
+const NAN_EQUALITY_OUT: &str = "0001 0001 0001\n000101";
+
 // ─── Per-backend cross-checks ──────────────────────────────────────────
 //
 // One #[test] fn per (source × backend). Verbose vs a paste-macro
@@ -1586,4 +1637,29 @@ fn shared_recursive_sum_equality_ends_on_wasm_gc() {
     let shallow = run_within(source, &["--wasm-gc"], &["12"], minute);
     assert!(shallow.ends_with(SHARED_TAIL), "{shallow}");
     assert_eq!(run_within(source, &["--wasm-gc"], &["64"], minute), shallow);
+}
+
+#[test]
+fn cross_nan_equality_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-nan-vm", NAN_EQUALITY_SRC),
+        NAN_EQUALITY_OUT,
+    );
+}
+#[test]
+fn cross_nan_equality_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-nan-wasm", NAN_EQUALITY_SRC),
+        NAN_EQUALITY_OUT,
+    );
+}
+#[test]
+fn cross_nan_equality_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-nan-sh", NAN_EQUALITY_SRC),
+        NAN_EQUALITY_OUT,
+    );
 }

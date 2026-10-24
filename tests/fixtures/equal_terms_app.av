@@ -1,7 +1,7 @@
 module EqualTermsApp
     intent =
         "Fixture: == on recursive sums whose values share subterms: the Rust backend compares two pointers before reading either node, and every answer must stay the VM's."
-        "Terms rebuilt above shared leaves and equal or apart at each level, a sum holding a Float, deferred calls, two threads at once, and chains as deep as the first argument says."
+        "Terms rebuilt above shared leaves and equal or apart at each level, values holding a NaN (not equal to themselves, as one value or as a node held twice), deferred calls, two threads at once, and chains as deep as the first argument says."
     effects [Console.print, Args.get]
 
 type Term
@@ -13,6 +13,10 @@ type Term
 type Weights
     Weight(Float)
     Both(Weights, Weights)
+
+record Reading
+    at: Int
+    value: Float
 
 type Tree
     Tip
@@ -92,6 +96,22 @@ fn equalCount(a: Term, b: Term, n: Int, acc: Int) -> Int
             true -> equalCount(a, b, n - 1, acc + 1)
             false -> equalCount(a, b, n - 1, acc)
 
+fn weighed(depth: Int, leaf: Weights, other: Weights) -> Weights
+    ? "The given depth of Both above leaf, each with other on its right."
+    match depth == 0
+        true -> leaf
+        false -> Weights.Both(weighed(depth - 1, leaf, other), other)
+
+fn nanLevels(nan: Weights, one: Weights, depth: Int, top: Int, acc: String) -> String
+    ? "For each depth up to top, a NaN that deep: whether the value equals itself, a copy of its spine holding the same NaN, and the value with a number for the NaN."
+    match depth > top
+        true -> acc
+        false -> nanLevels(nan, one, depth + 1, top, "{acc} {sameNan(weighed(depth, nan, one), weighed(depth, nan, one), weighed(depth, one, one))}")
+
+fn sameNan(w: Weights, copy: Weights, plain: Weights) -> String
+    ? "Whether w equals itself, its copy and plain."
+    "{yes(w == w)}{yes(w == copy)}{yes(w == plain)}{yes(plain == plain)}"
+
 fn grow(depth: Int, seed: Int) -> Tree
     ? "A full tree of the given depth, built anew on each call."
     match depth == 0
@@ -131,7 +151,15 @@ fn main()
     Console.print("leaves {yes(Term.Hole == Term.Hole)}{yes(Term.Var(1) == Term.Var(1))}{yes(Term.Hole == Term.Var(0))}{yes(lam(Term.Hole) == lam(Term.Hole))}{yes(lam(Term.Hole) == lam(Term.Var(0)))}")
     zero = Float.fromInt(word(Term.Hole))
     one = Weights.Weight(1.5)
-    Console.print("floats {yes(Weights.Both(one, one) == Weights.Both(one, Weights.Weight(1.5)))}{yes(Weights.Weight(zero / zero) == Weights.Weight(zero / zero))}{yes(Weights.Both(one, Weights.Weight(zero / zero)) == Weights.Both(one, Weights.Weight(zero / zero)))}")
+    Console.print("floats {yes(Weights.Both(one, one) == Weights.Both(one, Weights.Weight(1.5)))}{yes(Weights.Weight(zero / zero) == Weights.Weight(zero / zero))}{yes(Weights.Both(one, Weights.Weight(zero / zero)) == Weights.Both(one, Weights.Weight(zero / zero)))}{yes(Weights.Weight(0.0 - zero) == Weights.Weight(zero))}")
+    nan = Weights.Weight(zero / zero)
+    Console.print("nan levels{nanLevels(nan, one, 0, 5, "")}")
+    r = Reading(at = 1, value = zero / zero)
+    xs = [1.5, zero / zero]
+    o = Option.Some(zero / zero)
+    t = (1, zero / zero)
+    m = Map.fromList([("a", zero / zero)])
+    Console.print("nan values {yes(r == r)}{yes([r] == [r])}{yes(xs == xs)}{yes(o == o)}{yes(t == t)}{yes(m == m)}{yes(List.contains([r], r))}{yes(List.contains(xs, 1.5))}{yes([nan] == [nan])}")
     g = grow(7, 1)
     d = later(7, 1)
     e = later(7, 2)

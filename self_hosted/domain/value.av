@@ -1,7 +1,7 @@
 module Value
     intent =
         "Runtime values for the mini interpreter."
-    exposes [Val, valRepr, mapKeyRepr]
+    exposes [Val, valRepr, mapKeyRepr, valEq]
     effects []
 
 fn quoteString(s: String) -> String
@@ -155,3 +155,75 @@ fn valFieldsRepr(items: List<Val>, acc: String, first: Bool) -> String
 verify valFieldsRepr
     valFieldsRepr([], "", true) => ""
     valFieldsRepr([Val.ValInt(1), Val.ValStr("hi")], "", true) => "1, \"hi\""
+
+fn valEq(a: Val, b: Val) -> Bool
+    ? "Whether two values are equal as == says: part by part, a Float by IEEE 754, so a NaN is not equal to itself and 0.0 is equal to -0.0."
+    match (a, b)
+        (Val.ValInt(x), Val.ValInt(y)) -> x == y
+        (Val.ValFloat(x), Val.ValFloat(y)) -> x == y
+        (Val.ValStr(x), Val.ValStr(y)) -> x == y
+        (Val.ValBool(x), Val.ValBool(y)) -> x == y
+        (Val.ValFnRef(x), Val.ValFnRef(y)) -> x == y
+        (Val.ValList(xs), Val.ValList(ys)) -> valsEq(xs, ys)
+        (Val.ValTuple(xs), Val.ValTuple(ys)) -> valsEq(xs, ys)
+        (Val.ValVector(xs), Val.ValVector(ys)) -> valsEq(List.fromVector(xs), List.fromVector(ys))
+        (Val.ValOk(x), Val.ValOk(y)) -> valEq(x, y)
+        (Val.ValErr(x), Val.ValErr(y)) -> valEq(x, y)
+        (Val.ValSome(x), Val.ValSome(y)) -> valEq(x, y)
+        (Val.ValNone, Val.ValNone) -> true
+        (Val.ValUnit, Val.ValUnit) -> true
+        (Val.ValRecord(n, fs), Val.ValRecord(m, gs)) -> match n == m
+            true -> entriesEq(Map.entries(Map.fromList(fs)), Map.entries(Map.fromList(gs)))
+            false -> false
+        (Val.ValVariant(_, n, fs), Val.ValVariant(_, m, gs)) -> match n == m
+            true -> valsEq(fs, gs)
+            false -> false
+        (Val.ValMap(x), Val.ValMap(y)) -> entriesEq(Map.entries(x), Map.entries(y))
+        _ -> valRepr(a) == valRepr(b)
+
+verify valEq
+    valEq(Val.ValInt(1), Val.ValInt(1)) => true
+    valEq(Val.ValFloat(0.0), Val.ValFloat(-0.0)) => true
+    valEq(Val.ValList([Val.ValInt(1)]), Val.ValList([Val.ValInt(2)])) => false
+    valEq(Val.ValSome(Val.ValStr("a")), Val.ValSome(Val.ValStr("a"))) => true
+    valEq(Val.ValRecord("P", [("x", Val.ValInt(1))]), Val.ValRecord("P", [("x", Val.ValInt(2))])) => false
+    valEq(Val.ValVariant(0, "S.A", [Val.ValInt(1)]), Val.ValVariant(0, "S.A", [Val.ValInt(1)])) => true
+    valEq(Val.ValVariant(0, "S.A", []), Val.ValVariant(1, "S.B", [])) => false
+    valEq(Val.ValNone, Val.ValUnit) => false
+
+fn valsEq(xs: List<Val>, ys: List<Val>) -> Bool
+    ? "Whether two lists of values are equal item by item."
+    match xs
+        [] -> match ys
+            [] -> true
+            _ -> false
+        [x, ..xr] -> match ys
+            [] -> false
+            [y, ..yr] -> match valEq(x, y)
+                true -> valsEq(xr, yr)
+                false -> false
+
+verify valsEq
+    valsEq([], []) => true
+    valsEq([Val.ValInt(1)], []) => false
+    valsEq([Val.ValInt(1)], [Val.ValInt(1)]) => true
+
+fn entriesEq(xs: List<Tuple<String, Val>>, ys: List<Tuple<String, Val>>) -> Bool
+    ? "Whether two lists of named values are equal entry by entry."
+    match xs
+        [] -> match ys
+            [] -> true
+            _ -> false
+        [x, ..xr] -> match ys
+            [] -> false
+            [y, ..yr] -> match (x, y)
+                ((k, v), (j, w)) -> match k == j
+                    true -> match valEq(v, w)
+                        true -> entriesEq(xr, yr)
+                        false -> false
+                    false -> false
+
+verify entriesEq
+    entriesEq([], []) => true
+    entriesEq([("a", Val.ValInt(1))], [("a", Val.ValInt(1))]) => true
+    entriesEq([("a", Val.ValInt(1))], [("b", Val.ValInt(1))]) => false

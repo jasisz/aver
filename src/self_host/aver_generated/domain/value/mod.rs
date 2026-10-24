@@ -1152,3 +1152,359 @@ pub fn valFieldsRepr(
         }
     }
 }
+
+/// Whether two values are equal as == says: part by part, a Float by IEEE 754, so a NaN is not equal to itself and 0.0 is equal to -0.0.
+pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
+    let mut __hold0: Val;
+    let mut a @ _: &Val = a;
+    let mut __hold1: Val;
+    let mut b @ _: &Val = b;
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __t = (a.clone(), b.clone());
+            match (__t.0.view(), __t.1.view()) {
+                (
+                    crate::aver_generated::domain::value::Val__view::ValInt(__x_fields),
+                    crate::aver_generated::domain::value::Val__view::ValInt(__y_fields),
+                ) => {
+                    let x = __x_fields.0.clone();
+                    let y = __y_fields.0.clone();
+                    return (x == y);
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValFloat(__x_fields),
+                    crate::aver_generated::domain::value::Val__view::ValFloat(__y_fields),
+                ) => {
+                    let x = __x_fields.0.clone();
+                    let y = __y_fields.0.clone();
+                    return (x == y);
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValStr(__x_fields),
+                    crate::aver_generated::domain::value::Val__view::ValStr(__y_fields),
+                ) => {
+                    let x = __x_fields.0.clone();
+                    let y = __y_fields.0.clone();
+                    return (x == y);
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValBool(__x_fields),
+                    crate::aver_generated::domain::value::Val__view::ValBool(__y_fields),
+                ) => {
+                    let x = __x_fields.0.clone();
+                    let y = __y_fields.0.clone();
+                    return (x == y);
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValFnRef(__x_fields),
+                    crate::aver_generated::domain::value::Val__view::ValFnRef(__y_fields),
+                ) => {
+                    let x = __x_fields.0.clone();
+                    let y = __y_fields.0.clone();
+                    return (x == y);
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValList(__xs_fields),
+                    crate::aver_generated::domain::value::Val__view::ValList(__ys_fields),
+                ) => {
+                    let xs = &__xs_fields.0;
+                    let ys = &__ys_fields.0;
+                    return crate::aver_generated::domain::value::valsEq(xs, ys);
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValTuple(__xs_fields),
+                    crate::aver_generated::domain::value::Val__view::ValTuple(__ys_fields),
+                ) => {
+                    let xs = &__xs_fields.0;
+                    let ys = &__ys_fields.0;
+                    return crate::aver_generated::domain::value::valsEq(xs, ys);
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValVector(__xs_fields),
+                    crate::aver_generated::domain::value::Val__view::ValVector(__ys_fields),
+                ) => {
+                    let xs = &__xs_fields.0;
+                    let ys = &__ys_fields.0;
+                    return {
+                        let __arg34 @ _ = xs.to_list();
+                        {
+                            let __arg35 @ _ = ys.to_list();
+                            crate::aver_generated::domain::value::valsEq(&__arg34, &__arg35)
+                        }
+                    };
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValOk(__x_fields),
+                    crate::aver_generated::domain::value::Val__view::ValOk(__y_fields),
+                ) => {
+                    let x = &__x_fields.0;
+                    let y = &__y_fields.0;
+                    {
+                        let __tco0 = x.clone();
+                        let __tco1 = y.clone();
+                        __hold0 = __tco0;
+                        a = &__hold0;
+                        __hold1 = __tco1;
+                        b = &__hold1;
+                        continue;
+                    }
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValErr(__x_fields),
+                    crate::aver_generated::domain::value::Val__view::ValErr(__y_fields),
+                ) => {
+                    let x = &__x_fields.0;
+                    let y = &__y_fields.0;
+                    {
+                        let __tco0 = x.clone();
+                        let __tco1 = y.clone();
+                        __hold0 = __tco0;
+                        a = &__hold0;
+                        __hold1 = __tco1;
+                        b = &__hold1;
+                        continue;
+                    }
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValSome(__x_fields),
+                    crate::aver_generated::domain::value::Val__view::ValSome(__y_fields),
+                ) => {
+                    let x = &__x_fields.0;
+                    let y = &__y_fields.0;
+                    {
+                        let __tco0 = x.clone();
+                        let __tco1 = y.clone();
+                        __hold0 = __tco0;
+                        a = &__hold0;
+                        __hold1 = __tco1;
+                        b = &__hold1;
+                        continue;
+                    }
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValNone,
+                    crate::aver_generated::domain::value::Val__view::ValNone,
+                ) => {
+                    return true;
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValUnit,
+                    crate::aver_generated::domain::value::Val__view::ValUnit,
+                ) => {
+                    return true;
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValRecord(__n_fields),
+                    crate::aver_generated::domain::value::Val__view::ValRecord(__m_fields),
+                ) => {
+                    let n = __n_fields.0.clone();
+                    let fs = &__n_fields.1;
+                    let m = __m_fields.0.clone();
+                    let gs = &__m_fields.1;
+                    if (n == m) {
+                        return {
+                            let __arg36 @ _ = {
+                                let mut es: Vec<_> = {
+                                    let mut __map = HashMap::new();
+                                    for (__key, __value) in fs.clone().iter().cloned() {
+                                        __map = __map.insert_owned(__key, __value);
+                                    }
+                                    __map
+                                }
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect();
+                                es.sort_by(|a, b| a.0.cmp(&b.0));
+                                aver_rt::AverList::from_vec(es)
+                            };
+                            {
+                                let __arg37 @ _ = {
+                                    let mut es: Vec<_> = {
+                                        let mut __map = HashMap::new();
+                                        for (__key, __value) in gs.clone().iter().cloned() {
+                                            __map = __map.insert_owned(__key, __value);
+                                        }
+                                        __map
+                                    }
+                                    .iter()
+                                    .map(|(k, v)| (k.clone(), v.clone()))
+                                    .collect();
+                                    es.sort_by(|a, b| a.0.cmp(&b.0));
+                                    aver_rt::AverList::from_vec(es)
+                                };
+                                crate::aver_generated::domain::value::entriesEq(&__arg36, &__arg37)
+                            }
+                        };
+                    } else {
+                        return false;
+                    }
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValVariant(__n_fields),
+                    crate::aver_generated::domain::value::Val__view::ValVariant(__m_fields),
+                ) => {
+                    let n = __n_fields.1.clone();
+                    let fs = &__n_fields.2;
+                    let m = __m_fields.1.clone();
+                    let gs = &__m_fields.2;
+                    if (n == m) {
+                        return crate::aver_generated::domain::value::valsEq(fs, gs);
+                    } else {
+                        return false;
+                    }
+                }
+                (
+                    crate::aver_generated::domain::value::Val__view::ValMap(__x_fields),
+                    crate::aver_generated::domain::value::Val__view::ValMap(__y_fields),
+                ) => {
+                    let x = &__x_fields.0;
+                    let y = &__y_fields.0;
+                    return {
+                        let __arg38 @ _ = {
+                            let mut es: Vec<_> =
+                                x.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                            es.sort_by(|a, b| a.0.cmp(&b.0));
+                            aver_rt::AverList::from_vec(es)
+                        };
+                        {
+                            let __arg39 @ _ = {
+                                let mut es: Vec<_> =
+                                    y.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                                es.sort_by(|a, b| a.0.cmp(&b.0));
+                                aver_rt::AverList::from_vec(es)
+                            };
+                            crate::aver_generated::domain::value::entriesEq(&__arg38, &__arg39)
+                        }
+                    };
+                }
+                _ => {
+                    return (crate::aver_generated::domain::value::valRepr(a)
+                        == crate::aver_generated::domain::value::valRepr(b));
+                }
+            }
+        }
+    }
+}
+
+/// Whether two lists of values are equal item by item.
+#[inline(always)]
+pub fn valsEq(xs @ _: &aver_rt::AverList<Val>, ys @ _: &aver_rt::AverList<Val>) -> bool {
+    let mut __hold0: aver_rt::AverList<Val>;
+    let mut xs @ _: &aver_rt::AverList<Val> = xs;
+    let mut __hold1: aver_rt::AverList<Val>;
+    let mut ys @ _: &aver_rt::AverList<Val> = ys;
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = xs;
+            if __list_subject.is_empty() {
+                {
+                    let __list_subject = ys;
+                    if __list_subject.is_empty() {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            } else {
+                if let (Some(x), Some(xr)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __list_subject = ys;
+                        if __list_subject.is_empty() {
+                            return false;
+                        } else {
+                            if let (Some(y), Some(yr)) =
+                                (__list_subject.first(), __list_subject.tail())
+                            {
+                                if crate::aver_generated::domain::value::valEq(x, y) {
+                                    {
+                                        let __tco0 = xr;
+                                        let __tco1 = yr;
+                                        __hold0 = __tco0;
+                                        xs = &__hold0;
+                                        __hold1 = __tco1;
+                                        ys = &__hold1;
+                                        continue;
+                                    }
+                                } else {
+                                    return false;
+                                }
+                            } else {
+                                panic!("Aver Rust codegen: non-exhaustive list match")
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}
+
+/// Whether two lists of named values are equal entry by entry.
+#[inline(always)]
+pub fn entriesEq(
+    xs @ _: &aver_rt::AverList<(AverStr, Val)>,
+    ys @ _: &aver_rt::AverList<(AverStr, Val)>,
+) -> bool {
+    let mut __hold0: aver_rt::AverList<(AverStr, Val)>;
+    let mut xs @ _: &aver_rt::AverList<(AverStr, Val)> = xs;
+    let mut __hold1: aver_rt::AverList<(AverStr, Val)>;
+    let mut ys @ _: &aver_rt::AverList<(AverStr, Val)> = ys;
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = xs;
+            if __list_subject.is_empty() {
+                {
+                    let __list_subject = ys;
+                    if __list_subject.is_empty() {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            } else {
+                if let (Some(x), Some(xr)) = (__list_subject.first(), __list_subject.tail()) {
+                    {
+                        let __list_subject = ys;
+                        if __list_subject.is_empty() {
+                            return false;
+                        } else {
+                            if let (Some(y), Some(yr)) =
+                                (__list_subject.first(), __list_subject.tail())
+                            {
+                                {
+                                    let ((k, v), (j, w)) = (x.clone(), y.clone());
+                                    if (k == j) {
+                                        if crate::aver_generated::domain::value::valEq(&v, &w) {
+                                            {
+                                                let __tco0 = xr;
+                                                let __tco1 = yr;
+                                                __hold0 = __tco0;
+                                                xs = &__hold0;
+                                                __hold1 = __tco1;
+                                                ys = &__hold1;
+                                                continue;
+                                            }
+                                        } else {
+                                            return false;
+                                        }
+                                    } else {
+                                        return false;
+                                    }
+                                }
+                            } else {
+                                panic!("Aver Rust codegen: non-exhaustive list match")
+                            }
+                        }
+                    }
+                } else {
+                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+            }
+        }
+    }
+}

@@ -284,7 +284,7 @@ pub fn builtinListContainsInner(
     ))
 }
 
-/// Check if a value is in a list by repr comparison.
+/// Check if a value is in a list, as == compares them.
 #[inline(always)]
 pub fn listContainsVal(
     items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
@@ -300,9 +300,7 @@ pub fn listContainsVal(
                 return false;
             } else {
                 if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    if (crate::aver_generated::domain::value::valRepr(v)
-                        == crate::aver_generated::domain::value::valRepr(needle))
-                    {
+                    if crate::aver_generated::domain::value::valEq(v, needle) {
                         return true;
                     } else {
                         {

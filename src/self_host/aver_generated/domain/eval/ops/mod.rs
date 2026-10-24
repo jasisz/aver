@@ -391,7 +391,7 @@ pub fn applyBoolCmp(
     }
 }
 
-/// Fallback comparison using repr (for variants, lists, etc).
+/// Comparison of values that are not scalars (variants, lists, etc): equal part by part.
 pub fn evalCmpRepr(
     va @ _: &crate::aver_generated::domain::value::Val,
     vb @ _: &crate::aver_generated::domain::value::Val,
@@ -402,16 +402,14 @@ pub fn evalCmpRepr(
         crate::aver_generated::domain::ast::CmpOp::CmpEq => {
             Ok(crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool(
-                    (crate::aver_generated::domain::value::valRepr(va)
-                        == crate::aver_generated::domain::value::valRepr(vb)),
+                    crate::aver_generated::domain::value::valEq(va, vb),
                 ),
             ))
         }
         crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
             Ok(crate::aver_generated::domain::value::Val::ValBool(
                 crate::aver_generated::domain::value::Val__ValBool(
-                    (crate::aver_generated::domain::value::valRepr(va)
-                        != crate::aver_generated::domain::value::valRepr(vb)),
+                    (crate::aver_generated::domain::value::valEq(va, vb) == false),
                 ),
             ))
         }
