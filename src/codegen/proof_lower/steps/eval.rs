@@ -42,6 +42,10 @@ const MAX_REWRITE_ROUNDS: usize = 256;
 /// rewritten with candidates of, in file order.
 pub(crate) const MAX_AUTO_CANDIDATES: usize = 4;
 
+/// Most steps evaluating an argument to the call a cited law is about
+/// takes (see `Env::open_argument_for_cited`).
+const OPENINGS_FOR_CITED: usize = 4;
+
 /// Whether `part` occurs in `t`.
 fn holds(t: &Term, part: &Term) -> bool {
     *term::canon_ref(t) == *part || term::children(t).into_iter().any(|c| holds(c, part))
@@ -1770,6 +1774,9 @@ impl Env<'_> {
                 if self.length_ih.is_some() && self.shorter_proof(cur).is_some() {
                     return self.settle(cur, None);
                 }
+                if let Some(step) = self.open_argument_for_cited(cur)? {
+                    return Ok(step);
+                }
                 let outer = def.outer(args)?;
                 let ResolvedExpr::Match { subject, arms } = &def.body.node else {
                     self.mark_used(*id);
@@ -1958,6 +1965,214 @@ impl Env<'_> {
             },
             _ => self.settle(cur, None),
         }
+    }
+
+    /// Where a law the `using` list cites is about `f(.., g(..), ..)` and
+    /// `cur` calls `f` at an argument that is a call of another definition
+    /// evaluating to a call of `g`: that argument evaluated, so the cited
+    /// law applies before `f` itself is opened, which would hide the call
+    /// the law is about (`hashIn(wordOf(node(a, b)))`, where the word of
+    /// the node is `packWord(h, s, low)`, for a law about
+    /// `hashIn(packWord(h, s, low))`). Taken only where the law then
+    /// applies, its `when` proved.
+    fn open_argument_for_cited(&mut self, cur: &Term) -> Result<Option<Step>, String> {
+        use super::rewrite::Equation;
+        let ResolvedExpr::Call(ResolvedCallee::Fn(id), args) = &cur.node else {
+            return Ok(None);
+        };
+        for law in self.rewrite_laws.clone() {
+            let ResolvedExpr::Call(ResolvedCallee::Fn(head), pats) = &law.lhs.node else {
+                continue;
+            };
+            if head != id || pats.len() != args.len() {
+                continue;
+            }
+            for (i, pat) in pats.iter().enumerate() {
+                let ResolvedExpr::Call(ResolvedCallee::Fn(want), _) = &pat.node else {
+                    continue;
+                };
+                let Some((proof, to)) =
+                    self.open_to_call_of(&args[i], *want, OPENINGS_FOR_CITED)?
+                else {
+                    continue;
+                };
+                let ctx = term::context_at(cur, &[i]);
+                let new = canon(&term::plug(&ctx, &to));
+                if self
+                    .try_equation(&Equation::Law(Box::new(law.clone())), &new)
+                    .is_none()
+                {
+                    continue;
+                }
+                return Ok(Some(Step::Progress(Box::new((
+                    Proof::Congr {
+                        ctx,
+                        inner: Box::new(proof),
+                    },
+                    new,
+                )))));
+            }
+        }
+        Ok(None)
+    }
+
+    /// `t = true` for an Int comparison `t` by the rules of the builtins in
+    /// its sums and products, outside any call of a definition: a mask
+    /// `Bits.and(a, 2^n - 1)` read as the remainder it is, and an `Int.min`
+    /// or `Int.max` by cases on the comparison that picks its value. What is
+    /// left is proved as a fact again ([`Self::discharge`]), with the calls
+    /// of definitions as they stand, so what a cited law states about them
+    /// still counts (`flagsOf(a, b) + Int.max(Bits.and(a, 16383), 0) >= 0`
+    /// from `flagsOf(a, b) >= 0`). Each step leaves one such builtin fewer.
+    pub(super) fn discharge_by_picking(&mut self, t: &Term) -> Option<Proof> {
+        fn pick(t: &Term) -> bool {
+            matches!(&t.node, ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)
+                if matches!(b.as_str(), "Int.min" | "Int.max") && args.len() == 2)
+        }
+        fn mask(t: &Term) -> bool {
+            matches!(&t.node, ResolvedExpr::Call(ResolvedCallee::Builtin(b), _) if b == "Bits.and")
+                && bits_step(t).is_some()
+        }
+        fn find(t: &Term, at: &mut Vec<usize>) -> bool {
+            let linear = pick(t)
+                || matches!(
+                    t.node,
+                    ResolvedExpr::BinOp(
+                        BinOp::Add
+                            | BinOp::Sub
+                            | BinOp::Mul
+                            | BinOp::Lt
+                            | BinOp::Lte
+                            | BinOp::Gt
+                            | BinOp::Gte,
+                        ..
+                    ) | ResolvedExpr::Neg(_)
+                );
+            if linear {
+                for (i, c) in term::children(t).into_iter().enumerate() {
+                    at.push(i);
+                    if find(c, at) {
+                        return true;
+                    }
+                    at.pop();
+                }
+            }
+            pick(t) || mask(t)
+        }
+        if !matches!(
+            t.node,
+            ResolvedExpr::BinOp(BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte, ..)
+        ) {
+            return None;
+        }
+        let mut path = Vec::new();
+        if !find(t, &mut path) {
+            return None;
+        }
+        let t = canon(t);
+        let atom = term::at(&t, &path).clone();
+        let ctx = term::context_at(&t, &path);
+        let truth = term::boolean(true);
+        let then = |env: &mut Self, step: Proof, to: &Term| -> Option<Proof> {
+            let next = canon(&term::plug(&ctx, to));
+            let rest = env.discharge(&next)?;
+            Some(Proof::Trans {
+                terms: vec![t.clone(), next, truth.clone()],
+                steps: vec![
+                    Proof::Congr {
+                        ctx: ctx.clone(),
+                        inner: Box::new(step),
+                    },
+                    rest,
+                ],
+            })
+        };
+        if let Some(Step::Progress(b)) = bits_step(&atom) {
+            let (step, to) = *b;
+            return then(self, step, &to);
+        }
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &atom.node else {
+            return None;
+        };
+        let min = name == "Int.min";
+        let on = canon(&term::binop(BinOp::Lte, args[0].clone(), args[1].clone()));
+        let subst = vec![
+            ("a".to_string(), args[0].clone()),
+            ("b".to_string(), args[1].clone()),
+        ];
+        let case = |env: &mut Self, hyp: &str, value: bool| -> Option<Proof> {
+            let rule = match (min, value) {
+                (true, true) => WallRule::MinLe,
+                (true, false) => WallRule::MinGt,
+                (false, true) => WallRule::MaxLe,
+                (false, false) => WallRule::MaxGt,
+            };
+            let (_, concl) = rule.instantiate(&subst)?;
+            let step = Proof::Rule {
+                rule,
+                subst: subst.clone(),
+                premises: vec![Proof::Hyp(hyp.to_string())],
+            };
+            then(env, step, &concl.rhs)
+        };
+        if let Some((hyp, v)) = self.hyp_for(&on)
+            && let Some(v) = term::bool_value(&v)
+        {
+            return case(self, &hyp, v);
+        }
+        let named = self.next_hyp_count();
+        let hyp = self.fresh_hyp();
+        let branch = |env: &mut Self, value: bool| {
+            env.hyps
+                .push((hyp.clone(), Eqn::new(on.clone(), term::boolean(value))));
+            let out = case(env, &hyp, value);
+            env.hyps.pop();
+            out
+        };
+        match branch(self, true).and_then(|yes| Some((yes, branch(self, false)?))) {
+            Some((yes, no)) => Some(Proof::Cases {
+                on,
+                hyp,
+                if_true: Box::new(yes),
+                if_false: Box::new(no),
+            }),
+            None => {
+                self.rewind_hyp_count(named);
+                None
+            }
+        }
+    }
+
+    /// `t`, a call of a definition, evaluated at its head (at most `steps`
+    /// steps, each at a call of a definition) until it is a call of `want`.
+    fn open_to_call_of(
+        &mut self,
+        t: &Term,
+        want: crate::ir::identity::FnId,
+        steps: usize,
+    ) -> Result<Option<(Proof, Term)>, String> {
+        let mut chain = Chain::new(t);
+        for _ in 0..=steps {
+            let cur = chain.cur().clone();
+            let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &cur.node else {
+                return Ok(None);
+            };
+            if *id == want {
+                if chain.is_empty() {
+                    return Ok(None);
+                }
+                let (to, proof) = chain.finish();
+                return Ok(Some((proof, to)));
+            }
+            match self.head_step(&cur)? {
+                Step::Progress(step) => {
+                    let (proof, to) = *step;
+                    chain.push(proof, to);
+                }
+                _ => return Ok(None),
+            }
+        }
+        Ok(None)
     }
 
     /// Evaluate every argument; a closed result computes, an open one

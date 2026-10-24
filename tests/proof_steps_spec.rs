@@ -2492,6 +2492,44 @@ fn both_kernels_check_cited_orders_under_a_proved_when_and_refuse_mutations() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// A law about reading a packed word back, cited where the word is built
+/// inside a definition or a constructor: the argument is evaluated to the
+/// call the law is about before the outer call is opened, and the law's
+/// `when` is proved through the `Int.min`, `Int.max` and masks of the
+/// word's parts, with what the other cited laws state about the calls.
+#[test]
+fn a_cited_law_applies_where_a_word_is_packed_and_its_when_through_min_and_max() {
+    let out = scratch("packed-word");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("packed_word.av", &out).into_iter().collect();
+    for law in ["joined.hashOfJoined", "node.hashOfNode"] {
+        let text = fs::read_to_string(
+            files
+                .get(law)
+                .unwrap_or_else(|| panic!("{law} has steps: {files:?}")),
+        )
+        .unwrap();
+        assert_eq!(aver::proof_kernel::verdict(&text), Ok(law.to_string()));
+        assert!(text.contains("(law packWord.hashBack "), "{law}\n{text}");
+        // The `when` at the cited instance holds by the case of the min.
+        assert!(text.contains("(rule int.min.le "), "{law}\n{text}");
+        let mutant = text.replacen("(rule int.min.le ", "(rule int.min.gt ", 1);
+        let verdict = aver::proof_kernel::verdict(&mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{law}: {verdict:?}"
+        );
+    }
+    let _ = fs::remove_dir_all(&out);
+    let (_, summary) = aver_backend_json("packed_word.av", &out, None);
+    for law in ["joined.hashOfJoined", "node.hashOfNode"] {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn lean_closes_cited_orders_under_a_proved_when_by_their_steps() {
     if !lean_required::lake_available() {

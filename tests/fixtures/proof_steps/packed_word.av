@@ -1,0 +1,106 @@
+module PackedWord
+    intent = "A node keeps a word: a hash above, a capped size and flags below. The law that reads the hash back is cited where a node is built, before the word is opened into arithmetic."
+    exposes [Tree, mix, hashIn, sizeIn, flagsOf, packWord, joined, wordOf, node, hashOf]
+    effects []
+
+fn mix(a: Int, b: Int, c: Int) -> Int
+    ? "Mixes a tag and two hashes below the modulus."
+    Int.mod((a * 1000003 + b) * 1000003 + c, 2147483647)
+
+verify mix
+    mix(0, 0, 5) => 5
+
+fn hashIn(w: Int) -> Int
+    ? "The hash in a word."
+    Int.div(w, 2147483648)
+
+verify hashIn
+    hashIn(2147483648) => 1
+
+fn sizeIn(w: Int) -> Int
+    ? "The capped size in a word."
+    Bits.and(Int.div(w, 33554432), 63)
+
+verify sizeIn
+    sizeIn(33554432) => 1
+
+verify sizeIn law inRange
+    given w: Int = [0, 5, -1]
+    Bool.and(sizeIn(w) >= 0, sizeIn(w) <= 63) => true
+
+fn flagsOf(a: Int, b: Int) -> Int
+    ? "The flag bits of two words, or-ed, in place."
+    Bits.and(Bits.or(a, b), 33554431) - Bits.and(Bits.or(a, b), 16383)
+
+verify flagsOf
+    flagsOf(16384, 0) => 16384
+
+verify flagsOf law nonNegative
+    given a: Int = [0, 5, -1]
+    given b: Int = [0, 7]
+    flagsOf(a, b) >= 0 => true
+
+verify flagsOf law belowRange
+    given a: Int = [0, 5, -1]
+    given b: Int = [0, 7]
+    flagsOf(a, b) <= 33538048 => true
+
+fn packWord(h: Int, s: Int, low: Int) -> Int
+    ? "A word from its hash, size and low bits."
+    (h * 64 + s) * 33554432 + low
+
+verify packWord
+    packWord(1, 0, 0) => 2147483648
+
+verify packWord law hashBack
+    given h: Int = [0, 5]
+    given s: Int = [1, 63]
+    given low: Int = [0, 7]
+    when Bool.and(Bool.and(s >= 0, s <= 63), Bool.and(low >= 0, low < 33554432))
+    hashIn(packWord(h, s, low)) => h
+
+fn joined(tag: Int, a: Int, b: Int) -> Int
+    ? "The word of a node over two parts, from theirs: hashes mixed, sizes added and capped, flags or-ed, the larger range."
+    packWord(mix(tag, hashIn(a), hashIn(b)), Int.min(sizeIn(a) + sizeIn(b) + 1, 63), flagsOf(a, b) + Int.max(Bits.and(a, 16383), Bits.and(b, 16383)))
+
+verify joined
+    hashIn(joined(4, 0, 0)) => mix(4, 0, 0)
+
+verify joined law hashOfJoined
+    given a: Int = [0, 5, -1]
+    given b: Int = [0, 7]
+    using [packWord.hashBack, flagsOf.nonNegative, flagsOf.belowRange, sizeIn.inRange]
+    hashIn(joined(4, a, b)) => mix(4, hashIn(a), hashIn(b))
+
+type Tree
+    Leaf(Int)
+    Node(Int, Tree, Tree)
+
+fn wordOf(t: Tree) -> Int
+    ? "The word a node carries, or a leaf's, made on the spot."
+    match t
+        Tree.Leaf(h) -> packWord(Int.mod(h, 2147483647), 1, 0)
+        Tree.Node(w, _, _) -> w
+
+verify wordOf
+    wordOf(Tree.Leaf(1)) => 2181038080
+
+fn node(l: Tree, r: Tree) -> Tree
+    ? "A node over two trees, its word packed from theirs."
+    Tree.Node(joined(4, wordOf(l), wordOf(r)), l, r)
+
+verify node
+    hashOf(node(Tree.Leaf(0), Tree.Leaf(0))) => mix(4, 0, 0)
+
+fn hashOf(t: Tree) -> Int
+    ? "The hash of a tree, read from its word."
+    hashIn(wordOf(t))
+
+verify hashOf
+    hashOf(Tree.Leaf(7)) => 7
+
+verify node law hashOfNode
+    given l: Tree = [Tree.Leaf(1), Tree.Leaf(2)]
+    given r: Tree = [Tree.Leaf(3)]
+    using [packWord.hashBack, flagsOf.nonNegative, flagsOf.belowRange, sizeIn.inRange]
+    hashOf(node(l, r)) => mix(4, hashOf(l), hashOf(r))
