@@ -31,7 +31,7 @@ fn __mutual_tco_trampoline_1(
                         return crate::aver_generated::domain::parser_match::parseConstructorPatternBindings(&*tokens, nextPos, name, __arg4);
                     }
                     _ => {
-                        if name.contains(".") {
+                        if name.contains('.') {
                             return Ok((
                                 crate::aver_generated::domain::ast::Pattern::PatConstructor(
                                     name,
