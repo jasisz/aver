@@ -27,6 +27,10 @@ pub(crate) struct Stuck {
     fn_id: Option<FnId>,
     on: Term,
     ctors: Vec<(SplitCtor, Fields)>,
+    /// Where `on` is a call of a recursive definition stopped at its own
+    /// subject: the split on that subject, tried where this one does not
+    /// close.
+    opened: Option<Box<Stuck>>,
 }
 
 fn mentions_any(t: &Term, names: &[String]) -> bool {
@@ -267,6 +271,23 @@ impl Env<'_> {
         if let Some(inner) = self.stuck_subject(&on, recursive) {
             return Some(inner);
         }
+        // A subject that is a call of a recursive definition whose own
+        // `match` stops at its subject: where the cases of the call's value
+        // do not close, which know nothing of what the call was given, that
+        // subject is split on, so the call opens in each case.
+        let opened = match &on.node {
+            ResolvedExpr::Call(ResolvedCallee::Fn(g), _)
+                if !recursive && self.inputs.recursive_fns.contains(g) =>
+            {
+                self.met_recursive.set(true);
+                self.open_recursive
+                    .then(|| self.stuck_subject(&on, true))
+                    .flatten()
+                    .filter(|inner| inner.fn_id == Some(*g))
+                    .map(Box::new)
+            }
+            _ => None,
+        };
         // A given of a finite type, or a field of one, is split into every
         // value instead (see [`super::finite`]).
         let mut root = &on;
@@ -304,6 +325,7 @@ impl Env<'_> {
             fn_id: Some(*id),
             on,
             ctors,
+            opened,
         })
     }
 
@@ -326,12 +348,12 @@ impl Env<'_> {
             on.set_ty(ty.clone());
         }
         // Only a subject of a sum or list type: a comparison is split on by
-        // the Bool splits, and a variable by the list-variable split. The
-        // type must be known: the Lean export reads the split by it.
-        if matches!(on.node, ResolvedExpr::Ident(_))
-            || !matches!(on.ty(), Some(Type::List(_) | Type::Named { .. }))
-        {
-            return None;
+        // the Bool splits, and a list variable by the list-variable split.
+        // The type must be known: the Lean export reads the split by it.
+        match on.ty() {
+            Some(Type::Named { .. }) => {}
+            Some(Type::List(_)) if !matches!(on.node, ResolvedExpr::Ident(_)) => {}
+            _ => return None,
         }
         let ctors = self.split_ctors(arms, on.ty())?;
         if ctors
@@ -354,12 +376,34 @@ impl Env<'_> {
             fn_id: None,
             on,
             ctors,
+            opened: None,
         })
     }
 
     /// `lhs = rhs` in one case per constructor of `st.on`, each under the
-    /// hypothesis that `st.on` is that constructor applied to fresh names.
+    /// hypothesis that `st.on` is that constructor applied to fresh names;
+    /// where that does not close, by the split `st.opened`, with the script
+    /// as it was.
     pub(crate) fn split_on(
+        &mut self,
+        mut st: Stuck,
+        lhs: &Term,
+        rhs: &Term,
+        depth: usize,
+    ) -> Result<Proof, String> {
+        let Some(opened) = st.opened.take() else {
+            return self.split_once(st, lhs, rhs, depth);
+        };
+        let marks = (self.laws.len(), self.used.len(), self.used_consts.len());
+        self.split_once(st, lhs, rhs, depth).or_else(|_| {
+            self.laws.truncate(marks.0);
+            self.used.truncate(marks.1);
+            self.used_consts.truncate(marks.2);
+            self.split_on(*opened, lhs, rhs, depth)
+        })
+    }
+
+    fn split_once(
         &mut self,
         st: Stuck,
         lhs: &Term,

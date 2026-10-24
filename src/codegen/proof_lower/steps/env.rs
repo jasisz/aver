@@ -114,6 +114,14 @@ pub(crate) struct Env<'a> {
     pub read_bodies: bool,
     /// Whether an attempt met such a hypothesis.
     pub met_answered: std::cell::Cell<bool>,
+    /// Whether a split on the value of a call of a recursive definition
+    /// that stops at its own subject is followed, where it does not close,
+    /// by the split on that subject (see `Env::stuck_subject`): the last
+    /// attempt of a search, made only where an earlier one met such a call,
+    /// so it never displaces the induction along that definition.
+    pub open_recursive: bool,
+    /// Whether an attempt met such a call.
+    pub met_recursive: std::cell::Cell<bool>,
     /// The hypothesis being read through its body: evaluation opens this
     /// call by its definition, not by what states its value.
     pub reading_body: Option<Term>,
@@ -456,6 +464,8 @@ impl<'a> Env<'a> {
             barren: Vec::new(),
             read_bodies: false,
             met_answered: std::cell::Cell::new(false),
+            open_recursive: false,
+            met_recursive: std::cell::Cell::new(false),
             reading_body: None,
             proving_cited_when: false,
             open_halving: true,

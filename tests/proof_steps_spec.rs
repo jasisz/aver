@@ -2530,6 +2530,46 @@ fn a_cited_law_applies_where_a_word_is_packed_and_its_when_through_min_and_max()
     let _ = fs::remove_dir_all(out);
 }
 
+/// A law about what a function reads from the result of a recursive one
+/// that rebuilds a node, `wordOf(rebuilt(t, p, m))`, where the recursive
+/// calls sit in parts the reader never looks at: the cases are the ones
+/// `rebuilt` itself reads (its plan, then its mode inside an arm), so each
+/// case opens `rebuilt` and the word comes out, rather than cases of
+/// `rebuilt`'s value, which know nothing about `t`. Induction is not needed,
+/// and the `knowing` that stands on the law is accepted without
+/// `--trust-laws`.
+#[test]
+fn a_word_read_from_a_rebuilt_node_splits_on_what_the_rebuild_reads() {
+    let out = scratch("rebuilt-word");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("rebuilt_word.av", &out).into_iter().collect();
+    let law = "rebuilt.knowsWord";
+    let text = fs::read_to_string(
+        files
+            .get(law)
+            .unwrap_or_else(|| panic!("{law} has steps: {files:?}")),
+    )
+    .unwrap();
+    assert_eq!(aver::proof_kernel::verdict(&text), Ok(law.to_string()));
+    // The case of the plan's node opens `rebuilt` at its third arm; read
+    // at another arm, the kernel refuses the step.
+    assert!(text.contains("(unfold rebuilt 3 "), "{text}");
+    let mutant = text.replacen("(unfold rebuilt 3 ", "(unfold rebuilt 2 ", 1);
+    let verdict = aver::proof_kernel::verdict(&mutant);
+    assert!(
+        verdict
+            .as_ref()
+            .is_err_and(|why| why.starts_with("step proof")),
+        "{verdict:?}"
+    );
+    let _ = fs::remove_dir_all(&out);
+    let (_, summary) = aver_backend_json("rebuilt_word.av", &out, None);
+    assert_eq!(summary["closed_by"][law], "steps", "{summary}");
+    let _ = fs::remove_dir_all(out);
+    let result = aver_in(&repo_root().join(FIXTURES), &["check", "rebuilt_word.av"]);
+    assert!(result.status.success(), "{}", format_output(&result));
+}
+
 #[test]
 fn lean_closes_cited_orders_under_a_proved_when_by_their_steps() {
     if !lean_required::lake_available() {
