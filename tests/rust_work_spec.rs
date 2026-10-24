@@ -593,7 +593,8 @@ fn matched_vector_set_shapes_build_and_match_the_vm() {
 }
 
 /// A record handed to a pair of functions that tail-call each other moves
-/// into the trampoline instead of being cloned by the wrapper.
+/// into the member's entry and on into the trampoline instead of being cloned
+/// by the wrapper.
 ///
 /// `turns` calls `pump` once per turn with its pool at its last use. The
 /// wrapper used to borrow the pool and clone it into the trampoline's state,
@@ -611,8 +612,8 @@ fn a_mutual_tail_call_member_takes_a_record_by_value() {
         let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
             .map_err(|error| format!("read the generated entry module: {error}"))?;
         for expected in [
-            "pub fn pump(pool @ _: Pool, key @ _: aver_rt::AverInt, left @ _: aver_rt::AverInt) -> Pool {\n    __mutual_tco_trampoline_1(__MutualTco1::Pump(pool, key, left))",
-            "pub fn pumped(pool @ _: Pool,",
+            "pub fn pump(mut pool @ _: Pool, mut key @ _: aver_rt::AverInt, mut left @ _: aver_rt::AverInt) -> Pool {",
+            "pub fn pumped(mut pool @ _: Pool,",
             "let __tco0 = pump(pool, ",
         ] {
             if !entry.contains(expected) {
