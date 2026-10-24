@@ -383,21 +383,22 @@ struct Calls<S> {
     drop_args: unsafe fn(NonNull<Header>, Pending<'_>),
 }
 
+/// The call: `K` is `()`, or [`Known`] for a call that knows a value, kept
+/// in the node past this and past the room for what the call returns.
 #[repr(C)]
 struct Deferred<S: 'static, A, F, K> {
     lazy: Lazy<S>,
-    /// `()`, or for a call that knows a value, the [`Known`] value.
-    known: K,
     /// Moved out by the call.
     args: ManuallyDrop<A>,
     run: F,
+    known: PhantomData<K>,
 }
 
 /// What a deferred call made by [`Thin::deferred_knowing`] knows of what
 /// it will return: the value of the projection `projection` of it, which a
 /// law gives (see `docs/language.md`, "Deferred calls that know a value").
-/// It follows the [`Lazy`] at the start of the node, in the part the call's
-/// result is written over.
+/// It takes the last [`KNOWN_WORDS`] words of the node, which nothing writes
+/// over, so a thread reads it while another one makes the call.
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct Known {
@@ -405,11 +406,19 @@ struct Known {
     value: i64,
 }
 
-/// Where a node made by [`Thin::deferred_knowing`] keeps its [`Known`].
-#[repr(C)]
-struct Knowing<S: 'static> {
-    lazy: Lazy<S>,
-    known: Known,
+const KNOWN_WORDS: u32 = (size_of::<Known>() / 8) as u32;
+
+/// Where a node of `words` words made by [`Thin::deferred_knowing`] keeps
+/// its [`Known`].
+///
+/// # Safety
+/// `node` is such a node.
+unsafe fn known_at(node: NonNull<Header>, words: u32) -> NonNull<Known> {
+    unsafe {
+        node.cast::<u64>()
+            .add((words - KNOWN_WORDS) as usize)
+            .cast()
+    }
 }
 
 /// The constructor's part of the tag of a node a call was deferred in.
@@ -418,14 +427,8 @@ const BUSY: u32 = 1 << 8;
 const WAITED: u32 = 1 << 9;
 const FAILED: u32 = 1 << 10;
 const FORWARD: u32 = 1 << 11;
-/// The node was made by [`Thin::deferred_knowing`]: a [`Known`] follows its
-/// [`Lazy`] until the call is made.
+/// The node was made by [`Thin::deferred_knowing`]: it ends in a [`Known`].
 const KNOWS: u32 = 1 << 12;
-/// How many threads read the [`Known`] of a call not yet made, in the bits
-/// from here to [`WORDS_SHIFT`]. A thread makes the call only when none
-/// does, so none reads while the result is written over it.
-const READER: u32 = 1 << 13;
-const READERS: u32 = 0b111 << 13;
 /// Where the size in 8-byte words of a node a call was deferred in starts in
 /// its tag. Every other node has 0 there.
 pub const WORDS_SHIFT: u32 = 16;
@@ -461,11 +464,11 @@ impl<S: ThinSum + HandOver, A: HandOver, F: FnOnce(A) -> S + Copy, K> Deferred<S
     };
 
     /// The size of the node in words: room for the call and for a node of
-    /// any constructor.
+    /// any constructor, then for a [`Known`] when `K` is one.
     const WORDS: u32 = {
         let size = node_size::<Self>();
         let size = if size > S::ROOM { size } else { S::ROOM };
-        let words = size.div_ceil(8);
+        let words = size.div_ceil(8) + size_of::<K>().div_ceil(8);
         assert!(
             words < 1 << (32 - WORDS_SHIFT),
             "the arguments of a deferred call take at most 512 KB"
@@ -541,7 +544,7 @@ impl<S: ThinSum + HandOver> Thin<S> {
         A: HandOver + Send + Sync + 'static,
         F: FnOnce(A) -> S + Copy + Send + Sync + 'static,
     {
-        unsafe { Self::deferred_with(tag, args, run, ()) }
+        unsafe { Self::deferred_with::<A, F, ()>(tag, args, run) }
     }
 
     /// [`Thin::deferred`] for a call a law says the projection `projection`
@@ -562,18 +565,14 @@ impl<S: ThinSum + HandOver> Thin<S> {
         A: HandOver + Send + Sync + 'static,
         F: FnOnce(A) -> S + Copy + Send + Sync + 'static,
     {
-        const {
-            assert!(
-                std::mem::offset_of!(Deferred<S, A, F, Known>, known)
-                    == std::mem::offset_of!(Knowing<S>, known)
-            )
-        };
-        let known = Known { projection, value };
-        unsafe { Self::deferred_with(tag | KNOWS, args, run, known) }
+        let this = unsafe { Self::deferred_with::<A, F, Known>(tag | KNOWS, args, run) };
+        let at = unsafe { known_at(this.ptr, Deferred::<S, A, F, Known>::WORDS) };
+        unsafe { at.write(Known { projection, value }) };
+        this
     }
 
     #[inline]
-    unsafe fn deferred_with<A, F, K>(tag: u32, args: A, run: F, known: K) -> Self
+    unsafe fn deferred_with<A, F, K>(tag: u32, args: A, run: F) -> Self
     where
         A: HandOver + Send + Sync + 'static,
         F: FnOnce(A) -> S + Copy + Send + Sync + 'static,
@@ -600,9 +599,9 @@ impl<S: ThinSum + HandOver> Thin<S> {
                 lazy: Lazy {
                     calls: Deferred::<S, A, F, K>::CALLS,
                 },
-                known,
                 args: ManuallyDrop::new(args),
                 run,
+                known: PhantomData,
             },
         };
         unsafe { ptr.cast::<Node<Deferred<S, A, F, K>>>().write(node) };
@@ -614,7 +613,7 @@ impl<S: ThinSum + HandOver> Thin<S> {
     /// The value a law gives for the projection `projection` of a call not
     /// yet made, which was made by [`Thin::deferred_knowing`] with it, in a
     /// sum whose hidden constructor is `lazy`; `None` for any other value,
-    /// and while another thread makes the call. Never makes the call.
+    /// and once the call is made or has panicked. Never makes the call.
     #[inline]
     pub fn deferred_known(&self, lazy: u32, projection: u32) -> Option<i64> {
         self.known(lazy)
@@ -636,34 +635,15 @@ impl<S: ThinSum + HandOver> Thin<S> {
         if self.is_empty_ctor() {
             return None;
         }
-        let header = self.header();
-        let mut tag = header.tag.load(Ordering::Relaxed);
-        loop {
-            if tag & (CTOR | KNOWS) != lazy | KNOWS {
-                return None;
-            }
-            if tag & FORWARD != 0 {
-                // SAFETY: a forwarding node holds the value it stands for.
-                return unsafe { self.fields::<Thin<S>>() }.known(lazy);
-            }
-            if tag & (BUSY | FAILED) != 0 || tag & READERS == READERS {
-                return None;
-            }
-            match header.tag.compare_exchange_weak(
-                tag,
-                tag + READER,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(now) => tag = now,
-            }
+        // The `Known` was written before the node had a second owner and
+        // is never written again, so a `Relaxed` look at the tag will do.
+        let tag = self.header().tag.load(Ordering::Relaxed);
+        if tag & (CTOR | KNOWS | FAILED) != lazy | KNOWS {
+            return None;
         }
-        // SAFETY: the node was made by `deferred_knowing`, and no thread
-        // makes the call while this one reads (see `READERS`).
-        let known = unsafe { (*self.ptr.cast::<Node<Knowing<S>>>().as_ptr()).fields.known };
-        header.tag.fetch_sub(READER, Ordering::Release);
-        Some(known)
+        // SAFETY: the node was made by `deferred_knowing`, which wrote the
+        // `Known` there, past all a call or its result writes.
+        Some(unsafe { known_at(self.ptr, tag >> WORDS_SHIFT).read() })
     }
 
     /// The tag of the value's constructor, in a sum some `lazy f(…)`
@@ -702,12 +682,6 @@ impl<S: ThinSum + HandOver> Thin<S> {
             }
             if tag & BUSY != 0 {
                 tag = wait(header, tag);
-                continue;
-            }
-            // A thread reads what the call knows; it is done in a moment.
-            if tag & READERS != 0 {
-                std::hint::spin_loop();
-                tag = header.tag.load(Ordering::Acquire);
                 continue;
             }
             match header.tag.compare_exchange_weak(
@@ -1653,6 +1627,32 @@ mod tests {
         assert!(matches!(outer.view(), L__View::Leaf(leaf) if leaf.0 == 5));
         drop(knowing_leaf(9, &MADE));
         assert_eq!(MADE.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_call_being_made_still_gives_what_it_knows_and_one_that_panicked_does_not() {
+        thread_local! {
+            static BEING_MADE: std::cell::RefCell<Option<L>> = const { std::cell::RefCell::new(None) };
+        }
+        let lazy = L::deferred_knowing(
+            (super::Kept(()), ()),
+            |_| {
+                let known = BEING_MADE.with(|it| it.borrow().as_ref().unwrap().deferred_known(1));
+                assert_eq!(known, Some(42));
+                l_leaf(6)
+            },
+            1,
+            42,
+        );
+        BEING_MADE.with(|it| *it.borrow_mut() = Some(lazy.clone()));
+        assert!(matches!(lazy.view(), L__View::Leaf(leaf) if leaf.0 == 6));
+        BEING_MADE.with(|it| *it.borrow_mut() = None);
+        let failing =
+            L::deferred_knowing((super::Kept(()), ()), |_| panic!("the call fails"), 1, 5);
+        assert_eq!(failing.deferred_known(1), Some(5));
+        let looked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| failing.tag()));
+        assert!(looked.is_err());
+        assert_eq!(failing.deferred_known(1), None, "panicked");
     }
 
     #[test]

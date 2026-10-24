@@ -530,6 +530,8 @@ The arguments are computed at once; only the call waits. The result has the type
 
 It pays where a program builds large values most of which it never looks into, for example a term built by substitution that is then only compared by identity or thrown away. A call nobody looks at is never made, and what it would have built is never allocated.
 
+It costs where the value is looked at anyway. A deferred call that is made costs about 400 machine instructions more than building its result at once (about 220 with `allocator = "mimalloc"`), and until it is made its node keeps the arguments alive. So defer the parts that are large and mostly never looked into, not small ones. Two measurements on a substitution: over a tree where the walk looks at nearly nothing it built, `lazy` took 0.27 G instructions instead of 5.2 G; where it looks at every node, 13.6 G instead of 5.7 G. Where about a third or more of what is built gets looked at, building at once is faster.
+
 What `lazy` may stand before:
 
 - a call of a function declared with `fn` in the program, not a constructor, a built-in or a function passed in as a value;
@@ -573,6 +575,8 @@ The program means the same as without `knowing`, since the law says `P` gives th
 `--trust-laws` on `aver check` or `aver compile` lets a law that is not proved through, once its samples pass (they are run then, as `aver verify` runs them). `aver compile` says which laws the build trusts, and the compiled Rust program checks each one every time it makes a call that knows a value from it: it computes `P` of what the call returned and stops with a message naming the law when that is not the value kept. `--certify` is refused with `--trust-laws`.
 
 `==` on two deferred calls not yet made that know different values of the same `P` says they differ without making either call. Otherwise it makes them and compares, as for any value. Only compiled Rust keeps values; every other backend makes the call at once, as it does any deferred call.
+
+`knowing` helps where a program asks `P` of a part it does not otherwise look into, and only as much as deferring that part helps. Measured on a walk down a spine that reads the word of the part beside it at each level and never looks into it: where that part is 15 nodes, building it at once took 39.3 G instructions, `lazy` 10.7 G and `lazy … knowing` 9.1 G; where it is one node and two leaves, building it at once took 11.2 G, `lazy` 18.6 G and `lazy … knowing` 15.4 G. A small part is cheaper to build than to defer, with or without `knowing`.
 
 ## Processes
 
