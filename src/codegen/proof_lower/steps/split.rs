@@ -267,6 +267,18 @@ impl Env<'_> {
         if let Some(inner) = self.stuck_subject(&on, recursive) {
             return Some(inner);
         }
+        // A subject that is a call of a recursive definition whose own
+        // `match` stops at its subject: that subject is split on, so the
+        // call opens in each case, rather than the call's value, of which
+        // the cases would then know nothing.
+        if !recursive
+            && let ResolvedExpr::Call(ResolvedCallee::Fn(g), _) = &on.node
+            && self.inputs.recursive_fns.contains(g)
+            && let Some(inner) = self.stuck_subject(&on, true)
+            && inner.fn_id == Some(*g)
+        {
+            return Some(inner);
+        }
         // A given of a finite type, or a field of one, is split into every
         // value instead (see [`super::finite`]).
         let mut root = &on;
