@@ -8254,6 +8254,7 @@ mod tests {
             node,
             line: 0,
             ty: OnceLock::new(),
+            lazy: false,
         }
     }
 
@@ -8264,6 +8265,7 @@ mod tests {
             node,
             line: 0,
             ty: stamp,
+            lazy: false,
         }
     }
 

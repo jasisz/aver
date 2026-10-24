@@ -1656,6 +1656,7 @@ mod tests {
             node,
             line: 0,
             ty: std::sync::OnceLock::new(),
+            lazy: false,
         }
     }
 
