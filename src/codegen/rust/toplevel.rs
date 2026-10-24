@@ -1450,8 +1450,11 @@ fn compute_resolved_rc_params_by_index(
     let member_ids: HashSet<crate::ir::FnId> = group_fns.iter().map(|fd| fd.fn_id).collect();
     let mut candidates: HashSet<usize> = (0..arity)
         .filter(|&i| {
-            let ty = &group_fns[0].params[i].1;
-            group_fns.iter().all(|fd| fd.params[i].1 == *ty) && is_expensive_clone_type(ty)
+            // The emitter names an invariant by its name, so a param renamed
+            // in one member is not one.
+            let (name, ty) = &group_fns[0].params[i];
+            group_fns.iter().all(|fd| fd.params[i] == (name.clone(), ty.clone()))
+                && is_expensive_clone_type(ty)
         })
         .collect();
 

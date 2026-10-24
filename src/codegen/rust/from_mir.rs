@@ -849,7 +849,7 @@ pub(super) fn compute_owned_record_params(
 /// The `List` params that may be taken by value: those of a function every
 /// caller reaches by a direct call, which excludes `main`, a guest entry, a
 /// function used as a value and a mutual tail-call member (whose wrappers
-/// keep their own ABI, see [`mutual_tco_value_params`]).
+/// keep their own ABI, see [`unlent_by_bounces`]).
 fn handed_list_candidates(
     ctx: &CodegenContext,
     program: &crate::ir::mir::MirProgram,
@@ -1102,7 +1102,9 @@ fn owned_params_with(
     lists: &HashSet<(crate::ir::FnId, usize)>,
 ) -> HashMap<crate::ir::FnId, Vec<bool>> {
     let mut owned: HashMap<crate::ir::FnId, Vec<bool>> = HashMap::new();
-    owned.extend(mutual_tco_value_params(ctx));
+    let invariants = mutual_tco_invariants(ctx);
+    let invariant =
+        |id: &crate::ir::FnId, i: usize| invariants.get(id).is_some_and(|set| set.contains(&i));
     let mut candidates: Vec<(crate::ir::FnId, Vec<usize>)> = Vec::new();
     // A tail-call loop takes its params by value whether or not it consumes
     // them, so for these functions `consuming` starts empty and the fixpoint
@@ -1114,29 +1116,30 @@ fn owned_params_with(
         };
         let mutual = ctx.mutual_tco_members.contains(id);
         if mutual || super::toplevel::resolved_fn_has_self_tailcall(resolved) {
-            // A self-tail-recursive loop borrows every param it only reads
-            // (see [`self_loop_lends`]); the fixpoint below takes by value
-            // the ones its body consumes or its result hands on.
-            // A guest entry keeps the owned signature its host calls.
+            // A tail-call loop, of one function or of a mutual group,
+            // borrows every param it only reads (see [`self_loop_lends`] and
+            // [`unlent_by_bounces`]); the fixpoint below takes by value the
+            // ones its body consumes or its result hands on. A mutual group's
+            // invariants stay borrowed. A guest entry keeps the owned
+            // signature its host calls.
             let guest = ctx.guest_entry.as_deref() == Some(resolved.name.as_str());
             let lends = |i: usize| {
-                !mutual
-                    && !guest
+                !guest
+                    && !invariant(id, i)
                     && should_borrow_param(&resolved.params[i].1)
                     && mir_fn.params.get(i).is_some()
             };
-            if !mutual {
-                let abi: Vec<bool> = (0..resolved.params.len())
-                    .map(|i| {
-                        let slot = mir_fn.params[i].local;
-                        !lends(i)
+            let abi: Vec<bool> = (0..resolved.params.len())
+                .map(|i| {
+                    let slot = mir_fn.params[i].local;
+                    !invariant(id, i)
+                        && (!lends(i)
                             || result_hands_on(&mir_fn.body.node, slot)
                             || builtin_takes_local(&mir_fn.body.node, slot, &program.builtins)
-                            || unwrapped_at_last_use(&mir_fn.body.node, slot)
-                    })
-                    .collect();
-                owned.insert(*id, abi);
-            }
+                            || unwrapped_at_last_use(&mir_fn.body.node, slot))
+                })
+                .collect();
+            owned.insert(*id, abi);
             loops.push((*id, resolved.params.len()));
             let open: Vec<usize> = (0..resolved.params.len())
                 .filter(|&i| {
@@ -1221,6 +1224,8 @@ fn owned_params_with(
                 }
             }
         }
+        graduated.extend(unlent_by_bounces(ctx, program, &owned));
+        graduated.retain(|(id, i)| !invariant(id, *i));
         if graduated.is_empty() {
             break;
         }
@@ -1228,10 +1233,7 @@ fn owned_params_with(
             if let Some(facts) = consuming.get_mut(&id) {
                 facts[i] = true;
             }
-            // A mutual tail-call group keeps the wrapper ABI it was given.
-            if !ctx.mutual_tco_members.contains(&id)
-                && let Some(abi) = owned.get_mut(&id)
-            {
+            if let Some(abi) = owned.get_mut(&id) {
                 abi[i] = true;
             }
         }
@@ -1395,17 +1397,10 @@ pub(super) fn self_loop_lends(ctx: &CodegenContext, fn_id: crate::ir::FnId, inde
             .is_some_and(|by_value| !by_value)
 }
 
-/// Which params of each mutual tail-call member its wrapper takes by value.
-///
-/// Every arm of the trampoline holds its params by value, so a wrapper that
-/// borrows a record or collection has to clone it into the trampoline's
-/// state, and while the caller's copy lives every in-place update of a Map
-/// in it copies the Map. Taken by value, a caller at its last use moves the
-/// value in and nothing is cloned; a caller that keeps it clones at the call
-/// instead of in the wrapper, which costs the same. The group's invariants
-/// (params every member hands on unchanged) stay borrowed: the trampoline
-/// reads them through `&T` for the whole run and never needs its own copy.
-fn mutual_tco_value_params(ctx: &CodegenContext) -> HashMap<crate::ir::FnId, Vec<bool>> {
+/// The invariants of each mutual tail-call group, by member: the params
+/// every member hands on unchanged, which the trampoline reads through `&T`
+/// for the whole run.
+fn mutual_tco_invariants(ctx: &CodegenContext) -> HashMap<crate::ir::FnId, HashSet<usize>> {
     let members: Vec<&crate::ir::hir::ResolvedFnDef> = ctx
         .mutual_tco_members
         .iter()
@@ -1414,26 +1409,71 @@ fn mutual_tco_value_params(ctx: &CodegenContext) -> HashMap<crate::ir::FnId, Vec
     let mut out = HashMap::new();
     for group in crate::call_graph::tailcall_scc_components_resolved(&members) {
         let invariants = super::toplevel::compute_resolved_rc_params(&group);
-        let invariant_names: HashSet<&str> = invariants
+        let names: HashSet<&str> = invariants
             .iter()
             .filter_map(|&i| group[0].params.get(i).map(|(name, _)| name.as_str()))
             .collect();
         for fd in &group {
-            let by_value = fd
-                .params
-                .iter()
-                .map(|(name, ty)| {
-                    should_borrow_param(ty) && !invariant_names.contains(name.as_str())
-                })
+            let set = (fd.params.iter().enumerate())
+                .filter(|(_, (name, _))| names.contains(name.as_str()))
+                .map(|(i, _)| i)
                 .collect();
-            out.insert(fd.fn_id, by_value);
+            out.insert(fd.fn_id, set);
+        }
+    }
+    out
+}
+
+/// The lent params of mutual tail-call members that a bounce fills with
+/// something the loop cannot keep borrowed. A lent param is `&T` in the
+/// trampoline's state, so a bounce may pass only a borrow that outlives the
+/// loop: a lent param or invariant of the caller, or a field of one. A tail
+/// call between members of different groups is counted too, which can only
+/// take a param by value that could have stayed borrowed.
+fn unlent_by_bounces(
+    ctx: &CodegenContext,
+    program: &crate::ir::mir::MirProgram,
+    owned: &HashMap<crate::ir::FnId, Vec<bool>>,
+) -> Vec<(crate::ir::FnId, usize)> {
+    fn bounces<'a>(expr: &'a MirExpr, out: &mut Vec<&'a crate::ir::mir::MirTailCall>) {
+        if let MirExpr::TailCall(call) = expr {
+            out.push(&call.node);
+        }
+        crate::ir::mir::expr::walk_children(expr, &mut |child| bounces(child, out));
+    }
+    let lent = |id: crate::ir::FnId, i: usize| {
+        owned
+            .get(&id)
+            .and_then(|abi| abi.get(i))
+            .is_some_and(|by_value| !by_value)
+    };
+    let mut out = Vec::new();
+    for id in &ctx.mutual_tco_members {
+        let Some(caller) = program.fn_by_id(*id) else {
+            continue;
+        };
+        let mut calls = Vec::new();
+        bounces(&caller.body.node, &mut calls);
+        for call in calls {
+            if !ctx.mutual_tco_members.contains(&call.target) {
+                continue;
+            }
+            for (j, arg) in call.args.iter().enumerate() {
+                let kept = super::ownership::projection_root_local(&arg.node)
+                    .and_then(|root| caller.params.iter().position(|p| p.local == root.slot))
+                    .is_some_and(|k| lent(*id, k));
+                if lent(call.target, j) && !kept {
+                    out.push((call.target, j));
+                }
+            }
         }
     }
     out
 }
 
 /// Whether mutual tail-call member `fn_id` takes param `index`, which would
-/// otherwise be borrowed, by value (see [`mutual_tco_value_params`]).
+/// otherwise be borrowed, by value: a param its group does not lend (see
+/// [`unlent_by_bounces`]).
 pub(super) fn mutual_param_by_value(
     ctx: &CodegenContext,
     fn_id: crate::ir::FnId,
@@ -6358,6 +6398,23 @@ pub(super) fn emit_mir_mutual_tco_block(
         .filter_map(|&i| group_fns[0].params.get(i).map(|(name, _)| name.clone()))
         .collect();
 
+    // A param the group lends (see [`unlent_by_bounces`]) is `&T` in the
+    // state too, all of them and the invariants under one lifetime.
+    let lent: HashMap<crate::ir::FnId, Vec<bool>> = group_fns
+        .iter()
+        .map(|fd| {
+            let mask = (fd.params.iter().enumerate())
+                .map(|(i, (name, ty))| {
+                    !rc_names.contains(name)
+                        && should_borrow_param(ty)
+                        && !mutual_param_by_value(ctx, fd.fn_id, i)
+                })
+                .collect();
+            (fd.fn_id, mask)
+        })
+        .collect();
+    let lends = lent.values().flatten().any(|lent| *lent);
+    let (lifetime, borrow) = if lends { ("<'a>", "&'a ") } else { ("", "&") };
     // An entry hands the group's invariants, its own `&T` params, to the
     // loop as they are.
     let rc_entry_args: String = group_fns[0]
@@ -6371,17 +6428,15 @@ pub(super) fn emit_mir_mutual_tco_block(
     // emitting anything if a member can't render (all-or-nothing block).
     let mut arm_bodies: Vec<(String, String)> = Vec::with_capacity(group_fns.len());
     for (i, mir_fn) in mir_fns.iter().enumerate() {
-        // Trampoline arm policy: no borrow-by-default, rc params wrapped.
-        // NB: own_param graduation is deliberately NOT applied to the
-        // mutual-TCO path — graduating a collection param to owned here
-        // would require coordinating the trampoline enum payload type, the
-        // wrapper signatures, and the arg passing across every member, a
-        // far larger and riskier change for no measured win (the perf
-        // flagship `vector_ops` is self-TCO, handled in `emit_mir_tco_fn`).
-        // Keeping borrow-by-default is always sound — not graduating never
-        // skips a clone.
+        // Trampoline arm policy: params by value except the lent ones, rc
+        // params wrapped.
         let mut policy = MirFnEmitPolicy::from_resolved(group_fns[i], scope, false);
         policy.rc_wrapped = rc_names.clone();
+        policy.borrowed_params.extend(
+            (group_fns[i].params.iter().zip(&lent[&group_fns[i].fn_id]))
+                .filter(|(_, lent)| **lent)
+                .map(|((name, _), _)| name.clone()),
+        );
         // The trampoline signature stays boxed, while the rewritten member
         // body may contain raw compiler-owned character locals. Use the MIR's
         // explicit restricted tags rather than the pre-rewrite whole-function
@@ -6407,6 +6462,7 @@ pub(super) fn emit_mir_mutual_tco_block(
             members: &member_fn_ids,
             enum_name: &enum_name,
             rc_names: &rc_names,
+            lent: &lent,
             enter: None,
         };
         let body = emit_mir_trampoline_body(&mir_fn.body, &bounce, &arm_ctx)?;
@@ -6425,14 +6481,19 @@ pub(super) fn emit_mir_mutual_tco_block(
     // 1. Enum — one variant per member, payload = non-rc param types.
     let mut enum_lines = Vec::new();
     enum_lines.push("#[allow(non_camel_case_types)]".to_string());
-    enum_lines.push(format!("enum {} {{", enum_name));
+    enum_lines.push(format!("enum {enum_name}{lifetime} {{"));
     for fd in group_fns {
         let variant = fn_name_to_variant(&fd.name);
-        let param_types: Vec<String> = fd
-            .params
-            .iter()
-            .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(_, ty)| super::types::type_to_rust_scoped(ty, ctx, scope))
+        let param_types: Vec<String> = (fd.params.iter().zip(&lent[&fd.fn_id]))
+            .filter(|((name, _), _)| !rc_names.contains(name))
+            .map(|((_, ty), lent)| {
+                let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
+                if *lent {
+                    format!("{borrow}{rust_type}")
+                } else {
+                    rust_type
+                }
+            })
             .collect();
         if param_types.is_empty() {
             enum_lines.push(format!("    {},", variant));
@@ -6444,11 +6505,10 @@ pub(super) fn emit_mir_mutual_tco_block(
     sections.push(enum_lines.join("\n"));
 
     // 2. Trampoline fn — rc params are extra `&T` args.
-    let rc_extra_params: String = mutual_rc_param_sig(group_fns[0], &rc_names, ctx, scope);
+    let rc_extra_params: String = mutual_rc_param_sig(group_fns[0], &rc_names, borrow, ctx, scope);
     let mut tramp_lines = Vec::new();
     tramp_lines.push(format!(
-        "fn {}(mut {}: {}{}) -> {} {{",
-        trampoline_name, state_name, enum_name, rc_extra_params, ret_type
+        "fn {trampoline_name}{lifetime}(mut {state_name}: {enum_name}{lifetime}{rc_extra_params}) -> {ret_type} {{"
     ));
     tramp_lines.push("    loop {".to_string());
     tramp_lines.push(format!("        {state_name} = match {state_name} {{"));
@@ -6478,50 +6538,30 @@ pub(super) fn emit_mir_mutual_tco_block(
     //    position, runs its body as an ordinary function: a call that ends
     //    without bouncing to another member builds no state and enters no
     //    loop. A bounce hands the next state to the trampoline, so a chain
-    //    of bounces still runs in constant stack. The invariants are `&T`
-    //    as in the loop; a param the loop holds by value but the signature
-    //    borrows is cloned once on entry.
+    //    of bounces still runs in constant stack. The invariants and the
+    //    lent params are `&T` as in the loop.
     for (fd, (_, entry_body)) in group_fns.iter().zip(&arm_bodies) {
-        let fn_name = aver_name_to_rust(&fd.name);
-        let mut params = Vec::with_capacity(fd.params.len());
-        let mut prelude = Vec::new();
-        for (i, (name, ty)) in fd.params.iter().enumerate() {
-            let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
-            if rc_names.contains(name) {
-                params.push(format!(
-                    "{}: &{rust_type}",
-                    explicit_parameter_pattern(name, false)
-                ));
-            } else if should_borrow_param(ty) && !mutual_param_by_value(ctx, fd.fn_id, i) {
-                params.push(format!(
-                    "{}: &{rust_type}",
-                    explicit_parameter_pattern(name, false)
-                ));
-                let rust_name = aver_name_to_rust(name);
-                prelude.push(format!(
-                    "    let {} = {rust_name}.clone();",
-                    explicit_parameter_pattern(name, true)
-                ));
-            } else {
-                params.push(format!(
-                    "{}: {rust_type}",
-                    explicit_parameter_pattern(name, true)
-                ));
-            }
-        }
+        let params: Vec<String> = (fd.params.iter().zip(&lent[&fd.fn_id]))
+            .map(|((name, ty), lent)| {
+                let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
+                if *lent || rc_names.contains(name) {
+                    format!("{}: &{rust_type}", explicit_parameter_pattern(name, false))
+                } else {
+                    format!("{}: {rust_type}", explicit_parameter_pattern(name, true))
+                }
+            })
+            .collect();
         let mut entry = Vec::new();
         if let Some(desc) = &fd.desc {
             entry.push(format!("/// {}", desc));
         }
-        entry.push("#[allow(unused_mut)]".to_string());
         entry.push(format!(
             "{}fn {}({}) -> {} {{",
             visibility,
-            fn_name,
+            aver_name_to_rust(&fd.name),
             params.join(", "),
             ret_type
         ));
-        entry.extend(prelude);
         entry.push(entry_body.clone());
         entry.push("}".to_string());
         sections.push(entry.join("\n"));
@@ -6535,6 +6575,7 @@ pub(super) fn emit_mir_mutual_tco_block(
 fn mutual_rc_param_sig(
     fd: &crate::ir::hir::ResolvedFnDef,
     rc_names: &HashSet<String>,
+    borrow: &str,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
@@ -6547,7 +6588,7 @@ fn mutual_rc_param_sig(
         .filter(|(name, _)| rc_names.contains(name))
         .map(|(name, ty)| {
             format!(
-                "{}: &{}",
+                "{}: {borrow}{}",
                 explicit_parameter_pattern(name, false),
                 super::types::type_to_rust_scoped(ty, ctx, scope)
             )
@@ -6568,6 +6609,8 @@ struct Bounce<'a> {
     members: &'a HashSet<crate::ir::FnId>,
     enum_name: &'a str,
     rc_names: &'a HashSet<String>,
+    /// The lent params of every member, by position.
+    lent: &'a HashMap<crate::ir::FnId, Vec<bool>>,
     enter: Option<(&'a str, &'a str)>,
 }
 
@@ -6616,6 +6659,7 @@ fn emit_mir_trampoline_tail_expr(
         members,
         enum_name,
         rc_names,
+        lent,
         enter,
     } = *bounce;
     match &expr.node {
@@ -6630,7 +6674,7 @@ fn emit_mir_trampoline_tail_expr(
                 let target_name = ctx.symbol_table.fn_entry(tc.target).key.name.clone();
                 let variant = super::toplevel::fn_name_to_variant(&target_name);
                 let mut arg_strs = Vec::new();
-                for a in &tc.args {
+                for (j, a) in tc.args.iter().enumerate() {
                     // Skip rc args by the arg's source-level name: a
                     // pass-through arg is a bare local read whose name is
                     // in `rc_names` (shared across the SCC by name+type).
@@ -6639,7 +6683,12 @@ fn emit_mir_trampoline_tail_expr(
                     {
                         continue;
                     }
-                    arg_strs.push(mir_clone_arg(emit_mir_expr(a, ctx)?, &a.node, ctx));
+                    let code = emit_mir_expr(a, ctx)?;
+                    arg_strs.push(if lent[&tc.target].get(j).copied().unwrap_or(false) {
+                        mir_borrow_arg(code, &a.node, ctx)
+                    } else {
+                        mir_clone_arg(code, &a.node, ctx)
+                    });
                 }
                 let state = if arg_strs.is_empty() {
                     format!("{}::{}", enum_name, variant)
