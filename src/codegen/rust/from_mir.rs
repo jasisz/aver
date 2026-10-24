@@ -6351,11 +6351,18 @@ pub(super) fn emit_mir_mutual_tco_block(
     let state_name = super::syntax::generated_ident("state");
     let ret_type = super::types::type_to_rust_scoped(&group_fns[0].return_type, ctx, scope);
 
-    let member_fn_ids: HashSet<crate::ir::FnId> = mir_fns.iter().map(|m| m.fn_id).collect();
     let rc_indices = compute_resolved_rc_params(group_fns);
     let rc_names: HashSet<String> = rc_indices
         .iter()
         .filter_map(|&i| group_fns[0].params.get(i).map(|(name, _)| name.clone()))
+        .collect();
+    // Which params of each member are the group's invariants, by position.
+    let members: HashMap<crate::ir::FnId, Vec<bool>> = group_fns
+        .iter()
+        .map(|fd| {
+            let invariants = fd.params.iter().map(|(name, _)| rc_names.contains(name));
+            (fd.fn_id, invariants.collect())
+        })
         .collect();
 
     // Render every member's trampoline-arm body FIRST — bail before
@@ -6394,13 +6401,7 @@ pub(super) fn emit_mir_mutual_tco_block(
         // parameters. Tell equality's operand-shape classifier about that
         // representation; no general clone policy changes.
         arm_ctx.rc_wrapped_are_borrowed_refs = true;
-        let body = emit_mir_trampoline_body(
-            &mir_fn.body,
-            &member_fn_ids,
-            &enum_name,
-            &rc_names,
-            &arm_ctx,
-        )?;
+        let body = emit_mir_trampoline_body(&mir_fn.body, &members, &enum_name, &arm_ctx)?;
         arm_bodies.push(body);
     }
 
@@ -6582,9 +6583,8 @@ fn emit_resolved_fn_params(
 /// position (member-`TailCall` → enum variant bounce, value → `return`).
 fn emit_mir_trampoline_body(
     body: &Spanned<MirExpr>,
-    members: &HashSet<crate::ir::FnId>,
+    members: &HashMap<crate::ir::FnId, Vec<bool>>,
     enum_name: &str,
-    rc_names: &HashSet<String>,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
     let mut lines = Vec::new();
@@ -6605,7 +6605,7 @@ fn emit_mir_trampoline_body(
         current = &let_node.body;
     }
 
-    let tail = emit_mir_trampoline_tail_expr(current, members, enum_name, rc_names, ctx)?;
+    let tail = emit_mir_trampoline_tail_expr(current, members, enum_name, ctx)?;
     lines.push(format!("                {}", tail));
     Some(lines.join("\n"))
 }
@@ -6616,30 +6616,23 @@ fn emit_mir_trampoline_body(
 /// `return`. `Match` / `IfThenElse` recurse (still tail position).
 fn emit_mir_trampoline_tail_expr(
     expr: &Spanned<MirExpr>,
-    members: &HashSet<crate::ir::FnId>,
+    members: &HashMap<crate::ir::FnId, Vec<bool>>,
     enum_name: &str,
-    rc_names: &HashSet<String>,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
     match &expr.node {
         MirExpr::TailCall(spanned_tc) => {
             let tc = &spanned_tc.node;
-            if members.contains(&tc.target) {
+            if let Some(invariants) = members.get(&tc.target) {
                 // Bounce → enum variant for the TARGET member, excluding
-                // its rc (pass-through) args. The target's param names
-                // drive which positional args are rc — read them off the
-                // target fn entry's source-level signature so the rc
-                // filter matches the target, not the caller.
+                // the args at its invariant positions: the caller hands its
+                // own copy of each on unchanged, and the trampoline already
+                // holds it as an `&T` arg.
                 let target_name = ctx.symbol_table.fn_entry(tc.target).key.name.clone();
                 let variant = super::toplevel::fn_name_to_variant(&target_name);
                 let mut arg_strs = Vec::new();
-                for a in &tc.args {
-                    // Skip rc args by the arg's source-level name: a
-                    // pass-through arg is a bare local read whose name is
-                    // in `rc_names` (shared across the SCC by name+type).
-                    if let Some(local) = local_of(&a.node)
-                        && rc_names.contains(&local.name)
-                    {
+                for (a, invariant) in tc.args.iter().zip(invariants) {
+                    if *invariant {
                         continue;
                     }
                     arg_strs.push(mir_clone_arg(emit_mir_expr(a, ctx)?, &a.node, ctx));
@@ -6661,13 +6654,13 @@ fn emit_mir_trampoline_tail_expr(
         }
         MirExpr::Match(spanned_match) => {
             emit_mir_match_with(&spanned_match.node, ctx, &|arm_body, ctx| {
-                emit_mir_trampoline_tail_expr(arm_body, members, enum_name, rc_names, ctx)
+                emit_mir_trampoline_tail_expr(arm_body, members, enum_name, ctx)
             })
         }
         MirExpr::IfThenElse(spanned_ite) => {
             let (cond, then_src, else_src) = mir_if_cond_and_branches(&spanned_ite.node, ctx)?;
-            let t = emit_mir_trampoline_tail_expr(then_src, members, enum_name, rc_names, ctx)?;
-            let e = emit_mir_trampoline_tail_expr(else_src, members, enum_name, rc_names, ctx)?;
+            let t = emit_mir_trampoline_tail_expr(then_src, members, enum_name, ctx)?;
+            let e = emit_mir_trampoline_tail_expr(else_src, members, enum_name, ctx)?;
             Some(format!("if {} {{ {} }} else {{ {} }}", cond, t, e))
         }
         // A `let` before a bounce (an argument bound first, see
@@ -6675,8 +6668,7 @@ fn emit_mir_trampoline_tail_expr(
         MirExpr::Let(spanned_let) => {
             let let_node = &spanned_let.node;
             let value = emit_mir_statement_value(let_node, ctx)?;
-            let tail =
-                emit_mir_trampoline_tail_expr(&let_node.body, members, enum_name, rc_names, ctx)?;
+            let tail = emit_mir_trampoline_tail_expr(&let_node.body, members, enum_name, ctx)?;
             Some(if let_node.binding_name.is_empty() {
                 format!("{{ {value}; {tail} }}")
             } else {
