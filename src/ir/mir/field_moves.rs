@@ -16,7 +16,10 @@
 //! - cannot run together with `q` (the two sit in different arms of one
 //!   `match`, or in the two branches of one `if`),
 //! - finished before `q` began and holds nothing of `s` afterwards (`o` is
-//!   in a `let` value and `q` in that `let`'s body), or
+//!   in a `let` value and `q` in that `let`'s body, or inside a call in an
+//!   earlier part, or is itself an earlier part of a record or constructor,
+//!   which keeps a copy: `R(e = s.e, memo = Map.set(s.memo, k, (x, s.e)))`),
+//!   or
 //! - reads a disjoint part of `s` (`s.window.spent` beside
 //!   `s.window.created`; the base of `T.update(s, window = ...)` at its
 //!   last use beside anything under `s.window`).
@@ -258,7 +261,10 @@ enum Branching {
     Sequence,
     /// A call: its value holds nothing of what its arguments read.
     Call,
-    /// A record, constructor, tuple or list: its parts run in order.
+    /// A record or constructor: its parts run in order, and each is a value
+    /// the new one keeps, never a borrow of what it reads.
+    Kept,
+    /// A tuple or list: its parts run in order.
     Ordered,
     Other,
 }
@@ -571,9 +577,8 @@ fn collect(
         MirExpr::Match(_) | MirExpr::IfThenElse(_) => Branching::Alternatives,
         MirExpr::Let(_) => Branching::Sequence,
         MirExpr::Call(_) | MirExpr::TailCall(_) => Branching::Call,
-        MirExpr::RecordCreate(_) | MirExpr::Construct(_) | MirExpr::Tuple(_) | MirExpr::List(_) => {
-            Branching::Ordered
-        }
+        MirExpr::RecordCreate(_) | MirExpr::Construct(_) => Branching::Kept,
+        MirExpr::Tuple(_) | MirExpr::List(_) => Branching::Ordered,
         _ => Branching::Other,
     };
     let in_product = in_product || matches!(expr, MirExpr::IndependentProduct(_));
@@ -839,12 +844,18 @@ fn apart(o: &Read, q: &Read) -> bool {
             // Parts that run in order, and the arguments of a call: a read
             // inside a call in an earlier part is over once that call
             // returns, as for a subject above (`R(o = f(s.a), a = s.a)`,
-            // `g(f(s.a), s.a)`).
-            Branching::Ordered | Branching::Call => {
+            // `g(f(s.a), s.a)`). An earlier part of a record or constructor
+            // that is the read itself, or holds it only inside values, keeps
+            // a copy of what it read and holds nothing of `s` itself
+            // (`R(e = s.e, memo = Map.set(s.memo, k, (x, s.e)))`).
+            Branching::Kept | Branching::Ordered | Branching::Call => {
+                let below = &o.trail[depth + 1..];
                 o_child < q_child
-                    && o.trail[depth + 1..]
-                        .iter()
-                        .any(|(_, _, below)| *below == Branching::Call)
+                    && (below.iter().any(|(_, _, b)| *b == Branching::Call)
+                        || (branching == Branching::Kept
+                            && below.iter().all(|(_, _, b)| {
+                                matches!(b, Branching::Kept | Branching::Ordered)
+                            })))
             }
             Branching::Other => false,
         };
@@ -878,7 +889,8 @@ mod tests {
     use super::*;
     use crate::ast::Spanned;
     use crate::ir::mir::expr::{
-        MirCall, MirCallee, MirLet, MirLocal, MirProject, MirRecordField, MirRecordUpdate,
+        MirCall, MirCallee, MirLet, MirLocal, MirProject, MirRecordCreate, MirRecordField,
+        MirRecordUpdate,
     };
     use crate::ir::{FnId, TypeId};
 
@@ -958,6 +970,67 @@ mod tests {
             project(local(0, false), "st"),
             project(local(0, true), "st"),
         ]));
+        assert!(movable_projections(&body.node, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_copy_in_an_earlier_part_of_a_record_lets_a_later_part_move() {
+        // R(e = s.e, memo = f(s.memo, (x, s.e))): the field `e` keeps a copy
+        // of `s.e`, so the later read is its last and moves.
+        let field = |name: &str, value| MirRecordField {
+            name: name.to_string(),
+            value,
+        };
+        let record = |fields| {
+            sp(MirExpr::RecordCreate(Spanned::bare(MirRecordCreate {
+                type_id: Some(TypeId(0)),
+                type_name: "R".to_string(),
+                fields,
+            })))
+        };
+        let body = record(vec![
+            field("e", project(local(0, false), "e")),
+            field(
+                "memo",
+                call(vec![
+                    project(local(0, false), "memo"),
+                    sp(MirExpr::Tuple(vec![
+                        local(1, true),
+                        project(local(0, true), "e"),
+                    ])),
+                ]),
+            ),
+        ]);
+        let MirExpr::RecordCreate(created) = &body.node else {
+            unreachable!()
+        };
+        let set = args(&created.node.fields[1].value);
+        let MirExpr::Tuple(pair) = &set[1].node else {
+            unreachable!()
+        };
+        let movable = movable_projections(&body.node, &[]);
+        assert!(movable.contains(&addr(&pair[1])));
+        assert!(movable.contains(&addr(&set[0])));
+        assert!(!movable.contains(&addr(&created.node.fields[0].value)));
+        // Read again after it, the earlier part's read does not move either.
+        let body = record(vec![
+            field("e", project(local(0, false), "e")),
+            field("f", project(local(0, true), "e")),
+        ]);
+        let MirExpr::RecordCreate(created) = &body.node else {
+            unreachable!()
+        };
+        let movable = movable_projections(&body.node, &[]);
+        assert_eq!(movable.len(), 1);
+        assert!(movable.contains(&addr(&created.node.fields[1].value)));
+        // An earlier part of a tuple may be a borrow of the field; it blocks.
+        let body = record(vec![field(
+            "pair",
+            sp(MirExpr::Tuple(vec![
+                project(local(0, false), "e"),
+                project(local(0, true), "e"),
+            ])),
+        )]);
         assert!(movable_projections(&body.node, &[]).is_empty());
     }
 

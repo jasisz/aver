@@ -1,0 +1,159 @@
+module RecordPartCopyThenMove
+    intent = "A field read by an earlier part of a record or constructor is copied there, so a later read of the same field in the same literal is its last and moves; the copy must still hold the old value."
+    depends []
+    effects [Console.print, Args.get]
+
+type Expr
+    Leaf(Int)
+    Node(Int, Expr, Expr)
+
+record SR
+    e: Expr
+    memo: Map<Int, Tuple<Expr, Expr>>
+
+record Two
+    before: Map<Int, Int>
+    after: Map<Int, Int>
+
+type Pair
+    Kept(Map<Int, Int>, Map<Int, Int>)
+
+record MS
+    next: Int
+    forced: Map<Int, Expr>
+
+record MX
+    e: Expr
+    ms: MS
+
+record Run
+    seen: Map<Int, Int>
+    pos: Int
+
+record Done
+    run: Run
+    at: Int
+
+fn remember(r: SR, e: Expr, key: Int) -> SR
+    ? "Records a rebuilt node: `r.e` is copied into `e` and moves into the entry."
+    SR(e = r.e, memo = Map.set(r.memo, key, (e, r.e)))
+
+verify remember
+    Map.len(remember(SR(e = Expr.Leaf(1), memo = {}), Expr.Leaf(2), 3).memo) => 1
+
+fn memoLoop(i: Int, n: Int, r: SR) -> SR
+    ? "Remembers n nodes into one memo."
+    match i >= n
+        true -> r
+        false -> memoLoop(i + 1, n, remember(SR(e = Expr.Node(i, r.e, Expr.Leaf(i)), memo = r.memo), Expr.Leaf(i), i * 2147483648 - i))
+
+verify memoLoop
+    Map.len(memoLoop(0, 3, SR(e = Expr.Leaf(0), memo = {})).memo) => 3
+
+fn split(t: Two, k: Int) -> Two
+    ? "The earlier field keeps the Map as it was; the later one adds k."
+    Two(before = t.after, after = Map.set(t.after, k, k))
+
+verify split
+    Map.len(split(Two(before = {}, after = {}), 1).before) => 0
+
+fn splitLoop(i: Int, n: Int, t: Two) -> Two
+    ? "Splits n times, each time from the newer Map."
+    match i >= n
+        true -> t
+        false -> splitLoop(i + 1, n, split(t, i))
+
+verify splitLoop
+    Map.len(splitLoop(0, 3, Two(before = {}, after = {})).after) => 3
+
+fn kept(t: Two, k: Int) -> Pair
+    ? "The same through a constructor."
+    Pair.Kept(t.after, Map.set(t.after, k, k))
+
+verify kept
+    kept(Two(before = {}, after = {}), 1) => Pair.Kept({}, {1 => 1})
+
+fn remembered(x: MX, id: Int) -> MX
+    ? "Forces one node: `x.e` is copied into `e` and moves into the nested update."
+    MX(e = x.e, ms = MS.update(x.ms, forced = Map.set(x.ms.forced, id, x.e)))
+
+verify remembered
+    Map.len(remembered(MX(e = Expr.Leaf(1), ms = MS(next = 0, forced = {})), 4).ms.forced) => 1
+
+fn forceLoop(i: Int, n: Int, x: MX) -> MX
+    ? "Forces n nodes."
+    match i >= n
+        true -> x
+        false -> forceLoop(i + 1, n, remembered(MX(e = Expr.Node(i, x.e, x.e), ms = x.ms), i))
+
+verify forceLoop
+    Map.len(forceLoop(0, 3, MX(e = Expr.Leaf(0), ms = MS(next = 0, forced = {}))).ms.forced) => 3
+
+fn walk(run: Run, left: Int) -> Done
+    ? "A loop whose way out copies the whole run and then reads its position."
+    match left
+        0 -> Done(run = run, at = run.pos)
+        _ -> walk(Run(seen = Map.set(run.seen, left, run.pos), pos = run.pos + 1), left - 1)
+
+verify walk
+    walk(Run(seen = {}, pos = 0), 2).at => 2
+
+fn leftmost(e: Expr) -> Int
+    ? "The leftmost leaf."
+    match e
+        Expr.Leaf(n) -> n
+        Expr.Node(_, l, _) -> leftmost(l)
+
+verify leftmost
+    leftmost(Expr.Node(1, Expr.Leaf(5), Expr.Leaf(6))) => 5
+    leftmost(Expr.Leaf(7)) => 7
+
+fn keySum(keys: List<Int>, acc: Int) -> Int
+    ? "The sum of the keys."
+    match keys
+        [] -> acc
+        [k, ..rest] -> keySum(rest, acc + k)
+
+verify keySum
+    keySum([1, 2], 0) => 3
+    keySum([], 4) => 4
+
+fn entrySum(entries: List<Tuple<Int, Int>>, acc: Int) -> Int
+    ? "Each key times its place in the list plus its value, summed: the list must come sorted by key."
+    match entries
+        [] -> acc
+        [(k, v), ..rest] -> entrySum(rest, acc + k * List.len(rest) + v)
+
+verify entrySum
+    entrySum([(1, 2), (3, 4)], 0) => 7
+    entrySum([], 4) => 4
+
+fn sizes(p: Pair) -> String
+    ? "The sizes of both Maps."
+    match p
+        Pair.Kept(a, b) -> "{Map.len(a)}/{Map.len(b)}"
+
+verify sizes
+    sizes(Pair.Kept({}, {1 => 1})) => "0/1"
+
+fn argInt(i: Int, fallback: Int) -> Int
+    ? "The i-th program argument as an Int."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), i)
+        Option.Some(s) -> Result.withDefault(Int.fromString(s), fallback)
+        Option.None -> fallback
+
+fn main() -> Unit
+    ? "Runs every shape n times and prints what each kept."
+    ! [Console.print, Args.get]
+    n = argInt(0, 100)
+    m = memoLoop(0, n, SR(e = Expr.Leaf(0), memo = {}))
+    t = splitLoop(0, n, Two(before = {}, after = {}))
+    x = forceLoop(0, n, MX(e = Expr.Leaf(0), ms = MS(next = 0, forced = {})))
+    d = walk(Run(seen = {}, pos = 0), n)
+    last = n - 1
+    Console.print("memo {Map.len(m.memo)} leftmost {leftmost(m.e)} keys {keySum(Map.keys(m.memo), 0)}")
+    Console.print("split before {Map.len(t.before)} after {Map.len(t.after)} has {Map.has(t.before, last)} {Map.has(t.after, last)}")
+    Console.print("kept {sizes(kept(t, n))} {sizes(kept(t, 0))}")
+    Console.print("forced {Map.len(x.ms.forced)} leftmost {leftmost(x.e)}")
+    Console.print("walk at {d.at} seen {Map.len(d.run.seen)} entries {entrySum(Map.entries(d.run.seen), 0)}")
