@@ -5598,6 +5598,7 @@ fn mir_emit_equality(
     format!("({left} {op_str} {right})")
 }
 
+/// The text of a string literal.
 fn mir_str_literal(expr: &MirExpr) -> Option<&str> {
     match expr {
         MirExpr::Literal(lit) => match &lit.node {
@@ -5666,9 +5667,13 @@ fn mir_emit_slice_equality(bop: &crate::ir::mir::MirBinOp, ctx: &MirEmitCtx<'_>)
     {
         return None;
     }
-    let side = |side: &Spanned<MirExpr>, slice: Option<(&[Spanned<MirExpr>], bool)>| {
+    let side = |operand: &Spanned<MirExpr>, slice: Option<(&[Spanned<MirExpr>], bool)>| {
         let Some((args, indexed)) = slice else {
-            return Some(mir_as_str(&side.node, &emit_mir_expr(side, ctx)?, ctx));
+            return Some(mir_as_str(
+                &operand.node,
+                &emit_mir_expr(operand, ctx)?,
+                ctx,
+            ));
         };
         let text = emit_mir_expr(&args[0], ctx)?;
         if indexed {
