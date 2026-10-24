@@ -192,6 +192,18 @@ impl AverIntList {
         }
     }
 
+    /// `concat` of a left list the caller hands over: two packed carriers
+    /// join by growing the left body in place when it is not shared (see
+    /// [`AverPackedU8::extend_owned`]); any other pair joins as `concat`.
+    pub fn concat_owned(left: Self, right: &Self) -> Self {
+        match (left, right) {
+            (Self::Packed(left), Self::Packed(right)) if !left.is_empty() => {
+                Self::Packed(left.extend_owned(right.as_slice()))
+            }
+            (left, right) => Self::concat(&left, right),
+        }
+    }
+
     pub fn reverse(&self) -> Self {
         match self {
             Self::Packed(values) => {
@@ -199,7 +211,24 @@ impl AverIntList {
                 bytes.reverse();
                 Self::Packed(AverPackedU8::from_vec(bytes))
             }
-            Self::Wide(values) => Self::from_vec(values.reverse().to_vec()),
+            Self::Wide(values) => {
+                let mut out = values.to_vec();
+                out.reverse();
+                Self::from_vec(out)
+            }
+        }
+    }
+
+    /// `reverse` of a list the caller hands over: a body it alone holds is
+    /// reversed where it lies rather than copied.
+    pub fn reverse_owned(self) -> Self {
+        match self {
+            Self::Packed(values) => {
+                let mut bytes = values.into_vec();
+                bytes.reverse();
+                Self::Packed(AverPackedU8::from_vec(bytes))
+            }
+            Self::Wide(values) => Self::from_vec(values.into_reversed_vec()),
         }
     }
 
@@ -231,7 +260,10 @@ impl fmt::Debug for AverIntList {
 
 impl PartialEq for AverIntList {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter_cloned().eq(other.iter_cloned())
+        match (self, other) {
+            (Self::Packed(left), Self::Packed(right)) => left.as_slice() == right.as_slice(),
+            _ => self.len() == other.len() && self.iter_cloned().eq(other.iter_cloned()),
+        }
     }
 }
 
@@ -245,7 +277,10 @@ impl PartialOrd for AverIntList {
 
 impl Ord for AverIntList {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.iter_cloned().cmp(other.iter_cloned())
+        match (self, other) {
+            (Self::Packed(left), Self::Packed(right)) => left.as_slice().cmp(right.as_slice()),
+            _ => self.iter_cloned().cmp(other.iter_cloned()),
+        }
     }
 }
 
@@ -381,6 +416,32 @@ mod tests {
         let joined = AverIntList::concat(&bytes, &beyond_byte);
         assert!(matches!(joined, AverIntList::Wide(_)));
         assert_eq!(joined.aver_display(), "[1, 2, 256]");
+    }
+
+    #[test]
+    fn owned_concat_and_reverse_leave_a_shared_list_as_it_was() {
+        let ints = |values: &[i64]| {
+            AverIntList::from_vec(values.iter().copied().map(AverInt::from_i64).collect())
+        };
+        let shared = ints(&[1, 2]);
+        let joined = AverIntList::concat_owned(shared.clone(), &ints(&[3]));
+        assert_eq!(shared.aver_display(), "[1, 2]");
+        let grown = AverIntList::concat_owned(joined, &ints(&[4]));
+        assert!(matches!(grown, AverIntList::Packed(_)));
+        assert_eq!(grown.aver_display(), "[1, 2, 3, 4]");
+        let wide = AverIntList::concat_owned(grown.clone(), &ints(&[300]));
+        assert_eq!(wide.aver_display(), "[1, 2, 3, 4, 300]");
+        assert_eq!(grown.aver_display(), "[1, 2, 3, 4]");
+        let started = AverIntList::concat_owned(AverIntList::empty(), &ints(&[7]));
+        assert_eq!(started.aver_display(), "[7]");
+
+        assert_eq!(
+            wide.clone().reverse_owned().aver_display(),
+            "[300, 4, 3, 2, 1]"
+        );
+        assert_eq!(wide.reverse().aver_display(), "[300, 4, 3, 2, 1]");
+        assert_eq!(grown.clone().reverse_owned().aver_display(), "[4, 3, 2, 1]");
+        assert_eq!(grown.aver_display(), "[1, 2, 3, 4]");
     }
 
     #[test]

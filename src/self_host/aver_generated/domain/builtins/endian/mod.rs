@@ -48,7 +48,7 @@ pub fn byteVals(
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(octets, [] => { return acc.reverse(); }, [octet, rest] => { {
+        aver_list_match!(octets, [] => { return (acc).reverse_owned(); }, [octet, rest] => { {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValInt(crate::aver_generated::domain::value::Val__ValInt(octet)), acc);
             octets = __tco0;

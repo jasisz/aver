@@ -1743,12 +1743,12 @@ pub fn letBindings(
         == aver_rt::AverInt::from_i64(args.len() as i64))
     {
         {
-            let __arg3 @ _ = {
+            let __arg3 @ _ = ({
                 let __arg2 @ _ =
                     crate::proof_std::aver_generated::kernel::proof::givenNames(&d.params);
                 crate::proof_std::aver_generated::kernel::lib::zipBind(&__arg2, args)
-            }
-            .reverse();
+            })
+            .reverse_owned();
             crate::proof_std::aver_generated::kernel::lib::bindLets(&d.lets, __arg3)
         }
     } else {

@@ -4492,11 +4492,11 @@ pub fn unfoldArm(
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     let outer @ _ = {
-        let __arg10 @ _ = {
+        let __arg10 @ _ = ({
             let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::types::paramsOf(&d);
             crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg9, xs)
-        }
-        .reverse();
+        })
+        .reverse_owned();
         crate::proof_kernel::aver_generated::kernel::check::bindLets(&d.lets, __arg10)
     }?;
     let lhs @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TCall(

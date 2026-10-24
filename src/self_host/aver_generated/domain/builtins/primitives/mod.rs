@@ -458,7 +458,7 @@ pub fn extractStrings(
 ) -> Result<aver_rt::AverList<AverStr>, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return Ok(acc.reverse()); }, [v, rest] => { { let __t = v; match __t.view() {
+        aver_list_match!(items, [] => { return Ok((acc).reverse_owned()); }, [v, rest] => { { let __t = v; match __t.view() {
         crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
             let s = __s_fields.0.clone();
             {
@@ -1266,7 +1266,7 @@ pub fn strPartsToVals(
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(parts, [] => { return acc.reverse(); }, [s, rest] => { {
+        aver_list_match!(parts, [] => { return (acc).reverse_owned(); }, [s, rest] => { {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(s)), acc);
             parts = __tco0;

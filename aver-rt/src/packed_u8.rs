@@ -97,6 +97,28 @@ impl AverPackedU8 {
         crate::AverIntList::from_packed(self.clone())
     }
 
+    /// These bytes followed by `more`, from a carrier the caller hands over.
+    /// A body this carrier alone holds, read to its end, grows in place, so
+    /// a loop that keeps appending to one accumulator copies each piece once
+    /// rather than the whole accumulator every step.
+    pub fn extend_owned(mut self, more: &[u8]) -> Self {
+        if more.is_empty() {
+            return self;
+        }
+        if let Some(storage) = self.storage.as_mut()
+            && self.end == storage.len()
+            && let Some(bytes) = Rc::get_mut(storage)
+        {
+            bytes.extend_from_slice(more);
+            self.end = bytes.len();
+            return self;
+        }
+        let mut bytes = Vec::with_capacity(self.len() + more.len());
+        bytes.extend_from_slice(self.as_slice());
+        bytes.extend_from_slice(more);
+        Self::from_vec(bytes)
+    }
+
     pub fn into_vec(self) -> Vec<u8> {
         match self.storage {
             Some(storage) if self.start == 0 && self.end == storage.len() => {
@@ -197,6 +219,22 @@ mod tests {
         packed.hash(&mut packed_hash);
         general.hash(&mut general_hash);
         assert_eq!(packed_hash.finish(), general_hash.finish());
+    }
+
+    #[test]
+    fn extend_owned_grows_a_sole_body_and_copies_a_shared_one() {
+        let first = AverPackedU8::from_vec(vec![1, 2]);
+        let grown = first.extend_owned(&[3]).extend_owned(&[]);
+        assert_eq!(grown.as_slice(), &[1, 2, 3]);
+        let kept = grown.clone();
+        let copied = grown.extend_owned(&[4]);
+        assert_eq!(kept.as_slice(), &[1, 2, 3]);
+        assert_eq!(copied.as_slice(), &[1, 2, 3, 4]);
+        let view = copied.drop_first(1).take_first(2);
+        drop(copied);
+        assert_eq!(view.extend_owned(&[9]).as_slice(), &[2, 3, 9]);
+        let empty = AverPackedU8::from_vec(Vec::new()).extend_owned(&[5]);
+        assert_eq!(empty.as_slice(), &[5]);
     }
 
     #[test]

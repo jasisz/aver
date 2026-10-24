@@ -17,8 +17,7 @@ programs and the VM-facing adapters that rely on the same semantics.
 
 - `AverList<T>`: a multi-representation persistent sequence used by Aver list
   operations, including deep-list paths such as teardown, `tail`, and
-  `list_uncons`; `concat` is represented as a rope, append-heavy chains are
-  packed into construction segments, and sequential reads use a lazy traversal
+  `list_uncons`; `concat` is represented as a rope, and sequential reads use a lazy traversal
   index so later tails advance without rebuilding the rope or copying values
 - `AverDisplay`: Aver-specific display formatting used by `Console.print` and string interpolation
 - shared runtime helpers for console, time, disk, env, and string operations
@@ -44,7 +43,6 @@ it is an alias for `Arc` because lists may be captured by parallel branches.
 | `Flat` | A body created from `Vec<T>` | A tail shares the same body and advances an offset. |
 | `Prepend` | Persistent `List.prepend` | Head and tail are O(1); length is cached. |
 | `Concat` | Persistent `List.concat` | Construction is O(1), copies no values, and may form an arbitrarily skewed rope. |
-| `Segments` | Construction chunks for repeated append | Keeps append-created spines in chunks of at most 128 elements. |
 | `Indexed` | Sequential consumption of a concat rope | All tails share one traversal table and advance a constant-size cursor. |
 
 The first `uncons` of a `Concat` performs an iterative, explicit-stack DFS and

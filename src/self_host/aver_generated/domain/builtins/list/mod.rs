@@ -229,7 +229,7 @@ pub fn builtinListReverse(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
-        crate::aver_generated::domain::value::Val__ValList(items.reverse()),
+        crate::aver_generated::domain::value::Val__ValList((items).reverse_owned()),
     ))
 }
 

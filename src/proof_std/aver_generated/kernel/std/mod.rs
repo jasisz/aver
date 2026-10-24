@@ -2045,7 +2045,7 @@ pub fn first(
                             };
                             __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
                                 &((aver_rt::string_join(
-                                    &whys.reverse(),
+                                    &(whys).reverse_owned(),
                                     &::aver_rt::str_lit!(" | "),
                                 ))
                                 .into_aver()),
@@ -2916,7 +2916,7 @@ pub fn subText(n @ _: &Node) -> AverStr {
     };
     let hyps @ _ = {
         let __arg10 @ _ = {
-            let __arg9 @ _ = g.hyps.reverse();
+            let __arg9 @ _ = (g.hyps).reverse_owned();
             crate::proof_std::aver_generated::kernel::std::hypTexts(&__arg9)
         };
         crate::proof_std::aver_generated::kernel::wire::spaced(&__arg10)

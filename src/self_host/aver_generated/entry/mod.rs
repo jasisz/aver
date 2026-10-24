@@ -24,7 +24,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::QualifyFns__indexed(mut fns @ _, mut prefix @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(fns, [] => { return acc.reverse() }, [f, rest] => __MutualTco1::QualifyFnsOne__indexed(f, rest, prefix, acc))
+                aver_list_match!(fns, [] => { return (acc).reverse_owned() }, [f, rest] => __MutualTco1::QualifyFnsOne__indexed(f, rest, prefix, acc))
             }
             __MutualTco1::QualifyFnsOne__indexed(
                 mut f @ _,
@@ -309,7 +309,7 @@ pub fn shiftFnIdsInFns(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(fns, [] => { return acc.reverse(); }, [fd, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(fns, [] => { return (acc).reverse_owned(); }, [fd, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(shiftFnIdsInFn(fd, offset.clone()), acc);
             fns = __tco0;
@@ -388,7 +388,7 @@ pub fn shiftFnIdsInStmts(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(stmts, [] => { return acc.reverse(); }, [stmt, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(stmts, [] => { return (acc).reverse_owned(); }, [stmt, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(shiftFnIdsInStmt(&stmt, offset.clone()), acc);
             stmts = __tco0;
@@ -761,7 +761,7 @@ pub fn shiftFnIdsInExprs(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(exprs, [] => { return acc.reverse(); }, [expr, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(exprs, [] => { return (acc).reverse_owned(); }, [expr, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(shiftFnIdsInExpr(expr, offset.clone()), acc);
             exprs = __tco0;
@@ -780,7 +780,7 @@ pub fn shiftFnIdsInFields(
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(fields, [] => { return acc.reverse(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
+        ::aver_rt::aver_list_match_reuse!(fields, [] => { return (acc).reverse_owned(); }, [pair, rest, __list_slot] => { { let (name, expr) = pair; {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend((name, shiftFnIdsInExpr(expr, offset.clone())), acc);
             fields = __tco0;
@@ -799,7 +799,7 @@ pub fn shiftFnIdsInArms(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(arms, [] => { return acc.reverse(); }, [arm, rest, __list_slot] => { {
+        ::aver_rt::aver_list_match_reuse!(arms, [] => { return (acc).reverse_owned(); }, [arm, rest, __list_slot] => { {
             let __tco0 = rest;
             let __tco2 = __list_slot.prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: shiftFnIdsInExpr(arm.body, offset.clone()), bindingSlots: arm.bindingSlots }, acc);
             arms = __tco0;

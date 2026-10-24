@@ -3401,7 +3401,7 @@ pub fn splitIndependentExprs(
         {
             let __list_subject = exprs;
             if __list_subject.is_empty() {
-                return (leftAcc.reverse(), rightAcc.reverse());
+                return ((leftAcc).reverse_owned(), (rightAcc).reverse_owned());
             } else {
                 if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if sendLeft {
@@ -3514,7 +3514,7 @@ pub fn finishIndependentVals(
         {
             let __list_subject = items;
             if __list_subject.is_empty() {
-                return acc.reverse();
+                return (acc).reverse_owned();
             } else {
                 if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
@@ -3541,7 +3541,7 @@ pub fn unwrapProductResults(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        ::aver_rt::aver_list_match_reuse!(items, [] => { return Ok(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(acc.reverse()))); }, [v, rest, __list_slot] => { { let __t = v; match __t.view() {
+        ::aver_rt::aver_list_match_reuse!(items, [] => { return Ok(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple((acc).reverse_owned()))); }, [v, rest, __list_slot] => { { let __t = v; match __t.view() {
         crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
             let x = &__x_fields.0;
             {
@@ -3835,7 +3835,7 @@ pub fn evalListItemsRev(
         {
             let __list_subject = exprs;
             if __list_subject.is_empty() {
-                return Ok(acc.reverse());
+                return Ok((acc).reverse_owned());
             } else {
                 if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match crate::aver_generated::domain::eval::core::evalExpr(
@@ -3888,7 +3888,7 @@ pub fn evalArgsRev(
         {
             let __list_subject = exprs;
             if __list_subject.is_empty() {
-                return Ok(acc.reverse());
+                return Ok((acc).reverse_owned());
             } else {
                 if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match crate::aver_generated::domain::eval::core::evalExpr(
@@ -4540,7 +4540,7 @@ pub fn collectFastForwardArgs(
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(slotArgs, [] => { return Ok(acc.reverse()); }, [slot, rest] => { match crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot) { Ok(v @ _) => { {
+        aver_list_match!(slotArgs, [] => { return Ok((acc).reverse_owned()); }, [slot, rest] => { match crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot) { Ok(v @ _) => { {
             let __tco0 = rest;
             let __tco2 = aver_rt::AverList::prepend_owned(v, acc);
             slotArgs = __tco0;
@@ -5223,7 +5223,7 @@ pub fn evalListItemsSlotRev(
         {
             let __list_subject = exprs;
             if __list_subject.is_empty() {
-                return Ok(acc.reverse());
+                return Ok((acc).reverse_owned());
             } else {
                 if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
@@ -5520,7 +5520,7 @@ pub fn evalArgsSlotRev(
         {
             let __list_subject = exprs;
             if __list_subject.is_empty() {
-                return Ok(acc.reverse());
+                return Ok((acc).reverse_owned());
             } else {
                 if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(

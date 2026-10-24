@@ -244,7 +244,7 @@ pub fn scan(
                                                     {
                                                         aver_list_match!(parents, [] => { return Err(::aver_rt::str_lit!("unexpected )")); }, [parent, above] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), parent);
+            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::sexp::Sexp::Node((current).reverse_owned()), parent);
             let __tco3 = above;
             __hold0 = __tco0;
             cs = &__hold0;
@@ -742,7 +742,9 @@ pub fn withinAll(
             let __list_subject = xs;
             if __list_subject.is_empty() {
                 return Ok((
-                    crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(acc.reverse()),
+                    crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(
+                        (acc).reverse_owned(),
+                    ),
                     size,
                 ));
             } else {
@@ -880,7 +882,7 @@ pub fn scan__cursor(
                                                     {
                                                         aver_list_match!(parents, [] => { return Err(::aver_rt::str_lit!("unexpected )")); }, [parent, above] => { {
             let __tco1 = __cur_i1;
-            let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(current.reverse()), parent);
+            let __tco3 = aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::sexp::Sexp::Node((current).reverse_owned()), parent);
             let __tco4 = above;
             __cur_i = __tco1;
             current = __tco3;

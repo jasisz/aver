@@ -194,7 +194,7 @@ pub fn expectByteItems(
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(items, [] => { return Ok(acc.reverse()); }, [item, rest] => { { let __t = item; match __t.view() {
+        aver_list_match!(items, [] => { return Ok((acc).reverse_owned()); }, [item, rest] => { { let __t = item; match __t.view() {
         crate::aver_generated::domain::value::Val__view::ValInt(__value_fields) => {
             let value = __value_fields.0.clone();
             {

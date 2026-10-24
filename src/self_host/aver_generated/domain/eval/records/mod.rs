@@ -194,7 +194,7 @@ pub fn mergeRecordFieldsAcc(
         {
             let __list_subject = existing;
             if __list_subject.is_empty() {
-                return aver_rt::AverList::concat(&acc.reverse(), &overrides);
+                return aver_rt::AverList::concat(&(acc).reverse_owned(), &overrides);
             } else {
                 if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {

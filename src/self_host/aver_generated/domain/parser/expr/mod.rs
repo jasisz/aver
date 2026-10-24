@@ -246,7 +246,7 @@ fn __mutual_tco_trampoline_3(
                                     aver_rt::AverList::from_vec(vec![
                                         crate::aver_generated::domain::ast::Expr::ExprList(
                                             crate::aver_generated::domain::ast::Expr__ExprList(
-                                                acc.reverse(),
+                                                (acc).reverse_owned(),
                                             ),
                                         ),
                                     ]),
@@ -358,7 +358,9 @@ fn __mutual_tco_trampoline_4(
                     _ => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprConcat(
-                                crate::aver_generated::domain::ast::Expr__ExprConcat(acc.reverse()),
+                                crate::aver_generated::domain::ast::Expr__ExprConcat(
+                                    (acc).reverse_owned(),
+                                ),
                             ),
                             pos,
                         ));
@@ -374,7 +376,9 @@ fn __mutual_tco_trampoline_4(
                     _ => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprConcat(
-                                crate::aver_generated::domain::ast::Expr__ExprConcat(acc.reverse()),
+                                crate::aver_generated::domain::ast::Expr__ExprConcat(
+                                    (acc).reverse_owned(),
+                                ),
                             ),
                             pos,
                         ));
@@ -468,7 +472,9 @@ fn __mutual_tco_trampoline_5(
                     crate::aver_generated::domain::token::Token::TkRBracket => {
                         return Ok((
                             crate::aver_generated::domain::ast::Expr::ExprList(
-                                crate::aver_generated::domain::ast::Expr__ExprList(items.reverse()),
+                                crate::aver_generated::domain::ast::Expr__ExprList(
+                                    (items).reverse_owned(),
+                                ),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
@@ -569,7 +575,7 @@ fn __mutual_tco_trampoline_6(
                         return crate::aver_generated::domain::parser::expr::finishTupleOrProduct(
                             &*tokens,
                             pos.add(&aver_rt::AverInt::from_i64(1)),
-                            &items.reverse(),
+                            &(items).reverse_owned(),
                         );
                     }
                     _ => return Err(::aver_rt::str_lit!("Expected ')' or ',' in tuple")),
@@ -766,7 +772,7 @@ fn __mutual_tco_trampoline_8(
                             crate::aver_generated::domain::ast::Expr::ExprRecord(
                                 crate::aver_generated::domain::ast::Expr__ExprRecord(
                                     name,
-                                    fields.reverse(),
+                                    (fields).reverse_owned(),
                                 ),
                             ),
                             pos2.add(&aver_rt::AverInt::from_i64(1)),
@@ -905,7 +911,7 @@ fn __mutual_tco_trampoline_9(
                             crate::aver_generated::domain::ast::Expr::ExprCall(
                                 crate::aver_generated::domain::ast::Expr__ExprCall(
                                     name,
-                                    args.reverse(),
+                                    (args).reverse_owned(),
                                 ),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
@@ -922,7 +928,7 @@ fn __mutual_tco_trampoline_9(
                             crate::aver_generated::domain::ast::Expr::ExprCall(
                                 crate::aver_generated::domain::ast::Expr__ExprCall(
                                     name,
-                                    args.reverse(),
+                                    (args).reverse_owned(),
                                 ),
                             ),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
@@ -1063,7 +1069,7 @@ fn __mutual_tco_trampoline_10(
                                         crate::aver_generated::domain::ast::Expr::ExprRecord(
                                             crate::aver_generated::domain::ast::Expr__ExprRecord(
                                                 ::aver_rt::str_lit!("_named"),
-                                                namedAcc.reverse(),
+                                                (namedAcc).reverse_owned(),
                                             ),
                                         ),
                                     ]),
@@ -1122,7 +1128,7 @@ fn __mutual_tco_trampoline_10(
                                         crate::aver_generated::domain::ast::Expr::ExprRecord(
                                             crate::aver_generated::domain::ast::Expr__ExprRecord(
                                                 ::aver_rt::str_lit!("_named"),
-                                                namedAcc.reverse(),
+                                                (namedAcc).reverse_owned(),
                                             ),
                                         ),
                                     ]),
@@ -1227,7 +1233,7 @@ fn __mutual_tco_trampoline_11(
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                                     crate::aver_generated::domain::ast::Expr__ExprMatch(
                                         (*subject).clone(),
-                                        acc.reverse(),
+                                        (acc).reverse_owned(),
                                     ),
                                 ),
                                 pos2.add(&aver_rt::AverInt::from_i64(1)),
@@ -1243,7 +1249,7 @@ fn __mutual_tco_trampoline_11(
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                                     crate::aver_generated::domain::ast::Expr__ExprMatch(
                                         (*subject).clone(),
-                                        acc.reverse(),
+                                        (acc).reverse_owned(),
                                     ),
                                 ),
                                 pos2,
@@ -1367,7 +1373,7 @@ fn __mutual_tco_trampoline_12(
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                                     crate::aver_generated::domain::ast::Expr__ExprMatch(
                                         (*subject).clone(),
-                                        acc.reverse(),
+                                        (acc).reverse_owned(),
                                     ),
                                 ),
                                 pos,

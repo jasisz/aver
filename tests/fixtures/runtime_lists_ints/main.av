@@ -1,0 +1,98 @@
+module Main
+    intent = "Lists handed over or shared, and integers past the machine word, read the same on every backend."
+    depends [Bytes]
+    effects [Console.print]
+
+fn render(values: List<Int>) -> String
+    ? "A list of Int, one element after another."
+    match values
+        [] -> ""
+        [head, ..tail] -> "{head},{render(tail)}"
+
+fn onto(count: Int, acc: List<Int>) -> List<Int>
+    ? "Join a chunk onto the accumulator per step."
+    match count <= 0
+        true -> acc
+        false -> onto(count - 1, List.concat(acc, List.concat([count, 255], [0])))
+
+fn ontoKeeping(count: Int, acc: List<Int>) -> List<Int>
+    ? "The same, with the accumulator read again after the join."
+    match count <= 0
+        true -> acc
+        false -> ontoKeeping(count - 1, List.concat(List.concat(acc, [count]), List.take(acc, 1)))
+
+fn bytesOnto(count: Int, acc: Bytes) -> Bytes
+    ? "Join Bytes onto an accumulator."
+    match count <= 0
+        true -> acc
+        false -> bytesOnto(count - 1, Bytes.concat(acc, Result.withDefault(Bytes.fromList([count, 7]), Bytes.empty())))
+
+fn chain(count: Int, acc: List<Int>) -> List<Int>
+    ? "A long chain of nodes over one tail."
+    match count <= 0
+        true -> acc
+        false -> chain(count - 1, List.prepend(count, acc))
+
+fn sum(values: List<Int>, acc: Int) -> Int
+    ? "Every element added up."
+    match values
+        [] -> acc
+        [head, ..tail] -> sum(tail, acc + head)
+
+fn mask() -> Int
+    ? "Sixty-four one bits."
+    18446744073709551615
+
+fn rotated13(value: Int) -> Int
+    ? "Rotate left by 13, in 64 bits."
+    Bits.low(Bits.or(Bits.shiftLeft(value, 13), Bits.shiftRight(value, 51)), 64)
+
+fn mixed(value: Int) -> Int
+    ? "One siphash-like round on a 64-bit word."
+    Bits.low(Bits.xor(rotated13(Bits.low(value + mask(), 64)), Bits.and(value, 12297829382473034410)), 64)
+
+fn rounds(count: Int, value: Int) -> Int
+    ? "Many rounds."
+    match count <= 0
+        true -> value
+        false -> rounds(count - 1, mixed(value))
+
+fn lows(value: Int) -> String
+    ? "The low bits of one value at the widths around the machine words."
+    "{Bits.low(value, 0)} {Bits.low(value, 1)} {Bits.low(value, 31)} {Bits.low(value, 32)} {Bits.low(value, 62)} {Bits.low(value, 63)} {Bits.low(value, 64)} {Bits.low(value, 65)} {Bits.low(value, 100)} {Bits.low(value, 128)}"
+
+fn arithmetic(a: Int, b: Int) -> String
+    ? "Every word-sized operation on a pair of large values."
+    "{a + b} {a - b} {a * b} {Bits.and(a, b)} {Bits.or(a, b)} {Bits.xor(a, b)}"
+
+fn main() -> Unit
+    ? "Print each shape so a backend that drifts shows a diff."
+    ! [Console.print]
+    shared = [1, 2]
+    joined = List.concat(shared, [3])
+    again = List.concat(shared, [4])
+    Console.print("{render(shared)} {render(joined)} {render(again)} {render(onto(3, shared))} {render(shared)}")
+    Console.print("{render(onto(4, []))} {render(ontoKeeping(3, [9]))} {render(List.concat(onto(2, []), [300, -1]))}")
+    bytes = Bytes.fromList([5, 6])
+    grown = bytesOnto(3, bytes)
+    Console.print("{Bytes.toHex(bytes)} {Bytes.toHex(grown)} {Bytes.toHex(Bytes.drop(grown, 3))} {Bytes.toHex(bytesOnto(2, Bytes.empty()))}")
+    wide = [1, 300, -5]
+    Console.print("{render(List.reverse(shared))} {render(shared)} {render(List.reverse(wide))} {render(wide)} {render(List.reverse(onto(2, [])))} {render(List.reverse(chain(3, shared)))}")
+    Console.print("{List.reverse(["a", "b", "c"]) == ["c", "b", "a"]} {[1, 2] == List.concat([1], [2])} {[1, 2] == List.prepend(1, [2])} {[1, 2] == [1, 3]}")
+    tail = chain(5, [])
+    long = chain(200000, tail)
+    Console.print("{sum(long, 0)} {List.len(long)} {render(tail)}")
+    Console.print("{rounds(20000, 1)} {rounds(1000, 18446744073709551614)}")
+    Console.print(lows(4611686018427387904))
+    Console.print(lows(-4611686018427387905))
+    Console.print(lows(-1))
+    Console.print(lows(-18446744073709551616))
+    Console.print(lows(-18446744073709551617))
+    Console.print(lows(340282366920938463463374607431768211457))
+    Console.print(arithmetic(9223372036854775808, 18446744073709551615))
+    Console.print(arithmetic(-9223372036854775809, 4611686018427387904))
+    Console.print(arithmetic(-340282366920938463463374607431768211456, -3))
+    values = Vector.fromList([10, 20, 30])
+    names = Vector.fromList(["x", "y"])
+    Console.print("{Option.withDefault(Vector.get(values, 2), 0)} {Option.withDefault(Vector.get(names, 1), "-")} {Option.withDefault(Vector.get(Vector.fromList(wide), 1), 0)} {Option.withDefault(Vector.get(Vector.fromList(["p", "q"]), 0), "-")}")
+    Console.print(String.join(Map.values({"b" => "two", "a" => "one", "c" => "three"}), ","))
