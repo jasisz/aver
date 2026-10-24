@@ -1,0 +1,139 @@
+module SharedCollectionCycleApp
+    intent =
+        "Fixture: types that hold themselves through a List, a Vector, a Map, a tuple in a list, an Option of a list and a record, each value holding one subterm in many places."
+        "Equal values built apart and values that differ at the last leaf are compared and used as map keys, as deep as the first argument says."
+    effects [Console.print, Args.get]
+
+type Tree
+    Leaf(Int)
+    Node(List<Tree>)
+
+type Json
+    JNum(Float)
+    JArr(Vector<Json>)
+    JObj(Map<String, Json>)
+
+record Dir
+    name: String
+    kids: List<Tuple<String, Dir>>
+
+type Term
+    Var(Int)
+    App(Term, List<Term>)
+
+type Big
+    Small(Int)
+    Large(Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Option<List<Big>>)
+
+fn tree(n: Int, last: Int) -> Tree
+    ? "n levels of lists, each holding the level below twice, over Leaf(last)."
+    match n <= 0
+        true -> Tree.Leaf(last)
+        false -> twoTrees(tree(n - 1, last))
+
+fn twoTrees(t: Tree) -> Tree
+    ? "A list holding t twice."
+    Tree.Node([t, t])
+
+fn treeSpine(n: Int, last: Int) -> Tree
+    ? "tree(n, 1) with its rightmost leaf last, built level by level."
+    match n <= 0
+        true -> Tree.Leaf(last)
+        false -> Tree.Node([tree(n - 1, 1), treeSpine(n - 1, last)])
+
+fn json(n: Int, last: Float) -> Json
+    ? "n levels of vectors and maps in turn, each holding the level below twice, over JNum(last)."
+    match n <= 0
+        true -> Json.JNum(last)
+        false -> twoJsons(n, json(n - 1, last))
+
+fn twoJsons(n: Int, j: Json) -> Json
+    ? "A vector or a map holding j twice."
+    match Int.mod(n, 2) == 0
+        true -> Json.JArr(Vector.fromList([j, j]))
+        false -> Json.JObj(Map.fromList([("a", j), ("b", j)]))
+
+fn jsonSpine(n: Int, last: Float) -> Json
+    ? "json(n, 1.5) with its last leaf last, built level by level."
+    match n <= 0
+        true -> Json.JNum(last)
+        false -> match Int.mod(n, 2) == 0
+            true -> Json.JArr(Vector.fromList([json(n - 1, 1.5), jsonSpine(n - 1, last)]))
+            false -> Json.JObj(Map.fromList([("a", json(n - 1, 1.5)), ("b", jsonSpine(n - 1, last))]))
+
+fn dir(n: Int, last: String) -> Dir
+    ? "n levels of directories, each holding the level below under two names."
+    match n <= 0
+        true -> Dir(name = last, kids = [])
+        false -> twoDirs(dir(n - 1, last))
+
+fn twoDirs(d: Dir) -> Dir
+    ? "A directory holding d twice."
+    Dir(name = "d", kids = [("x", d), ("y", d)])
+
+fn dirSpine(n: Int, last: String) -> Dir
+    ? "dir(n, \"f\") with its last directory named last, built level by level."
+    match n <= 0
+        true -> Dir(name = last, kids = [])
+        false -> Dir(name = "d", kids = [("x", dir(n - 1, "f")), ("y", dirSpine(n - 1, last))])
+
+fn term(n: Int, last: Int) -> Term
+    ? "n levels of applications, each holding the level below as the function and twice in its arguments."
+    match n <= 0
+        true -> Term.Var(last)
+        false -> threeTerms(term(n - 1, last))
+
+fn threeTerms(t: Term) -> Term
+    ? "An application of t to t and t."
+    Term.App(t, [t, t])
+
+fn termSpine(n: Int, last: Int) -> Term
+    ? "term(n, 1) with its last argument's leaf last, built level by level."
+    match n <= 0
+        true -> Term.Var(last)
+        false -> Term.App(term(n - 1, 1), [term(n - 1, 1), termSpine(n - 1, last)])
+
+fn big(n: Int, last: Int) -> Big
+    ? "n levels of large constructors, each holding the level below twice in an optional list."
+    match n <= 0
+        true -> Big.Small(last)
+        false -> twoBigs(big(n - 1, last))
+
+fn twoBigs(b: Big) -> Big
+    ? "A large constructor holding b twice."
+    Big.Large(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, Option.Some([b, b]))
+
+fn bigSpine(n: Int, last: Int) -> Big
+    ? "big(n, 1) with its rightmost leaf last, built level by level."
+    match n <= 0
+        true -> Big.Small(last)
+        false -> Big.Large(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, Option.Some([big(n - 1, 1), bigSpine(n - 1, last)]))
+
+fn yes(b: Bool) -> String
+    ? "1 or 0."
+    match b
+        true -> "1"
+        false -> "0"
+
+fn depth() -> Int
+    ? "The first argument as a number, 12 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 12)
+        Option.None -> 12
+
+fn main() -> Unit
+    ! [Console.print, Args.get]
+    n = depth()
+    trees = Map.fromList([(tree(n, 1), 1)])
+    Console.print("tree " + yes(tree(n, 1) == treeSpine(n, 1)) + yes(tree(n, 1) == treeSpine(n, 2)) + yes(Map.has(trees, treeSpine(n, 1))) + yes(Map.has(trees, treeSpine(n, 2))))
+    zero = Float.fromInt(List.len([1]) - 1)
+    nan = json(n, zero / zero)
+    Console.print("json " + yes(json(n, 1.5) == jsonSpine(n, 1.5)) + yes(json(n, 1.5) == jsonSpine(n, 2.5)) + yes(nan == nan) + yes(jsonSpine(n, zero) == jsonSpine(n, (zero - 1.0) * zero)))
+    dirs = Map.fromList([(dir(n, "f"), 1)])
+    Console.print("dir " + yes(dir(n, "f") == dirSpine(n, "f")) + yes(dir(n, "f") == dirSpine(n, "g")) + yes(Map.has(dirs, dirSpine(n, "f"))) + yes(Map.has(dirs, dirSpine(n, "g"))))
+    terms = Map.fromList([(term(n, 1), 1)])
+    Console.print("term " + yes(term(n, 1) == termSpine(n, 1)) + yes(term(n, 1) == termSpine(n, 2)) + yes(Map.has(terms, termSpine(n, 1))) + yes(Map.has(terms, termSpine(n, 2))))
+    bigs = Map.fromList([(big(n, 1), 1)])
+    Console.print("big " + yes(big(n, 1) == bigSpine(n, 1)) + yes(big(n, 1) == bigSpine(n, 2)) + yes(Map.has(bigs, bigSpine(n, 1))) + yes(Map.has(bigs, bigSpine(n, 2))))
+    Console.print("maps " + yes(trees == Map.fromList([(treeSpine(n, 1), 1)])) + yes(trees == Map.fromList([(treeSpine(n, 2), 1)])))

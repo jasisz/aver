@@ -2025,6 +2025,23 @@ fn vm_equality_of_shared_values_costs_the_graph() {
     assert_eq!(aver_run_within_a_minute(&file, &["64"]), shallow);
 }
 
+/// The same for types that hold themselves through a `List`, a `Vector`, a
+/// `Map`, a tuple in a list, an `Option` of a list and a record: equal
+/// values built apart, a difference at the last leaf, a NaN at every leaf,
+/// `0.0` against `-0.0`, and maps keyed by such values.
+#[test]
+fn vm_equality_through_collections_costs_the_graph() {
+    let file =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/shared_collection_cycle_app.av");
+    let shallow = aver_run_within_a_minute(&file, &["12"]);
+    assert_eq!(shallow, SHARED_COLLECTION_CYCLE_OUT);
+    assert_eq!(aver_run_within_a_minute(&file, &["64"]), shallow);
+}
+
+/// What `shared_collection_cycle_app.av` prints at any depth.
+const SHARED_COLLECTION_CYCLE_OUT: &str =
+    "tree 1010\njson 1001\ndir 1010\nterm 1010\nbig 1010\nmaps 10";
+
 /// The same with a `Float` at the last leaf: a NaN there makes the values
 /// unequal however much they share, and the two zeroes stay equal.
 #[test]

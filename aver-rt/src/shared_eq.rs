@@ -101,6 +101,15 @@ pub trait NodeId {
     fn count(&self) -> usize;
 }
 
+/// The payload of a shared constructor of a sum that is not thin, compared
+/// by [`Walk::node`] as one node.
+impl<T: WalkEq> WalkEq for Shared<T> {
+    #[inline]
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
+        (**self).walk_eq(&**other, walk)
+    }
+}
+
 impl<T> NodeId for Shared<T> {
     #[inline]
     fn addr(&self) -> usize {
@@ -155,6 +164,29 @@ impl<'v> Walk<'_, 'v> {
         reflexive: bool,
         fields_eq: impl FnOnce(Self) -> bool,
     ) -> bool {
+        self.pair(a, b, reflexive, fields_eq, move |walk| a.walk_eq(b, walk))
+    }
+
+    /// Takes one step of the budget, or answers that it is spent: the
+    /// pairs met from now on are remembered.
+    #[inline]
+    pub(crate) fn step(self) -> bool {
+        let left = self.left.get();
+        self.left.set(left.saturating_sub(1));
+        left > 0
+    }
+
+    /// [`Walk::node`] for any pair `a` and `b` stand for, `later` comparing
+    /// them if they are left for later.
+    #[inline]
+    pub(crate) fn pair<N: NodeId>(
+        self,
+        a: &N,
+        b: &N,
+        reflexive: bool,
+        fields_eq: impl FnOnce(Self) -> bool,
+        later: impl for<'w> FnOnce(Walk<'w, 'v>) -> bool + 'v,
+    ) -> bool {
         if reflexive && a.addr() == b.addr() {
             return true;
         }
@@ -162,7 +194,7 @@ impl<'v> Walk<'_, 'v> {
         if left == 0 {
             // The pairs under way go on where they are; only the ones met
             // from now on are remembered.
-            return self.remembering(a, b, fields_eq);
+            return self.remembering(a, b, fields_eq, later);
         }
         self.left.set(left - 1);
         fields_eq(self)
@@ -174,17 +206,15 @@ impl<'v> Walk<'_, 'v> {
     /// held in one place is reached by one path only.
     #[cold]
     #[inline(never)]
-    fn remembering<N: NodeId + WalkEq>(
+    fn remembering<N: NodeId>(
         self,
-        a: &'v N,
-        b: &'v N,
+        a: &N,
+        b: &N,
         fields_eq: impl FnOnce(Self) -> bool,
+        later: impl for<'w> FnOnce(Walk<'w, 'v>) -> bool + 'v,
     ) -> bool {
-        let (here, top) = (stack_here(), self.memory.top.get());
-        if top == 0 {
-            self.memory.top.set(here);
-        } else if top.saturating_sub(here) > DEEP {
-            return self.leave(a, b);
+        if self.deep() {
+            return self.leave(later);
         }
         if a.count() == 1 || b.count() == 1 {
             return fields_eq(self);
@@ -207,14 +237,24 @@ impl<'v> Walk<'_, 'v> {
         same
     }
 
+    /// Whether the walk is [`DEEP`] bytes below where its memory began,
+    /// which the first pair met with memory marks.
+    #[inline]
+    pub(crate) fn deep(self) -> bool {
+        let (here, top) = (stack_here(), self.memory.top.get());
+        if top == 0 {
+            self.memory.top.set(here);
+            return false;
+        }
+        top.saturating_sub(here) > DEEP
+    }
+
     /// Leaves the pair for later (see [`Walk::rest`]): equal for now.
     #[cold]
     #[inline(never)]
-    fn leave<N: WalkEq>(self, a: &'v N, b: &'v N) -> bool {
+    pub(crate) fn leave(self, later: impl for<'w> FnOnce(Walk<'w, 'v>) -> bool + 'v) -> bool {
         let mut spent = self.memory.spent.take().unwrap_or_default();
-        spent
-            .later
-            .push(Box::new(move |walk: Walk<'_, 'v>| a.walk_eq(b, walk)));
+        spent.later.push(Box::new(later));
         self.memory.spent.set(Some(spent));
         true
     }

@@ -408,22 +408,114 @@ pub(super) fn ctor_is_shared(id: crate::ir::TypeId, variant: &str, ctx: &Codegen
 
 /// Whether the generated `==` of `ty` passes the `aver_rt::Walk` of the
 /// comparison it is part of down to its fields (`aver_rt::WalkEq`): a type
-/// that holds a value of itself with no collection in between, a recursive
-/// sum or a record on the cycle of one, or an `Option` of such a type. A
-/// field of any other type begins a comparison of its own.
+/// that holds a value of itself (see [`walking_def`]), or an `Option` of
+/// one; or a collection, tuple or `Result` holding a type that holds itself
+/// through a collection (see [`through_collection`]), whose items the walk
+/// then compares (`aver_rt::shared_items`). A field of any other type begins
+/// a comparison of its own.
 pub(super) fn walks(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -> bool {
     match ty {
         Type::Option(inner) => walks(inner, ctx, scope),
         Type::Named { id, name } => {
             named_type_def(*id, name, ctx, scope).is_some_and(|td| walking_def(td, ctx))
         }
+        Type::List(item) | Type::Vector(item) | Type::Map(_, item) => {
+            walks(item, ctx, scope) && holds_collection_cycle(item, ctx, scope)
+        }
+        Type::Tuple(items) => {
+            holds_collection_cycle(ty, ctx, scope) && items.iter().any(|t| walks(t, ctx, scope))
+        }
+        Type::Result(ok, err) => {
+            holds_collection_cycle(ty, ctx, scope)
+                && (walks(ok, ctx, scope) || walks(err, ctx, scope))
+        }
         _ => false,
     }
 }
 
-/// [`walks`] for a declaration.
+/// [`walks`] for a declaration: a type that holds a value of itself, with
+/// no collection in between (see [`on_cycle`]) or through one.
 pub(super) fn walking_def(td: &TypeDef, ctx: &CodegenContext) -> bool {
-    type_def_contract(td, ctx).capabilities.partial_eq && on_cycle(td, ctx)
+    type_def_contract(td, ctx).capabilities.partial_eq
+        && (on_cycle(td, ctx) || through_collection(td, ctx))
+}
+
+/// Whether a value of `td` can hold a value of `td` in a `List`, a `Vector`
+/// or a `Map`, at any depth. Its `==` and hash then carry one walk through
+/// those collections (see `aver_rt::shared_items`): a value holding one
+/// subterm in many places is compared and hashed at the cost of the graph,
+/// not of the tree it unfolds to.
+pub(super) fn through_collection(td: &TypeDef, ctx: &CodegenContext) -> bool {
+    let key = crate::codegen::common::backend_type_def_key(ctx, td);
+    let scope = crate::codegen::common::type_key_for_decl(ctx, td);
+    let mut seen = HashSet::new();
+    fields_of(td).any(|field| {
+        collection_reaches(
+            &parse_type_str(field),
+            &key,
+            false,
+            ctx,
+            scope.scope_str(),
+            &mut seen,
+        )
+    })
+}
+
+/// Whether `ty` reaches the type `target`, through a collection somewhere
+/// on the way when `in_collection` is not already.
+fn collection_reaches(
+    ty: &Type,
+    target: &str,
+    in_collection: bool,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    seen: &mut HashSet<(String, bool)>,
+) -> bool {
+    let mut on = |ty: &Type, inside: bool| collection_reaches(ty, target, inside, ctx, scope, seen);
+    match ty {
+        Type::Option(inner) => on(inner, in_collection),
+        Type::Result(ok, err) => on(ok, in_collection) || on(err, in_collection),
+        Type::Tuple(items) => items.iter().any(|item| on(item, in_collection)),
+        Type::List(item) | Type::Vector(item) => on(item, true),
+        Type::Map(k, v) => on(k, true) || on(v, true),
+        Type::Named { id, name } => named_type_def(*id, name, ctx, scope).is_some_and(|next| {
+            let key = crate::codegen::common::backend_type_def_key(ctx, next);
+            if in_collection && key == target {
+                return true;
+            }
+            let decl = crate::codegen::common::type_key_for_decl(ctx, next);
+            seen.insert((key, in_collection))
+                && fields_of(next).any(|field| {
+                    collection_reaches(
+                        &parse_type_str(field),
+                        target,
+                        in_collection,
+                        ctx,
+                        decl.scope_str(),
+                        seen,
+                    )
+                })
+        }),
+        _ => false,
+    }
+}
+
+/// Whether `ty` names, at any depth of its type arguments, a type that
+/// holds itself through a collection (see [`through_collection`]).
+fn holds_collection_cycle(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+    match ty {
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+            holds_collection_cycle(inner, ctx, scope)
+        }
+        Type::Result(a, b) | Type::Map(a, b) => {
+            holds_collection_cycle(a, ctx, scope) || holds_collection_cycle(b, ctx, scope)
+        }
+        Type::Tuple(items) => items.iter().any(|t| holds_collection_cycle(t, ctx, scope)),
+        Type::Named { id, name } => {
+            named_type_def(*id, name, ctx, scope).is_some_and(|td| through_collection(td, ctx))
+        }
+        _ => false,
+    }
 }
 
 fn reaches_inline(

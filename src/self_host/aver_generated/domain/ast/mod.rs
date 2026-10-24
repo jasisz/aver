@@ -340,20 +340,53 @@ impl aver_rt::thin::HandOver for Expr__ExprGte {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprConcat(pub aver_rt::AverList<Expr>);
 
+impl aver_rt::WalkEq for Expr__ExprConcat {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
+
 impl aver_rt::thin::HandOver for Expr__ExprConcat {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprTuple(pub aver_rt::AverList<Expr>);
+
+impl aver_rt::WalkEq for Expr__ExprTuple {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
 
 impl aver_rt::thin::HandOver for Expr__ExprTuple {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprList(pub aver_rt::AverList<Expr>);
 
+impl aver_rt::WalkEq for Expr__ExprList {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
+
 impl aver_rt::thin::HandOver for Expr__ExprList {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprRecord(pub AverStr, pub aver_rt::AverList<(AverStr, Expr)>);
+
+impl aver_rt::WalkEq for Expr__ExprRecord {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                ((*x).0 == (*y).0 && (*x).1.walk_eq(&(*y).1, walk))
+            })
+    }
+}
 
 impl aver_rt::thin::HandOver for Expr__ExprRecord {}
 
@@ -381,20 +414,56 @@ impl aver_rt::thin::HandOver for Expr__ExprFieldAccess {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprCall(pub AverStr, pub aver_rt::AverList<Expr>);
 
+impl aver_rt::WalkEq for Expr__ExprCall {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
+
 impl aver_rt::thin::HandOver for Expr__ExprCall {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprCallDirect(pub aver_rt::AverInt, pub aver_rt::AverList<Expr>);
+
+impl aver_rt::WalkEq for Expr__ExprCallDirect {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
 
 impl aver_rt::thin::HandOver for Expr__ExprCallDirect {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprCallBuiltin(pub AverStr, pub aver_rt::AverList<Expr>);
 
+impl aver_rt::WalkEq for Expr__ExprCallBuiltin {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
+
 impl aver_rt::thin::HandOver for Expr__ExprCallBuiltin {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr__ExprCallBuiltinId(pub aver_rt::AverInt, pub aver_rt::AverList<Expr>);
+
+impl aver_rt::WalkEq for Expr__ExprCallBuiltinId {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
 
 impl aver_rt::thin::HandOver for Expr__ExprCallBuiltinId {}
 
@@ -403,7 +472,10 @@ pub struct Expr__ExprMatch(pub Expr, pub aver_rt::AverList<MatchArm>);
 
 impl aver_rt::WalkEq for Expr__ExprMatch {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0.walk_eq(&other.0, walk) && self.1 == other.1
+        self.0.walk_eq(&other.0, walk)
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -434,6 +506,15 @@ pub struct Expr__ExprIndependentProduct(pub aver_rt::AverList<Expr>, pub bool);
 impl PartialEq for Expr__ExprIndependentProduct {
     fn eq(&self, other: &Self) -> bool {
         self.1 == other.1 && self.0 == other.0
+    }
+}
+
+impl aver_rt::WalkEq for Expr__ExprIndependentProduct {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -494,24 +575,42 @@ impl aver_rt::WalkEq for Expr {
             Some(Expr__pair::ExprGte(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Expr__pair::ExprConcat(a0, b0)) => a0 == b0,
-            Some(Expr__pair::ExprTuple(a0, b0)) => a0 == b0,
-            Some(Expr__pair::ExprList(a0, b0)) => a0 == b0,
-            Some(Expr__pair::ExprRecord(a0, b0)) => a0 == b0,
+            Some(Expr__pair::ExprConcat(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Expr__pair::ExprTuple(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Expr__pair::ExprList(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Expr__pair::ExprRecord(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Expr__pair::ExprFieldAccess(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Expr__pair::ExprCall(a0, b0)) => a0 == b0,
-            Some(Expr__pair::ExprCallDirect(a0, b0)) => a0 == b0,
-            Some(Expr__pair::ExprCallBuiltin(a0, b0)) => a0 == b0,
-            Some(Expr__pair::ExprCallBuiltinId(a0, b0)) => a0 == b0,
+            Some(Expr__pair::ExprCall(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Expr__pair::ExprCallDirect(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Expr__pair::ExprCallBuiltin(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Expr__pair::ExprCallBuiltinId(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Expr__pair::ExprMatch(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Expr__pair::ExprPropagate(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Expr__pair::ExprIndependentProduct(a0, b0)) => a0 == b0,
+            Some(Expr__pair::ExprIndependentProduct(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             None => false,
         }
     }
@@ -1610,11 +1709,25 @@ impl aver_replay::ReplayValue for Expr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Expr,
     pub bindingSlots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+}
+
+impl PartialEq for MatchArm {
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
+
+impl aver_rt::WalkEq for MatchArm {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.pattern.walk_eq(&other.pattern, walk)
+            && self.body.walk_eq(&other.body, walk)
+            && self.bindingSlots == other.bindingSlots
+    }
 }
 
 impl aver_rt::AverDisplay for MatchArm {
@@ -1695,7 +1808,7 @@ impl aver_replay::ReplayValue for MatchArm {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Pattern {
     PatInt(aver_rt::AverInt),
     PatFloat(f64),
@@ -1708,6 +1821,40 @@ pub enum Pattern {
     PatTuple(aver_rt::AverList<Pattern>),
     PatWild,
     PatVar(AverStr),
+}
+
+impl aver_rt::WalkEq for Pattern {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        match (self, other) {
+            (Pattern::PatInt(a0), Pattern::PatInt(b0)) => a0 == b0,
+            (Pattern::PatFloat(a0), Pattern::PatFloat(b0)) => a0 == b0,
+            (Pattern::PatBool(a0), Pattern::PatBool(b0)) => a0 == b0,
+            (Pattern::PatStr(a0), Pattern::PatStr(b0)) => a0 == b0,
+            (Pattern::PatEmpty, Pattern::PatEmpty) => true,
+            (Pattern::PatCons(a0, a1), Pattern::PatCons(b0, b1)) => a0 == b0 && a1 == b1,
+            (Pattern::PatConstructor(a0, a1), Pattern::PatConstructor(b0, b1)) => {
+                a0 == b0 && a1 == b1
+            }
+            (Pattern::PatConstructorId(a0, a1, a2), Pattern::PatConstructorId(b0, b1, b2)) => {
+                a0 == b0 && a1 == b1 && a2 == b2
+            }
+            (Pattern::PatTuple(a0), Pattern::PatTuple(b0)) => {
+                aver_rt::shared_items::eq_list(&(*a0), &(*b0), walk, |x, y, walk| {
+                    (*x).walk_eq(&(*y), walk)
+                })
+            }
+            (Pattern::PatWild, Pattern::PatWild) => true,
+            (Pattern::PatVar(a0), Pattern::PatVar(b0)) => a0 == b0,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for Pattern {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
 }
 
 impl aver_rt::AverDisplay for Pattern {

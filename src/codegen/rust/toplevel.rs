@@ -2,8 +2,8 @@ use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
     RepresentationCapabilities, RepresentationContract, cheap_fields_first, hands_over,
-    is_boxed_record, is_thin_sum, on_cycle, shared_variants, type_def_contract, variant_field_refs,
-    walking_def, walks,
+    is_boxed_record, is_thin_sum, on_cycle, shared_variants, through_collection, type_def_contract,
+    variant_field_refs, walking_def, walks,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -87,6 +87,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             representation,
             &shared_variants(td, ctx),
             is_thin_sum(td, ctx),
+            through_collection(td, ctx),
             ctx.rust_lazy_sums
                 .contains(&crate::codegen::common::backend_type_def_key(ctx, td)),
         ),
@@ -98,6 +99,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             scope,
             walking_def(td, ctx),
             on_cycle(td, ctx),
+            through_collection(td, ctx),
             is_boxed_record(td, ctx),
             representation,
         ),
@@ -134,20 +136,193 @@ fn without_derived_eq(
     }
 }
 
-/// `a(i) == b(i) && ...` over the fields in `order`; a field marked in
-/// `walking` compares with `a(i).walk_eq(&b(i), walk)` instead (see `walks`).
+/// The types of the fields of one constructor or record, for the fields
+/// whose `==` and hash carry the walk of the value holding them (see
+/// `walks`).
+#[derive(Clone, Copy)]
+struct Walking<'a> {
+    types: &'a [&'a str],
+    ctx: &'a CodegenContext,
+    scope: Option<&'a str>,
+}
+
+impl Walking<'_> {
+    fn field(&self, i: usize) -> Option<Type> {
+        let ty = parse_type_str(self.types.get(i)?);
+        walks(&ty, self.ctx, self.scope).then_some(ty)
+    }
+
+    fn marks(&self) -> Vec<bool> {
+        (0..self.types.len())
+            .map(|i| self.field(i).is_some())
+            .collect()
+    }
+
+    /// `==` within the walk on the places `a` and `b` of `ty`.
+    fn eq(&self, ty: &Type, a: &str, b: &str) -> String {
+        if !walks(ty, self.ctx, self.scope) {
+            return format!("{a} == {b}");
+        }
+        let items = |inner: &Type| self.eq(inner, "(*x)", "(*y)");
+        match ty {
+            Type::Option(inner) if !matches!(**inner, Type::Named { .. }) => format!(
+                "match (&{a}, &{b}) {{ (Some(x), Some(y)) => {}, (None, None) => true, _ => false }}",
+                items(inner)
+            ),
+            Type::Result(ok, err) => format!(
+                "match (&{a}, &{b}) {{ (Ok(x), Ok(y)) => {}, (Err(x), Err(y)) => {}, _ => false }}",
+                items(ok),
+                items(err)
+            ),
+            Type::Tuple(parts) => {
+                let tests: Vec<String> = (0..parts.len())
+                    .map(|i| self.eq(&parts[i], &format!("{a}.{i}"), &format!("{b}.{i}")))
+                    .collect();
+                format!("({})", tests.join(" && "))
+            }
+            Type::List(item) => format!(
+                "aver_rt::shared_items::eq_list(&{a}, &{b}, walk, |x, y, walk| {})",
+                items(item)
+            ),
+            Type::Vector(item) => format!(
+                "aver_rt::shared_items::eq_vector(&{a}, &{b}, walk, |x, y, walk| {})",
+                items(item)
+            ),
+            Type::Map(_, item) => format!(
+                "aver_rt::shared_items::eq_map(&{a}, &{b}, walk, |x, y, walk| {})",
+                items(item)
+            ),
+            _ => format!("{a}.walk_eq(&{b}, walk)"),
+        }
+    }
+
+    /// The hash of the place `v` of `ty` fed to `state` against the budget
+    /// `left`: an expression for what is left of it.
+    fn stream(&self, ty: &Type, v: &str) -> String {
+        if !walks(ty, self.ctx, self.scope) {
+            return format!("{{ std::hash::Hash::hash(&{v}, state); left }}");
+        }
+        let tagged = |tag: u8, inner: &Type| {
+            format!(
+                "{{ std::hash::Hash::hash(&{tag}u8, state); {} }}",
+                self.stream(inner, "(*x)")
+            )
+        };
+        match ty {
+            Type::Option(inner) if !matches!(**inner, Type::Named { .. }) => format!(
+                "match &{v} {{ Some(x) => {}, None => {{ std::hash::Hash::hash(&0u8, state); left }} }}",
+                tagged(1, inner)
+            ),
+            Type::Result(ok, err) => format!(
+                "match &{v} {{ Ok(x) => {}, Err(x) => {} }}",
+                tagged(0, ok),
+                tagged(1, err)
+            ),
+            Type::Tuple(parts) => {
+                let mut body = String::new();
+                let mut branches = 0;
+                for (i, part) in parts.iter().enumerate() {
+                    branches += usize::from(walks(part, self.ctx, self.scope));
+                    write!(
+                        body,
+                        " let left = {};",
+                        self.stream(part, &format!("{v}.{i}"))
+                    )
+                    .unwrap();
+                }
+                match branches > 1 {
+                    true => format!(
+                        "match left {{ 0 => 0, left => {{ let left = left - 1;{body} left }} }}"
+                    ),
+                    false => format!("{{{body} left }}"),
+                }
+            }
+            Type::List(item) | Type::Vector(item) => format!(
+                "aver_rt::shared_items::stream_items({v}.iter(), state, left, |x, state, left| {})",
+                self.stream(item, "(*x)")
+            ),
+            Type::Map(_, item) => format!(
+                "aver_rt::shared_items::stream_map(&{v}, state, left, |x, state, left| {})",
+                self.stream(item, "(*x)")
+            ),
+            _ => format!("aver_rt::WalkHash::stream(&{v}, state, left)"),
+        }
+    }
+
+    /// The hash made from parts (see `aver_rt::shared_hash`) of the place
+    /// `v` of `ty`, which [`Walking::stream`] would feed, with `walk`.
+    fn parts(&self, ty: &Type, v: &str) -> String {
+        if !walks(ty, self.ctx, self.scope) {
+            return format!(
+                "{{ let h = &mut aver_rt::shared_hash::node_hasher(); std::hash::Hash::hash(&{v}, h); std::hash::Hasher::finish(h) }}"
+            );
+        }
+        let made = |parts: &[(&Type, String)], tag: Option<u8>| {
+            let mut body = String::from("let h = &mut aver_rt::shared_hash::node_hasher();");
+            if let Some(tag) = tag {
+                write!(body, " std::hash::Hash::hash(&{tag}u8, h);").unwrap();
+            }
+            for (part, v) in parts {
+                write!(
+                    body,
+                    " std::hash::Hasher::write_u64(h, {});",
+                    self.parts(part, v)
+                )
+                .unwrap();
+            }
+            format!("{{ {body} std::hash::Hasher::finish(h) }}")
+        };
+        match ty {
+            Type::Option(inner) if !matches!(**inner, Type::Named { .. }) => format!(
+                "match &{v} {{ Some(x) => {}, None => 0 }}",
+                self.parts(inner, "(*x)")
+            ),
+            Type::Result(ok, err) => format!(
+                "match &{v} {{ Ok(x) => {}, Err(x) => {} }}",
+                made(&[(ok, "(*x)".to_string())], Some(0)),
+                made(&[(err, "(*x)".to_string())], Some(1))
+            ),
+            Type::Tuple(items) => {
+                let parts: Vec<(&Type, String)> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| (t, format!("{v}.{i}")))
+                    .collect();
+                made(&parts, None)
+            }
+            Type::List(item) => format!(
+                "aver_rt::shared_items::parts_list(&{v}, walk, |x, walk| {})",
+                self.parts(item, "(*x)")
+            ),
+            Type::Vector(item) => format!(
+                "aver_rt::shared_items::parts_vector(&{v}, walk, |x, walk| {})",
+                self.parts(item, "(*x)")
+            ),
+            Type::Map(_, item) => format!(
+                "aver_rt::shared_items::parts_map(&{v}, walk, |x, walk| {})",
+                self.parts(item, "(*x)")
+            ),
+            _ => format!("aver_rt::WalkHash::walk_hash(&{v}, walk)"),
+        }
+    }
+}
+
+/// `a(i) == b(i) && ...` over the fields in `order`; a field that carries
+/// the walk (see [`Walking`]) compares within it instead.
 fn fields_equal(
     order: &[usize],
-    walking: &[bool],
+    walking: Option<Walking<'_>>,
     a: impl Fn(usize) -> String,
     b: impl Fn(usize) -> String,
 ) -> String {
     let tests: Vec<String> = order
         .iter()
-        .map(|&i| match walking.get(i) {
-            Some(true) => format!("{}.walk_eq(&{}, walk)", a(i), b(i)),
-            _ => format!("{} == {}", a(i), b(i)),
-        })
+        .map(
+            |&i| match walking.and_then(|w| w.field(i).map(|ty| (w, ty))) {
+                Some((w, ty)) => w.eq(&ty, &a(i), &b(i)),
+                None => format!("{} == {}", a(i), b(i)),
+            },
+        )
         .collect();
     tests.join(" && ")
 }
@@ -199,14 +374,6 @@ fn hand_over_impl(
     }
 }
 
-/// For each of `types`, whether its `==` carries the comparison's walk.
-fn walking_fields(types: &[&str], ctx: &CodegenContext, scope: Option<&str>) -> Vec<bool> {
-    types
-        .iter()
-        .map(|ty| walks(&parse_type_str(ty), ctx, scope))
-        .collect()
-}
-
 /// The two bodies of an `aver_rt::WalkHash` (see `aver_rt::shared_hash`)
 /// for one constructor or record: its fields fed to the hasher `state` as a
 /// derived `Hash` would, against the budget `left`, and its fields written
@@ -223,8 +390,9 @@ struct HashParts {
     from_parts: String,
 }
 
-fn hash_parts(walking: &[bool], field: impl Fn(usize) -> String) -> HashParts {
-    let branches = walking.iter().filter(|&&walks| walks).count() > 1;
+fn hash_parts(walking: Walking<'_>, field: impl Fn(usize) -> String) -> HashParts {
+    let marks = walking.marks();
+    let branches = marks.iter().filter(|&&walks| walks).count() > 1;
     let mut parts = HashParts {
         stream: match branches {
             true => " if left == 0 { return 0; } let left = left - 1;".to_string(),
@@ -232,22 +400,19 @@ fn hash_parts(walking: &[bool], field: impl Fn(usize) -> String) -> HashParts {
         },
         from_parts: String::new(),
     };
-    for (i, &walks) in walking.iter().enumerate() {
+    for i in 0..marks.len() {
         let field = field(i);
-        match walks {
-            true => {
-                write!(
-                    parts.stream,
-                    " let left = aver_rt::WalkHash::stream(&{field}, state, left);"
-                )
-                .unwrap();
+        match walking.field(i) {
+            Some(ty) => {
+                write!(parts.stream, " let left = {};", walking.stream(&ty, &field)).unwrap();
                 write!(
                     parts.from_parts,
-                    " std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&{field}, walk));"
+                    " std::hash::Hasher::write_u64(h, {});",
+                    walking.parts(&ty, &field)
                 )
                 .unwrap();
             }
-            false => {
+            None => {
                 write!(parts.stream, " std::hash::Hash::hash(&{field}, state);").unwrap();
                 write!(parts.from_parts, " std::hash::Hash::hash(&{field}, h);").unwrap();
             }
@@ -278,6 +443,63 @@ fn partial_eq_impl(name: &str, test: &str) -> String {
     )
 }
 
+/// The `Hash` and `aver_rt::WalkHash` of a sum that is not thin and holds
+/// itself through a collection (see `through_collection`): a value is fed
+/// to the hasher as a derived `Hash` would, within the budget of
+/// `aver_rt::shared_hash`, and past it hashed from its parts.
+fn through_sum_hash<'a>(
+    name: &str,
+    variants: &[TypeVariant],
+    shared: &[bool],
+    walking_in: impl Fn(usize) -> Walking<'a>,
+) -> String {
+    let (mut stream, mut from_parts) = (String::new(), String::new());
+    for (i, (v, &shared)) in variants.iter().zip(shared).enumerate() {
+        let tag = format!("std::hash::Hash::hash(&{i}u32, ");
+        if v.fields.is_empty() {
+            writeln!(
+                stream,
+                "            {name}::{} => {{ {tag}state); left }}",
+                v.name
+            )
+            .unwrap();
+            writeln!(
+                from_parts,
+                "            {name}::{} => aver_rt::shared_hash::tag_hash({i}),",
+                v.name
+            )
+            .unwrap();
+            continue;
+        }
+        let (bindings, _) = variant_field_refs(shared, "f", v.fields.len());
+        let parts = hash_parts(walking_in(i), |j| match shared {
+            true => format!("f.{j}"),
+            false => format!("(*f{j})"),
+        });
+        let ctor = format!("            {name}::{}({bindings})", v.name);
+        writeln!(stream, "{ctor} => {{ {tag}state);{} left }}", parts.stream).unwrap();
+        match shared {
+            true => writeln!(
+                from_parts,
+                "{ctor} => walk.node(f, |{}, h| {{ {tag}h);{} }}),",
+                used("walk", &parts.from_parts),
+                parts.from_parts
+            ),
+            false => writeln!(
+                from_parts,
+                "{ctor} => {{ let h = &mut aver_rt::shared_hash::node_hasher(); {tag}h);{} std::hash::Hasher::finish(h) }}",
+                parts.from_parts
+            ),
+        }
+        .unwrap();
+    }
+    let matched = |arms: &str| format!("match self {{\n{arms}        }}");
+    format!(
+        "\nimpl std::hash::Hash for {name} {{\n    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {{\n        aver_rt::shared_hash::hash(self, state)\n    }}\n}}\n{}",
+        walk_hash_impl(name, &matched(&stream), &matched(&from_parts))
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_sum_type(
     name: &str,
@@ -288,6 +510,7 @@ fn emit_sum_type(
     representation: RepresentationContract,
     shared: &[bool],
     thin: bool,
+    through: bool,
     lazy: bool,
 ) -> String {
     let mut out = String::new();
@@ -317,10 +540,11 @@ fn emit_sum_type(
                 .flatten()
         })
         .collect();
-    // The `==` of a thin sum carries an `aver_rt::Walk` through the
-    // payloads, which compares a subterm under many nodes once, not once per
-    // path to it, when the walk is long.
-    let recursive = capabilities.partial_eq && thin;
+    // The `==` of a thin sum, or of a sum holding itself through a
+    // collection, carries an `aver_rt::Walk` through the payloads, which
+    // compares a subterm under many nodes once, not once per path to it,
+    // when the walk is long.
+    let recursive = capabilities.partial_eq && (thin || through);
     let inline_eq = recursive
         || shared
             .iter()
@@ -328,14 +552,19 @@ fn emit_sum_type(
             .any(|(shared, order)| !shared && order.is_some());
     // The fields of each constructor whose `==` carries the walk; one with
     // none of them compares its `Shared` as any other sum does.
-    let walking: Vec<Vec<bool>> = variants
+    let field_types: Vec<Vec<&str>> = variants
         .iter()
-        .map(|v| {
-            let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
-            match recursive {
-                true => walking_fields(&types, ctx, scope),
-                false => Vec::new(),
-            }
+        .map(|v| v.fields.iter().map(String::as_str).collect())
+        .collect();
+    let walking_in = |i: usize| Walking {
+        types: &field_types[i],
+        ctx,
+        scope,
+    };
+    let walking: Vec<Vec<bool>> = (0..variants.len())
+        .map(|i| match recursive {
+            true => walking_in(i).marks(),
+            false => Vec::new(),
         })
         .collect();
     let walks_on = |i: usize| walking[i].contains(&true);
@@ -381,7 +610,7 @@ fn emit_sum_type(
             let (this, that) = (|i| format!("self.{i}"), |i| format!("other.{i}"));
             if order.is_some() || reflexive {
                 let declared: Vec<usize> = (0..v.fields.len()).collect();
-                let test = fields_equal(order.as_ref().unwrap_or(&declared), &[], this, that);
+                let test = fields_equal(order.as_ref().unwrap_or(&declared), None, this, that);
                 let test = match reflexive {
                     true => format!("std::ptr::eq(self, other) || {test}"),
                     false => test,
@@ -392,7 +621,7 @@ fn emit_sum_type(
                 let order = order
                     .clone()
                     .unwrap_or_else(|| (0..v.fields.len()).collect());
-                let test = fields_equal(&order, &walking[i], this, that);
+                let test = fields_equal(&order, Some(walking_in(i)), this, that);
                 payloads.push_str(&walk_eq_impl(&payload, &test));
             }
             if thin {
@@ -447,8 +676,7 @@ fn emit_sum_type(
                     writeln!(from_parts, "{ctor} => aver_rt::shared_hash::tag_hash({i}),").unwrap();
                     continue;
                 }
-                let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
-                let parts = hash_parts(&walking_fields(&types, ctx, scope), |j| format!("f.{j}"));
+                let parts = hash_parts(walking_in(i), |j| format!("f.{j}"));
                 writeln!(
                     stream,
                     "{ctor}(f) => {{ {tag}state);{} left }}",
@@ -474,8 +702,16 @@ fn emit_sum_type(
             write!(out, "\nimpl Eq for {name} {{}}\n").unwrap();
         }
     } else {
-        let derived = derive_line(without_derived_eq(capabilities, inline_eq));
+        let derived = without_derived_eq(capabilities, inline_eq);
+        let hashed = through && capabilities.hash;
+        let derived = derive_line(RepresentationCapabilities {
+            hash: derived.hash && !hashed,
+            ..derived
+        });
         writeln!(out, "{derived}\n{visibility}enum {name} {{\n{body}}}").unwrap();
+        if hashed {
+            out.push_str(&through_sum_hash(name, variants, &shared, walking_in));
+        }
     }
     out.push_str(&payloads);
     // A thin sum whose `==` is reflexive and that no `lazy f(…)` returns
@@ -483,7 +719,7 @@ fn emit_sum_type(
     // built by substitution most subterms are shared, so most pairs a
     // comparison meets are one node, equal with no call and no load (see
     // `walk_eq_by_node`).
-    let one_first = recursive && capabilities.eq && !lazy;
+    let one_first = recursive && thin && capabilities.eq && !lazy;
     if inline_eq {
         let mut arms = String::new();
         for (i, ((v, &shared), order)) in variants.iter().zip(&shared).zip(&eq_orders).enumerate() {
@@ -506,11 +742,21 @@ fn emit_sum_type(
                 0 => "true".to_string(),
                 // Both nodes of one constructor: equal at once when they are
                 // one node and `==` is reflexive.
-                _ if walks_on(i) => format!(
+                _ if walks_on(i) && thin => format!(
                     "walk.node(self, other, {}, |walk| a0.walk_eq(b0, walk))",
                     capabilities.eq && !one_first
                 ),
-                _ => fields_equal(&order, &[], |i| format!("a{i}"), |i| format!("b{i}")),
+                _ if walks_on(i) && shared => format!(
+                    "walk.node(a0, b0, {}, |walk| (**a0).walk_eq(&**b0, walk))",
+                    capabilities.partial_eq && capabilities.eq
+                ),
+                _ if walks_on(i) => fields_equal(
+                    &order,
+                    Some(walking_in(i)),
+                    |i| format!("(*a{i})"),
+                    |i| format!("(*b{i})"),
+                ),
+                _ => fields_equal(&order, None, |i| format!("a{i}"), |i| format!("b{i}")),
             };
             match thin {
                 true if order.is_empty() => {
@@ -532,9 +778,14 @@ fn emit_sum_type(
             .unwrap();
         }
         if recursive {
-            let test = format!(
-                "match {name}::view_pair(self, other) {{\n{arms}            None => false,\n        }}"
-            );
+            let test = match thin {
+                true => format!(
+                    "match {name}::view_pair(self, other) {{\n{arms}            None => false,\n        }}"
+                ),
+                false => {
+                    format!("match (self, other) {{\n{arms}            _ => false,\n        }}")
+                }
+            };
             match one_first {
                 true => out.push_str(&walk_eq_by_node(name, &test)),
                 false => out.push_str(&walk_eq_impl(name, &test)),
@@ -704,6 +955,7 @@ fn emit_product_type(
     scope: Option<&str>,
     walking: bool,
     cyclic: bool,
+    through: bool,
     boxed: bool,
     representation: RepresentationContract,
 ) -> String {
@@ -727,7 +979,14 @@ fn emit_product_type(
         .partial_eq
         .then(|| cheap_fields_first(&types, ctx, scope))
         .flatten();
-    let derived = without_derived_eq(capabilities, eq_order.is_some());
+    // A record holding itself through a collection compares and hashes
+    // within one walk from the top (see `through_collection`).
+    let through = through && walking;
+    let derived = without_derived_eq(capabilities, eq_order.is_some() || through);
+    let derived = RepresentationCapabilities {
+        hash: derived.hash && !through,
+        ..derived
+    };
     writeln!(out, "{}", derive_line(derived)).unwrap();
     writeln!(out, "{}struct {} {{", visibility, name).unwrap();
     for (field_name, field_type) in fields {
@@ -752,11 +1011,18 @@ fn emit_product_type(
         .unwrap();
     }
     writeln!(out, "}}").unwrap();
-    if let Some(order) = &eq_order {
+    let walking_fields = Walking {
+        types: &types,
+        ctx,
+        scope,
+    };
+    if through {
+        out.push_str(&partial_eq_impl(name, "aver_rt::walk_eq(self, other)"));
+    } else if let Some(order) = &eq_order {
         let field = |i: usize| aver_name_to_rust(&fields[i].0);
         let test = fields_equal(
             order,
-            &[],
+            None,
             |i| format!("self.{}", field(i)),
             |i| format!("other.{}", field(i)),
         );
@@ -767,15 +1033,22 @@ fn emit_product_type(
         let order = eq_order.unwrap_or_else(|| (0..fields.len()).collect());
         let test = fields_equal(
             &order,
-            &walking_fields(&types, ctx, scope),
+            Some(walking_fields),
             |i| format!("self.{}", field(i)),
             |i| format!("other.{}", field(i)),
         );
         out.push_str(&walk_eq_impl(name, &test));
     }
-    if cyclic && capabilities.hash {
+    if through && capabilities.hash {
+        write!(
+            out,
+            "\nimpl std::hash::Hash for {name} {{\n    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {{\n        aver_rt::shared_hash::hash(self, state)\n    }}\n}}\n"
+        )
+        .unwrap();
+    }
+    if (cyclic || through) && capabilities.hash {
         let field = |i: usize| format!("self.{}", aver_name_to_rust(&fields[i].0));
-        let parts = hash_parts(&walking_fields(&types, ctx, scope), field);
+        let parts = hash_parts(walking_fields, field);
         let from_parts = format!(
             "let h = &mut aver_rt::shared_hash::node_hasher();{}\n        std::hash::Hasher::finish(h)",
             parts.from_parts

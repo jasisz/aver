@@ -520,6 +520,15 @@ impl VM {
                     self.stack
                         .push(NanValue::new_bool(a.as_float() > b.as_float()));
                 }
+                LE_FLOAT | GE_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?.as_float();
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?.as_float();
+                    let holds = match op {
+                        LE_FLOAT => a <= b,
+                        _ => a >= b,
+                    };
+                    self.stack.push(NanValue::new_bool(holds));
+                }
 
                 CONCAT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;

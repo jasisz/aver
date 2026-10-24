@@ -567,6 +567,14 @@ fn folded_nan_and_infinity_constants_match_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Float division by a zero computed at run time gives NaN and infinities,
+/// which compare as on the VM (`<=` and `>=` with a NaN are false).
+#[test]
+fn float_division_by_zero_matches_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/float_division_by_zero_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A worker that hands its String to another module's indexed helper passes
 /// the index it holds instead of going through the wrapper, which would index
 /// the whole string again on every call. Multibyte characters make the index
@@ -643,26 +651,50 @@ fn shared_recursive_sum_matches_between_rust_and_vm() {
     assert_plain_parity_then(
         "tests/fixtures/shared_recursive_sum_app.av",
         None,
-        |bin, shallow| {
-            let mut child = Command::new(bin)
-                .arg("64")
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| format!("failed to run compiled binary: {e}"))?;
-            let started = std::time::Instant::now();
-            while child.try_wait().expect("binary is waitable").is_none() {
-                if started.elapsed() > std::time::Duration::from_secs(60) {
-                    let _ = child.kill();
-                    return Err("`==` at 64 levels did not end within a minute".into());
-                }
-                std::thread::sleep(std::time::Duration::from_millis(20));
+        prints_the_same_at_64_levels,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// The compiled binary run at 64 levels ends within a minute and prints
+/// what it printed at 12.
+fn prints_the_same_at_64_levels(bin: &Path, shallow: &str) -> Result<(), String> {
+    let mut child = Command::new(bin)
+        .arg("64")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+    let started = std::time::Instant::now();
+    while child.try_wait().expect("binary is waitable").is_none() {
+        if started.elapsed() > std::time::Duration::from_secs(60) {
+            let _ = child.kill();
+            return Err("`==` at 64 levels did not end within a minute".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().expect("binary output");
+    let deep = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    match deep == shallow {
+        true => Ok(()),
+        false => Err(format!("at 64 levels:\n{deep}\nat 12:\n{shallow}")),
+    }
+}
+
+/// The same for types that hold themselves through a `List`, a `Vector`, a
+/// `Map`, a tuple in a list, an `Option` of a list and a record, a thin sum
+/// with a list field and a large constructor behind a `Shared`: `==` and
+/// the hash of a map key carry one walk through the collections, so the
+/// binary answers at 64 levels as at 12.
+#[test]
+fn equality_through_collections_matches_between_rust_and_vm() {
+    assert_plain_parity_then(
+        "tests/fixtures/shared_collection_cycle_app.av",
+        None,
+        |bin, shallow| match shallow {
+            "tree 1010\njson 1001\ndir 1010\nterm 1010\nbig 1010\nmaps 10" => {
+                prints_the_same_at_64_levels(bin, shallow)
             }
-            let out = child.wait_with_output().expect("binary output");
-            let deep = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            match deep == shallow {
-                true => Ok(()),
-                false => Err(format!("at 64 levels:\n{deep}\nat 12:\n{shallow}")),
-            }
+            _ => Err(format!("at 12 levels:\n{shallow}")),
         },
     )
     .unwrap_or_else(|e| panic!("{e}"));

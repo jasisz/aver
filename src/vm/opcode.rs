@@ -141,6 +141,12 @@ pub const LT_FLOAT: u8 = 0x26;
 /// Typed `>` for two `Float` operands; same shape as `LT_FLOAT`.
 pub const GT_FLOAT: u8 = 0x27;
 
+/// Typed `<=` and `>=` for two `Float` operands. Not `NOT` of `GT_FLOAT`
+/// and `LT_FLOAT`: a NaN is neither smaller, larger nor equal, so every
+/// comparison with one is false.
+pub const LE_FLOAT: u8 = 0x2A;
+pub const GE_FLOAT: u8 = 0x2B;
+
 /// Fused `match n { LIT -> ...; _ -> ... }` arm test: peek the top of
 /// stack (subject left in place by the surrounding `compile_match`),
 /// if its `Int` value equals the inline `imm` literal — fall through
@@ -679,6 +685,8 @@ pub fn opcode_name(op: u8) -> &'static str {
         GT_INT => "GT_INT",
         LT_FLOAT => "LT_FLOAT",
         GT_FLOAT => "GT_FLOAT",
+        LE_FLOAT => "LE_FLOAT",
+        GE_FLOAT => "GE_FLOAT",
         LT => "LT",
         GT => "GT",
         CONCAT => "CONCAT",
@@ -803,6 +811,8 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | GT
         | GT_INT
         | GT_FLOAT
+        | LE_FLOAT
+        | GE_FLOAT
         | RETURN
         | PROPAGATE_ERR
         | PROPAGATE_ERR_CONSUMED

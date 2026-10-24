@@ -60,10 +60,26 @@ impl aver_rt::thin::HandOver for Val__ValFnRef {}
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValList(pub aver_rt::AverList<Val>);
 
+impl aver_rt::WalkEq for Val__ValList {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
+
 impl aver_rt::thin::HandOver for Val__ValList {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValVector(pub aver_rt::AverVector<Val>);
+
+impl aver_rt::WalkEq for Val__ValVector {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_vector(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
 
 impl aver_rt::thin::HandOver for Val__ValVector {}
 
@@ -115,10 +131,27 @@ impl aver_rt::thin::HandOver for Val__ValSome {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValTuple(pub aver_rt::AverList<Val>);
 
+impl aver_rt::WalkEq for Val__ValTuple {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
+
 impl aver_rt::thin::HandOver for Val__ValTuple {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValRecord(pub AverStr, pub aver_rt::AverList<(AverStr, Val)>);
+
+impl aver_rt::WalkEq for Val__ValRecord {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                ((*x).0 == (*y).0 && (*x).1.walk_eq(&(*y).1, walk))
+            })
+    }
+}
 
 impl aver_rt::thin::HandOver for Val__ValRecord {}
 
@@ -144,10 +177,28 @@ pub struct Val__ValVariant(
     pub aver_rt::AverList<Val>,
 );
 
+impl aver_rt::WalkEq for Val__ValVariant {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.2, &other.2, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
+
 impl aver_rt::thin::HandOver for Val__ValVariant {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Val__ValMap(pub aver_rt::AverMap<AverStr, Val>);
+
+impl aver_rt::WalkEq for Val__ValMap {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_map(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
 
 impl aver_rt::thin::HandOver for Val__ValMap {}
 
@@ -159,8 +210,12 @@ impl aver_rt::WalkEq for Val {
             Some(Val__pair::ValStr(a0, b0)) => a0 == b0,
             Some(Val__pair::ValBool(a0, b0)) => a0 == b0,
             Some(Val__pair::ValFnRef(a0, b0)) => a0 == b0,
-            Some(Val__pair::ValList(a0, b0)) => a0 == b0,
-            Some(Val__pair::ValVector(a0, b0)) => a0 == b0,
+            Some(Val__pair::ValList(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Val__pair::ValVector(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Val__pair::ValOk(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
@@ -171,13 +226,21 @@ impl aver_rt::WalkEq for Val {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Val__pair::ValNone) => true,
-            Some(Val__pair::ValTuple(a0, b0)) => a0 == b0,
-            Some(Val__pair::ValRecord(a0, b0)) => a0 == b0,
+            Some(Val__pair::ValTuple(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Val__pair::ValRecord(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Val__pair::ValTcpConnection(a0, b0)) => a0 == b0,
             Some(Val__pair::ValTcpDial(a0, b0)) => a0 == b0,
             Some(Val__pair::ValTcpListener(a0, b0)) => a0 == b0,
-            Some(Val__pair::ValVariant(a0, b0)) => a0 == b0,
-            Some(Val__pair::ValMap(a0, b0)) => a0 == b0,
+            Some(Val__pair::ValVariant(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Val__pair::ValMap(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Val__pair::ValUnit) => true,
             None => false,
         }

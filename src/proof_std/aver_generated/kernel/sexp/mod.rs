@@ -2,11 +2,94 @@
 use crate::proof_std::*;
 use ::aver_rt::aver_list_match;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub enum Sexp {
     Atom(AverStr),
     Text(AverStr),
     Node(aver_rt::AverList<Sexp>),
+}
+
+impl std::hash::Hash for Sexp {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Sexp {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        match self {
+            Sexp::Atom(f0) => {
+                std::hash::Hash::hash(&0u32, state);
+                std::hash::Hash::hash(&(*f0), state);
+                left
+            }
+            Sexp::Text(f0) => {
+                std::hash::Hash::hash(&1u32, state);
+                std::hash::Hash::hash(&(*f0), state);
+                left
+            }
+            Sexp::Node(f0) => {
+                std::hash::Hash::hash(&2u32, state);
+                let left = aver_rt::shared_items::stream_items(
+                    (*f0).iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
+                left
+            }
+        }
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        match self {
+            Sexp::Atom(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&0u32, h);
+                std::hash::Hash::hash(&(*f0), h);
+                std::hash::Hasher::finish(h)
+            }
+            Sexp::Text(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&1u32, h);
+                std::hash::Hash::hash(&(*f0), h);
+                std::hash::Hasher::finish(h)
+            }
+            Sexp::Node(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&2u32, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&(*f0), walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
+                std::hash::Hasher::finish(h)
+            }
+        }
+    }
+}
+
+impl aver_rt::WalkEq for Sexp {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        match (self, other) {
+            (Sexp::Atom(a0), Sexp::Atom(b0)) => a0 == b0,
+            (Sexp::Text(a0), Sexp::Text(b0)) => a0 == b0,
+            (Sexp::Node(a0), Sexp::Node(b0)) => {
+                aver_rt::shared_items::eq_list(&(*a0), &(*b0), walk, |x, y, walk| {
+                    (*x).walk_eq(&(*y), walk)
+                })
+            }
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for Sexp {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
 }
 
 impl Sexp {

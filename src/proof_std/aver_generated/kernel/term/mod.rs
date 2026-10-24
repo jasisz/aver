@@ -95,7 +95,12 @@ impl aver_rt::WalkHash for Ty {
             }
             Ty__view::TyTuple(f) => {
                 std::hash::Hash::hash(&10u32, state);
-                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.0.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Ty__view::TyNamed(f) => {
@@ -151,9 +156,14 @@ impl aver_rt::WalkHash for Ty {
                 std::hash::Hash::hash(&9u32, h);
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
             }),
-            Ty__view::TyTuple(f) => walk.node(self, |_, h| {
+            Ty__view::TyTuple(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&10u32, h);
-                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.0, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Ty__view::TyNamed(f) => walk.node(self, |_, h| {
                 std::hash::Hash::hash(&11u32, h);
@@ -292,6 +302,14 @@ impl PartialEq for Ty__TyTuple {
     }
 }
 
+impl aver_rt::WalkEq for Ty__TyTuple {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
+
 impl aver_rt::thin::HandOver for Ty__TyTuple {}
 
 #[derive(Clone, Debug, Eq, Hash)]
@@ -359,7 +377,9 @@ impl Ty {
             Some(Ty__pair::TyVector(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Ty__pair::TyTuple(a0, b0)) => a0 == b0,
+            Some(Ty__pair::TyTuple(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Ty__pair::TyNamed(a0, b0)) => a0 == b0,
             Some(Ty__pair::TyAny) => true,
             Some(Ty__pair::TyVar(a0, b0)) => a0 == b0,
@@ -592,13 +612,23 @@ impl aver_rt::WalkHash for Term {
             Term__view::TCall(f) => {
                 std::hash::Hash::hash(&7u32, state);
                 std::hash::Hash::hash(&f.0, state);
-                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.1.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Term__view::TBi(f) => {
                 std::hash::Hash::hash(&8u32, state);
                 std::hash::Hash::hash(&f.0, state);
-                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.1.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Term__view::TOp(f) => {
@@ -620,41 +650,84 @@ impl aver_rt::WalkHash for Term {
             Term__view::TCtor(f) => {
                 std::hash::Hash::hash(&11u32, state);
                 std::hash::Hash::hash(&f.0, state);
-                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.1.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Term__view::TMatch(f) => {
                 std::hash::Hash::hash(&12u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
                 let left = aver_rt::WalkHash::stream(&f.0, state, left);
-                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.1.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Term__view::TParts(f) => {
                 std::hash::Hash::hash(&13u32, state);
-                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.0.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Term__view::TList(f) => {
                 std::hash::Hash::hash(&14u32, state);
-                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.0.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Term__view::TTuple(f) => {
                 std::hash::Hash::hash(&15u32, state);
-                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.0.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Term__view::TRec(f) => {
                 std::hash::Hash::hash(&16u32, state);
                 std::hash::Hash::hash(&f.0, state);
-                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.1.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Term__view::TUpd(f) => {
                 std::hash::Hash::hash(&17u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
                 std::hash::Hash::hash(&f.0, state);
                 let left = aver_rt::WalkHash::stream(&f.1, state, left);
-                std::hash::Hash::hash(&f.2, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.2.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
         }
@@ -685,15 +758,25 @@ impl aver_rt::WalkHash for Term {
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
                 std::hash::Hash::hash(&f.1, h);
             }),
-            Term__view::TCall(f) => walk.node(self, |_, h| {
+            Term__view::TCall(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&7u32, h);
                 std::hash::Hash::hash(&f.0, h);
-                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
-            Term__view::TBi(f) => walk.node(self, |_, h| {
+            Term__view::TBi(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&8u32, h);
                 std::hash::Hash::hash(&f.0, h);
-                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Term__view::TOp(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&9u32, h);
@@ -705,38 +788,73 @@ impl aver_rt::WalkHash for Term {
                 std::hash::Hash::hash(&10u32, h);
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
             }),
-            Term__view::TCtor(f) => walk.node(self, |_, h| {
+            Term__view::TCtor(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&11u32, h);
                 std::hash::Hash::hash(&f.0, h);
-                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Term__view::TMatch(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&12u32, h);
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
-                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
-            Term__view::TParts(f) => walk.node(self, |_, h| {
+            Term__view::TParts(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&13u32, h);
-                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.0, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
-            Term__view::TList(f) => walk.node(self, |_, h| {
+            Term__view::TList(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&14u32, h);
-                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.0, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
-            Term__view::TTuple(f) => walk.node(self, |_, h| {
+            Term__view::TTuple(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&15u32, h);
-                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.0, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
-            Term__view::TRec(f) => walk.node(self, |_, h| {
+            Term__view::TRec(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&16u32, h);
                 std::hash::Hash::hash(&f.0, h);
-                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Term__view::TUpd(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&17u32, h);
                 std::hash::Hash::hash(&f.0, h);
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
-                std::hash::Hash::hash(&f.2, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.2, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
         }
     }
@@ -818,6 +936,15 @@ impl PartialEq for Term__TCall {
     }
 }
 
+impl aver_rt::WalkEq for Term__TCall {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
+
 impl aver_rt::thin::HandOver for Term__TCall {}
 
 #[derive(Clone, Debug, Eq, Hash)]
@@ -826,6 +953,15 @@ pub struct Term__TBi(pub AverStr, pub aver_rt::AverList<Term>);
 impl PartialEq for Term__TBi {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
+
+impl aver_rt::WalkEq for Term__TBi {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -883,6 +1019,15 @@ impl PartialEq for Term__TCtor {
     }
 }
 
+impl aver_rt::WalkEq for Term__TCtor {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
+
 impl aver_rt::thin::HandOver for Term__TCtor {}
 
 #[derive(Clone, Debug, Eq, Hash)]
@@ -896,7 +1041,10 @@ impl PartialEq for Term__TMatch {
 
 impl aver_rt::WalkEq for Term__TMatch {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0.walk_eq(&other.0, walk) && self.1 == other.1
+        self.0.walk_eq(&other.0, walk)
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -915,6 +1063,14 @@ impl PartialEq for Term__TParts {
     }
 }
 
+impl aver_rt::WalkEq for Term__TParts {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
+
 impl aver_rt::thin::HandOver for Term__TParts {}
 
 #[derive(Clone, Debug, Eq, Hash)]
@@ -923,6 +1079,14 @@ pub struct Term__TList(pub aver_rt::AverList<Term>);
 impl PartialEq for Term__TList {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other) || self.0 == other.0
+    }
+}
+
+impl aver_rt::WalkEq for Term__TList {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
     }
 }
 
@@ -937,6 +1101,14 @@ impl PartialEq for Term__TTuple {
     }
 }
 
+impl aver_rt::WalkEq for Term__TTuple {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
+
 impl aver_rt::thin::HandOver for Term__TTuple {}
 
 #[derive(Clone, Debug, Eq, Hash)]
@@ -945,6 +1117,15 @@ pub struct Term__TRec(pub AverStr, pub aver_rt::AverList<Field>);
 impl PartialEq for Term__TRec {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+    }
+}
+
+impl aver_rt::WalkEq for Term__TRec {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -961,7 +1142,11 @@ impl PartialEq for Term__TUpd {
 
 impl aver_rt::WalkEq for Term__TUpd {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0 == other.0 && self.1.walk_eq(&other.1, walk) && self.2 == other.2
+        self.0 == other.0
+            && self.1.walk_eq(&other.1, walk)
+            && aver_rt::shared_items::eq_list(&self.2, &other.2, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -992,22 +1177,36 @@ impl Term {
             Some(Term__pair::TGet(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Term__pair::TCall(a0, b0)) => a0 == b0,
-            Some(Term__pair::TBi(a0, b0)) => a0 == b0,
+            Some(Term__pair::TCall(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Term__pair::TBi(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Term__pair::TOp(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Term__pair::TNeg(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Term__pair::TCtor(a0, b0)) => a0 == b0,
+            Some(Term__pair::TCtor(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Term__pair::TMatch(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Term__pair::TParts(a0, b0)) => a0 == b0,
-            Some(Term__pair::TList(a0, b0)) => a0 == b0,
-            Some(Term__pair::TTuple(a0, b0)) => a0 == b0,
-            Some(Term__pair::TRec(a0, b0)) => a0 == b0,
+            Some(Term__pair::TParts(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Term__pair::TList(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Term__pair::TTuple(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Term__pair::TRec(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Term__pair::TUpd(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
@@ -1178,10 +1377,47 @@ impl aver_rt::AverDisplay for Term {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct Arm {
     pub pattern: Pat,
     pub body: Term,
+}
+
+impl PartialEq for Arm {
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
+
+impl aver_rt::WalkEq for Arm {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.pattern.walk_eq(&other.pattern, walk) && self.body.walk_eq(&other.body, walk)
+    }
+}
+
+impl std::hash::Hash for Arm {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Arm {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        if left == 0 {
+            return 0;
+        }
+        let left = left - 1;
+        let left = aver_rt::WalkHash::stream(&self.pattern, state, left);
+        let left = aver_rt::WalkHash::stream(&self.body, state, left);
+        left
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        let h = &mut aver_rt::shared_hash::node_hasher();
+        std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&self.pattern, walk));
+        std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&self.body, walk));
+        std::hash::Hasher::finish(h)
+    }
 }
 
 impl PartialOrd for Arm {
@@ -1214,10 +1450,43 @@ impl aver_rt::AverDisplay for Arm {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct Field {
     pub name: AverStr,
     pub value: Term,
+}
+
+impl PartialEq for Field {
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
+
+impl aver_rt::WalkEq for Field {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.name == other.name && self.value.walk_eq(&other.value, walk)
+    }
+}
+
+impl std::hash::Hash for Field {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Field {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        std::hash::Hash::hash(&self.name, state);
+        let left = aver_rt::WalkHash::stream(&self.value, state, left);
+        left
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        let h = &mut aver_rt::shared_hash::node_hasher();
+        std::hash::Hash::hash(&self.name, h);
+        std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&self.value, walk));
+        std::hash::Hasher::finish(h)
+    }
 }
 
 impl PartialOrd for Field {
@@ -1250,7 +1519,7 @@ impl aver_rt::AverDisplay for Field {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub enum Pat {
     PWild,
     PVar(AverStr),
@@ -1259,6 +1528,129 @@ pub enum Pat {
     PCons(AverStr, AverStr),
     PTuple(aver_rt::AverList<Pat>),
     PCtor(AverStr, aver_rt::AverList<AverStr>),
+}
+
+impl std::hash::Hash for Pat {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Pat {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        match self {
+            Pat::PWild => {
+                std::hash::Hash::hash(&0u32, state);
+                left
+            }
+            Pat::PVar(f0) => {
+                std::hash::Hash::hash(&1u32, state);
+                std::hash::Hash::hash(&(*f0), state);
+                left
+            }
+            Pat::PLit(f0) => {
+                std::hash::Hash::hash(&2u32, state);
+                let left = aver_rt::WalkHash::stream(&(*f0), state, left);
+                left
+            }
+            Pat::PNil => {
+                std::hash::Hash::hash(&3u32, state);
+                left
+            }
+            Pat::PCons(f0, f1) => {
+                std::hash::Hash::hash(&4u32, state);
+                std::hash::Hash::hash(&(*f0), state);
+                std::hash::Hash::hash(&(*f1), state);
+                left
+            }
+            Pat::PTuple(f0) => {
+                std::hash::Hash::hash(&5u32, state);
+                let left = aver_rt::shared_items::stream_items(
+                    (*f0).iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
+                left
+            }
+            Pat::PCtor(f0, f1) => {
+                std::hash::Hash::hash(&6u32, state);
+                std::hash::Hash::hash(&(*f0), state);
+                std::hash::Hash::hash(&(*f1), state);
+                left
+            }
+        }
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        match self {
+            Pat::PWild => aver_rt::shared_hash::tag_hash(0),
+            Pat::PVar(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&1u32, h);
+                std::hash::Hash::hash(&(*f0), h);
+                std::hash::Hasher::finish(h)
+            }
+            Pat::PLit(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&2u32, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&(*f0), walk));
+                std::hash::Hasher::finish(h)
+            }
+            Pat::PNil => aver_rt::shared_hash::tag_hash(3),
+            Pat::PCons(f0, f1) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&4u32, h);
+                std::hash::Hash::hash(&(*f0), h);
+                std::hash::Hash::hash(&(*f1), h);
+                std::hash::Hasher::finish(h)
+            }
+            Pat::PTuple(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&5u32, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&(*f0), walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
+                std::hash::Hasher::finish(h)
+            }
+            Pat::PCtor(f0, f1) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&6u32, h);
+                std::hash::Hash::hash(&(*f0), h);
+                std::hash::Hash::hash(&(*f1), h);
+                std::hash::Hasher::finish(h)
+            }
+        }
+    }
+}
+
+impl aver_rt::WalkEq for Pat {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        match (self, other) {
+            (Pat::PWild, Pat::PWild) => true,
+            (Pat::PVar(a0), Pat::PVar(b0)) => a0 == b0,
+            (Pat::PLit(a0), Pat::PLit(b0)) => (*a0).walk_eq(&(*b0), walk),
+            (Pat::PNil, Pat::PNil) => true,
+            (Pat::PCons(a0, a1), Pat::PCons(b0, b1)) => a0 == b0 && a1 == b1,
+            (Pat::PTuple(a0), Pat::PTuple(b0)) => {
+                aver_rt::shared_items::eq_list(&(*a0), &(*b0), walk, |x, y, walk| {
+                    (*x).walk_eq(&(*y), walk)
+                })
+            }
+            (Pat::PCtor(a0, a1), Pat::PCtor(b0, b1)) => a0 == b0 && a1 == b1,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for Pat {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
 }
 
 impl Pat {
@@ -1399,12 +1791,118 @@ impl aver_rt::AverDisplay for Eqn {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub enum Fin {
     FBool,
     FSum(aver_rt::AverList<AverStr>),
     FRec(AverStr, aver_rt::AverList<FinField>),
     FTuple(aver_rt::AverList<Fin>),
+}
+
+impl std::hash::Hash for Fin {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Fin {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        match self {
+            Fin::FBool => {
+                std::hash::Hash::hash(&0u32, state);
+                left
+            }
+            Fin::FSum(f0) => {
+                std::hash::Hash::hash(&1u32, state);
+                std::hash::Hash::hash(&(*f0), state);
+                left
+            }
+            Fin::FRec(f0, f1) => {
+                std::hash::Hash::hash(&2u32, state);
+                std::hash::Hash::hash(&(*f0), state);
+                let left = aver_rt::shared_items::stream_items(
+                    (*f1).iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
+                left
+            }
+            Fin::FTuple(f0) => {
+                std::hash::Hash::hash(&3u32, state);
+                let left = aver_rt::shared_items::stream_items(
+                    (*f0).iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
+                left
+            }
+        }
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        match self {
+            Fin::FBool => aver_rt::shared_hash::tag_hash(0),
+            Fin::FSum(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&1u32, h);
+                std::hash::Hash::hash(&(*f0), h);
+                std::hash::Hasher::finish(h)
+            }
+            Fin::FRec(f0, f1) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&2u32, h);
+                std::hash::Hash::hash(&(*f0), h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&(*f1), walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
+                std::hash::Hasher::finish(h)
+            }
+            Fin::FTuple(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&3u32, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&(*f0), walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
+                std::hash::Hasher::finish(h)
+            }
+        }
+    }
+}
+
+impl aver_rt::WalkEq for Fin {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        match (self, other) {
+            (Fin::FBool, Fin::FBool) => true,
+            (Fin::FSum(a0), Fin::FSum(b0)) => a0 == b0,
+            (Fin::FRec(a0, a1), Fin::FRec(b0, b1)) => {
+                (*a0) == (*b0)
+                    && aver_rt::shared_items::eq_list(&(*a1), &(*b1), walk, |x, y, walk| {
+                        (*x).walk_eq(&(*y), walk)
+                    })
+            }
+            (Fin::FTuple(a0), Fin::FTuple(b0)) => {
+                aver_rt::shared_items::eq_list(&(*a0), &(*b0), walk, |x, y, walk| {
+                    (*x).walk_eq(&(*y), walk)
+                })
+            }
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for Fin {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
 }
 
 impl Fin {
@@ -1460,10 +1958,43 @@ impl aver_rt::AverDisplay for Fin {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct FinField {
     pub name: AverStr,
     pub fin: Fin,
+}
+
+impl PartialEq for FinField {
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
+
+impl aver_rt::WalkEq for FinField {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.name == other.name && self.fin.walk_eq(&other.fin, walk)
+    }
+}
+
+impl std::hash::Hash for FinField {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for FinField {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        std::hash::Hash::hash(&self.name, state);
+        let left = aver_rt::WalkHash::stream(&self.fin, state, left);
+        left
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        let h = &mut aver_rt::shared_hash::node_hasher();
+        std::hash::Hash::hash(&self.name, h);
+        std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&self.fin, walk));
+        std::hash::Hasher::finish(h)
+    }
 }
 
 impl PartialOrd for FinField {

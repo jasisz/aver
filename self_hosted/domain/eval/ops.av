@@ -29,16 +29,14 @@ fn applyBinopFloat(x: Float, y: Float, op: BinOp) -> Result<Val, String>
         BinOp.OpAdd -> Result.Ok(Val.ValFloat(x + y))
         BinOp.OpSub -> Result.Ok(Val.ValFloat(x - y))
         BinOp.OpMul -> Result.Ok(Val.ValFloat(x * y))
-        BinOp.OpDiv -> match y == 0.0
-            true -> Result.Err("float division by zero")
-            false -> Result.Ok(Val.ValFloat(x / y))
+        BinOp.OpDiv -> Result.Ok(Val.ValFloat(x / y))
 
 verify applyBinopFloat
     applyBinopFloat(1.5, 2.5, BinOp.OpAdd) => Result.Ok(Val.ValFloat(4.0))
     applyBinopFloat(5.0, 3.0, BinOp.OpSub) => Result.Ok(Val.ValFloat(2.0))
     applyBinopFloat(2.0, 3.0, BinOp.OpMul) => Result.Ok(Val.ValFloat(6.0))
     applyBinopFloat(10.0, 4.0, BinOp.OpDiv) => Result.Ok(Val.ValFloat(2.5))
-    applyBinopFloat(1.0, 0.0, BinOp.OpDiv) => Result.Err("float division by zero")
+    applyBinopFloat(1.0, 0.0, BinOp.OpDiv) => Result.Ok(Val.ValFloat(1.0 / 0.0))
 
 fn applyCmp(x: Int, y: Int, op: CmpOp) -> Val
     ? "Apply a comparison operation to two integers."

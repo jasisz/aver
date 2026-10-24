@@ -78,7 +78,12 @@ impl aver_rt::WalkHash for Tactic {
             }
             Tactic__view::First(f) => {
                 std::hash::Hash::hash(&5u32, state);
-                std::hash::Hash::hash(&f.0, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.0.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Tactic__view::Plan(f) => {
@@ -118,9 +123,14 @@ impl aver_rt::WalkHash for Tactic {
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
             }),
-            Tactic__view::First(f) => walk.node(self, |_, h| {
+            Tactic__view::First(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&5u32, h);
-                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.0, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Tactic__view::Plan(f) => walk.node(self, |_, h| {
                 std::hash::Hash::hash(&6u32, h);
@@ -265,6 +275,14 @@ impl PartialEq for Tactic__First {
     }
 }
 
+impl aver_rt::WalkEq for Tactic__First {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
+
 impl aver_rt::thin::HandOver for Tactic__First {}
 
 #[derive(Clone, Debug, Eq, Hash)]
@@ -303,7 +321,9 @@ impl Tactic {
             Some(Tactic__pair::SplitBool(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Tactic__pair::First(a0, b0)) => a0 == b0,
+            Some(Tactic__pair::First(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Tactic__pair::Plan(a0, b0)) => a0 == b0,
             None => false,
         }

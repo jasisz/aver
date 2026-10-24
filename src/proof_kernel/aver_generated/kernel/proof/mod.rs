@@ -59,8 +59,22 @@ impl aver_rt::WalkHash for Proof {
             }
             Proof__view::PTrans(f) => {
                 std::hash::Hash::hash(&2u32, state);
-                std::hash::Hash::hash(&f.0, state);
-                std::hash::Hash::hash(&f.1, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
+                let left = aver_rt::shared_items::stream_items(
+                    f.0.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
+                let left = aver_rt::shared_items::stream_items(
+                    f.1.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Proof__view::PCongr(f) => {
@@ -75,11 +89,30 @@ impl aver_rt::WalkHash for Proof {
             }
             Proof__view::PUnfold(f) => {
                 std::hash::Hash::hash(&4u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
                 std::hash::Hash::hash(&f.0, state);
                 std::hash::Hash::hash(&f.1, state);
-                std::hash::Hash::hash(&f.2, state);
-                std::hash::Hash::hash(&f.3, state);
-                std::hash::Hash::hash(&f.4, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.2.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
+                let left = aver_rt::shared_items::stream_items(
+                    f.3.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
+                let left = aver_rt::shared_items::stream_items(
+                    f.4.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Proof__view::PConst(f) => {
@@ -94,7 +127,12 @@ impl aver_rt::WalkHash for Proof {
                 }
                 let left = left - 1;
                 std::hash::Hash::hash(&f.0, state);
-                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.1.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 let left = aver_rt::WalkHash::stream(&f.2, state, left);
                 let left = aver_rt::WalkHash::stream(&f.3, state, left);
                 left
@@ -118,14 +156,24 @@ impl aver_rt::WalkHash for Proof {
                 std::hash::Hash::hash(&10u32, state);
                 std::hash::Hash::hash(&f.0, state);
                 std::hash::Hash::hash(&f.1, state);
-                std::hash::Hash::hash(&f.2, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.2.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Proof__view::PLaw(f) => {
                 std::hash::Hash::hash(&11u32, state);
                 std::hash::Hash::hash(&f.0, state);
                 std::hash::Hash::hash(&f.1, state);
-                std::hash::Hash::hash(&f.2, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.2.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Proof__view::PCompute(f) => {
@@ -152,10 +200,24 @@ impl aver_rt::WalkHash for Proof {
             }
             Proof__view::PSplit(f) => {
                 std::hash::Hash::hash(&14u32, state);
+                if left == 0 {
+                    return 0;
+                }
+                let left = left - 1;
                 let left = aver_rt::WalkHash::stream(&f.0, state, left);
                 std::hash::Hash::hash(&f.1, state);
-                std::hash::Hash::hash(&f.2, state);
-                std::hash::Hash::hash(&f.3, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.2.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
+                let left = aver_rt::shared_items::stream_items(
+                    f.3.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Proof__view::PHave(f) => {
@@ -179,7 +241,12 @@ impl aver_rt::WalkHash for Proof {
                 std::hash::Hash::hash(&f.0, state);
                 let left = aver_rt::WalkHash::stream(&f.1, state, left);
                 let left = aver_rt::WalkHash::stream(&f.2, state, left);
-                std::hash::Hash::hash(&f.3, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.3.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Proof__view::PAbsurd(f) => {
@@ -200,11 +267,21 @@ impl aver_rt::WalkHash for Proof {
                 }
                 let left = left - 1;
                 std::hash::Hash::hash(&f.0, state);
-                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.1.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 let left = aver_rt::WalkHash::stream(&f.2, state, left);
                 let left = aver_rt::WalkHash::stream(&f.3, state, left);
                 std::hash::Hash::hash(&f.4, state);
-                std::hash::Hash::hash(&f.5, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.5.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 left
             }
             Proof__view::PListInduct(f) => {
@@ -221,7 +298,12 @@ impl aver_rt::WalkHash for Proof {
                 std::hash::Hash::hash(&f.5, state);
                 std::hash::Hash::hash(&f.6, state);
                 std::hash::Hash::hash(&f.7, state);
-                std::hash::Hash::hash(&f.8, state);
+                let left = aver_rt::shared_items::stream_items(
+                    f.8.iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
                 let left = aver_rt::WalkHash::stream(&f.9, state, left);
                 left
             }
@@ -289,23 +371,48 @@ impl aver_rt::WalkHash for Proof {
                 std::hash::Hash::hash(&1u32, h);
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
             }),
-            Proof__view::PTrans(f) => walk.node(self, |_, h| {
+            Proof__view::PTrans(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&2u32, h);
-                std::hash::Hash::hash(&f.0, h);
-                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.0, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Proof__view::PCongr(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&3u32, h);
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
             }),
-            Proof__view::PUnfold(f) => walk.node(self, |_, h| {
+            Proof__view::PUnfold(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&4u32, h);
                 std::hash::Hash::hash(&f.0, h);
                 std::hash::Hash::hash(&f.1, h);
-                std::hash::Hash::hash(&f.2, h);
-                std::hash::Hash::hash(&f.3, h);
-                std::hash::Hash::hash(&f.4, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.2, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.3, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.4, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Proof__view::PConst(f) => walk.node(self, |_, h| {
                 std::hash::Hash::hash(&5u32, h);
@@ -314,7 +421,12 @@ impl aver_rt::WalkHash for Proof {
             Proof__view::PArm(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&6u32, h);
                 std::hash::Hash::hash(&f.0, h);
-                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.3, walk));
             }),
@@ -330,17 +442,27 @@ impl aver_rt::WalkHash for Proof {
                 std::hash::Hash::hash(&9u32, h);
                 std::hash::Hash::hash(&f.0, h);
             }),
-            Proof__view::PRule(f) => walk.node(self, |_, h| {
+            Proof__view::PRule(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&10u32, h);
                 std::hash::Hash::hash(&f.0, h);
                 std::hash::Hash::hash(&f.1, h);
-                std::hash::Hash::hash(&f.2, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.2, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
-            Proof__view::PLaw(f) => walk.node(self, |_, h| {
+            Proof__view::PLaw(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&11u32, h);
                 std::hash::Hash::hash(&f.0, h);
                 std::hash::Hash::hash(&f.1, h);
-                std::hash::Hash::hash(&f.2, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.2, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Proof__view::PCompute(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&12u32, h);
@@ -358,8 +480,18 @@ impl aver_rt::WalkHash for Proof {
                 std::hash::Hash::hash(&14u32, h);
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
                 std::hash::Hash::hash(&f.1, h);
-                std::hash::Hash::hash(&f.2, h);
-                std::hash::Hash::hash(&f.3, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.2, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.3, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Proof__view::PHave(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&15u32, h);
@@ -373,7 +505,12 @@ impl aver_rt::WalkHash for Proof {
                 std::hash::Hash::hash(&f.0, h);
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
-                std::hash::Hash::hash(&f.3, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.3, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Proof__view::PAbsurd(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&17u32, h);
@@ -384,11 +521,21 @@ impl aver_rt::WalkHash for Proof {
             Proof__view::PInduct(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&18u32, h);
                 std::hash::Hash::hash(&f.0, h);
-                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.2, walk));
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.3, walk));
                 std::hash::Hash::hash(&f.4, h);
-                std::hash::Hash::hash(&f.5, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.5, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
             }),
             Proof__view::PListInduct(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&19u32, h);
@@ -400,7 +547,12 @@ impl aver_rt::WalkHash for Proof {
                 std::hash::Hash::hash(&f.5, h);
                 std::hash::Hash::hash(&f.6, h);
                 std::hash::Hash::hash(&f.7, h);
-                std::hash::Hash::hash(&f.8, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&f.8, walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
                 std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.9, walk));
             }),
             Proof__view::PListCases(f) => walk.node(self, |walk, h| {
@@ -498,6 +650,16 @@ impl PartialEq for Proof__PTrans {
     }
 }
 
+impl aver_rt::WalkEq for Proof__PTrans {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        }) && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+            (*x).walk_eq(&(*y), walk)
+        })
+    }
+}
+
 impl aver_rt::thin::HandOver for Proof__PTrans {}
 
 #[derive(Clone, Debug, Eq, Hash)]
@@ -545,6 +707,22 @@ impl PartialEq for Proof__PUnfold {
     }
 }
 
+impl aver_rt::WalkEq for Proof__PUnfold {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.2, &other.2, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+            && aver_rt::shared_items::eq_list(&self.3, &other.3, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+            && aver_rt::shared_items::eq_list(&self.4, &other.4, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
+
 impl aver_rt::thin::HandOver for Proof__PUnfold {}
 
 #[derive(Clone, Debug, Eq, Hash)]
@@ -576,7 +754,9 @@ impl PartialEq for Proof__PArm {
 impl aver_rt::WalkEq for Proof__PArm {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
-            && self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
             && self.2.walk_eq(&other.2, walk)
             && self.3.walk_eq(&other.3, walk)
     }
@@ -655,6 +835,16 @@ impl PartialEq for Proof__PRule {
     }
 }
 
+impl aver_rt::WalkEq for Proof__PRule {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.2, &other.2, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
+
 impl aver_rt::thin::HandOver for Proof__PRule {}
 
 #[derive(Clone, Debug, Eq, Hash)]
@@ -667,6 +857,16 @@ pub struct Proof__PLaw(
 impl PartialEq for Proof__PLaw {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+    }
+}
+
+impl aver_rt::WalkEq for Proof__PLaw {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.0 == other.0
+            && self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.2, &other.2, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -748,8 +948,12 @@ impl aver_rt::WalkEq for Proof__PSplit {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.1 == other.1
             && self.0.walk_eq(&other.0, walk)
-            && self.2 == other.2
-            && self.3 == other.3
+            && aver_rt::shared_items::eq_list(&self.2, &other.2, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+            && aver_rt::shared_items::eq_list(&self.3, &other.3, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -811,7 +1015,9 @@ impl aver_rt::WalkEq for Proof__PEnum {
         self.0 == other.0
             && self.1.walk_eq(&other.1, walk)
             && self.2.walk_eq(&other.2, walk)
-            && self.3 == other.3
+            && aver_rt::shared_items::eq_list(&self.3, &other.3, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -876,11 +1082,15 @@ impl PartialEq for Proof__PInduct {
 impl aver_rt::WalkEq for Proof__PInduct {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
         self.0 == other.0
-            && self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
             && self.2.walk_eq(&other.2, walk)
             && self.3.walk_eq(&other.3, walk)
             && self.4 == other.4
-            && self.5 == other.5
+            && aver_rt::shared_items::eq_list(&self.5, &other.5, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
     }
 }
 
@@ -931,7 +1141,9 @@ impl aver_rt::WalkEq for Proof__PListInduct {
             && self.3 == other.3
             && self.4.walk_eq(&other.4, walk)
             && self.7 == other.7
-            && self.8 == other.8
+            && aver_rt::shared_items::eq_list(&self.8, &other.8, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
             && self.9.walk_eq(&other.9, walk)
     }
 }
@@ -1119,11 +1331,15 @@ impl Proof {
             Some(Proof__pair::PSymm(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Proof__pair::PTrans(a0, b0)) => a0 == b0,
+            Some(Proof__pair::PTrans(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Proof__pair::PCongr(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
-            Some(Proof__pair::PUnfold(a0, b0)) => a0 == b0,
+            Some(Proof__pair::PUnfold(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Proof__pair::PConst(a0, b0)) => a0 == b0,
             Some(Proof__pair::PArm(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
@@ -1135,8 +1351,12 @@ impl Proof {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PHyp(a0, b0)) => a0 == b0,
-            Some(Proof__pair::PRule(a0, b0)) => a0 == b0,
-            Some(Proof__pair::PLaw(a0, b0)) => a0 == b0,
+            Some(Proof__pair::PRule(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
+            Some(Proof__pair::PLaw(a0, b0)) => {
+                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+            }
             Some(Proof__pair::PCompute(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
@@ -1572,13 +1792,90 @@ impl aver_rt::AverDisplay for Cut {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct Case {
     pub binders: aver_rt::AverList<AverStr>,
     pub ihs: aver_rt::AverList<AverStr>,
     pub carry: aver_rt::AverList<aver_rt::AverList<Proof>>,
     pub more: aver_rt::AverList<More>,
     pub proof: Proof,
+}
+
+impl PartialEq for Case {
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
+
+impl aver_rt::WalkEq for Case {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.binders == other.binders
+            && self.ihs == other.ihs
+            && aver_rt::shared_items::eq_list(&self.carry, &other.carry, walk, |x, y, walk| {
+                aver_rt::shared_items::eq_list(&(*x), &(*y), walk, |x, y, walk| {
+                    (*x).walk_eq(&(*y), walk)
+                })
+            })
+            && aver_rt::shared_items::eq_list(&self.more, &other.more, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+            && self.proof.walk_eq(&other.proof, walk)
+    }
+}
+
+impl std::hash::Hash for Case {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Case {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        if left == 0 {
+            return 0;
+        }
+        let left = left - 1;
+        std::hash::Hash::hash(&self.binders, state);
+        std::hash::Hash::hash(&self.ihs, state);
+        let left = aver_rt::shared_items::stream_items(
+            self.carry.iter(),
+            state,
+            left,
+            |x, state, left| {
+                aver_rt::shared_items::stream_items((*x).iter(), state, left, |x, state, left| {
+                    aver_rt::WalkHash::stream(&(*x), state, left)
+                })
+            },
+        );
+        let left =
+            aver_rt::shared_items::stream_items(self.more.iter(), state, left, |x, state, left| {
+                aver_rt::WalkHash::stream(&(*x), state, left)
+            });
+        let left = aver_rt::WalkHash::stream(&self.proof, state, left);
+        left
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        let h = &mut aver_rt::shared_hash::node_hasher();
+        std::hash::Hash::hash(&self.binders, h);
+        std::hash::Hash::hash(&self.ihs, h);
+        std::hash::Hasher::write_u64(
+            h,
+            aver_rt::shared_items::parts_list(&self.carry, walk, |x, walk| {
+                aver_rt::shared_items::parts_list(&(*x), walk, |x, walk| {
+                    aver_rt::WalkHash::walk_hash(&(*x), walk)
+                })
+            }),
+        );
+        std::hash::Hasher::write_u64(
+            h,
+            aver_rt::shared_items::parts_list(&self.more, walk, |x, walk| {
+                aver_rt::WalkHash::walk_hash(&(*x), walk)
+            }),
+        );
+        std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&self.proof, walk));
+        std::hash::Hasher::finish(h)
+    }
 }
 
 impl PartialOrd for Case {
@@ -1617,11 +1914,48 @@ impl aver_rt::AverDisplay for Case {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct SplitCase {
     pub ctor: AverStr,
     pub binders: aver_rt::AverList<AverStr>,
     pub proof: Proof,
+}
+
+impl PartialEq for SplitCase {
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
+
+impl aver_rt::WalkEq for SplitCase {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.ctor == other.ctor
+            && self.binders == other.binders
+            && self.proof.walk_eq(&other.proof, walk)
+    }
+}
+
+impl std::hash::Hash for SplitCase {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for SplitCase {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        std::hash::Hash::hash(&self.ctor, state);
+        std::hash::Hash::hash(&self.binders, state);
+        let left = aver_rt::WalkHash::stream(&self.proof, state, left);
+        left
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        let h = &mut aver_rt::shared_hash::node_hasher();
+        std::hash::Hash::hash(&self.ctor, h);
+        std::hash::Hash::hash(&self.binders, h);
+        std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&self.proof, walk));
+        std::hash::Hasher::finish(h)
+    }
 }
 
 impl PartialOrd for SplitCase {
@@ -1656,10 +1990,43 @@ impl aver_rt::AverDisplay for SplitCase {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct More {
     pub call: aver_rt::AverInt,
     pub ih: IhAt,
+}
+
+impl PartialEq for More {
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
+
+impl aver_rt::WalkEq for More {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.call == other.call && self.ih.walk_eq(&other.ih, walk)
+    }
+}
+
+impl std::hash::Hash for More {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for More {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        std::hash::Hash::hash(&self.call, state);
+        let left = aver_rt::WalkHash::stream(&self.ih, state, left);
+        left
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        let h = &mut aver_rt::shared_hash::node_hasher();
+        std::hash::Hash::hash(&self.call, h);
+        std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&self.ih, walk));
+        std::hash::Hasher::finish(h)
+    }
 }
 
 impl PartialOrd for More {
@@ -1692,11 +2059,74 @@ impl aver_rt::AverDisplay for More {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct IhAt {
     pub name: AverStr,
     pub at: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     pub carry: aver_rt::AverList<Proof>,
+}
+
+impl PartialEq for IhAt {
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::walk_eq(self, other)
+    }
+}
+
+impl aver_rt::WalkEq for IhAt {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        self.name == other.name
+            && aver_rt::shared_items::eq_list(&self.at, &other.at, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+            && aver_rt::shared_items::eq_list(&self.carry, &other.carry, walk, |x, y, walk| {
+                (*x).walk_eq(&(*y), walk)
+            })
+    }
+}
+
+impl std::hash::Hash for IhAt {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for IhAt {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        if left == 0 {
+            return 0;
+        }
+        let left = left - 1;
+        std::hash::Hash::hash(&self.name, state);
+        let left =
+            aver_rt::shared_items::stream_items(self.at.iter(), state, left, |x, state, left| {
+                aver_rt::WalkHash::stream(&(*x), state, left)
+            });
+        let left = aver_rt::shared_items::stream_items(
+            self.carry.iter(),
+            state,
+            left,
+            |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+        );
+        left
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        let h = &mut aver_rt::shared_hash::node_hasher();
+        std::hash::Hash::hash(&self.name, h);
+        std::hash::Hasher::write_u64(
+            h,
+            aver_rt::shared_items::parts_list(&self.at, walk, |x, walk| {
+                aver_rt::WalkHash::walk_hash(&(*x), walk)
+            }),
+        );
+        std::hash::Hasher::write_u64(
+            h,
+            aver_rt::shared_items::parts_list(&self.carry, walk, |x, walk| {
+                aver_rt::WalkHash::walk_hash(&(*x), walk)
+            }),
+        );
+        std::hash::Hasher::finish(h)
+    }
 }
 
 impl PartialOrd for IhAt {

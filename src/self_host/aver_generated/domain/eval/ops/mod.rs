@@ -63,13 +63,9 @@ pub fn applyBinopFloat(
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpDiv => {
-            if (y == 0.0f64) {
-                Err(::aver_rt::str_lit!("float division by zero"))
-            } else {
-                Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                    crate::aver_generated::domain::value::Val__ValFloat((x / y)),
-                ))
-            }
+            Ok(crate::aver_generated::domain::value::Val::ValFloat(
+                crate::aver_generated::domain::value::Val__ValFloat((x / y)),
+            ))
         }
     }
 }
