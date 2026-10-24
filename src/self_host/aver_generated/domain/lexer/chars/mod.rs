@@ -319,22 +319,33 @@ pub fn readNumberLoop__indexed(
     mut acc @ _: aver_rt::AverInt,
     mut __str_index @ _: aver_rt::StringIndex,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
+    let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
+    {
+        Some(__start) => __start,
+        None => {
+            crate::cancel_checkpoint();
+            if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+                return (acc, pos);
+            } else {
+                return (acc, pos);
+            }
+        }
+    };
     loop {
         crate::cancel_checkpoint();
-        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+        if (aver_rt::AverInt::from_i64(pos)
+            < aver_rt::AverInt::from_i64(src.chars().count() as i64))
+        {
             {
-                let __int_match_subject = aver_rt::string_index_code_at_i64(
-                    &src,
-                    &__str_index,
-                    aver_rt::string_position(&pos),
-                );
+                let __int_match_subject =
+                    aver_rt::string_index_code_at_i64(&src, &__str_index, pos);
                 if __int_match_subject == -1i64 {
-                    return (acc, pos);
+                    return (acc, aver_rt::AverInt::from_i64(pos));
                 } else {
                     let __str_ix_c1 = __int_match_subject;
                     if crate::aver_generated::domain::lexer::chars::isDigit__code(__str_ix_c1) {
                         {
-                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco1 = (pos + 1i64);
                             let __tco2 = acc.mul(&aver_rt::AverInt::from_i64(10)).add(
                                 &crate::aver_generated::domain::lexer::chars::digitVal__code(
                                     __str_ix_c1,
@@ -345,12 +356,12 @@ pub fn readNumberLoop__indexed(
                             continue;
                         }
                     } else {
-                        return (acc, pos);
+                        return (acc, aver_rt::AverInt::from_i64(pos));
                     }
                 }
             }
         } else {
-            return (acc, pos);
+            return (acc, aver_rt::AverInt::from_i64(pos));
         }
     }
 }
@@ -375,33 +386,43 @@ pub fn readIdentLoopDotted__indexed(
     mut acc @ _: AverStr,
     mut __str_index @ _: aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
+    let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
+    {
+        Some(__start) => __start,
+        None => {
+            crate::cancel_checkpoint();
+            if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+                return (acc, pos);
+            } else {
+                return (acc, pos);
+            }
+        }
+    };
     loop {
         crate::cancel_checkpoint();
-        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
-            match aver_rt::string_index_char_at_i64(
-                &src,
-                &__str_index,
-                aver_rt::string_position(&pos),
-            ) {
+        if (aver_rt::AverInt::from_i64(pos)
+            < aver_rt::AverInt::from_i64(src.chars().count() as i64))
+        {
+            match aver_rt::string_index_char_at_i64(&src, &__str_index, pos) {
                 Some(c @ _) => {
                     if crate::aver_generated::domain::lexer::chars::isIdentCharDotted(c.clone()) {
                         {
-                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco1 = (pos + 1i64);
                             let __tco2 = (acc + &c);
                             pos = __tco1;
                             acc = __tco2;
                             continue;
                         }
                     } else {
-                        return (acc, pos);
+                        return (acc, aver_rt::AverInt::from_i64(pos));
                     }
                 }
                 None => {
-                    return (acc, pos);
+                    return (acc, aver_rt::AverInt::from_i64(pos));
                 }
             }
         } else {
-            return (acc, pos);
+            return (acc, aver_rt::AverInt::from_i64(pos));
         }
     }
 }
@@ -414,33 +435,43 @@ pub fn readIdentLoopPlain__indexed(
     mut acc @ _: AverStr,
     mut __str_index @ _: aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
+    let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
+    {
+        Some(__start) => __start,
+        None => {
+            crate::cancel_checkpoint();
+            if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+                return (acc, pos);
+            } else {
+                return (acc, pos);
+            }
+        }
+    };
     loop {
         crate::cancel_checkpoint();
-        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
-            match aver_rt::string_index_char_at_i64(
-                &src,
-                &__str_index,
-                aver_rt::string_position(&pos),
-            ) {
+        if (aver_rt::AverInt::from_i64(pos)
+            < aver_rt::AverInt::from_i64(src.chars().count() as i64))
+        {
+            match aver_rt::string_index_char_at_i64(&src, &__str_index, pos) {
                 Some(c @ _) => {
                     if crate::aver_generated::domain::lexer::chars::isIdentCharPlain(c.clone()) {
                         {
-                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco1 = (pos + 1i64);
                             let __tco2 = (acc + &c);
                             pos = __tco1;
                             acc = __tco2;
                             continue;
                         }
                     } else {
-                        return (acc, pos);
+                        return (acc, aver_rt::AverInt::from_i64(pos));
                     }
                 }
                 None => {
-                    return (acc, pos);
+                    return (acc, aver_rt::AverInt::from_i64(pos));
                 }
             }
         } else {
-            return (acc, pos);
+            return (acc, aver_rt::AverInt::from_i64(pos));
         }
     }
 }

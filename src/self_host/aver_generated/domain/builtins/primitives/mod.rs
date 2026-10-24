@@ -752,7 +752,11 @@ pub fn stringToCharList(
     crate::cancel_checkpoint();
     let __arg4 @ _ = aver_rt::string_index_build(&s);
     crate::aver_generated::domain::builtins::primitives::stringToCharList__indexed(
-        s, pos, total, acc, __arg4,
+        s,
+        pos.to_i64().expect("Int out of i64 range"),
+        total,
+        acc,
+        __arg4,
     )
 }
 
@@ -1371,7 +1375,7 @@ pub fn builtinStringReplaceAllDo(
 #[inline(always)]
 pub fn stringToCharList__indexed(
     mut s @ _: AverStr,
-    mut pos @ _: aver_rt::AverInt,
+    mut pos @ _: i64,
     mut total @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut __str_index @ _: aver_rt::StringIndex,
@@ -1379,14 +1383,10 @@ pub fn stringToCharList__indexed(
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
-        if (pos < total) {
-            match aver_rt::string_index_char_at_i64(
-                &s,
-                &__str_index,
-                aver_rt::string_position(&pos),
-            ) {
+        if (aver_rt::AverInt::from_i64(pos) < total) {
+            match aver_rt::string_index_char_at_i64(&s, &__str_index, pos) {
                 Some(c @ _) => {
-                    let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco1 = (pos + 1i64);
                     let __tco3 = aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::value::Val::ValStr(
                             crate::aver_generated::domain::value::Val__ValStr(c),

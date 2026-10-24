@@ -7735,7 +7735,9 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::LstPush
             | BuiltinIntrinsic::LstFinalize
             | BuiltinIntrinsic::BranchPathChild
-            | BuiltinIntrinsic::BranchPathParse => false,
+            | BuiltinIntrinsic::BranchPathParse
+            // Rust only (its representation rewrite).
+            | BuiltinIntrinsic::StrIndexPosition => false,
         }
     }
 

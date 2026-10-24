@@ -6152,6 +6152,33 @@ pub(super) fn emit_mir_tco_fn(
     let bare_facts = ctx.bare_i64.for_fn(mir_fn.fn_id);
     let params = emit_tco_params_mir(&fd.params, &lent, bare_facts, ctx, scope);
     let ret_type = bare_return_type(ret_type, bare_facts);
+
+    // A string-walk position checked once on entry keeps its boxed param;
+    // a prologue makes it the loop's `i64`, or, for a start no read can
+    // succeed at, runs the body's failure path on the boxed start (rendered
+    // with the facts where that param is boxed). The rewritten MIR and the
+    // analysis must agree on it.
+    let entry_check = match (
+        mir_fn.repr.entry_check.as_ref(),
+        bare_facts.and_then(|f| f.entry_check.as_deref()),
+    ) {
+        (None, None) => None,
+        (Some(check), Some(facts))
+            if check.param == facts.param && !lent.contains(&check.param) =>
+        {
+            let mut fallback_ctx = emit_ctx;
+            fallback_ctx.bare = &facts.facts;
+            let fallback = emit_mir_tco_body(
+                &check.fallback,
+                mir_fn.fn_id,
+                &fd.params,
+                &passthrough_indices,
+                &fallback_ctx,
+            )?;
+            Some((check, fallback))
+        }
+        _ => return None,
+    };
     let mut lines = Vec::new();
     lines.push(format!(
         "{}fn {}({}) -> {} {{",
@@ -6171,6 +6198,22 @@ pub(super) fn emit_mir_tco_fn(
             explicit_parameter_pattern(name, true),
             aver_name_to_rust(name)
         ));
+    }
+    if let Some((check, fallback)) = entry_check {
+        let name = &fd.params[check.param].0;
+        let start = generated_ident("start");
+        lines.push(format!(
+            "    let {}: i64 = match aver_rt::string_position_within(&{}, {}i64, {}i64) {{",
+            explicit_parameter_pattern(name, true),
+            aver_name_to_rust(name),
+            check.lo,
+            check.hi
+        ));
+        lines.push(format!("        Some({start}) => {start},"));
+        lines.push("        None => {".to_string());
+        lines.push(fallback);
+        lines.push("        }".to_string());
+        lines.push("    };".to_string());
     }
     lines.push("    loop {".to_string());
     lines.push(body_code);
@@ -6400,7 +6443,7 @@ fn emit_mir_self_tco_continue(
         //     falls through to `emit_mir_expr` (lowering `Unbox`).
         //   - boxed param: `emit_mir_expr` (lowering any `Box` node), then
         //     the clone policy.
-        if ctx.bare.param_is_bare(i) {
+        if ctx.bare.loop_param_is_bare(i) {
             let rendered = emit_bare_i64(a).or_else(|| emit_mir_expr(a, &tail_ctx));
             arg_strs[i] = Some(rendered?);
         } else {
@@ -8388,6 +8431,15 @@ fn emit_mir_intrinsic_call(
         BuiltinIntrinsic::StrIndexBuild => {
             let s = emit_mir_expr(&args[0], ctx)?;
             Some(format!("aver_rt::string_index_build(&{s})"))
+        }
+        // A boxed position handed to a param only read at as a position.
+        BuiltinIntrinsic::StrIndexPosition => {
+            let position = emit_mir_expr(&args[0], ctx)?;
+            let call = format!("aver_rt::string_position(&{position})");
+            Some(match raw_result {
+                true => call,
+                false => format!("aver_rt::AverInt::from_i64({call})"),
+            })
         }
         // A position the representation analysis proved to fit `i64` (a
         // string-walk position, `bare_i64::string_positions`) arrives

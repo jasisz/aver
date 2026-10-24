@@ -61,7 +61,8 @@ fn cursor_offset_interval() -> Interval {
 }
 
 /// The range of a compiler-owned carrier a call returns: a character code,
-/// or the cursor's next byte offset. `None` for every other call.
+/// the cursor's next byte offset, or a position saturated to `i64`. `None`
+/// for every other call.
 fn carrier_call_interval(e: &MirExpr) -> Option<Interval> {
     use crate::ir::hir::BuiltinIntrinsic as I;
     let MirExpr::Call(c) = e else {
@@ -72,8 +73,14 @@ fn carrier_call_interval(e: &MirExpr) -> Option<Interval> {
             I::StrIndexCodeAt | I::StrCursorCode | I::StrFoldLower | I::StrFoldUpper,
         ) => Some(index_code_interval()),
         MirCallee::Intrinsic(I::StrCursorNext) => Some(cursor_offset_interval()),
+        MirCallee::Intrinsic(I::StrIndexPosition) => Some(i64_interval()),
         _ => None,
     }
+}
+
+/// Every `i64`.
+fn i64_interval() -> Interval {
+    Interval::between(i64::MIN as i128, i64::MAX as i128)
 }
 
 fn is_code_carrier_call(e: &MirExpr) -> bool {
@@ -307,6 +314,28 @@ pub struct FnBareFacts {
     /// whenever no bounded multi-field record is in scope — the byte-identical
     /// default (the direct-field form then never fires).
     pub field_carrier_intervals: FieldCarrierIntervals,
+    /// A string-walk position whose start is not bounded, checked once on
+    /// entry (Rust only). Its param stays `AverInt` in the signature; the
+    /// loop holds it as an `i64`.
+    pub entry_check: Option<std::boxed::Box<EntryCheck>>,
+    /// Params only read at as a string position (Rust only): bare in the
+    /// signature, and a caller with a boxed position saturates it
+    /// (`__str_index_position`) instead of checking it.
+    pub saturated_params: Vec<usize>,
+}
+
+/// A position param checked once on entry: a start in `[lo, hi]` enters
+/// the loop as an `i64`; any other start fails every read of the position,
+/// so the fn's result is `fallback` — the body's failure path, which never
+/// steps the loop — evaluated on the boxed start.
+#[derive(Debug, Clone)]
+pub struct EntryCheck {
+    pub param: usize,
+    pub lo: i64,
+    pub hi: i64,
+    pub fallback: Spanned<MirExpr>,
+    /// The facts `fallback` is emitted with: the param is boxed there.
+    pub facts: FnBareFacts,
 }
 
 impl FnBareFacts {
@@ -318,6 +347,17 @@ impl FnBareFacts {
     /// Is param index `i` bare in the signature?
     pub fn param_is_bare(&self, i: usize) -> bool {
         self.bare_params.get(i).copied().unwrap_or(false)
+    }
+
+    /// Does param `i` take a boxed position saturated, not checked?
+    pub fn param_takes_saturated(&self, i: usize) -> bool {
+        self.saturated_params.contains(&i)
+    }
+
+    /// Does the loop of this fn hold param `i` as an `i64`: bare in the
+    /// signature, or checked on entry?
+    pub fn loop_param_is_bare(&self, i: usize) -> bool {
+        self.param_is_bare(i) || self.entry_check.as_ref().is_some_and(|c| c.param == i)
     }
 
     /// The interval over-approximation of a value bound to `slot`, when the
@@ -541,18 +581,23 @@ impl BareI64Facts {
 /// fragment (callers unseen) bails to all-`Boxed`, exactly like
 /// `own_param`.
 pub fn analyze(program: &MirProgram, carrier: &CarrierIntervals) -> BareI64Facts {
-    analyze_with_fields(program, carrier, &FieldCarrierIntervals::new())
+    analyze_with_fields(program, carrier, &FieldCarrierIntervals::new(), true)
 }
 
 /// [`analyze`] plus the multi-field carrier table (`field_carrier`): the
 /// wasm-gc entry threads the eligible `(record, field)` bounds so a DIRECT
 /// bounded-field read renders as a raw i64 leaf. Every other caller goes
 /// through [`analyze`] (empty field table) and keeps the byte-identical
-/// pre-slice behavior.
+/// pre-slice behavior. `rust_positions` turns on the two lowerings of a
+/// string position only the Rust backend emits: a walk whose start is not
+/// bounded checked once on entry ([`EntryCheck`]), and a param only read at
+/// as a position taking a boxed one saturated
+/// ([`FnBareFacts::saturated_params`]).
 pub fn analyze_with_fields(
     program: &MirProgram,
     carrier: &CarrierIntervals,
     field_carrier: &FieldCarrierIntervals,
+    rust_positions: bool,
 ) -> BareI64Facts {
     // Diagnostic / bench-differential escape hatch: skip the analysis so a
     // run keeps the conservative all-Boxed baseline.
@@ -577,11 +622,31 @@ pub fn analyze_with_fields(
     // return is bare. The field table only adds NEW bare leaves (a direct
     // bounded-field read), which the body pass reads via the per-fn facts; the
     // cross-frame param/return summary keys off `carrier` exactly as before.
-    let summary = compute_summary(program, &int_params, carrier, field_carrier);
+    let summary = compute_summary(program, &int_params, carrier, field_carrier, rust_positions);
 
     let mut fns: HashMap<FnId, FnBareFacts> = HashMap::new();
     for (id, f) in program.iter() {
-        fns.insert(*id, analyze_fn(f, &summary, carrier, field_carrier));
+        let mut facts = analyze_fn(f, &summary, carrier, field_carrier, None);
+        if let Some(checked) = summary.checked.get(id) {
+            let on_fallback = MirFn {
+                body: checked.fallback.clone(),
+                ..f.clone()
+            };
+            facts.entry_check = Some(std::boxed::Box::new(EntryCheck {
+                param: checked.param,
+                lo: 0,
+                hi: POSITION_TOP as i64,
+                fallback: checked.fallback.clone(),
+                facts: analyze_fn(
+                    &on_fallback,
+                    &summary,
+                    carrier,
+                    field_carrier,
+                    Some(checked.param),
+                ),
+            }));
+        }
+        fns.insert(*id, facts);
     }
 
     BareI64Facts { fns }
@@ -606,9 +671,20 @@ struct Summary {
     /// comes from a read of the string they index, boxed at each
     /// general-Int sink instead of demoted when they escape.
     positions: HashSet<(FnId, usize)>,
+    /// Positions checked once on entry: boxed in the signature, bare in the
+    /// loop.
+    checked: std::rc::Rc<HashMap<FnId, CheckedPosition>>,
+    /// Params only read at as a position ([`read_only_positions`]).
+    read_only: std::rc::Rc<HashSet<(FnId, usize)>>,
 }
 
 impl Summary {
+    /// Does the loop of `id` hold param `i` as an `i64` though its
+    /// signature keeps it boxed (a position checked on entry)?
+    fn checked_param(&self, id: FnId, i: usize) -> bool {
+        self.checked.get(&id).is_some_and(|c| c.param == i)
+    }
+
     fn param_bare(&self, id: FnId, i: usize) -> bool {
         self.bare_params
             .get(&id)
@@ -639,6 +715,7 @@ fn compute_summary(
     int_params: &HashMap<FnId, Vec<bool>>,
     carrier: &CarrierIntervals,
     field_carrier: &FieldCarrierIntervals,
+    rust_positions: bool,
 ) -> Summary {
     // Address-taken fns (name appears as a `FnValue`) have callers we
     // cannot attribute — pin all their params/return boxed.
@@ -699,13 +776,49 @@ fn compute_summary(
     // type and both readers (condition B + the `analyze_fn` seed) are
     // unchanged.
     let mut bare_param_intervals = compute_bare_param_intervals(program, &edges, &address_taken);
-    let ranges = string_positions(program, &edges, &address_taken, &bare_param_intervals);
+    let ranges = string_positions(
+        program,
+        &edges,
+        &address_taken,
+        &bare_param_intervals,
+        rust_positions,
+    );
     for &(id, i) in &ranges.positions {
         if let Some(cell) = bare_param_intervals.get_mut(&id).and_then(|v| v.get_mut(i)) {
             *cell = ranges.entry[&id][i]
                 .fits_i64()
                 .then_some(ranges.entry[&id][i]);
         }
+    }
+    // A param only read at as a position takes any `i64`: callers with a
+    // boxed position saturate it.
+    let read_only = std::rc::Rc::new(match rust_positions {
+        true => read_only_positions(program, &address_taken, &edges),
+        false => HashSet::new(),
+    });
+    let checked = std::rc::Rc::new(ranges.checked);
+    for &(id, i) in read_only.iter() {
+        if let Some(cell) = bare_param_intervals.get_mut(&id).and_then(|v| v.get_mut(i)) {
+            *cell = Some(i64_interval());
+        }
+    }
+    // A position checked on entry keeps its boxed signature (callers hand
+    // over any start) and its return boxed (the fallback returns what the
+    // boxed body does); inside the loop it ranges over the checked range.
+    for (id, position) in checked.iter() {
+        if let Some(cell) = bare_param_intervals
+            .get_mut(id)
+            .and_then(|v| v.get_mut(position.param))
+        {
+            *cell = Some(position.range);
+        }
+        if let Some(cell) = bare_params
+            .get_mut(id)
+            .and_then(|v| v.get_mut(position.param))
+        {
+            *cell = false;
+        }
+        bare_return.insert(*id, false);
     }
 
     loop {
@@ -720,6 +833,9 @@ fn compute_summary(
             for (i, arg) in edge.args.iter().enumerate() {
                 if !callee_params.get(i).copied().unwrap_or(false) {
                     continue; // already boxed — skip
+                }
+                if read_only.contains(&(edge.target, i)) {
+                    continue; // a boxed position is saturated at the call
                 }
                 let ok = arg_supplies_bare(
                     &arg.node,
@@ -782,10 +898,12 @@ fn compute_summary(
             bare_return: bare_return.clone(),
             bare_param_intervals: bare_param_intervals.clone(),
             positions: ranges.positions.clone(),
+            checked: checked.clone(),
+            read_only: read_only.clone(),
         };
         for (id, f) in program.iter() {
             let mut escaping: HashSet<LocalId> = HashSet::new();
-            scan_escapes(&f.body.node, &tmp, &mut escaping);
+            scan_escapes(&f.body.node, f.fn_id, &tmp, &mut escaping);
             for (i, p) in f.params.iter().enumerate() {
                 if bare_params[id].get(i).copied().unwrap_or(false)
                     && escaping.contains(&p.local)
@@ -809,8 +927,10 @@ fn compute_summary(
                 bare_return: bare_return.clone(),
                 bare_param_intervals: bare_param_intervals.clone(),
                 positions: ranges.positions.clone(),
+                checked: checked.clone(),
+                read_only: read_only.clone(),
             };
-            let facts = analyze_fn(f, &tmp, carrier, field_carrier);
+            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None);
             if !facts.bare_return && bare_return.insert(*id, false) != Some(false) {
                 changed = true;
             }
@@ -857,9 +977,11 @@ fn compute_summary(
             bare_return: bare_return.clone(),
             bare_param_intervals: bare_param_intervals.clone(),
             positions: ranges.positions.clone(),
+            checked: checked.clone(),
+            read_only: read_only.clone(),
         };
         for (_caller, f) in program.iter() {
-            let facts = analyze_fn(f, &tmp, carrier, field_carrier);
+            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None);
             let mut demote: Vec<FnId> = Vec::new();
             collect_let_bound_boxed_returns(&f.body.node, &facts, &bare_return, &mut demote);
             for target in demote {
@@ -881,6 +1003,8 @@ fn compute_summary(
         bare_return,
         bare_param_intervals,
         positions: ranges.positions,
+        checked,
+        read_only,
     }
 }
 
@@ -1378,21 +1502,68 @@ fn compute_param_intervals_for_test(program: &MirProgram) -> HashMap<FnId, Vec<O
 // bounded by that string's length, and no string is longer than
 // `isize::MAX - 8` characters. So in a self-recursive walk whose every
 // back-edge sits under such a read (`match String.charAt(s, i)` past its
-// `None`, the indexed code read past its `-1`, or `i < String.len(s)`), the
-// back-edge value `i + k` lies in `[k, isize::MAX - 9 + k]` whatever string
-// is read, and the param's range is that joined with its entry values.
-// Entry values are evaluated over the CALLERS' param ranges, solved callers
-// first, so a position handed through an ABI-preserving wrapper keeps the
-// literal it started from.
+// `None`, the indexed code read past its `-1`, a classifier's answer that
+// only a successful read gives, or `i < String.len(s)`), the back-edge value
+// `i + k` lies in `[k, isize::MAX - 9 + k]` whatever string is read, and the
+// param's range is that joined with its entry values. Entry values are
+// evaluated over the CALLERS' param ranges, solved callers first, so a
+// position handed through an ABI-preserving wrapper keeps the literal it
+// started from.
+//
+// A start that is not bounded (a record field, a call result) is checked
+// once on entry instead (Rust only, see [`checked_position`]): when every
+// step follows a successful read, a start outside `[0, POSITION_TOP]` fails
+// the first read and never steps, so the loop itself only ever sees starts
+// the check lets through.
+
+/// The last position a successful read can be at: a string's characters
+/// are at most its bytes, which share one allocation with the reference
+/// count (`aver_rt::shared::Node`), and no allocation exceeds `isize::MAX`.
+const POSITION_TOP: i128 = isize::MAX as i128 - 9;
+
+/// Classifier facts, `(fn, Int param) → values`: every value the fn can
+/// return on a path where its read at that param did not succeed. A value
+/// outside the set therefore means the read succeeded, so the position is
+/// in `[0, POSITION_TOP]`.
+type Classifiers = HashMap<(FnId, usize), Interval>;
+
+/// The program and the facts the position walk reads.
+struct PositionCx<'a> {
+    program: &'a MirProgram,
+    classifiers: Classifiers,
+    /// Whether a position whose start is not bounded may be checked once on
+    /// entry. Only the Rust backend emits the entry check.
+    entry_checks: bool,
+}
+
+/// A classified value in scope: the slot a classifier call was bound to,
+/// with the values that call returns when its read fails.
+type Classified = Vec<(LocalId, Interval)>;
 
 /// The output of [`string_positions`].
 struct PositionRanges {
     /// Per-`(fn, param)` range over every value the param can hold — the
     /// hull of its entry values, a proven recurrence bound, or a position
-    /// range. `unbounded()` where nothing is known.
+    /// range. `unbounded()` where nothing is known, and for a position
+    /// checked on entry (any start reaches its failure path).
     entry: HashMap<FnId, Vec<Interval>>,
     /// The params whose range comes from a position guard.
     positions: HashSet<(FnId, usize)>,
+    /// The positions checked once on entry, at most one per fn.
+    checked: HashMap<FnId, CheckedPosition>,
+}
+
+/// A position whose start is checked once on entry.
+#[derive(Debug, Clone)]
+struct CheckedPosition {
+    /// The param index.
+    param: usize,
+    /// Its range inside the loop, past the check.
+    range: Interval,
+    /// The body as it runs for a start the check turns away: every read of
+    /// the position fails, so only the failure path is left, and it does not
+    /// step the loop.
+    fallback: Spanned<MirExpr>,
 }
 
 /// Where a self-tail-call sits relative to a read of the position param.
@@ -1413,17 +1584,27 @@ fn string_positions(
     edges: &[CallEdge],
     address_taken: &HashSet<String>,
     recurrence: &HashMap<FnId, Vec<Option<Interval>>>,
+    entry_checks: bool,
 ) -> PositionRanges {
+    let cx = PositionCx {
+        program,
+        classifiers: classifiers(program),
+        entry_checks,
+    };
     let nodes: Vec<FnId> = program.iter().map(|(id, _)| *id).collect();
     let mut graph: HashMap<FnId, Vec<FnId>> = HashMap::new();
     for edge in edges.iter().filter(|e| e.caller != e.target) {
         graph.entry(edge.caller).or_default().push(edge.target);
     }
-    // Callers first; a fn in a call cycle (or called from one) never gets an
-    // in-degree of zero and keeps every param unbounded.
+    // Callers first. A fn in a call cycle is never solved and keeps every
+    // param unbounded, so a call it makes counts for nothing here: its
+    // callee takes that call's arguments as unbounded.
     let mutual = crate::scc::mutually_recursive(&nodes, &graph);
     let mut indegree: HashMap<FnId, usize> = nodes.iter().map(|id| (*id, 0)).collect();
-    for callees in graph.values() {
+    for (caller, callees) in &graph {
+        if mutual.contains(caller) {
+            continue;
+        }
         for t in callees {
             if let Some(d) = indegree.get_mut(t) {
                 *d += 1;
@@ -1442,6 +1623,7 @@ fn string_positions(
             .map(|(id, f)| (*id, vec![Interval::unbounded(); f.params.len()]))
             .collect(),
         positions: HashSet::new(),
+        checked: HashMap::new(),
     };
     while let Some(id) = ready.pop() {
         let f = program.fn_by_id(id).expect("listed fn");
@@ -1459,9 +1641,13 @@ fn string_positions(
                     .any(|e| e.target == id && e.is_tail_self() && e.args.len() > i);
                 if !self_edges {
                     seed
-                } else if let Some(iv) = position_range(f, i, seed, program) {
+                } else if let Some(iv) = position_range(f, i, seed, &cx, false) {
                     out.positions.insert((id, i));
                     iv
+                } else if let Some(checked) = checked_position(f, i, &cx, &out.checked) {
+                    out.positions.insert((id, i));
+                    out.checked.insert(id, checked);
+                    Interval::unbounded()
                 } else {
                     Interval::unbounded()
                 }
@@ -1510,8 +1696,15 @@ fn entry_hull(
 }
 
 /// The range of position param `i` of `f` entered with `seed`, when every
-/// self-tail-call passing it sits under a guard on that position.
-fn position_range(f: &MirFn, i: usize, seed: Interval, program: &MirProgram) -> Option<Interval> {
+/// self-tail-call passing it sits under a guard on that position (under a
+/// successful read, when `require_read`).
+fn position_range(
+    f: &MirFn,
+    i: usize,
+    seed: Interval,
+    cx: &PositionCx<'_>,
+    require_read: bool,
+) -> Option<Interval> {
     let slot = f.params[i].local;
     let mut sites: Vec<(PositionGuard, &MirExpr)> = Vec::new();
     collect_position_sites(
@@ -1520,16 +1713,17 @@ fn position_range(f: &MirFn, i: usize, seed: Interval, program: &MirProgram) -> 
         i,
         slot,
         PositionGuard::None,
-        program,
+        cx,
+        &mut Vec::new(),
         &mut sites,
     );
-    if sites.is_empty() || sites.iter().any(|(g, _)| *g == PositionGuard::None) {
+    let least = match require_read {
+        true => PositionGuard::Read,
+        false => PositionGuard::Below,
+    };
+    if sites.is_empty() || sites.iter().any(|(g, _)| *g < least) {
         return None;
     }
-    // The last position of the longest string: its characters are at most
-    // its bytes, which share one allocation with the reference count
-    // (`aver_rt::shared::Node`), and no allocation exceeds `isize::MAX`.
-    let top = isize::MAX as i128 - 9;
     // Past `i < len` alone the position is only bounded above; below it is
     // bounded by its own range, which a forward step never lowers. Assume
     // the entry's floor, then check the result kept it.
@@ -1541,8 +1735,8 @@ fn position_range(f: &MirFn, i: usize, seed: Interval, program: &MirProgram) -> 
     let mut range = seed;
     for (guard, arg) in &sites {
         let at = match guard {
-            PositionGuard::Read => Interval::between(0, top),
-            _ => Interval::between(floor, top),
+            PositionGuard::Read => Interval::between(0, POSITION_TOP),
+            _ => Interval::between(floor, POSITION_TOP),
         };
         let env = HashMap::from([(slot, at)]);
         range = range.hull(eval_interval_pub(arg, &env));
@@ -1552,68 +1746,549 @@ fn position_range(f: &MirFn, i: usize, seed: Interval, program: &MirProgram) -> 
     (keeps_floor && range.fits_i64()).then_some(range)
 }
 
+/// Position param `i` of `f` checked once on entry, when its start is not
+/// bounded. Every step must follow a successful read of it, so a start
+/// outside `[0, POSITION_TOP]` (where every read fails) never steps: the
+/// loop runs on the checked range, and any other start runs the body's
+/// failure path ([`failure_path`]) on the boxed start. One per fn.
+fn checked_position(
+    f: &MirFn,
+    i: usize,
+    cx: &PositionCx<'_>,
+    checked: &HashMap<FnId, CheckedPosition>,
+) -> Option<CheckedPosition> {
+    if !cx.entry_checks || checked.contains_key(&f.fn_id) {
+        return None;
+    }
+    let range = position_range(f, i, Interval::between(0, POSITION_TOP), cx, true)?;
+    let fallback = failure_path(
+        f.body.clone(),
+        f.fn_id,
+        f.params[i].local,
+        cx,
+        &mut Vec::new(),
+    )?;
+    Some(CheckedPosition {
+        param: i,
+        range,
+        fallback,
+    })
+}
+
 /// Collect the arg at `i` of every self-tail-call in `e`, with the guard on
 /// position `slot` it sits under.
+#[allow(clippy::too_many_arguments)]
 fn collect_position_sites<'a>(
     e: &'a MirExpr,
     self_fn: FnId,
     i: usize,
     slot: LocalId,
     guard: PositionGuard,
-    program: &MirProgram,
+    cx: &PositionCx<'_>,
+    scope: &mut Classified,
     out: &mut Vec<(PositionGuard, &'a MirExpr)>,
 ) {
-    let walk = |c: &'a MirExpr, g: PositionGuard, out: &mut Vec<_>| {
-        collect_position_sites(c, self_fn, i, slot, g, program, out)
-    };
     match e {
         MirExpr::TailCall(tc) if tc.node.target == self_fn => {
             if let Some(arg) = tc.node.args.get(i) {
                 out.push((guard, &arg.node));
             }
             for a in &tc.node.args {
-                walk(&a.node, guard, out);
+                collect_position_sites(&a.node, self_fn, i, slot, guard, cx, scope, out);
             }
         }
-        MirExpr::Match(m) if reads_position(&m.node.subject.node, slot, program) => {
-            walk(&m.node.subject.node, guard, out);
-            let mut failure_seen = false;
-            for arm in &m.node.arms {
-                let read = match &arm.pattern {
-                    MirPattern::Literal(Literal::Int(k)) => *k >= 0,
-                    MirPattern::Ctor {
-                        ctor: super::super::expr::MirCtor::Builtin(c),
-                        ..
-                    } => *c == crate::ir::hir::BuiltinCtor::OptionSome,
-                    MirPattern::Wildcard | MirPattern::Bind(..) => failure_seen,
-                    _ => false,
+        MirExpr::Let(l) => {
+            collect_position_sites(&l.node.value.node, self_fn, i, slot, guard, cx, scope, out);
+            let class = classified(&l.node.value.node, slot, scope, cx);
+            if let Some(fails) = class {
+                scope.push((l.node.binding, fails));
+            }
+            collect_position_sites(&l.node.body.node, self_fn, i, slot, guard, cx, scope, out);
+            if class.is_some() {
+                scope.pop();
+            }
+        }
+        MirExpr::Match(m) => {
+            collect_position_sites(
+                &m.node.subject.node,
+                self_fn,
+                i,
+                slot,
+                guard,
+                cx,
+                scope,
+                out,
+            );
+            let read = read_arms(&m.node.subject.node, &m.node.arms, slot, cx, scope);
+            for (k, arm) in m.node.arms.iter().enumerate() {
+                let g = match read.as_ref().is_some_and(|r| r[k]) {
+                    true => PositionGuard::Read,
+                    false => guard,
                 };
-                failure_seen |= matches!(
-                    &arm.pattern,
-                    MirPattern::Literal(Literal::Int(-1))
-                        | MirPattern::Ctor {
-                            ctor: super::super::expr::MirCtor::Builtin(
-                                crate::ir::hir::BuiltinCtor::OptionNone
-                            ),
-                            ..
-                        }
-                );
-                let g = if read { PositionGuard::Read } else { guard };
-                walk(&arm.body.node, g, out);
+                collect_position_sites(&arm.body.node, self_fn, i, slot, g, cx, scope, out);
             }
         }
         MirExpr::IfThenElse(ite) => {
-            let (then_g, else_g) = match below_length(&ite.node.cond.node, slot, program) {
-                Some(true) => (guard.max(PositionGuard::Below), guard),
-                Some(false) => (guard, guard.max(PositionGuard::Below)),
-                None => (guard, guard),
-            };
-            walk(&ite.node.cond.node, guard, out);
-            walk(&ite.node.then_branch.node, then_g, out);
-            walk(&ite.node.else_branch.node, else_g, out);
+            let (then_g, else_g) = cond_guards(&ite.node.cond.node, slot, cx, scope);
+            let n = &ite.node;
+            collect_position_sites(&n.cond.node, self_fn, i, slot, guard, cx, scope, out);
+            let then_g = guard.max(then_g);
+            collect_position_sites(
+                &n.then_branch.node,
+                self_fn,
+                i,
+                slot,
+                then_g,
+                cx,
+                scope,
+                out,
+            );
+            let else_g = guard.max(else_g);
+            collect_position_sites(
+                &n.else_branch.node,
+                self_fn,
+                i,
+                slot,
+                else_g,
+                cx,
+                scope,
+                out,
+            );
         }
-        _ => visit_children(e, &mut |c| walk(c, guard, out)),
+        _ => visit_children(e, &mut |c| {
+            collect_position_sites(c, self_fn, i, slot, guard, cx, scope, out)
+        }),
     }
+}
+
+/// The value a read of position `slot` gives when it fails.
+#[derive(Debug, Clone, Copy)]
+enum Failure {
+    /// `String.charAt` and its indexed form: `Option.None`.
+    None,
+    /// The indexed code read: `-1`.
+    Code,
+    /// A classifier: one of these values.
+    Values(Interval),
+}
+
+/// What a failed read of `slot` gives when `e` is that read: a direct one,
+/// a classifier call on it, or a slot bound to such a call.
+fn read_failure(
+    e: &MirExpr,
+    slot: LocalId,
+    cx: &PositionCx<'_>,
+    scope: &Classified,
+) -> Option<Failure> {
+    use crate::ir::hir::BuiltinIntrinsic as I;
+    if reads_position(e, slot, cx.program) {
+        return Some(match e {
+            MirExpr::Call(c)
+                if matches!(c.node.callee, MirCallee::Intrinsic(I::StrIndexCodeAt)) =>
+            {
+                Failure::Code
+            }
+            _ => Failure::None,
+        });
+    }
+    classified(e, slot, scope, cx).map(Failure::Values)
+}
+
+/// The values a classifier call on position `slot` gives when its read
+/// fails, when `e` is one or a slot bound to one.
+fn classified(
+    e: &MirExpr,
+    slot: LocalId,
+    scope: &Classified,
+    cx: &PositionCx<'_>,
+) -> Option<Interval> {
+    match e {
+        MirExpr::Local(l) => scope
+            .iter()
+            .rev()
+            .find(|(s, _)| *s == l.node.slot)
+            .map(|(_, fails)| *fails),
+        MirExpr::Call(c) => {
+            let MirCallee::Fn(g) = c.node.callee else {
+                return None;
+            };
+            c.node.args.iter().enumerate().find_map(|(j, a)| {
+                subject_is_local(&a.node, slot)
+                    .then(|| cx.classifiers.get(&(g, j)).copied())
+                    .flatten()
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Does an arm with `pattern` run for a failed read: `Some(true)` when it
+/// runs for every failure value, `Some(false)` when for none, `None` when
+/// for some only (or the pattern is not one a read is matched with).
+fn takes_failure(pattern: &MirPattern, failure: Failure) -> Option<bool> {
+    use super::super::expr::MirCtor;
+    use crate::ir::hir::BuiltinCtor;
+    match (pattern, failure) {
+        (MirPattern::Wildcard | MirPattern::Bind(..), _) => Some(true),
+        (MirPattern::Ctor { ctor, .. }, Failure::None) => match ctor {
+            MirCtor::Builtin(BuiltinCtor::OptionNone) => Some(true),
+            MirCtor::Builtin(BuiltinCtor::OptionSome) => Some(false),
+            _ => None,
+        },
+        (MirPattern::Literal(Literal::Int(k)), Failure::Code) => Some(*k == -1),
+        (MirPattern::Literal(Literal::Int(k)), Failure::Values(fails)) => {
+            match (fails.as_point(), fails.contains_point(*k as i128)) {
+                (_, false) => Some(false),
+                (Some(_), true) => Some(true),
+                (None, true) => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// For a match on a read of position `slot`, which arms run only after the
+/// read succeeded: the arms before the first one a failure takes, when that
+/// arm takes every failure value, and every arm after it. `None` when the
+/// subject is no such read.
+fn read_arms(
+    subject: &MirExpr,
+    arms: &[super::super::expr::MirMatchArm],
+    slot: LocalId,
+    cx: &PositionCx<'_>,
+    scope: &Classified,
+) -> Option<Vec<bool>> {
+    let failure = read_failure(subject, slot, cx, scope)?;
+    let mut failure_seen = false;
+    let read = arms
+        .iter()
+        .map(|arm| {
+            let read = failure_seen || takes_failure(&arm.pattern, failure) == Some(false);
+            failure_seen |= takes_failure(&arm.pattern, failure) == Some(true);
+            read
+        })
+        .collect();
+    Some(read)
+}
+
+/// The guard each branch of `if cond` puts on position `slot`: `Below` for
+/// the branch where `slot < String.len(_)` holds, `Read` for a branch no
+/// failed read of a classifier reaches (`d < 0` false, for a classifier
+/// that fails with `-1`).
+fn cond_guards(
+    cond: &MirExpr,
+    slot: LocalId,
+    cx: &PositionCx<'_>,
+    scope: &Classified,
+) -> (PositionGuard, PositionGuard) {
+    match below_length(cond, slot, cx.program) {
+        Some(true) => return (PositionGuard::Below, PositionGuard::None),
+        Some(false) => return (PositionGuard::None, PositionGuard::Below),
+        None => {}
+    }
+    let Some((fails, then_set, else_set)) = classified_test(cond, slot, cx, scope) else {
+        return (PositionGuard::None, PositionGuard::None);
+    };
+    let read = |set: IntSet| match set.misses(fails) {
+        true => PositionGuard::Read,
+        false => PositionGuard::None,
+    };
+    (read(then_set), read(else_set))
+}
+
+/// The Ints a test holds on, or fails on.
+#[derive(Debug, Clone, Copy)]
+enum IntSet {
+    Range(Interval),
+    AllBut(i128),
+}
+
+impl IntSet {
+    /// Does no value of `fails` lie in the set?
+    fn misses(self, fails: Interval) -> bool {
+        match self {
+            IntSet::Range(r) => r.disjoint(fails),
+            IntSet::AllBut(k) => fails.as_point() == Some(k),
+        }
+    }
+}
+
+/// A comparison of a classified value with an Int literal: the classifier's
+/// failure values, the set the test holds on and the set it fails on.
+fn classified_test(
+    cond: &MirExpr,
+    slot: LocalId,
+    cx: &PositionCx<'_>,
+    scope: &Classified,
+) -> Option<(Interval, IntSet, IntSet)> {
+    let MirExpr::BinOp(b) = cond else {
+        return None;
+    };
+    let (l, r) = (&b.node.lhs.node, &b.node.rhs.node);
+    let (fails, k, op) = match (classified(l, slot, scope, cx), literal_interval(r)) {
+        (Some(fails), Some(k)) => (fails, k.as_point()?, b.node.op),
+        _ => {
+            let fails = classified(r, slot, scope, cx)?;
+            let k = literal_interval(l)?.as_point()?;
+            // `k OP x` is `x OP' k`.
+            let flipped = match b.node.op {
+                BinOp::Lt => BinOp::Gt,
+                BinOp::Lte => BinOp::Gte,
+                BinOp::Gt => BinOp::Lt,
+                BinOp::Gte => BinOp::Lte,
+                other => other,
+            };
+            (fails, k, flipped)
+        }
+    };
+    use IntSet::{AllBut, Range};
+    let (holds, fails_on) = match op {
+        BinOp::Lt => (Range(Interval::le(k - 1)), Range(Interval::ge(k))),
+        BinOp::Lte => (Range(Interval::le(k)), Range(Interval::ge(k + 1))),
+        BinOp::Gt => (Range(Interval::ge(k + 1)), Range(Interval::le(k))),
+        BinOp::Gte => (Range(Interval::ge(k)), Range(Interval::le(k - 1))),
+        BinOp::Eq => (Range(Interval::point(k)), AllBut(k)),
+        BinOp::Neq => (AllBut(k), Range(Interval::point(k))),
+        _ => return None,
+    };
+    Some((fails, holds, fails_on))
+}
+
+/// The classifier facts of `program`: for each fn returning `Int` and each
+/// of its `Int` params, the values it can return on a path where its read at
+/// that param did not succeed, when they are all known (literal leaves).
+fn classifiers(program: &MirProgram) -> Classifiers {
+    let none = PositionCx {
+        program,
+        classifiers: Classifiers::new(),
+        entry_checks: false,
+    };
+    let mut out = Classifiers::new();
+    for (id, f) in program.iter() {
+        if !ty_str_is_int(&f.return_type) || leaves_early(&f.body.node) {
+            continue;
+        }
+        for (j, p) in f.params.iter().enumerate() {
+            if !ty_str_is_int(&p.ty) {
+                continue;
+            }
+            let mut fails: Option<Interval> = None;
+            if failure_values(&f.body.node, p.local, &none, &mut fails)
+                && let Some(fails) = fails.filter(|iv| iv.fits_i64())
+            {
+                out.insert((*id, j), fails);
+            }
+        }
+    }
+    out
+}
+
+/// Hull into `fails` every value `e` can return on a path where its read of
+/// `slot` did not succeed. `false` when one of them is not a known Int.
+fn failure_values(
+    e: &MirExpr,
+    slot: LocalId,
+    cx: &PositionCx<'_>,
+    fails: &mut Option<Interval>,
+) -> bool {
+    match e {
+        MirExpr::Let(l) => failure_values(&l.node.body.node, slot, cx, fails),
+        MirExpr::Match(m) => {
+            let read = read_arms(&m.node.subject.node, &m.node.arms, slot, cx, &Vec::new());
+            m.node.arms.iter().enumerate().all(|(k, arm)| {
+                read.as_ref().is_some_and(|r| r[k])
+                    || failure_values(&arm.body.node, slot, cx, fails)
+            })
+        }
+        MirExpr::IfThenElse(ite) => {
+            failure_values(&ite.node.then_branch.node, slot, cx, fails)
+                && failure_values(&ite.node.else_branch.node, slot, cx, fails)
+        }
+        _ => {
+            // The value itself: `eval_interval_pub` would hull in the 0 its
+            // overflow accumulator starts from.
+            let mut worst = Interval::point(0);
+            let iv = eval_interval(e, &HashMap::new(), &mut worst, &FnBareFacts::default());
+            *fails = Some(fails.map_or(iv, |f| f.hull(iv)));
+            iv.fits_i64()
+        }
+    }
+}
+
+/// Can `e` leave its fn other than through its value (`?`, `return`)?
+fn leaves_early(e: &MirExpr) -> bool {
+    if matches!(e, MirExpr::Try(_) | MirExpr::Return(_)) {
+        return true;
+    }
+    let mut found = false;
+    visit_children(e, &mut |c| found = found || leaves_early(c));
+    found
+}
+
+/// The body `e` of `self_fn` as it runs when every read of position `slot`
+/// fails: each match on such a read is replaced by the arm a failure takes
+/// (a binding arm binds the read), each test only a successful read passes
+/// by its other branch. `None` when a failure would still step the loop or
+/// take an arm that depends on which value the read failed with.
+fn failure_path(
+    e: Spanned<MirExpr>,
+    self_fn: FnId,
+    slot: LocalId,
+    cx: &PositionCx<'_>,
+    scope: &mut Classified,
+) -> Option<Spanned<MirExpr>> {
+    let take = |b: &mut std::boxed::Box<Spanned<MirExpr>>| {
+        std::mem::replace(
+            &mut **b,
+            Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Unit))),
+        )
+    };
+    let mut e = e;
+    let line = e.line;
+    match &mut e.node {
+        MirExpr::Let(l) => {
+            if contains_self_tailcall(&l.node.value.node, self_fn) {
+                return None;
+            }
+            let class = classified(&l.node.value.node, slot, scope, cx);
+            if let Some(fails) = class {
+                scope.push((l.node.binding, fails));
+            }
+            let body = failure_path(take(&mut l.node.body), self_fn, slot, cx, scope);
+            if class.is_some() {
+                scope.pop();
+            }
+            *l.node.body = body?;
+            Some(e)
+        }
+        MirExpr::Match(m) => {
+            if contains_self_tailcall(&m.node.subject.node, self_fn) {
+                return None;
+            }
+            let Some(failure) = read_failure(&m.node.subject.node, slot, cx, scope) else {
+                for arm in &mut m.node.arms {
+                    let body = std::mem::replace(
+                        &mut arm.body,
+                        Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Unit))),
+                    );
+                    arm.body = failure_path(body, self_fn, slot, cx, scope)?;
+                }
+                return Some(e);
+            };
+            // The first arm a failure can take must take every failure.
+            let k = m
+                .node
+                .arms
+                .iter()
+                .position(|arm| takes_failure(&arm.pattern, failure) != Some(false))?;
+            if takes_failure(&m.node.arms[k].pattern, failure) != Some(true) {
+                return None;
+            }
+            let arm = m.node.arms.swap_remove(k);
+            let body = failure_path(arm.body, self_fn, slot, cx, scope)?;
+            let MirPattern::Bind(binding, binding_name) = arm.pattern else {
+                return Some(body);
+            };
+            let ty = body.ty().cloned();
+            let bound = Spanned::new(
+                MirExpr::Let(Spanned::new(
+                    super::super::expr::MirLet {
+                        binding,
+                        binding_name,
+                        value: std::boxed::Box::new(take(&mut m.node.subject)),
+                        body: std::boxed::Box::new(body),
+                    },
+                    line,
+                )),
+                line,
+            );
+            if let Some(ty) = ty {
+                bound.set_ty(ty);
+            }
+            Some(bound)
+        }
+        MirExpr::IfThenElse(ite) => {
+            if contains_self_tailcall(&ite.node.cond.node, self_fn) {
+                return None;
+            }
+            match cond_guards(&ite.node.cond.node, slot, cx, scope) {
+                (PositionGuard::Read, _) => {
+                    failure_path(take(&mut ite.node.else_branch), self_fn, slot, cx, scope)
+                }
+                (_, PositionGuard::Read) => {
+                    failure_path(take(&mut ite.node.then_branch), self_fn, slot, cx, scope)
+                }
+                _ => {
+                    let then_b = take(&mut ite.node.then_branch);
+                    *ite.node.then_branch = failure_path(then_b, self_fn, slot, cx, scope)?;
+                    let else_b = take(&mut ite.node.else_branch);
+                    *ite.node.else_branch = failure_path(else_b, self_fn, slot, cx, scope)?;
+                    Some(e)
+                }
+            }
+        }
+        _ => (!contains_self_tailcall(&e.node, self_fn)).then_some(e),
+    }
+}
+
+/// The `Int` params only ever read at as a string position: every use is
+/// the position of an indexed read, which answers the same for a value and
+/// for it saturated to `i64`. Not for `main`, a fn taken as a value, or a fn
+/// in a call cycle (the Rust backend keeps a mutual trampoline boxed).
+fn read_only_positions(
+    program: &MirProgram,
+    address_taken: &HashSet<String>,
+    edges: &[CallEdge],
+) -> HashSet<(FnId, usize)> {
+    let nodes: Vec<FnId> = program.iter().map(|(id, _)| *id).collect();
+    let mut graph: HashMap<FnId, Vec<FnId>> = HashMap::new();
+    for edge in edges.iter().filter(|e| e.caller != e.target) {
+        graph.entry(edge.caller).or_default().push(edge.target);
+    }
+    let mutual = crate::scc::mutually_recursive(&nodes, &graph);
+    let mut out = HashSet::new();
+    for (id, f) in program.iter() {
+        if f.name == "main" || address_taken.contains(&f.name) || mutual.contains(id) {
+            continue;
+        }
+        for (i, p) in f.params.iter().enumerate() {
+            let read = |e: &MirExpr| read_at(e, p.local);
+            if ty_str_is_int(&p.ty) && read(&f.body.node) == Some(true) {
+                out.insert((*id, i));
+            }
+        }
+    }
+    out
+}
+
+/// Is every use of `slot` in `e` the position of an indexed read:
+/// `Some(true)` when there is at least one, `Some(false)` when there is none,
+/// `None` when some other use reads it.
+fn read_at(e: &MirExpr, slot: LocalId) -> Option<bool> {
+    if subject_is_local(e, slot) {
+        return None;
+    }
+    let mut seen = false;
+    if let MirExpr::Call(c) = e {
+        for (k, a) in c.node.args.iter().enumerate() {
+            let at = intrinsic_accepts_raw_position_arg(&c.node.callee, k);
+            match (
+                at && subject_is_local(&a.node, slot),
+                read_at(&a.node, slot),
+            ) {
+                (true, _) => seen = true,
+                (false, None) => return None,
+                (false, Some(r)) => seen |= r,
+            }
+        }
+        return Some(seen);
+    }
+    let mut other = false;
+    visit_children(e, &mut |c| match read_at(c, slot) {
+        None => other = true,
+        Some(r) => seen |= r,
+    });
+    (!other).then_some(seen)
 }
 
 /// Is `e` a read of the string character at position `slot`?
@@ -2223,11 +2898,14 @@ fn literal_interval(arg: &MirExpr) -> Option<Interval> {
 /// `summary` (which params/returns are bare). The body walk derives an
 /// interval per slot (bottom-up over the `Let` chain), an escape predicate
 /// (a single use-flow scan), and combines them via `raw_i64_eligible`.
+/// `boxed_param` is a position checked on entry read as the boxed start it
+/// is on the entry check's fallback, not as the loop's `i64`.
 fn analyze_fn(
     f: &MirFn,
     summary: &Summary,
     carrier: &CarrierIntervals,
     field_carrier: &FieldCarrierIntervals,
+    boxed_param: Option<usize>,
 ) -> FnBareFacts {
     let mut facts = FnBareFacts::default();
 
@@ -2275,7 +2953,9 @@ fn analyze_fn(
             intervals.insert(p.local, Interval::unbounded());
             continue;
         }
-        let iv = if recurrence_bare {
+        let loop_bare =
+            recurrence_bare || (boxed_param != Some(i) && summary.checked_param(f.fn_id, i));
+        let iv = if loop_bare {
             summary
                 .param_interval(f.fn_id, i)
                 .filter(|iv| iv.fits_i64())
@@ -2312,7 +2992,7 @@ fn analyze_fn(
     // 3. Escape: a single use-flow scan. A slot escapes if any use-site is
     //    a general-Int context.
     let mut escaping: HashSet<LocalId> = HashSet::new();
-    scan_escapes(&f.body.node, summary, &mut escaping);
+    scan_escapes(&f.body.node, f.fn_id, summary, &mut escaping);
 
     // 4. Combine.
     for (slot, iv) in &intervals {
@@ -2366,6 +3046,9 @@ fn analyze_fn(
             }
         });
     }
+    facts.saturated_params = (0..f.params.len())
+        .filter(|&i| bare_params[i] && summary.read_only.contains(&(f.fn_id, i)))
+        .collect();
     facts.bare_params = bare_params;
 
     // 5. Return: bare iff the summary says so AND the body's tail value is
@@ -2484,7 +3167,7 @@ fn eval_interval(
 /// general (boxed) Int param of a callee, (b) is stored in an aggregate,
 /// or (c) is stringified. We over-approximate: any unrecognized use of a
 /// slot defaults to escaping.
-fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
+fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet<LocalId>) {
     match e {
         // Aggregates: every Int element/field escapes — INCLUDING a bare
         // leaf reached through a `BinOp`/`Neg` (the aggregate emit does not
@@ -2492,41 +3175,41 @@ fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
         MirExpr::List(items) | MirExpr::Tuple(items) => {
             for it in items {
                 mark_operand_escapes_deep(&it.node, out);
-                scan_escapes(&it.node, summary, out);
+                scan_escapes(&it.node, self_fn, summary, out);
             }
         }
         MirExpr::MapLiteral(pairs) => {
             for (k, v) in pairs {
                 mark_operand_escapes_deep(&k.node, out);
                 mark_operand_escapes_deep(&v.node, out);
-                scan_escapes(&k.node, summary, out);
-                scan_escapes(&v.node, summary, out);
+                scan_escapes(&k.node, self_fn, summary, out);
+                scan_escapes(&v.node, self_fn, summary, out);
             }
         }
         MirExpr::Construct(c) => {
             for a in &c.node.args {
                 mark_operand_escapes_deep(&a.node, out);
-                scan_escapes(&a.node, summary, out);
+                scan_escapes(&a.node, self_fn, summary, out);
             }
         }
         MirExpr::RecordCreate(r) => {
             for fld in &r.node.fields {
                 mark_operand_escapes_deep(&fld.value.node, out);
-                scan_escapes(&fld.value.node, summary, out);
+                scan_escapes(&fld.value.node, self_fn, summary, out);
             }
         }
         MirExpr::RecordUpdate(u) => {
             mark_operand_escapes_deep(&u.node.base.node, out);
-            scan_escapes(&u.node.base.node, summary, out);
+            scan_escapes(&u.node.base.node, self_fn, summary, out);
             for fld in &u.node.updates {
                 mark_operand_escapes_deep(&fld.value.node, out);
-                scan_escapes(&fld.value.node, summary, out);
+                scan_escapes(&fld.value.node, self_fn, summary, out);
             }
         }
         MirExpr::IndependentProduct(ip) => {
             for it in &ip.node.items {
                 mark_operand_escapes_deep(&it.node, out);
-                scan_escapes(&it.node, summary, out);
+                scan_escapes(&it.node, self_fn, summary, out);
             }
         }
         // Stringification: every embedded value escapes (including a bare
@@ -2536,7 +3219,7 @@ fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
             for p in parts {
                 if let super::super::expr::MirStrPart::Expr(ex) = p {
                     mark_operand_escapes_deep(&ex.node, out);
-                    scan_escapes(&ex.node, summary, out);
+                    scan_escapes(&ex.node, self_fn, summary, out);
                 }
             }
         }
@@ -2554,7 +3237,7 @@ fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
                     if !summary.param_bare(target, i) {
                         mark_operand_escapes(&a.node, out);
                     }
-                    scan_escapes(&a.node, summary, out);
+                    scan_escapes(&a.node, self_fn, summary, out);
                 }
             }
             // A builtin / intrinsic / fn-value callee is normally a
@@ -2572,23 +3255,28 @@ fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
                     {
                         mark_operand_escapes_deep(&a.node, out);
                     }
-                    scan_escapes(&a.node, summary, out);
+                    scan_escapes(&a.node, self_fn, summary, out);
                 }
             }
         },
         // A tail call: same, against the (self) callee's bare params.
         MirExpr::TailCall(tc) => {
+            let target = tc.node.target;
             for (i, a) in tc.node.args.iter().enumerate() {
-                if !summary.param_bare(tc.node.target, i) {
+                // A self-tail-call rebinds the loop's own `i64` for a
+                // position checked on entry.
+                let bare = summary.param_bare(target, i)
+                    || (target == self_fn && summary.checked_param(target, i));
+                if !bare {
                     mark_operand_escapes(&a.node, out);
                 }
-                scan_escapes(&a.node, summary, out);
+                scan_escapes(&a.node, self_fn, summary, out);
             }
         }
         // Control flow + arithmetic: recurse. A bare Local in tail/return
         // or arithmetic-operand position is consumed bare (no escape).
         _ => {
-            visit_children(e, &mut |c| scan_escapes(c, summary, out));
+            visit_children(e, &mut |c| scan_escapes(c, self_fn, summary, out));
         }
     }
 }
@@ -4252,12 +4940,316 @@ fn main() -> Int
     }
 
     #[test]
-    fn position_with_an_unbounded_start_stays_boxed() {
+    fn position_with_an_unbounded_start_is_checked_on_entry() {
         let src = walk(
             "i + 1",
             "0 - String.len(\"abc\") * 1000000000000 * 1000000000000",
         );
+        // The signature keeps the start boxed; the loop holds it raw.
         assert!(!position_is_bare(&src, "walk__indexed", "i"));
+        assert!(position_is_checked(&src, "walk__indexed", "i"));
+    }
+
+    /// Is param `name` of fn `fn_name` checked on entry, held raw by the
+    /// loop, with a fallback that never steps the loop?
+    fn position_is_checked(src: &str, fn_name: &str, name: &str) -> bool {
+        let (program, facts) = facts_for(src);
+        let id = fn_id_by_name(&program, fn_name);
+        let f = program.fn_by_id(id).expect("fn");
+        let i = f.params.iter().position(|p| p.name == name).expect("param");
+        let facts = facts.for_fn(id).expect("facts");
+        let Some(check) = facts.entry_check.as_deref() else {
+            return false;
+        };
+        assert_eq!(check.param, i);
+        assert!(!facts.param_is_bare(i), "the signature stays boxed");
+        assert!(facts.loop_param_is_bare(i));
+        assert!(facts.is_bare(f.params[i].local), "the loop holds it raw");
+        assert!(
+            !check.facts.is_bare(f.params[i].local),
+            "the fallback reads the boxed start"
+        );
+        assert!(!contains_self_tailcall(&check.fallback.node, id));
+        assert!(!facts.bare_return);
+        true
+    }
+
+    /// Pestka's reader: the digit loop matches the character itself, and its
+    /// start is a record field, handed on through a classifier.
+    const READER: &str = r#"
+record NumAt
+    value: Int
+    end: Int
+
+fn digitAt(s: String, i: Int) -> Int
+    match String.charAt(s, i)
+        Option.Some("0") -> 0
+        Option.Some("1") -> 1
+        Option.Some -> -1
+        Option.None -> NONE
+
+fn numberAt(s: String, i: Int, acc: Int) -> NumAt
+    match String.charAt(s, i)
+        Option.Some("0") -> numberAt(s, i + 1, acc * 10)
+        Option.Some("1") -> numberAt(s, i + 1, acc * 10 + 1)
+        Option.Some -> NumAt(value = acc, end = i)
+        Option.None -> NumAt(value = acc, end = i)
+
+fn walkAt(s: String, i: Int, acc: Int) -> NumAt
+    d = digitAt(s, i)
+    match d < 0
+        true -> NumAt(value = acc, end = i)
+        false -> walkAt(s, i + 1, acc * 10 + d)
+
+fn canonAt(s: String, i: Int) -> NumAt
+    d = digitAt(s, i)
+    match d < 0
+        true -> NumAt(value = 0, end = -1)
+        false -> numberAt(s, i + 1, d)
+
+fn main() -> Int
+    a = canonAt("x10,1", 1)
+    b = canonAt("x10,1", a.end + 1)
+    c = walkAt("x10,1", b.end - 3, 0)
+    a.value + b.value + c.value
+"#;
+
+    #[test]
+    fn position_started_from_a_record_field_is_checked_on_entry() {
+        let src = READER.replace("NONE", "-1");
+        assert!(position_is_checked(&src, "numberAt__indexed", "i"));
+        let (program, facts) = facts_for(&src);
+        let id = fn_id_by_name(&program, "numberAt__indexed");
+        let check = facts.for_fn(id).unwrap().entry_check.as_deref().unwrap();
+        // Every read fails on such a start: what is left is the arm for the
+        // end of the text.
+        assert!(
+            matches!(check.fallback.node, MirExpr::RecordCreate(_)),
+            "{:?}",
+            check.fallback.node
+        );
+        // The rewrite keeps the step raw and hands the fallback to the emitter.
+        let program = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(
+            program,
+            &HashSet::new(),
+            &CarrierIntervals::new(),
+        );
+        let f = program.fn_by_id(id).unwrap();
+        let check = f.repr.entry_check.as_ref().expect("entry check in the MIR");
+        assert!(!f.repr.param_is_bare(check.param));
+        assert!(f.repr.slot_is_bare(f.params[check.param].local));
+        fn boxed_step(e: &MirExpr, id: FnId, i: usize, out: &mut bool) {
+            if let MirExpr::TailCall(tc) = e
+                && tc.node.target == id
+            {
+                *out |= matches!(tc.node.args[i].node, MirExpr::Box(_) | MirExpr::Unbox(_));
+            }
+            visit_children(e, &mut |c| boxed_step(c, id, i, out));
+        }
+        let mut boxed = false;
+        boxed_step(&f.body.node, id, check.param, &mut boxed);
+        assert!(!boxed, "the loop steps the raw position");
+    }
+
+    #[test]
+    fn position_guarded_through_a_classifier_is_bare() {
+        let src = r#"
+fn digitAt(s: String, i: Int) -> Int
+    match String.charAt(s, i)
+        Option.Some("1") -> 1
+        Option.Some -> -1
+        Option.None -> -1
+
+fn walk(s: String, i: Int, n: Int) -> Int
+    d = digitAt(s, i)
+    match d < 0
+        true -> n
+        false -> walk(s, i + 1, n + d)
+
+fn bitAt(s: String, i: Int) -> Int
+    match String.charAt(s, i)
+        Option.Some("1") -> 1
+        Option.Some("0") -> 0
+        Option.Some -> 9
+        Option.None -> 9
+
+fn spell(s: String, i: Int, n: Int) -> Int
+    match bitAt(s, i)
+        9 -> n
+        d -> spell(s, i + 1, n * 2 + d)
+
+fn main() -> Int
+    walk("111", 0, 0) + spell("11", 0, 0)
+"#;
+        assert!(position_is_bare(src, "walk__indexed", "i"));
+        assert!(position_is_bare(src, "spell__indexed", "i"));
+    }
+
+    #[test]
+    fn classifier_guard_with_a_record_field_start_is_checked_on_entry() {
+        let src = READER.replace("NONE", "-1");
+        assert!(position_is_checked(&src, "walkAt__indexed", "i"));
+    }
+
+    #[test]
+    fn classifier_answering_a_failed_read_is_no_guard() {
+        // `digitAt` answers 0 past the end, so `d >= 0` does not mean the
+        // read succeeded.
+        let src = READER.replace("NONE", "0");
+        assert!(!position_is_bare(&src, "walkAt__indexed", "i"));
+        assert!(!position_is_checked(&src, "walkAt__indexed", "i"));
+        // The loop that reads the character itself is unaffected.
+        assert!(position_is_checked(&src, "numberAt__indexed", "i"));
+    }
+
+    #[test]
+    fn step_outside_the_read_is_not_checked_on_entry() {
+        let src = r#"
+record At
+    pos: Int
+
+fn walk(s: String, i: Int, n: Int) -> Int
+    match n > 3
+        true -> walk(s, i + 1, n - 1)
+        false -> match String.charAt(s, i)
+            Option.None -> n
+            Option.Some(_) -> walk(s, i + 1, n + 1)
+
+fn main() -> Int
+    walk("abc", At(pos = 1).pos, 0)
+"#;
+        assert!(!position_is_bare(src, "walk__indexed", "i"));
+        assert!(!position_is_checked(src, "walk__indexed", "i"));
+    }
+
+    #[test]
+    fn length_test_alone_is_not_checked_on_entry() {
+        // Below zero `i < String.len(s)` holds: a start from a field may
+        // step the loop without any read succeeding.
+        let src = r#"
+record At
+    pos: Int
+
+fn count(s: String, i: Int, n: Int) -> Int
+    match i < String.len(s)
+        true -> count(s, i + 1, n + 1)
+        false -> n
+
+fn main() -> Int
+    count("abc", At(pos = 1).pos, 0)
+"#;
+        assert!(!position_is_bare(src, "count", "i"));
+        assert!(!position_is_checked(src, "count", "i"));
+    }
+
+    #[test]
+    fn param_only_read_at_takes_a_saturated_position() {
+        let src = READER.replace("NONE", "-1");
+        let (program, facts) = facts_for(&src);
+        let id = fn_id_by_name(&program, "digitAt__indexed");
+        let f = facts.for_fn(id).unwrap();
+        assert!(f.param_is_bare(1) && f.param_takes_saturated(1));
+        // `numberAt` steps its position, the wrapper hands it on: neither
+        // only reads it.
+        let number = fn_id_by_name(&program, "numberAt__indexed");
+        assert!(!facts.for_fn(number).unwrap().param_takes_saturated(1));
+        let wrapper = fn_id_by_name(&program, "digitAt");
+        assert!(!facts.for_fn(wrapper).unwrap().param_takes_saturated(1));
+        // `canonAt` hands it a boxed start: saturated at the call; the loop
+        // of `walkAt` hands it its raw position as it is.
+        let program = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(
+            program,
+            &HashSet::new(),
+            &CarrierIntervals::new(),
+        );
+        fn arg_of_call(e: &MirExpr, callee: FnId, out: &mut Vec<MirExpr>) {
+            if let MirExpr::Call(c) = e
+                && c.node.callee == MirCallee::Fn(callee)
+            {
+                out.push(c.node.args[1].node.clone());
+            }
+            visit_children(e, &mut |c| arg_of_call(c, callee, out));
+        }
+        let saturated = |e: &MirExpr| {
+            matches!(e, MirExpr::Call(c) if c.node.callee
+                == MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::StrIndexPosition))
+        };
+        let mut from_canon = Vec::new();
+        let canon = fn_id_by_name(&program, "canonAt__indexed");
+        arg_of_call(
+            &program.fn_by_id(canon).unwrap().body.node,
+            id,
+            &mut from_canon,
+        );
+        assert!(!from_canon.is_empty() && from_canon.iter().all(saturated));
+        let walk = fn_id_by_name(&program, "walkAt__indexed");
+        let mut from_loop = Vec::new();
+        arg_of_call(
+            &program.fn_by_id(walk).unwrap().body.node,
+            id,
+            &mut from_loop,
+        );
+        assert!(from_loop.iter().any(|e| matches!(e, MirExpr::Local(_))));
+        let fallback = &program
+            .fn_by_id(walk)
+            .unwrap()
+            .repr
+            .entry_check
+            .as_ref()
+            .unwrap()
+            .fallback;
+        let mut from_fallback = Vec::new();
+        arg_of_call(&fallback.node, id, &mut from_fallback);
+        assert!(from_fallback.iter().all(saturated));
+    }
+
+    #[test]
+    fn param_read_otherwise_takes_no_saturated_position() {
+        let src = r#"
+fn next(s: String, i: Int) -> Int
+    match String.charAt(s, i + 1)
+        Option.Some(_) -> 1
+        Option.None -> 0
+
+fn here(s: String, i: Int) -> Int
+    match String.charAt(s, i)
+        Option.Some(_) -> i
+        Option.None -> 0
+
+fn walk(s: String, i: Int, n: Int) -> Int
+    match String.charAt(s, i)
+        Option.None -> n
+        Option.Some(_) -> walk(s, i + 1, n + next(s, i) + here(s, i))
+
+fn main() -> Int
+    walk("abc", 0, 0)
+"#;
+        let (program, facts) = facts_for(src);
+        for name in ["next__indexed", "here__indexed"] {
+            let id = fn_id_by_name(&program, name);
+            assert!(
+                !facts.for_fn(id).unwrap().param_takes_saturated(1),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn wasm_gc_analysis_has_no_rust_positions() {
+        let src = READER.replace("NONE", "-1");
+        let (program, _) = facts_for(&src);
+        let facts = analyze_with_fields(
+            &program,
+            &CarrierIntervals::new(),
+            &FieldCarrierIntervals::new(),
+            false,
+        );
+        let id = fn_id_by_name(&program, "numberAt__indexed");
+        let f = facts.for_fn(id).unwrap();
+        assert!(f.entry_check.is_none());
+        assert!(!f.is_bare(program.fn_by_id(id).unwrap().params[1].local));
+        let digit = fn_id_by_name(&program, "digitAt__indexed");
+        assert!(!facts.for_fn(digit).unwrap().param_takes_saturated(1));
     }
 
     #[test]

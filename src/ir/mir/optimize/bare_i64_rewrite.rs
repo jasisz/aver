@@ -72,7 +72,7 @@ pub fn rewrite_for_rust(
     // carrier table so `carrier_interval` declines every carrier.
     let empty = super::bare_i64::CarrierIntervals::new();
     let empty_fields = super::bare_i64::FieldCarrierIntervals::new();
-    rewrite(program, boxed_signature_fns, &empty, &empty_fields)
+    rewrite(program, boxed_signature_fns, &empty, &empty_fields, true)
 }
 
 /// ETAP-2 SLICE 2b: the wasm-gc entry. Identical body to
@@ -93,22 +93,27 @@ pub fn rewrite_for_wasm_gc(
     carrier: &super::bare_i64::CarrierIntervals,
     field_carrier: &super::bare_i64::FieldCarrierIntervals,
 ) -> MirProgram {
-    rewrite(program, boxed_signature_fns, carrier, field_carrier)
+    // No entry check: the wasm-gc emitter has no loop prologue for it.
+    rewrite(program, boxed_signature_fns, carrier, field_carrier, false)
 }
 
 /// The shared rewrite both public entries delegate to. Target-agnostic:
 /// it consumes only the analysis output + the caller-supplied
 /// `boxed_signature_fns`. See [`rewrite_for_rust`] /
 /// [`rewrite_for_wasm_gc`] for the two callers and how each computes
-/// `boxed_signature_fns`.
+/// `boxed_signature_fns`. `entry_checks` is whether the backend emits the
+/// entry check of a string-walk position whose start is not bounded
+/// ([`super::bare_i64::EntryCheck`]).
 fn rewrite(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
     carrier: &super::bare_i64::CarrierIntervals,
     field_carrier: &super::bare_i64::FieldCarrierIntervals,
+    entry_checks: bool,
 ) -> MirProgram {
     let mut program = program;
-    let facts = super::bare_i64::analyze_with_fields(&program, carrier, field_carrier);
+    let facts =
+        super::bare_i64::analyze_with_fields(&program, carrier, field_carrier, entry_checks);
     // Collect ids first to avoid borrowing `program.fns` while mutating it.
     let ids: Vec<crate::ir::FnId> = program.fns.keys().copied().collect();
     for id in ids {
@@ -266,6 +271,7 @@ fn rewrite_fn(
         bare_params: facts.bare_params.clone(),
         bare_return: facts.bare_return,
         carrier_slots,
+        entry_check: None,
     };
 
     // 2. Insert boundary nodes. The body is in RETURN position: a bare
@@ -275,14 +281,32 @@ fn rewrite_fn(
         facts,
         all,
         boxed_signature_fns,
+        self_fn: f.fn_id,
     };
     let body = std::mem::replace(
         &mut f.body,
         Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Unit))),
     );
     f.body = rewrite_tail(body, facts.bare_return, &ctx);
+
+    // 3. A position checked on entry: its fallback (the failure path on
+    //    the boxed start) gets the boundaries of its own facts, where that
+    //    param is boxed. The return is boxed for such a fn.
+    if let Some(check) = facts.entry_check.as_deref() {
+        let fallback_ctx = RewriteCtx {
+            facts: &check.facts,
+            ..ctx
+        };
+        f.repr.entry_check = Some(crate::ir::mir::MirEntryCheck {
+            param: check.param,
+            lo: check.lo,
+            hi: check.hi,
+            fallback: rewrite_tail(check.fallback.clone(), false, &fallback_ctx),
+        });
+    }
 }
 
+#[derive(Clone, Copy)]
 struct RewriteCtx<'a> {
     facts: &'a FnBareFacts,
     all: &'a BareI64Facts,
@@ -291,6 +315,9 @@ struct RewriteCtx<'a> {
     /// `AverInt` params regardless of the analysis flags — so `call_returns_raw`
     /// and `rewrite_call_args` treat them as boxed.
     boxed_signature_fns: &'a std::collections::HashSet<crate::ir::FnId>,
+    /// The fn being rewritten: its self-tail-calls rebind the loop's params,
+    /// which hold a position checked on entry as an `i64`.
+    self_fn: crate::ir::FnId,
 }
 
 impl RewriteCtx<'_> {
@@ -692,7 +719,7 @@ fn rewrite_tail_inner(
             let target = tc.node.target;
             let callee = MirCallee::Fn(target);
             let args = std::mem::take(&mut tc.node.args);
-            tc.node.args = rewrite_call_args(args, &callee, ctx);
+            tc.node.args = rewrite_call_args(args, &callee, target == ctx.self_fn, ctx);
             Spanned::new(MirExpr::TailCall(tc), line)
         }
         // A base-case value (a literal, a bare `Local`, an arithmetic tree,
@@ -833,14 +860,14 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
         MirExpr::Call(mut c) => {
             let callee = c.node.callee.clone();
             let args = std::mem::take(&mut c.node.args);
-            c.node.args = rewrite_call_args(args, &callee, ctx);
+            c.node.args = rewrite_call_args(args, &callee, false, ctx);
             Spanned::new(MirExpr::Call(c), line)
         }
         MirExpr::TailCall(mut tc) => {
             let target = tc.node.target;
             let callee = MirCallee::Fn(target);
             let args = std::mem::take(&mut tc.node.args);
-            tc.node.args = rewrite_call_args(args, &callee, ctx);
+            tc.node.args = rewrite_call_args(args, &callee, target == ctx.self_fn, ctx);
             Spanned::new(MirExpr::TailCall(tc), line)
         }
         MirExpr::List(items) => Spanned::new(MirExpr::List(rewrite_boxed_each(items, ctx)), line),
@@ -977,16 +1004,29 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
 fn rewrite_call_args(
     args: Vec<Spanned<MirExpr>>,
     callee: &MirCallee,
+    self_tail: bool,
     ctx: &RewriteCtx<'_>,
 ) -> Vec<Spanned<MirExpr>> {
     let callee_facts = match callee {
         MirCallee::Fn(t) => ctx.callee_facts(*t),
         _ => None,
     };
+    // A self-tail-call rebinds the loop's own params: a position checked on
+    // entry is an `i64` there, though the signature keeps it boxed.
+    let param_bare = |f: &FnBareFacts, i: usize| match self_tail {
+        true => f.loop_param_is_bare(i),
+        false => f.param_is_bare(i),
+    };
     args.into_iter()
         .enumerate()
         .map(|(i, a)| {
-            if callee_facts.is_some_and(|f| f.param_is_bare(i))
+            // A param only read at as a position takes a boxed one saturated.
+            if callee_facts.is_some_and(|f| param_bare(f, i) && f.param_takes_saturated(i))
+                && !renders_raw(&a.node, ctx.facts)
+            {
+                return saturated_position(rewrite_boxed(a, ctx));
+            }
+            if callee_facts.is_some_and(|f| param_bare(f, i))
                 || super::bare_i64::intrinsic_accepts_raw_code_arg(callee, i)
                 || (super::bare_i64::intrinsic_accepts_raw_position_arg(callee, i)
                     && renders_raw(&a.node, ctx.facts))
@@ -997,6 +1037,22 @@ fn rewrite_call_args(
             }
         })
         .collect()
+}
+
+/// `e`, a boxed position, as the `i64` an indexed read takes: saturated
+/// outside `i64`, which keeps every answer of the reads.
+fn saturated_position(e: Spanned<MirExpr>) -> Spanned<MirExpr> {
+    let line = e.line;
+    let ty = e.ty().cloned();
+    let call = crate::ir::mir::MirCall {
+        callee: MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::StrIndexPosition),
+        args: vec![e],
+    };
+    let out = Spanned::new(MirExpr::Call(Spanned::new(call, line)), line);
+    if let Some(t) = ty {
+        out.set_ty(t);
+    }
+    out
 }
 
 fn rewrite_boxed_each(items: Vec<Spanned<MirExpr>>, ctx: &RewriteCtx<'_>) -> Vec<Spanned<MirExpr>> {

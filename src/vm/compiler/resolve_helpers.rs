@@ -66,6 +66,9 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::BytPush => Some((BYTE_BUILDER_PUSH, 2)),
         BuiltinIntrinsic::BytFinalize => Some((BYTE_BUILDER_FINALIZE, 1)),
         BuiltinIntrinsic::ToStr => None,
+        // Rust only: the representation rewrite of the Rust backend is its
+        // one producer.
+        BuiltinIntrinsic::StrIndexPosition => None,
     }
 }
 

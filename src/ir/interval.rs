@@ -254,6 +254,21 @@ impl Interval {
         self.lo.le(Bound::Finite(k)) && Bound::Finite(k).le(self.hi)
     }
 
+    /// `true` when no integer lies in both intervals.
+    pub fn disjoint(self, other: Interval) -> bool {
+        let below =
+            |a: Bound, b: Bound| matches!((a, b), (Bound::Finite(x), Bound::Finite(y)) if x < y);
+        below(self.hi, other.lo) || below(other.hi, self.lo)
+    }
+
+    /// The single integer the interval holds, if it holds one.
+    pub fn as_point(self) -> Option<i128> {
+        match (self.lo, self.hi) {
+            (Bound::Finite(a), Bound::Finite(b)) if a == b => Some(a),
+            _ => None,
+        }
+    }
+
     /// Standard interval widening ∇. An endpoint that moved OUTWARD between
     /// the previous iterate `self` and the next iterate `next` jumps to the
     /// matching infinity; a stable or inward-moving endpoint is kept (as the

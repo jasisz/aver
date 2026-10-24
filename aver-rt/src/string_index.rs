@@ -117,6 +117,14 @@ pub fn string_position(position: &AverInt) -> i64 {
     })
 }
 
+/// The start of a string walk the compiler checks once on entry: the
+/// position as an `i64` when it lies in `[lo, hi]`, the range a successful
+/// read can be at, else `None` (the walk's first read fails there).
+#[inline]
+pub fn string_position_within(position: &AverInt, lo: i64, hi: i64) -> Option<i64> {
+    position.to_i64().filter(|p| (lo..=hi).contains(p))
+}
+
 /// Indexed equivalent of `String.charAt`.
 pub fn string_index_char_at(
     text: &AverStr,
@@ -391,5 +399,18 @@ mod tests {
             ),
             text
         );
+    }
+
+    #[test]
+    fn a_start_is_let_into_the_loop_only_within_its_range() {
+        let top = isize::MAX as i64 - 9;
+        let within = |p: &AverInt| string_position_within(p, 0, top);
+        assert_eq!(within(&AverInt::from_i64(0)), Some(0));
+        assert_eq!(within(&AverInt::from_i64(top)), Some(top));
+        assert_eq!(within(&AverInt::from_i64(top + 1)), None);
+        assert_eq!(within(&AverInt::from_i64(-1)), None);
+        assert_eq!(within(&AverInt::from_i64(i64::MIN)), None);
+        let past = AverInt::from_i64(i64::MAX).add(&AverInt::from_i64(1));
+        assert_eq!(within(&past), None);
     }
 }
