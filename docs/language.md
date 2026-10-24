@@ -538,7 +538,7 @@ What `lazy` may stand before:
 
 Anything else is a compile error that says which rule the call breaks.
 
-Only compiled Rust defers the call. The VM, wasm-gc, wasip2 and the self-hosted interpreter make every call at once, and proofs read `lazy f(x)` as `f(x)`. A recursive call in tail position is a loop step, so `lazy` there is made at once on Rust too. The parts of a value a deferred call returns can be deferred again (`Node(lazy left(t), lazy right(t))`), which is how a large value gets built one level at a time, as it is looked at.
+Only compiled Rust defers the call. The VM, wasm-gc, wasip2 and the self-hosted interpreter make every call at once, and proofs read `lazy f(x)` as `f(x)`. A `lazy` call is never a tail call, in tail position too: compiled Rust returns the deferred call at once, so the stack does not grow, and a deferred call that returns another one makes that one in its place, one after another. The other backends make it as an ordinary call, one inside another. The parts of a value a deferred call returns can be deferred again (`Node(lazy left(t), lazy right(t))`), which is how a large value gets built one level at a time, as it is looked at.
 
 Three things to know:
 

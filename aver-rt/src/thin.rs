@@ -20,10 +20,12 @@
 //! value, `view` to match on one, `view_pair` to compare two.
 //!
 //! A sum some `lazy f(…)` of the program returns has one more, hidden
-//! constructor: the call, not yet made (see [`Thin::deferred`]). Every way of looking at a
-//! value (`view`, `view_pair`, `tag`, and through them `==`, hashing and
-//! printing) makes the call first, once, and from then on looks at what it
-//! returned, so no code can tell such a value from the one the call returns.
+//! constructor: the call, not yet made (see [`Thin::deferred`]). Every way of
+//! looking at a value (`view`, `view_pair`, `tag`, and through them `==`,
+//! hashing and printing) makes the call first, once, and from then on looks
+//! at what it returned, so no code can tell such a value from the one the
+//! call returns. Making the call writes what it returned into the call's own
+//! node, which from then on is a node of that constructor (see [`Lazy`]).
 //!
 //! The atomic operations and their orderings are those `Shared` uses, which
 //! are `std::sync::Arc`'s strong count (library/alloc/src/sync.rs). The count
@@ -31,13 +33,12 @@
 //! `isize::MAX`; reaching it takes two billion owners of one node, 16 GB of
 //! pointers to it alone.
 
-use std::cell::UnsafeCell;
+use std::alloc::Layout;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
-use std::mem::MaybeUninit;
 use std::ptr::NonNull;
-use std::sync::Once;
 use std::sync::atomic::{self, AtomicU32, Ordering};
+use std::sync::{Condvar, Mutex, PoisonError};
 
 /// Past it, a clone aborts rather than let the count wrap around.
 const MAX_REFCOUNT: u32 = i32::MAX as u32;
@@ -48,11 +49,12 @@ const MAX_REFCOUNT: u32 = i32::MAX as u32;
 pub const MAX_TAGS: usize = 256;
 
 /// The header at the start of a node: the count, then the constructor's tag,
-/// which never changes after the node is made.
+/// which never changes after the node is made, except in a node a deferred
+/// call was made in (see [`Lazy`]).
 #[repr(C)]
 pub struct Header {
     count: AtomicU32,
-    tag: u32,
+    tag: AtomicU32,
 }
 
 #[repr(C)]
@@ -78,6 +80,35 @@ pub unsafe trait ThinSum: Sized + 'static {
     /// The node was made by `Thin::new` for constructor `tag`, and no owner
     /// is left.
     unsafe fn free(node: NonNull<Header>, tag: u32, pending: Pending<'_>);
+
+    /// The value's pointer, for the code of a deferred call.
+    fn into_thin(self) -> Thin<Self>;
+
+    /// For a sum some `lazy f(…)` returns: the most bytes a node of any of
+    /// its constructors takes, which a node a call was deferred in has room
+    /// for (see [`Lazy`]).
+    const ROOM: usize = 0;
+
+    /// For a sum some `lazy f(…)` returns: moves the fields of `value`, a
+    /// node of a declared constructor, into the node `room` a call was
+    /// deferred in (copies them if `value` has other owners), and gives
+    /// back the constructor's tag.
+    ///
+    /// # Safety
+    /// `room` is a node made by [`Thin::deferred`] whose call this thread
+    /// is making, and `value` is a node of a declared constructor.
+    unsafe fn fill(_room: NonNull<Header>, _value: Thin<Self>) -> u32 {
+        unreachable!("only a sum some `lazy f(…)` returns has deferred calls")
+    }
+
+    /// For a sum some `lazy f(…)` returns: hands over the fields of the
+    /// node a call was made in, now of the declared constructor `tag`.
+    ///
+    /// # Safety
+    /// As [`ThinSum::free`]; the caller gives back the memory.
+    unsafe fn hand_over_fields(_node: NonNull<Header>, _tag: u32, _pending: Pending<'_>) {
+        unreachable!("only a sum some `lazy f(…)` returns has deferred calls")
+    }
 }
 
 /// One value of the recursive sum `S` (see the module docs).
@@ -116,7 +147,7 @@ impl<S: ThinSum> Thin<S> {
         let node = Box::new(Node {
             header: Header {
                 count: AtomicU32::new(1),
-                tag,
+                tag: AtomicU32::new(tag),
             },
             fields,
         });
@@ -152,7 +183,7 @@ impl<S: ThinSum> Thin<S> {
         if self.is_empty_ctor() {
             (self.ptr.as_ptr().addr() - 1) as u32
         } else {
-            self.header().tag
+            self.header().tag.load(Ordering::Relaxed)
         }
     }
 
@@ -208,11 +239,13 @@ impl<S: ThinSum> Thin<S> {
 
     /// The last owner's part of `drop`, kept out of line as
     /// `Arc::drop_slow` is: the `Acquire` fence makes every other owner's
-    /// use of the fields happen before they are dropped.
+    /// use of the fields, and a call made in the node, happen before they
+    /// are dropped.
     #[cold]
     #[inline(never)]
-    fn drop_slow(&mut self, tag: u32) {
+    fn drop_slow(&mut self) {
         atomic::fence(Ordering::Acquire);
+        let tag = self.header().tag.load(Ordering::Relaxed);
         let mut put_aside = Vec::new();
         unsafe { S::free(self.ptr, tag, Pending::new(&mut put_aside)) };
         while let Some((node, release)) = put_aside.pop() {
@@ -239,7 +272,7 @@ unsafe fn release<S: ThinSum>(node: NonNull<Header>, pending: Pending<'_>) {
         return;
     }
     atomic::fence(Ordering::Acquire);
-    unsafe { S::free(node, header.tag, pending) }
+    unsafe { S::free(node, header.tag.load(Ordering::Relaxed), pending) }
 }
 
 /// How the drop of a value frees its nodes.
@@ -312,76 +345,158 @@ impl<T: HandOver> HandOver for Option<T> {
 }
 
 /// The start of the node of the hidden constructor of a sum some `lazy f(…)`
-/// returns (see the module docs): the call until it is made, then what it
-/// returned. The first look at the value makes the call, on whichever thread
-/// looks first; a look from another thread meanwhile waits for it, and every
-/// later look reads the result. Making the call uses up its arguments. The
-/// arguments and the function follow in the node ([`Deferred`]), of types
-/// only `calls` knows.
+/// returns (see the module docs): the call, not yet made. The arguments and
+/// the function follow it in the node ([`Deferred`]), of types only `calls`
+/// knows.
+///
+/// The node has room for a node of any constructor of the sum
+/// ([`ThinSum::ROOM`]) and keeps its size in words in its tag, above
+/// [`WORDS_SHIFT`]. The first look at the value makes the call, on whichever
+/// thread looks first, and writes what the call returned over the call, in
+/// the same node: from then on the node is one of that constructor, read as
+/// any other, and its tag, written last with `Release`, says which. Until
+/// then the tag is the hidden constructor's, and says besides:
+///
+/// - [`BUSY`]: a thread is making the call. Another one that looks waits for
+///   it ([`WAITED`]).
+/// - [`FAILED`]: the call panicked, having used up its arguments. A later
+///   look panics too, as one at a poisoned `std::sync::Once` does.
+/// - [`FORWARD`]: the call returned a deferred call someone else also owns.
+///   The node holds that value and stands for it.
+///
+/// A call that returns a node no one else owns moves that node's fields in
+/// and frees it; one that returns a node with other owners copies its
+/// fields, each one more owner of what it holds. A call that returns a
+/// deferred call no one else owns makes that call in its place, and so on,
+/// one after another rather than one inside another.
 #[repr(C)]
 struct Lazy<S: 'static> {
-    once: Once,
-    /// Written once, by the call, under `once`.
-    value: UnsafeCell<MaybeUninit<S>>,
     calls: &'static Calls<S>,
 }
 
 /// What a node of one [`Deferred`] type does with its call.
 struct Calls<S> {
-    /// Makes the call and writes `value`. Run once, under `once`.
-    make: unsafe fn(NonNull<Header>),
-    /// Frees the node whose count reached 0.
-    free: unsafe fn(NonNull<Header>, Pending<'_>),
-    phantom: PhantomData<fn() -> S>,
+    /// Makes the call, using up its arguments; when told to, first gives
+    /// back the node's memory.
+    make: unsafe fn(NonNull<Header>, bool) -> S,
+    /// Hands over the arguments of a call never made.
+    drop_args: unsafe fn(NonNull<Header>, Pending<'_>),
 }
 
 #[repr(C)]
 struct Deferred<S: 'static, A, F> {
     lazy: Lazy<S>,
     /// Moved out by the call.
-    args: UnsafeCell<ManuallyDrop<A>>,
+    args: ManuallyDrop<A>,
     run: F,
+}
+
+/// The constructor's part of the tag of a node a call was deferred in.
+pub const CTOR: u32 = 0xff;
+const BUSY: u32 = 1 << 8;
+const WAITED: u32 = 1 << 9;
+const FAILED: u32 = 1 << 10;
+const FORWARD: u32 = 1 << 11;
+/// Where the size in 8-byte words of a node a call was deferred in starts in
+/// its tag. Every other node has 0 there.
+pub const WORDS_SHIFT: u32 = 16;
+
+/// Where a thread waits for a call another one is making.
+static WAITING: Mutex<()> = Mutex::new(());
+static MADE: Condvar = Condvar::new();
+
+/// The size of a node of a constructor with fields `P`, for
+/// [`ThinSum::ROOM`].
+pub const fn node_size<P>() -> usize {
+    assert!(
+        align_of::<Node<P>>() <= 8,
+        "a sum some `lazy f(…)` returns holds no field aligned past 8 bytes"
+    );
+    size_of::<Node<P>>()
+}
+
+/// Gives back the memory of a node made by [`Thin::deferred`].
+///
+/// # Safety
+/// The node was made by `Thin::deferred` with `words` words, and nothing
+/// reads it any more.
+unsafe fn free_room(node: NonNull<Header>, words: u32) {
+    let layout = unsafe { Layout::from_size_align_unchecked(words as usize * 8, 8) };
+    unsafe { std::alloc::dealloc(node.as_ptr().cast(), layout) }
 }
 
 impl<S: ThinSum + HandOver, A: HandOver, F: FnOnce(A) -> S + Copy> Deferred<S, A, F> {
     const CALLS: &'static Calls<S> = &Calls {
         make: Self::make,
-        free: Self::free,
-        phantom: PhantomData,
+        drop_args: Self::drop_args,
+    };
+
+    /// The size of the node in words: room for the call and for a node of
+    /// any constructor.
+    const WORDS: u32 = {
+        let size = node_size::<Self>();
+        let size = if size > S::ROOM { size } else { S::ROOM };
+        let words = size.div_ceil(8);
+        assert!(
+            words < 1 << (32 - WORDS_SHIFT),
+            "the arguments of a deferred call take at most 512 KB"
+        );
+        words as u32
     };
 
     /// # Safety
-    /// `node` is a node of this type, `once` runs this, and no one else
-    /// reads the arguments.
-    unsafe fn make(node: NonNull<Header>) {
-        let node = node.cast::<Node<Self>>().as_ptr();
-        let deferred = unsafe { &raw const (*node).fields };
-        let args = unsafe { ManuallyDrop::take(&mut *(*deferred).args.get()) };
-        let value = unsafe { ((*deferred).run)(args) };
-        unsafe { (*(*deferred).lazy.value.get()).write(value) };
+    /// `node` is a node of this type whose call no one has made or is
+    /// making but the caller, and, when `free`, no one else owns.
+    unsafe fn make(node: NonNull<Header>, free: bool) -> S {
+        let deferred = unsafe { &raw const (*node.cast::<Node<Self>>().as_ptr()).fields };
+        let args = ManuallyDrop::into_inner(unsafe { std::ptr::read(&raw const (*deferred).args) });
+        let run = unsafe { std::ptr::read(&raw const (*deferred).run) };
+        if free {
+            unsafe { free_room(node, Self::WORDS) };
+        }
+        run(args)
     }
 
     /// # Safety
-    /// `node` is a node of this type whose count is 0.
-    unsafe fn free(node: NonNull<Header>, pending: Pending<'_>) {
-        let node = node.cast::<Node<Self>>().as_ptr();
-        let deferred = unsafe { &raw mut (*node).fields };
-        let lazy = unsafe { &raw mut (*deferred).lazy };
-        // With no owner left no call is under way: the call was made (the
-        // value is there), began and panicked (nothing is), or never began
-        // (the arguments are). Only in the last two does this run.
-        let mut made = true;
-        unsafe { &(*lazy).once }.call_once_force(|state| {
-            made = false;
-            if !state.is_poisoned() {
-                let args = unsafe { ManuallyDrop::take(&mut *(*deferred).args.get()) };
-                args.hand_over(pending);
-            }
-        });
-        if made {
-            unsafe { (*(*lazy).value.get()).assume_init_read() }.hand_over(pending);
+    /// `node` is a node of this type whose count is 0 and whose call was
+    /// never made.
+    unsafe fn drop_args(node: NonNull<Header>, pending: Pending<'_>) {
+        let deferred = unsafe { &raw const (*node.cast::<Node<Self>>().as_ptr()).fields };
+        let args = ManuallyDrop::into_inner(unsafe { std::ptr::read(&raw const (*deferred).args) });
+        args.hand_over(pending);
+    }
+}
+
+/// Writes the tag that ends a call, and wakes whoever waits for it.
+fn publish(header: &Header, tag: u32) {
+    if header.tag.swap(tag, Ordering::Release) & WAITED != 0 {
+        let _waiting = WAITING.lock().unwrap_or_else(PoisonError::into_inner);
+        MADE.notify_all();
+    }
+}
+
+/// Waits until the call another thread is making, whose node's tag was
+/// `tag`, is made, and gives back the tag then.
+#[cold]
+fn wait(header: &Header, tag: u32) -> u32 {
+    if tag & WAITED == 0 {
+        if let Err(now) =
+            header
+                .tag
+                .compare_exchange(tag, tag | WAITED, Ordering::Acquire, Ordering::Acquire)
+        {
+            return now;
         }
-        drop(unsafe { Box::from_raw(node.cast::<ManuallyDrop<Node<Self>>>()) });
+    }
+    // `publish` wakes the waiters holding the lock, so the call cannot end
+    // between the look below and the wait.
+    let mut waiting = WAITING.lock().unwrap_or_else(PoisonError::into_inner);
+    loop {
+        let now = header.tag.load(Ordering::Acquire);
+        if now & BUSY == 0 {
+            return now;
+        }
+        waiting = MADE.wait(waiting).unwrap_or_else(PoisonError::into_inner);
     }
 }
 
@@ -389,15 +504,15 @@ impl<S: ThinSum + HandOver> Thin<S> {
     /// A node of the hidden constructor `tag`, holding the call `run(args)`.
     ///
     /// # Safety
-    /// `tag` is the tag of the hidden constructor of `S`, and `S::free`
-    /// frees a node of it with [`Thin::free_deferred`].
+    /// `tag` is the tag of the hidden constructor of `S`, and `S` is laid
+    /// out by [`thin_sum!`] with `lazy tag`.
     #[inline]
     pub unsafe fn deferred<A, F>(tag: u32, args: A, run: F) -> Self
     where
         A: HandOver + Send + Sync + 'static,
         F: FnOnce(A) -> S + Copy + Send + Sync + 'static,
     {
-        // `made` reads a `Lazy` at the start of the fields, wherever the
+        // `force` reads a `Lazy` at the start of the fields, wherever the
         // whole `Deferred` puts its fields.
         const {
             assert!(
@@ -405,40 +520,180 @@ impl<S: ThinSum + HandOver> Thin<S> {
                     == std::mem::offset_of!(Node<Lazy<S>>, fields)
             )
         };
-        let fields = Deferred {
-            lazy: Lazy {
-                once: Once::new(),
-                value: UnsafeCell::new(MaybeUninit::uninit()),
-                calls: Deferred::<S, A, F>::CALLS,
-            },
-            args: UnsafeCell::new(ManuallyDrop::new(args)),
-            run,
+        let words = Deferred::<S, A, F>::WORDS;
+        let layout = unsafe { Layout::from_size_align_unchecked(words as usize * 8, 8) };
+        let Some(ptr) = NonNull::new(unsafe { std::alloc::alloc(layout) }) else {
+            std::alloc::handle_alloc_error(layout)
         };
-        unsafe { Self::new(tag, fields) }
+        let node = Node {
+            header: Header {
+                count: AtomicU32::new(1),
+                tag: AtomicU32::new(tag | (words << WORDS_SHIFT)),
+            },
+            fields: Deferred {
+                lazy: Lazy {
+                    calls: Deferred::<S, A, F>::CALLS,
+                },
+                args: ManuallyDrop::new(args),
+                run,
+            },
+        };
+        unsafe { ptr.cast::<Node<Deferred<S, A, F>>>().write(node) };
+        let ptr = ptr.cast::<Header>();
+        assert!(ptr.as_ptr().addr() > MAX_TAGS);
+        Self::from_ptr(ptr)
     }
 
-    /// What the call of a node of the hidden constructor returned, making
-    /// it if no one has yet.
-    ///
-    /// # Safety
-    /// The value is of the hidden constructor, made by [`Thin::deferred`].
+    /// The tag of the value's constructor, in a sum some `lazy f(…)`
+    /// returns: an `Acquire` load, which sees the fields of a node a call
+    /// was made in.
     #[inline]
-    pub unsafe fn made(&self) -> &S {
-        let lazy = unsafe { &raw const (*self.ptr.cast::<Node<Lazy<S>>>().as_ptr()).fields };
-        let calls = unsafe { (*lazy).calls };
-        unsafe { &(*lazy).once }.call_once(|| unsafe { (calls.make)(self.ptr) });
-        // Written by the call, which `once` has seen through.
-        unsafe { (*(*lazy).value.get()).assume_init_ref() }
+    pub fn lazy_tag(&self) -> u32 {
+        if self.is_empty_ctor() {
+            (self.ptr.as_ptr().addr() - 1) as u32
+        } else {
+            self.header().tag.load(Ordering::Acquire) & CTOR
+        }
     }
 
-    /// For [`ThinSum::free`]: frees a node of the hidden constructor.
+    /// Makes the call the node holds if no one has, waiting for it if
+    /// another thread is making it, and gives back what stands for it: the
+    /// node itself, of a declared constructor now, or the value it holds.
     ///
     /// # Safety
-    /// The node was made by [`Thin::deferred`] and its count is 0.
+    /// The value is of the hidden constructor `lazy`, made by
+    /// [`Thin::deferred`].
+    #[cold]
+    #[inline(never)]
+    pub unsafe fn force(&self, lazy: u32) -> &Thin<S> {
+        let header = self.header();
+        let mut tag = header.tag.load(Ordering::Acquire);
+        loop {
+            if tag & CTOR != lazy {
+                return self;
+            }
+            if tag & FORWARD != 0 {
+                return unsafe { self.fields::<Thin<S>>() };
+            }
+            if tag & FAILED != 0 {
+                panic!("the deferred call this value stands for panicked");
+            }
+            if tag & BUSY != 0 {
+                tag = wait(header, tag);
+                continue;
+            }
+            match header.tag.compare_exchange_weak(
+                tag,
+                tag | BUSY,
+                Ordering::Acquire,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    unsafe { self.make(lazy, tag) };
+                    tag = header.tag.load(Ordering::Acquire);
+                }
+                Err(now) => tag = now,
+            }
+        }
+    }
+
+    /// Makes the call, writes what it returned into the node and publishes
+    /// the tag that says what the node now is.
+    ///
+    /// # Safety
+    /// This thread set [`BUSY`] in the node's tag, which was `tag`.
+    unsafe fn make(&self, lazy: u32, tag: u32) {
+        /// Marks the call failed should it panic.
+        struct Failing<'a>(&'a Header, u32);
+        impl Drop for Failing<'_> {
+            fn drop(&mut self) {
+                publish(self.0, self.1 | FAILED);
+            }
+        }
+        let failing = Failing(self.header(), tag);
+        let calls = |node: NonNull<Header>| unsafe {
+            (*node.cast::<Node<Lazy<S>>>().as_ptr()).fields.calls
+        };
+        let mut value = unsafe { (calls(self.ptr).make)(self.ptr, false) }.into_thin();
+        // A call no one else owns and no one has looked at is made here, in
+        // the place of this one.
+        while !value.is_empty_ctor() {
+            // The hidden constructor and no mark: a call no one has begun.
+            let unmade = value.header().tag.load(Ordering::Acquire) & !(!0 << WORDS_SHIFT) == lazy;
+            if !unmade || value.header().count.load(Ordering::Acquire) != 1 {
+                break;
+            }
+            let node = ManuallyDrop::new(value).ptr;
+            value = unsafe { (calls(node).make)(node, true) }.into_thin();
+        }
+        let made = if value.is_empty_ctor() {
+            value.lazy_tag()
+        } else if value.lazy_tag() == lazy {
+            unsafe { (&raw mut (*self.ptr.cast::<Node<Thin<S>>>().as_ptr()).fields).write(value) };
+            lazy | FORWARD
+        } else {
+            unsafe { S::fill(self.ptr, value) }
+        };
+        std::mem::forget(failing);
+        publish(self.header(), made | (tag & !CTOR));
+    }
+
+    /// For [`ThinSum::fill`]: moves the fields of `value`, a node of the
+    /// constructor with fields `P`, into `room`, or copies them if `value`
+    /// has other owners.
+    ///
+    /// # Safety
+    /// As `ThinSum::fill`, and `P` is the constructor's field struct.
     #[inline]
-    pub unsafe fn free_deferred(node: NonNull<Header>, pending: Pending<'_>) {
-        let lazy = unsafe { &raw const (*node.cast::<Node<Lazy<S>>>().as_ptr()).fields };
-        unsafe { ((*lazy).calls.free)(node, pending) }
+    pub unsafe fn fill_with<P: Clone>(room: NonNull<Header>, value: Self) {
+        let into = unsafe { &raw mut (*room.cast::<Node<P>>().as_ptr()).fields };
+        // `Acquire`, as `Arc::get_mut`: every other owner is done with it.
+        if value.header().count.load(Ordering::Acquire) != 1 {
+            unsafe { into.write(value.fields::<P>().clone()) };
+            return;
+        }
+        let value = ManuallyDrop::new(value);
+        let from = value.ptr.cast::<Node<P>>().as_ptr();
+        unsafe { into.write(std::ptr::read(&raw const (*from).fields)) };
+        match value.header().tag.load(Ordering::Relaxed) >> WORDS_SHIFT {
+            0 => drop(unsafe { Box::from_raw(from.cast::<ManuallyDrop<Node<P>>>()) }),
+            words => unsafe { free_room(value.ptr, words) },
+        }
+    }
+
+    /// For [`ThinSum::hand_over_fields`]: hands over the fields `P` of a
+    /// node a call was made in.
+    ///
+    /// # Safety
+    /// As `ThinSum::hand_over_fields`, and `P` is the constructor's field
+    /// struct.
+    #[inline]
+    pub unsafe fn hand_over_fields_of<P: HandOver>(node: NonNull<Header>, pending: Pending<'_>) {
+        let node = node.cast::<Node<P>>().as_ptr();
+        unsafe { std::ptr::read(&raw const (*node).fields) }.hand_over(pending);
+    }
+
+    /// For [`ThinSum::free`]: frees a node made by [`Thin::deferred`], of a
+    /// sum whose hidden constructor is `lazy`, whose tag is `tag`.
+    ///
+    /// # Safety
+    /// The node was made by `Thin::deferred` and its count is 0.
+    #[inline]
+    pub unsafe fn free_deferred(node: NonNull<Header>, tag: u32, lazy: u32, pending: Pending<'_>) {
+        // With no owner left no call is under way: the call was made (what
+        // it returned is there), began and panicked (nothing is), or never
+        // began (the arguments are).
+        if tag & CTOR != lazy {
+            unsafe { S::hand_over_fields(node, tag & CTOR, pending) };
+        } else if tag & FORWARD != 0 {
+            let held =
+                unsafe { (&raw const (*node.cast::<Node<Thin<S>>>().as_ptr()).fields).read() };
+            pending.take(held);
+        } else if tag & FAILED == 0 {
+            let calls = unsafe { (*node.cast::<Node<Lazy<S>>>().as_ptr()).fields.calls };
+            unsafe { (calls.drop_args)(node, pending) };
+        }
+        unsafe { free_room(node, tag >> WORDS_SHIFT) };
     }
 }
 
@@ -474,18 +729,16 @@ impl<S: ThinSum> Clone for Thin<S> {
 }
 
 impl<S: ThinSum> Drop for Thin<S> {
-    /// As `Arc::drop`: a `Release` decrement. The tag is read BEFORE it:
-    /// once the count drops another owner may free the node.
+    /// As `Arc::drop`: a `Release` decrement.
     #[inline]
     fn drop(&mut self) {
         if self.is_empty_ctor() {
             return;
         }
-        let tag = self.header().tag;
         if self.header().count.fetch_sub(1, Ordering::Release) != 1 {
             return;
         }
-        self.drop_slow(tag);
+        self.drop_slow();
     }
 }
 
@@ -594,10 +847,20 @@ macro_rules! thin_sum {
             ) {
                 match tag {
                     $( $tag => $crate::thin_sum!(@free $name node pending $( $fields )?), )+
-                    $( $lazy => unsafe { $crate::thin::Thin::<$name>::free_deferred(node, pending) }, )?
+                    // A node a call was deferred in (`aver_rt::thin::Lazy`).
+                    $( _ if tag >> $crate::thin::WORDS_SHIFT != 0 => unsafe {
+                        $crate::thin::Thin::<$name>::free_deferred(node, tag, $lazy, pending)
+                    }, )?
                     _ => unreachable!("no constructor has tag {tag}"),
                 }
             }
+
+            #[inline]
+            fn into_thin(self) -> $crate::thin::Thin<Self> {
+                self.0
+            }
+
+            $crate::thin_sum!(@lazy $name $( $lazy )? ; $( $tag $( ( $fields ) )? ),+);
         }
 
         impl $crate::thin::HandOver for $name {
@@ -611,21 +874,13 @@ macro_rules! thin_sum {
         impl $name {
             $( $crate::thin_sum!(@ctor $vis $name $tag $ctor $( $fields )?); )+
 
-            /// What the hidden constructor's call returned, making the call
-            /// if no one has yet (`aver_rt::thin::Thin::deferred`); the
-            /// value itself when it is of a declared constructor, as every
-            /// value of a sum no `lazy f(…)` returns is.
+            /// The value and its constructor's tag, making the call first
+            /// if the value is a call no one has made yet
+            /// (`aver_rt::thin::Thin::deferred`), as no value of a sum no
+            /// `lazy f(…)` returns is.
             #[inline]
-            fn made(&self) -> &Self {
-                let value = self;
-                $(
-                    let mut value = value;
-                    while value.0.tag() == $lazy {
-                        // SAFETY: a node of tag `$lazy` is made only by `deferred`.
-                        value = unsafe { value.0.made() };
-                    }
-                )?
-                value
+            fn made(&self) -> (&$crate::thin::Thin<$name>, u32) {
+                $crate::thin_sum!(@made &self.0 $( , $lazy )?)
             }
 
             $(
@@ -643,9 +898,9 @@ macro_rules! thin_sum {
             /// The constructor and its fields, to match on.
             #[inline]
             $vis fn view(&self) -> $view<'_> {
-                let this = self.made();
-                match this.0.tag() {
-                    $( $tag => $view::$ctor $( (unsafe { this.0.fields::<$fields>() }) )?, )+
+                let (this, tag) = self.made();
+                match tag {
+                    $( $tag => $view::$ctor $( (unsafe { this.fields::<$fields>() }) )?, )+
                     // Safe code makes a value only through the constructors
                     // above, whose tags are these, checked at compile time.
                     _ => unsafe { ::std::hint::unreachable_unchecked() },
@@ -655,13 +910,12 @@ macro_rules! thin_sum {
             /// Both values' fields when they are of the same constructor.
             #[inline]
             $vis fn view_pair<'a>(a: &'a Self, b: &'a Self) -> ::std::option::Option<$pair<'a>> {
-                let (a, b) = (a.made(), b.made());
-                let tag = a.0.tag();
-                if tag != b.0.tag() {
+                let ((a, tag), (b, other)) = (a.made(), b.made());
+                if tag != other {
                     return None;
                 }
                 Some(match tag {
-                    $( $tag => $pair::$ctor $( (unsafe { a.0.fields::<$fields>() }, unsafe { b.0.fields::<$fields>() }) )?, )+
+                    $( $tag => $pair::$ctor $( (unsafe { a.fields::<$fields>() }, unsafe { b.fields::<$fields>() }) )?, )+
                     // As in `view`.
                     _ => unsafe { ::std::hint::unreachable_unchecked() },
                 })
@@ -670,7 +924,7 @@ macro_rules! thin_sum {
             /// The tag of the value's constructor (its declaration index).
             #[inline]
             $vis fn tag(&self) -> u32 {
-                self.made().0.tag()
+                self.made().1
             }
 
             /// Whether both are the same node, or the same constructor
@@ -686,16 +940,79 @@ macro_rules! thin_sum {
         impl $crate::NodeId for $name {
             #[inline]
             fn addr(&self) -> usize {
-                $crate::thin::Thin::addr(&self.made().0)
+                $crate::thin::Thin::addr(self.made().0)
             }
 
             #[inline]
             fn count(&self) -> usize {
-                $crate::thin::Thin::strong_count(&self.made().0)
+                $crate::thin::Thin::strong_count(self.made().0)
             }
         }
     };
 
+    (@made $value:expr) => {{
+        let value = $value;
+        (value, value.tag())
+    }};
+    (@made $value:expr, $lazy:literal) => {{
+        let mut value = $value;
+        loop {
+            let tag = value.lazy_tag();
+            if tag != $lazy {
+                break (value, tag);
+            }
+            // SAFETY: a node of tag `$lazy` is made only by `deferred`.
+            value = unsafe { value.force($lazy) };
+        }
+    }};
+    (@lazy $name:ident ; $( $tag:literal $( ( $fields:ty ) )? ),+) => {};
+    (@lazy $name:ident $lazy:literal ; $( $tag:literal $( ( $fields:ty ) )? ),+) => {
+        const ROOM: usize = {
+            let mut room = 0;
+            $( $(
+                let size = $crate::thin::node_size::<$fields>();
+                if size > room {
+                    room = size;
+                }
+            )? )+
+            room
+        };
+
+        unsafe fn fill(
+            room: ::std::ptr::NonNull<$crate::thin::Header>,
+            value: $crate::thin::Thin<Self>,
+        ) -> u32 {
+            let tag = value.lazy_tag();
+            match tag {
+                $( $tag => $crate::thin_sum!(@fill $name room value $( $fields )?), )+
+                _ => unreachable!("no declared constructor has tag {tag}"),
+            }
+            tag
+        }
+
+        unsafe fn hand_over_fields(
+            node: ::std::ptr::NonNull<$crate::thin::Header>,
+            tag: u32,
+            pending: $crate::thin::Pending<'_>,
+        ) {
+            match tag {
+                $( $tag => $crate::thin_sum!(@hand $name node pending $( $fields )?), )+
+                _ => unreachable!("no declared constructor has tag {tag}"),
+            }
+        }
+    };
+    (@fill $name:ident $room:ident $value:ident $fields:ty) => {
+        unsafe { $crate::thin::Thin::<$name>::fill_with::<$fields>($room, $value) }
+    };
+    (@fill $name:ident $room:ident $value:ident) => {
+        drop($value)
+    };
+    (@hand $name:ident $node:ident $pending:ident $fields:ty) => {
+        unsafe { $crate::thin::Thin::<$name>::hand_over_fields_of::<$fields>($node, $pending) }
+    };
+    (@hand $name:ident $node:ident $pending:ident) => {
+        ()
+    };
     (@free $name:ident $node:ident $pending:ident $fields:ty) => {
         unsafe { $crate::thin::Thin::<$name>::free_node::<$fields>($node, $pending) }
     };
@@ -971,12 +1288,15 @@ mod tests {
     }
 
     // A sum some `lazy f(…)` returns: `L::deferred` holds the call.
-    #[derive(Debug, PartialEq)]
+    #[derive(Clone, Debug, PartialEq)]
     pub struct L__Leaf(u64);
-    #[derive(Debug)]
+    #[derive(Clone, Debug)]
     pub struct L__Node(L, L);
+    #[derive(Clone, Debug)]
+    pub struct L__Held(Arc<Counted>);
 
     impl super::HandOver for L__Leaf {}
+    impl super::HandOver for L__Held {}
 
     impl super::HandOver for L__Node {
         fn hand_over(self, pending: super::Pending<'_>) {
@@ -990,7 +1310,9 @@ mod tests {
         pub L / L__View / L__Pairs {
             0 Leaf(L__Leaf),
             1 Node(L__Node),
-        } lazy 2
+            2 Nil,
+            3 Held(L__Held),
+        } lazy 4
     }
 
     impl std::fmt::Debug for L {
@@ -1004,6 +1326,8 @@ mod tests {
             match L::view_pair(self, other) {
                 None => false,
                 Some(L__Pairs::Leaf(a, b)) => a == b,
+                Some(L__Pairs::Nil) => true,
+                Some(L__Pairs::Held(a, b)) => a.0 == b.0,
                 Some(L__Pairs::Node(a, b)) => walk.node(self, other, true, |walk| {
                     a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
@@ -1041,6 +1365,7 @@ mod tests {
         loop {
             let next = match at.view() {
                 L__View::Leaf(leaf) => return total + leaf.0,
+                L__View::Nil | L__View::Held(_) => return total,
                 L__View::Node(node) => {
                     total += l_sum(&node.0);
                     node.1.clone()
@@ -1077,7 +1402,7 @@ mod tests {
         let lazy = spine(1, &MADE);
         let below = match lazy.view() {
             L__View::Node(node) => node.1.clone(),
-            L__View::Leaf(_) => unreachable!(),
+            _ => unreachable!(),
         };
         let again = below.clone();
         for _ in 0..10 {
@@ -1086,14 +1411,10 @@ mod tests {
             assert!(walk_eq(&below, &again));
         }
         assert_eq!(MADE.load(Ordering::SeqCst), 1);
-        // The node it returned stands for it: one node, compared at once.
+        // What it returned was written into its own node.
         use crate::NodeId;
-        let made = match below.view() {
-            L__View::Leaf(_) => below.addr(),
-            L__View::Node(_) => unreachable!(),
-        };
-        assert_eq!(made, again.addr());
-        assert_ne!(super::Thin::addr(&below.0), made);
+        assert_eq!(below.addr(), super::Thin::addr(&below.0));
+        assert_eq!(again.addr(), super::Thin::addr(&below.0));
     }
 
     #[test]
@@ -1164,6 +1485,140 @@ mod tests {
             held = L::deferred((held, ()), |(below, ())| l_node(below, l_leaf(0)));
         }
         drop(held);
+    }
+
+    fn held(drops: &Arc<AtomicUsize>) -> L {
+        L::Held(L__Held(Arc::new(Counted(drops.clone(), 0))))
+    }
+
+    #[test]
+    fn a_call_returning_a_node_no_one_else_owns_moves_it_in() {
+        use crate::NodeId;
+        let drops = Arc::new(AtomicUsize::new(0));
+        // The call returns its own argument, which only the call held.
+        let lazy = L::deferred((held(&drops), ()), |(value, ())| value);
+        assert_eq!(lazy.tag(), 3);
+        assert_eq!(lazy.addr(), super::Thin::addr(&lazy.0));
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        drop(lazy);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        // A constructor without fields.
+        let nil = L::deferred((super::Kept(()), ()), |_| L::Nil);
+        assert!(walk_eq(&nil, &L::Nil));
+        assert!(matches!(nil.view(), L__View::Nil));
+        assert_eq!(nil.addr(), super::Thin::addr(&nil.0));
+    }
+
+    #[test]
+    fn a_call_returning_a_node_others_own_copies_its_fields() {
+        use crate::NodeId;
+        let drops = Arc::new(AtomicUsize::new(0));
+        let kept = l_node(held(&drops), l_leaf(2));
+        let lazy = L::deferred((kept.clone(), ()), |(value, ())| value);
+        assert!(walk_eq(&lazy, &kept));
+        assert_ne!(lazy.addr(), kept.addr());
+        // One more owner of each field, and none more of the node.
+        assert_eq!(super::Thin::strong_count(&kept.0), 1);
+        match (lazy.view(), kept.view()) {
+            (L__View::Node(a), L__View::Node(b)) => {
+                assert!(L::ptr_eq(&a.0, &b.0));
+                assert_eq!(super::Thin::strong_count(&b.0.0), 2);
+            }
+            _ => unreachable!(),
+        }
+        drop(kept);
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        drop(lazy);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_call_returning_a_call_others_own_stands_for_it() {
+        use crate::NodeId;
+        static MADE: AtomicUsize = AtomicUsize::new(0);
+        let inner = L::deferred((super::Kept(2u64), ()), |(super::Kept(n), ())| {
+            spine(n, &MADE)
+        });
+        let outer = L::deferred((inner.clone(), ()), |(value, ())| value);
+        assert_eq!(l_sum(&outer), 3);
+        // Both are the node `inner`'s call was made in.
+        assert_eq!(outer.addr(), super::Thin::addr(&inner.0));
+        assert_eq!(inner.addr(), super::Thin::addr(&inner.0));
+        assert!(walk_eq(&outer, &inner));
+        drop(inner);
+        assert_eq!(l_sum(&outer), 3);
+    }
+
+    #[test]
+    fn a_call_with_arguments_larger_than_any_node_is_made_in_its_node() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let args = (super::Kept([1u64, 2, 3, 4, 5, 6, 7, 8]), (held(&drops), ()));
+        let lazy = L::deferred(args, |(super::Kept(numbers), (value, ()))| {
+            l_node(l_leaf(numbers.iter().sum()), value)
+        });
+        assert_eq!(l_sum(&lazy), 36);
+        drop(lazy);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        // And one never made.
+        let never = L::deferred(
+            (super::Kept([0u64; 8]), (held(&drops), ())),
+            |(_, (value, ()))| value,
+        );
+        drop(never);
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn many_threads_making_one_call_see_it_made_once() {
+        static RUNS: AtomicUsize = AtomicUsize::new(0);
+        let threads = if cfg!(miri) { 4 } else { 8 };
+        let rounds = if cfg!(miri) { 2 } else { 200 };
+        for _ in 0..rounds {
+            RUNS.store(0, Ordering::SeqCst);
+            let shared = L::deferred((super::Kept(()), ()), |_| {
+                RUNS.fetch_add(1, Ordering::SeqCst);
+                // Long enough for the others to arrive and wait.
+                let mut below = l_leaf(1);
+                for i in 0..if cfg!(miri) { 10 } else { 2000 } {
+                    below = l_node(l_leaf(i), below);
+                }
+                below
+            });
+            let start = std::sync::Barrier::new(threads);
+            std::thread::scope(|scope| {
+                for _ in 0..threads {
+                    let (mine, start) = (shared.clone(), &start);
+                    scope.spawn(move || {
+                        start.wait();
+                        assert!(matches!(mine.view(), L__View::Node(_)));
+                    });
+                }
+            });
+            assert_eq!(RUNS.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn a_call_that_panicked_panics_every_look_on_every_thread() {
+        static RUNS: AtomicUsize = AtomicUsize::new(0);
+        let shared = L::deferred((super::Kept(()), ()), |_| {
+            RUNS.fetch_add(1, Ordering::SeqCst);
+            panic!("the call fails")
+        });
+        let threads = if cfg!(miri) { 4 } else { 8 };
+        let start = std::sync::Barrier::new(threads);
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                let (mine, start) = (shared.clone(), &start);
+                scope.spawn(move || {
+                    start.wait();
+                    let looked =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mine.tag()));
+                    assert!(looked.is_err());
+                });
+            }
+        });
+        assert_eq!(RUNS.load(Ordering::SeqCst), 1);
     }
 
     #[test]

@@ -50,9 +50,12 @@ fn transform_fn(fd: &mut FnDef, scc_members: &HashSet<String>) {
 /// Recursively transform an expression in tail position.
 fn transform_tail_expr(spanned: &mut Spanned<Expr>, scc_members: &HashSet<String>) {
     match &mut spanned.node {
-        // Direct call: `f(args)` where f is Ident in SCC
+        // Direct call: `f(args)` where f is Ident in SCC. A deferred call
+        // (`lazy f(args)`) is not a loop step: compiled Rust returns the
+        // deferred call at once, the other backends make an ordinary call.
         Expr::FnCall(fn_expr, args) => {
-            if let Expr::Ident(name) = &fn_expr.node
+            if !spanned.lazy
+                && let Expr::Ident(name) = &fn_expr.node
                 && scc_members.contains(name)
             {
                 let name = name.clone();
@@ -127,6 +130,35 @@ fn factorial(n: Int, acc: Int) -> Int
             }
             other => panic!("expected TailCall, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn does_not_transform_a_deferred_tail_call() {
+        let src = r#"
+type T
+    Leaf
+    Node(T)
+
+fn down(n: Int) -> T
+    match n
+        0 -> T.Leaf
+        _ -> lazy up(n - 1)
+
+fn up(n: Int) -> T
+    lazy down(n)
+"#;
+        let mut items = parse(src);
+        transform_program(&mut items);
+        let fd = items
+            .iter()
+            .find_map(|item| match item {
+                TopLevel::FnDef(fd) if fd.name == "down" => Some(fd),
+                _ => None,
+            })
+            .expect("down");
+        let arms = extract_match_arms(fd);
+        assert!(matches!(arms[1].body.node, Expr::FnCall(..)));
+        assert!(arms[1].body.lazy);
     }
 
     #[test]
