@@ -331,6 +331,19 @@ mod tests {
                     string_index_code_at(&text, &index, &at),
                     expected_char.map_or(-1, |c| i64::from(u32::from(c)))
                 );
+                for to in [
+                    position - 1,
+                    position,
+                    position + 2,
+                    position + 65,
+                    i64::MAX,
+                ] {
+                    assert_eq!(
+                        string_index_slice_str(&text, &index, position, to),
+                        crate::string_slice(&text, position, to),
+                        "{text:?} at {position}..{to}"
+                    );
+                }
             }
         }
     }
