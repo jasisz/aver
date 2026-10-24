@@ -6358,9 +6358,18 @@ pub(super) fn emit_mir_mutual_tco_block(
         .filter_map(|&i| group_fns[0].params.get(i).map(|(name, _)| name.clone()))
         .collect();
 
+    // An entry hands the group's invariants, its own `&T` params, to the
+    // loop as they are.
+    let rc_entry_args: String = group_fns[0]
+        .params
+        .iter()
+        .filter(|(name, _)| rc_names.contains(name))
+        .map(|(name, _)| format!(", {}", aver_name_to_rust(name)))
+        .collect();
+
     // Render every member's trampoline-arm body FIRST — bail before
     // emitting anything if a member can't render (all-or-nothing block).
-    let mut arm_bodies: Vec<String> = Vec::with_capacity(group_fns.len());
+    let mut arm_bodies: Vec<(String, String)> = Vec::with_capacity(group_fns.len());
     for (i, mir_fn) in mir_fns.iter().enumerate() {
         // Trampoline arm policy: no borrow-by-default, rc params wrapped.
         // NB: own_param graduation is deliberately NOT applied to the
@@ -6394,14 +6403,21 @@ pub(super) fn emit_mir_mutual_tco_block(
         // parameters. Tell equality's operand-shape classifier about that
         // representation; no general clone policy changes.
         arm_ctx.rc_wrapped_are_borrowed_refs = true;
-        let body = emit_mir_trampoline_body(
-            &mir_fn.body,
-            &member_fn_ids,
-            &enum_name,
-            &rc_names,
-            &arm_ctx,
-        )?;
-        arm_bodies.push(body);
+        let bounce = Bounce {
+            members: &member_fn_ids,
+            enum_name: &enum_name,
+            rc_names: &rc_names,
+            enter: None,
+        };
+        let body = emit_mir_trampoline_body(&mir_fn.body, &bounce, &arm_ctx)?;
+        // The entry runs the same body as an ordinary function and enters
+        // the loop only at its first bounce.
+        let enter = Bounce {
+            enter: Some((&trampoline_name, &rc_entry_args)),
+            ..bounce
+        };
+        let entry = emit_mir_trampoline_body(&mir_fn.body, &enter, &arm_ctx)?;
+        arm_bodies.push((body, entry));
     }
 
     let mut sections = Vec::new();
@@ -6436,7 +6452,7 @@ pub(super) fn emit_mir_mutual_tco_block(
     ));
     tramp_lines.push("    loop {".to_string());
     tramp_lines.push(format!("        {state_name} = match {state_name} {{"));
-    for (fd, arm_body) in group_fns.iter().zip(&arm_bodies) {
+    for (fd, (arm_body, _)) in group_fns.iter().zip(&arm_bodies) {
         let variant = fn_name_to_variant(&fd.name);
         let param_bindings: Vec<String> = fd
             .params
@@ -6458,66 +6474,57 @@ pub(super) fn emit_mir_mutual_tco_block(
     tramp_lines.push("}".to_string());
     sections.push(tramp_lines.join("\n"));
 
-    // 3. Wrapper fns — borrow-by-default params, clone borrowed into the
-    //    enum variant, pass rc params as `&T` extra trampoline args.
-    for fd in group_fns {
+    // 3. Entries — a member called from outside the loop, or not in tail
+    //    position, runs its body as an ordinary function: a call that ends
+    //    without bouncing to another member builds no state and enters no
+    //    loop. A bounce hands the next state to the trampoline, so a chain
+    //    of bounces still runs in constant stack. The invariants are `&T`
+    //    as in the loop; a param the loop holds by value but the signature
+    //    borrows is cloned once on entry.
+    for (fd, (_, entry_body)) in group_fns.iter().zip(&arm_bodies) {
         let fn_name = aver_name_to_rust(&fd.name);
-        let variant = fn_name_to_variant(&fd.name);
-        let by_value: Vec<bool> = (0..fd.params.len())
-            .map(|i| mutual_param_by_value(ctx, fd.fn_id, i))
-            .collect();
-        let params = emit_resolved_fn_params(&fd.params, &by_value, ctx, scope);
-        let variant_arg_names: Vec<String> = fd
-            .params
-            .iter()
-            .enumerate()
-            .filter(|(_, (name, _))| !rc_names.contains(name))
-            .map(|(i, (name, ty))| {
+        let mut params = Vec::with_capacity(fd.params.len());
+        let mut prelude = Vec::new();
+        for (i, (name, ty)) in fd.params.iter().enumerate() {
+            let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
+            if rc_names.contains(name) {
+                params.push(format!(
+                    "{}: &{rust_type}",
+                    explicit_parameter_pattern(name, false)
+                ));
+            } else if should_borrow_param(ty) && !mutual_param_by_value(ctx, fd.fn_id, i) {
+                params.push(format!(
+                    "{}: &{rust_type}",
+                    explicit_parameter_pattern(name, false)
+                ));
                 let rust_name = aver_name_to_rust(name);
-                if should_borrow_param(ty) && !by_value[i] {
-                    format!("{}.clone()", rust_name)
-                } else {
-                    rust_name
-                }
-            })
-            .collect();
-        let variant_call = if variant_arg_names.is_empty() {
-            format!("{}::{}", enum_name, variant)
-        } else {
-            format!(
-                "{}::{}({})",
-                enum_name,
-                variant,
-                variant_arg_names.join(", ")
-            )
-        };
-        let rc_extra_args: String = {
-            let parts: Vec<String> = fd
-                .params
-                .iter()
-                .filter(|(name, _)| rc_names.contains(name))
-                .map(|(name, _)| format!("&{}", aver_name_to_rust(name)))
-                .collect();
-            if parts.is_empty() {
-                String::new()
+                prelude.push(format!(
+                    "    let {} = {rust_name}.clone();",
+                    explicit_parameter_pattern(name, true)
+                ));
             } else {
-                format!(", {}", parts.join(", "))
+                params.push(format!(
+                    "{}: {rust_type}",
+                    explicit_parameter_pattern(name, true)
+                ));
             }
-        };
-        let mut wrapper = Vec::new();
-        if let Some(desc) = &fd.desc {
-            wrapper.push(format!("/// {}", desc));
         }
-        wrapper.push(format!(
+        let mut entry = Vec::new();
+        if let Some(desc) = &fd.desc {
+            entry.push(format!("/// {}", desc));
+        }
+        entry.push("#[allow(unused_mut)]".to_string());
+        entry.push(format!(
             "{}fn {}({}) -> {} {{",
-            visibility, fn_name, params, ret_type
+            visibility,
+            fn_name,
+            params.join(", "),
+            ret_type
         ));
-        wrapper.push(format!(
-            "    {}({}{})",
-            trampoline_name, variant_call, rc_extra_args
-        ));
-        wrapper.push("}".to_string());
-        sections.push(wrapper.join("\n"));
+        entry.extend(prelude);
+        entry.push(entry_body.clone());
+        entry.push("}".to_string());
+        sections.push(entry.join("\n"));
     }
 
     Some(sections.join("\n\n"))
@@ -6553,27 +6560,15 @@ fn mutual_rc_param_sig(
     }
 }
 
-/// A mutual tail-call wrapper's params: borrowed by default, by value where
-/// `by_value` says so.
-fn emit_resolved_fn_params(
-    params: &[(String, crate::types::Type)],
-    by_value: &[bool],
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    params
-        .iter()
-        .enumerate()
-        .map(|(i, (name, ty))| {
-            let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
-            if should_borrow_param(ty) && !by_value.get(i).copied().unwrap_or(false) {
-                format!("{}: &{rust_type}", explicit_parameter_pattern(name, false))
-            } else {
-                format!("{}: {rust_type}", explicit_parameter_pattern(name, false))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+/// Where a bounce to a group member goes: in a trampoline arm it is the
+/// loop's next state; in a member's entry it enters the loop with that state
+/// (`enter` holds the trampoline's name and the invariant args).
+#[derive(Clone, Copy)]
+struct Bounce<'a> {
+    members: &'a HashSet<crate::ir::FnId>,
+    enum_name: &'a str,
+    rc_names: &'a HashSet<String>,
+    enter: Option<(&'a str, &'a str)>,
 }
 
 /// Emit one trampoline arm body from MIR: leads with
@@ -6582,9 +6577,7 @@ fn emit_resolved_fn_params(
 /// position (member-`TailCall` → enum variant bounce, value → `return`).
 fn emit_mir_trampoline_body(
     body: &Spanned<MirExpr>,
-    members: &HashSet<crate::ir::FnId>,
-    enum_name: &str,
-    rc_names: &HashSet<String>,
+    bounce: &Bounce<'_>,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
     let mut lines = Vec::new();
@@ -6605,7 +6598,7 @@ fn emit_mir_trampoline_body(
         current = &let_node.body;
     }
 
-    let tail = emit_mir_trampoline_tail_expr(current, members, enum_name, rc_names, ctx)?;
+    let tail = emit_mir_trampoline_tail_expr(current, bounce, ctx)?;
     lines.push(format!("                {}", tail));
     Some(lines.join("\n"))
 }
@@ -6616,11 +6609,15 @@ fn emit_mir_trampoline_body(
 /// `return`. `Match` / `IfThenElse` recurse (still tail position).
 fn emit_mir_trampoline_tail_expr(
     expr: &Spanned<MirExpr>,
-    members: &HashSet<crate::ir::FnId>,
-    enum_name: &str,
-    rc_names: &HashSet<String>,
+    bounce: &Bounce<'_>,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
+    let Bounce {
+        members,
+        enum_name,
+        rc_names,
+        enter,
+    } = *bounce;
     match &expr.node {
         MirExpr::TailCall(spanned_tc) => {
             let tc = &spanned_tc.node;
@@ -6644,16 +6641,15 @@ fn emit_mir_trampoline_tail_expr(
                     }
                     arg_strs.push(mir_clone_arg(emit_mir_expr(a, ctx)?, &a.node, ctx));
                 }
-                if arg_strs.is_empty() {
-                    Some(format!("{}::{}", enum_name, variant))
+                let state = if arg_strs.is_empty() {
+                    format!("{}::{}", enum_name, variant)
                 } else {
-                    Some(format!(
-                        "{}::{}({})",
-                        enum_name,
-                        variant,
-                        arg_strs.join(", ")
-                    ))
-                }
+                    format!("{}::{}({})", enum_name, variant, arg_strs.join(", "))
+                };
+                Some(match enter {
+                    Some((trampoline, rc_args)) => format!("return {trampoline}({state}{rc_args})"),
+                    None => state,
+                })
             } else {
                 let name = ctx.symbol_table.fn_entry(tc.target).key.canonical();
                 Some(format!("return {}", emit_named_call(&name, &tc.args, ctx)?))
@@ -6661,13 +6657,13 @@ fn emit_mir_trampoline_tail_expr(
         }
         MirExpr::Match(spanned_match) => {
             emit_mir_match_with(&spanned_match.node, ctx, &|arm_body, ctx| {
-                emit_mir_trampoline_tail_expr(arm_body, members, enum_name, rc_names, ctx)
+                emit_mir_trampoline_tail_expr(arm_body, bounce, ctx)
             })
         }
         MirExpr::IfThenElse(spanned_ite) => {
             let (cond, then_src, else_src) = mir_if_cond_and_branches(&spanned_ite.node, ctx)?;
-            let t = emit_mir_trampoline_tail_expr(then_src, members, enum_name, rc_names, ctx)?;
-            let e = emit_mir_trampoline_tail_expr(else_src, members, enum_name, rc_names, ctx)?;
+            let t = emit_mir_trampoline_tail_expr(then_src, bounce, ctx)?;
+            let e = emit_mir_trampoline_tail_expr(else_src, bounce, ctx)?;
             Some(format!("if {} {{ {} }} else {{ {} }}", cond, t, e))
         }
         // A `let` before a bounce (an argument bound first, see
@@ -6675,8 +6671,7 @@ fn emit_mir_trampoline_tail_expr(
         MirExpr::Let(spanned_let) => {
             let let_node = &spanned_let.node;
             let value = emit_mir_statement_value(let_node, ctx)?;
-            let tail =
-                emit_mir_trampoline_tail_expr(&let_node.body, members, enum_name, rc_names, ctx)?;
+            let tail = emit_mir_trampoline_tail_expr(&let_node.body, bounce, ctx)?;
             Some(if let_node.binding_name.is_empty() {
                 format!("{{ {value}; {tail} }}")
             } else {
