@@ -338,9 +338,9 @@ impl Env<'_> {
             on.set_ty(ty.clone());
         }
         // Only a subject of a sum or list type: a comparison is split on by
-        // the Bool splits, and a variable by the list-variable split. The
-        // type must be known: the Lean export reads the split by it.
-        if matches!(on.node, ResolvedExpr::Ident(_))
+        // the Bool splits, and a list variable by the list-variable split.
+        // The type must be known: the Lean export reads the split by it.
+        if matches!(on.node, ResolvedExpr::Ident(_)) && !matches!(on.ty(), Some(Type::Named { .. }))
             || !matches!(on.ty(), Some(Type::List(_) | Type::Named { .. }))
         {
             return None;
