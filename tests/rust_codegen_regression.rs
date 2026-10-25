@@ -53,6 +53,7 @@ const RUST_REGRESSION_CORPUS: &[&str] = &[
     "examples/core/shapes.av",
     "examples/core/temperature.av",
     "tests/fixtures/bare_variant_patterns.av",
+    "tests/fixtures/rust_raw_int_shapes.av",
 ];
 
 fn temp_output_dir(prefix: &str) -> PathBuf {
@@ -120,8 +121,11 @@ fn rust_codegen_emits_buildable_project_for_every_corpus_example() {
         // + shared `target/` so dep compile cost amortises across
         // the corpus. `CARGO_TARGET_DIR` is the canonical env var
         // for redirecting the build directory.
+        // `--tests` checks the verify cases too: they compile only into
+        // the test build, so a plain check never type-checks them.
         let check = Command::new("cargo")
             .arg("check")
+            .arg("--tests")
             .arg("--manifest-path")
             .arg(project_dir.join("Cargo.toml"))
             .env("CARGO_TARGET_DIR", &shared_target)
@@ -471,8 +475,11 @@ fn rust_codegen_compiles_unbox_boundary_regressions() {
         // does NOT imply the emitted Rust type-checks — the whole point of
         // these regressions is that it used to emit `i64`-into-`AverInt`
         // E0308 mismatches.
+        // `--tests` checks the verify cases too: they compile only into
+        // the test build, so a plain check never type-checks them.
         let check = Command::new("cargo")
             .arg("check")
+            .arg("--tests")
             .arg("--manifest-path")
             .arg(project_dir.join("Cargo.toml"))
             .env("CARGO_TARGET_DIR", &shared_target)

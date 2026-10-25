@@ -381,7 +381,10 @@ fn empty_bare_facts() -> &'static crate::ir::mir::FnBareFacts {
 /// non-Int operand, an overflowing compound) is NOT bare, so the emit
 /// keeps `AverInt`.
 fn mir_expr_is_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> bool {
-    ctx.bare.expr_is_bare_i64(&expr.node)
+    // A value the rewrite narrowed renders an `i64` too: a match subject a
+    // raw binding aliases (`match Bits.and(i, 1023) { 0 -> …; b -> b }`)
+    // compares its literals as `i64`.
+    matches!(expr.node, MirExpr::Unbox(_)) || ctx.bare.expr_is_bare_i64(&expr.node)
 }
 
 /// Emit `expr` as a raw `i64` expression, assuming [`mir_expr_is_bare_i64`]
@@ -431,14 +434,9 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
                 RawOp::Low => format!("(({a}) & {}i64)", (1i128 << count?) - 1),
             })
         }
-        MirExpr::Neg(_) => {
-            // Sound only when the interval excludes `i64::MIN`; the
-            // analysis proves the operand fits `i64`, but `-i64::MIN`
-            // wraps. We bail to the boxed path for a bare `Neg` (the
-            // const-fold pass collapses `Neg(Literal)` before here, so a
-            // real bare `Neg` is rare) — keeping `AverInt` is always sound.
-            None
-        }
+        // The facts call a negation raw only when its result fits `i64`, so
+        // its operand is never `i64::MIN`.
+        MirExpr::Neg(inner) => Some(format!("(-{})", emit_bare_i64(inner, ctx)?)),
         MirExpr::BinOp(b) => {
             let op = match b.node.op {
                 BinOp::Add => "+",
@@ -2214,6 +2212,13 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             }
             Some(aver_name_to_rust(name))
         }
+        // A negation the facts call raw: native over its raw operand.
+        MirExpr::Neg(_)
+            if mir_expr_is_bare_i64(expr, emit_ctx)
+                && let Some(raw) = emit_bare_i64(expr, emit_ctx) =>
+        {
+            Some(raw)
+        }
         MirExpr::Neg(inner) => {
             // `Int` negation is `AverInt::neg()` (non-wrapping; `-i64::MIN`
             // promotes to `Big`). `Float` negation keeps the raw `-`. The
@@ -3571,6 +3576,11 @@ fn emit_mir_program_level(
     let mut prog = base.clone();
     let mut lowered = crate::ir::mir::lower_top_level_value(resolved, &mut prog).ok()?;
     bind(&mut lowered);
+    let lowered = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_free_value(
+        lowered,
+        &ctx.bare_i64,
+        &ctx.mutual_tco_members,
+    );
     let policy = MirFnEmitPolicy::empty();
     // Lend the grown clone's builtin table (it backs `Call(Builtin(id))`
     // resolution and may carry a builtin the lowering just interned) plus
@@ -3708,7 +3718,16 @@ pub(super) fn emit_mir_top_stmt_values(
     let mut prog = base.clone();
     let lowered: Vec<Spanned<MirExpr>> = resolved_values
         .iter()
-        .map(|value| crate::ir::mir::lower_top_level_value(value, &mut prog).ok())
+        .map(|value| {
+            let lowered = crate::ir::mir::lower_top_level_value(value, &mut prog).ok()?;
+            Some(
+                crate::ir::mir::optimize::bare_i64_rewrite::rewrite_free_value(
+                    lowered,
+                    &ctx.bare_i64,
+                    &ctx.mutual_tco_members,
+                ),
+            )
+        })
         .collect::<Option<_>>()?;
     let policy = MirFnEmitPolicy::empty();
     let emit_ctx = MirEmitCtx::program_level(ctx, &policy, &prog.builtins);
@@ -3763,6 +3782,11 @@ pub(super) fn emit_module_binding_getters(scope: Option<&str>, ctx: &CodegenCont
             let value = ctx.mir_program.as_ref().and_then(|base| {
                 let mut prog = base.clone();
                 let lowered = crate::ir::mir::lower_top_level_value(&resolved, &mut prog).ok()?;
+                let lowered = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_free_value(
+                    lowered,
+                    &ctx.bare_i64,
+                    &ctx.mutual_tco_members,
+                );
                 let emit_ctx = MirEmitCtx::program_level(ctx, &policy, &prog.builtins);
                 emit_mir_expr(&lowered, &emit_ctx)
             });
@@ -8850,11 +8874,16 @@ mod tests {
 
     #[test]
     fn emits_neg_as_paren_minus_inner() {
-        // An Int operand negates via `AverInt::neg()` (no std `-`).
+        // A negation of a literal is a raw `i64`; as a free value it is
+        // boxed where it meets a general `Int`.
         let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
-        let expr = span(MirExpr::Neg(Box::new(inner)));
+        let expr = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_free_value(
+            span(MirExpr::Neg(Box::new(inner))),
+            &crate::ir::mir::BareI64Facts::default(),
+            &HashSet::new(),
+        );
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("neg should emit");
-        assert_eq!(emit, "aver_rt::AverInt::from_i64(7).neg()");
+        assert_eq!(emit, "aver_rt::AverInt::from_i64((-7i64))");
     }
 
     #[test]
