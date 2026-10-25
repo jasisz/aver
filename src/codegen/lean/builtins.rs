@@ -374,6 +374,7 @@ mod tests {
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
             packed_sequence_layouts: HashMap::new(),
+            rust_i64_carriers: HashMap::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table: crate::ir::SymbolTable::default(),
             current_module_scope: std::cell::RefCell::new(None),

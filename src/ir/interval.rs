@@ -341,6 +341,100 @@ impl Interval {
         }
         Interval { lo, hi }
     }
+
+    /// `Int.mod(x, k)` for a divisor `k > 0`: the remainder is Euclidean,
+    /// so it lies in `[0, k - 1]` whatever `x` is.
+    pub fn rem_euclid_by(k: i128) -> Interval {
+        debug_assert!(k > 0);
+        Interval::between(0, k - 1)
+    }
+
+    /// `Int.div(self, k)` for a divisor `k > 0`: Euclidean division by a
+    /// positive divisor rounds down, which keeps the order of the bounds.
+    pub fn div_euclid_by(self, k: i128) -> Interval {
+        debug_assert!(k > 0);
+        let div = |b: Bound| match b {
+            Bound::Finite(x) => Bound::Finite(x.div_euclid(k)),
+            open => open,
+        };
+        Interval {
+            lo: div(self.lo),
+            hi: div(self.hi),
+        }
+    }
+
+    /// `Bits.and(self, other)` over two's complement integers: the result
+    /// takes no bit that a non-negative operand lacks, so it lies in
+    /// `[0, hi]` of such an operand; two operands within `i64` give a result
+    /// within `i64`; anything else is unbounded.
+    pub fn bit_and(self, other: Interval) -> Interval {
+        let non_negative = |i: Interval| i.lo.max(Bound::Finite(0)) == i.lo;
+        match (non_negative(self), non_negative(other)) {
+            (true, true) => Interval {
+                lo: Bound::Finite(0),
+                hi: self.hi.min(other.hi),
+            },
+            (true, false) => Interval {
+                lo: Bound::Finite(0),
+                hi: self.hi,
+            },
+            (false, true) => Interval {
+                lo: Bound::Finite(0),
+                hi: other.hi,
+            },
+            (false, false) => within_i64_or_unbounded(self, other),
+        }
+    }
+
+    /// `Bits.or` / `Bits.xor` of `self` and `other`: two non-negative
+    /// operands below `2^b` give a result in `[0, 2^b - 1]`; two operands
+    /// within `i64` give a result within `i64`; anything else is unbounded.
+    pub fn bit_or(self, other: Interval) -> Interval {
+        let non_negative = |i: Interval| i.lo.max(Bound::Finite(0)) == i.lo;
+        if non_negative(self)
+            && non_negative(other)
+            && let Bound::Finite(hi) = self.hi.max(other.hi)
+        {
+            let bits = 128 - (hi as u128).leading_zeros();
+            let top = if bits >= 127 {
+                Bound::PosInf
+            } else {
+                Bound::Finite((1i128 << bits) - 1)
+            };
+            return Interval {
+                lo: Bound::Finite(0),
+                hi: top,
+            };
+        }
+        within_i64_or_unbounded(self, other)
+    }
+
+    /// `Int.min(self, other)`.
+    pub fn min_with(self, other: Interval) -> Interval {
+        Interval {
+            lo: self.lo.min(other.lo),
+            hi: self.hi.min(other.hi),
+        }
+    }
+
+    /// `Int.max(self, other)`.
+    pub fn max_with(self, other: Interval) -> Interval {
+        Interval {
+            lo: self.lo.max(other.lo),
+            hi: self.hi.max(other.hi),
+        }
+    }
+}
+
+/// The bitwise result of two operands within `i64` is within `i64` (their
+/// two's complement fits 64 bits, so the result's does); otherwise nothing
+/// is known.
+fn within_i64_or_unbounded(a: Interval, b: Interval) -> Interval {
+    if a.fits_i64() && b.fits_i64() {
+        Interval::between(i64::MIN as i128, i64::MAX as i128)
+    } else {
+        Interval::unbounded()
+    }
 }
 
 /// Classification of an operation's worst-case `i64` intermediate.
@@ -1011,6 +1105,44 @@ mod tests {
     }
 
     // ── Bound saturating arithmetic ─────────────────────────────────
+
+    #[test]
+    fn the_word_builtins_bound_their_results() {
+        let byte = Interval::between(0, 255);
+        let word = Interval::between(0, (1 << 62) - 1);
+        let any = Interval::unbounded();
+        let i64_line = Interval::between(i64::MIN as i128, i64::MAX as i128);
+        assert_eq!(Interval::rem_euclid_by(7), Interval::between(0, 6));
+        assert_eq!(
+            Interval::between(-9, 9).div_euclid_by(4),
+            Interval::between(-3, 2)
+        );
+        assert_eq!(any.div_euclid_by(4), any);
+        assert_eq!(word.bit_and(byte), byte);
+        assert_eq!(any.bit_and(byte), byte);
+        assert_eq!(
+            Interval::between(-5, 5).bit_and(Interval::between(-1, 3)),
+            i64_line
+        );
+        assert_eq!(any.bit_and(Interval::between(-1, 3)), any);
+        assert_eq!(
+            byte.bit_or(Interval::between(0, 1000)),
+            Interval::between(0, 1023)
+        );
+        assert_eq!(
+            Interval::point(0).bit_or(Interval::point(0)),
+            Interval::point(0)
+        );
+        assert_eq!(Interval::between(-1, 1).bit_or(byte), i64_line);
+        assert_eq!(
+            byte.min_with(Interval::between(-3, 7)),
+            Interval::between(-3, 7)
+        );
+        assert_eq!(
+            byte.max_with(Interval::between(-3, 7)),
+            Interval::between(0, 255)
+        );
+    }
 
     #[test]
     fn bound_posinf_plus_finite_is_posinf() {

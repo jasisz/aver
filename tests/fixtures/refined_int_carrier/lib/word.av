@@ -1,0 +1,51 @@
+module Word
+    intent =
+        "The packed metadata of a node: hash, capped size, flags and range in"
+        "one Int below 2^62, as a refinement over Int."
+    exposes [fromInt, word, value, leaf, joined, hashIn, sizeIn, flagsOf, rangeIn]
+    exposes opaque [Word]
+    depends [Lib.Hash]
+    effects []
+
+record Word
+    value: Int
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "Smart constructor: a word is below 2^62."
+    match Bool.and(n >= 0, n < 4611686018427387904)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+fn word(n: Int) -> Word
+    ? "A word from an Int already in range; zero for anything else."
+    match fromInt(n)
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 0)
+
+fn value(w: Word) -> Int
+    ? "The word as an Int."
+    w.value
+
+fn leaf(h: Lib.Hash.Hash, range: Int) -> Word
+    ? "The word of a leaf: its hash, size one, no flags, its range."
+    word(Lib.Hash.value(h) * 2147483648 + 33554432 + Int.min(Int.max(range, 0), 16383))
+
+fn hashIn(w: Word) -> Lib.Hash.Hash
+    ? "The hash in a word."
+    Lib.Hash.hash(Int.div(w.value, 2147483648))
+
+fn sizeIn(w: Word) -> Int
+    ? "The capped tree size in a word."
+    Bits.and(Int.div(w.value, 33554432), 63)
+
+fn flagsOf(wa: Word, wb: Word) -> Int
+    ? "The flag bits of two words, or-ed."
+    Bits.and(Bits.or(wa.value, wb.value), 33538048)
+
+fn rangeIn(w: Word) -> Int
+    ? "The range in a word."
+    Bits.and(w.value, 16383)
+
+fn joined(tag: Int, wf: Word, wa: Word) -> Word
+    ? "The word of a node over two parts, from theirs alone."
+    word((Lib.Hash.value(Lib.Hash.mix2(tag, hashIn(wf), hashIn(wa))) * 64 + Int.min(sizeIn(wf) + sizeIn(wa) + 1, 63)) * 33554432 + flagsOf(wf, wa) + Int.max(rangeIn(wf), rangeIn(wa)))

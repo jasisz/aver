@@ -708,6 +708,7 @@ fn emit_product_type(
     representation: RepresentationContract,
 ) -> String {
     let packed_u8 = super::uses_packed_u8(ctx, name);
+    let i64_carrier = super::carrier::is_i64_carrier(ctx, name);
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     // A boxed record (see `is_boxed_record`) keeps its fields in
@@ -734,6 +735,10 @@ fn emit_product_type(
             debug_assert_eq!(fields.len(), 1);
             debug_assert_eq!(parse_type_str(field_type), Type::List(Box::new(Type::Int)));
             "aver_rt::AverPackedU8".to_string()
+        } else if i64_carrier {
+            debug_assert_eq!(fields.len(), 1);
+            debug_assert_eq!(parse_type_str(field_type), Type::Int);
+            "i64".to_string()
         } else {
             type_annotation_to_rust_scoped(field_type, ctx, scope)
         };
@@ -2195,6 +2200,7 @@ mod tests {
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
             packed_sequence_layouts: HashMap::new(),
+            rust_i64_carriers: HashMap::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table: crate::ir::SymbolTable::default(),
             current_module_scope: std::cell::RefCell::new(None),

@@ -3,6 +3,7 @@
 /// Transforms Aver AST -> valid Rust source code.
 mod arg_order;
 mod builtins;
+mod carrier;
 pub(crate) mod composition;
 pub mod emit_ctx;
 mod expr;
@@ -167,18 +168,20 @@ fn transpile_project(
         // analysis, so the rewrite must not tag them bare (it would desync
         // the boxed signature from a bare-rewritten body / caller).
         let boxed = ctx.mutual_tco_members.clone();
-        // ETAP-2 SLICE 0+1: derive the per-carrier-type proven bound from the
-        // same refinement-via-opaque inputs the proof side reads, so a
-        // carrier function-slot can lower to native `i64`. An empty table
-        // (no opaque-bounded carrier in scope) keeps the all-`Int` behavior.
-        // Scoped so the immutable `&ctx` borrow ends before the assignment.
-        let carrier = {
-            let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
-            crate::codegen::proof_lower::carrier_interval_table(&inputs)
-        };
-        ctx.mir_program = Some(
-            crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog, &boxed, &carrier),
+        // The refinement carriers this backend holds as a struct over a raw
+        // `i64` (see `carrier`). An empty table keeps every carrier's
+        // `AverInt` field and the facts the context was built with.
+        let carriers = carrier::i64_carriers(ctx);
+        let (prog, facts) = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust_with_facts(
+            prog, &boxed, &carriers,
         );
+        if !carriers.is_empty() {
+            // The emitter reads the facts the rewrite placed its boundaries
+            // by, which know the carriers.
+            ctx.bare_i64 = facts;
+        }
+        ctx.rust_i64_carriers = carriers;
+        ctx.mir_program = Some(prog);
         arg_order::bind_computed_arguments(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
@@ -1110,7 +1113,10 @@ mod tests {
     use crate::ir::mir::{LocalId, MirExpr, MirLocal};
     use crate::source::parse_source;
 
-    fn ctx_from_source(source: &str, project_name: &str) -> crate::codegen::CodegenContext {
+    pub(super) fn ctx_from_source(
+        source: &str,
+        project_name: &str,
+    ) -> crate::codegen::CodegenContext {
         let mut items = parse_source(source).expect("source should parse");
         // Run the canonical compiler pipeline exactly as the CLI
         // (`main::commands::compile`) does, so the in-process
@@ -1254,7 +1260,10 @@ mod tests {
             .expect("expected generated Rust entry module")
     }
 
-    fn generated_file<'a>(out: &'a crate::codegen::ProjectOutput, path: &str) -> &'a str {
+    pub(super) fn generated_file<'a>(
+        out: &'a crate::codegen::ProjectOutput,
+        path: &str,
+    ) -> &'a str {
         out.files
             .iter()
             .find_map(|(name, content)| (name == path).then_some(content.as_str()))

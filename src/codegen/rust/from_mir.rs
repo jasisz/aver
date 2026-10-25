@@ -388,10 +388,10 @@ fn mir_expr_is_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> bool {
 /// already returned `true`. Literals become the bare `{N}i64` form,
 /// arithmetic uses native operators, and a bare `Local` is its plain
 /// ident. `None` only if a nested operand can't render (e.g. a synthetic
-/// unnamed local) — the caller then falls back to the boxed path. Takes no
-/// `ctx`: the bare gate (`mir_expr_is_bare_i64`) already consulted it, and
-/// the emit itself is purely structural.
-fn emit_bare_i64(expr: &Spanned<MirExpr>) -> Option<String> {
+/// unnamed local) — the caller then falls back to the boxed path. The bare
+/// gate (`mir_expr_is_bare_i64`) already consulted the facts; `ctx` renders
+/// the base of a carrier's raw field.
+fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     match &expr.node {
         MirExpr::Literal(l) => match l.node {
             crate::ast::Literal::Int(k) => Some(format!("{}i64", k)),
@@ -403,6 +403,33 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>) -> Option<String> {
                 return None;
             }
             Some(aver_name_to_rust(name))
+        }
+        // The raw field of a carrier held as an `i64` (`emit_mir_expr`
+        // renders such a read raw where the facts know it).
+        MirExpr::Project(_) if ctx.bare.is_carrier_project(&expr.node) => emit_mir_expr(expr, ctx),
+        // A builtin computed raw, when its operands are raw.
+        MirExpr::Call(_)
+            if ctx.bare.expr_is_bare_i64(&expr.node)
+                && let Some((op, args)) = ctx.bare.raw_op_call(&expr.node) =>
+        {
+            use crate::ir::mir::bare_i64::RawOp;
+            let a = emit_bare_i64(&args[0], ctx)?;
+            // A shift or a mask by its literal count; the facts admitted
+            // only counts that keep it exact.
+            let count = op.literal_operand(&args[1].node).flatten();
+            let b = emit_bare_i64(&args[1], ctx)?;
+            Some(match op {
+                RawOp::Mod => format!("({a}).rem_euclid({b})"),
+                RawOp::Div => format!("({a}).div_euclid({b})"),
+                RawOp::And => format!("({a} & {b})"),
+                RawOp::Or => format!("({a} | {b})"),
+                RawOp::Xor => format!("({a} ^ {b})"),
+                RawOp::Min => format!("({a}).min({b})"),
+                RawOp::Max => format!("({a}).max({b})"),
+                RawOp::Shr => format!("(({a}) >> {})", count?),
+                RawOp::Shl => format!("(({a}) * {}i64)", 1i128 << count?),
+                RawOp::Low => format!("(({a}) & {}i64)", (1i128 << count?) - 1),
+            })
         }
         MirExpr::Neg(_) => {
             // Sound only when the interval excludes `i64::MIN`; the
@@ -419,8 +446,8 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>) -> Option<String> {
                 BinOp::Mul => "*",
                 _ => return None,
             };
-            let l = emit_bare_i64(&b.node.lhs)?;
-            let r = emit_bare_i64(&b.node.rhs)?;
+            let l = emit_bare_i64(&b.node.lhs, ctx)?;
+            let r = emit_bare_i64(&b.node.rhs, ctx)?;
             Some(format!("({} {} {})", l, op, r))
         }
         _ => None,
@@ -431,7 +458,7 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>) -> Option<String> {
 /// analysis proved it bare, saturated from `AverInt` otherwise.
 fn emit_string_position(arg: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     if mir_expr_is_bare_i64(arg, ctx)
-        && let Some(raw) = emit_bare_i64(arg)
+        && let Some(raw) = emit_bare_i64(arg, ctx)
     {
         return Some(raw);
     }
@@ -1838,6 +1865,39 @@ fn pack_u8_list(value: String) -> String {
     )
 }
 
+/// Is this record a refinement carrier the backend holds as a raw `i64`
+/// (`codegen::rust::carrier`)? Its name is the only one of its kind in the
+/// program, so the name answers even where the identity is missing.
+fn i64_carrier_record(
+    type_id: Option<crate::ir::TypeId>,
+    type_name: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
+    let Some(codegen) = ctx.codegen else {
+        return false;
+    };
+    let name = match type_id {
+        Some(id) => ctx.symbol_table.type_entry(id).key.name.as_str(),
+        None => type_name,
+    };
+    super::carrier::is_i64_carrier(codegen, name)
+}
+
+/// The `i64` a carrier's field is built from: a value that renders raw (or
+/// that the rewrite narrowed with `Unbox`) as it is, any other `AverInt`
+/// narrowed here. Outside a rewritten body (a verify case) every value is an
+/// `AverInt`; the smart constructor's bound keeps the narrowing from failing.
+fn emit_carrier_field(value: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    if mir_expr_is_bare_i64(value, ctx) {
+        return emit_bare_i64(value, ctx).or_else(|| emit_mir_expr(value, ctx));
+    }
+    let emitted = emit_mir_expr(value, ctx)?;
+    Some(match value.node {
+        MirExpr::Unbox(_) => emitted,
+        _ => format!("({emitted}).to_i64().expect(\"Int out of i64 range\")"),
+    })
+}
+
 /// `[]`, `{}` or `Option.None` spelled with its stamped element type, for
 /// the positions where nothing lets rustc infer it: the operand of a
 /// collection builtin (`List.len([])` is `AverList::empty().len()`) and
@@ -2229,8 +2289,8 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     _ => false,
                 };
                 if whole_bare
-                    && let Some(lb) = emit_bare_i64(&bop.lhs)
-                    && let Some(rb) = emit_bare_i64(&bop.rhs)
+                    && let Some(lb) = emit_bare_i64(&bop.lhs, emit_ctx)
+                    && let Some(rb) = emit_bare_i64(&bop.rhs, emit_ctx)
                 {
                     match bop.op {
                         BinOp::Add => return Some(format!("({} + {})", lb, rb)),
@@ -2290,8 +2350,8 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
             ) && mir_expr_is_bare_i64(&bop.lhs, emit_ctx)
                 && mir_expr_is_bare_i64(&bop.rhs, emit_ctx)
-                && let Some(lb) = emit_bare_i64(&bop.lhs)
-                && let Some(rb) = emit_bare_i64(&bop.rhs)
+                && let Some(lb) = emit_bare_i64(&bop.lhs, emit_ctx)
+                && let Some(rb) = emit_bare_i64(&bop.rhs, emit_ctx)
             {
                 let op = match bop.op {
                     BinOp::Eq => "==",
@@ -2362,6 +2422,15 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 let l = detach_borrow_before_later_move(l, &bop.lhs, &[&bop.rhs], emit_ctx);
                 Some(format!("({} {} {})", l, op_str, r))
             }
+        }
+        // A builtin computed on raw `i64` operands renders raw wherever
+        // the facts say so; the rewrite boxed it where it meets a general
+        // `Int`.
+        MirExpr::Call(_)
+            if emit_ctx.bare.raw_op_call(&expr.node).is_some()
+                && mir_expr_is_bare_i64(expr, emit_ctx) =>
+        {
+            emit_bare_i64(expr, emit_ctx)
         }
         MirExpr::Call(spanned_call) => {
             let call = &spanned_call.node;
@@ -2570,7 +2639,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // binding's value raw (representation): a `i64` binding takes a
             // native `i64` literal / leaf / arithmetic.
             let value = if emit_ctx.bare.is_bare(let_node.binding) {
-                emit_bare_i64(&let_node.value)
+                emit_bare_i64(&let_node.value, emit_ctx)
                     .or_else(|| emit_mir_expr(&let_node.value, emit_ctx))?
             } else {
                 // The binding is an owning position — see
@@ -2618,6 +2687,15 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let Some(Type::Named { id, name }) = proj.base.ty() else {
                 return Some(projected);
             };
+            // A carrier held as a raw `i64`: the read is raw where the facts
+            // know it (the rewrite boxed it wherever it meets a general
+            // `Int`), and boxed here anywhere else.
+            if i64_carrier_record(*id, name, emit_ctx) {
+                return Some(match emit_ctx.bare.is_carrier_project(&expr.node) {
+                    true => projected,
+                    false => format!("aver_rt::AverInt::from_i64({projected})"),
+                });
+            }
             match packed_u8_carrier(*id, name, emit_ctx) {
                 // A field read at its last use hands its carrier over, so a
                 // body no one else holds stays unshared (`Bytes.concat` onto
@@ -2643,8 +2721,14 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let Some(packed_u8) = packed_u8_carrier(rec.type_id, &rec.type_name, emit_ctx) else {
                 return Some(unresolved_packed_carrier(&rec.type_name, emit_ctx));
             };
+            let i64_carrier = i64_carrier_record(rec.type_id, &rec.type_name, emit_ctx);
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
+                if i64_carrier {
+                    let val = emit_carrier_field(&f.value, emit_ctx)?;
+                    parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
+                    continue;
+                }
                 let mut val = match emit_owned_record_field_successor(None, f, emit_ctx) {
                     Some(val) => val,
                     None => {
@@ -2889,7 +2973,15 @@ fn emit_update_parts(
 ) -> Option<(Vec<(String, String)>, bool)> {
     let mut parts = Vec::with_capacity(upd.updates.len());
     let mut moved_replaced_field = false;
+    let i64_carrier = i64_carrier_record(upd.type_id, &upd.type_name, ctx);
     for f in &upd.updates {
+        if i64_carrier {
+            parts.push((
+                aver_name_to_rust(&f.name),
+                emit_carrier_field(&f.value, ctx)?,
+            ));
+            continue;
+        }
         let update_base = local_of(&upd.base.node).map(|base| base.slot);
         let val = match emit_owned_record_field_successor(update_base, f, ctx) {
             Some(val) => {
@@ -4451,7 +4543,7 @@ fn emit_mir_match_with(
         )
     } else if subject_is_bare {
         // A bare i64 subject: emit the plain value (no clone — Copy).
-        emit_bare_i64(&m.subject).or_else(|| emit_mir_expr(&m.subject, emit_ctx))?
+        emit_bare_i64(&m.subject, emit_ctx).or_else(|| emit_mir_expr(&m.subject, emit_ctx))?
     } else if borrowed_subject {
         emit_mir_expr(&m.subject, emit_ctx)?
     } else if kept_subject {
@@ -5861,7 +5953,7 @@ fn emit_bare_return_tail(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
     match &expr.node {
         // A directly bare-eligible leaf / arithmetic tail.
         _ if mir_expr_is_bare_i64(expr, ctx) => {
-            emit_bare_i64(expr).or_else(|| emit_mir_expr(expr, ctx))
+            emit_bare_i64(expr, ctx).or_else(|| emit_mir_expr(expr, ctx))
         }
         // A `Match` over Int literals whose arm bodies are bare tails. Reuse
         // the Int-literal guard chain but render each arm's tail bare.
@@ -5926,7 +6018,7 @@ fn emit_mir_let_chain_flat(
         // `n = 1` chain emitted a boxed value into an `i64` binding and the
         // generated crate failed to compile.
         let value = if ctx.bare.is_bare(current.binding) {
-            emit_bare_i64(&current.value).or_else(|| emit_mir_expr(&current.value, ctx))?
+            emit_bare_i64(&current.value, ctx).or_else(|| emit_mir_expr(&current.value, ctx))?
         } else {
             emit_mir_binding_value(&current.value, ctx)?
         };
@@ -6383,7 +6475,7 @@ fn emit_mir_value_return(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
     // analysis only set `bare_return` when EVERY tail leaf is bare-eligible
     // (`tail_value_is_bare`), so this path renders.
     if ctx.bare.bare_return && mir_expr_is_bare_i64(expr, ctx) {
-        return emit_bare_i64(expr).or_else(|| emit_mir_expr(expr, ctx));
+        return emit_bare_i64(expr, ctx).or_else(|| emit_mir_expr(expr, ctx));
     }
     // ETAP-2 SLICE 1: the boxed-return tail boundary (defects Q5 / subj_ret)
     // is now an EXPLICIT `Box` node the `bare_i64_rewrite` pass inserted
@@ -6444,7 +6536,7 @@ fn emit_mir_self_tco_continue(
         //   - boxed param: `emit_mir_expr` (lowering any `Box` node), then
         //     the clone policy.
         if ctx.bare.loop_param_is_bare(i) {
-            let rendered = emit_bare_i64(a).or_else(|| emit_mir_expr(a, &tail_ctx));
+            let rendered = emit_bare_i64(a, &tail_ctx).or_else(|| emit_mir_expr(a, &tail_ctx));
             arg_strs[i] = Some(rendered?);
         } else {
             let code = emit_mir_expr(a, &tail_ctx)?;
@@ -6514,8 +6606,8 @@ fn mir_if_cond_and_branches<'a>(
             // comparison bare path in `emit_mir_expr`.
             let (l, r) = if mir_expr_is_bare_i64(&bop.lhs, ctx)
                 && mir_expr_is_bare_i64(&bop.rhs, ctx)
-                && let Some(lb) = emit_bare_i64(&bop.lhs)
-                && let Some(rb) = emit_bare_i64(&bop.rhs)
+                && let Some(lb) = emit_bare_i64(&bop.lhs, ctx)
+                && let Some(rb) = emit_bare_i64(&bop.rhs, ctx)
             {
                 (lb, rb)
             } else {
@@ -7116,7 +7208,7 @@ fn emit_named_call_to(
             // compound / literal renders via `emit_bare_i64`; anything else
             // (an `Unbox` node the rewrite inserted for a genuinely-boxed
             // arg) falls through to `emit_mir_expr`.
-            let rendered = emit_bare_i64(a).or_else(|| emit_mir_expr(a, ctx));
+            let rendered = emit_bare_i64(a, ctx).or_else(|| emit_mir_expr(a, ctx));
             arg_strs.push(rendered?);
             continue;
         }
@@ -7185,7 +7277,7 @@ fn emit_deferred_call(
     for (i, arg) in args.iter().enumerate().rev() {
         let is_bare = bare.is_some_and(|f| f.param_is_bare(i));
         let mut value = match is_bare {
-            true => emit_bare_i64(arg).or_else(|| emit_mir_expr(arg, ctx))?,
+            true => emit_bare_i64(arg, ctx).or_else(|| emit_mir_expr(arg, ctx))?,
             false => mir_clone_arg(emit_mir_expr(arg, ctx)?, &arg.node, ctx),
         };
         if knows.is_some() {
@@ -8383,7 +8475,7 @@ fn emit_mir_intrinsic_call(
         | BuiltinIntrinsic::StrCursorNext
         | BuiltinIntrinsic::StrCursorCode => {
             let s = emit_mir_expr(&args[0], ctx)?;
-            let i = emit_bare_i64(&args[1]).or_else(|| emit_mir_expr(&args[1], ctx))?;
+            let i = emit_bare_i64(&args[1], ctx).or_else(|| emit_mir_expr(&args[1], ctx))?;
             let call = |f: &str| format!("aver_rt::{f}(&{s}, ({i}) as usize)");
             Some(match intrinsic {
                 BuiltinIntrinsic::StrCursorEnd => call("str_cursor_end"),

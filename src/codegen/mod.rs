@@ -512,6 +512,13 @@ pub struct CodegenContext {
     /// this table, so an entry certifies both the element interval and the
     /// smart-constructor-only construction discipline.
     pub packed_sequence_layouts: HashMap<String, crate::codegen::proof_lower::PackedSequenceLayout>,
+    /// The refinement carriers the Rust backend holds as a raw `i64`: a
+    /// single-field record over `Int` whose smart constructor proves a bound
+    /// that fits `i64`, built nowhere else, and the only type of its name in
+    /// the program. Keyed by that name, valued by the proven bound. Filled by
+    /// the Rust transpile only (see `codegen::rust::carrier`); empty for every
+    /// other backend, and then every carrier keeps its `AverInt` field.
+    pub rust_i64_carriers: crate::ir::mir::bare_i64::CarrierIntervals,
     /// Proof-export decision IR populated by `proof_lower::lower`
     /// during `build_context`. The Lean backend reads from
     /// here to decide refinement-record lift, recursion contracts,
@@ -1104,6 +1111,7 @@ pub fn build_context(
         buffer_fusion_sites,
         synthesized_buffered_fns,
         packed_sequence_layouts: HashMap::new(),
+        rust_i64_carriers: HashMap::new(),
         bare_i64,
         rust_owned_record_params: Default::default(),
         rust_lazy_sums: Default::default(),
@@ -1618,6 +1626,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         buffer_fusion_sites: Vec::new(),
         synthesized_buffered_fns: Vec::new(),
         packed_sequence_layouts: std::collections::HashMap::new(),
+        rust_i64_carriers: std::collections::HashMap::new(),
         proof_ir: crate::ir::ProofIR::default(),
         symbol_table: crate::ir::SymbolTable::default(),
         current_module_scope: std::cell::RefCell::new(None),
