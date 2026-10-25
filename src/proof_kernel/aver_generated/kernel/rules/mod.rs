@@ -233,11 +233,12 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
         let __dispatch_subject = id.clone();
         if &*__dispatch_subject == "bool.and.true_l" {
             {
-                let __arg3 @ _ = aver_rt::AverList::from_vec(vec![
+                let __arg3 @ _ = aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!(
                         "b"
                     )),
-                ]);
+                    aver_rt::AverList::empty(),
+                );
                 {
                     let __arg4 @ _ = {
                         let __arg1 @ _ =
@@ -270,11 +271,12 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
         } else {
             if &*__dispatch_subject == "bool.and.false_l" {
                 {
-                    let __arg8 @ _ = aver_rt::AverList::from_vec(vec![
+                    let __arg8 @ _ = aver_rt::AverList::prepend_owned(
                         crate::proof_kernel::aver_generated::kernel::rules::bo(
                             ::aver_rt::str_lit!("b"),
                         ),
-                    ]);
+                        aver_rt::AverList::empty(),
+                    );
                     {
                         let __arg9 @ _ = {
                             let __arg6 @ _ =
@@ -311,11 +313,12 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
             } else {
                 if &*__dispatch_subject == "bool.and.true_r" {
                     {
-                        let __arg13 @ _ = aver_rt::AverList::from_vec(vec![
+                        let __arg13 @ _ = aver_rt::AverList::prepend_owned(
                             crate::proof_kernel::aver_generated::kernel::rules::bo(
                                 ::aver_rt::str_lit!("a"),
                             ),
-                        ]);
+                            aver_rt::AverList::empty(),
+                        );
                         {
                             let __arg14 @ _ = {
                                 let __arg11 @ _ =
@@ -345,11 +348,12 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
                 } else {
                     if &*__dispatch_subject == "bool.and.false_r" {
                         {
-                            let __arg18 @ _ = aver_rt::AverList::from_vec(vec![
+                            let __arg18 @ _ = aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::rules::bo(
                                     ::aver_rt::str_lit!("a"),
                                 ),
-                            ]);
+                                aver_rt::AverList::empty(),
+                            );
                             {
                                 let __arg19 @ _ = {
                                     let __arg16 @ _ =
@@ -376,11 +380,12 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
                     } else {
                         if &*__dispatch_subject == "bool.or.true_l" {
                             {
-                                let __arg23 @ _ = aver_rt::AverList::from_vec(vec![
+                                let __arg23 @ _ = aver_rt::AverList::prepend_owned(
                                     crate::proof_kernel::aver_generated::kernel::rules::bo(
                                         ::aver_rt::str_lit!("b"),
                                     ),
-                                ]);
+                                    aver_rt::AverList::empty(),
+                                );
                                 {
                                     let __arg24 @ _ = {
                                         let __arg21 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true));
@@ -404,11 +409,12 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
                         } else {
                             if &*__dispatch_subject == "bool.or.false_l" {
                                 {
-                                    let __arg28 @ _ = aver_rt::AverList::from_vec(vec![
+                                    let __arg28 @ _ = aver_rt::AverList::prepend_owned(
                                         crate::proof_kernel::aver_generated::kernel::rules::bo(
                                             ::aver_rt::str_lit!("b"),
                                         ),
-                                    ]);
+                                        aver_rt::AverList::empty(),
+                                    );
                                     {
                                         let __arg29 @ _ = {
                                             let __arg26 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(false));
@@ -426,11 +432,12 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
                             } else {
                                 if &*__dispatch_subject == "bool.or.true_r" {
                                     {
-                                        let __arg33 @ _ = aver_rt::AverList::from_vec(vec![
+                                        let __arg33 @ _ = aver_rt::AverList::prepend_owned(
                                             crate::proof_kernel::aver_generated::kernel::rules::bo(
                                                 ::aver_rt::str_lit!("a"),
                                             ),
-                                        ]);
+                                            aver_rt::AverList::empty(),
+                                        );
                                         {
                                             let __arg34 @ _ = {
                                                 let __arg31 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a"));
@@ -448,7 +455,7 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
                                 } else {
                                     if &*__dispatch_subject == "bool.or.false_r" {
                                         {
-                                            let __arg38 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("a"))]);
+                                            let __arg38 @ _ = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("a")), aver_rt::AverList::empty());
                                             {
                                                 let __arg39 @ _ = {
                                                     let __arg36 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a"));
@@ -465,10 +472,10 @@ pub fn schema(id @ _: AverStr) -> Option<Schema> {
                                         }
                                     } else {
                                         if &*__dispatch_subject == "bool.and.elim_l" {
-                                            Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("a")), crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("b"))]), premises: aver_rt::AverList::from_vec(vec![{ let __arg43 @ _ = { let __arg41 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")); { let __arg42 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("b")); crate::proof_kernel::aver_generated::kernel::rules::conn(::aver_rt::str_lit!("Bool.and"), __arg41, __arg42) } }; crate::proof_kernel::aver_generated::kernel::rules::is(__arg43, true) }]), concl: { let __arg44 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")); crate::proof_kernel::aver_generated::kernel::rules::is(__arg44, true) } })
+                                            Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("a")), crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("b"))]), premises: aver_rt::AverList::prepend_owned({ let __arg43 @ _ = { let __arg41 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")); { let __arg42 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("b")); crate::proof_kernel::aver_generated::kernel::rules::conn(::aver_rt::str_lit!("Bool.and"), __arg41, __arg42) } }; crate::proof_kernel::aver_generated::kernel::rules::is(__arg43, true) }, aver_rt::AverList::empty()), concl: { let __arg44 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")); crate::proof_kernel::aver_generated::kernel::rules::is(__arg44, true) } })
                                         } else {
                                             if &*__dispatch_subject == "bool.and.elim_r" {
-                                                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("a")), crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("b"))]), premises: aver_rt::AverList::from_vec(vec![{ let __arg47 @ _ = { let __arg45 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")); { let __arg46 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("b")); crate::proof_kernel::aver_generated::kernel::rules::conn(::aver_rt::str_lit!("Bool.and"), __arg45, __arg46) } }; crate::proof_kernel::aver_generated::kernel::rules::is(__arg47, true) }]), concl: { let __arg48 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("b")); crate::proof_kernel::aver_generated::kernel::rules::is(__arg48, true) } })
+                                                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("a")), crate::proof_kernel::aver_generated::kernel::rules::bo(::aver_rt::str_lit!("b"))]), premises: aver_rt::AverList::prepend_owned({ let __arg47 @ _ = { let __arg45 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")); { let __arg46 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("b")); crate::proof_kernel::aver_generated::kernel::rules::conn(::aver_rt::str_lit!("Bool.and"), __arg45, __arg46) } }; crate::proof_kernel::aver_generated::kernel::rules::is(__arg47, true) }, aver_rt::AverList::empty()), concl: { let __arg48 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("b")); crate::proof_kernel::aver_generated::kernel::rules::is(__arg48, true) } })
                                             } else {
                                                 crate::proof_kernel::aver_generated::kernel::rules::comparisonSchema(id)
                                             }
@@ -495,16 +502,23 @@ pub fn complement(
     crate::proof_kernel::cancel_checkpoint();
     Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
         binders: binders.clone(),
-        premises: aver_rt::AverList::from_vec(vec![{
-            let __arg5 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
-                    p,
-                    crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")),
-                    crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("b")),
-                ),
-            );
-            crate::proof_kernel::aver_generated::kernel::rules::is(__arg5, pv)
-        }]),
+        premises: aver_rt::AverList::prepend_owned(
+            {
+                let __arg5 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                    crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
+                        p,
+                        crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!(
+                            "a"
+                        )),
+                        crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!(
+                            "b"
+                        )),
+                    ),
+                );
+                crate::proof_kernel::aver_generated::kernel::rules::is(__arg5, pv)
+            },
+            aver_rt::AverList::empty(),
+        ),
         concl: {
             let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                 crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
@@ -544,7 +558,7 @@ pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
                     let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
                             ::aver_rt::str_lit!("Bool.not"),
-                            aver_rt::AverList::from_vec(vec![
+                            aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                                     crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
                                         ::aver_rt::str_lit!("=="),
@@ -556,7 +570,8 @@ pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
                                         ),
                                     ),
                                 ),
-                            ]),
+                                aver_rt::AverList::empty(),
+                            ),
                         ),
                     );
                     crate::proof_kernel::aver_generated::kernel::rules::plain(&ints, __arg2, __arg3)
@@ -662,12 +677,15 @@ pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
                                             ::aver_rt::str_lit!("b"),
                                         ),
                                     ]),
-                                    premises: aver_rt::AverList::from_vec(vec![{
-                                        let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("b"))));
-                                        crate::proof_kernel::aver_generated::kernel::rules::is(
-                                            __arg10, true,
-                                        )
-                                    }]),
+                                    premises: aver_rt::AverList::prepend_owned(
+                                        {
+                                            let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("b"))));
+                                            crate::proof_kernel::aver_generated::kernel::rules::is(
+                                                __arg10, true,
+                                            )
+                                        },
+                                        aver_rt::AverList::empty(),
+                                    ),
                                     concl: {
                                         let __arg11 @ _ =
                                             crate::proof_kernel::aver_generated::kernel::rules::v(
@@ -684,7 +702,7 @@ pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
                             } else {
                                 if &*__dispatch_subject == "bool.beq.refl" {
                                     {
-                                        let __arg13 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::same(::aver_rt::str_lit!("a"))]);
+                                        let __arg13 @ _ = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::same(::aver_rt::str_lit!("a")), aver_rt::AverList::empty());
                                         {
                                             let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a"))));
                                             {
@@ -790,22 +808,13 @@ pub fn divisionSchema(id @ _: AverStr) -> Option<Schema> {
                     crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("a")),
                     crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("k")),
                 ]),
-                premises: aver_rt::AverList::from_vec(vec![{
-                    let __arg1 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-                        crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
-                            ::aver_rt::str_lit!("=="),
-                            crate::proof_kernel::aver_generated::kernel::rules::v(
-                                ::aver_rt::str_lit!("k"),
-                            ),
-                            crate::proof_kernel::aver_generated::kernel::term::Term::TInt(
-                                crate::proof_kernel::aver_generated::kernel::term::Term__TInt(
-                                    aver_rt::AverInt::from_i64(0),
-                                ),
-                            ),
-                        ),
-                    );
-                    crate::proof_kernel::aver_generated::kernel::rules::is(__arg1, false)
-                }]),
+                premises: aver_rt::AverList::prepend_owned(
+                    {
+                        let __arg1 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
+                        crate::proof_kernel::aver_generated::kernel::rules::is(__arg1, false)
+                    },
+                    aver_rt::AverList::empty(),
+                ),
                 concl: {
                     let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
@@ -825,18 +834,16 @@ pub fn divisionSchema(id @ _: AverStr) -> Option<Schema> {
                             crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
                                 crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(
                                     ::aver_rt::str_lit!("Result.Ok"),
-                                    aver_rt::AverList::from_vec(vec![{
-                                        let __arg2 @ _ =
-                                            crate::proof_kernel::aver_generated::kernel::rules::v(
-                                                ::aver_rt::str_lit!("a"),
-                                            );
+                                    aver_rt::AverList::prepend_owned(
                                         {
-                                            let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"));
-                                            crate::proof_kernel::aver_generated::kernel::rules::divE(
-                                                __arg2, __arg3,
-                                            )
-                                        }
-                                    }]),
+                                            let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a"));
+                                            {
+                                                let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"));
+                                                crate::proof_kernel::aver_generated::kernel::rules::divE(__arg2, __arg3)
+                                            }
+                                        },
+                                        aver_rt::AverList::empty(),
+                                    ),
                                 ),
                             );
                         crate::proof_kernel::aver_generated::kernel::rules::eq(__arg4, __arg5)
@@ -854,10 +861,13 @@ pub fn divisionSchema(id @ _: AverStr) -> Option<Schema> {
                             "k"
                         )),
                     ]),
-                    premises: aver_rt::AverList::from_vec(vec![{
-                        let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
-                        crate::proof_kernel::aver_generated::kernel::rules::is(__arg6, false)
-                    }]),
+                    premises: aver_rt::AverList::prepend_owned(
+                        {
+                            let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
+                            crate::proof_kernel::aver_generated::kernel::rules::is(__arg6, false)
+                        },
+                        aver_rt::AverList::empty(),
+                    ),
                     concl: {
                         let __arg9 @ _ =
                             crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
@@ -878,13 +888,16 @@ pub fn divisionSchema(id @ _: AverStr) -> Option<Schema> {
                                 crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
                                     crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(
                                         ::aver_rt::str_lit!("Result.Ok"),
-                                        aver_rt::AverList::from_vec(vec![{
-                                            let __arg7 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a"));
+                                        aver_rt::AverList::prepend_owned(
                                             {
-                                                let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"));
-                                                crate::proof_kernel::aver_generated::kernel::rules::modE(__arg7, __arg8)
-                                            }
-                                        }]),
+                                                let __arg7 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a"));
+                                                {
+                                                    let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"));
+                                                    crate::proof_kernel::aver_generated::kernel::rules::modE(__arg7, __arg8)
+                                                }
+                                            },
+                                            aver_rt::AverList::empty(),
+                                        ),
                                     ),
                                 );
                             crate::proof_kernel::aver_generated::kernel::rules::eq(__arg9, __arg10)
@@ -902,10 +915,15 @@ pub fn divisionSchema(id @ _: AverStr) -> Option<Schema> {
                                 ::aver_rt::str_lit!("k"),
                             ),
                         ]),
-                        premises: aver_rt::AverList::from_vec(vec![{
-                            let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!(">"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
-                            crate::proof_kernel::aver_generated::kernel::rules::is(__arg11, true)
-                        }]),
+                        premises: aver_rt::AverList::prepend_owned(
+                            {
+                                let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!(">"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
+                                crate::proof_kernel::aver_generated::kernel::rules::is(
+                                    __arg11, true,
+                                )
+                            },
+                            aver_rt::AverList::empty(),
+                        ),
                         concl: {
                             let __arg16 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("+"), crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("*"), { let __arg12 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")); { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")); crate::proof_kernel::aver_generated::kernel::rules::divE(__arg12, __arg13) } }, crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")))), { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")); { let __arg15 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")); crate::proof_kernel::aver_generated::kernel::rules::modE(__arg14, __arg15) } }));
                             {
@@ -930,12 +948,15 @@ pub fn divisionSchema(id @ _: AverStr) -> Option<Schema> {
                                     ::aver_rt::str_lit!("k"),
                                 ),
                             ]),
-                            premises: aver_rt::AverList::from_vec(vec![{
-                                let __arg18 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!(">"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
-                                crate::proof_kernel::aver_generated::kernel::rules::is(
-                                    __arg18, true,
-                                )
-                            }]),
+                            premises: aver_rt::AverList::prepend_owned(
+                                {
+                                    let __arg18 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!(">"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
+                                    crate::proof_kernel::aver_generated::kernel::rules::is(
+                                        __arg18, true,
+                                    )
+                                },
+                                aver_rt::AverList::empty(),
+                            ),
                             concl: {
                                 let __arg23 @ _ = {
                                     let __arg21 @ _ = {
@@ -1102,18 +1123,20 @@ pub fn bitsSchema(id @ _: AverStr) -> Option<Schema> {
         let __dispatch_subject = id.clone();
         if &*__dispatch_subject == "bits.not" {
             {
-                let __arg1 @ _ = aver_rt::AverList::from_vec(vec![
+                let __arg1 @ _ = aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("a")),
-                ]);
+                    aver_rt::AverList::empty(),
+                );
                 {
                     let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
                             ::aver_rt::str_lit!("Bits.not"),
-                            aver_rt::AverList::from_vec(vec![
+                            aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::rules::v(
                                     ::aver_rt::str_lit!("a"),
                                 ),
-                            ]),
+                                aver_rt::AverList::empty(),
+                            ),
                         ),
                     );
                     {
@@ -1138,15 +1161,21 @@ pub fn bitsSchema(id @ _: AverStr) -> Option<Schema> {
                             "k"
                         )),
                     ]),
-                    premises: aver_rt::AverList::from_vec(vec![{
-                        let __arg5 @ _ = {
-                            let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(
-                                ::aver_rt::str_lit!("k"),
-                            );
-                            crate::proof_kernel::aver_generated::kernel::rules::powerOfTwo(__arg4)
-                        };
-                        crate::proof_kernel::aver_generated::kernel::rules::is(__arg5, true)
-                    }]),
+                    premises: aver_rt::AverList::prepend_owned(
+                        {
+                            let __arg5 @ _ = {
+                                let __arg4 @ _ =
+                                    crate::proof_kernel::aver_generated::kernel::rules::v(
+                                        ::aver_rt::str_lit!("k"),
+                                    );
+                                crate::proof_kernel::aver_generated::kernel::rules::powerOfTwo(
+                                    __arg4,
+                                )
+                            };
+                            crate::proof_kernel::aver_generated::kernel::rules::is(__arg5, true)
+                        },
+                        aver_rt::AverList::empty(),
+                    ),
                     concl: {
                         let __arg8 @ _ = {
                             let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(
@@ -1196,30 +1225,35 @@ pub fn bitsSchema(id @ _: AverStr) -> Option<Schema> {
                                 ::aver_rt::str_lit!("n"),
                             ),
                         ]),
-                        premises: aver_rt::AverList::from_vec(vec![{
-                            let __arg16 @ _ = {
-                                let __arg14 @ _ = {
-                                    let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<="), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n"))));
+                        premises: aver_rt::AverList::prepend_owned(
+                            {
+                                let __arg16 @ _ = {
+                                    let __arg14 @ _ = {
+                                        let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<="), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n"))));
+                                        {
+                                            let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("+"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1))))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"))));
+                                            crate::proof_kernel::aver_generated::kernel::rules::conn(
+                                                ::aver_rt::str_lit!("Bool.and"),
+                                                __arg10,
+                                                __arg11,
+                                            )
+                                        }
+                                    };
                                     {
-                                        let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("+"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1))))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"))));
+                                        let __arg15 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")), { let __arg12 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1))); { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n")); crate::proof_kernel::aver_generated::kernel::rules::shl(__arg12, __arg13) } }));
                                         crate::proof_kernel::aver_generated::kernel::rules::conn(
                                             ::aver_rt::str_lit!("Bool.and"),
-                                            __arg10,
-                                            __arg11,
+                                            __arg14,
+                                            __arg15,
                                         )
                                     }
                                 };
-                                {
-                                    let __arg15 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("=="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")), { let __arg12 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1))); { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n")); crate::proof_kernel::aver_generated::kernel::rules::shl(__arg12, __arg13) } }));
-                                    crate::proof_kernel::aver_generated::kernel::rules::conn(
-                                        ::aver_rt::str_lit!("Bool.and"),
-                                        __arg14,
-                                        __arg15,
-                                    )
-                                }
-                            };
-                            crate::proof_kernel::aver_generated::kernel::rules::is(__arg16, true)
-                        }]),
+                                crate::proof_kernel::aver_generated::kernel::rules::is(
+                                    __arg16, true,
+                                )
+                            },
+                            aver_rt::AverList::empty(),
+                        ),
                         concl: {
                             let __arg19 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
@@ -1271,20 +1305,21 @@ pub fn bitsSchema(id @ _: AverStr) -> Option<Schema> {
                                     ::aver_rt::str_lit!("n"),
                                 ),
                             ]),
-                            premises: aver_rt::AverList::from_vec(vec![{
-                                let __arg22 @ _ = {
-                                    let __arg21 @ _ =
-                                        crate::proof_kernel::aver_generated::kernel::rules::v(
-                                            ::aver_rt::str_lit!("k"),
-                                        );
-                                    crate::proof_kernel::aver_generated::kernel::rules::powerOfTwo(
-                                        __arg21,
+                            premises: aver_rt::AverList::prepend_owned(
+                                {
+                                    let __arg22 @ _ = {
+                                        let __arg21 @ _ =
+                                            crate::proof_kernel::aver_generated::kernel::rules::v(
+                                                ::aver_rt::str_lit!("k"),
+                                            );
+                                        crate::proof_kernel::aver_generated::kernel::rules::powerOfTwo(__arg21)
+                                    };
+                                    crate::proof_kernel::aver_generated::kernel::rules::is(
+                                        __arg22, true,
                                     )
-                                };
-                                crate::proof_kernel::aver_generated::kernel::rules::is(
-                                    __arg22, true,
-                                )
-                            }]),
+                                },
+                                aver_rt::AverList::empty(),
+                            ),
                             concl: {
                                 let __arg27 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("Bits.and"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"))])));
                                 {
@@ -1383,7 +1418,7 @@ pub fn counted(
     };
     Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
         binders: binders.clone(),
-        premises: aver_rt::AverList::from_vec(vec![premise]),
+        premises: aver_rt::AverList::prepend_owned(premise, aver_rt::AverList::empty()),
         concl: crate::proof_kernel::aver_generated::kernel::rules::eq(l, r),
     })
 }
@@ -1423,11 +1458,12 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
         let __dispatch_subject = id.clone();
         if &*__dispatch_subject == "list.concat.nil" {
             {
-                let __arg8 @ _ = aver_rt::AverList::from_vec(vec![
+                let __arg8 @ _ = aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::rules::lt(::aver_rt::str_lit!(
                         "b"
                     )),
-                ]);
+                    aver_rt::AverList::empty(),
+                );
                 {
                     let __arg9 @ _ = {
                         let __arg7 @ _ = aver_rt::AverList::from_vec(vec![
@@ -1523,14 +1559,17 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
                         ]);
                         {
                             let __arg21 @ _ = {
-                                let __arg18 @ _ = aver_rt::AverList::from_vec(vec![xa]);
+                                let __arg18 @ _ = aver_rt::AverList::prepend_owned(
+                                    xa,
+                                    aver_rt::AverList::empty(),
+                                );
                                 crate::proof_kernel::aver_generated::kernel::rules::lb(
                                     ::aver_rt::str_lit!("len"),
                                     &__arg18,
                                 )
                             };
                             {
-                                let __arg22 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("+"), { let __arg19 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a"))]); crate::proof_kernel::aver_generated::kernel::rules::lb(::aver_rt::str_lit!("len"), &__arg19) }, crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1)))));
+                                let __arg22 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("+"), { let __arg19 @ _ = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")), aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::rules::lb(::aver_rt::str_lit!("len"), &__arg19) }, crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1)))));
                                 crate::proof_kernel::aver_generated::kernel::rules::plain(
                                     &__arg20, __arg21, __arg22,
                                 )
@@ -1540,11 +1579,12 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
                 } else {
                     if &*__dispatch_subject == "list.take.nil" {
                         {
-                            let __arg24 @ _ = aver_rt::AverList::from_vec(vec![
+                            let __arg24 @ _ = aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::rules::i(
                                     ::aver_rt::str_lit!("n"),
                                 ),
-                            ]);
+                                aver_rt::AverList::empty(),
+                            );
                             {
                                 let __arg25 @ _ = {
                                     let __arg23 @ _ = aver_rt::AverList::from_vec(vec![
@@ -1616,11 +1656,12 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
                             } else {
                                 if &*__dispatch_subject == "list.drop.nil" {
                                     {
-                                        let __arg35 @ _ = aver_rt::AverList::from_vec(vec![
+                                        let __arg35 @ _ = aver_rt::AverList::prepend_owned(
                                             crate::proof_kernel::aver_generated::kernel::rules::i(
                                                 ::aver_rt::str_lit!("n"),
                                             ),
-                                        ]);
+                                            aver_rt::AverList::empty(),
+                                        );
                                         {
                                             let __arg36 @ _ = {
                                                 let __arg34 @ _ = aver_rt::AverList::from_vec(vec![nil.clone(), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n"))]);
@@ -1660,9 +1701,10 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
                                                     {
                                                         let __arg48 @ _ = {
                                                             let __arg43 @ _ =
-                                                                aver_rt::AverList::from_vec(vec![
+                                                                aver_rt::AverList::prepend_owned(
                                                                     xa,
-                                                                ]);
+                                                                    aver_rt::AverList::empty(),
+                                                                );
                                                             crate::proof_kernel::aver_generated::kernel::rules::lb(::aver_rt::str_lit!("reverse"), &__arg43)
                                                         };
                                                         {
@@ -1671,7 +1713,7 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
                                                                     aver_rt::AverList::from_vec(
                                                                         vec![
                                                                             {
-                                                                                let __arg44 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a"))]);
+                                                                                let __arg44 @ _ = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")), aver_rt::AverList::empty());
                                                                                 crate::proof_kernel::aver_generated::kernel::rules::lb(::aver_rt::str_lit!("reverse"), &__arg44)
                                                                             },
                                                                             {
@@ -1744,16 +1786,21 @@ pub fn mapSchema(id @ _: AverStr) -> Option<Schema> {
             &__arg7,
         )
     };
-    let other @ _ = aver_rt::AverList::from_vec(vec![{
-        let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
-            crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
-                ::aver_rt::str_lit!("!="),
-                crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")),
-                crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k2")),
-            ),
-        );
-        crate::proof_kernel::aver_generated::kernel::rules::is(__arg8, true)
-    }]);
+    let other @ _ = aver_rt::AverList::prepend_owned(
+        {
+            let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
+                crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
+                    ::aver_rt::str_lit!("!="),
+                    crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k")),
+                    crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!(
+                        "k2"
+                    )),
+                ),
+            );
+            crate::proof_kernel::aver_generated::kernel::rules::is(__arg8, true)
+        },
+        aver_rt::AverList::empty(),
+    );
     let mkv @ _ = aver_rt::AverList::from_vec(vec![
         crate::proof_kernel::aver_generated::kernel::rules::kv(::aver_rt::str_lit!("m")),
         crate::proof_kernel::aver_generated::kernel::rules::key(::aver_rt::str_lit!("k")),
@@ -1769,11 +1816,12 @@ pub fn mapSchema(id @ _: AverStr) -> Option<Schema> {
         let __dispatch_subject = id.clone();
         if &*__dispatch_subject == "map.get.empty" {
             {
-                let __arg10 @ _ = aver_rt::AverList::from_vec(vec![
+                let __arg10 @ _ = aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::rules::key(::aver_rt::str_lit!(
                         "k"
                     )),
-                ]);
+                    aver_rt::AverList::empty(),
+                );
                 {
                     let __arg11 @ _ = {
                         let __arg9 @ _ = aver_rt::AverList::from_vec(vec![
@@ -1821,11 +1869,12 @@ pub fn mapSchema(id @ _: AverStr) -> Option<Schema> {
                             crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
                                 crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(
                                     ::aver_rt::str_lit!("Option.Some"),
-                                    aver_rt::AverList::from_vec(vec![
+                                    aver_rt::AverList::prepend_owned(
                                         crate::proof_kernel::aver_generated::kernel::rules::v(
                                             ::aver_rt::str_lit!("v"),
                                         ),
-                                    ]),
+                                        aver_rt::AverList::empty(),
+                                    ),
                                 ),
                             );
                         crate::proof_kernel::aver_generated::kernel::rules::plain(
@@ -1875,11 +1924,12 @@ pub fn mapSchema(id @ _: AverStr) -> Option<Schema> {
                 } else {
                     if &*__dispatch_subject == "map.has.empty" {
                         {
-                            let __arg21 @ _ = aver_rt::AverList::from_vec(vec![
+                            let __arg21 @ _ = aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::rules::key(
                                     ::aver_rt::str_lit!("k"),
                                 ),
-                            ]);
+                                aver_rt::AverList::empty(),
+                            );
                             {
                                 let __arg22 @ _ = {
                                     let __arg20 @ _ = aver_rt::AverList::from_vec(vec![
@@ -1953,8 +2003,10 @@ pub fn mapSchema(id @ _: AverStr) -> Option<Schema> {
                                         let __arg32 @ _ = <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>>::empty();
                                         {
                                             let __arg33 @ _ = {
-                                                let __arg31 @ _ =
-                                                    aver_rt::AverList::from_vec(vec![empty]);
+                                                let __arg31 @ _ = aver_rt::AverList::prepend_owned(
+                                                    empty,
+                                                    aver_rt::AverList::empty(),
+                                                );
                                                 crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("len"), &__arg31)
                                             };
                                             {
@@ -1965,10 +2017,10 @@ pub fn mapSchema(id @ _: AverStr) -> Option<Schema> {
                                     }
                                 } else {
                                     if &*__dispatch_subject == "map.len.set_present" {
-                                        Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: mkv, premises: aver_rt::AverList::from_vec(vec![{ let __arg36 @ _ = { let __arg35 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"))]); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("has"), &__arg35) }; crate::proof_kernel::aver_generated::kernel::rules::is(__arg36, true) }]), concl: { let __arg39 @ _ = { let __arg37 @ _ = aver_rt::AverList::from_vec(vec![set]); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("len"), &__arg37) }; { let __arg40 @ _ = { let __arg38 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m"))]); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("len"), &__arg38) }; crate::proof_kernel::aver_generated::kernel::rules::eq(__arg39, __arg40) } } })
+                                        Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: mkv, premises: aver_rt::AverList::prepend_owned({ let __arg36 @ _ = { let __arg35 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"))]); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("has"), &__arg35) }; crate::proof_kernel::aver_generated::kernel::rules::is(__arg36, true) }, aver_rt::AverList::empty()), concl: { let __arg39 @ _ = { let __arg37 @ _ = aver_rt::AverList::prepend_owned(set, aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("len"), &__arg37) }; { let __arg40 @ _ = { let __arg38 @ _ = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m")), aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("len"), &__arg38) }; crate::proof_kernel::aver_generated::kernel::rules::eq(__arg39, __arg40) } } })
                                     } else {
                                         if &*__dispatch_subject == "map.len.set_absent" {
-                                            Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: mkv, premises: aver_rt::AverList::from_vec(vec![{ let __arg42 @ _ = { let __arg41 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"))]); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("has"), &__arg41) }; crate::proof_kernel::aver_generated::kernel::rules::is(__arg42, false) }]), concl: { let __arg45 @ _ = { let __arg43 @ _ = aver_rt::AverList::from_vec(vec![set]); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("len"), &__arg43) }; { let __arg46 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("+"), { let __arg44 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m"))]); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("len"), &__arg44) }, crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1))))); crate::proof_kernel::aver_generated::kernel::rules::eq(__arg45, __arg46) } } })
+                                            Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: mkv, premises: aver_rt::AverList::prepend_owned({ let __arg42 @ _ = { let __arg41 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("k"))]); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("has"), &__arg41) }; crate::proof_kernel::aver_generated::kernel::rules::is(__arg42, false) }, aver_rt::AverList::empty()), concl: { let __arg45 @ _ = { let __arg43 @ _ = aver_rt::AverList::prepend_owned(set, aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("len"), &__arg43) }; { let __arg46 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("+"), { let __arg44 @ _ = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("m")), aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::rules::mb(::aver_rt::str_lit!("len"), &__arg44) }, crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1))))); crate::proof_kernel::aver_generated::kernel::rules::eq(__arg45, __arg46) } } })
                                         } else {
                                             crate::proof_kernel::aver_generated::kernel::rules::vectorSchema(id)
                                         }
@@ -2048,9 +2100,10 @@ pub fn inRange(
 pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let len @ _ = {
-        let __arg6 @ _ = aver_rt::AverList::from_vec(vec![
+        let __arg6 @ _ = aver_rt::AverList::prepend_owned(
             crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("v")),
-        ]);
+            aver_rt::AverList::empty(),
+        );
         crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("len"), &__arg6)
     };
     let written @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
@@ -2100,26 +2153,31 @@ pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
         let __dispatch_subject = id.clone();
         if &*__dispatch_subject == "vector.to_list.of_list" {
             {
-                let __arg9 @ _ = aver_rt::AverList::from_vec(vec![
+                let __arg9 @ _ = aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::rules::lt(::aver_rt::str_lit!(
                         "l"
                     )),
-                ]);
+                    aver_rt::AverList::empty(),
+                );
                 {
                     let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
                             ::aver_rt::str_lit!("List.fromVector"),
-                            aver_rt::AverList::from_vec(vec![{
-                                let __arg8 @ _ = aver_rt::AverList::from_vec(vec![
-                                    crate::proof_kernel::aver_generated::kernel::rules::v(
-                                        ::aver_rt::str_lit!("l"),
-                                    ),
-                                ]);
-                                crate::proof_kernel::aver_generated::kernel::rules::vb(
-                                    ::aver_rt::str_lit!("fromList"),
-                                    &__arg8,
-                                )
-                            }]),
+                            aver_rt::AverList::prepend_owned(
+                                {
+                                    let __arg8 @ _ = aver_rt::AverList::prepend_owned(
+                                        crate::proof_kernel::aver_generated::kernel::rules::v(
+                                            ::aver_rt::str_lit!("l"),
+                                        ),
+                                        aver_rt::AverList::empty(),
+                                    );
+                                    crate::proof_kernel::aver_generated::kernel::rules::vb(
+                                        ::aver_rt::str_lit!("fromList"),
+                                        &__arg8,
+                                    )
+                                },
+                                aver_rt::AverList::empty(),
+                            ),
                         ),
                     );
                     {
@@ -2135,25 +2193,28 @@ pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
         } else {
             if &*__dispatch_subject == "vector.of_list.to_list" {
                 {
-                    let __arg13 @ _ = aver_rt::AverList::from_vec(vec![
+                    let __arg13 @ _ = aver_rt::AverList::prepend_owned(
                         crate::proof_kernel::aver_generated::kernel::rules::vec(
                             ::aver_rt::str_lit!("v"),
                         ),
-                    ]);
+                        aver_rt::AverList::empty(),
+                    );
                     {
                         let __arg14 @ _ = {
-                            let __arg12 @ _ = aver_rt::AverList::from_vec(vec![
+                            let __arg12 @ _ = aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
                                     crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
                                         ::aver_rt::str_lit!("List.fromVector"),
-                                        aver_rt::AverList::from_vec(vec![
+                                        aver_rt::AverList::prepend_owned(
                                             crate::proof_kernel::aver_generated::kernel::rules::v(
                                                 ::aver_rt::str_lit!("v"),
                                             ),
-                                        ]),
+                                            aver_rt::AverList::empty(),
+                                        ),
                                     ),
                                 ),
-                            ]);
+                                aver_rt::AverList::empty(),
+                            );
                             crate::proof_kernel::aver_generated::kernel::rules::vb(
                                 ::aver_rt::str_lit!("fromList"),
                                 &__arg12,
@@ -2172,13 +2233,14 @@ pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
             } else {
                 if &*__dispatch_subject == "vector.len.to_list" {
                     {
-                        let __arg16 @ _ = aver_rt::AverList::from_vec(vec![
+                        let __arg16 @ _ = aver_rt::AverList::prepend_owned(
                             crate::proof_kernel::aver_generated::kernel::rules::vec(
                                 ::aver_rt::str_lit!("v"),
                             ),
-                        ]);
+                            aver_rt::AverList::empty(),
+                        );
                         {
-                            let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.len"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.fromVector"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("v"))])))])));
+                            let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.len"), aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.fromVector"), aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("v")), aver_rt::AverList::empty()))), aver_rt::AverList::empty())));
                             crate::proof_kernel::aver_generated::kernel::rules::plain(
                                 &__arg16, len, __arg17,
                             )
@@ -2188,12 +2250,15 @@ pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
                     if &*__dispatch_subject == "vector.get.negative" {
                         Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
                             binders: vi,
-                            premises: aver_rt::AverList::from_vec(vec![{
-                                let __arg18 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
-                                crate::proof_kernel::aver_generated::kernel::rules::is(
-                                    __arg18, true,
-                                )
-                            }]),
+                            premises: aver_rt::AverList::prepend_owned(
+                                {
+                                    let __arg18 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
+                                    crate::proof_kernel::aver_generated::kernel::rules::is(
+                                        __arg18, true,
+                                    )
+                                },
+                                aver_rt::AverList::empty(),
+                            ),
                             concl: {
                                 let __arg20 @ _ = {
                                     let __arg19 @ _ = aver_rt::AverList::from_vec(vec![
@@ -2221,12 +2286,15 @@ pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
                         if &*__dispatch_subject == "vector.get.past_end" {
                             Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
                                 binders: vi,
-                                premises: aver_rt::AverList::from_vec(vec![{
-                                    let __arg22 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!(">="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), len));
-                                    crate::proof_kernel::aver_generated::kernel::rules::is(
-                                        __arg22, true,
-                                    )
-                                }]),
+                                premises: aver_rt::AverList::prepend_owned(
+                                    {
+                                        let __arg22 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!(">="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), len));
+                                        crate::proof_kernel::aver_generated::kernel::rules::is(
+                                            __arg22, true,
+                                        )
+                                    },
+                                    aver_rt::AverList::empty(),
+                                ),
                                 concl: {
                                     let __arg24 @ _ = {
                                         let __arg23 @ _ = aver_rt::AverList::from_vec(vec![
@@ -2254,18 +2322,21 @@ pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
                             if &*__dispatch_subject == "vector.set.out_of_range" {
                                 Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
                                     binders: vix,
-                                    premises: aver_rt::AverList::from_vec(vec![{
-                                        let __arg28 @ _ = {
-                                            let __arg26 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
-                                            {
-                                                let __arg27 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!(">="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), len));
-                                                crate::proof_kernel::aver_generated::kernel::rules::conn(::aver_rt::str_lit!("Bool.or"), __arg26, __arg27)
-                                            }
-                                        };
-                                        crate::proof_kernel::aver_generated::kernel::rules::is(
-                                            __arg28, true,
-                                        )
-                                    }]),
+                                    premises: aver_rt::AverList::prepend_owned(
+                                        {
+                                            let __arg28 @ _ = {
+                                                let __arg26 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0)))));
+                                                {
+                                                    let __arg27 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!(">="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), len));
+                                                    crate::proof_kernel::aver_generated::kernel::rules::conn(::aver_rt::str_lit!("Bool.or"), __arg26, __arg27)
+                                                }
+                                            };
+                                            crate::proof_kernel::aver_generated::kernel::rules::is(
+                                                __arg28, true,
+                                            )
+                                        },
+                                        aver_rt::AverList::empty(),
+                                    ),
                                     concl: {
                                         let __arg30 @ _ = {
                                             let __arg29 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("v")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("x"))]);
@@ -2284,7 +2355,7 @@ pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
                                 })
                             } else {
                                 if &*__dispatch_subject == "vector.get.set_same" {
-                                    Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: vix, premises: aver_rt::AverList::from_vec(vec![{ let __arg32 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")); crate::proof_kernel::aver_generated::kernel::rules::inRange(__arg32, len) }]), concl: { let __arg34 @ _ = { let __arg33 @ _ = aver_rt::AverList::from_vec(vec![written, crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i"))]); crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("get"), &__arg33) }; { let __arg35 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(::aver_rt::str_lit!("Option.Some"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("x"))]))); crate::proof_kernel::aver_generated::kernel::rules::eq(__arg34, __arg35) } } })
+                                    Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: vix, premises: aver_rt::AverList::prepend_owned({ let __arg32 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")); crate::proof_kernel::aver_generated::kernel::rules::inRange(__arg32, len) }, aver_rt::AverList::empty()), concl: { let __arg34 @ _ = { let __arg33 @ _ = aver_rt::AverList::from_vec(vec![written, crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i"))]); crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("get"), &__arg33) }; { let __arg35 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(::aver_rt::str_lit!("Option.Some"), aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("x")), aver_rt::AverList::empty()))); crate::proof_kernel::aver_generated::kernel::rules::eq(__arg34, __arg35) } } })
                                 } else {
                                     if &*__dispatch_subject == "vector.get.set_other" {
                                         Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::vec(::aver_rt::str_lit!("v")), crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("i")), crate::proof_kernel::aver_generated::kernel::rules::any(::aver_rt::str_lit!("x")), crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("j"))]), premises: aver_rt::AverList::from_vec(vec![{ let __arg36 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")); crate::proof_kernel::aver_generated::kernel::rules::inRange(__arg36, len) }, { let __arg37 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("!="), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("j")))); crate::proof_kernel::aver_generated::kernel::rules::is(__arg37, true) }]), concl: { let __arg40 @ _ = { let __arg38 @ _ = aver_rt::AverList::from_vec(vec![written, crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("j"))]); crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("get"), &__arg38) }; { let __arg41 @ _ = { let __arg39 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("v")), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("j"))]); crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("get"), &__arg39) }; crate::proof_kernel::aver_generated::kernel::rules::eq(__arg40, __arg41) } } })
@@ -2293,17 +2364,20 @@ pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
                                             {
                                                 let __arg43 @ _ = {
                                                     let __arg42 @ _ =
-                                                        aver_rt::AverList::from_vec(vec![written]);
+                                                        aver_rt::AverList::prepend_owned(
+                                                            written,
+                                                            aver_rt::AverList::empty(),
+                                                        );
                                                     crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("len"), &__arg42)
                                                 };
                                                 crate::proof_kernel::aver_generated::kernel::rules::plain(&vix, __arg43, len)
                                             }
                                         } else {
                                             if &*__dispatch_subject == "vector.len.new" {
-                                                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("n")), crate::proof_kernel::aver_generated::kernel::rules::any(::aver_rt::str_lit!("x"))]), premises: aver_rt::AverList::from_vec(vec![{ let __arg44 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<="), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n")))); crate::proof_kernel::aver_generated::kernel::rules::is(__arg44, true) }]), concl: { let __arg46 @ _ = { let __arg45 @ _ = aver_rt::AverList::from_vec(vec![made]); crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("len"), &__arg45) }; { let __arg47 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n")); crate::proof_kernel::aver_generated::kernel::rules::eq(__arg46, __arg47) } } })
+                                                Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("n")), crate::proof_kernel::aver_generated::kernel::rules::any(::aver_rt::str_lit!("x"))]), premises: aver_rt::AverList::prepend_owned({ let __arg44 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<="), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n")))); crate::proof_kernel::aver_generated::kernel::rules::is(__arg44, true) }, aver_rt::AverList::empty()), concl: { let __arg46 @ _ = { let __arg45 @ _ = aver_rt::AverList::prepend_owned(made, aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("len"), &__arg45) }; { let __arg47 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n")); crate::proof_kernel::aver_generated::kernel::rules::eq(__arg46, __arg47) } } })
                                             } else {
                                                 if &*__dispatch_subject == "vector.get.new" {
-                                                    Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("n")), crate::proof_kernel::aver_generated::kernel::rules::any(::aver_rt::str_lit!("x")), crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("i"))]), premises: aver_rt::AverList::from_vec(vec![{ let __arg48 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")); { let __arg49 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n")); crate::proof_kernel::aver_generated::kernel::rules::inRange(__arg48, __arg49) } }]), concl: { let __arg51 @ _ = { let __arg50 @ _ = aver_rt::AverList::from_vec(vec![made, crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i"))]); crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("get"), &__arg50) }; { let __arg52 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(::aver_rt::str_lit!("Option.Some"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("x"))]))); crate::proof_kernel::aver_generated::kernel::rules::eq(__arg51, __arg52) } } })
+                                                    Some(crate::proof_kernel::aver_generated::kernel::rules::Schema { binders: aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("n")), crate::proof_kernel::aver_generated::kernel::rules::any(::aver_rt::str_lit!("x")), crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("i"))]), premises: aver_rt::AverList::prepend_owned({ let __arg48 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i")); { let __arg49 @ _ = crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("n")); crate::proof_kernel::aver_generated::kernel::rules::inRange(__arg48, __arg49) } }, aver_rt::AverList::empty()), concl: { let __arg51 @ _ = { let __arg50 @ _ = aver_rt::AverList::from_vec(vec![made, crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("i"))]); crate::proof_kernel::aver_generated::kernel::rules::vb(::aver_rt::str_lit!("get"), &__arg50) }; { let __arg52 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(::aver_rt::str_lit!("Option.Some"), aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("x")), aver_rt::AverList::empty()))); crate::proof_kernel::aver_generated::kernel::rules::eq(__arg51, __arg52) } } })
                                                 } else {
                                                     crate::proof_kernel::aver_generated::kernel::rules::pickSchema(id)
                                                 }
@@ -2331,9 +2405,10 @@ pub fn picked(
     crate::proof_kernel::cancel_checkpoint();
     Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
         binders: binders.clone(),
-        premises: aver_rt::AverList::from_vec(vec![
+        premises: aver_rt::AverList::prepend_owned(
             crate::proof_kernel::aver_generated::kernel::rules::is(test, holds),
-        ]),
+            aver_rt::AverList::empty(),
+        ),
         concl: crate::proof_kernel::aver_generated::kernel::rules::eq(l, r),
     })
 }
@@ -2381,9 +2456,10 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
     let abs @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
         crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
             ::aver_rt::str_lit!("Int.abs"),
-            aver_rt::AverList::from_vec(vec![
+            aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a")),
-            ]),
+                aver_rt::AverList::empty(),
+            ),
         ),
     );
     let found @ _ = {
@@ -2477,11 +2553,12 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
                     } else {
                         if &*__dispatch_subject == "int.abs.neg" {
                             {
-                                let __arg16 @ _ = aver_rt::AverList::from_vec(vec![
+                                let __arg16 @ _ = aver_rt::AverList::prepend_owned(
                                     crate::proof_kernel::aver_generated::kernel::rules::i(
                                         ::aver_rt::str_lit!("a"),
                                     ),
-                                ]);
+                                    aver_rt::AverList::empty(),
+                                );
                                 {
                                     let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("-"), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("a"))));
                                     crate::proof_kernel::aver_generated::kernel::rules::picked(
@@ -2492,11 +2569,12 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
                         } else {
                             if &*__dispatch_subject == "int.abs.nonneg" {
                                 {
-                                    let __arg18 @ _ = aver_rt::AverList::from_vec(vec![
+                                    let __arg18 @ _ = aver_rt::AverList::prepend_owned(
                                         crate::proof_kernel::aver_generated::kernel::rules::i(
                                             ::aver_rt::str_lit!("a"),
                                         ),
-                                    ]);
+                                        aver_rt::AverList::empty(),
+                                    );
                                     {
                                         let __arg19 @ _ =
                                             crate::proof_kernel::aver_generated::kernel::rules::v(
@@ -2510,11 +2588,12 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
                             } else {
                                 if &*__dispatch_subject == "list.contains.nil" {
                                     {
-                                        let __arg21 @ _ = aver_rt::AverList::from_vec(vec![
+                                        let __arg21 @ _ = aver_rt::AverList::prepend_owned(
                                             crate::proof_kernel::aver_generated::kernel::rules::any(
                                                 ::aver_rt::str_lit!("y"),
                                             ),
-                                        ]);
+                                            aver_rt::AverList::empty(),
+                                        );
                                         {
                                             let __arg22 @ _ = {
                                                 let __arg20 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TList(crate::proof_kernel::aver_generated::kernel::term::Term__TList(aver_rt::AverList::empty())), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("y"))]);
@@ -2606,11 +2685,12 @@ pub fn defaultSchema(id @ _: AverStr) -> Option<Schema> {
                                 crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
                                     crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(
                                         ::aver_rt::str_lit!("Option.Some"),
-                                        aver_rt::AverList::from_vec(vec![
+                                        aver_rt::AverList::prepend_owned(
                                             crate::proof_kernel::aver_generated::kernel::rules::v(
                                                 ::aver_rt::str_lit!("x"),
                                             ),
-                                        ]),
+                                            aver_rt::AverList::empty(),
+                                        ),
                                     ),
                                 ),
                                 crate::proof_kernel::aver_generated::kernel::rules::v(
@@ -2632,11 +2712,12 @@ pub fn defaultSchema(id @ _: AverStr) -> Option<Schema> {
         } else {
             if &*__dispatch_subject == "option.with_default.none" {
                 {
-                    let __arg6 @ _ = aver_rt::AverList::from_vec(vec![
+                    let __arg6 @ _ = aver_rt::AverList::prepend_owned(
                         crate::proof_kernel::aver_generated::kernel::rules::any(
                             ::aver_rt::str_lit!("d"),
                         ),
-                    ]);
+                        aver_rt::AverList::empty(),
+                    );
                     {
                         let __arg7 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("Option.withDefault"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(::aver_rt::str_lit!("Option.None"), aver_rt::AverList::empty())), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("d"))])));
                         {
@@ -2661,7 +2742,7 @@ pub fn defaultSchema(id @ _: AverStr) -> Option<Schema> {
                             ),
                         ]);
                         {
-                            let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("Result.withDefault"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(::aver_rt::str_lit!("Result.Ok"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("x"))]))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("d"))])));
+                            let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("Result.withDefault"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(::aver_rt::str_lit!("Result.Ok"), aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("x")), aver_rt::AverList::empty()))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("d"))])));
                             {
                                 let __arg11 @ _ =
                                     crate::proof_kernel::aver_generated::kernel::rules::v(
@@ -2683,7 +2764,7 @@ pub fn defaultSchema(id @ _: AverStr) -> Option<Schema> {
                                 ),
                             ]);
                             {
-                                let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("Result.withDefault"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(::aver_rt::str_lit!("Result.Err"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("e"))]))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("d"))])));
+                                let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("Result.withDefault"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(::aver_rt::str_lit!("Result.Err"), aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("e")), aver_rt::AverList::empty()))), crate::proof_kernel::aver_generated::kernel::rules::v(::aver_rt::str_lit!("d"))])));
                                 {
                                     let __arg14 @ _ =
                                         crate::proof_kernel::aver_generated::kernel::rules::v(

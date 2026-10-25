@@ -113,7 +113,10 @@ pub fn matchPattern(
         }
         crate::aver_generated::domain::ast::Pattern::PatVar(name) => {
             let name = name.clone();
-            Ok(aver_rt::AverList::from_vec(vec![(name, v)]))
+            Ok(aver_rt::AverList::prepend_owned(
+                (name, v),
+                aver_rt::AverList::empty(),
+            ))
         }
     }
 }
@@ -449,7 +452,10 @@ pub fn matchWrapperPatDirect(
                     crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
                         let inner = &__inner_fields.0;
                         Ok({
-                            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
+                            let __arg6 @ _ = aver_rt::AverList::prepend_owned(
+                                inner.clone(),
+                                aver_rt::AverList::empty(),
+                            );
                             crate::aver_generated::domain::match_mod::zipBindings(bindings, &__arg6)
                         })
                     }
@@ -464,7 +470,10 @@ pub fn matchWrapperPatDirect(
                         crate::aver_generated::domain::value::Val__view::ValErr(__inner_fields) => {
                             let inner = &__inner_fields.0;
                             Ok({
-                                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
+                                let __arg7 @ _ = aver_rt::AverList::prepend_owned(
+                                    inner.clone(),
+                                    aver_rt::AverList::empty(),
+                                );
                                 crate::aver_generated::domain::match_mod::zipBindings(
                                     bindings, &__arg7,
                                 )
@@ -483,8 +492,10 @@ pub fn matchWrapperPatDirect(
                             ) => {
                                 let inner = &__inner_fields.0;
                                 Ok({
-                                    let __arg8 @ _ =
-                                        aver_rt::AverList::from_vec(vec![inner.clone()]);
+                                    let __arg8 @ _ = aver_rt::AverList::prepend_owned(
+                                        inner.clone(),
+                                        aver_rt::AverList::empty(),
+                                    );
                                     crate::aver_generated::domain::match_mod::zipBindings(
                                         bindings, &__arg8,
                                     )
@@ -566,7 +577,10 @@ pub fn matchWrapperPat(
                     crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
                         let inner = &__inner_fields.0;
                         Ok({
-                            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
+                            let __arg6 @ _ = aver_rt::AverList::prepend_owned(
+                                inner.clone(),
+                                aver_rt::AverList::empty(),
+                            );
                             crate::aver_generated::domain::match_mod::zipBindings(bindings, &__arg6)
                         })
                     }
@@ -581,7 +595,10 @@ pub fn matchWrapperPat(
                         crate::aver_generated::domain::value::Val__view::ValErr(__inner_fields) => {
                             let inner = &__inner_fields.0;
                             Ok({
-                                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
+                                let __arg7 @ _ = aver_rt::AverList::prepend_owned(
+                                    inner.clone(),
+                                    aver_rt::AverList::empty(),
+                                );
                                 crate::aver_generated::domain::match_mod::zipBindings(
                                     bindings, &__arg7,
                                 )
@@ -600,8 +617,10 @@ pub fn matchWrapperPat(
                             ) => {
                                 let inner = &__inner_fields.0;
                                 Ok({
-                                    let __arg8 @ _ =
-                                        aver_rt::AverList::from_vec(vec![inner.clone()]);
+                                    let __arg8 @ _ = aver_rt::AverList::prepend_owned(
+                                        inner.clone(),
+                                        aver_rt::AverList::empty(),
+                                    );
                                     crate::aver_generated::domain::match_mod::zipBindings(
                                         bindings, &__arg8,
                                     )

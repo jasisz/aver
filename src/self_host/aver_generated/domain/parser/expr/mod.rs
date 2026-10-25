@@ -243,13 +243,14 @@ fn __mutual_tco_trampoline_3(
                             crate::aver_generated::domain::ast::Expr::ExprCall(
                                 crate::aver_generated::domain::ast::Expr__ExprCall(
                                     ::aver_rt::str_lit!("Map.fromList"),
-                                    aver_rt::AverList::from_vec(vec![
+                                    aver_rt::AverList::prepend_owned(
                                         crate::aver_generated::domain::ast::Expr::ExprList(
                                             crate::aver_generated::domain::ast::Expr__ExprList(
                                                 (acc).reverse_owned(),
                                             ),
                                         ),
-                                    ]),
+                                        aver_rt::AverList::empty(),
+                                    ),
                                 ),
                             ),
                             pos2.add(&aver_rt::AverInt::from_i64(1)),
@@ -1058,27 +1059,26 @@ fn __mutual_tco_trampoline_10(
                             field,
                         )
                     }
-                    crate::aver_generated::domain::token::Token::TkRParen => {
-                        return Ok((
-                            crate::aver_generated::domain::ast::Expr::ExprCall(
-                                crate::aver_generated::domain::ast::Expr__ExprCall(
-                                    name,
-                                    aver_rt::AverList::concat(
-                                        &positionalArgs.reverse(),
-                                        &aver_rt::AverList::from_vec(vec![
+                    crate::aver_generated::domain::token::Token::TkRParen => return Ok((
+                        crate::aver_generated::domain::ast::Expr::ExprCall(
+                            crate::aver_generated::domain::ast::Expr__ExprCall(
+                                name,
+                                aver_rt::AverList::concat(
+                                    &positionalArgs.reverse(),
+                                    &aver_rt::AverList::prepend_owned(
                                         crate::aver_generated::domain::ast::Expr::ExprRecord(
                                             crate::aver_generated::domain::ast::Expr__ExprRecord(
                                                 ::aver_rt::str_lit!("_named"),
                                                 (namedAcc).reverse_owned(),
                                             ),
                                         ),
-                                    ]),
+                                        aver_rt::AverList::empty(),
                                     ),
                                 ),
                             ),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
-                        ));
-                    }
+                        ),
+                        pos.add(&aver_rt::AverInt::from_i64(1)),
+                    )),
                     _ => {
                         return Err(::aver_rt::str_lit!(
                             "Expected field name or ')' in named arguments"
@@ -1117,27 +1117,26 @@ fn __mutual_tco_trampoline_10(
                         );
                         __MutualTco10::ParseNamedArgs(__arg6, name, namedAcc)
                     }
-                    crate::aver_generated::domain::token::Token::TkRParen => {
-                        return Ok((
-                            crate::aver_generated::domain::ast::Expr::ExprCall(
-                                crate::aver_generated::domain::ast::Expr__ExprCall(
-                                    name,
-                                    aver_rt::AverList::concat(
-                                        &positionalArgs.reverse(),
-                                        &aver_rt::AverList::from_vec(vec![
+                    crate::aver_generated::domain::token::Token::TkRParen => return Ok((
+                        crate::aver_generated::domain::ast::Expr::ExprCall(
+                            crate::aver_generated::domain::ast::Expr__ExprCall(
+                                name,
+                                aver_rt::AverList::concat(
+                                    &positionalArgs.reverse(),
+                                    &aver_rt::AverList::prepend_owned(
                                         crate::aver_generated::domain::ast::Expr::ExprRecord(
                                             crate::aver_generated::domain::ast::Expr__ExprRecord(
                                                 ::aver_rt::str_lit!("_named"),
                                                 (namedAcc).reverse_owned(),
                                             ),
                                         ),
-                                    ]),
+                                        aver_rt::AverList::empty(),
                                     ),
                                 ),
                             ),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
-                        ));
-                    }
+                        ),
+                        pos.add(&aver_rt::AverInt::from_i64(1)),
+                    )),
                     _ => {
                         return Err(::aver_rt::str_lit!(
                             "Expected ',' or ')' in named arguments"
@@ -1767,13 +1766,14 @@ pub fn parseMapLiteral(
             crate::aver_generated::domain::ast::Expr::ExprCall(
                 crate::aver_generated::domain::ast::Expr__ExprCall(
                     ::aver_rt::str_lit!("Map.fromList"),
-                    aver_rt::AverList::from_vec(vec![
+                    aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::ast::Expr::ExprList(
                             crate::aver_generated::domain::ast::Expr__ExprList(
                                 aver_rt::AverList::empty(),
                             ),
                         ),
-                    ]),
+                        aver_rt::AverList::empty(),
+                    ),
                 ),
             ),
             pos2.add(&aver_rt::AverInt::from_i64(1)),
@@ -1815,11 +1815,12 @@ pub fn parseStringOrInterp(
             crate::aver_generated::domain::parser::expr::parseInterpParts(
                 tokens,
                 pos.add(&aver_rt::AverInt::from_i64(1)),
-                aver_rt::AverList::from_vec(vec![
+                aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::ast::Expr::ExprStr(
                         crate::aver_generated::domain::ast::Expr__ExprStr(prefix),
                     ),
-                ]),
+                    aver_rt::AverList::empty(),
+                ),
             )
         }
         _ => Ok((
@@ -1866,7 +1867,7 @@ pub fn parseParenExpr(
                 crate::aver_generated::domain::parser::expr::parseTupleRest(
                     tokens,
                     pos2.add(&aver_rt::AverInt::from_i64(1)),
-                    aver_rt::AverList::from_vec(vec![expr]),
+                    aver_rt::AverList::prepend_owned(expr, aver_rt::AverList::empty()),
                 )
             }
             crate::aver_generated::domain::token::Token::TkRParen => {

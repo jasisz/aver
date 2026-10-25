@@ -154,7 +154,7 @@ pub fn product(
     >,
 ) -> aver_rt::AverList<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(parts, [] => aver_rt::AverList::from_vec(vec![aver_rt::AverList::empty()]), [p, rest] => { { let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::finite::product(rest); crate::proof_kernel::aver_generated::kernel::finite::prefixEach(&p, &__arg3) } })
+    aver_list_match!(parts, [] => aver_rt::AverList::prepend_owned(aver_rt::AverList::empty(), aver_rt::AverList::empty()), [p, rest] => { { let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::finite::product(rest); crate::proof_kernel::aver_generated::kernel::finite::prefixEach(&p, &__arg3) } })
 }
 
 /// Each head in front of every tail, heads in order.

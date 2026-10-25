@@ -66,22 +66,25 @@ pub fn bytesVal(
     crate::aver_generated::domain::value::Val::ValRecord(
         crate::aver_generated::domain::value::Val__ValRecord(
             ::aver_rt::str_lit!("Bytes"),
-            aver_rt::AverList::from_vec(vec![(
-                ::aver_rt::str_lit!("values"),
-                crate::aver_generated::domain::value::Val::ValList(
-                    crate::aver_generated::domain::value::Val__ValList({
-                        let __arg1 @ _ = crate::aver_generated::bytes::octets(bytes);
-                        {
-                            let __arg2 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
-                            crate::aver_generated::domain::builtins::endian::byteVals__collected(
-                                &__arg1, __arg2,
-                            )
-                        }
-                    }),
+            aver_rt::AverList::prepend_owned(
+                (
+                    ::aver_rt::str_lit!("values"),
+                    crate::aver_generated::domain::value::Val::ValList(
+                        crate::aver_generated::domain::value::Val__ValList({
+                            let __arg1 @ _ = crate::aver_generated::bytes::octets(bytes);
+                            {
+                                let __arg2 @ _ = aver_rt::list_builder_new(
+                                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                                );
+                                crate::aver_generated::domain::builtins::endian::byteVals__collected(
+                                    &__arg1, __arg2,
+                                )
+                            }
+                        }),
+                    ),
                 ),
-            )]),
+                aver_rt::AverList::empty(),
+            ),
         ),
     )
 }

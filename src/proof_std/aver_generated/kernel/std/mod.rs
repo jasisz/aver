@@ -1516,7 +1516,7 @@ pub fn rewriteOnce(
                                 return Ok(Some(
                                     crate::proof_std::aver_generated::kernel::lib::Rw {
                                         to: {
-                                            let __arg5 @ _ = aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("□"), h.eqn.rhs.clone())]);
+                                            let __arg5 @ _ = aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("□"), h.eqn.rhs.clone()), aver_rt::AverList::empty());
                                             crate::proof_std::aver_generated::kernel::subst::subst(
                                                 c.clone(),
                                                 &__arg5,
@@ -2595,13 +2595,14 @@ pub fn listCases(
                     h,
                     tl,
                     aver_rt::AverList::empty(),
-                    aver_rt::AverList::from_vec(vec![
+                    aver_rt::AverList::prepend_owned(
                         crate::proof_std::aver_generated::kernel::proof::IhAt {
                             name: ih,
                             at: aver_rt::AverList::empty(),
                             carry: aver_rt::AverList::empty(),
                         },
-                    ]),
+                        aver_rt::AverList::empty(),
+                    ),
                     consProof,
                 ),
             ),
@@ -3366,29 +3367,34 @@ pub fn readPremise(
                                 if __list_subject.is_empty() {
                                     Ok(aver_rt::AverList::empty())
                                 } else {
-                                    Ok(aver_rt::AverList::from_vec(vec![
+                                    Ok(aver_rt::AverList::prepend_owned(
                                         crate::proof_std::aver_generated::kernel::decode::term(s)?,
-                                    ]))
+                                        aver_rt::AverList::empty(),
+                                    ))
                                 }
                             }
-                            _ => Ok(aver_rt::AverList::from_vec(vec![
+                            _ => Ok(aver_rt::AverList::prepend_owned(
                                 crate::proof_std::aver_generated::kernel::decode::term(s)?,
-                            ])),
+                                aver_rt::AverList::empty(),
+                            )),
                         }
                     }
-                    _ => Ok(aver_rt::AverList::from_vec(vec![
+                    _ => Ok(aver_rt::AverList::prepend_owned(
                         crate::proof_std::aver_generated::kernel::decode::term(s)?,
-                    ])),
+                        aver_rt::AverList::empty(),
+                    )),
                 }
             } else {
-                Ok(aver_rt::AverList::from_vec(vec![
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_std::aver_generated::kernel::decode::term(s)?,
-                ]))
+                    aver_rt::AverList::empty(),
+                ))
             }
         }
-        _ => Ok(aver_rt::AverList::from_vec(vec![
+        _ => Ok(aver_rt::AverList::prepend_owned(
             crate::proof_std::aver_generated::kernel::decode::term(s)?,
-        ])),
+            aver_rt::AverList::empty(),
+        )),
     }
 }
 
@@ -3449,7 +3455,7 @@ pub fn readHyps(
                                                     {
                                                         let __list_subject = __pat5;
                                                         if __list_subject.is_empty() {
-                                                            Ok(aver_rt::AverList::concat(&crate::proof_std::aver_generated::kernel::std::readHyps(&rest)?, &aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::proof::Hyp { name: n, eqn: crate::proof_std::aver_generated::kernel::term::Eqn { lhs: crate::proof_std::aver_generated::kernel::decode::term(l)?, rhs: crate::proof_std::aver_generated::kernel::decode::term(r)? } }])))
+                                                            Ok(aver_rt::AverList::concat(&crate::proof_std::aver_generated::kernel::std::readHyps(&rest)?, &aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::proof::Hyp { name: n, eqn: crate::proof_std::aver_generated::kernel::term::Eqn { lhs: crate::proof_std::aver_generated::kernel::decode::term(l)?, rhs: crate::proof_std::aver_generated::kernel::decode::term(r)? } }, aver_rt::AverList::empty())))
                                                         } else {
                                                             Err(::aver_rt::str_lit!(
                                                                 "malformed hypothesis"

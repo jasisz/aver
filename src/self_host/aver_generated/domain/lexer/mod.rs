@@ -163,9 +163,10 @@ fn __mutual_tco_trampoline_1(
                     aver_rt::string_position(&pos),
                 ) {
                     None => {
-                        return aver_rt::AverList::from_vec(vec![
+                        return aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::token::Token::TkEof,
-                        ]);
+                            aver_rt::AverList::empty(),
+                        );
                     }
                     Some(c @ _) => __MutualTco1::TokenizeSome__indexed(c, src, pos),
                 }
@@ -175,9 +176,10 @@ fn __mutual_tco_trampoline_1(
                 if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
                     __MutualTco1::TokenizeAtPos__indexed(src, pos)
                 } else {
-                    return aver_rt::AverList::from_vec(vec![
+                    return aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::token::Token::TkEof,
-                    ]);
+                        aver_rt::AverList::empty(),
+                    );
                 }
             }
         };
@@ -1590,7 +1592,10 @@ pub fn processIndentToken(
         }
         crate::aver_generated::domain::token::Token::TkEof => aver_rt::AverList::concat(
             &crate::aver_generated::domain::lexer::emitFinalDedents(stack),
-            &aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::token::Token::TkEof]),
+            &aver_rt::AverList::prepend_owned(
+                crate::aver_generated::domain::token::Token::TkEof,
+                aver_rt::AverList::empty(),
+            ),
         ),
         _ => aver_rt::AverList::prepend_owned(
             t.clone(),
@@ -1970,9 +1975,10 @@ pub fn tokenizeAlpha__indexed(
                 __str_index,
             )
         }
-        None => {
-            aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::token::Token::TkEof])
-        }
+        None => aver_rt::AverList::prepend_owned(
+            crate::aver_generated::domain::token::Token::TkEof,
+            aver_rt::AverList::empty(),
+        ),
     }
 }
 
@@ -2335,15 +2341,17 @@ pub fn skipLineComment__indexed(
                     }
                 }
                 None => {
-                    return aver_rt::AverList::from_vec(vec![
+                    return aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::token::Token::TkEof,
-                    ]);
+                        aver_rt::AverList::empty(),
+                    );
                 }
             }
         } else {
-            return aver_rt::AverList::from_vec(vec![
+            return aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkEof,
-            ]);
+                aver_rt::AverList::empty(),
+            );
         }
     }
 }

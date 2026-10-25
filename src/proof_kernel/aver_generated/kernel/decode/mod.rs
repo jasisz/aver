@@ -3224,31 +3224,36 @@ pub fn premise(
                                 if __list_subject.is_empty() {
                                     Ok(aver_rt::AverList::empty())
                                 } else {
-                                    Ok(aver_rt::AverList::from_vec(vec![
+                                    Ok(aver_rt::AverList::prepend_owned(
                                         crate::proof_kernel::aver_generated::kernel::decode::term(
                                             s,
                                         )?,
-                                    ]))
+                                        aver_rt::AverList::empty(),
+                                    ))
                                 }
                             }
-                            _ => Ok(aver_rt::AverList::from_vec(vec![
+                            _ => Ok(aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::decode::term(s)?,
-                            ])),
+                                aver_rt::AverList::empty(),
+                            )),
                         }
                     }
-                    _ => Ok(aver_rt::AverList::from_vec(vec![
+                    _ => Ok(aver_rt::AverList::prepend_owned(
                         crate::proof_kernel::aver_generated::kernel::decode::term(s)?,
-                    ])),
+                        aver_rt::AverList::empty(),
+                    )),
                 }
             } else {
-                Ok(aver_rt::AverList::from_vec(vec![
+                Ok(aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::decode::term(s)?,
-                ]))
+                    aver_rt::AverList::empty(),
+                ))
             }
         }
-        _ => Ok(aver_rt::AverList::from_vec(vec![
+        _ => Ok(aver_rt::AverList::prepend_owned(
             crate::proof_kernel::aver_generated::kernel::decode::term(s)?,
-        ])),
+            aver_rt::AverList::empty(),
+        )),
     }
 }
 

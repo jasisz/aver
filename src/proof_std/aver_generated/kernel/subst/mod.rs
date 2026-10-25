@@ -132,7 +132,7 @@ pub fn patNames(
         crate::proof_std::aver_generated::kernel::term::Pat::PVar(n) => {
             let n = n.clone();
             {
-                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![n]);
+                let __arg7 @ _ = aver_rt::AverList::prepend_owned(n, aver_rt::AverList::empty());
                 crate::proof_std::aver_generated::kernel::subst::dropWild(&__arg7)
             }
         }
@@ -225,10 +225,13 @@ pub fn freeVars(
             match __t.view() {
                 crate::proof_std::aver_generated::kernel::term::Term__view::TVar(__n_fields) => {
                     let n = __n_fields.0.clone();
-                    return aver_rt::AverList::from_vec(vec![n]);
+                    return aver_rt::AverList::prepend_owned(n, aver_rt::AverList::empty());
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::THole => {
-                    return aver_rt::AverList::from_vec(vec![::aver_rt::str_lit!("□")]);
+                    return aver_rt::AverList::prepend_owned(
+                        ::aver_rt::str_lit!("□"),
+                        aver_rt::AverList::empty(),
+                    );
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
                     let o = &__o_fields.0;

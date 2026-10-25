@@ -413,7 +413,11 @@ fn __mutual_tco_trampoline_2(
                         },
                         ((aver_rt::AverInt::from_i64(before.len() as i64)
                             == aver_rt::AverInt::from_i64(0))
-                            || (before == aver_rt::AverList::from_vec(vec![e.clone()]))),
+                            || (before
+                                == aver_rt::AverList::prepend_owned(
+                                    e.clone(),
+                                    aver_rt::AverList::empty(),
+                                ))),
                     );
                     match __subject {
                         (true, _) => {
@@ -447,7 +451,8 @@ fn __mutual_tco_trampoline_2(
                             );
                         }
                         _ => {
-                            let __arg11 @ _ = aver_rt::AverList::from_vec(vec![e]);
+                            let __arg11 @ _ =
+                                aver_rt::AverList::prepend_owned(e, aver_rt::AverList::empty());
                             __MutualTco2::SplitCases(rest, hss, vss, __arg11, path)
                         }
                     }
@@ -581,9 +586,10 @@ fn __mutual_tco_trampoline_3(
                 mut i @ _,
             ) => {
                 crate::proof_kernel::cancel_checkpoint();
-                let at @ _ = aver_rt::AverList::from_vec(vec![
+                let at @ _ = aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::term::bind(v.clone(), x),
-                ]);
+                    aver_rt::AverList::empty(),
+                );
                 let here @ _ = aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
@@ -1135,7 +1141,7 @@ fn __mutual_tco_trampoline_7(mut __state: __MutualTco7) -> Result<(), AverStr> {
                     Ok(k @ _) => {
                         let __arg6 @ _ = aver_rt::AverList::concat(
                             &earlier,
-                            &aver_rt::AverList::from_vec(vec![law]),
+                            &aver_rt::AverList::prepend_owned(law, aver_rt::AverList::empty()),
                         );
                         __MutualTco7::CheckFacts(rest, __arg6)
                     }
@@ -2247,18 +2253,21 @@ pub fn letsTyped(
                     {
                         let __tco0 = rest;
                         let __tco1 = {
-                            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![{
-                                let __arg5 @ _ =
-                                    crate::proof_kernel::aver_generated::kernel::check::typeOf(
-                                        &b.value,
-                                        &env,
-                                        path.clone(),
-                                    )?;
-                                crate::proof_kernel::aver_generated::kernel::term::typed(
-                                    b.name.clone(),
-                                    __arg5,
-                                )
-                            }]);
+                            let __arg6 @ _ = aver_rt::AverList::prepend_owned(
+                                {
+                                    let __arg5 @ _ =
+                                        crate::proof_kernel::aver_generated::kernel::check::typeOf(
+                                            &b.value,
+                                            &env,
+                                            path.clone(),
+                                        )?;
+                                    crate::proof_kernel::aver_generated::kernel::term::typed(
+                                        b.name.clone(),
+                                        __arg5,
+                                    )
+                                },
+                                aver_rt::AverList::empty(),
+                            );
                             crate::proof_kernel::aver_generated::kernel::check::withVars(
                                 &env, &__arg6,
                             )
@@ -2751,21 +2760,23 @@ pub fn plugBoth(
     {
         let __subject = (
             {
-                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![
+                let __arg7 @ _ = aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::term::bind(
                         ::aver_rt::str_lit!("□"),
                         e.lhs,
                     ),
-                ]);
+                    aver_rt::AverList::empty(),
+                );
                 crate::proof_kernel::aver_generated::kernel::subst::subst(c.clone(), &__arg7)
             },
             {
-                let __arg8 @ _ = aver_rt::AverList::from_vec(vec![
+                let __arg8 @ _ = aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::term::bind(
                         ::aver_rt::str_lit!("□"),
                         e.rhs,
                     ),
-                ]);
+                    aver_rt::AverList::empty(),
+                );
                 crate::proof_kernel::aver_generated::kernel::subst::subst(c, &__arg8)
             },
         );
@@ -3371,18 +3382,21 @@ pub fn sumEnv() -> Env {
             consts: aver_rt::AverList::empty(),
             laws: aver_rt::AverList::empty(),
             hyps: aver_rt::AverList::empty(),
-            vars: aver_rt::AverList::from_vec(vec![{
-                let __arg0 @ _ = crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
-                    crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(
-                        ::aver_rt::str_lit!("C"),
-                    ),
-                );
-                crate::proof_kernel::aver_generated::kernel::term::typed(
-                    ::aver_rt::str_lit!("x"),
-                    __arg0,
-                )
-            }]),
-            sums: aver_rt::AverList::from_vec(vec![
+            vars: aver_rt::AverList::prepend_owned(
+                {
+                    let __arg0 @ _ = crate::proof_kernel::aver_generated::kernel::term::Ty::TyNamed(
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyNamed(
+                            ::aver_rt::str_lit!("C"),
+                        ),
+                    );
+                    crate::proof_kernel::aver_generated::kernel::term::typed(
+                        ::aver_rt::str_lit!("x"),
+                        __arg0,
+                    )
+                },
+                aver_rt::AverList::empty(),
+            ),
+            sums: aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::proof::Sum {
                     name: ::aver_rt::str_lit!("C"),
                     eq: false,
@@ -3397,7 +3411,8 @@ pub fn sumEnv() -> Env {
                         },
                     ]),
                 },
-            ]),
+                aver_rt::AverList::empty(),
+            ),
             recs: aver_rt::AverList::empty(),
             sigs: aver_rt::AverList::empty(),
         },
@@ -3652,7 +3667,10 @@ pub fn litCtors(
     {
         let __list_subject = lits;
         if __list_subject.is_empty() {
-            aver_rt::AverList::from_vec(vec![::aver_rt::str_lit!("else")])
+            aver_rt::AverList::prepend_owned(
+                ::aver_rt::str_lit!("else"),
+                aver_rt::AverList::empty(),
+            )
         } else {
             if let Some((k, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                 aver_rt::AverList::prepend_owned(
@@ -3708,7 +3726,7 @@ pub fn ctorHyps(
         } else {
             if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                 aver_rt::AverList::prepend_owned(
-                    aver_rt::AverList::from_vec(vec![
+                    aver_rt::AverList::prepend_owned(
                         crate::proof_kernel::aver_generated::kernel::proof::Hyp {
                             name: h.clone(),
                             eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn {
@@ -3718,7 +3736,8 @@ pub fn ctorHyps(
                                 ),
                             },
                         },
-                    ]),
+                        aver_rt::AverList::empty(),
+                    ),
                     crate::proof_kernel::aver_generated::kernel::check::ctorHyps(&rest, on, h),
                 )
             } else {
@@ -3748,7 +3767,7 @@ pub fn litHyps(
                 unreachable!("Aver Rust codegen: tuple element list mismatch")
             };
             aver_rt::AverList::prepend_owned(
-                aver_rt::AverList::from_vec(vec![
+                aver_rt::AverList::prepend_owned(
                     crate::proof_kernel::aver_generated::kernel::proof::Hyp {
                         name: h.clone(),
                         eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn {
@@ -3756,11 +3775,12 @@ pub fn litHyps(
                             rhs: k.clone(),
                         },
                     },
-                ]),
+                    aver_rt::AverList::empty(),
+                ),
                 {
                     let __arg11 @ _ = aver_rt::AverList::concat(
                         &seen.clone(),
-                        &aver_rt::AverList::from_vec(vec![k]),
+                        &aver_rt::AverList::prepend_owned(k, aver_rt::AverList::empty()),
                     );
                     crate::proof_kernel::aver_generated::kernel::check::litHyps(
                         &ks, &more, on, h, &__arg11,
@@ -3771,9 +3791,10 @@ pub fn litHyps(
             let Some((c, more)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
                 unreachable!("Aver Rust codegen: tuple element list mismatch")
             };
-            aver_rt::AverList::from_vec(vec![
+            aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::check::unequal(&c.binders, seen, on),
-            ])
+                aver_rt::AverList::empty(),
+            )
         } else {
             aver_rt::AverList::empty()
         }
@@ -4589,7 +4610,8 @@ pub fn armStep(
                         crate::proof_kernel::aver_generated::kernel::term::Binding,
                     >>::empty();
                     {
-                        let __arg9 @ _ = aver_rt::AverList::from_vec(vec![q]);
+                        let __arg9 @ _ =
+                            aver_rt::AverList::prepend_owned(q, aver_rt::AverList::empty());
                         crate::proof_kernel::aver_generated::kernel::check::selected(
                             s, &arms, k, &__arg8, ys, &__arg9, t, env, path,
                         )
@@ -4795,7 +4817,8 @@ pub fn catchAllArm(
             let __arg12 @ _ =
                 crate::proof_kernel::aver_generated::kernel::subst::patNames(&chosen.pattern);
             {
-                let __arg13 @ _ = aver_rt::AverList::from_vec(vec![v.clone()]);
+                let __arg13 @ _ =
+                    aver_rt::AverList::prepend_owned(v.clone(), aver_rt::AverList::empty());
                 crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg12, &__arg13)
             }
         };
@@ -4804,13 +4827,14 @@ pub fn catchAllArm(
                 let __arg14 @ _ =
                     crate::proof_kernel::aver_generated::kernel::subst::patNames(&chosen.pattern);
                 {
-                    let __arg15 @ _ = aver_rt::AverList::from_vec(vec![
+                    let __arg15 @ _ = aver_rt::AverList::prepend_owned(
                         crate::proof_kernel::aver_generated::kernel::check::typeOf(
                             &subject,
                             &env,
                             path.clone(),
                         )?,
-                    ]);
+                        aver_rt::AverList::empty(),
+                    );
                     crate::proof_kernel::aver_generated::kernel::types::namedVars(
                         &__arg14, &__arg15,
                     )
@@ -4851,7 +4875,8 @@ pub fn catchAllArm(
                         &chosen.pattern,
                     );
                     {
-                        let __arg20 @ _ = aver_rt::AverList::from_vec(vec![v.clone()]);
+                        let __arg20 @ _ =
+                            aver_rt::AverList::prepend_owned(v.clone(), aver_rt::AverList::empty());
                         crate::proof_kernel::aver_generated::kernel::check::zipBind(
                             &__arg19, &__arg20,
                         )
@@ -5156,7 +5181,10 @@ pub fn armEquation(
             crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg15, ys)
         };
         {
-            let __arg17 @ _ = aver_rt::AverList::from_vec(vec![::aver_rt::str_lit!("_")]);
+            let __arg17 @ _ = aver_rt::AverList::prepend_owned(
+                ::aver_rt::str_lit!("_"),
+                aver_rt::AverList::empty(),
+            );
             crate::proof_kernel::aver_generated::kernel::check::withoutNames(__arg16, __arg17)
         }
     };
@@ -5849,14 +5877,15 @@ pub fn lawPremises(
     {
         let __list_subject = l.premise.clone();
         if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            aver_rt::AverList::from_vec(vec![
+            aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::term::Eqn {
                     lhs: p.clone(),
                     rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBool(true),
                     ),
                 },
-            ])
+                aver_rt::AverList::empty(),
+            )
         } else {
             if __list_subject.is_empty() {
                 aver_rt::AverList::empty()
@@ -6052,7 +6081,7 @@ pub fn lawHyps(
     {
         let __list_subject = ob.premise.clone();
         if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            aver_rt::AverList::from_vec(vec![
+            aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::proof::Hyp {
                     name: ::aver_rt::str_lit!("when"),
                     eqn: crate::proof_kernel::aver_generated::kernel::term::Eqn {
@@ -6062,7 +6091,8 @@ pub fn lawHyps(
                         ),
                     },
                 },
-            ])
+                aver_rt::AverList::empty(),
+            )
         } else {
             if __list_subject.is_empty() {
                 aver_rt::AverList::empty()
@@ -6407,7 +6437,8 @@ pub fn notMentioningAny(
             } else {
                 if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     if {
-                        let __arg4 @ _ = aver_rt::AverList::from_vec(vec![h.clone()]);
+                        let __arg4 @ _ =
+                            aver_rt::AverList::prepend_owned(h.clone(), aver_rt::AverList::empty());
                         crate::proof_kernel::aver_generated::kernel::check::hypsMention(
                             &__arg4, names,
                         )
@@ -6922,7 +6953,10 @@ pub fn inductCaseNamed(
                 crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg16, ys)
             };
             {
-                let __arg18 @ _ = aver_rt::AverList::from_vec(vec![::aver_rt::str_lit!("_")]);
+                let __arg18 @ _ = aver_rt::AverList::prepend_owned(
+                    ::aver_rt::str_lit!("_"),
+                    aver_rt::AverList::empty(),
+                );
                 crate::proof_kernel::aver_generated::kernel::check::withoutNames(__arg17, __arg18)
             }
         },
@@ -7144,11 +7178,14 @@ pub fn caseValue(
 {
     crate::proof_kernel::cancel_checkpoint();
     match guard {
-        None => Ok(aver_rt::AverList::from_vec(vec![{
-            let __arg6 @ _ =
-                crate::proof_kernel::aver_generated::kernel::check::patTerm(p, ys, path)?;
-            crate::proof_kernel::aver_generated::kernel::term::bind(v, __arg6)
-        }])),
+        None => Ok(aver_rt::AverList::prepend_owned(
+            {
+                let __arg6 @ _ =
+                    crate::proof_kernel::aver_generated::kernel::check::patTerm(p, ys, path)?;
+                crate::proof_kernel::aver_generated::kernel::term::bind(v, __arg6)
+            },
+            aver_rt::AverList::empty(),
+        )),
         Some(g @ _) => Ok(aver_rt::AverList::empty()),
     }
 }
@@ -7173,7 +7210,7 @@ pub fn caseGuard(
                         match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(__b_fields) => {
             let b = __b_fields.0.clone();
-            { let __list_subject = __pat2; if let Some((h, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat4; if __list_subject.is_empty() { Ok(aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::proof::Hyp { name: h, eqn: { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: g, rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(b)) }; crate::proof_kernel::aver_generated::kernel::check::instantiate(__arg13, rename, path) }? }])) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b })) } }
+            { let __list_subject = __pat2; if let Some((h, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat4; if __list_subject.is_empty() { Ok(aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::proof::Hyp { name: h, eqn: { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: g, rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(crate::proof_kernel::aver_generated::kernel::term::Term__TBool(b)) }; crate::proof_kernel::aver_generated::kernel::check::instantiate(__arg13, rename, path) }? }, aver_rt::AverList::empty())) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b })) } }
         },
         _ => {
             Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(65)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("step ")); __b }; __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!(": the arm is not one value of the comparison")); __b }))
@@ -7644,12 +7681,13 @@ pub fn ihHolds(
             __arg10,
         )
     }?;
-    Ok(aver_rt::AverList::from_vec(vec![
+    Ok(aver_rt::AverList::prepend_owned(
         crate::proof_kernel::aver_generated::kernel::proof::Hyp {
             name: h,
             eqn: crate::proof_kernel::aver_generated::kernel::check::instantiate(claim, bs, path)?,
         },
-    ]))
+        aver_rt::AverList::empty(),
+    ))
 }
 
 /// The varied givens bound to the call's arguments.
@@ -8065,7 +8103,7 @@ pub fn lenInduct(
                                                         }
                                                     } {
                                                         {
-                                                            let __arg25 @ _ = crate::proof_kernel::aver_generated::kernel::proof::Law { key: ih, givens: { let __arg22 @ _ = aver_rt::AverList::prepend(v.clone(), general); crate::proof_kernel::aver_generated::kernel::check::typedNames(&__arg22, env, path.clone()) }?, premise: aver_rt::AverList::from_vec(vec![{ let __arg23 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.len"), aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(v.clone()))]))), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n.clone())))); { let __arg24 @ _ = crate::proof_kernel::aver_generated::kernel::check::factsOf(&carried, path.clone())?; crate::proof_kernel::aver_generated::kernel::check::conjoined(__arg23, &__arg24) } }]), lhs: claim.lhs.clone(), rhs: claim.rhs.clone() };
+                                                            let __arg25 @ _ = crate::proof_kernel::aver_generated::kernel::proof::Law { key: ih, givens: { let __arg22 @ _ = aver_rt::AverList::prepend(v.clone(), general); crate::proof_kernel::aver_generated::kernel::check::typedNames(&__arg22, env, path.clone()) }?, premise: aver_rt::AverList::prepend_owned({ let __arg23 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::term::Term::TBi(crate::proof_kernel::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.len"), aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(v.clone())), aver_rt::AverList::empty()))), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n.clone())))); { let __arg24 @ _ = crate::proof_kernel::aver_generated::kernel::check::factsOf(&carried, path.clone())?; crate::proof_kernel::aver_generated::kernel::check::conjoined(__arg23, &__arg24) } }, aver_rt::AverList::empty()), lhs: claim.lhs.clone(), rhs: claim.rhs.clone() };
                                                             crate::proof_kernel::aver_generated::kernel::check::lenCase(v, claim, &carried, general, n, hn, &__arg25, c, env, path)
                                                         }
                                                     } else {
@@ -8126,13 +8164,14 @@ pub fn lenCase(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
                             ::aver_rt::str_lit!("List.len"),
-                            aver_rt::AverList::from_vec(vec![
+                            aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
                                     crate::proof_kernel::aver_generated::kernel::term::Term__TVar(
                                         v.clone(),
                                     ),
                                 ),
-                            ]),
+                                aver_rt::AverList::empty(),
+                            ),
                         ),
                     ),
                     crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
@@ -8422,14 +8461,17 @@ pub fn listCases(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    let atNil @ _ = aver_rt::AverList::from_vec(vec![{
-        let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TList(
-            crate::proof_kernel::aver_generated::kernel::term::Term__TList(
-                aver_rt::AverList::empty(),
-            ),
-        );
-        crate::proof_kernel::aver_generated::kernel::term::bind(v.clone(), __arg17)
-    }]);
+    let atNil @ _ = aver_rt::AverList::prepend_owned(
+        {
+            let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TList(
+                crate::proof_kernel::aver_generated::kernel::term::Term__TList(
+                    aver_rt::AverList::empty(),
+                ),
+            );
+            crate::proof_kernel::aver_generated::kernel::term::bind(v.clone(), __arg17)
+        },
+        aver_rt::AverList::empty(),
+    );
     {
         let __arg19 @ _ = crate::proof_kernel::aver_generated::kernel::check::instantiate(
             claim.clone(),
@@ -8463,22 +8505,29 @@ pub fn listCases(
             }
         }
     }?;
-    let atCell @ _ = aver_rt::AverList::from_vec(vec![{
-        let __arg22 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
-            crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
-                ::aver_rt::str_lit!("List.prepend"),
-                aver_rt::AverList::from_vec(vec![
-                    crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
-                        crate::proof_kernel::aver_generated::kernel::term::Term__TVar(h.clone()),
-                    ),
-                    crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
-                        crate::proof_kernel::aver_generated::kernel::term::Term__TVar(t.clone()),
-                    ),
-                ]),
-            ),
-        );
-        crate::proof_kernel::aver_generated::kernel::term::bind(v.clone(), __arg22)
-    }]);
+    let atCell @ _ = aver_rt::AverList::prepend_owned(
+        {
+            let __arg22 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
+                    ::aver_rt::str_lit!("List.prepend"),
+                    aver_rt::AverList::from_vec(vec![
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
+                            crate::proof_kernel::aver_generated::kernel::term::Term__TVar(
+                                h.clone(),
+                            ),
+                        ),
+                        crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
+                            crate::proof_kernel::aver_generated::kernel::term::Term__TVar(
+                                t.clone(),
+                            ),
+                        ),
+                    ]),
+                ),
+            );
+            crate::proof_kernel::aver_generated::kernel::term::bind(v.clone(), __arg22)
+        },
+        aver_rt::AverList::empty(),
+    );
     let inCell @ _ = {
         let __arg24 @ _ = {
             let __arg23 @ _ = crate::proof_kernel::aver_generated::kernel::check::hypsAt(
