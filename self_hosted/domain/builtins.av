@@ -211,29 +211,36 @@ fn builtinMapEntries(args: List<Val>) -> Result<Val, String>
     ? "Map.entries(map) -> List of tuples."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValMap(m) -> Result.Ok(Val.ValList(mapEntriesToTuples(Map.entries(m), [])))
+        Val.ValMap(m) -> Result.Ok(Val.ValList(Domain.Value.mapEntries(m)))
         _ -> Result.Err("Map.entries requires a Map")
 
 verify builtinMapEntries
     builtinMapEntries([Val.ValMap({})]) => Result.Ok(Val.ValList([]))
     builtinMapEntries([Val.ValInt(1)]) => Result.Err("Map.entries requires a Map")
 
-fn mapEntriesToTuples(entries: List<Tuple<String, Val>>, acc: List<Val>) -> List<Val>
-    ? "Convert entries to list of (key, value) tuples."
+fn entriesKeys(entries: List<Val>, acc: List<Val>) -> List<Val>
+    ? "The keys of map entries."
     match entries
         [] -> List.reverse(acc)
-        [pair, ..rest] -> match pair
-            (k, v) -> mapEntriesToTuples(rest, List.prepend(Val.ValTuple([Val.ValStr(k), v]), acc))
+        [entry, ..rest] -> entriesKeys(rest, List.prepend(Domain.Value.entryKey(entry), acc))
 
-verify mapEntriesToTuples
-    mapEntriesToTuples([], []) => []
-    mapEntriesToTuples([("a", Val.ValInt(1))], []) => [Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)])]
+verify entriesKeys
+    entriesKeys([Val.ValTuple([Val.ValInt(1), Val.ValStr("a")])], []) => [Val.ValInt(1)]
+
+fn entriesValues(entries: List<Val>, acc: List<Val>) -> List<Val>
+    ? "The values of map entries."
+    match entries
+        [] -> List.reverse(acc)
+        [entry, ..rest] -> entriesValues(rest, List.prepend(Domain.Value.entryValue(entry), acc))
+
+verify entriesValues
+    entriesValues([Val.ValTuple([Val.ValInt(1), Val.ValStr("a")])], []) => [Val.ValStr("a")]
 
 fn builtinMapKeys(args: List<Val>) -> Result<Val, String>
     ? "Map.keys(map) -> List of keys."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValMap(m) -> Result.Ok(Val.ValList(stringsToVals(Map.keys(m), [])))
+        Val.ValMap(m) -> Result.Ok(Val.ValList(entriesKeys(Domain.Value.mapEntries(m), [])))
         _ -> Result.Err("Map.keys requires a Map")
 
 verify builtinMapKeys
@@ -244,7 +251,7 @@ fn builtinMapValues(args: List<Val>) -> Result<Val, String>
     ? "Map.values(map) -> List of values."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValMap(m) -> Result.Ok(Val.ValList(Map.values(m)))
+        Val.ValMap(m) -> Result.Ok(Val.ValList(entriesValues(Domain.Value.mapEntries(m), [])))
         _ -> Result.Err("Map.values requires a Map")
 
 verify builtinMapValues
@@ -271,18 +278,18 @@ fn tuplesToMap(items: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
 
 verify tuplesToMap
     tuplesToMap([], {}) => {}
-    tuplesToMap([Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)])], {}) => Map.set({}, "a", Val.ValInt(1))
+    tuplesToMap([Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)])], {}) => Map.set({}, "a", Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)]))
 
 fn tuplesToMapOne(parts: List<Val>, rest: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
     ? "Extract key-value from tuple parts."
     match parts
         [kV, ..tail] -> match tail
-            [vV, ..ignored] -> tuplesToMap(rest, Map.set(acc, Domain.Value.mapKeyRepr(kV), vV))
+            [vV, ..ignored] -> tuplesToMap(rest, Map.set(acc, Domain.Value.mapKeyRepr(kV), Val.ValTuple([kV, vV])))
             [] -> tuplesToMap(rest, acc)
         [] -> tuplesToMap(rest, acc)
 
 verify tuplesToMapOne
-    tuplesToMapOne([Val.ValStr("k"), Val.ValInt(1)], [], {}) => Map.set({}, "k", Val.ValInt(1))
+    tuplesToMapOne([Val.ValStr("k"), Val.ValInt(1)], [], {}) => Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(1)]))
     tuplesToMapOne([], [], {}) => {}
 
 fn builtinMapSize(args: List<Val>) -> Result<Val, String>
@@ -691,18 +698,18 @@ fn builtinMapSet(args: List<Val>) -> Result<Val, String>
         _ -> Result.Err("Map.set takes 3 arguments")
 
 verify builtinMapSet
-    builtinMapSet([Val.ValMap({}), Val.ValStr("a"), Val.ValInt(1)]) => Result.Ok(Val.ValMap(Map.set({}, "a", Val.ValInt(1))))
+    builtinMapSet([Val.ValMap({}), Val.ValStr("a"), Val.ValInt(1)]) => Result.Ok(Val.ValMap(Map.set({}, "a", Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)]))))
     builtinMapSet([Val.ValInt(1)]) => Result.Err("Map.set takes 3 arguments")
     builtinMapSet([]) => Result.Err("Map.set takes 3 arguments")
 
 fn builtinMapSetInner(mapV: Val, keyV: Val, valV: Val) -> Result<Val, String>
     ? "Set a key in the map. O(1)."
     match mapV
-        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.set(m, Domain.Value.mapKeyRepr(keyV), valV)))
+        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.set(m, Domain.Value.mapKeyRepr(keyV), Val.ValTuple([keyV, valV]))))
         _ -> Result.Err("Map.set requires a Map")
 
 verify builtinMapSetInner
-    builtinMapSetInner(Val.ValMap({}), Val.ValStr("x"), Val.ValInt(5)) => Result.Ok(Val.ValMap(Map.set({}, "x", Val.ValInt(5))))
+    builtinMapSetInner(Val.ValMap({}), Val.ValStr("x"), Val.ValInt(5)) => Result.Ok(Val.ValMap(Map.set({}, "x", Val.ValTuple([Val.ValStr("x"), Val.ValInt(5)]))))
     builtinMapSetInner(Val.ValInt(1), Val.ValStr("x"), Val.ValInt(5)) => Result.Err("Map.set requires a Map")
 
 fn builtinMapGet(args: List<Val>) -> Result<Val, String>
@@ -712,7 +719,7 @@ fn builtinMapGet(args: List<Val>) -> Result<Val, String>
         (mapV, keyV) -> builtinMapGetInner(mapV, keyV)
 
 verify builtinMapGet
-    builtinMapGet([Val.ValMap(Map.set({}, "a", Val.ValInt(1))), Val.ValStr("a")]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
+    builtinMapGet([Val.ValMap(Map.set({}, "a", Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)]))), Val.ValStr("a")]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
     builtinMapGet([Val.ValMap({}), Val.ValStr("x")]) => Result.Ok(Val.ValNone)
     builtinMapGet([]) => Result.Err("expected 2 arguments")
 
@@ -720,12 +727,12 @@ fn builtinMapGetInner(mapV: Val, keyV: Val) -> Result<Val, String>
     ? "Look up key in map. O(1)."
     match mapV
         Val.ValMap(m) -> match Map.get(m, Domain.Value.mapKeyRepr(keyV))
-            Option.Some(v) -> Result.Ok(Val.ValSome(v))
+            Option.Some(entry) -> Result.Ok(Val.ValSome(Domain.Value.entryValue(entry)))
             Option.None -> Result.Ok(Val.ValNone)
         _ -> Result.Err("Map.get requires a Map")
 
 verify builtinMapGetInner
-    builtinMapGetInner(Val.ValMap(Map.set({}, "k", Val.ValInt(7))), Val.ValStr("k")) => Result.Ok(Val.ValSome(Val.ValInt(7)))
+    builtinMapGetInner(Val.ValMap(Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(7)]))), Val.ValStr("k")) => Result.Ok(Val.ValSome(Val.ValInt(7)))
     builtinMapGetInner(Val.ValMap({}), Val.ValStr("k")) => Result.Ok(Val.ValNone)
     builtinMapGetInner(Val.ValInt(1), Val.ValStr("k")) => Result.Err("Map.get requires a Map")
 
@@ -736,7 +743,7 @@ fn builtinMapHas(args: List<Val>) -> Result<Val, String>
         (mapV, keyV) -> builtinMapHasInner(mapV, keyV)
 
 verify builtinMapHas
-    builtinMapHas([Val.ValMap(Map.set({}, "a", Val.ValInt(1))), Val.ValStr("a")]) => Result.Ok(Val.ValBool(true))
+    builtinMapHas([Val.ValMap(Map.set({}, "a", Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)]))), Val.ValStr("a")]) => Result.Ok(Val.ValBool(true))
     builtinMapHas([Val.ValMap({}), Val.ValStr("a")]) => Result.Ok(Val.ValBool(false))
     builtinMapHas([]) => Result.Err("expected 2 arguments")
 
@@ -747,7 +754,7 @@ fn builtinMapHasInner(mapV: Val, keyV: Val) -> Result<Val, String>
         _ -> Result.Err("Map.has requires a Map")
 
 verify builtinMapHasInner
-    builtinMapHasInner(Val.ValMap(Map.set({}, "x", Val.ValInt(1))), Val.ValStr("x")) => Result.Ok(Val.ValBool(true))
+    builtinMapHasInner(Val.ValMap(Map.set({}, "x", Val.ValTuple([Val.ValStr("x"), Val.ValInt(1)]))), Val.ValStr("x")) => Result.Ok(Val.ValBool(true))
     builtinMapHasInner(Val.ValMap({}), Val.ValStr("x")) => Result.Ok(Val.ValBool(false))
     builtinMapHasInner(Val.ValInt(1), Val.ValStr("x")) => Result.Err("Map.has requires a Map")
 
@@ -809,8 +816,8 @@ fn headersToValMap(headers: Map<String, List<String>>, names: List<String>, acc:
     match names
         [] -> acc
         [name, ..rest] -> match Map.get(headers, name)
-            Option.Some(values) -> headersToValMap(headers, rest, Map.set(acc, name, Val.ValList(stringsToValStrs(values, []))))
-            Option.None -> headersToValMap(headers, rest, Map.set(acc, name, Val.ValList([])))
+            Option.Some(values) -> headersToValMap(headers, rest, Map.set(acc, name, Val.ValTuple([Val.ValStr(name), Val.ValList(stringsToValStrs(values, []))])))
+            Option.None -> headersToValMap(headers, rest, Map.set(acc, name, Val.ValTuple([Val.ValStr(name), Val.ValList([])])))
 
 fn stringsToValStrs(values: List<String>, acc: List<Val>) -> List<Val>
     ? "Convert a list of strings into a list of Val.ValStr (tail-recursive)."
@@ -824,11 +831,11 @@ verify stringsToValStrs
 
 verify headersToValMap
     headersToValMap({}, [], {}) => {}
-    headersToValMap({"x" => ["Y"]}, ["x"], {}) => {"x" => Val.ValList([Val.ValStr("Y")])}
+    headersToValMap({"x" => ["Y"]}, ["x"], {}) => {"x" => Val.ValTuple([Val.ValStr("x"), Val.ValList([Val.ValStr("Y")])])}
 
 verify headersToVal
     headersToVal({}) => Val.ValMap({})
-    headersToVal({"x" => ["Y"]}) => Val.ValMap({"x" => Val.ValList([Val.ValStr("Y")])})
+    headersToVal({"x" => ["Y"]}) => Val.ValMap({"x" => Val.ValTuple([Val.ValStr("x"), Val.ValList([Val.ValStr("Y")])])})
 
 fn builtinTcpSend(args: List<Val>) -> Result<Val, String>
     ? "Tcp.send(host, port, message) -> Result<String, String>."
@@ -1008,12 +1015,11 @@ verify valVariantToTcpSocket
     valVariantToTcpSocket("Tcp.Socket.Connected", []) => Result.Err("Tcp.Socket.Connected takes one resource")
     valVariantToTcpSocket("Tcp.Socket.Sending", []) => Result.Err("Tcp.Socket.Sending takes one resource")
 
-fn tcpSocketEntriesToMap(entries: List<Tuple<String, Val>>, acc: Map<Int, Tcp.Socket>) -> Result<Map<Int, Tcp.Socket>, String>
+fn tcpSocketEntriesToMap(entries: List<Val>, acc: Map<Int, Tcp.Socket>) -> Result<Map<Int, Tcp.Socket>, String>
     ? "Recover integer caller keys and typed socket states from a self-host Val map."
     match entries
         [] -> Result.Ok(acc)
-        [pair, ..rest] -> match pair
-            (keyText, socketV) -> tcpSocketEntriesToMap(rest, Map.set(acc, Int.fromString(keyText)?, valToTcpSocket(socketV)?))
+        [entry, ..rest] -> tcpSocketEntriesToMap(rest, Map.set(acc, Domain.Builtins.Helpers.expectInt(Domain.Value.entryKey(entry))?, valToTcpSocket(Domain.Value.entryValue(entry))?))
 
 verify tcpSocketEntriesToMap
     tcpSocketEntriesToMap([], {}) => Result.Ok({})
@@ -1041,7 +1047,7 @@ fn builtinTcpPollInner(sockets: Map<String, Val>, timeoutV: Val) -> Result<Val, 
     ? "Inner Tcp.poll."
     ! [Tcp.poll]
     timeoutMs = Domain.Builtins.Helpers.expectInt(timeoutV)?
-    typedSockets = tcpSocketEntriesToMap(Map.entries(sockets), {})?
+    typedSockets = tcpSocketEntriesToMap(Map.values(sockets), {})?
     match Tcp.poll(typedSockets, timeoutMs)
         Result.Ok(keys) -> Result.Ok(Val.ValOk(Val.ValList(tcpReadyKeysToVals(keys, []))))
         Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))

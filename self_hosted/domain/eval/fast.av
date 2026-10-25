@@ -32,10 +32,10 @@ verify runFastLeafSlot
     runFastLeafSlot(FastLeaf.LeafConstBool(true), Vector.new(0, Val.ValUnit)) => Result.Ok(Val.ValBool(true))
     runFastLeafSlot(FastLeaf.LeafSlot(0), Vector.fromList([Val.ValInt(7)])) => Result.Ok(Val.ValInt(7))
     runFastLeafSlot(FastLeaf.LeafFieldAccess(0, "x"), Vector.fromList([Val.ValRecord("R", [("x", Val.ValInt(5))])])) => Result.Ok(Val.ValInt(5))
-    runFastLeafSlot(FastLeaf.LeafMapGet(0, 1), Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValInt(9))), Val.ValStr("k")])) => Result.Ok(Val.ValSome(Val.ValInt(9)))
-    runFastLeafSlot(FastLeaf.LeafMapSet(0, 1, 2), Vector.fromList([Val.ValMap({}), Val.ValStr("k"), Val.ValInt(1)])) => Result.Ok(Val.ValMap(Map.set({}, "k", Val.ValInt(1))))
+    runFastLeafSlot(FastLeaf.LeafMapGet(0, 1), Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(9)]))), Val.ValStr("k")])) => Result.Ok(Val.ValSome(Val.ValInt(9)))
+    runFastLeafSlot(FastLeaf.LeafMapSet(0, 1, 2), Vector.fromList([Val.ValMap({}), Val.ValStr("k"), Val.ValInt(1)])) => Result.Ok(Val.ValMap(Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(1)]))))
     runFastLeafSlot(FastLeaf.LeafMapHas(0, 1), Vector.fromList([Val.ValMap({}), Val.ValStr("k")])) => Result.Ok(Val.ValBool(false))
-    runFastLeafSlot(FastLeaf.LeafMapRemove(0, 1), Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValInt(1))), Val.ValStr("k")])) => Result.Ok(Val.ValMap({}))
+    runFastLeafSlot(FastLeaf.LeafMapRemove(0, 1), Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(1)]))), Val.ValStr("k")])) => Result.Ok(Val.ValMap({}))
     runFastLeafSlot(FastLeaf.LeafVectorGetOrInt(0, 1, 99), Vector.fromList([Val.ValVector(Vector.fromList([Val.ValInt(42)])), Val.ValInt(0)])) => Result.Ok(Val.ValInt(42))
     runFastLeafSlot(FastLeaf.LeafBinopSlots(BinOp.OpAdd, 0, 1), Vector.fromList([Val.ValInt(3), Val.ValInt(4)])) => Result.Ok(Val.ValInt(7))
     runFastLeafSlot(FastLeaf.LeafCmpSlots(CmpOp.CmpEq, 0, 1), Vector.fromList([Val.ValInt(1), Val.ValInt(1)])) => Result.Ok(Val.ValBool(true))
@@ -145,19 +145,19 @@ fn fastMapGetSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int) -> Result<
     fastMapGetSlotInner(mapV, keyV)
 
 verify fastMapGetSlot
-    fastMapGetSlot(Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValInt(9))), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValSome(Val.ValInt(9)))
+    fastMapGetSlot(Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(9)]))), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValSome(Val.ValInt(9)))
     fastMapGetSlot(Vector.fromList([Val.ValInt(1), Val.ValStr("k")]), 0, 1) => Result.Err("Map.get requires a Map")
 
 fn fastMapGetSlotInner(mapV: Val, keyV: Val) -> Result<Val, String>
     ? "Look up a key in a ValMap without going through builtin dispatch."
     match mapV
         Val.ValMap(m) -> match Map.get(m, Domain.Value.mapKeyRepr(keyV))
-            Option.Some(v) -> Result.Ok(Val.ValSome(v))
+            Option.Some(entry) -> Result.Ok(Val.ValSome(Domain.Value.entryValue(entry)))
             Option.None -> Result.Ok(Val.ValNone)
         _ -> Result.Err("Map.get requires a Map")
 
 verify fastMapGetSlotInner
-    fastMapGetSlotInner(Val.ValMap(Map.set({}, "a", Val.ValInt(1))), Val.ValStr("a")) => Result.Ok(Val.ValSome(Val.ValInt(1)))
+    fastMapGetSlotInner(Val.ValMap(Map.set({}, "a", Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)]))), Val.ValStr("a")) => Result.Ok(Val.ValSome(Val.ValInt(1)))
     fastMapGetSlotInner(Val.ValMap({}), Val.ValStr("x")) => Result.Ok(Val.ValNone)
     fastMapGetSlotInner(Val.ValInt(5), Val.ValStr("x")) => Result.Err("Map.get requires a Map")
 
@@ -169,17 +169,17 @@ fn fastMapSetSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int, valueSlot:
     fastMapSetSlotInner(mapV, keyV, valueV)
 
 verify fastMapSetSlot
-    fastMapSetSlot(Vector.fromList([Val.ValMap({}), Val.ValStr("k"), Val.ValInt(1)]), 0, 1, 2) => Result.Ok(Val.ValMap(Map.set({}, "k", Val.ValInt(1))))
+    fastMapSetSlot(Vector.fromList([Val.ValMap({}), Val.ValStr("k"), Val.ValInt(1)]), 0, 1, 2) => Result.Ok(Val.ValMap(Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(1)]))))
     fastMapSetSlot(Vector.fromList([Val.ValInt(1), Val.ValStr("k"), Val.ValInt(1)]), 0, 1, 2) => Result.Err("Map.set requires a Map")
 
 fn fastMapSetSlotInner(mapV: Val, keyV: Val, valueV: Val) -> Result<Val, String>
     ? "Set a key in a ValMap without going through builtin dispatch."
     match mapV
-        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.set(m, Domain.Value.mapKeyRepr(keyV), valueV)))
+        Val.ValMap(m) -> Result.Ok(Val.ValMap(Map.set(m, Domain.Value.mapKeyRepr(keyV), Val.ValTuple([keyV, valueV]))))
         _ -> Result.Err("Map.set requires a Map")
 
 verify fastMapSetSlotInner
-    fastMapSetSlotInner(Val.ValMap({}), Val.ValStr("k"), Val.ValInt(9)) => Result.Ok(Val.ValMap(Map.set({}, "k", Val.ValInt(9))))
+    fastMapSetSlotInner(Val.ValMap({}), Val.ValStr("k"), Val.ValInt(9)) => Result.Ok(Val.ValMap(Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(9)]))))
     fastMapSetSlotInner(Val.ValInt(1), Val.ValStr("k"), Val.ValInt(9)) => Result.Err("Map.set requires a Map")
 
 fn fastVectorNewSlot(calleeEnv: Vector<Val>, sizeSlot: Int, fill: Int) -> Result<Val, String>
@@ -235,7 +235,7 @@ fn fastMapHasSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int) -> Result<
         _ -> Result.Err("Map.has requires a Map")
 
 verify fastMapHasSlot
-    fastMapHasSlot(Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValInt(1))), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValBool(true))
+    fastMapHasSlot(Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(1)]))), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValBool(true))
     fastMapHasSlot(Vector.fromList([Val.ValMap({}), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValBool(false))
     fastMapHasSlot(Vector.fromList([Val.ValInt(1), Val.ValStr("k")]), 0, 1) => Result.Err("Map.has requires a Map")
 
@@ -248,7 +248,7 @@ fn fastMapRemoveSlot(calleeEnv: Vector<Val>, mapSlot: Int, keySlot: Int) -> Resu
         _ -> Result.Err("Map.remove requires a Map")
 
 verify fastMapRemoveSlot
-    fastMapRemoveSlot(Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValInt(1))), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValMap({}))
+    fastMapRemoveSlot(Vector.fromList([Val.ValMap(Map.set({}, "k", Val.ValTuple([Val.ValStr("k"), Val.ValInt(1)]))), Val.ValStr("k")]), 0, 1) => Result.Ok(Val.ValMap({}))
     fastMapRemoveSlot(Vector.fromList([Val.ValInt(1), Val.ValStr("k")]), 0, 1) => Result.Err("Map.remove requires a Map")
 
 fn fastVectorLenSlot(calleeEnv: Vector<Val>, vecSlot: Int) -> Result<Val, String>

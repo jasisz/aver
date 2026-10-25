@@ -869,6 +869,24 @@ fn bound_empty_literal_settled_later_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Map keys told apart by value and maps iterated in key order: records,
+/// tuples and lists of strings that print like separators, sums, numbers,
+/// options and booleans. `tests/cross_backend_stress.rs` runs the same file
+/// on wasm-gc and the self-host.
+#[test]
+fn map_key_identity_matches_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/map_key_identity_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// `String.fromFloat` and interpolation of NaN, the infinities, `-0.0` and
+/// ordinary numbers. `tests/cross_backend_stress.rs` runs the same file on
+/// wasm-gc and the self-host.
+#[test]
+fn float_text_matches_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/float_text_app.av", None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// An interpolated String in a module-level statement. The interpolation
 /// pass lowered function bodies only, so a top-level `"a{1}b"`, bound or
 /// bare, reached the Rust walker as a raw interpolation and the crate got

@@ -348,8 +348,10 @@ pub fn fastMapGetSlotInner(
                         .get(&crate::aver_generated::domain::value::mapKeyRepr(keyV))
                         .cloned();
                     match __subject {
-                        Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-                            crate::aver_generated::domain::value::Val__ValSome(v),
+                        Some(entry @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+                            crate::aver_generated::domain::value::Val__ValSome(
+                                crate::aver_generated::domain::value::entryValue(&entry),
+                            ),
                         )),
                         None => Ok(crate::aver_generated::domain::value::Val::ValNone),
                     }
@@ -371,14 +373,14 @@ pub fn fastMapSetSlot(
     let mapV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
     let keyV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
     let valueV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, valueSlot)?;
-    crate::aver_generated::domain::eval::fast::fastMapSetSlotInner(&mapV, &keyV, &valueV)
+    crate::aver_generated::domain::eval::fast::fastMapSetSlotInner(&mapV, keyV, valueV)
 }
 
 /// Set a key in a ValMap without going through builtin dispatch.
 pub fn fastMapSetSlotInner(
     mapV @ _: &crate::aver_generated::domain::value::Val,
-    keyV @ _: &crate::aver_generated::domain::value::Val,
-    valueV @ _: &crate::aver_generated::domain::value::Val,
+    mut keyV @ _: crate::aver_generated::domain::value::Val,
+    mut valueV @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -388,8 +390,12 @@ pub fn fastMapSetSlotInner(
                 let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValMap(
                     crate::aver_generated::domain::value::Val__ValMap(m.clone().insert_owned(
-                        crate::aver_generated::domain::value::mapKeyRepr(keyV),
-                        valueV.clone(),
+                        crate::aver_generated::domain::value::mapKeyRepr(&keyV),
+                        crate::aver_generated::domain::value::Val::ValTuple(
+                            crate::aver_generated::domain::value::Val__ValTuple(
+                                aver_rt::AverList::from_vec(vec![keyV, valueV]),
+                            ),
+                        ),
                     )),
                 ))
             }

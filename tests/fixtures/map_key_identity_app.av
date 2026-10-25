@@ -1,0 +1,132 @@
+module MapKeyIdentityApp
+    intent =
+        "Map keys are told apart by value, not by how they print, and every map iterates in key order."
+
+record P
+    x: Int
+    y: String
+
+record Q
+    b: Int
+    a: Int
+
+type Shape
+    Dot
+    Line(Int)
+    Box(Int, Int)
+
+fn yes(b: Bool) -> String
+    ? "1 or 0."
+    match b
+        true -> "1"
+        false -> "0"
+
+fn ps(xs: List<P>) -> String
+    ? "Render records."
+    match xs
+        [] -> ""
+        [p, ..rest] -> "P({p.x},{p.y}) " + ps(rest)
+
+fn qs(xs: List<Q>) -> String
+    ? "Render records."
+    match xs
+        [] -> ""
+        [q, ..rest] -> "Q({q.b},{q.a}) " + qs(rest)
+
+fn pairs(xs: List<Tuple<String, String>>) -> String
+    ? "Render string pairs."
+    match xs
+        [] -> ""
+        [pair, ..rest] -> match pair
+            (u, v) -> "<{u}|{v}> " + pairs(rest)
+
+fn shape(s: Shape) -> String
+    ? "Render a shape."
+    match s
+        Shape.Dot -> "Dot"
+        Shape.Line(n) -> "Line({n})"
+        Shape.Box(a, b) -> "Box({a},{b})"
+
+fn shapes(xs: List<Shape>) -> String
+    ? "Render shapes."
+    match xs
+        [] -> ""
+        [s, ..rest] -> shape(s) + " " + shapes(rest)
+
+fn ints(xs: List<Int>) -> String
+    ? "Render numbers."
+    match xs
+        [] -> ""
+        [n, ..rest] -> "{n} " + ints(rest)
+
+fn strs(xs: List<String>) -> String
+    ? "Render strings."
+    match xs
+        [] -> ""
+        [s, ..rest] -> "<{s}> " + strs(rest)
+
+fn entries(xs: List<Tuple<Int, String>>) -> String
+    ? "Render Int-keyed entries."
+    match xs
+        [] -> ""
+        [pair, ..rest] -> match pair
+            (k, v) -> "{k}={v} " + entries(rest)
+
+fn lists(xs: List<List<String>>) -> String
+    ? "Render lists of strings."
+    match xs
+        [] -> ""
+        [l, ..rest] -> "[" + strs(l) + "] " + lists(rest)
+
+fn opts(xs: List<Option<Int>>) -> String
+    ? "Render options."
+    match xs
+        [] -> ""
+        [o, ..rest] -> match o
+            Option.Some(n) -> "Some({n}) " + opts(rest)
+            Option.None -> "None " + opts(rest)
+
+fn records()
+    ? "Two records of one type, and one record built twice."
+    ! [Console.print]
+    a = P(x = 1, y = "a")
+    b = P(x = 2, y = "b")
+    m = Map.set({}, a, 10)
+    found = yes(Map.has(m, a)) + yes(Map.has(m, b)) + yes(Map.has(m, P(y = "a", x = 1)))
+    got = Option.withDefault(Map.get(m, b), -1)
+    both = Map.set(Map.set(m, b, 20), P(x = 1, y = "a"), 11)
+    gone = Map.remove(both, P(x = 2, y = "b"))
+    Console.print("rec " + found + " {got} {Map.len(both)} {Map.len(gone)} " + ps(Map.keys(both)) + ints(Map.values(both)))
+    q = Map.set(Map.set({}, Q(b = 1, a = 2), 1), Q(b = 2, a = 1), 2)
+    Console.print("by name " + qs(Map.keys(q)))
+    f = Map.fromList([(P(x = 3, y = "c"), 1), (a, 2), (P(x = 3, y = "c"), 3)])
+    Console.print("from {Map.len(f)} " + ps(Map.keys(f)) + ints(Map.values(f)) + yes(f == Map.set(Map.set({}, a, 2), P(x = 3, y = "c"), 3)))
+
+fn strings()
+    ? "Strings that print like separators."
+    ! [Console.print]
+    t = Map.set(Map.set(Map.set({}, ("a\", \"b", "c"), 1), ("a", "b\", \"c"), 2), ("1:a", "b"), 3)
+    t2 = Map.set(t, ("1", "a1:b"), 4)
+    Console.print("tup {Map.len(t2)} " + pairs(Map.keys(t2)) + yes(Map.has(t2, ("a", "b\", \"c"))) + yes(Map.has(t2, ("a", "b"))))
+    l = Map.set(Map.set({}, ["a\", \"b"], 1), ["a", "b"], 2)
+    Console.print("list {Map.len(l)} " + lists(Map.keys(l)))
+    s = Map.set(Map.set(Map.set({}, "b", 1), "a, b", 2), "a", 3)
+    Console.print("str " + strs(Map.keys(s)))
+
+fn others()
+    ? "Sums, numbers, options and booleans."
+    ! [Console.print]
+    s = Map.set(Map.set(Map.set(Map.set({}, Shape.Line(1), 1), Shape.Box(1, 2), 2), Shape.Dot, 3), Shape.Box(1, 1), 4)
+    Console.print("sum {Map.len(s)} " + yes(Map.has(s, Shape.Line(2))) + yes(Map.has(s, Shape.Box(1, 2))) + " " + shapes(Map.keys(s)))
+    n = Map.set(Map.set(Map.set({}, 10, "ten"), 9, "nine"), -1, "neg")
+    Console.print("int " + ints(Map.keys(n)) + entries(Map.entries(n)))
+    o: Map<Option<Int>, String> = Map.set(Map.set({}, Option.Some(1), "s"), Option.None, "n")
+    Console.print("opt " + opts(Map.keys(o)))
+    bs = Map.set(Map.set({}, true, 1), false, 0)
+    Console.print("bool " + ints(Map.values(bs)))
+
+fn main()
+    ! [Console.print]
+    records()
+    strings()
+    others()

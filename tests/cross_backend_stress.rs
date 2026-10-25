@@ -387,6 +387,68 @@ fn main()
 // number, of a value holding a NaN, and `0.0` against `-0.0`.
 const NAN_EQUALITY_OUT: &str = "0001 0001 0001\n000101";
 
+/// Map keys told apart by value, not by how they print: two records of one
+/// type, a record built twice with its fields in another order, tuples and
+/// lists of strings that print like separators, sums, numbers, options and
+/// booleans, each map iterated in key order.
+const MAP_KEY_IDENTITY_SRC: &str = include_str!("fixtures/map_key_identity_app.av");
+const MAP_KEY_IDENTITY_OUT: &str = "rec 101 -1 2 1 P(1,a) P(2,b) 11 20 \nby name Q(2,1) Q(1,2) \nfrom 2 P(1,a) P(3,c) 2 3 1\ntup 4 <1|a1:b> <1:a|b> <a|b\", \"c> <a\", \"b|c> 10\nlist 2 [<a> <b> ] [<a\", \"b> ] \nstr <a> <a, b> <b> \nsum 4 01 Box(1,1) Box(1,2) Dot Line(1) \nint -1 9 10 -1=neg 9=nine 10=ten \nopt None Some(1) \nbool 0 1";
+
+#[test]
+fn cross_map_key_identity_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-mapkey-vm", MAP_KEY_IDENTITY_SRC),
+        MAP_KEY_IDENTITY_OUT,
+    );
+}
+#[test]
+fn cross_map_key_identity_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-mapkey-wasm", MAP_KEY_IDENTITY_SRC),
+        MAP_KEY_IDENTITY_OUT,
+    );
+}
+#[test]
+fn cross_map_key_identity_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-mapkey-sh", MAP_KEY_IDENTITY_SRC),
+        MAP_KEY_IDENTITY_OUT,
+    );
+}
+
+/// `String.fromFloat` and interpolation of NaN, the infinities, `-0.0`,
+/// `0.0` and ordinary large and small numbers.
+const FLOAT_TEXT_SRC: &str = include_str!("fixtures/float_text_app.av");
+const FLOAT_TEXT_OUT: &str = "NaN inf -inf -0 0\nNaN inf -inf -0 0\n-1.5 1000000000000000 10000000000000000000 123456.789\n0.001 0.0000000001 0.30000000000000004 3.141592653589793";
+
+#[test]
+fn cross_float_text_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-ftext-vm", FLOAT_TEXT_SRC),
+        FLOAT_TEXT_OUT,
+    );
+}
+#[test]
+fn cross_float_text_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-ftext-wasm", FLOAT_TEXT_SRC),
+        FLOAT_TEXT_OUT,
+    );
+}
+#[test]
+fn cross_float_text_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-ftext-sh", FLOAT_TEXT_SRC),
+        FLOAT_TEXT_OUT,
+    );
+}
+
 // ─── Per-backend cross-checks ──────────────────────────────────────────
 //
 // One #[test] fn per (source × backend). Verbose vs a paste-macro

@@ -122,7 +122,7 @@ impl EndianTypes {
     }
 }
 
-fn string_literal(text: &str) -> String {
+pub(super) fn string_literal(text: &str) -> String {
     let bytes = text
         .as_bytes()
         .iter()
