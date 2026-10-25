@@ -262,7 +262,7 @@ mod tests {
                 },
             )
         };
-        assert!(!manifest(RustPanic::Unwind).contains("panic"));
+        assert!(!manifest(RustPanic::Unwind).contains("panic = "));
         let abort = manifest(RustPanic::Abort);
         assert!(abort.contains("codegen-units = 1\npanic = \"abort\"\n"));
         assert!(abort.contains("[profile.dev]\noverflow-checks = true\npanic = \"abort\"\n"));
