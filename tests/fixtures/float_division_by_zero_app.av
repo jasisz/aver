@@ -1,6 +1,6 @@
 module FloatDivisionByZero
     intent =
-        "Fixture: Float division by zero at run time is IEEE 754 on every backend: 0.0 / 0.0 is NaN, x / 0.0 an infinity of the sign of x and of the zero, and NaN compares false with everything, itself too."
+        "Fixture: Float division by zero at run time is IEEE 754 on every backend: 0.0 / 0.0 is NaN, x / 0.0 an infinity of the sign of x and of the zero, NaN compares false with everything, itself too, and -x of a zero is the other zero."
 
 fn yes(b: Bool) -> String
     ? "1 or 0."
@@ -23,3 +23,4 @@ fn main() -> Unit
     Console.print("nan " + yes(nan == nan) + yes(nan != nan) + yes(nan < one) + yes(nan > one) + yes(nan <= nan) + yes(nan >= nan))
     Console.print("inf " + yes(up > 1000000.0) + yes(down < -1000000.0) + yes(up == up) + yes(up == 0.0 - down) + yes(one / minusZero < -1000000.0) + yes(minusZero == zero))
     Console.print("mix " + yes(up - up == up - up) + yes(zero * up == zero * up) + yes(one / up == zero) + yes(Float.fromInt(1) / zero > 1000000.0))
+    Console.print("neg " + yes(one / -zero < 0.0) + yes(one / -minusZero > 0.0) + yes(-zero == zero))

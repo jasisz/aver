@@ -239,7 +239,7 @@ pub fn evalNegVals(
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
                 let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValFloat(
-                    crate::aver_generated::domain::value::Val__ValFloat((0.0f64 - f)),
+                    crate::aver_generated::domain::value::Val__ValFloat((-f)),
                 ))
             }
             _ => Err(::aver_rt::str_lit!("unary '-' requires Int or Float")),

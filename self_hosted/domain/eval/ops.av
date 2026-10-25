@@ -99,7 +99,7 @@ fn evalNegVals(v: Val) -> Result<Val, String>
     ? "Apply unary minus to an evaluated value. Numeric only."
     match v
         Val.ValInt(n) -> Result.Ok(Val.ValInt(0 - n))
-        Val.ValFloat(f) -> Result.Ok(Val.ValFloat(0.0 - f))
+        Val.ValFloat(f) -> Result.Ok(Val.ValFloat(-f))
         _ -> Result.Err("unary '-' requires Int or Float")
 
 verify evalNegVals

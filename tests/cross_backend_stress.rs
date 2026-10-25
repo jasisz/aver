@@ -1729,7 +1729,7 @@ fn cross_nan_equality_self_host() {
 /// Float division by a zero computed at run time, and how its NaN and
 /// infinities compare (`<=` and `>=` with a NaN are false too).
 const FLOAT_DIVISION_SRC: &str = include_str!("fixtures/float_division_by_zero_app.av");
-const FLOAT_DIVISION_OUT: &str = "nan 010000\ninf 111111\nmix 0011";
+const FLOAT_DIVISION_OUT: &str = "nan 010000\ninf 111111\nmix 0011\nneg 111";
 
 #[test]
 fn cross_float_division_by_zero_vm() {
