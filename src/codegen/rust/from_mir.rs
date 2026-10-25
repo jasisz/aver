@@ -701,7 +701,9 @@ fn lent_lookups(expr: &MirExpr, body: &MirExpr, ctx: &MirEmitCtx<'_>, out: &mut 
             &codegen.rust_lent_options,
             false,
         )
-        && reads_only_borrow(&binding.node.body.node, root.slot, ctx)
+        // Nothing moves out of a borrowed root.
+        && (super::ownership::root_is_borrowed(root, ctx)
+            || reads_only_borrow(&binding.node.body.node, root.slot, ctx))
         && !ctx.is_borrowed_param(&binding.node.binding_name)
         && binder_count(body, &binding.node.binding_name) == 1
     {
