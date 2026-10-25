@@ -200,7 +200,7 @@ pub fn builtinConsolePrint(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     {
         let __provider_arg0: AverStr = crate::aver_generated::domain::value::valRepr(&v);
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
@@ -231,7 +231,7 @@ pub fn builtinConsoleError(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     {
         let __provider_arg0: AverStr = crate::aver_generated::domain::value::valRepr(&v);
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.error",
             "reissued",
@@ -262,7 +262,7 @@ pub fn builtinConsoleWarn(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     {
         let __provider_arg0: AverStr = crate::aver_generated::domain::value::valRepr(&v);
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.warn",
             "reissued",
@@ -291,7 +291,7 @@ pub fn builtinConsoleReadLine(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.readLine",
             "recorded",
@@ -333,7 +333,7 @@ pub fn builtinDiskReadText(
     let path @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
         let __provider_arg0: AverStr = path;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
             "recorded",
@@ -376,7 +376,7 @@ pub fn builtinArgsGet(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let rawArgs @ _ = {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Args.get",
             "recorded",
@@ -410,7 +410,7 @@ pub fn builtinEnvGet(
     let key @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
         let __provider_arg0: AverStr = key;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Env.get",
             "recorded",
@@ -464,7 +464,7 @@ pub fn builtinEnvSetInner(
     match {
         let __provider_arg0: AverStr = key;
         let __provider_arg1: AverStr = value;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Env.set",
             "recorded",
@@ -747,7 +747,7 @@ pub fn builtinRandomIntInner(
     match {
         let __provider_arg0: aver_rt::AverInt = minN;
         let __provider_arg1: aver_rt::AverInt = maxN;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Random.int",
             "recorded",
@@ -797,7 +797,7 @@ pub fn builtinTimeSleep(
     let ms @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     match {
         let __provider_arg0: aver_rt::AverInt = ms;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Time.sleep",
             "recorded",
@@ -839,7 +839,7 @@ pub fn builtinTimeUnixMs(
     crate::cancel_checkpoint();
     Ok(crate::aver_generated::domain::value::Val::ValInt(
         crate::aver_generated::domain::value::Val__ValInt({
-            crate::cancel_checkpoint();
+            crate::cancel_checkpoint_now();
             crate::aver_replay::invoke_capability_effect(
                 "Time.unixMs",
                 "recorded",
@@ -872,7 +872,7 @@ pub fn builtinTerminalNoArg(
 pub fn termClear() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.clear",
             "recorded",
@@ -907,7 +907,7 @@ pub fn termClear() -> Result<crate::aver_generated::domain::value::Val, AverStr>
 pub fn termFlush() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.flush",
             "recorded",
@@ -942,7 +942,7 @@ pub fn termFlush() -> Result<crate::aver_generated::domain::value::Val, AverStr>
 pub fn termEnableRawMode() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.enableRawMode",
             "recorded",
@@ -977,7 +977,7 @@ pub fn termEnableRawMode() -> Result<crate::aver_generated::domain::value::Val, 
 pub fn termDisableRawMode() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.disableRawMode",
             "recorded",
@@ -1012,7 +1012,7 @@ pub fn termDisableRawMode() -> Result<crate::aver_generated::domain::value::Val,
 pub fn termHideCursor() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.hideCursor",
             "recorded",
@@ -1047,7 +1047,7 @@ pub fn termHideCursor() -> Result<crate::aver_generated::domain::value::Val, Ave
 pub fn termShowCursor() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.showCursor",
             "recorded",
@@ -1082,7 +1082,7 @@ pub fn termShowCursor() -> Result<crate::aver_generated::domain::value::Val, Ave
 pub fn termResetColor() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.resetColor",
             "recorded",
@@ -1119,7 +1119,7 @@ pub fn builtinTerminalReadKey(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.readKey",
             "recorded",
@@ -1169,7 +1169,7 @@ pub fn builtinTerminalSize(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.size",
             "recorded",
@@ -1246,7 +1246,7 @@ pub fn termPrintStr(s @ _: AverStr) -> Result<crate::aver_generated::domain::val
     crate::cancel_checkpoint();
     match {
         let __provider_arg0: AverStr = s;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.print",
             "recorded",
@@ -1290,7 +1290,7 @@ pub fn builtinTerminalSetColor(
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
         let __provider_arg0: AverStr = s;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.setColor",
             "recorded",
@@ -1348,7 +1348,7 @@ pub fn builtinTerminalMoveToInner(
     match {
         let __provider_arg0: aver_rt::AverInt = x;
         let __provider_arg1: aver_rt::AverInt = y;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Terminal.moveTo",
             "recorded",
@@ -1410,7 +1410,7 @@ pub fn builtinDiskWriteTextInner(
     match {
         let __provider_arg0: AverStr = path;
         let __provider_arg1: AverStr = content;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Disk.writeText",
             "recorded",
@@ -1472,7 +1472,7 @@ pub fn builtinDiskAppendTextInner(
     match {
         let __provider_arg0: AverStr = path;
         let __provider_arg1: AverStr = content;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Disk.appendText",
             "recorded",
@@ -1520,7 +1520,7 @@ pub fn builtinDiskDelete(
     let path @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
         let __provider_arg0: AverStr = path;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Disk.delete",
             "recorded",
@@ -1564,7 +1564,7 @@ pub fn builtinDiskDeleteDir(
     let path @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
         let __provider_arg0: AverStr = path;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Disk.deleteDir",
             "recorded",
@@ -1608,7 +1608,7 @@ pub fn builtinDiskMakeDir(
     let path @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
         let __provider_arg0: AverStr = path;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Disk.makeDir",
             "recorded",
@@ -1653,7 +1653,7 @@ pub fn builtinDiskExists(
     Ok(crate::aver_generated::domain::value::Val::ValBool(
         crate::aver_generated::domain::value::Val__ValBool({
             let __provider_arg0: AverStr = path;
-            crate::cancel_checkpoint();
+            crate::cancel_checkpoint_now();
             crate::aver_replay::invoke_capability_effect(
                 "Disk.exists",
                 "recorded",
@@ -1685,7 +1685,7 @@ pub fn builtinDiskListDir(
     let path @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
         let __provider_arg0: AverStr = path;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Disk.listDir",
             "recorded",
@@ -2026,7 +2026,7 @@ pub fn builtinTimeNow(
     crate::cancel_checkpoint();
     Ok(crate::aver_generated::domain::value::Val::ValStr(
         crate::aver_generated::domain::value::Val__ValStr({
-            crate::cancel_checkpoint();
+            crate::cancel_checkpoint_now();
             crate::aver_replay::invoke_capability_effect(
                 "Time.now",
                 "recorded",
@@ -2059,7 +2059,7 @@ pub fn builtinHttpSimple(
             Ok({
                 let __arg4 @ _ = {
                     let __provider_arg0: AverStr = url;
-                    crate::cancel_checkpoint();
+                    crate::cancel_checkpoint_now();
                     crate::aver_replay::invoke_capability_effect(
                         "Http.get",
                         "recorded",
@@ -2088,7 +2088,7 @@ pub fn builtinHttpSimple(
                 Ok({
                     let __arg5 @ _ = {
                         let __provider_arg0: AverStr = url;
-                        crate::cancel_checkpoint();
+                        crate::cancel_checkpoint_now();
                         crate::aver_replay::invoke_capability_effect(
                             "Http.head",
                             "recorded",
@@ -2116,7 +2116,7 @@ pub fn builtinHttpSimple(
                 Ok({
                     let __arg6 @ _ = {
                         let __provider_arg0: AverStr = url;
-                        crate::cancel_checkpoint();
+                        crate::cancel_checkpoint_now();
                         crate::aver_replay::invoke_capability_effect(
                             "Http.delete",
                             "recorded",
@@ -2210,7 +2210,7 @@ pub fn builtinHttpBodyInner(
                     let __provider_arg2: AverStr = ct;
                     let __provider_arg3: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>> =
                         HashMap::new();
-                    crate::cancel_checkpoint();
+                    crate::cancel_checkpoint_now();
                     crate::aver_replay::invoke_capability_effect(
                         "Http.post",
                         "recorded",
@@ -2251,7 +2251,7 @@ pub fn builtinHttpBodyInner(
                         let __provider_arg2: AverStr = ct;
                         let __provider_arg3: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>> =
                             HashMap::new();
-                        crate::cancel_checkpoint();
+                        crate::cancel_checkpoint_now();
                         crate::aver_replay::invoke_capability_effect(
                             "Http.put",
                             "recorded",
@@ -2299,7 +2299,7 @@ pub fn builtinHttpBodyInner(
                         let __provider_arg2: AverStr = ct;
                         let __provider_arg3: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>> =
                             HashMap::new();
-                        crate::cancel_checkpoint();
+                        crate::cancel_checkpoint_now();
                         crate::aver_replay::invoke_capability_effect(
                             "Http.patch",
                             "recorded",
@@ -2544,7 +2544,7 @@ pub fn builtinTcpSendInner(
         let __provider_arg0: AverStr = host;
         let __provider_arg1: aver_rt::AverInt = port;
         let __provider_arg2: AverStr = msg;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.send",
             "recorded",
@@ -2610,7 +2610,7 @@ pub fn builtinTcpPingInner(
     match {
         let __provider_arg0: AverStr = host;
         let __provider_arg1: aver_rt::AverInt = port;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.ping",
             "recorded",
@@ -2672,7 +2672,7 @@ pub fn builtinTcpConnectInner(
     match {
         let __provider_arg0: AverStr = host;
         let __provider_arg1: aver_rt::AverInt = port;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.connect",
             "recorded",
@@ -2763,7 +2763,7 @@ pub fn builtinTcpBeginConnectInner(
     match {
         let __provider_arg0: AverStr = host;
         let __provider_arg1: aver_rt::AverInt = port;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.beginConnect",
             "recorded",
@@ -2830,7 +2830,7 @@ pub fn builtinTcpDialled(
     let dial @ _ = crate::aver_generated::domain::builtins::valToTcpDial(&v)?;
     match {
         let __provider_arg0: crate::aver_generated::tcp::Dial = dial;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.dialled",
             "recorded",
@@ -2901,7 +2901,7 @@ pub fn builtinTcpListenInner(
     match {
         let __provider_arg0: aver_rt::AverInt = port;
         let __provider_arg1: aver_rt::AverInt = backlog;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.listen",
             "recorded",
@@ -2970,7 +2970,7 @@ pub fn builtinTcpAccept(
     let listener @ _ = crate::aver_generated::domain::builtins::valToTcpListener(&v)?;
     match {
         let __provider_arg0: crate::aver_generated::tcp::Listener = listener;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.accept",
             "recorded",
@@ -3027,7 +3027,7 @@ pub fn builtinTcpPeerAddress(
     let connection @ _ = crate::aver_generated::domain::builtins::valToTcpConn(&v)?;
     match {
         let __provider_arg0: crate::aver_generated::tcp::Connection = connection;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.peerAddress",
             "recorded",
@@ -3250,7 +3250,7 @@ pub fn builtinTcpPollInner(
             crate::aver_generated::tcp::Socket,
         > = typedSockets;
         let __provider_arg1: aver_rt::AverInt = timeoutMs;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.poll",
             "recorded",
@@ -3307,7 +3307,7 @@ pub fn builtinTcpCloseDial(
     let dial @ _ = crate::aver_generated::domain::builtins::valToTcpDial(&v)?;
     match {
         let __provider_arg0: crate::aver_generated::tcp::Dial = dial;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.closeDial",
             "recorded",
@@ -3351,7 +3351,7 @@ pub fn builtinTcpCloseListener(
     let listener @ _ = crate::aver_generated::domain::builtins::valToTcpListener(&v)?;
     match {
         let __provider_arg0: crate::aver_generated::tcp::Listener = listener;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.closeListener",
             "recorded",
@@ -3409,7 +3409,7 @@ pub fn builtinTcpWriteLineInner(
     match {
         let __provider_arg0: crate::aver_generated::tcp::Connection = tc;
         let __provider_arg1: AverStr = line;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.writeLine",
             "recorded",
@@ -3457,7 +3457,7 @@ pub fn builtinTcpReadLine(
     let tc @ _ = crate::aver_generated::domain::builtins::valToTcpConn(&v)?;
     match {
         let __provider_arg0: crate::aver_generated::tcp::Connection = tc;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.readLine",
             "recorded",
@@ -3503,7 +3503,7 @@ pub fn builtinTcpClose(
     let tc @ _ = crate::aver_generated::domain::builtins::valToTcpConn(&v)?;
     match {
         let __provider_arg0: crate::aver_generated::tcp::Connection = tc;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.close",
             "recorded",
