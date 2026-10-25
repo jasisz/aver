@@ -23,8 +23,8 @@ fn __mutual_tco_trampoline_1(
                 crate::cancel_checkpoint();
                 aver_list_match!(items, [] => { return acc }, [item, rest] => { { let __t = item; match __t.view() {
         crate::aver_generated::domain::value::Val__view::ValTuple(__parts_fields) => {
-            let parts = &__parts_fields.0;
-            __MutualTco1::TuplesToMapOne(parts.clone(), rest, acc)
+            let (parts,) = if __t.owns_node() { let __f = crate::aver_generated::domain::value::Val::take::<crate::aver_generated::domain::value::Val__ValTuple>(__t); (__f.0,) } else { let __c = (__parts_fields.0.clone(),); drop(__t); __c };
+            __MutualTco1::TuplesToMapOne(parts, rest, acc)
         },
         _ => {
             __MutualTco1::TuplesToMap(rest, acc)
@@ -531,10 +531,19 @@ pub fn builtinMapEntries(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = &__m_fields.0;
+                let (m,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValMap,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__m_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 Ok(crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList(
-                        crate::aver_generated::domain::value::mapEntries(m.clone()),
+                        crate::aver_generated::domain::value::mapEntries(m),
                     ),
                 ))
             }
@@ -589,11 +598,19 @@ pub fn builtinMapKeys(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = &__m_fields.0;
+                let (m,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValMap,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__m_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 Ok(crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList({
-                        let __arg3 @ _ =
-                            crate::aver_generated::domain::value::mapEntries(m.clone());
+                        let __arg3 @ _ = crate::aver_generated::domain::value::mapEntries(m);
                         {
                             let __arg4 @ _ = aver_rt::list_builder_new(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
@@ -620,11 +637,19 @@ pub fn builtinMapValues(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = &__m_fields.0;
+                let (m,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValMap,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__m_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 Ok(crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList({
-                        let __arg3 @ _ =
-                            crate::aver_generated::domain::value::mapEntries(m.clone());
+                        let __arg3 @ _ = crate::aver_generated::domain::value::mapEntries(m);
                         {
                             let __arg4 @ _ = aver_rt::list_builder_new(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
@@ -1230,7 +1255,16 @@ pub fn builtinTerminalPrint(
         let __t = &v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
-                let s = __s_fields.0.clone();
+                let (s,) = if v.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValStr,
+                    >(v);
+                    (__f.0,)
+                } else {
+                    let __c = (__s_fields.0.clone(),);
+                    drop(v);
+                    __c
+                };
                 crate::aver_generated::domain::builtins::termPrintStr(s)
             }
             _ => {
@@ -1864,7 +1898,16 @@ pub fn builtinBoolNot(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValBool(__b_fields) => {
-                let b = __b_fields.0.clone();
+                let (b,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValBool,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__b_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 if b {
                     Ok(crate::aver_generated::domain::value::Val::ValBool(
                         crate::aver_generated::domain::value::Val__ValBool(false),
@@ -3210,11 +3253,17 @@ pub fn builtinTcpPoll(
             let __t = socketsV;
             match __t.view() {
                 crate::aver_generated::domain::value::Val__view::ValMap(__sockets_fields) => {
-                    let sockets = &__sockets_fields.0;
-                    crate::aver_generated::domain::builtins::builtinTcpPollInner(
-                        sockets.clone(),
-                        &timeoutV,
-                    )
+                    let (sockets,) = if __t.owns_node() {
+                        let __f = crate::aver_generated::domain::value::Val::take::<
+                            crate::aver_generated::domain::value::Val__ValMap,
+                        >(__t);
+                        (__f.0,)
+                    } else {
+                        let __c = (__sockets_fields.0.clone(),);
+                        drop(__t);
+                        __c
+                    };
+                    crate::aver_generated::domain::builtins::builtinTcpPollInner(sockets, &timeoutV)
                 }
                 _ => Err(::aver_rt::str_lit!(
                     "Tcp.poll requires a Map as its first argument"

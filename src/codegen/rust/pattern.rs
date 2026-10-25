@@ -137,13 +137,8 @@ fn emit_constructor_pattern(
                 true => "__view",
                 false => "",
             };
-            let rust_name = match resolve_module_call(&qualified_type_name, ctx) {
-                Some((prefix, bare_type_name)) => format!(
-                    "{}::{bare_type_name}{suffix}::{variant_name}",
-                    module_prefix_to_rust_path(prefix)
-                ),
-                None => format!("{qualified_type_name}{suffix}::{variant_name}"),
-            };
+            let type_path = rust_type_path(qualified_type_name, ctx);
+            let rust_name = format!("{type_path}{suffix}::{variant_name}");
             match shared_fields_binder(ctor, bindings, ctx) {
                 Some(binder) => format!("{rust_name}({binder})"),
                 None => emit_tuple_like_constructor_pattern(&rust_name, bindings),
@@ -161,6 +156,31 @@ fn emit_constructor_pattern(
             let rust_name = name.replace('.', "::");
             emit_tuple_like_constructor_pattern(&rust_name, bindings)
         }
+    }
+}
+
+/// The Rust path of a declared type, as code of another module names it.
+fn rust_type_path(qualified_type_name: String, ctx: &CodegenContext) -> String {
+    match resolve_module_call(&qualified_type_name, ctx) {
+        Some((prefix, bare_type_name)) => {
+            format!("{}::{bare_type_name}", module_prefix_to_rust_path(prefix))
+        }
+        None => qualified_type_name,
+    }
+}
+
+/// The Rust path of the type a constructor of a declared sum builds, and
+/// the constructor's name: the struct of its fields is `{path}__{name}`.
+pub(super) fn ctor_type_path(
+    ctor: &ResolvedCtor,
+    ctx: &CodegenContext,
+) -> Option<(String, String)> {
+    match semantic_constructor_from_resolved_ctor(ctor, &ctx.symbol_table) {
+        SemanticConstructor::TypeConstructor {
+            qualified_type_name,
+            variant_name,
+        } => Some((rust_type_path(qualified_type_name, ctx), variant_name)),
+        _ => None,
     }
 }
 
