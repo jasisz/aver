@@ -1213,45 +1213,36 @@ pub fn sortPairs(pairs @ _: &aver_rt::AverList<(Val, Val)>) -> aver_rt::AverList
                         pairs.clone()
                     } else {
                         {
-                            let __arg4 @ _ = {
-                                let __arg2 @ _ = <aver_rt::AverList<(Val, Val)>>::empty();
+                            let (left, right) = {
+                                let __arg4 @ _ = <aver_rt::AverList<(Val, Val)>>::empty();
                                 {
-                                    let __arg3 @ _ = <aver_rt::AverList<(Val, Val)>>::empty();
+                                    let __arg5 @ _ = <aver_rt::AverList<(Val, Val)>>::empty();
                                     crate::aver_generated::domain::value::splitPairs(
-                                        pairs, __arg2, __arg3,
+                                        pairs, __arg4, __arg5,
                                     )
                                 }
                             };
-                            crate::aver_generated::domain::value::sortHalves(&__arg4)
+                            {
+                                let __arg6 @ _ =
+                                    crate::aver_generated::domain::value::sortPairs(&left);
+                                {
+                                    let __arg7 @ _ =
+                                        crate::aver_generated::domain::value::sortPairs(&right);
+                                    {
+                                        let __arg8 @ _ = aver_rt::list_builder_new(
+                                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                                        );
+                                        crate::aver_generated::domain::value::mergePairs__collected(
+                                            __arg6, __arg7, __arg8,
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             } else {
                 panic!("Aver Rust codegen: non-exhaustive list match")
-            }
-        }
-    }
-}
-
-/// Sort both halves and merge them.
-pub fn sortHalves(
-    halves @ _: &(aver_rt::AverList<(Val, Val)>, aver_rt::AverList<(Val, Val)>),
-) -> aver_rt::AverList<(Val, Val)> {
-    crate::cancel_checkpoint();
-    {
-        let (left, right) = halves;
-        {
-            let __arg3 @ _ = crate::aver_generated::domain::value::sortPairs(left);
-            {
-                let __arg4 @ _ = crate::aver_generated::domain::value::sortPairs(right);
-                {
-                    let __arg5 @ _ = aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    );
-                    crate::aver_generated::domain::value::mergePairs__collected(
-                        __arg3, __arg4, __arg5,
-                    )
-                }
             }
         }
     }
@@ -1301,7 +1292,7 @@ pub fn mergePairs(
 ) -> aver_rt::AverList<(Val, Val)> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(xs.clone(), [] => { return aver_rt::AverList::concat(&(acc).reverse_owned(), &ys); }, [x, xr] => { aver_list_match!(ys.clone(), [] => { return aver_rt::AverList::concat(&(acc).reverse_owned(), &xs); }, [y, yr] => { if crate::aver_generated::domain::value::pairBefore(&x, &y) { {
+        aver_list_match!(xs.clone(), [] => { return aver_rt::AverList::concat(&(acc).reverse_owned(), &ys); }, [x, xr] => { aver_list_match!(ys.clone(), [] => { return aver_rt::AverList::concat(&(acc).reverse_owned(), &xs); }, [y, yr] => { { let ((a, _), (b, _)) = (x.clone(), y.clone()); if (crate::aver_generated::domain::value::valCmp(a, b) < aver_rt::AverInt::from_i64(0)) { {
             let __tco0 = xr;
             let __tco2 = aver_rt::AverList::prepend_owned(x, acc);
             xs = __tco0;
@@ -1313,16 +1304,7 @@ pub fn mergePairs(
             ys = __tco1;
             acc = __tco2;
             continue;
-        } } }) })
-    }
-}
-
-/// Whether the first pair's key sorts before the second's.
-pub fn pairBefore(x @ _: &(Val, Val), y @ _: &(Val, Val)) -> bool {
-    crate::cancel_checkpoint();
-    {
-        let ((a, _), (b, _)) = (x.clone(), y.clone());
-        (crate::aver_generated::domain::value::valCmp(a, b) < aver_rt::AverInt::from_i64(0))
+        } } } }) })
     }
 }
 
@@ -2119,7 +2101,7 @@ pub fn mergePairs__collected(
 ) -> aver_rt::AverList<(Val, Val)> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(xs.clone(), [] => { return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &ys); }, [x, xr] => { aver_list_match!(ys.clone(), [] => { return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &xs); }, [y, yr] => { if crate::aver_generated::domain::value::pairBefore(&x, &y) { {
+        aver_list_match!(xs.clone(), [] => { return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &ys); }, [x, xr] => { aver_list_match!(ys.clone(), [] => { return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &xs); }, [y, yr] => { { let ((a, _), (b, _)) = (x.clone(), y.clone()); if (crate::aver_generated::domain::value::valCmp(a, b) < aver_rt::AverInt::from_i64(0)) { {
             let __tco0 = xr;
             let __tco2 = aver_rt::list_builder_push(acc, x);
             xs = __tco0;
@@ -2131,6 +2113,6 @@ pub fn mergePairs__collected(
             ys = __tco1;
             acc = __tco2;
             continue;
-        } } }) })
+        } } } }) })
     }
 }

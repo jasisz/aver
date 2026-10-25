@@ -172,18 +172,11 @@ fn sortPairs(pairs: List<Tuple<Val, Val>>) -> List<Tuple<Val, Val>>
         [] -> pairs
         [_, ..rest] -> match rest
             [] -> pairs
-            _ -> sortHalves(splitPairs(pairs, [], []))
+            _ -> match splitPairs(pairs, [], [])
+                (left, right) -> mergePairs(sortPairs(left), sortPairs(right), [])
 
 verify sortPairs
     sortPairs([(Val.ValInt(2), Val.ValUnit), (Val.ValInt(-1), Val.ValUnit), (Val.ValInt(1), Val.ValUnit)]) => [(Val.ValInt(-1), Val.ValUnit), (Val.ValInt(1), Val.ValUnit), (Val.ValInt(2), Val.ValUnit)]
-
-fn sortHalves(halves: Tuple<List<Tuple<Val, Val>>, List<Tuple<Val, Val>>>) -> List<Tuple<Val, Val>>
-    ? "Sort both halves and merge them."
-    match halves
-        (left, right) -> mergePairs(sortPairs(left), sortPairs(right), [])
-
-verify sortHalves
-    sortHalves(([(Val.ValInt(2), Val.ValUnit)], [(Val.ValInt(1), Val.ValUnit)])) => [(Val.ValInt(1), Val.ValUnit), (Val.ValInt(2), Val.ValUnit)]
 
 fn splitPairs(pairs: List<Tuple<Val, Val>>, left: List<Tuple<Val, Val>>, right: List<Tuple<Val, Val>>) -> Tuple<List<Tuple<Val, Val>>, List<Tuple<Val, Val>>>
     ? "Deal pairs into two halves alternately."
@@ -200,20 +193,13 @@ fn mergePairs(xs: List<Tuple<Val, Val>>, ys: List<Tuple<Val, Val>>, acc: List<Tu
         [] -> List.concat(List.reverse(acc), ys)
         [x, ..xr] -> match ys
             [] -> List.concat(List.reverse(acc), xs)
-            [y, ..yr] -> match pairBefore(x, y)
-                true -> mergePairs(xr, ys, List.prepend(x, acc))
-                false -> mergePairs(xs, yr, List.prepend(y, acc))
+            [y, ..yr] -> match (x, y)
+                ((a, _), (b, _)) -> match valCmp(a, b) < 0
+                    true -> mergePairs(xr, ys, List.prepend(x, acc))
+                    false -> mergePairs(xs, yr, List.prepend(y, acc))
 
 verify mergePairs
     mergePairs([(Val.ValInt(1), Val.ValUnit)], [(Val.ValInt(0), Val.ValUnit)], []) => [(Val.ValInt(0), Val.ValUnit), (Val.ValInt(1), Val.ValUnit)]
-
-fn pairBefore(x: Tuple<Val, Val>, y: Tuple<Val, Val>) -> Bool
-    ? "Whether the first pair's key sorts before the second's."
-    match (x, y)
-        ((a, _), (b, _)) -> valCmp(a, b) < 0
-
-verify pairBefore
-    pairBefore((Val.ValInt(1), Val.ValUnit), (Val.ValInt(2), Val.ValUnit)) => true
 
 fn valCmp(a: Val, b: Val) -> Int
     ? "Order two map keys of one type, -1, 0 or 1: Int by value, String by codepoint, Bool false first, a list or tuple item by item, a record by its fields in name order, a variant by constructor name and then payload, None before Some, Ok before Err."
