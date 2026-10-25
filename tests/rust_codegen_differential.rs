@@ -5008,6 +5008,24 @@ fn lists_of_every_shape_match_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A one-element list literal is one cell, `prepend_owned(x, empty())`,
+/// rather than a vector and the node over it: words, records, sums and
+/// lists as an argument, a match subject, a result, a constructor field
+/// (5000 nested), either side of a join (3000 joins each way), compared and
+/// used as a map key. The compiled program must print what the VM does.
+#[test]
+fn one_element_list_literals_are_one_cell_and_match_vm() {
+    let relative = "tests/fixtures/singleton_list_literals_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("singleton_list_literals", &src);
+    assert!(
+        emitted.contains("aver_rt::AverList::prepend_owned(p, aver_rt::AverList::empty())"),
+        "a one-element literal is one cell:\n{emitted}"
+    );
+    assert!(!emitted.contains("from_vec(vec![p])"), "{emitted}");
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// The same with a bounce between two mutually recursive functions
 /// (`step(st, t, localValue(st.lctx, n), n)`), a field read by an earlier
 /// argument (`putFirst(readOnly(w.st, w.e), w.st, w.e)`), and a field read

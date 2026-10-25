@@ -2766,6 +2766,16 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     emit_ctx,
                 ));
             }
+            // `[x]` is one `Prepend` node onto `[]`: one allocation, where a
+            // vector, its buffer and the node over them are three. A
+            // `List<Int>` keeps `from_vec`, which packs a byte as a byte.
+            if let [item] = parts.as_slice()
+                && list_type == "aver_rt::AverList"
+            {
+                return Some(format!(
+                    "aver_rt::AverList::prepend_owned({item}, aver_rt::AverList::empty())"
+                ));
+            }
             Some(format!("{list_type}::from_vec(vec![{}])", parts.join(", ")))
         }
         MirExpr::MapLiteral(entries) => {
