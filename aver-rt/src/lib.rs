@@ -2831,6 +2831,8 @@ mod tests {
     /// once, and only by the last of the lists that hold it.
     #[test]
     fn dropping_nested_lists_drops_each_element_once() {
+        /// Its fields are held only to be dropped.
+        #[allow(dead_code)]
         struct Closure(Counted, AverList<Closure>);
 
         let depth = if cfg!(miri) { 50 } else { 1_000 };
