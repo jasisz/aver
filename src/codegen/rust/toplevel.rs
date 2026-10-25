@@ -1790,13 +1790,44 @@ fn expr_uses_error_prop(expr: &Expr) -> bool {
 }
 
 pub(super) fn resolved_fn_has_self_tailcall(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    resolved_fn_has_tailcall_to(fd, fd.fn_id)
+}
+
+fn resolved_fn_has_tailcall_to(
+    fd: &crate::ir::hir::ResolvedFnDef,
+    target_id: crate::ir::FnId,
+) -> bool {
     fd.body.stmts().iter().any(|stmt| {
         let expr = match stmt {
             crate::ir::hir::ResolvedStmt::Expr(expr)
             | crate::ir::hir::ResolvedStmt::Binding { value: expr, .. } => expr,
         };
-        resolved_expr_has_tailcall_to(&expr.node, fd.fn_id)
+        resolved_expr_has_tailcall_to(&expr.node, target_id)
     })
+}
+
+/// The members of a mutual tail-call group a bounce lands on most, read off
+/// the code: a member that tail-calls itself, so it can go round without
+/// leaving, and every member such a loop hands over to directly, since each
+/// time the loop stops it goes on in one of those. A group with no such
+/// loop goes round through all its members, so all of them count.
+pub(super) fn hot_mutual_members(
+    group_fns: &[&crate::ir::hir::ResolvedFnDef],
+) -> HashSet<crate::ir::FnId> {
+    let loops: Vec<_> = group_fns
+        .iter()
+        .filter(|fd| resolved_fn_has_self_tailcall(fd))
+        .collect();
+    group_fns
+        .iter()
+        .filter(|fd| {
+            loops.is_empty()
+                || loops
+                    .iter()
+                    .any(|lp| resolved_fn_has_tailcall_to(lp, fd.fn_id))
+        })
+        .map(|fd| fd.fn_id)
+        .collect()
 }
 
 fn resolved_expr_has_tailcall_to(

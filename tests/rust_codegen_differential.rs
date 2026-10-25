@@ -2989,6 +2989,53 @@ fn main() -> Unit
     assert_eq!(rust, expected, "Rust diverged from the VM");
 }
 
+/// A member of a mutual tail-call group whose state is large and that the
+/// group's loop does not hand over to directly keeps its params on the
+/// group's side instead of in the trampoline's enum: `wide` and `wider`
+/// here, two bounces from `loopA`, entered from the loop, from each other
+/// and from outside, with a call into the group inside one of their bounces.
+#[test]
+fn mutual_tail_group_side_states_match_vm() {
+    let src = r#"module MutualSide
+    intent = "Large states of a mutual tail-call group kept on the group's side"
+    effects [Console.print]
+
+fn loopA(n: Int, acc: Int, stop: Int) -> Int
+    ? "Goes round on itself down to stop, then out through mid."
+    match n <= 0
+        true -> acc
+        false -> match n == stop
+            true -> mid(n - 1, acc)
+            false -> loopA(n - 1, acc + 1, stop)
+
+fn mid(n: Int, acc: Int) -> Int
+    ? "A small member the loop hands over to."
+    wide(n, acc, [n, acc], [acc], [], "w", n, 1)
+
+fn wide(n: Int, acc: Int, xs: List<Int>, ys: List<Int>, zs: List<Int>, label: String, k: Int, m: Int) -> Int
+    ? "A large state two bounces from the loop."
+    match n <= 0
+        true -> acc + List.len(xs) + k
+        false -> wider(n - 1, acc + List.len(xs) + List.len(ys) + List.len(zs), List.prepend(m, xs), ys, zs, "{label}x", k, m + 1, String.len(label))
+
+fn wider(n: Int, acc: Int, xs: List<Int>, ys: List<Int>, zs: List<Int>, label: String, k: Int, m: Int, t: Int) -> Int
+    ? "Another large state: back to the loop, or once more through wide."
+    match t > 3
+        true -> loopA(n, acc + t + loopA(3, 0, 1), n - 4)
+        false -> wide(n, acc + m, ys, xs, zs, label, k + 1, m)
+
+fn main() -> Unit
+    ? "Enters the group through the loop and through both large members."
+    ! [Console.print]
+    Console.print("{loopA(100000, 0, 99995)} {wide(7, 0, [], [1], [2, 3], "s", 0, 0)} {wider(2, 1, [1], [], [], "abcd", 0, 0, 9)}")
+"#;
+    let expected = "433330 35 16";
+    let vm = run_vm_inline("mutual_side", src).expect("vm run");
+    assert_eq!(vm, expected, "VM contract changed");
+    let rust = build_run_rust_inline("mutual_side", src).expect("rust build + run");
+    assert_eq!(rust, expected, "Rust diverged from the VM");
+}
+
 /// The reported shape, which is a two-file one: the keyword-named mutual
 /// pair lives in a DEPENDENCY module and the entry module only calls into
 /// it. That is how the bug stayed hidden — the dep module had been

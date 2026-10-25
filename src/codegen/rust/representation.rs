@@ -257,6 +257,11 @@ pub(super) fn type_is_boxed_record(
     named_type_def(id, name, ctx, scope).is_some_and(|td| is_boxed_record(td, ctx))
 }
 
+/// [`inline_size`] of a param or field of type `ty`, declared in `scope`.
+pub(super) fn type_inline_size(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -> usize {
+    inline_size(ty, ctx, scope, &mut HashSet::new())
+}
+
 /// The bytes a value of `ty` takes inline in the Rust it is lowered to, as
 /// near as the size of the runtime's carriers allows: the measure
 /// [`shared_variants`] compares constructors by and [`is_boxed_record`]
