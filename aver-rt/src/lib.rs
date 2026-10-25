@@ -1030,13 +1030,32 @@ impl<T> DropPending<T> {
 
 impl<T> Drop for AverListInner<T> {
     fn drop(&mut self) {
-        if matches!(self, AverListInner::Flat { .. }) {
-            return;
+        // A chain of prepends this node alone holds is taken apart here, one
+        // node after another, so a list of any length takes no stack: each
+        // node's tail is taken out of it before it goes, and its own drop
+        // then finds nothing below it. A tail someone else also holds only
+        // loses this count when the fields drop.
+        let mut next = match self {
+            AverListInner::Flat { .. } => return,
+            AverListInner::Prepend { tail, .. } => tail.take_sole_node(),
+            _ => return self.drop_tree(),
+        };
+        while let Some(mut node) = next {
+            next = match Rc::get_mut(&mut node) {
+                Some(AverListInner::Prepend { tail, .. }) => tail.take_sole_node(),
+                _ => None,
+            };
         }
+    }
+}
 
-        // Children this node alone holds are taken apart here, one at a time,
-        // so a deep list does not recurse through its nested nodes on the
-        // Rust call stack; a shared child only loses a count.
+impl<T> AverListInner<T> {
+    /// The drop of a concat or an indexed node: the nodes below it that it
+    /// alone holds are taken apart one at a time, so a deep rope does not
+    /// recurse on the Rust call stack either.
+    #[cold]
+    #[inline(never)]
+    fn drop_tree(&mut self) {
         let mut pending = DropPending {
             next: None,
             rest: Vec::new(),
@@ -1107,6 +1126,13 @@ impl<T> AverList<T> {
     /// The node's shape, or none for the empty list.
     fn shape(&self) -> Option<&AverListInner<T>> {
         self.inner.as_deref()
+    }
+
+    /// The node, taken out of the list, when this list alone holds it.
+    #[inline]
+    fn take_sole_node(&mut self) -> Option<Rc<AverListInner<T>>> {
+        Rc::get_mut(self.inner.as_mut()?)?;
+        self.inner.take()
     }
 
     #[cfg(test)]
