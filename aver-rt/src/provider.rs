@@ -39,6 +39,7 @@ pub use process::{
     standard_process_stop_requested, stop_watch_fired, stop_watch_installed,
 };
 pub use run::{STANDARD_RUN_FINGERPRINT, STANDARD_RUN_NATIVE_IDENTITY, StandardRunProvider};
+pub(crate) use runtime::provider_panic_line;
 pub use runtime::{
     NativeProviderRegistry, STANDARD_TIME_FINGERPRINT, STANDARD_TIME_NATIVE_IDENTITY,
     StandardTimeProvider, standard_time_now, standard_time_sleep, standard_time_unix_ms,

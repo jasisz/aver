@@ -453,6 +453,27 @@ fn first_module_value<T>(
     cell.get_or_init(compute)
 }
 
+/// With `[rust] panic = "abort"` nothing unwinds, and a panic would end the
+/// process in an abort. This hook prints what a panic prints, and the line a
+/// provider's panic adds, then ends the process with the status an
+/// unwinding panic ends it with (101). A build that unwinds keeps the
+/// default hook.
+pub fn exit_on_panic() {
+    if !cfg!(panic = "abort") {
+        return;
+    }
+    let print = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        print(info);
+        if let Some(line) = provider::provider_panic_line(info) {
+            eprintln!("\n{line}");
+        }
+        #[cfg(feature = "terminal")]
+        let _ = terminal::flush();
+        std::process::exit(101);
+    }));
+}
+
 static EXIT_AFTER_MAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Lets the entry `main` end the process itself (see [`exit_after_main`]).

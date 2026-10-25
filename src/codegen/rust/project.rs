@@ -2,7 +2,7 @@
 use std::collections::HashSet;
 
 use super::composition::ProviderComposition;
-use crate::config::RustAllocator;
+use crate::config::{RustAllocator, RustOptions, RustPanic};
 use crate::toolchain_source::ToolchainSource;
 
 /// Exact aver-rt version embedded alongside the toolchain's Cargo source
@@ -37,7 +37,7 @@ pub fn generate_cargo_toml(
     has_runtime_policy: bool,
     has_scoped_runtime: bool,
     provider_composition: &ProviderComposition,
-    allocator: RustAllocator,
+    rust: RustOptions,
 ) -> String {
     let mut lines = Vec::new();
     lines.push("[package]".to_string());
@@ -57,7 +57,7 @@ pub fn generate_cargo_toml(
     if services.contains("Terminal") {
         rt_features.push("terminal");
     }
-    if allocator == RustAllocator::Mimalloc {
+    if rust.allocator == RustAllocator::Mimalloc {
         rt_features.push("mimalloc");
     }
     rt_features.sort();
@@ -93,6 +93,12 @@ pub fn generate_cargo_toml(
     lines.push("[profile.release]".to_string());
     lines.push("lto = true".to_string());
     lines.push("codegen-units = 1".to_string());
+    // `[rust] panic = "abort"`: no unwinding in a build that runs the
+    // program; `cargo test` keeps unwinding whatever the profile says.
+    let abort = rust.panic == RustPanic::Abort;
+    if abort {
+        lines.push("panic = \"abort\"".to_string());
+    }
 
     // Iteration keeps release-like runtime semantics while trading peak
     // optimisation for a much shorter edit/build/run loop. This is a named
@@ -119,6 +125,9 @@ pub fn generate_cargo_toml(
     lines.push(String::new());
     lines.push("[profile.dev]".to_string());
     lines.push("overflow-checks = true".to_string());
+    if abort {
+        lines.push("panic = \"abort\"".to_string());
+    }
     lines.push(String::new());
     lines.push("[profile.test]".to_string());
     lines.push("overflow-checks = true".to_string());
@@ -134,6 +143,17 @@ pub fn declare_global_allocator(root_main: &mut String, allocator: RustAllocator
         root_main.push_str(
             "\n#[global_allocator]\nstatic GLOBAL: aver_rt::MiMalloc = aver_rt::MiMalloc;\n",
         );
+    }
+}
+
+/// With `[rust] panic = "abort"`, `main` first sets the hook that ends the
+/// process the way an unwinding panic does (see `aver_rt::exit_on_panic`).
+pub fn exit_on_panic(root_main: &mut String, panic: RustPanic) {
+    if panic == RustPanic::Abort
+        && let Some(start) = root_main.find("\nfn main(")
+        && let Some(body) = root_main[start..].find("{\n")
+    {
+        root_main.insert_str(start + body + 2, "    aver_rt::exit_on_panic();\n");
     }
 }
 
@@ -185,9 +205,11 @@ fn toml_string(value: &str) -> String {
 mod tests {
     use std::collections::HashSet;
 
-    use super::{generate_cargo_toml, generate_readme, runtime_dependency_line, toml_string};
+    use super::{
+        exit_on_panic, generate_cargo_toml, generate_readme, runtime_dependency_line, toml_string,
+    };
     use crate::codegen::rust::composition::ProviderComposition;
-    use crate::config::RustAllocator;
+    use crate::config::{RustOptions, RustPanic};
 
     #[test]
     fn runtime_dependency_can_use_local_override_path() {
@@ -212,13 +234,50 @@ mod tests {
             false,
             false,
             &ProviderComposition::default(),
-            RustAllocator::System,
+            RustOptions::default(),
         );
 
         assert!(manifest.contains("[profile.release]\nlto = true\ncodegen-units = 1"));
         assert!(manifest.contains(
             "[profile.iteration]\ninherits = \"release\"\nopt-level = 1\nlto = false\ncodegen-units = 256\nincremental = true"
         ));
+    }
+
+    /// `[rust] panic = "abort"` turns unwinding off in the profiles that run
+    /// the program, and `main` sets the hook first; the default changes
+    /// neither.
+    #[test]
+    fn panic_abort_reaches_the_profiles_and_main_only_when_chosen() {
+        let manifest = |panic| {
+            generate_cargo_toml(
+                "demo",
+                &HashSet::new(),
+                false,
+                false,
+                false,
+                &ProviderComposition::default(),
+                RustOptions {
+                    panic,
+                    ..Default::default()
+                },
+            )
+        };
+        assert!(!manifest(RustPanic::Unwind).contains("panic = "));
+        let abort = manifest(RustPanic::Abort);
+        assert!(abort.contains("codegen-units = 1\npanic = \"abort\"\n"));
+        assert!(abort.contains("[profile.dev]\noverflow-checks = true\npanic = \"abort\"\n"));
+        assert!(!abort.contains("[profile.test]\noverflow-checks = true\npanic"));
+
+        let main = "use x;\n\nfn main() -> Result<(), String> {\n    run()\n}\n";
+        let mut unwind = main.to_string();
+        exit_on_panic(&mut unwind, RustPanic::Unwind);
+        assert_eq!(unwind, main);
+        let mut hooked = main.to_string();
+        exit_on_panic(&mut hooked, RustPanic::Abort);
+        assert_eq!(
+            hooked,
+            "use x;\n\nfn main() -> Result<(), String> {\n    aver_rt::exit_on_panic();\n    run()\n}\n"
+        );
     }
 
     #[test]

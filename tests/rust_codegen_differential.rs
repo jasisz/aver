@@ -598,6 +598,172 @@ fn lists_handed_over_and_large_integers_match_vm() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+// ─── `[rust] panic = "abort"` ───────────────────────────────────────────
+
+const PANIC_ABORT: &str = "[rust]\npanic = \"abort\"\n";
+
+/// `source` as `main.av` beside `aver_toml`, compiled with `extra` and
+/// built; returns the binary and the directory to run it in.
+fn build_with_config(
+    ws: &Path,
+    name: &str,
+    source: &str,
+    aver_toml: &str,
+    extra: &[&str],
+) -> Result<(PathBuf, PathBuf), String> {
+    let root = ws.join(name);
+    fs::create_dir_all(&root).expect("create module root");
+    fs::write(root.join("main.av"), source).expect("write program");
+    fs::write(root.join("aver.toml"), aver_toml).expect("write aver.toml");
+    let project = ws.join(format!("{name}_project"));
+    compile_rust(&root.join("main.av"), &project, name, Some(&root), extra)?;
+    Ok((cargo_build(&project, name)?, root))
+}
+
+/// stderr with the thread numbers the panic message carries taken out.
+fn without_thread_ids(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let mut out = String::new();
+    let mut rest = text.as_ref();
+    while let Some(at) = rest.find("' (") {
+        let (head, tail) = rest.split_at(at + 3);
+        out.push_str(head);
+        rest = tail.trim_start_matches(|c: char| c.is_ascii_digit());
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A panic of the program ends it with 101 and the same message whether
+/// the stack unwinds or not; only the second report of `main`'s thread,
+/// `thread join: Any { .. }`, is not there without unwinding.
+#[test]
+fn a_program_panic_without_unwinding_ends_with_101_and_the_same_message() {
+    const SOURCE: &str = "module Refused\n    intent = \"A Disk call the policy refuses.\"\n    effects [Disk.exists, Console.print]\n\nfn shown(b: Bool) -> String\n    ? \"yes or no.\"\n    match b\n        true -> \"yes\"\n        false -> \"no\"\n\nverify shown\n    shown(true) => \"yes\"\n    shown(false) => \"no\"\n\nfn main() -> Unit\n    ! [Disk.exists, Console.print]\n    Console.print(\"before\")\n    Console.print(shown(Disk.exists(\"./blocked.txt\")))\n";
+    const POLICY: &str = "[effects.Disk]\npaths = [\"./allowed/**\"]\n";
+    let ws = temp_dir("panic_program");
+    let result = (|| {
+        let mut runs = Vec::new();
+        for (name, toml) in [
+            ("p_unwind", POLICY.to_string()),
+            ("p_abort", format!("{POLICY}\n{PANIC_ABORT}")),
+        ] {
+            let (bin, root) = build_with_config(&ws, name, SOURCE, &toml, &["--policy", "embed"])?;
+            let out = Command::new(&bin)
+                .current_dir(&root)
+                .output()
+                .map_err(|e| format!("failed to run {name}: {e}"))?;
+            if out.status.code() != Some(101) || String::from_utf8_lossy(&out.stdout) != "before\n"
+            {
+                return Err(format!(
+                    "{name} must print `before` and end with 101:\n{}",
+                    format_output(&out)
+                ));
+            }
+            runs.push(without_thread_ids(&out.stderr));
+        }
+        let (unwind, abort) = (&runs[0], &runs[1]);
+        let (first, join) = unwind
+            .split_once("\nthread 'main' ")
+            .ok_or_else(|| format!("no report of main's thread:\n{unwind}"))?;
+        if !join.contains("thread join: Any { .. }")
+            || abort != first
+            || !abort.contains("aver.toml policy violation")
+        {
+            return Err(format!("--- unwind ---\n{unwind}\n--- abort ---\n{abort}"));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A provider that panics (`Console.print` into a pipe nobody reads) ends
+/// the program with 101 and names the provider and the operation, whether
+/// the stack unwinds or not.
+#[test]
+fn a_provider_panic_without_unwinding_names_the_provider_and_ends_with_101() {
+    const SOURCE: &str = "module Talkative\n    intent = \"Prints more lines than its reader takes.\"\n    effects [Console.print]\n\nfn lines(n: Int) -> Int\n    ? \"Prints n lines.\"\n    ! [Console.print]\n    match n == 0\n        true -> 0\n        false -> next(n)\n\nfn next(n: Int) -> Int\n    ? \"One line, then the rest.\"\n    ! [Console.print]\n    Console.print(\"line {n}\")\n    lines(n - 1)\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"{lines(1000000)}\")\n";
+    const LINE: &str = "error[capability-provider-panic]: provider 'aver.standard.Console/native' panicked while calling 'Console.print': failed printing to stdout: Broken pipe (os error 32)";
+    let ws = temp_dir("panic_provider");
+    let result = (|| {
+        for (name, toml) in [("p_pipe_unwind", ""), ("p_pipe_abort", PANIC_ABORT)] {
+            let (bin, root) = build_with_config(&ws, name, SOURCE, toml, &[])?;
+            let mut child = Command::new(&bin)
+                .current_dir(&root)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("failed to run {name}: {e}"))?;
+            let mut first = [0u8; 4];
+            std::io::Read::read_exact(child.stdout.as_mut().expect("piped stdout"), &mut first)
+                .map_err(|e| format!("{name} printed nothing: {e}"))?;
+            drop(child.stdout.take());
+            let out = child.wait_with_output().expect("wait for the program");
+            if out.status.code() != Some(101)
+                || !String::from_utf8_lossy(&out.stderr).contains(LINE)
+            {
+                return Err(format!(
+                    "{name} must name the provider and end with 101:\n{}",
+                    format_output(&out)
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// Cancel mode stops a branch by unwinding, so `panic = "abort"` is refused
+/// with it, compiled in or read when the program starts; an independent
+/// product and a false `verify` case under `cargo test` keep working.
+#[test]
+fn panic_abort_is_refused_with_cancel_mode_and_leaves_products_and_tests_working() {
+    const SOURCE: &str = "module Both\n    intent = \"An independent product and a false verify case.\"\n    effects [Console.print]\n\nfn double(n: Int) -> Int\n    ? \"Twice n.\"\n    n * 2\n\nverify double\n    double(1) => 2\n    double(2) => 5\n    double(3) => 6\n\nfn main() -> Unit\n    ! [Console.print]\n    match (double(1), double(2))!\n        (a, b) -> Console.print(\"{a} {b}\")\n";
+    let ws = temp_dir("panic_refused");
+    let result = (|| {
+        for (toml, extra, why) in [
+            (
+                format!("[independence]\nmode = \"cancel\"\n\n{PANIC_ABORT}"),
+                &["--policy", "embed"][..],
+                "[independence] mode = \"cancel\"",
+            ),
+            (
+                PANIC_ABORT.to_string(),
+                &["--with-replay"][..],
+                "--with-replay or --policy runtime",
+            ),
+        ] {
+            let refused = build_with_config(&ws, "p_refused", SOURCE, &toml, extra)
+                .expect_err("cancel mode with panic = \"abort\" must be refused");
+            if !refused.contains(&format!(
+                "[rust] panic = \"abort\" cannot be used with {why}"
+            )) {
+                return Err(refused);
+            }
+        }
+        let (bin, root) = build_with_config(&ws, "p_product", SOURCE, PANIC_ABORT, &[])?;
+        let out = Command::new(&bin)
+            .current_dir(&root)
+            .output()
+            .expect("run the product");
+        if !out.status.success() || String::from_utf8_lossy(&out.stdout) != "2 4\n" {
+            return Err(format!("the product must run:\n{}", format_output(&out)));
+        }
+        let tested = cargo_test_in(&ws.join("p_product_project"), &shared_target_dir())
+            .expect_err("the false verify case must fail");
+        if !tested.contains("test result: FAILED. 2 passed; 1 failed") {
+            return Err(format!(
+                "cargo test must report the false case and run the others:\n{tested}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 #[test]
 fn a_trusted_law_that_does_not_hold_stops_the_program_when_the_call_is_made() {
     const SOURCE: &str = "module Trusted\n    intent = \"a deferred call knows a value from a law that does not hold\"\n    effects [Console.print]\n\ntype Term\n    Var(Int, Int)\n    App(Term, Term, Int)\n\nfn wordOf(t: Term) -> Int\n    ? \"The word a term carries.\"\n    match t\n        Term.Var(_, w) -> w\n        Term.App(_, _, w) -> w\n\nfn shift(t: Term, by: Int) -> Term\n    ? \"Every variable moved by `by`.\"\n    match t\n        Term.Var(n, _) -> Term.Var(n + by, wordOf(t) * 31 + by)\n        Term.App(f, a, _) -> Term.App(shift(f, by), shift(a, by), wordOf(t) * 31 + by)\n\nverify shift law wordGuess\n    given t: Term = [Term.Var(0, 5)]\n    given by: Int = [0]\n    wordOf(shift(t, by)) => wordOf(t) * 31\n\nfn main() -> Unit\n    ! [Console.print]\n    t = Term.Var(0, 1)\n    later = lazy shift(t, 2) knowing shift.wordGuess(t, 2)\n    Console.print(\"known {wordOf(later)}\")\n    Console.print(\"made {wordOf(shift(later, 0))}\")\n";

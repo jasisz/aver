@@ -10,6 +10,38 @@ use super::{
     ProviderResourceHandle, ProviderValue,
 };
 
+#[cfg(panic = "abort")]
+thread_local! {
+    /// The provider and operation this thread is in, for the panic hook of a
+    /// build that does not unwind (see `crate::exit_on_panic`).
+    static CALLING: std::cell::RefCell<Option<(String, String)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// What a provider that panicked says, the same whether its stack unwinds.
+fn provider_panic(provider: &str, operation: &str, panic: &(dyn std::any::Any + Send)) -> String {
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload");
+    format!(
+        "error[capability-provider-panic]: provider '{provider}' panicked while calling '{operation}': {message}"
+    )
+}
+
+/// That line for a panic inside a provider, in a build that does not unwind.
+pub(crate) fn provider_panic_line(info: &std::panic::PanicHookInfo<'_>) -> Option<String> {
+    #[cfg(panic = "abort")]
+    return CALLING
+        .with(|calling| calling.borrow().clone())
+        .map(|(provider, operation)| provider_panic(&provider, &operation, info.payload()));
+    #[cfg(not(panic = "abort"))]
+    {
+        let _ = info;
+        None
+    }
+}
+
 #[derive(Default)]
 struct ResourceStore {
     next_slot: u64,
@@ -189,22 +221,20 @@ impl NativeProviderRegistry {
             contract_hash: contract.contract_hash.clone(),
             model_hash: contract.model_hash.clone(),
         };
-        catch_unwind(AssertUnwindSafe(|| {
+        #[cfg(panic = "abort")]
+        let calling = CALLING.with(|calling| {
+            calling.replace(Some((
+                binding.provider_identity().to_string(),
+                operation.to_string(),
+            )))
+        });
+        let answer = catch_unwind(AssertUnwindSafe(|| {
             call(binding.provider.as_ref(), &context)
-        }))
-        .map_err(|panic| {
-            let message = panic
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
-                .unwrap_or("non-string panic payload");
-            format!(
-                "error[capability-provider-panic]: provider '{}' panicked while calling '{}': {}",
-                binding.provider_identity(),
-                operation,
-                message
-            )
-        })?
+        }));
+        #[cfg(panic = "abort")]
+        CALLING.with(|now| now.replace(calling));
+        answer
+            .map_err(|panic| provider_panic(binding.provider_identity(), operation, panic.as_ref()))?
         .map_err(|fault| {
             format!(
                 "error[capability-provider-fault]: provider fault from '{}' while calling '{}': {}",

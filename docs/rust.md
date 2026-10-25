@@ -134,6 +134,14 @@ A comparison of an `Int` with a literal outside `[-2^62, 2^62)` (`n < 4611686018
 
 The generated binary uses the platform's allocator. A project can ask for mimalloc instead with `[rust]` `allocator = "mimalloc"` in its `aver.toml` (the default is `"system"`; any other value is an error): `Cargo.toml` then turns on the `mimalloc` feature of `aver-rt` and `src/main.rs` declares `aver_rt::MiMalloc` as the `#[global_allocator]`. It sends requests aligned to 16 bytes or less to plain `mi_malloc`, so a 48-byte value takes a 48-byte block rather than the 64-byte one that `mi_malloc_aligned` falls back to when the 48-byte page is full. It helps programs that allocate heavily, most of all on macOS, and needs a C compiler to build.
 
+A panic unwinds the stack, as in any Rust program. `[rust]` `panic = "abort"` in `aver.toml` builds the program without unwinding (the default is `"unwind"`; any other value is an error). `Cargo.toml` then sets `panic = "abort"` in its `release` and `dev` profiles, and `main` first sets a panic hook. The hook prints what a panic prints and ends the process with status 101, the status an unwinding panic ends it with. Without unwinding, the compiler leaves out the code that frees a function's values when a panic passes through it. On a synthetic that builds and walks lists that is about 10% fewer instructions and 10% less time with mimalloc, and 3.5% fewer instructions with the system allocator; on one that rebuilds a tree, 2.3% and 0.7%. What a panic does changes, and the option is for a program that accepts that:
+
+- The panic's own report is the same. The second report that follows it today, from `main`'s thread (`thread 'main' panicked at src/main.rs:…: thread join: Any { .. }`), is not printed.
+- When a provider panics, the line `error[capability-provider-panic]: provider '…' panicked while calling '…': …` is printed after the panic's report, as today, but without the `thread '…' panicked at src/provider_support.rs:…` line above it.
+- The process ends at the panic. In an independent product `(a, b)!` the other branches do not run to their end, so effects they had not made yet are never made. A `Work` job whose body panics ends the whole program, where today `take` answers it with an error and the program goes on. No value is dropped, so a `Terminal` buffer is flushed only on the thread that panicked.
+- `[independence] mode = "cancel"`, `--with-replay` and `--policy runtime` are refused with this option, since a cancelled branch stops by unwinding.
+- `cargo test`, which runs the `verify` cases, still unwinds: a false case fails its own test and the others run.
+
 When developing the runtime inside the Aver repository, set `AVER_RUNTIME_PATH` before running `aver compile`. The generated project then uses a path dependency instead of the crates.io release:
 
 ```bash
