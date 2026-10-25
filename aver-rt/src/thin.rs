@@ -17,8 +17,7 @@
 //! pairs tag `i` with the `i`-th constructor's field struct by construction
 //! and checks the tags at compile time. Generated code calls only the safe
 //! functions and constants the macro defines: one per constructor to build a
-//! value, `view` to match on one, `view_pair` to compare two, `owns_node`
-//! and `take` to move the fields out of a node no one else owns.
+//! value, `view` to match on one, `view_pair` to compare two.
 //!
 //! A sum some `lazy f(…)` of the program returns has one more, hidden
 //! constructor: the call, not yet made (see [`Thin::deferred`]). Every way of
@@ -112,16 +111,6 @@ pub unsafe trait ThinSum: Sized + 'static {
     }
 }
 
-/// The field struct of the constructor `TAG` of `S`, which [`thin_sum!`]
-/// implements for each constructor with fields: what the sum's `take`
-/// moves out of a node.
-///
-/// # Safety
-/// A node of `S` whose tag is `TAG` holds a `Self` after its header.
-pub unsafe trait CtorFields<S: ThinSum> {
-    const TAG: u32;
-}
-
 /// One value of the recursive sum `S` (see the module docs).
 pub struct Thin<S: ThinSum> {
     ptr: NonNull<Header>,
@@ -205,43 +194,6 @@ impl<S: ThinSum> Thin<S> {
     #[inline]
     pub unsafe fn fields<P>(&self) -> &P {
         unsafe { &(*self.ptr.cast::<Node<P>>().as_ptr()).fields }
-    }
-
-    /// Whether this is the only owner of a node `new` made, whose fields
-    /// [`Thin::into_fields`] then moves out: a `Relaxed` look, as
-    /// `Arc::strong_count`, which `into_fields` makes again before it moves
-    /// anything. In a sum with deferred calls (`lazy`), a node a call was
-    /// made in has the room of the call and is never taken apart.
-    #[inline]
-    pub fn owns_node(&self, lazy: bool) -> bool {
-        !self.is_empty_ctor()
-            && self.header().count.load(Ordering::Relaxed) == 1
-            && !(lazy && self.header().tag.load(Ordering::Relaxed) >> WORDS_SHIFT != 0)
-    }
-
-    /// The fields of a value this is the only owner of (see
-    /// [`Thin::owns_node`]), moved out of its node, whose memory is then
-    /// given back; a copy of them otherwise. The `Acquire` load, as
-    /// `Arc::get_mut`, sees every other owner done with the fields.
-    ///
-    /// # Safety
-    /// `this.tag()` names a constructor with fields, `P` is its struct, and
-    /// `lazy` is whether the sum has deferred calls.
-    #[inline]
-    pub unsafe fn into_fields<P: Clone>(this: Self, lazy: bool) -> P {
-        let header = this.header();
-        if header.count.load(Ordering::Acquire) != 1
-            || (lazy && header.tag.load(Ordering::Relaxed) >> WORDS_SHIFT != 0)
-        {
-            return unsafe { this.fields::<P>() }.clone();
-        }
-        let this = ManuallyDrop::new(this);
-        let node = this.ptr.cast::<Node<P>>().as_ptr();
-        // SAFETY: the fields are moved out once, and the box, made by
-        // `new::<P>`, is then freed without dropping them.
-        let fields = unsafe { std::ptr::read(&raw const (*node).fields) };
-        drop(unsafe { Box::from_raw(node.cast::<ManuallyDrop<Node<P>>>()) });
-        fields
     }
 
     /// Whether both are the same node, or the same constructor without
@@ -1021,8 +973,6 @@ macro_rules! thin_sum {
             }
         }
 
-        $( $crate::thin_sum!(@fields $name $tag $( $fields )?); )+
-
         #[allow(non_snake_case, dead_code)]
         impl $name {
             $( $crate::thin_sum!(@ctor $vis $name $tag $ctor $( $fields )?); )+
@@ -1077,31 +1027,6 @@ macro_rules! thin_sum {
                     // Safe code makes a value only through the constructors
                     // above, whose tags are these, checked at compile time.
                     _ => unsafe { ::std::hint::unreachable_unchecked() },
-                }
-            }
-
-            /// Whether this is the only owner of its node, so that `take`
-            /// moves the fields out of it (`aver_rt::thin::Thin::owns_node`).
-            #[inline]
-            $vis fn owns_node(&self) -> bool {
-                self.0.owns_node($crate::thin_sum!(@is_lazy $( $lazy )?))
-            }
-
-            /// The fields of the value's constructor, whose struct is `P`:
-            /// moved out of the node when this is its only owner, copied
-            /// otherwise (`aver_rt::thin::Thin::into_fields`). Panics when
-            /// the value is of another constructor.
-            #[inline]
-            $vis fn take<P: $crate::thin::CtorFields<Self> + Clone>(self) -> P {
-                let (this, tag) = self.made();
-                assert!(tag == P::TAG, "a value taken apart as another constructor");
-                match ::std::ptr::eq(this, &self.0) {
-                    // SAFETY: tag `P::TAG` holds a `P` (`CtorFields`).
-                    true => unsafe {
-                        $crate::thin::Thin::into_fields::<P>(self.0, $crate::thin_sum!(@is_lazy $( $lazy )?))
-                    },
-                    // The value stands for a call made in another node.
-                    false => unsafe { this.fields::<P>() }.clone(),
                 }
             }
 
@@ -1222,19 +1147,6 @@ macro_rules! thin_sum {
     (@free $name:ident $node:ident $pending:ident) => {
         unreachable!("a constructor without fields has no node")
     };
-    (@fields $name:ident $tag:literal $fields:ty) => {
-        // SAFETY: `new` makes a node of this tag with these fields only.
-        unsafe impl $crate::thin::CtorFields<$name> for $fields {
-            const TAG: u32 = $tag;
-        }
-    };
-    (@fields $name:ident $tag:literal) => {};
-    (@is_lazy) => {
-        false
-    };
-    (@is_lazy $lazy:literal) => {
-        true
-    };
     (@ctor $vis:vis $name:ident $tag:literal $ctor:ident $fields:ty) => {
         #[inline]
         $vis fn $ctor(fields: $fields) -> Self {
@@ -1272,9 +1184,9 @@ mod tests {
 
     #[derive(Debug, PartialEq)]
     pub struct T__Leaf(Counted);
-    #[derive(Clone, Debug)]
+    #[derive(Debug)]
     pub struct T__Pair(T, T, u8);
-    #[derive(Clone, Debug)]
+    #[derive(Debug)]
     pub struct T__Opt(Option<T>);
 
     impl super::HandOver for T__Leaf {}
@@ -1460,44 +1372,6 @@ mod tests {
         assert_eq!(super::Thin::strong_count(&root.0), 1);
         drop(root);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn take_moves_the_fields_out_of_a_node_with_one_owner() {
-        let drops = Arc::new(AtomicUsize::new(0));
-        let t = pair(leaf(&drops, 1), T::Nil, 7);
-        assert!(t.owns_node());
-        let fields: T__Pair = t.take();
-        // The leaf moved with its node's only owner: nothing was copied.
-        assert_eq!(super::Thin::strong_count(&fields.0.0), 1);
-        assert_eq!((sum(&fields.0), fields.2), (1, 7));
-        assert_eq!(drops.load(Ordering::SeqCst), 0);
-        drop(fields);
-        assert_eq!(drops.load(Ordering::SeqCst), 1);
-        assert!(!T::Nil.owns_node());
-    }
-
-    #[test]
-    fn take_copies_the_fields_of_a_node_others_own() {
-        let drops = Arc::new(AtomicUsize::new(0));
-        let t = pair(leaf(&drops, 1), T::Nil, 7);
-        let kept = t.clone();
-        assert!(!t.owns_node());
-        let fields: T__Pair = t.take();
-        // The copy and the node `kept` holds own the leaf.
-        assert_eq!(super::Thin::strong_count(&fields.0.0), 2);
-        assert_eq!(super::Thin::strong_count(&kept.0), 1);
-        drop(kept);
-        assert_eq!(super::Thin::strong_count(&fields.0.0), 1);
-        assert_eq!(drops.load(Ordering::SeqCst), 0);
-        drop(fields);
-        assert_eq!(drops.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    #[should_panic(expected = "another constructor")]
-    fn take_as_another_constructor_panics() {
-        let _: T__Opt = pair(T::Nil, T::Unit, 0).take();
     }
 
     /// Deep enough to overflow a test thread's stack were each node freed
@@ -1909,39 +1783,6 @@ mod tests {
         );
         drop(never);
         assert_eq!(drops.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn take_copies_the_fields_of_a_node_a_call_was_made_in() {
-        let drops = Arc::new(AtomicUsize::new(0));
-        // Its node has the room of the call, which only that room's size
-        // gives back: the fields are copied, the node dropped as it is.
-        let lazy = L::deferred((super::Kept(5u64), ()), |(super::Kept(n), ())| l_leaf(n));
-        assert_eq!(lazy.tag(), 0);
-        assert!(!lazy.owns_node());
-        let leaf: L__Leaf = lazy.take();
-        assert_eq!(leaf.0, 5);
-        let lazy = L::deferred((held(&drops), ()), |(value, ())| l_node(value, l_leaf(2)));
-        let fields: L__Node = lazy.take();
-        assert_eq!(super::Thin::strong_count(&fields.0.0), 1);
-        assert!(matches!(fields.1.view(), L__View::Leaf(leaf) if leaf.0 == 2));
-        drop(fields);
-        assert_eq!(drops.load(Ordering::SeqCst), 1);
-        // One that stands for a call made in another node.
-        let inner = L::deferred((held(&drops), ()), |(value, ())| l_node(value, l_leaf(3)));
-        let outer = L::deferred((inner.clone(), ()), |(value, ())| value);
-        let fields: L__Node = outer.take();
-        assert!(matches!(fields.1.view(), L__View::Leaf(leaf) if leaf.0 == 3));
-        assert_eq!(l_sum(&inner), 3);
-        drop((inner, fields));
-        assert_eq!(drops.load(Ordering::SeqCst), 2);
-        // A node `new` made gives its fields up.
-        let node = l_node(held(&drops), l_leaf(4));
-        assert!(node.owns_node());
-        let fields: L__Node = node.take();
-        assert_eq!(super::Thin::strong_count(&fields.0.0), 1);
-        drop(fields);
-        assert_eq!(drops.load(Ordering::SeqCst), 3);
     }
 
     #[test]

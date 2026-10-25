@@ -456,7 +456,7 @@ pub fn extractStrings(
         crate::cancel_checkpoint();
         aver_list_match!(items, [] => { return Ok((acc).reverse_owned()); }, [v, rest] => { { let __t = v; match __t.view() {
         crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
-            let (s,) = if __t.owns_node() { let __f = crate::aver_generated::domain::value::Val::take::<crate::aver_generated::domain::value::Val__ValStr>(__t); (__f.0,) } else { let __c = (__s_fields.0.clone(),); drop(__t); __c };
+            let s = __s_fields.0.clone();
             {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverList::prepend_owned(s, acc);
@@ -540,16 +540,7 @@ pub fn builtinStringFromBool(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValBool(__b_fields) => {
-                let (b,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValBool,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__b_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let b = __b_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(aver_rt::bool_str(b)),
                 ))
@@ -581,16 +572,7 @@ pub fn builtinStringFromFloat(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let (f,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValFloat,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__f_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(aver_rt::display_str(&(f))),
                 ))
@@ -919,16 +901,7 @@ pub fn builtinFloatRound(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let (f,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValFloat,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__f_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(
                         aver_rt::AverInt::from_f64_trunc(f.round()),
@@ -950,16 +923,7 @@ pub fn builtinFloatToString(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let (f,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValFloat,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__f_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValStr(
                     crate::aver_generated::domain::value::Val__ValStr(aver_rt::display_str(&(f))),
                 ))
@@ -979,16 +943,7 @@ pub fn builtinFloatAbs(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let (f,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValFloat,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__f_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValFloat(
                     crate::aver_generated::domain::value::Val__ValFloat(f.abs()),
                 ))
@@ -1008,16 +963,7 @@ pub fn builtinFloatFloor(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let (f,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValFloat,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__f_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(
                         aver_rt::AverInt::from_f64_trunc(f.floor()),
@@ -1039,16 +985,7 @@ pub fn builtinFloatCeil(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let (f,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValFloat,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__f_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(
                         aver_rt::AverInt::from_f64_trunc(f.ceil()),
@@ -1118,16 +1055,7 @@ pub fn builtinFloatSin(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let (f,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValFloat,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__f_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValFloat(
                     crate::aver_generated::domain::value::Val__ValFloat(f.sin()),
                 ))
@@ -1147,16 +1075,7 @@ pub fn builtinFloatCos(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let (f,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValFloat,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__f_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValFloat(
                     crate::aver_generated::domain::value::Val__ValFloat(f.cos()),
                 ))
@@ -1176,16 +1095,7 @@ pub fn builtinFloatSqrt(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let (f,) = if __t.owns_node() {
-                    let __f = crate::aver_generated::domain::value::Val::take::<
-                        crate::aver_generated::domain::value::Val__ValFloat,
-                    >(__t);
-                    (__f.0,)
-                } else {
-                    let __c = (__f_fields.0.clone(),);
-                    drop(__t);
-                    __c
-                };
+                let f = __f_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValFloat(
                     crate::aver_generated::domain::value::Val__ValFloat(f.sqrt()),
                 ))

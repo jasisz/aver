@@ -407,65 +407,6 @@ fn recursive_sum_as_one_pointer_matches_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
-/// A match on a value at its end takes the fields of the constructor it
-/// matches out of a node it alone owns (`take`, `Shared::unwrap_or_clone`)
-/// instead of copying them: out of a parameter another arm hands on whole, a computed
-/// value, a record's field in a loop, the value under a nested pattern, a
-/// deferred value, and a large constructor's shared node, with a field the
-/// arm only reads borrowed either way. A value handed on after the match
-/// keeps its fields, and one another value holds too is copied out of; all
-/// read as the VM.
-#[test]
-fn a_match_at_its_subjects_end_takes_the_fields_out_and_matches_vm() {
-    let relative = "tests/fixtures/match_takes_fields_app.av";
-    let file = repo_root().join(relative);
-    let vm_stdout = run_vm(&file, None).unwrap_or_else(|e| panic!("{e}"));
-    let ws = temp_dir("match_takes_fields");
-    let project = ws.join("project");
-    fs::create_dir_all(&project).expect("create project dir");
-    let result = (|| -> Result<(), String> {
-        compile_rust(&file, &project, "match_takes_fields", None, &[])?;
-        let emitted = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
-            .map_err(|e| format!("read emitted module: {e}"))?;
-        for (name, expected) in [
-            ("inc", 2),
-            ("swap", 2),
-            ("nested", 2),
-            ("steps", 3),
-            ("fold", 1),
-            ("regrow", 1),
-            ("readAfter", 0),
-        ] {
-            let start = emitted
-                .find(&format!("pub fn {name}("))
-                .ok_or_else(|| format!("no `{name}` in the emitted module"))?;
-            let body = &emitted[start..];
-            let body = &body[..body.find("\n}\n").unwrap_or(body.len())];
-            let takes = body.matches(".owns_node()").count()
-                + body.matches("Shared::strong_count(").count();
-            if takes != expected {
-                return Err(format!(
-                    "`{name}` takes fields {takes} times, not {expected}:\n{body}"
-                ));
-            }
-        }
-        let bin = cargo_build(&project, "match_takes_fields")?;
-        let out = Command::new(&bin)
-            .output()
-            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
-        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        match out.status.success() && rust_stdout == vm_stdout {
-            true => Ok(()),
-            false => Err(format!(
-                "stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{}",
-                format_output(&out)
-            )),
-        }
-    })();
-    let _ = fs::remove_dir_all(&ws);
-    result.unwrap_or_else(|e| panic!("{e}"));
-}
-
 /// `==` on a recursive sum compares two pointers before it reads either
 /// node: terms rebuilt above shared leaves, equal or apart at each level, a
 /// sum holding a `Float` (which does not take that shortcut), deferred calls
