@@ -31,7 +31,7 @@ use ::aver_rt::AverStr;
 use std::cell::{Cell, RefCell};
 use std::sync::{
     Arc,
-    atomic::AtomicBool,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 /// Convert String results from aver_rt to AverStr for generated code.
@@ -134,6 +134,10 @@ const MAY_CANCEL: bool = __INDEPENDENCE_MAY_CANCEL__;
 /// its flags: a cancelled branch stops at most this many steps late.
 const CANCEL_CHECK_EVERY: u32 = 1024;
 
+/// Branches that can be cancelled running now, on any thread. While there
+/// are none a step reads only this, not a thread local.
+static CANCELABLE_BRANCHES: AtomicUsize = AtomicUsize::new(0);
+
 thread_local! {
     static ACTIVE_CANCEL_FLAGS: RefCell<Vec<Arc<AtomicBool>>> = const { RefCell::new(Vec::new()) };
     /// Steps left before the next read of the flags; 0 on a thread that
@@ -150,6 +154,7 @@ impl Drop for CancelFlagGuard {
             cell.borrow_mut().pop();
         });
         CANCEL_STEPS_LEFT.with(|left| left.set(self.0));
+        CANCELABLE_BRANCHES.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -160,6 +165,7 @@ where
     ACTIVE_CANCEL_FLAGS.with(|cell| {
         cell.borrow_mut().push(flag);
     });
+    CANCELABLE_BRANCHES.fetch_add(1, Ordering::Relaxed);
     let _guard = CancelFlagGuard(CANCEL_STEPS_LEFT.with(|left| left.replace(CANCEL_CHECK_EVERY)));
     run()
 }
@@ -168,13 +174,18 @@ fn is_cancel_panic(payload: &(dyn std::any::Any + Send)) -> bool {
     payload.is::<AverCancelled>()
 }
 
-/// A step: a function entered, a loop or a trampoline going round. Outside
-/// a branch that can be cancelled it reads one counter; inside one it reads
-/// the flags every `CANCEL_CHECK_EVERY` steps.
+/// A step: a function entered, a loop or a trampoline going round. While no
+/// branch that can be cancelled runs it reads one counter; inside one it
+/// reads the flags every `CANCEL_CHECK_EVERY` steps.
+#[inline]
 pub fn cancel_checkpoint() {
-    if !MAY_CANCEL {
-        return;
+    if MAY_CANCEL && CANCELABLE_BRANCHES.load(Ordering::Relaxed) != 0 {
+        cancel_step();
     }
+}
+
+#[inline(never)]
+fn cancel_step() {
     let left = CANCEL_STEPS_LEFT.with(Cell::get);
     if left == 0 {
         return;
@@ -197,7 +208,7 @@ pub fn cancel_checkpoint_now() {
     let cancelled = ACTIVE_CANCEL_FLAGS.with(|cell| {
         cell.borrow()
             .iter()
-            .any(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+            .any(|flag| flag.load(Ordering::Relaxed))
     });
     if cancelled {
         std::panic::panic_any(AverCancelled);
