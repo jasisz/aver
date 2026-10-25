@@ -440,6 +440,18 @@ pub(super) fn walking_def(td: &TypeDef, ctx: &CodegenContext) -> bool {
         && (on_cycle(td, ctx) || through_collection(td, ctx))
 }
 
+/// Whether the `==` of `ty` is a walk-free `aver_fast_eq` (see
+/// `aver_rt::shared_items::top`): a type that holds itself through a
+/// collection and is not a thin sum, whose `==` carries a walk.
+pub(super) fn compares_fast(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+    match ty {
+        Type::Named { id, name } => named_type_def(*id, name, ctx, scope).is_some_and(|td| {
+            walking_def(td, ctx) && !is_thin_sum(td, ctx) && through_collection(td, ctx)
+        }),
+        _ => false,
+    }
+}
+
 /// Whether a value of `td` can hold a value of `td` in a `List`, a `Vector`
 /// or a `Map`, at any depth. Its `==` and hash then carry one walk through
 /// those collections (see `aver_rt::shared_items`): a value holding one

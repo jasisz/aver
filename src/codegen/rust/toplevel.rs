@@ -1,9 +1,9 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
-    RepresentationCapabilities, RepresentationContract, cheap_fields_first, hands_over,
-    is_boxed_record, is_thin_sum, on_cycle, shared_variants, through_collection, type_def_contract,
-    variant_field_refs, walking_def, walks,
+    RepresentationCapabilities, RepresentationContract, cheap_fields_first, compares_fast,
+    hands_over, is_boxed_record, is_thin_sum, on_cycle, shared_variants, through_collection,
+    type_def_contract, variant_field_refs, walking_def, walks,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -166,8 +166,7 @@ impl Walking<'_> {
     }
 
     /// `==` on the places `a` and `b` of `ty`: within the walk, or without
-    /// one when `fast`, a pair of collections then taking a walk of its own
-    /// when neither holds its items alone (`aver_rt::shared_items::fast_eq`).
+    /// one when `fast` (see `aver_rt::shared_items::top`).
     fn eq(&self, ty: &Type, a: &str, b: &str) -> String {
         if !walks(ty, self.ctx, self.scope) {
             return format!("{a} == {b}");
@@ -175,20 +174,21 @@ impl Walking<'_> {
         let items = |inner: &Type| self.eq(inner, "(*x)", "(*y)");
         let walked = |of: &str, item: &Type| match self.fast {
             true => format!(
-                "aver_rt::shared_items::fast_eq(&{a}, &{b}, |a, b, walk| {})",
-                Walking {
-                    fast: false,
-                    ..*self
-                }
-                .eq(ty, "(*a)", "(*b)")
+                "aver_rt::shared_items::fast_{of}(&{a}, &{b}, |x, y| {})",
+                items(item)
             ),
             false => format!(
-                "aver_rt::shared_items::{of}(&{a}, &{b}, walk, |x, y, walk| {})",
+                "aver_rt::shared_items::eq_{of}(&{a}, &{b}, walk, |x, y, walk| {})",
                 items(item)
             ),
         };
+        let named = |a: &str, b: &str| match self.fast {
+            true if compares_fast(ty, self.ctx, self.scope) => format!("{a}.aver_fast_eq(&{b})"),
+            true => format!("{a} == {b}"),
+            false => format!("{a}.walk_eq(&{b}, walk)"),
+        };
         match ty {
-            Type::Option(inner) if !matches!(**inner, Type::Named { .. }) => format!(
+            Type::Option(inner) if self.fast || !matches!(**inner, Type::Named { .. }) => format!(
                 "match (&{a}, &{b}) {{ (Some(x), Some(y)) => {}, (None, None) => true, _ => false }}",
                 items(inner)
             ),
@@ -203,11 +203,10 @@ impl Walking<'_> {
                     .collect();
                 format!("({})", tests.join(" && "))
             }
-            Type::List(item) => walked("eq_list", item),
-            Type::Vector(item) => walked("eq_vector", item),
-            Type::Map(_, item) => walked("eq_map", item),
-            _ if self.fast => format!("{a} == {b}"),
-            _ => format!("{a}.walk_eq(&{b}, walk)"),
+            Type::List(item) => walked("list", item),
+            Type::Vector(item) => walked("vector", item),
+            Type::Map(_, item) => walked("map", item),
+            _ => named(a, b),
         }
     }
 
@@ -452,6 +451,21 @@ fn walk_hash_impl(name: &str, stream: &str, from_parts: &str) -> String {
     )
 }
 
+/// The walk-free `==` of a type that holds itself through a collection, or
+/// of a constructor's payload in one (see `aver_rt::shared_items::top`).
+fn fast_eq_impl(name: &str, test: &str) -> String {
+    format!(
+        "\nimpl {name} {{\n    fn aver_fast_eq(&self, other: &Self) -> bool {{\n        {test}\n    }}\n}}\n"
+    )
+}
+
+/// The `PartialEq` of a type with a [`fast_eq_impl`].
+fn top_eq_impl(name: &str) -> String {
+    format!(
+        "\nimpl PartialEq for {name} {{\n    #[inline]\n    fn eq(&self, other: &Self) -> bool {{\n        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)\n    }}\n}}\n"
+    )
+}
+
 fn partial_eq_impl(name: &str, test: &str) -> String {
     format!(
         "\nimpl PartialEq for {name} {{\n    fn eq(&self, other: &Self) -> bool {{\n        {test}\n    }}\n}}\n"
@@ -612,12 +626,9 @@ fn emit_sum_type(
             // without reading it when `==` is reflexive; `Shared` cannot
             // tell, so the payload says it (see `aver_rt::Shared`).
             let reflexive = capabilities.partial_eq && capabilities.eq;
-            // The `==` of a sum that is not thin carries no walk (see
-            // `Walking::fast`), its payloads' neither.
-            let fast = (!thin && walks_on(i)).then(|| walking_in(i).fast());
             let derived = derive_line(without_derived_eq(
                 capabilities,
-                order.is_some() || reflexive || fast.is_some(),
+                order.is_some() || reflexive,
             ));
             writeln!(payloads, "\n{derived}").unwrap();
             writeln!(
@@ -627,18 +638,26 @@ fn emit_sum_type(
             )
             .unwrap();
             let (this, that) = (|i| format!("self.{i}"), |i| format!("other.{i}"));
-            if order.is_some() || reflexive || fast.is_some() {
+            if order.is_some() || reflexive {
                 let declared: Vec<usize> = (0..v.fields.len()).collect();
-                let test = fields_equal(order.as_ref().unwrap_or(&declared), fast, this, that);
+                let test = fields_equal(order.as_ref().unwrap_or(&declared), None, this, that);
                 let test = match reflexive {
                     true => format!("std::ptr::eq(self, other) || {test}"),
                     false => test,
                 };
-                let test = match fast {
-                    Some(_) => format!("use ::aver_rt::WalkEq as _;\n        {test}"),
-                    None => test,
-                };
                 payloads.push_str(&partial_eq_impl(&payload, &test));
+            }
+            // The `==` of a sum that is not thin carries no walk (see
+            // `aver_rt::shared_items::top`), its payloads' neither.
+            if !thin && walks_on(i) {
+                let declared: Vec<usize> = (0..v.fields.len()).collect();
+                let test = fields_equal(
+                    order.as_ref().unwrap_or(&declared),
+                    Some(walking_in(i).fast()),
+                    this,
+                    that,
+                );
+                payloads.push_str(&fast_eq_impl(&payload, &test));
             }
             if walks_on(i) {
                 let order = order
@@ -787,6 +806,7 @@ fn emit_sum_type(
             if recursive && !thin {
                 let fast = match order.len() {
                     0 => "true".to_string(),
+                    _ if shared && walks_on(i) => "(**a0).aver_fast_eq(&**b0)".to_string(),
                     _ if shared => "a0 == b0".to_string(),
                     _ => fields_equal(
                         &order,
@@ -842,10 +862,13 @@ fn emit_sum_type(
                     "\nimpl PartialEq for {name} {{\n    #[inline]\n    fn eq(&self, other: &Self) -> bool {{\n        aver_rt::walk_eq(self, other)\n    }}\n}}\n"
                 )
                 .unwrap(),
-                false => out.push_str(&partial_eq_impl(
-                    name,
-                    &format!("use ::aver_rt::WalkEq as _;\n        match (self, other) {{\n{fast_arms}            _ => false,\n        }}"),
-                )),
+                false => {
+                    out.push_str(&fast_eq_impl(
+                        name,
+                        &format!("match (self, other) {{\n{fast_arms}            _ => false,\n        }}"),
+                    ));
+                    out.push_str(&top_eq_impl(name));
+                }
             }
         } else {
             let test = format!("match (self, other) {{\n{arms}            _ => false,\n        }}");
@@ -1079,11 +1102,13 @@ fn emit_product_type(
             |i| format!("self.{}", field(i)),
             |i| format!("other.{}", field(i)),
         );
-        let test = match through {
-            true => format!("use ::aver_rt::WalkEq as _;\n        {test}"),
-            false => test,
-        };
-        out.push_str(&partial_eq_impl(name, &test));
+        match through {
+            true => {
+                out.push_str(&fast_eq_impl(name, &test));
+                out.push_str(&top_eq_impl(name));
+            }
+            false => out.push_str(&partial_eq_impl(name, &test)),
+        }
     }
     if walking {
         let field = |i: usize| aver_name_to_rust(&fields[i].0);

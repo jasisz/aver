@@ -94,21 +94,6 @@ pub fn walk_eq<T: WalkEq>(a: &T, b: &T) -> bool {
     a.walk_eq(b, walk) && walk.rest()
 }
 
-/// A top-level `==` of `a` and `b` that `eq` makes within a walk of its own.
-pub(crate) fn walk_with<'v, T>(
-    a: &'v T,
-    b: &'v T,
-    eq: impl for<'w> FnOnce(&'v T, &'v T, Walk<'w, 'v>) -> bool,
-) -> bool {
-    let left = Cell::new(BUDGET);
-    let memory = Memory::default();
-    let walk = Walk {
-        left: &left,
-        memory: &memory,
-    };
-    eq(a, b, walk) && walk.rest()
-}
-
 /// A node of a recursive sum, as a comparison sees it: its address, which
 /// identifies it while it lives, and how many owners it has.
 pub trait NodeId {

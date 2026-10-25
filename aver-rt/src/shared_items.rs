@@ -14,8 +14,10 @@
 //! it.
 
 use crate::Shared as Rc;
+use crate::shared_eq::BUDGET;
 use crate::shared_hash::{HashWalk, node_hasher};
 use crate::{AverList, AverListInner, AverListIter, AverMap, AverVector, NodeId, Walk};
+use std::cell::Cell;
 use std::hash::{Hash, Hasher};
 
 /// An item of a collection, as a walk sees it: where it is stored, and
@@ -119,7 +121,7 @@ fn map_alone<K, V>(map: &AverMap<K, V>) -> bool {
 
 /// A collection that holds its items alone: no other collection holds any
 /// of them, so each is reached by as many paths as the collection is.
-pub trait Alone {
+trait Alone {
     fn alone(&self) -> bool;
 }
 
@@ -156,30 +158,74 @@ impl<K, V> Alone for AverMap<K, V> {
     }
 }
 
-/// `==` on two collections on the cycle of a type, from an `==` that
-/// carries no walk: the collections' own `==` when either holds its items
-/// alone, as no item is met twice there; otherwise a walk of the pair,
-/// `walk_eq` comparing it within the walk.
-#[inline]
-pub fn fast_eq<'v, C: Alone + PartialEq>(
-    a: &'v C,
-    b: &'v C,
-    walk_eq: impl for<'w> FnOnce(&'v C, &'v C, Walk<'w, 'v>) -> bool,
-) -> bool {
-    match a.alone() || b.alone() {
-        true => a == b,
-        false => walked(a, b, walk_eq),
-    }
+thread_local! {
+    /// How many more pairs of collections that share their items the `==`
+    /// under way meets before it begins again with a walk (see [`top`]).
+    static SHARED: Cell<u32> = const { Cell::new(BUDGET) };
 }
 
+/// The `==` of a type that holds itself through a collection. `fast`
+/// compares as a derived `==` would, counting the pairs of collections that
+/// share their items (see [`fast_list`]): a pair of collections either of
+/// which holds its items alone meets each item once, and only a shared one
+/// can be met again. Once [`BUDGET`] of them are met, `fast` answers false
+/// at once, and the values are compared again within a walk. An `==` begun
+/// inside another (a key looked up in a map) counts for itself.
+#[inline]
+pub fn top<T: crate::WalkEq>(a: &T, b: &T, fast: impl FnOnce(&T, &T) -> bool) -> bool {
+    let saved = SHARED.with(|left| left.replace(BUDGET));
+    let same = fast(a, b);
+    let left = SHARED.with(|left| left.replace(saved));
+    same || (left == 0 && crate::walk_eq(a, b))
+}
+
+/// Takes one from [`SHARED`], or answers that it is spent.
 #[cold]
 #[inline(never)]
-fn walked<'v, C>(
-    a: &'v C,
-    b: &'v C,
-    walk_eq: impl for<'w> FnOnce(&'v C, &'v C, Walk<'w, 'v>) -> bool,
+fn shared_pair() -> bool {
+    SHARED.with(|left| {
+        let n = left.get();
+        left.set(n.saturating_sub(1));
+        n > 0
+    })
+}
+
+/// `==` on two lists from [`top`], `eq` comparing two items.
+#[inline]
+pub fn fast_list<T>(a: &AverList<T>, b: &AverList<T>, eq: impl Fn(&T, &T) -> bool) -> bool {
+    a.len() == b.len()
+        && (a.alone() || b.alone() || shared_pair())
+        && match (a.as_slice(), b.as_slice()) {
+            (Some(x), Some(y)) => x.iter().zip(y).all(|(x, y)| eq(x, y)),
+            _ => a.iter().zip(b).all(|(x, y)| eq(x, y)),
+        }
+}
+
+/// `==` on two vectors from [`top`], `eq` comparing two items.
+#[inline]
+pub fn fast_vector<T: Clone>(
+    a: &AverVector<T>,
+    b: &AverVector<T>,
+    eq: impl Fn(&T, &T) -> bool,
 ) -> bool {
-    crate::shared_eq::walk_with(a, b, walk_eq)
+    a.len() == b.len()
+        && (a.alone() || b.alone() || shared_pair())
+        && a.iter().zip(b.iter()).all(|(x, y)| eq(x, y))
+}
+
+/// `==` on two maps from [`top`], `eq` comparing the values of a key.
+#[inline]
+pub fn fast_map<K: Eq + Hash + Clone, V: Clone>(
+    a: &AverMap<K, V>,
+    b: &AverMap<K, V>,
+    eq: impl Fn(&V, &V) -> bool,
+) -> bool {
+    let (Some(x), Some(y)) = (&a.inner, &b.inner) else {
+        return a.len() == b.len();
+    };
+    x.len() == y.len()
+        && (a.alone() || b.alone() || shared_pair())
+        && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| eq(v, w)))
 }
 
 /// How two items are compared within a walk: a closure the Rust backend
