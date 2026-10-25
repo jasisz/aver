@@ -85,10 +85,23 @@ impl aver_rt::WalkEq for Sexp {
     }
 }
 
+impl Sexp {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Sexp::Atom(a0), Sexp::Atom(b0)) => (*a0) == (*b0),
+            (Sexp::Text(a0), Sexp::Text(b0)) => (*a0) == (*b0),
+            (Sexp::Node(a0), Sexp::Node(b0)) => {
+                aver_rt::shared_items::fast_list(&(*a0), &(*b0), |x, y| (*x).aver_fast_eq(&(*y)))
+            }
+            _ => false,
+        }
+    }
+}
+
 impl PartialEq for Sexp {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 

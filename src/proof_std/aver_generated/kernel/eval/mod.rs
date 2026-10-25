@@ -85,10 +85,23 @@ impl aver_rt::WalkEq for Val {
     }
 }
 
+impl Val {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Val::VInt(a0), Val::VInt(b0)) => (*a0) == (*b0),
+            (Val::VBool(a0), Val::VBool(b0)) => (*a0) == (*b0),
+            (Val::VList(a0), Val::VList(b0)) => {
+                aver_rt::shared_items::fast_list(&(*a0), &(*b0), |x, y| (*x).aver_fast_eq(&(*y)))
+            }
+            _ => false,
+        }
+    }
+}
+
 impl PartialEq for Val {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 

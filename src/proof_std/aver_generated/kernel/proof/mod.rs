@@ -1801,9 +1801,24 @@ pub struct Case {
     pub proof: Proof,
 }
 
+impl Case {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        self.binders == other.binders
+            && self.ihs == other.ihs
+            && aver_rt::shared_items::fast_list(&self.carry, &other.carry, |x, y| {
+                aver_rt::shared_items::fast_list(&(*x), &(*y), |x, y| (*x) == (*y))
+            })
+            && aver_rt::shared_items::fast_list(&self.more, &other.more, |x, y| {
+                (*x).aver_fast_eq(&(*y))
+            })
+            && self.proof == other.proof
+    }
+}
+
 impl PartialEq for Case {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 
@@ -1921,9 +1936,16 @@ pub struct SplitCase {
     pub proof: Proof,
 }
 
+impl SplitCase {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        self.ctor == other.ctor && self.binders == other.binders && self.proof == other.proof
+    }
+}
+
 impl PartialEq for SplitCase {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 
@@ -1996,9 +2018,16 @@ pub struct More {
     pub ih: IhAt,
 }
 
+impl More {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        self.call == other.call && self.ih.aver_fast_eq(&other.ih)
+    }
+}
+
 impl PartialEq for More {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 
@@ -2066,9 +2095,18 @@ pub struct IhAt {
     pub carry: aver_rt::AverList<Proof>,
 }
 
+impl IhAt {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && aver_rt::shared_items::fast_list(&self.at, &other.at, |x, y| (*x) == (*y))
+            && aver_rt::shared_items::fast_list(&self.carry, &other.carry, |x, y| (*x) == (*y))
+    }
+}
+
 impl PartialEq for IhAt {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 

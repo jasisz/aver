@@ -1383,9 +1383,16 @@ pub struct Arm {
     pub body: Term,
 }
 
+impl Arm {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        self.pattern.aver_fast_eq(&other.pattern) && self.body == other.body
+    }
+}
+
 impl PartialEq for Arm {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 
@@ -1456,9 +1463,16 @@ pub struct Field {
     pub value: Term,
 }
 
+impl Field {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.value == other.value
+    }
+}
+
 impl PartialEq for Field {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 
@@ -1646,10 +1660,27 @@ impl aver_rt::WalkEq for Pat {
     }
 }
 
+impl Pat {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Pat::PWild, Pat::PWild) => true,
+            (Pat::PVar(a0), Pat::PVar(b0)) => (*a0) == (*b0),
+            (Pat::PLit(a0), Pat::PLit(b0)) => (*a0) == (*b0),
+            (Pat::PNil, Pat::PNil) => true,
+            (Pat::PCons(a0, a1), Pat::PCons(b0, b1)) => (*a0) == (*b0) && (*a1) == (*b1),
+            (Pat::PTuple(a0), Pat::PTuple(b0)) => {
+                aver_rt::shared_items::fast_list(&(*a0), &(*b0), |x, y| (*x).aver_fast_eq(&(*y)))
+            }
+            (Pat::PCtor(a0, a1), Pat::PCtor(b0, b1)) => (*a0) == (*b0) && (*a1) == (*b1),
+            _ => false,
+        }
+    }
+}
+
 impl PartialEq for Pat {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 
@@ -1898,10 +1929,29 @@ impl aver_rt::WalkEq for Fin {
     }
 }
 
+impl Fin {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Fin::FBool, Fin::FBool) => true,
+            (Fin::FSum(a0), Fin::FSum(b0)) => (*a0) == (*b0),
+            (Fin::FRec(a0, a1), Fin::FRec(b0, b1)) => {
+                (*a0) == (*b0)
+                    && aver_rt::shared_items::fast_list(&(*a1), &(*b1), |x, y| {
+                        (*x).aver_fast_eq(&(*y))
+                    })
+            }
+            (Fin::FTuple(a0), Fin::FTuple(b0)) => {
+                aver_rt::shared_items::fast_list(&(*a0), &(*b0), |x, y| (*x).aver_fast_eq(&(*y)))
+            }
+            _ => false,
+        }
+    }
+}
+
 impl PartialEq for Fin {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 
@@ -1964,9 +2014,16 @@ pub struct FinField {
     pub fin: Fin,
 }
 
+impl FinField {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.fin.aver_fast_eq(&other.fin)
+    }
+}
+
 impl PartialEq for FinField {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 

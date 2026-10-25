@@ -1716,9 +1716,18 @@ pub struct MatchArm {
     pub bindingSlots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 }
 
+impl MatchArm {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        self.pattern.aver_fast_eq(&other.pattern)
+            && self.body == other.body
+            && self.bindingSlots == other.bindingSlots
+    }
+}
+
 impl PartialEq for MatchArm {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 
@@ -1850,10 +1859,37 @@ impl aver_rt::WalkEq for Pattern {
     }
 }
 
+impl Pattern {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Pattern::PatInt(a0), Pattern::PatInt(b0)) => (*a0) == (*b0),
+            (Pattern::PatFloat(a0), Pattern::PatFloat(b0)) => (*a0) == (*b0),
+            (Pattern::PatBool(a0), Pattern::PatBool(b0)) => (*a0) == (*b0),
+            (Pattern::PatStr(a0), Pattern::PatStr(b0)) => (*a0) == (*b0),
+            (Pattern::PatEmpty, Pattern::PatEmpty) => true,
+            (Pattern::PatCons(a0, a1), Pattern::PatCons(b0, b1)) => {
+                (*a0) == (*b0) && (*a1) == (*b1)
+            }
+            (Pattern::PatConstructor(a0, a1), Pattern::PatConstructor(b0, b1)) => {
+                (*a0) == (*b0) && (*a1) == (*b1)
+            }
+            (Pattern::PatConstructorId(a0, a1, a2), Pattern::PatConstructorId(b0, b1, b2)) => {
+                (*a0) == (*b0) && (*a1) == (*b1) && (*a2) == (*b2)
+            }
+            (Pattern::PatTuple(a0), Pattern::PatTuple(b0)) => {
+                aver_rt::shared_items::fast_list(&(*a0), &(*b0), |x, y| (*x).aver_fast_eq(&(*y)))
+            }
+            (Pattern::PatWild, Pattern::PatWild) => true,
+            (Pattern::PatVar(a0), Pattern::PatVar(b0)) => (*a0) == (*b0),
+            _ => false,
+        }
+    }
+}
+
 impl PartialEq for Pattern {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        aver_rt::walk_eq(self, other)
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
     }
 }
 
