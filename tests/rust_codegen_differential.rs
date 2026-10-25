@@ -411,6 +411,76 @@ fn equality_of_terms_with_shared_subterms_matches_vm() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A refinement carrier whose smart constructor proves a bound within `i64`
+/// is a struct over a raw `i64` field: a word and a hash in the shape of a
+/// kernel's terms (a recursive sum carrying its word first, words computed
+/// from words with remainders, quotients, masks and shifts, a map keyed by
+/// hash and one keyed by word), and a carrier as a variable, a record and
+/// variant field, a list, option and tuple element, a map key and value, at
+/// its bound edges, refused by its smart constructor, updated by a literal,
+/// past `i64` and back, and built from a value outside its smart constructor
+/// (which keeps the `Int` field), all read as the VM; its verify cases pass
+/// as tests, and the build with every carrier boxed reads the same.
+#[test]
+fn refinement_carriers_held_as_i64_match_vm() {
+    let relative = "tests/fixtures/refined_int_carrier/main.av";
+    let root = repo_root().join("tests/fixtures/refined_int_carrier");
+    let file = repo_root().join(relative);
+    let vm_stdout = run_vm(&file, Some(&root)).unwrap_or_else(|e| panic!("{e}"));
+    let ws = temp_dir("refined_int_carrier");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&file, &project, "refined_int_carrier", Some(&root), &[])?;
+        let emitted = fs::read_to_string(project.join("src/aver_generated/lib/word/mod.rs"))
+            .map_err(|e| format!("read emitted word module: {e}"))?;
+        if !emitted.contains("pub value: i64,") {
+            return Err(format!("the word is not held as an i64:\n{emitted}"));
+        }
+        let bin = cargo_build(&project, "refined_int_carrier")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !out.status.success() || rust_stdout != vm_stdout {
+            return Err(format!(
+                "stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{}",
+                format_output(&out)
+            ));
+        }
+        cargo_test_in(&project, &shared_target_dir())?;
+        // The same program with every carrier on its `AverInt` field reads
+        // the same: the field changed its representation, not a value.
+        let boxed = ws.join("boxed");
+        fs::create_dir_all(&boxed).expect("create boxed project dir");
+        compile_rust_env(
+            &file,
+            &boxed,
+            "refined_int_carrier_boxed",
+            Some(&root),
+            &[],
+            &[("AVER_NO_CARRIER_I64", "1")],
+        )?;
+        let emitted = fs::read_to_string(boxed.join("src/aver_generated/lib/word/mod.rs"))
+            .map_err(|e| format!("read emitted word module: {e}"))?;
+        if !emitted.contains("pub value: aver_rt::AverInt,") {
+            return Err(format!(
+                "AVER_NO_CARRIER_I64 kept the i64 field:\n{emitted}"
+            ));
+        }
+        let bin = cargo_build(&boxed, "refined_int_carrier_boxed")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        match String::from_utf8_lossy(&out.stdout).trim() == vm_stdout {
+            true => Ok(()),
+            false => Err(format!("boxed carriers diverged:\n{}", format_output(&out))),
+        }
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// `lazy f(…)` keeps the call in a node until the value is first looked at:
 /// a value never looked into, one looked at many times and from two threads
 /// at once, compared both ways with the value built at once, a spine a

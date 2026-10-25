@@ -59,20 +59,26 @@ use crate::ir::mir::{
 pub fn rewrite_for_rust(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
-    _carrier: &super::bare_i64::CarrierIntervals,
+    carrier: &super::bare_i64::CarrierIntervals,
 ) -> MirProgram {
-    // ETAP-2 carrier-`i64` is a WASM-GC-ONLY size lever: the wasm-gc registry
-    // erases an eligible carrier's storage to a native `i64` everywhere, so a
-    // carrier value IS an i64 and `c.value` can stay raw. The RUST backend
-    // keeps the carrier as a real struct (`IntRange { value: AverInt }`), so a
-    // raw-i64 carrier path would emit invalid Rust (a `.to_i64()` on a struct,
-    // an `i64` where the field is `AverInt`). The Int-recurrence bareness
-    // (countdown / factorial counters) is target-agnostic and stays on for
-    // Rust; only the carrier-projection leaf is suppressed — pass an EMPTY
-    // carrier table so `carrier_interval` declines every carrier.
-    let empty = super::bare_i64::CarrierIntervals::new();
+    rewrite_for_rust_with_facts(program, boxed_signature_fns, carrier).0
+}
+
+/// [`rewrite_for_rust`], also returning the analysis the rewrite placed its
+/// boundaries by. `carrier` is the Rust backend's own table: the carriers it
+/// holds as a struct over a raw `i64` field (`codegen::rust::carrier`). A
+/// `.value` read of one renders raw whatever its base, and building one
+/// takes a raw value; the Int-recurrence bareness (countdown / factorial
+/// counters) is independent of it. The emitter must read the same facts
+/// (the returned table) so every raw read it emits is one the rewrite boxed
+/// where it meets a general `Int`.
+pub fn rewrite_for_rust_with_facts(
+    program: MirProgram,
+    boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+    carrier: &super::bare_i64::CarrierIntervals,
+) -> (MirProgram, BareI64Facts) {
     let empty_fields = super::bare_i64::FieldCarrierIntervals::new();
-    rewrite(program, boxed_signature_fns, &empty, &empty_fields, true)
+    rewrite(program, boxed_signature_fns, carrier, &empty_fields, true)
 }
 
 /// ETAP-2 SLICE 2b: the wasm-gc entry. Identical body to
@@ -94,7 +100,7 @@ pub fn rewrite_for_wasm_gc(
     field_carrier: &super::bare_i64::FieldCarrierIntervals,
 ) -> MirProgram {
     // No entry check: the wasm-gc emitter has no loop prologue for it.
-    rewrite(program, boxed_signature_fns, carrier, field_carrier, false)
+    rewrite(program, boxed_signature_fns, carrier, field_carrier, false).0
 }
 
 /// The shared rewrite both public entries delegate to. Target-agnostic:
@@ -110,7 +116,7 @@ fn rewrite(
     carrier: &super::bare_i64::CarrierIntervals,
     field_carrier: &super::bare_i64::FieldCarrierIntervals,
     entry_checks: bool,
-) -> MirProgram {
+) -> (MirProgram, BareI64Facts) {
     let mut program = program;
     let facts =
         super::bare_i64::analyze_with_fields(&program, carrier, field_carrier, entry_checks);
@@ -174,6 +180,8 @@ fn rewrite(
                 values,
                 carrier_types: carrier.clone(),
                 field_carrier_intervals: field_carrier.clone(),
+                rust: entry_checks,
+                raw_ops: analyzed.raw_ops.clone(),
                 ..FnBareFacts::default()
             }
         } else {
@@ -186,7 +194,7 @@ fn rewrite(
             rewrite_fn(f, &fn_facts, &facts, boxed_signature_fns);
         }
     }
-    program
+    (program, facts)
 }
 
 /// The wasm-gc `boxed_signature_fns` set: every fn that participates in a
@@ -795,6 +803,8 @@ fn rewrite_children(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExp
 
 fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
     let line = e.line;
+    // A builtin computed raw over raw operands keeps them raw.
+    let raw_op = ctx.facts.raw_op_call(&e.node).is_some() && renders_raw(&e.node, ctx.facts);
     match e.node {
         MirExpr::BinOp(mut b) => {
             let op = b.node.op;
@@ -857,6 +867,11 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
             let r = rewrite_boxed(*inner, ctx);
             Spanned::new(MirExpr::Neg(std::boxed::Box::new(r)), line)
         }
+        MirExpr::Call(mut c) if raw_op => {
+            let args = std::mem::take(&mut c.node.args);
+            c.node.args = args.into_iter().map(|a| rewrite_raw(a, ctx)).collect();
+            Spanned::new(MirExpr::Call(c), line)
+        }
         MirExpr::Call(mut c) => {
             let callee = c.node.callee.clone();
             let args = std::mem::take(&mut c.node.args);
@@ -885,16 +900,18 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
             Spanned::new(MirExpr::Construct(c), line)
         }
         MirExpr::RecordCreate(mut r) => {
+            let carrier = ctx.facts.carrier_record(&r.node.type_name);
             for fld in &mut r.node.fields {
                 let v = std::mem::replace(
                     &mut fld.value,
                     Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Unit))),
                 );
-                fld.value = rewrite_boxed(v, ctx);
+                fld.value = rewrite_field(v, carrier, ctx);
             }
             Spanned::new(MirExpr::RecordCreate(r), line)
         }
         MirExpr::RecordUpdate(mut u) => {
+            let carrier = ctx.facts.carrier_record(&u.node.type_name);
             let base = take_box(&mut u.node.base);
             u.node.base = std::boxed::Box::new(rewrite_value(base, ctx));
             for fld in &mut u.node.updates {
@@ -902,7 +919,7 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
                     &mut fld.value,
                     Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Unit))),
                 );
-                fld.value = rewrite_boxed(v, ctx);
+                fld.value = rewrite_field(v, carrier, ctx);
             }
             Spanned::new(MirExpr::RecordUpdate(u), line)
         }
@@ -1057,6 +1074,27 @@ fn saturated_position(e: Spanned<MirExpr>) -> Spanned<MirExpr> {
 
 fn rewrite_boxed_each(items: Vec<Spanned<MirExpr>>, ctx: &RewriteCtx<'_>) -> Vec<Spanned<MirExpr>> {
     items.into_iter().map(|it| rewrite_boxed(it, ctx)).collect()
+}
+
+/// A record field value. A field of a Rust carrier is a raw `i64`: a value
+/// that renders raw goes in as it is, any other is boxed first (its raw
+/// arms and raw-returning calls boxed) and then narrowed once with the
+/// checked `Unbox`. Every other field is a boxed context.
+fn rewrite_field(e: Spanned<MirExpr>, carrier: bool, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
+    if !carrier {
+        return rewrite_boxed(e, ctx);
+    }
+    if renders_raw(&e.node, ctx.facts) {
+        return rewrite_raw(e, ctx);
+    }
+    match rewrite_boxed(e, ctx) {
+        // A raw-returning call boxed for the field: take it raw instead.
+        Spanned {
+            node: MirExpr::Box(raw),
+            ..
+        } => *raw,
+        boxed => unbox_node(boxed),
+    }
 }
 
 /// Take a boxed child out, leaving a Unit placeholder (immediately

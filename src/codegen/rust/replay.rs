@@ -216,10 +216,18 @@ fn emit_record_impl(
         Some(module) => format!("{module}.{name}"),
         None => name.to_string(),
     };
+    // A carrier held as a raw `i64` records and replays its field as the
+    // `Int` it is.
+    let i64_carrier = super::carrier::is_i64_carrier(ctx, name);
     let to_fields = fields
         .iter()
         .map(|(field_name, _)| {
-            if packed_u8 {
+            if i64_carrier {
+                format!(
+                    "            fields.insert({field_name:?}.to_string(), ReplayValue::to_replay_json(&aver_rt::AverInt::from_i64(self.{})));",
+                    aver_name_to_rust(field_name)
+                )
+            } else if packed_u8 {
                 format!(
                     "            fields.insert({field_name:?}.to_string(), ReplayValue::to_replay_json(&self.{}.to_int_list()));",
                     aver_name_to_rust(field_name)
@@ -244,7 +252,13 @@ fn emit_record_impl(
                 field_name,
                 format!("$record {name} missing field '{field_name}'")
             );
-            if packed_u8 {
+            if i64_carrier {
+                format!(
+                    "                {}: ({decoded}).to_i64().ok_or_else(|| {:?}.to_string())?,",
+                    aver_name_to_rust(field_name),
+                    format!("$record {name} field '{field_name}' is out of its range")
+                )
+            } else if packed_u8 {
                 format!(
                     "                {}: ({decoded}).into_packed()?,",
                     aver_name_to_rust(field_name)

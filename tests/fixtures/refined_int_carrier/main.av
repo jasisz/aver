@@ -1,0 +1,212 @@
+module Main
+    intent =
+        "Refinement carriers the Rust backend holds as a raw i64, read as the"
+        "VM reads them: a word and a hash in the shape of a kernel's terms"
+        "(a recursive sum carrying its word first, words from words, a map"
+        "keyed by hash), and a carrier in every position a value can take:"
+        "variable, record and variant field, list, option, tuple, map key and"
+        "value, its bound edges, a smart constructor refusing, an update by a"
+        "literal, a transient past i64, and a carrier built from a value"
+        "outside its smart constructor, which keeps the Int field."
+    exposes opaque [Pct, Loose]
+    depends [Lib.Hash, Lib.Word]
+    effects [Console.print]
+
+type Expr
+    Leaf(Lib.Word.Word, Int)
+    App(Lib.Word.Word, Expr, Expr)
+
+record Pct
+    value: Int
+
+record Loose
+    value: Int
+
+record Sample
+    label: String
+    pct: Pct
+    words: List<Lib.Word.Word>
+
+fn pct(n: Int) -> Result<Pct, String>
+    ? "Smart constructor: a percentage."
+    match Bool.and(n >= 0, n <= 100)
+        true -> Result.Ok(Pct(value = n))
+        false -> Result.Err("pct out of range: {n}")
+
+fn loose(n: Int) -> Result<Loose, String>
+    ? "Smart constructor of a carrier also built from a value elsewhere."
+    match Bool.and(n >= 0, n <= 100)
+        true -> Result.Ok(Loose(value = n))
+        false -> Result.Err("loose out of range")
+
+fn looseRaw(n: Int) -> Loose
+    ? "Builds the carrier past its smart constructor, so it keeps the Int field."
+    Loose(value = n)
+
+fn half(p: Pct) -> Pct
+    ? "Half a percentage, through the smart constructor."
+    match pct(Int.div(p.value, 2))
+        Result.Ok(h) -> h
+        Result.Err(_) -> Pct(value = 0)
+
+fn full(p: Pct) -> Pct
+    ? "An update by a literal inside the bound."
+    Pct.update(p, value = 100)
+
+fn transient(p: Pct) -> Int
+    ? "Past i64 and back: exact, as Int is."
+    (p.value + 9223372036854775807) - 9223372036854775807
+
+fn squares(p: Pct) -> Int
+    ? "Raw arithmetic over the field, its remainder and its bits."
+    p.value * p.value + Int.mod(p.value * 7, 13) + Bits.and(p.value, 6) + Bits.or(p.value, 1) + Bits.xor(p.value, 5)
+
+verify squares
+    squares(Pct(value = 3)) => 28
+    squares(Pct(value = 100)) => 10000 + Int.mod(700, 13) + 4 + 101 + 97
+
+verify half
+    half(Pct(value = 41)) => Pct(value = 20)
+    full(half(Pct(value = 0))) => Pct(value = 100)
+
+fn wordOf(e: Expr) -> Lib.Word.Word
+    ? "The word a node carries."
+    match e
+        Expr.Leaf(w, _) -> w
+        Expr.App(w, _, _) -> w
+
+fn leaf(i: Int) -> Expr
+    ? "A leaf over i."
+    Expr.Leaf(Lib.Word.leaf(Lib.Hash.mix(Lib.Hash.hash(1), Lib.Hash.hash(Int.mod(i, 2147483647))), Int.mod(i, 20000)), i)
+
+fn app(f: Expr, a: Expr) -> Expr
+    ? "An application, its word from its parts' words."
+    Expr.App(Lib.Word.joined(4, wordOf(f), wordOf(a)), f, a)
+
+fn build(i: Int, n: Int, acc: Expr) -> Expr
+    ? "A left spine of n applications."
+    match i >= n
+        true -> acc
+        false -> build(i + 1, n, app(acc, app(leaf(i), leaf(i + 7))))
+
+fn words(e: Expr, acc: List<Lib.Word.Word>) -> List<Lib.Word.Word>
+    ? "The words along the spine and of every argument."
+    match e
+        Expr.Leaf(w, _) -> List.prepend(w, acc)
+        Expr.App(w, f, a) -> words(f, List.prepend(w, List.prepend(wordOf(a), acc)))
+
+fn tally(ws: List<Lib.Word.Word>, m: Map<Lib.Hash.Hash, Int>) -> Map<Lib.Hash.Hash, Int>
+    ? "How many words carry each hash."
+    match ws
+        [] -> m
+        [w, ..rest] -> bump(rest, m, Lib.Word.hashIn(w))
+
+fn bump(ws: List<Lib.Word.Word>, m: Map<Lib.Hash.Hash, Int>, h: Lib.Hash.Hash) -> Map<Lib.Hash.Hash, Int>
+    ? "One more word with hash h."
+    c = Option.withDefault(Map.get(m, h), 0)
+    tally(ws, Map.set(m, h, c + 1))
+
+fn byWord(ws: List<Lib.Word.Word>, m: Map<Lib.Word.Word, Lib.Hash.Hash>) -> Map<Lib.Word.Word, Lib.Hash.Hash>
+    ? "Each word's hash, keyed by the word."
+    match ws
+        [] -> m
+        [w, ..rest] -> byWord(rest, Map.set(m, w, Lib.Word.hashIn(w)))
+
+fn showHashes(hs: List<Lib.Hash.Hash>, acc: String) -> String
+    ? "Hashes as text, in order."
+    match hs
+        [] -> acc
+        [h, ..rest] -> showHashes(rest, "{acc} {Lib.Hash.value(h)}")
+
+fn showWords(ws: List<Lib.Word.Word>, k: Int, acc: String) -> String
+    ? "The first k words as text."
+    match ws
+        [] -> acc
+        [w, ..rest] -> match k <= 0
+            true -> acc
+            false -> showWords(rest, k - 1, "{acc} {Lib.Word.value(w)}/{Lib.Word.sizeIn(w)}/{Lib.Word.rangeIn(w)}")
+
+fn biggest(ws: List<Lib.Word.Word>, best: Option<Lib.Word.Word>) -> Option<Lib.Word.Word>
+    ? "The word with the largest value."
+    match ws
+        [] -> best
+        [w, ..rest] -> match best
+            Option.None -> biggest(rest, Option.Some(w))
+            Option.Some(b) -> match Lib.Word.value(w) > Lib.Word.value(b)
+                true -> biggest(rest, Option.Some(w))
+                false -> biggest(rest, best)
+
+fn showPair(p: Tuple<Lib.Word.Word, Pct>) -> String
+    ? "A word and a percentage, as text."
+    match p
+        (w, q) -> "{Lib.Word.value(w)} {q.value}"
+
+fn showResult(r: Result<Pct, String>) -> String
+    ? "A smart constructor's answer, as text."
+    match r
+        Result.Ok(p) -> "ok {p.value}"
+        Result.Err(e) -> "err {e}"
+
+fn pcts(xs: List<Int>, acc: List<Pct>) -> List<Pct>
+    ? "The percentages among xs, reversed."
+    match xs
+        [] -> acc
+        [x, ..rest] -> match pct(x)
+            Result.Ok(p) -> pcts(rest, List.prepend(p, acc))
+            Result.Err(_) -> pcts(rest, acc)
+
+fn sumPcts(ps: List<Pct>, acc: Int) -> Int
+    ? "The sum of the percentages."
+    match ps
+        [] -> acc
+        [p, ..rest] -> sumPcts(rest, acc + p.value)
+
+fn edges(lo: Int, hi: Int) -> String
+    ? "The smart constructor at and past both edges."
+    "{showResult(pct(lo))} {showResult(pct(hi))} {showResult(pct(lo - 1))} {showResult(pct(hi + 1))}"
+
+fn onPct(n: Int, e: Expr) -> String
+    ? "Every operation on one percentage."
+    match pct(n)
+        Result.Ok(p) -> "pct {p.value} half {half(p).value} full {full(p).value} transient {transient(p)} squares {squares(p)} pair {showPair((wordOf(e), p))}"
+        Result.Err(err) -> err
+
+fn sample(ws: List<Lib.Word.Word>) -> String
+    ? "A carrier as a record field beside a list of carriers."
+    s = Sample(label = "s", pct = full(half(Pct(value = 40))), words = List.take(ws, 2))
+    "{s.label} {s.pct.value} {List.len(s.words)} {s.pct == Pct(value = 100)}"
+
+fn scores() -> String
+    ? "Carriers as a map's keys and values."
+    m = Map.set(Map.set({}, Pct(value = 9), Pct(value = 90)), Pct(value = 3), Pct(value = 30))
+    "{Map.len(m)} {Option.withDefault(Map.get(m, Pct(value = 3)), Pct(value = 0)).value} {showPcts(Map.keys(m), "")}"
+
+fn showPcts(ps: List<Pct>, acc: String) -> String
+    ? "Percentages as text, in order."
+    match ps
+        [] -> acc
+        [p, ..rest] -> showPcts(rest, "{acc} {p.value}")
+
+fn loosened(big: Int) -> String
+    ? "A carrier built past its smart constructor keeps every Int."
+    "{looseRaw(big).value} {looseRaw(7) == looseRaw(7)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    e = build(0, 300, leaf(0))
+    f = build(0, 300, leaf(0))
+    ws = words(e, [])
+    counts = tally(ws, {})
+    keyed = byWord(List.take(ws, 50), {})
+    Console.print("words {List.len(ws)} hashes {Map.len(counts)} keyed {Map.len(keyed)}")
+    Console.print("first{showWords(ws, 4, "")}")
+    Console.print("keys{showHashes(List.take(Map.keys(counts), 6), "")}")
+    Console.print("by word{showHashes(List.take(Map.values(keyed), 4), "")}")
+    Console.print("equal {e == f} {wordOf(e) == wordOf(f)} {e == build(0, 300, leaf(1))}")
+    Console.print("top {Lib.Word.value(Option.withDefault(biggest(ws, Option.None), wordOf(e)))}")
+    Console.print("edges {edges(0, 100)}")
+    Console.print(onPct(87, e))
+    Console.print("sample {sample(ws)}")
+    Console.print("list {sumPcts(pcts([5, 200, 95, -3, 50], []), 0)}")
+    Console.print("map {scores()}")
+    Console.print("loose {loosened(12345678901234567890123)}")

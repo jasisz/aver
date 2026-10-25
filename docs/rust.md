@@ -111,6 +111,12 @@ A constructor of any other sum much larger than its siblings keeps its fields in
 
 An `Int` is one machine word, `aver_rt::AverInt` (8 bytes, `Option<Int>` too): a value in `[-2^62, 2^62)` is stored in the word and arithmetic on it stays in registers, while a larger magnitude goes to the heap as a `BigInt`, so a program that packs a full 63 bits into one `Int` (a 64-bit hash, several fields in one word) pays an allocation for every value past `2^62`.
 
+### Refinements over Int
+
+A refinement over `Int` is a record of one `Int` field built by a smart constructor whose check bounds the value within `i64` (`Bool.and(n >= 0, n < 4611686018427387904)` for a word below `2^62`), usually listed under `exposes opaque` so that no other module builds it. Such a type is a struct whose field is an `i64`, not an `AverInt`. It keeps its name and every trait, so it goes into variants, records, lists, options, tuples and maps, as a key or a value, as any record does, and it has nothing to drop. Building one narrows the checked value to `i64` once. Reading its field gives that `i64`: arithmetic on it runs on `i64` where the bound proves every step stays within `i64`, and so do `Int.mod` and `Int.div` by a literal above zero, `Bits.and`, `Bits.or`, `Bits.xor`, `Bits.shiftRight`, `Bits.shiftLeft` and `Bits.low` by a literal count, `Int.min` and `Int.max`. The result becomes an `AverInt` only where it meets a general `Int`: a parameter, a return, a field of another type, a value printed. Those operations run on `i64` for any `Int` the backend already holds as one, such as a loop counter or a string position, as well.
+
+The type keeps its `AverInt` field when it is built anywhere but in its smart constructor from anything but a literal inside the bound (in a function or in a module binding; a `verify` case may build it from any value, since it runs as a test with overflow checks), when another type of the program has the same name, and when it is a capability's boundary type or the key of a wait set. `AVER_NO_CARRIER_I64=1` keeps the `AverInt` field for every type.
+
 ## Runtime dependency
 
 `Cargo.toml` is generated around the shared `aver-rt` runtime crate. Service-specific runtime features are turned on only when needed:

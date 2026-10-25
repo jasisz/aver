@@ -83,6 +83,120 @@ fn i64_interval() -> Interval {
     Interval::between(i64::MIN as i128, i64::MAX as i128)
 }
 
+/// A builtin the Rust backend computes on raw `i64` operands: the
+/// remainder and quotient by a literal `k > 0` (Euclidean, as `Int` is),
+/// the bitwise operations, a shift or the low bits by a literal count, and
+/// the smaller or larger of two. Each gives the exact `Int` result for
+/// operands within `i64` and a result its bound ([`RawOp::interval`]) keeps
+/// within `i64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawOp {
+    Mod,
+    Div,
+    And,
+    Or,
+    Xor,
+    Min,
+    Max,
+    /// `Bits.shiftRight(x, k)`: rounds down, as Euclidean division by `2^k`.
+    Shr,
+    /// `Bits.shiftLeft(x, k)`: `x * 2^k`.
+    Shl,
+    /// `Bits.low(x, k)`: the low `k` bits, `x` modulo `2^k`.
+    Low,
+}
+
+impl RawOp {
+    fn of_builtin(name: &str) -> Option<RawOp> {
+        Some(match name {
+            "Int.mod" => RawOp::Mod,
+            "Int.div" => RawOp::Div,
+            "Bits.and" => RawOp::And,
+            "Bits.or" => RawOp::Or,
+            "Bits.xor" => RawOp::Xor,
+            "Int.min" => RawOp::Min,
+            "Int.max" => RawOp::Max,
+            _ => return None,
+        })
+    }
+
+    /// The literal the second operand must be: a divisor above zero, or a
+    /// count no larger than the shift keeps exact. `None` for the ops that
+    /// take two values.
+    pub fn literal_operand(self, e: &MirExpr) -> Option<Option<i128>> {
+        let range = match self {
+            RawOp::Mod | RawOp::Div => 1..=i64::MAX as i128,
+            RawOp::Shr => 0..=63,
+            RawOp::Shl | RawOp::Low => 0..=62,
+            _ => return None,
+        };
+        let k = match e {
+            MirExpr::Literal(l) => match l.node {
+                Literal::Int(k) => Some(k as i128),
+                _ => None,
+            },
+            _ => None,
+        };
+        Some(k.filter(|k| range.contains(k)))
+    }
+
+    /// The result's bound from the first operand's and the second's (a
+    /// literal for [`RawOp::literal_operand`]).
+    fn interval(self, a: Interval, b: Interval) -> Option<Interval> {
+        let k = b.as_point();
+        Some(match self {
+            RawOp::Mod => Interval::rem_euclid_by(k?),
+            RawOp::Div => a.div_euclid_by(k?),
+            RawOp::And => a.bit_and(b),
+            RawOp::Or | RawOp::Xor => a.bit_or(b),
+            RawOp::Min => a.min_with(b),
+            RawOp::Max => a.max_with(b),
+            RawOp::Shr => a.div_euclid_by(1i128 << k?),
+            RawOp::Shl => a.mul(Interval::point(1i128 << k?)),
+            RawOp::Low => Interval::rem_euclid_by(1i128 << k?),
+        })
+    }
+}
+
+/// The calls the Rust backend computes raw, of one program ([`RawOp`]):
+/// none outside the Rust facts.
+#[derive(Debug, Clone, Default)]
+pub struct RawOps {
+    on: bool,
+    builtins: HashMap<crate::ir::BuiltinId, RawOp>,
+}
+
+impl RawOps {
+    fn of(program: &MirProgram, on: bool) -> RawOps {
+        let builtins = match on {
+            true => (0..program.builtins.len() as u32)
+                .map(crate::ir::BuiltinId)
+                .filter_map(|id| Some((id, RawOp::of_builtin(program.builtin_name(id))?)))
+                .collect(),
+            false => HashMap::new(),
+        };
+        RawOps { on, builtins }
+    }
+
+    /// The op a call of `callee` computes raw, if any. The literal forms
+    /// (`Int.mod(x, 7)`, `Bits.shiftRight(x, 3)`) reach MIR as intrinsics.
+    pub fn op(&self, callee: &MirCallee) -> Option<RawOp> {
+        use crate::ir::hir::BuiltinIntrinsic as I;
+        if !self.on {
+            return None;
+        }
+        match callee {
+            MirCallee::Builtin(id) => self.builtins.get(id).copied(),
+            MirCallee::Intrinsic(I::IntModEuclid) => Some(RawOp::Mod),
+            MirCallee::Intrinsic(I::IntDivEuclid) => Some(RawOp::Div),
+            MirCallee::Intrinsic(I::BitsShiftRight) => Some(RawOp::Shr),
+            MirCallee::Intrinsic(I::BitsShiftLeft) => Some(RawOp::Shl),
+            MirCallee::Intrinsic(I::BitsLow) => Some(RawOp::Low),
+            _ => None,
+        }
+    }
+}
+
 fn is_code_carrier_call(e: &MirExpr) -> bool {
     carrier_call_interval(e).is_some()
 }
@@ -322,6 +436,13 @@ pub struct FnBareFacts {
     /// signature, and a caller with a boxed position saturates it
     /// (`__str_index_position`) instead of checking it.
     pub saturated_params: Vec<usize>,
+    /// Facts for the Rust backend. There an eligible carrier (a type in
+    /// `carrier_types`) is a struct whose one field is a raw `i64`, so its
+    /// `.value` reads that `i64` whatever the base is, and building one takes
+    /// a raw value (see [`FnBareFacts::carrier_record`]).
+    pub rust: bool,
+    /// Rust: the calls of the program computed on raw `i64` operands.
+    pub raw_ops: std::sync::Arc<RawOps>,
 }
 
 /// A position param checked once on entry: a start in `[lo, hi]` enters
@@ -397,6 +518,11 @@ impl FnBareFacts {
         {
             return Some(iv);
         }
+        // Rust: every value of an eligible carrier holds its field as an
+        // `i64`, so the read is raw whatever the base is.
+        if self.rust {
+            return self.carrier_type_interval(p.node.base.ty());
+        }
         // Multi-field direct bounded-field read: `Project(rec, "x")` where
         // `rec`'s stamped type is a bounded record and `(record, "x")` is an
         // eligible field. The #550 storage erasure stored `x` as a native `i64`,
@@ -457,6 +583,47 @@ impl FnBareFacts {
         (known && iv.fits_i64()).then_some(iv)
     }
 
+    /// Rust: the proven bound of the eligible carrier type `ty` names. The
+    /// Rust table holds only names no other type of the program has, so a
+    /// qualified spelling (`Lib.Word.Word`) is matched by its last segment.
+    fn carrier_type_interval(&self, ty: Option<&Type>) -> Option<Interval> {
+        let name = ty.and_then(Type::named_name)?;
+        self.carrier_name_interval(name)
+    }
+
+    fn carrier_name_interval(&self, name: &str) -> Option<Interval> {
+        let bare = name.rsplit('.').next().unwrap_or(name);
+        let (iv, known) = self.carrier_types.get(bare).copied()?;
+        (known && iv.fits_i64()).then_some(iv)
+    }
+
+    /// Rust: is a record named `type_name` an eligible carrier, built from
+    /// a raw `i64`? Only the Rust facts answer yes.
+    pub fn carrier_record(&self, type_name: &str) -> bool {
+        self.rust && self.carrier_name_interval(type_name).is_some()
+    }
+
+    /// Rust: `e` as a call of a builtin computed raw, with its arguments.
+    pub fn raw_op_call<'e>(&self, e: &'e MirExpr) -> Option<(RawOp, &'e [Spanned<MirExpr>])> {
+        let MirExpr::Call(c) = e else {
+            return None;
+        };
+        let op = self.raw_ops.op(&c.node.callee)?;
+        (c.node.args.len() == 2).then_some((op, c.node.args.as_slice()))
+    }
+
+    /// The bound of a raw builtin call over raw operands; `None` when an
+    /// operand is not raw or not the literal the op takes.
+    fn raw_op_interval(&self, e: &MirExpr) -> Option<Interval> {
+        let (op, args) = self.raw_op_call(e)?;
+        let a = self.bare_expr_interval(&args[0].node)?;
+        let b = match op.literal_operand(&args[1].node) {
+            Some(k) => Interval::point(k?),
+            None => self.bare_expr_interval(&args[1].node)?,
+        };
+        op.interval(a, b).filter(|iv| iv.fits_i64())
+    }
+
     /// ETAP-2 carrier-`i64`: does `e` read a bare carrier's i64 `.value`
     /// (`Project(Local(bare_carrier_slot), _)`)? Such a read renders raw i64
     /// on wasm-gc (the project bridge is skipped), so it is a bare leaf.
@@ -495,8 +662,9 @@ impl FnBareFacts {
             MirExpr::Project(_) => self.carrier_project_interval(e),
             // Indexed dispatch returns either the `-1` sentinel or a Unicode
             // scalar, and the cursor step a byte offset, directly as the
-            // backend's native i64 carrier.
-            MirExpr::Call(_) => carrier_call_interval(e),
+            // backend's native i64 carrier; a builtin computed raw over raw
+            // operands gives its own bound.
+            MirExpr::Call(_) => carrier_call_interval(e).or_else(|| self.raw_op_interval(e)),
             MirExpr::Neg(inner) => {
                 let r = Interval::point(0).sub(self.bare_expr_interval(&inner.node)?);
                 r.fits_i64().then_some(r)
@@ -536,7 +704,7 @@ impl FnBareFacts {
             MirExpr::Local(local) => self.is_bare(local.node.slot),
             // ETAP-2 carrier-`i64`: a bare carrier's `.value` reads raw i64.
             MirExpr::Project(_) => self.is_carrier_project(e),
-            MirExpr::Call(_) => is_code_carrier_call(e),
+            MirExpr::Call(_) => is_code_carrier_call(e) || self.raw_op_interval(e).is_some(),
             // A compound: require the WHOLE-TREE result interval to fit i64.
             MirExpr::Neg(_) | MirExpr::BinOp(_) => self.bare_expr_interval(e).is_some_and(|iv| {
                 raw_i64_eligible(Some(iv), std::iter::once(&OpClass::OverflowFree))
@@ -626,7 +794,7 @@ pub fn analyze_with_fields(
 
     let mut fns: HashMap<FnId, FnBareFacts> = HashMap::new();
     for (id, f) in program.iter() {
-        let mut facts = analyze_fn(f, &summary, carrier, field_carrier, None);
+        let mut facts = analyze_fn(f, &summary, carrier, field_carrier, None, rust_positions);
         if let Some(checked) = summary.checked.get(id) {
             let on_fallback = MirFn {
                 body: checked.fallback.clone(),
@@ -643,6 +811,7 @@ pub fn analyze_with_fields(
                     carrier,
                     field_carrier,
                     Some(checked.param),
+                    rust_positions,
                 ),
             }));
         }
@@ -676,6 +845,8 @@ struct Summary {
     checked: std::rc::Rc<HashMap<FnId, CheckedPosition>>,
     /// Params only read at as a position ([`read_only_positions`]).
     read_only: std::rc::Rc<HashSet<(FnId, usize)>>,
+    /// Rust: the calls computed on raw `i64` operands ([`RawOp`]).
+    raw_ops: std::sync::Arc<RawOps>,
 }
 
 impl Summary {
@@ -797,6 +968,7 @@ fn compute_summary(
         false => HashSet::new(),
     });
     let checked = std::rc::Rc::new(ranges.checked);
+    let raw_ops = std::sync::Arc::new(RawOps::of(program, rust_positions));
     for &(id, i) in read_only.iter() {
         if let Some(cell) = bare_param_intervals.get_mut(&id).and_then(|v| v.get_mut(i)) {
             *cell = Some(i64_interval());
@@ -900,6 +1072,7 @@ fn compute_summary(
             positions: ranges.positions.clone(),
             checked: checked.clone(),
             read_only: read_only.clone(),
+            raw_ops: raw_ops.clone(),
         };
         for (id, f) in program.iter() {
             let mut escaping: HashSet<LocalId> = HashSet::new();
@@ -929,8 +1102,9 @@ fn compute_summary(
                 positions: ranges.positions.clone(),
                 checked: checked.clone(),
                 read_only: read_only.clone(),
+                raw_ops: raw_ops.clone(),
             };
-            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None);
+            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
             if !facts.bare_return && bare_return.insert(*id, false) != Some(false) {
                 changed = true;
             }
@@ -979,9 +1153,10 @@ fn compute_summary(
             positions: ranges.positions.clone(),
             checked: checked.clone(),
             read_only: read_only.clone(),
+            raw_ops: raw_ops.clone(),
         };
         for (_caller, f) in program.iter() {
-            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None);
+            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
             let mut demote: Vec<FnId> = Vec::new();
             collect_let_bound_boxed_returns(&f.body.node, &facts, &bare_return, &mut demote);
             for target in demote {
@@ -1005,6 +1180,7 @@ fn compute_summary(
         positions: ranges.positions,
         checked,
         read_only,
+        raw_ops,
     }
 }
 
@@ -2906,8 +3082,13 @@ fn analyze_fn(
     carrier: &CarrierIntervals,
     field_carrier: &FieldCarrierIntervals,
     boxed_param: Option<usize>,
+    rust: bool,
 ) -> FnBareFacts {
-    let mut facts = FnBareFacts::default();
+    let mut facts = FnBareFacts {
+        rust,
+        raw_ops: summary.raw_ops.clone(),
+        ..FnBareFacts::default()
+    };
 
     // 1. Range: seed param intervals from the summary. A bare param is
     //    seeded with its PROVEN recurrence interval (`[K-step, entry]`) when
@@ -3141,7 +3322,25 @@ fn eval_interval(
         MirExpr::Project(_) => facts
             .carrier_project_interval(e)
             .unwrap_or_else(Interval::unbounded),
-        MirExpr::Call(_) => carrier_call_interval(e).unwrap_or_else(Interval::unbounded),
+        MirExpr::Call(_) => {
+            if let Some(iv) = carrier_call_interval(e) {
+                return iv;
+            }
+            let Some((op, args)) = facts.raw_op_call(e) else {
+                return Interval::unbounded();
+            };
+            let a = eval_interval(&args[0].node, env, worst, facts);
+            let b = match op.literal_operand(&args[1].node) {
+                Some(Some(k)) => Some(Interval::point(k)),
+                Some(None) => None,
+                None => Some(eval_interval(&args[1].node, env, worst, facts)),
+            };
+            let r = b
+                .and_then(|b| op.interval(a, b))
+                .unwrap_or_else(Interval::unbounded);
+            *worst = worst.hull(r);
+            r
+        }
         MirExpr::Neg(inner) => {
             let r = Interval::point(0).sub(eval_interval(&inner.node, env, worst, facts));
             *worst = worst.hull(r);
@@ -3249,8 +3448,13 @@ fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet
             // result is another bounded carrier, so no general-Int boundary
             // exists on either side.
             _ => {
+                // A builtin computed raw takes its operands as arithmetic
+                // does: raw when the call is raw, boxed by the rewrite when
+                // it is not.
+                let raw_op = summary.raw_ops.op(&c.node.callee).is_some();
                 for (i, a) in c.node.args.iter().enumerate() {
-                    if !intrinsic_accepts_raw_code_arg(&c.node.callee, i)
+                    if !raw_op
+                        && !intrinsic_accepts_raw_code_arg(&c.node.callee, i)
                         && !intrinsic_accepts_raw_position_arg(&c.node.callee, i)
                     {
                         mark_operand_escapes_deep(&a.node, out);
@@ -5305,5 +5509,132 @@ fn main() -> Int
             boxed_sink,
             "the raw position is boxed where the record stores it"
         );
+    }
+
+    /// A word carrier and the reads of its field a Rust build computes on
+    /// raw `i64`: through a parameter, a match binder and a call result,
+    /// with the word builtins over them.
+    const WORD_SRC: &str = r#"
+module Toy
+    intent = "t"
+    exposes opaque [Word]
+
+record Word
+    value: Int
+
+fn fromInt(n: Int) -> Result<Word, String>
+    match Bool.and(n >= 0, n < 4611686018427387904)
+        true  -> Result.Ok(Word(value = n))
+        false -> Result.Err("err")
+
+fn word(n: Int) -> Word
+    match fromInt(n)
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 0)
+
+fn viaBinder(n: Int) -> Int
+    match fromInt(n)
+        Result.Ok(w) -> w.value * 2
+        Result.Err(_) -> 0
+
+fn viaCall(n: Int) -> Int
+    word(n).value + 1
+
+fn low(w: Word) -> Int
+    Bits.and(w.value, 255)
+
+fn hashIn(w: Word) -> Int
+    Int.div(w.value, 2147483648)
+
+fn residue(w: Word) -> Int
+    Int.mod(w.value + 5, 2147483647)
+
+fn shifted(w: Word) -> Int
+    Bits.shiftRight(w.value, 31)
+
+fn capped(w: Word) -> Int
+    Int.min(Bits.or(w.value, 3), 63)
+
+fn mixed(w: Word, k: Int) -> Int
+    Bits.and(w.value, k)
+"#;
+
+    fn word_facts(rust: bool) -> (MirProgram, BareI64Facts) {
+        let mut items = parse_source(WORD_SRC).expect("parse");
+        let cfg = crate::ir::pipeline::PipelineConfig {
+            typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        };
+        let result = crate::ir::pipeline::run(&mut items, cfg);
+        let table = carrier_table_for(&items, &result.symbol_table);
+        assert!(table.contains_key("Word"), "{table:?}");
+        let program = optimize(lower_program(&result.resolved_items));
+        let facts = analyze_with_fields(&program, &table, &FieldCarrierIntervals::new(), rust);
+        (program, facts)
+    }
+
+    /// The first expression of `name`'s body, in pre-order, that `pick`
+    /// accepts, and whether the facts of the function render it raw.
+    fn raw_in(name: &str, rust: bool, pick: fn(&MirExpr) -> bool) -> bool {
+        fn first<'e>(e: &'e MirExpr, pick: fn(&MirExpr) -> bool) -> Option<&'e MirExpr> {
+            if pick(e) {
+                return Some(e);
+            }
+            let mut found = None;
+            visit_children(e, &mut |c| {
+                if found.is_none() {
+                    found = first(c, pick);
+                }
+            });
+            found
+        }
+        let (program, facts) = word_facts(rust);
+        let id = fn_id_by_name(&program, name);
+        let body = &program.fn_by_id(id).unwrap().body.node;
+        let e = first(body, pick).unwrap_or_else(|| panic!("no such node in `{name}`"));
+        facts.for_fn(id).unwrap().expr_is_bare_i64(e)
+    }
+
+    fn is_arith(e: &MirExpr) -> bool {
+        matches!(e, MirExpr::BinOp(_))
+    }
+
+    fn is_call(e: &MirExpr) -> bool {
+        matches!(e, MirExpr::Call(_))
+    }
+
+    #[test]
+    fn rust_reads_a_carrier_field_raw_whatever_the_base() {
+        assert!(raw_in("viaBinder", true, is_arith));
+        assert!(raw_in("viaCall", true, is_arith));
+        // wasm-gc reads raw only a parameter's field: its emitter boxes
+        // every other read.
+        assert!(!raw_in("viaBinder", false, is_arith));
+        assert!(!raw_in("viaCall", false, is_arith));
+    }
+
+    #[test]
+    fn rust_computes_the_word_builtins_raw() {
+        for name in ["low", "hashIn", "residue", "shifted", "capped"] {
+            assert!(raw_in(name, true, is_call), "{name} should be raw on Rust");
+            assert!(
+                !raw_in(name, false, is_call),
+                "{name} stays boxed on wasm-gc"
+            );
+        }
+        // A mask that is a general Int keeps the call boxed.
+        assert!(!raw_in("mixed", true, is_call));
+    }
+
+    #[test]
+    fn a_carrier_field_is_built_from_a_raw_value() {
+        let (program, facts) = word_facts(true);
+        let id = fn_id_by_name(&program, "word");
+        let f = facts.for_fn(id).unwrap();
+        assert!(f.carrier_record("Word"));
+        assert!(f.carrier_record("Toy.Word"));
+        assert!(!f.carrier_record("Other"));
+        let (_, wasm) = word_facts(false);
+        assert!(!wasm.for_fn(id).unwrap().carrier_record("Word"));
     }
 }
