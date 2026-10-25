@@ -191,7 +191,7 @@ fn shared_pair() -> bool {
 }
 
 /// `==` on two lists from [`top`], `eq` comparing two items.
-#[inline]
+#[inline(never)]
 pub fn fast_list<T>(a: &AverList<T>, b: &AverList<T>, eq: impl Fn(&T, &T) -> bool) -> bool {
     a.len() == b.len()
         && (a.alone() || b.alone() || shared_pair())
@@ -202,7 +202,7 @@ pub fn fast_list<T>(a: &AverList<T>, b: &AverList<T>, eq: impl Fn(&T, &T) -> boo
 }
 
 /// `==` on two vectors from [`top`], `eq` comparing two items.
-#[inline]
+#[inline(never)]
 pub fn fast_vector<T: Clone>(
     a: &AverVector<T>,
     b: &AverVector<T>,
@@ -214,7 +214,7 @@ pub fn fast_vector<T: Clone>(
 }
 
 /// `==` on two maps from [`top`], `eq` comparing the values of a key.
-#[inline]
+#[inline(never)]
 pub fn fast_map<K: Eq + Hash + Clone, V: Clone>(
     a: &AverMap<K, V>,
     b: &AverMap<K, V>,
