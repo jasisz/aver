@@ -138,15 +138,52 @@ fn without_derived_eq(
 
 /// The types of the fields of one constructor or record, for the fields
 /// whose `==` and hash carry the walk of the value holding them (see
-/// `walks`).
+/// `walks`). `fast` is for the `==` of a type that holds itself through a
+/// collection only: it carries no walk, and a pair of collections takes one
+/// only when it shares its items (`aver_rt::shared_items::fast_eq`).
 #[derive(Clone, Copy)]
 struct Walking<'a> {
     types: &'a [&'a str],
     ctx: &'a CodegenContext,
     scope: Option<&'a str>,
+    fast: bool,
 }
 
 impl Walking<'_> {
+    fn fast(self) -> Self {
+        Walking { fast: true, ..self }
+    }
+
+    /// `==` without a walk on the places `a` and `b` of `ty` (see `fast`).
+    fn eq_fast(&self, ty: &Type, a: &str, b: &str) -> String {
+        if !walks(ty, self.ctx, self.scope) {
+            return format!("{a} == {b}");
+        }
+        let items = |inner: &Type| self.eq_fast(inner, "(*x)", "(*y)");
+        match ty {
+            Type::Option(inner) if !matches!(**inner, Type::Named { .. }) => format!(
+                "match (&{a}, &{b}) {{ (Some(x), Some(y)) => {}, (None, None) => true, _ => false }}",
+                items(inner)
+            ),
+            Type::Result(ok, err) => format!(
+                "match (&{a}, &{b}) {{ (Ok(x), Ok(y)) => {}, (Err(x), Err(y)) => {}, _ => false }}",
+                items(ok),
+                items(err)
+            ),
+            Type::Tuple(parts) => {
+                let tests: Vec<String> = (0..parts.len())
+                    .map(|i| self.eq_fast(&parts[i], &format!("{a}.{i}"), &format!("{b}.{i}")))
+                    .collect();
+                format!("({})", tests.join(" && "))
+            }
+            Type::List(_) | Type::Vector(_) | Type::Map(..) => format!(
+                "aver_rt::shared_items::fast_eq(&{a}, &{b}, |a, b, walk| {})",
+                self.eq(ty, "(*a)", "(*b)")
+            ),
+            _ => format!("{a} == {b}"),
+        }
+    }
+
     fn field(&self, i: usize) -> Option<Type> {
         let ty = parse_type_str(self.types.get(i)?);
         walks(&ty, self.ctx, self.scope).then_some(ty)
@@ -319,6 +356,7 @@ fn fields_equal(
         .iter()
         .map(
             |&i| match walking.and_then(|w| w.field(i).map(|ty| (w, ty))) {
+                Some((w, ty)) if w.fast => w.eq_fast(&ty, &a(i), &b(i)),
                 Some((w, ty)) => w.eq(&ty, &a(i), &b(i)),
                 None => format!("{} == {}", a(i), b(i)),
             },
@@ -560,6 +598,7 @@ fn emit_sum_type(
         types: &field_types[i],
         ctx,
         scope,
+        fast: false,
     };
     let walking: Vec<Vec<bool>> = (0..variants.len())
         .map(|i| match recursive {
@@ -596,9 +635,12 @@ fn emit_sum_type(
             // without reading it when `==` is reflexive; `Shared` cannot
             // tell, so the payload says it (see `aver_rt::Shared`).
             let reflexive = capabilities.partial_eq && capabilities.eq;
+            // The `==` of a sum that is not thin carries no walk (see
+            // `Walking::fast`), its payloads' neither.
+            let fast = (!thin && walks_on(i)).then(|| walking_in(i).fast());
             let derived = derive_line(without_derived_eq(
                 capabilities,
-                order.is_some() || reflexive,
+                order.is_some() || reflexive || fast.is_some(),
             ));
             writeln!(payloads, "\n{derived}").unwrap();
             writeln!(
@@ -608,12 +650,16 @@ fn emit_sum_type(
             )
             .unwrap();
             let (this, that) = (|i| format!("self.{i}"), |i| format!("other.{i}"));
-            if order.is_some() || reflexive {
+            if order.is_some() || reflexive || fast.is_some() {
                 let declared: Vec<usize> = (0..v.fields.len()).collect();
-                let test = fields_equal(order.as_ref().unwrap_or(&declared), None, this, that);
+                let test = fields_equal(order.as_ref().unwrap_or(&declared), fast, this, that);
                 let test = match reflexive {
                     true => format!("std::ptr::eq(self, other) || {test}"),
                     false => test,
+                };
+                let test = match fast {
+                    Some(_) => format!("use ::aver_rt::WalkEq as _;\n        {test}"),
+                    None => test,
                 };
                 payloads.push_str(&partial_eq_impl(&payload, &test));
             }
@@ -722,6 +768,9 @@ fn emit_sum_type(
     let one_first = recursive && thin && capabilities.eq && !lazy;
     if inline_eq {
         let mut arms = String::new();
+        // The arms of the `==` of a sum that is not thin, which carries no
+        // walk (see `Walking::fast`).
+        let mut fast_arms = String::new();
         for (i, ((v, &shared), order)) in variants.iter().zip(&shared).zip(&eq_orders).enumerate() {
             // A shared constructor compares its one `Shared`, equal at once
             // when both sides are the same allocation and `==` is reflexive.
@@ -758,6 +807,26 @@ fn emit_sum_type(
                 ),
                 _ => fields_equal(&order, None, |i| format!("a{i}"), |i| format!("b{i}")),
             };
+            if recursive && !thin {
+                let fast = match order.len() {
+                    0 => "true".to_string(),
+                    _ if shared => "a0 == b0".to_string(),
+                    _ => fields_equal(
+                        &order,
+                        Some(walking_in(i).fast()),
+                        |i| format!("(*a{i})"),
+                        |i| format!("(*b{i})"),
+                    ),
+                };
+                writeln!(
+                    fast_arms,
+                    "            ({name}::{0}{1}, {name}::{0}{2}) => {fast},",
+                    v.name,
+                    binds("a"),
+                    binds("b")
+                )
+                .unwrap();
+            }
             match thin {
                 true if order.is_empty() => {
                     writeln!(arms, "            Some({pair}::{}) => {test},", v.name)
@@ -790,11 +859,17 @@ fn emit_sum_type(
                 true => out.push_str(&walk_eq_by_node(name, &test)),
                 false => out.push_str(&walk_eq_impl(name, &test)),
             }
-            write!(
-                out,
-                "\nimpl PartialEq for {name} {{\n    #[inline]\n    fn eq(&self, other: &Self) -> bool {{\n        aver_rt::walk_eq(self, other)\n    }}\n}}\n"
-            )
-            .unwrap();
+            match thin {
+                true => write!(
+                    out,
+                    "\nimpl PartialEq for {name} {{\n    #[inline]\n    fn eq(&self, other: &Self) -> bool {{\n        aver_rt::walk_eq(self, other)\n    }}\n}}\n"
+                )
+                .unwrap(),
+                false => out.push_str(&partial_eq_impl(
+                    name,
+                    &format!("use ::aver_rt::WalkEq as _;\n        match (self, other) {{\n{fast_arms}            _ => false,\n        }}"),
+                )),
+            }
         } else {
             let test = format!("match (self, other) {{\n{arms}            _ => false,\n        }}");
             out.push_str(&partial_eq_impl(name, &test));
@@ -979,8 +1054,9 @@ fn emit_product_type(
         .partial_eq
         .then(|| cheap_fields_first(&types, ctx, scope))
         .flatten();
-    // A record holding itself through a collection compares and hashes
-    // within one walk from the top (see `through_collection`).
+    // A record holding itself through a collection compares with no walk
+    // until its collections share items, and hashes within one walk from
+    // the top (see `through_collection`).
     let through = through && walking;
     let derived = without_derived_eq(capabilities, eq_order.is_some() || through);
     let derived = RepresentationCapabilities {
@@ -1015,17 +1091,21 @@ fn emit_product_type(
         types: &types,
         ctx,
         scope,
+        fast: false,
     };
-    if through {
-        out.push_str(&partial_eq_impl(name, "aver_rt::walk_eq(self, other)"));
-    } else if let Some(order) = &eq_order {
+    if through || eq_order.is_some() {
         let field = |i: usize| aver_name_to_rust(&fields[i].0);
+        let declared: Vec<usize> = (0..fields.len()).collect();
         let test = fields_equal(
-            order,
-            None,
+            eq_order.as_ref().unwrap_or(&declared),
+            through.then(|| walking_fields.fast()),
             |i| format!("self.{}", field(i)),
             |i| format!("other.{}", field(i)),
         );
+        let test = match through {
+            true => format!("use ::aver_rt::WalkEq as _;\n        {test}"),
+            false => test,
+        };
         out.push_str(&partial_eq_impl(name, &test));
     }
     if walking {

@@ -117,6 +117,71 @@ fn map_alone<K, V>(map: &AverMap<K, V>) -> bool {
         .is_none_or(|table| Rc::strong_count(table) == 1)
 }
 
+/// A collection that holds its items alone: no other collection holds any
+/// of them, so each is reached by as many paths as the collection is.
+pub trait Alone {
+    fn alone(&self) -> bool;
+}
+
+/// A list holds its items alone when every node of it is held in one place:
+/// a chain of prepends down to a flat body, read node by node.
+impl<T> Alone for AverList<T> {
+    fn alone(&self) -> bool {
+        let mut list = self;
+        loop {
+            let Some(node) = list.inner.as_ref() else {
+                return true;
+            };
+            if Rc::strong_count(node) != 1 {
+                return false;
+            }
+            match &**node {
+                AverListInner::Flat { items } => return Rc::strong_count(items) == 1,
+                AverListInner::Prepend { tail, .. } => list = tail,
+                _ => return false,
+            }
+        }
+    }
+}
+
+impl<T> Alone for AverVector<T> {
+    fn alone(&self) -> bool {
+        vector_alone(self)
+    }
+}
+
+impl<K, V> Alone for AverMap<K, V> {
+    fn alone(&self) -> bool {
+        map_alone(self)
+    }
+}
+
+/// `==` on two collections on the cycle of a type, from an `==` that
+/// carries no walk: the collections' own `==` when either holds its items
+/// alone, as no item is met twice there; otherwise a walk of the pair,
+/// `walk_eq` comparing it within the walk.
+#[inline]
+pub fn fast_eq<'v, C: Alone + PartialEq>(
+    a: &'v C,
+    b: &'v C,
+    walk_eq: impl for<'w> FnOnce(&'v C, &'v C, Walk<'w, 'v>) -> bool,
+) -> bool {
+    match a.alone() || b.alone() {
+        true => a == b,
+        false => walked(a, b, walk_eq),
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn walked<'v, C>(
+    a: &'v C,
+    b: &'v C,
+    walk_eq: impl for<'w> FnOnce(&'v C, &'v C, Walk<'w, 'v>) -> bool,
+) -> bool {
+    crate::shared_eq::walk_with(a, b, walk_eq)
+}
+
 /// How two items are compared within a walk: a closure the Rust backend
 /// generates, holding nothing, so a pair of items can be left for later.
 pub trait ItemEq<'v, T: 'v>: for<'w> Fn(&'v T, &'v T, Walk<'w, 'v>) -> bool + Copy + 'v {}
@@ -161,22 +226,13 @@ fn list_spent<'v, T>(
         return walk.defer(move |walk| list_spent(a, b, walk, eq));
     }
     match (a.as_slice(), b.as_slice()) {
-        (Some(x), Some(y)) if list_alone(a) || list_alone(b) => {
+        (Some(x), Some(y)) if a.alone() || b.alone() => {
             x.iter().zip(y).all(|(x, y)| eq(x, y, walk))
         }
         _ => held(a)
             .zip(held(b))
             .all(|((x, alone), (y, too))| eq_item(x, y, alone || too, walk, eq)),
     }
-}
-
-/// Whether `list` is a flat body it alone points to: the case of
-/// [`held`] read without walking it.
-fn list_alone<T>(list: &AverList<T>) -> bool {
-    list.inner.as_ref().is_none_or(|node| {
-        Rc::strong_count(node) == 1
-            && matches!(&**node, AverListInner::Flat { items } if Rc::strong_count(items) == 1)
-    })
 }
 
 /// `==` on two vectors, `eq` comparing two items within `walk`.
