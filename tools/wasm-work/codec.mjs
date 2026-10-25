@@ -10,6 +10,11 @@ export const identifier = (name) => "n" + Array.from(utf8.encode(name), b => b.t
 // so `kinds` may legitimately be empty.
 export function workManifest(module) {
     const sections = WebAssembly.Module.customSections(module, "aver:work/v1");
+    // A program with neither door runs its plain `main`; the host still
+    // answers its effects.
+    if (!sections.length && !WebAssembly.Module.imports(module).some(i => i.module === "aver:work/v1")) {
+        return { version: 1, kinds: [], types: {} };
+    }
     if (sections.length !== 1) throw new Error("work: expected one aver:work/v1 descriptor");
     const manifest = JSON.parse(text.decode(sections[0]));
     if (manifest.version !== 1) throw new Error("work: unsupported ABI version");
