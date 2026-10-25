@@ -154,36 +154,6 @@ impl Walking<'_> {
         Walking { fast: true, ..self }
     }
 
-    /// `==` without a walk on the places `a` and `b` of `ty` (see `fast`).
-    fn eq_fast(&self, ty: &Type, a: &str, b: &str) -> String {
-        if !walks(ty, self.ctx, self.scope) {
-            return format!("{a} == {b}");
-        }
-        let items = |inner: &Type| self.eq_fast(inner, "(*x)", "(*y)");
-        match ty {
-            Type::Option(inner) if !matches!(**inner, Type::Named { .. }) => format!(
-                "match (&{a}, &{b}) {{ (Some(x), Some(y)) => {}, (None, None) => true, _ => false }}",
-                items(inner)
-            ),
-            Type::Result(ok, err) => format!(
-                "match (&{a}, &{b}) {{ (Ok(x), Ok(y)) => {}, (Err(x), Err(y)) => {}, _ => false }}",
-                items(ok),
-                items(err)
-            ),
-            Type::Tuple(parts) => {
-                let tests: Vec<String> = (0..parts.len())
-                    .map(|i| self.eq_fast(&parts[i], &format!("{a}.{i}"), &format!("{b}.{i}")))
-                    .collect();
-                format!("({})", tests.join(" && "))
-            }
-            Type::List(_) | Type::Vector(_) | Type::Map(..) => format!(
-                "aver_rt::shared_items::fast_eq(&{a}, &{b}, |a, b, walk| {})",
-                self.eq(ty, "(*a)", "(*b)")
-            ),
-            _ => format!("{a} == {b}"),
-        }
-    }
-
     fn field(&self, i: usize) -> Option<Type> {
         let ty = parse_type_str(self.types.get(i)?);
         walks(&ty, self.ctx, self.scope).then_some(ty)
@@ -195,12 +165,28 @@ impl Walking<'_> {
             .collect()
     }
 
-    /// `==` within the walk on the places `a` and `b` of `ty`.
+    /// `==` on the places `a` and `b` of `ty`: within the walk, or without
+    /// one when `fast`, a pair of collections then taking a walk of its own
+    /// when neither holds its items alone (`aver_rt::shared_items::fast_eq`).
     fn eq(&self, ty: &Type, a: &str, b: &str) -> String {
         if !walks(ty, self.ctx, self.scope) {
             return format!("{a} == {b}");
         }
         let items = |inner: &Type| self.eq(inner, "(*x)", "(*y)");
+        let walked = |of: &str, item: &Type| match self.fast {
+            true => format!(
+                "aver_rt::shared_items::fast_eq(&{a}, &{b}, |a, b, walk| {})",
+                Walking {
+                    fast: false,
+                    ..*self
+                }
+                .eq(ty, "(*a)", "(*b)")
+            ),
+            false => format!(
+                "aver_rt::shared_items::{of}(&{a}, &{b}, walk, |x, y, walk| {})",
+                items(item)
+            ),
+        };
         match ty {
             Type::Option(inner) if !matches!(**inner, Type::Named { .. }) => format!(
                 "match (&{a}, &{b}) {{ (Some(x), Some(y)) => {}, (None, None) => true, _ => false }}",
@@ -217,18 +203,10 @@ impl Walking<'_> {
                     .collect();
                 format!("({})", tests.join(" && "))
             }
-            Type::List(item) => format!(
-                "aver_rt::shared_items::eq_list(&{a}, &{b}, walk, |x, y, walk| {})",
-                items(item)
-            ),
-            Type::Vector(item) => format!(
-                "aver_rt::shared_items::eq_vector(&{a}, &{b}, walk, |x, y, walk| {})",
-                items(item)
-            ),
-            Type::Map(_, item) => format!(
-                "aver_rt::shared_items::eq_map(&{a}, &{b}, walk, |x, y, walk| {})",
-                items(item)
-            ),
+            Type::List(item) => walked("eq_list", item),
+            Type::Vector(item) => walked("eq_vector", item),
+            Type::Map(_, item) => walked("eq_map", item),
+            _ if self.fast => format!("{a} == {b}"),
             _ => format!("{a}.walk_eq(&{b}, walk)"),
         }
     }
@@ -356,7 +334,6 @@ fn fields_equal(
         .iter()
         .map(
             |&i| match walking.and_then(|w| w.field(i).map(|ty| (w, ty))) {
-                Some((w, ty)) if w.fast => w.eq_fast(&ty, &a(i), &b(i)),
                 Some((w, ty)) => w.eq(&ty, &a(i), &b(i)),
                 None => format!("{} == {}", a(i), b(i)),
             },
