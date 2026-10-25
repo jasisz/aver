@@ -14,9 +14,10 @@
 //!
 //! The table is an array of nodes: [`TABLE_START`] entries when the first
 //! one comes, twice as many, empty, whenever it is half full, up to
-//! [`TABLE_MAX`], at which size it starts again empty when half full. A
-//! walk over a large value that shares nothing so pays a table that stays
-//! small, rather than one entry for every node it meets. A comparison that
+//! [`TABLE_MAX`], at which size it starts again empty when half full. So it
+//! remembers every pair, half its largest size at a time, and a walk over a
+//! large value that shares nothing pays a table that stays small rather than
+//! one entry for every node it meets. A comparison that
 //! starts within another one with memory keeps the table, and the outermost
 //! one drops it when it ends.
 
