@@ -9,6 +9,7 @@
 //! itself or a binding written after it. A read in a branch that never runs
 //! counts the same.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{TypeChecker, TypeErrorSpan};
@@ -170,8 +171,8 @@ impl TypeChecker {
             let mut came_from: HashMap<Node, (Node, usize)> = HashMap::new();
             let mut queue: VecDeque<Node> = VecDeque::new();
             for &(next, line) in &graph[&start] {
-                if matches!(next, Node::Fn(_)) && !came_from.contains_key(&next) {
-                    came_from.insert(next, (start, line));
+                if let (Node::Fn(_), Entry::Vacant(slot)) = (next, came_from.entry(next)) {
+                    slot.insert((start, line));
                     queue.push_back(next);
                 }
             }
@@ -188,8 +189,8 @@ impl TypeChecker {
                             continue;
                         }
                     }
-                    if !came_from.contains_key(&next) {
-                        came_from.insert(next, (node, line));
+                    if let Entry::Vacant(slot) = came_from.entry(next) {
+                        slot.insert((node, line));
                         if later.is_none() && matches!(next, Node::Binding(_)) {
                             later = Some(next);
                         }
