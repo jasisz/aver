@@ -454,6 +454,10 @@ fn emit_dispatch_condition(
             DispatchLiteral::Int(i) if subject_is_bare => {
                 format!("{subject_name} == {i}i64")
             }
+            // A literal past `AverInt`'s inline range is never built.
+            DispatchLiteral::Int(i) if !super::from_mir::AVERINT_INLINE.contains(i) => {
+                format!("{subject_name}.cmp_i64({i}i64).is_eq()")
+            }
             DispatchLiteral::Int(i) => {
                 format!("{subject_name} == aver_rt::AverInt::from_i64({i})")
             }

@@ -514,11 +514,11 @@ pub struct CodegenContext {
     pub packed_sequence_layouts: HashMap<String, crate::codegen::proof_lower::PackedSequenceLayout>,
     /// The refinement carriers the Rust backend holds as a raw `i64`: a
     /// single-field record over `Int` whose smart constructor proves a bound
-    /// that fits `i64`, built nowhere else, and the only type of its name in
-    /// the program. Keyed by that name, valued by the proven bound. Filled by
-    /// the Rust transpile only (see `codegen::rust::carrier`); empty for every
-    /// other backend, and then every carrier keeps its `AverInt` field.
-    pub rust_i64_carriers: crate::ir::mir::bare_i64::CarrierIntervals,
+    /// that fits `i64`, built elsewhere only from values proven within it.
+    /// Keyed by type identity, valued by the bound. Filled by the Rust
+    /// transpile only (see `codegen::rust::carrier`); empty for every other
+    /// backend, and then every carrier keeps its `AverInt` field.
+    pub rust_i64_carriers: crate::ir::mir::bare_i64::CarrierIds,
     /// Proof-export decision IR populated by `proof_lower::lower`
     /// during `build_context`. The Lean backend reads from
     /// here to decide refinement-record lift, recursion contracts,
@@ -807,6 +807,10 @@ pub struct ProjectOutput {
     /// `cargo test` passes — but the user is told which of their cases the
     /// crate does not carry.
     pub omitted_verify_cases: Vec<String>,
+    /// What the backend chose not to do that the program may want to know,
+    /// one line each: a type shaped as a refinement carrier that keeps its
+    /// `Int` field, and why.
+    pub notes: Vec<String>,
     /// Universal law-claims the emission carries, in emit order. Populated by
     /// the certificate-model Lean emission only; empty everywhere else.
     pub law_claims: Vec<UniversalLawClaim>,
@@ -820,6 +824,7 @@ impl ProjectOutput {
             files,
             substituted_compile_errors: Vec::new(),
             omitted_verify_cases: Vec::new(),
+            notes: Vec::new(),
             law_claims: Vec::new(),
         }
     }

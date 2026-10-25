@@ -283,6 +283,11 @@ pub type CarrierIntervals = HashMap<String, (Interval, bool)>;
 /// the Rust backend, tests) reproduces the pre-slice all-`Int` behavior.
 pub type FieldCarrierIntervals = HashMap<(String, String), (Interval, bool)>;
 
+/// The Rust backend's refinement carriers: each held as a struct over a raw
+/// `i64` field, keyed by the type's identity, valued by the bound its smart
+/// constructor proves (`codegen::rust::carrier`).
+pub type CarrierIds = HashMap<crate::ir::TypeId, Interval>;
+
 /// The proven interval for a carrier whose Aver type name is `ty`, returned
 /// ONLY when the table holds a recognized bound (`interval_known`) that
 /// `fits_i64`. Any other case (`ty` not a carrier, an unrecognized invariant
@@ -437,10 +442,12 @@ pub struct FnBareFacts {
     /// (`__str_index_position`) instead of checking it.
     pub saturated_params: Vec<usize>,
     /// Facts for the Rust backend. There an eligible carrier (a type in
-    /// `carrier_types`) is a struct whose one field is a raw `i64`, so its
+    /// `carrier_ids`) is a struct whose one field is a raw `i64`, so its
     /// `.value` reads that `i64` whatever the base is, and building one takes
     /// a raw value (see [`FnBareFacts::carrier_record`]).
     pub rust: bool,
+    /// Rust: the carriers held as a raw `i64`, by type identity.
+    pub carrier_ids: std::sync::Arc<CarrierIds>,
     /// Rust: the calls of the program computed on raw `i64` operands.
     pub raw_ops: std::sync::Arc<RawOps>,
 }
@@ -520,8 +527,11 @@ impl FnBareFacts {
         }
         // Rust: every value of an eligible carrier holds its field as an
         // `i64`, so the read is raw whatever the base is.
-        if self.rust {
-            return self.carrier_type_interval(p.node.base.ty());
+        if self.rust
+            && let Some(Type::Named { id, .. }) = p.node.base.ty()
+            && let Some(iv) = self.carrier_id_interval(*id)
+        {
+            return Some(iv);
         }
         // Multi-field direct bounded-field read: `Project(rec, "x")` where
         // `rec`'s stamped type is a bounded record and `(record, "x")` is an
@@ -583,24 +593,14 @@ impl FnBareFacts {
         (known && iv.fits_i64()).then_some(iv)
     }
 
-    /// Rust: the proven bound of the eligible carrier type `ty` names. The
-    /// Rust table holds only names no other type of the program has, so a
-    /// qualified spelling (`Lib.Word.Word`) is matched by its last segment.
-    fn carrier_type_interval(&self, ty: Option<&Type>) -> Option<Interval> {
-        let name = ty.and_then(Type::named_name)?;
-        self.carrier_name_interval(name)
+    /// Rust: the bound of the carrier with identity `id`, if it is one.
+    fn carrier_id_interval(&self, id: Option<crate::ir::TypeId>) -> Option<Interval> {
+        self.carrier_ids.get(&id?).copied()
     }
 
-    fn carrier_name_interval(&self, name: &str) -> Option<Interval> {
-        let bare = name.rsplit('.').next().unwrap_or(name);
-        let (iv, known) = self.carrier_types.get(bare).copied()?;
-        (known && iv.fits_i64()).then_some(iv)
-    }
-
-    /// Rust: is a record named `type_name` an eligible carrier, built from
-    /// a raw `i64`? Only the Rust facts answer yes.
-    pub fn carrier_record(&self, type_name: &str) -> bool {
-        self.rust && self.carrier_name_interval(type_name).is_some()
+    /// Rust: is a record of identity `id` a carrier built from a raw `i64`?
+    pub fn carrier_record(&self, id: Option<crate::ir::TypeId>) -> bool {
+        self.rust && self.carrier_id_interval(id).is_some()
     }
 
     /// Rust: `e` as a call of a builtin computed raw, with its arguments.
@@ -767,6 +767,35 @@ pub fn analyze_with_fields(
     field_carrier: &FieldCarrierIntervals,
     rust_positions: bool,
 ) -> BareI64Facts {
+    analyze_inner(
+        program,
+        carrier,
+        field_carrier,
+        rust_positions,
+        &CarrierIds::new(),
+    )
+}
+
+/// The Rust backend's facts with its carriers (`carrier_ids`): a read of a
+/// carrier's field is a raw `i64` with the carrier's bound, whatever the
+/// base (see [`FnBareFacts::rust`]).
+pub fn analyze_rust(program: &MirProgram, carrier_ids: &CarrierIds) -> BareI64Facts {
+    analyze_inner(
+        program,
+        &CarrierIntervals::new(),
+        &FieldCarrierIntervals::new(),
+        true,
+        carrier_ids,
+    )
+}
+
+fn analyze_inner(
+    program: &MirProgram,
+    carrier: &CarrierIntervals,
+    field_carrier: &FieldCarrierIntervals,
+    rust_positions: bool,
+    carrier_ids: &CarrierIds,
+) -> BareI64Facts {
     // Diagnostic / bench-differential escape hatch: skip the analysis so a
     // run keeps the conservative all-Boxed baseline.
     if std::env::var("AVER_NO_BARE_I64").is_ok() {
@@ -790,7 +819,15 @@ pub fn analyze_with_fields(
     // return is bare. The field table only adds NEW bare leaves (a direct
     // bounded-field read), which the body pass reads via the per-fn facts; the
     // cross-frame param/return summary keys off `carrier` exactly as before.
-    let summary = compute_summary(program, &int_params, carrier, field_carrier, rust_positions);
+    let carrier_ids = std::sync::Arc::new(carrier_ids.clone());
+    let summary = compute_summary(
+        program,
+        &int_params,
+        carrier,
+        field_carrier,
+        rust_positions,
+        carrier_ids,
+    );
 
     let mut fns: HashMap<FnId, FnBareFacts> = HashMap::new();
     for (id, f) in program.iter() {
@@ -847,6 +884,8 @@ struct Summary {
     read_only: std::rc::Rc<HashSet<(FnId, usize)>>,
     /// Rust: the calls computed on raw `i64` operands ([`RawOp`]).
     raw_ops: std::sync::Arc<RawOps>,
+    /// Rust: the carriers held as a raw `i64` ([`CarrierIds`]).
+    carrier_ids: std::sync::Arc<CarrierIds>,
 }
 
 impl Summary {
@@ -887,6 +926,7 @@ fn compute_summary(
     carrier: &CarrierIntervals,
     field_carrier: &FieldCarrierIntervals,
     rust_positions: bool,
+    carrier_ids: std::sync::Arc<CarrierIds>,
 ) -> Summary {
     // Address-taken fns (name appears as a `FnValue`) have callers we
     // cannot attribute — pin all their params/return boxed.
@@ -1073,6 +1113,7 @@ fn compute_summary(
             checked: checked.clone(),
             read_only: read_only.clone(),
             raw_ops: raw_ops.clone(),
+            carrier_ids: carrier_ids.clone(),
         };
         for (id, f) in program.iter() {
             let mut escaping: HashSet<LocalId> = HashSet::new();
@@ -1103,6 +1144,7 @@ fn compute_summary(
                 checked: checked.clone(),
                 read_only: read_only.clone(),
                 raw_ops: raw_ops.clone(),
+                carrier_ids: carrier_ids.clone(),
             };
             let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
             if !facts.bare_return && bare_return.insert(*id, false) != Some(false) {
@@ -1154,6 +1196,7 @@ fn compute_summary(
             checked: checked.clone(),
             read_only: read_only.clone(),
             raw_ops: raw_ops.clone(),
+            carrier_ids: carrier_ids.clone(),
         };
         for (_caller, f) in program.iter() {
             let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
@@ -1181,6 +1224,7 @@ fn compute_summary(
         checked,
         read_only,
         raw_ops,
+        carrier_ids,
     }
 }
 
@@ -3087,6 +3131,7 @@ fn analyze_fn(
     let mut facts = FnBareFacts {
         rust,
         raw_ops: summary.raw_ops.clone(),
+        carrier_ids: summary.carrier_ids.clone(),
         ..FnBareFacts::default()
     };
 
@@ -5236,7 +5281,7 @@ fn main() -> Int
         let program = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(
             program,
             &HashSet::new(),
-            &CarrierIntervals::new(),
+            &CarrierIds::new(),
         );
         let f = program.fn_by_id(id).unwrap();
         let check = f.repr.entry_check.as_ref().expect("entry check in the MIR");
@@ -5364,7 +5409,7 @@ fn main() -> Int
         let program = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(
             program,
             &HashSet::new(),
-            &CarrierIntervals::new(),
+            &CarrierIds::new(),
         );
         fn arg_of_call(e: &MirExpr, callee: FnId, out: &mut Vec<MirExpr>) {
             if let MirExpr::Call(c) = e
@@ -5490,7 +5535,7 @@ fn main() -> Int
         let program = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(
             facts_for(src).0,
             &HashSet::new(),
-            &CarrierIntervals::new(),
+            &CarrierIds::new(),
         );
         let id = fn_id_by_name(&program, "find__indexed");
         let mut boxed_sink = false;
@@ -5567,9 +5612,18 @@ fn mixed(w: Word, k: Int) -> Int
         };
         let result = crate::ir::pipeline::run(&mut items, cfg);
         let table = carrier_table_for(&items, &result.symbol_table);
-        assert!(table.contains_key("Word"), "{table:?}");
+        let (iv, _) = table["Word"];
         let program = optimize(lower_program(&result.resolved_items));
-        let facts = analyze_with_fields(&program, &table, &FieldCarrierIntervals::new(), rust);
+        let facts = match rust {
+            true => {
+                let word = result
+                    .symbol_table
+                    .type_id_of(&crate::ir::TypeKey::entry("Word"))
+                    .expect("Word has an identity");
+                analyze_rust(&program, &CarrierIds::from([(word, iv)]))
+            }
+            false => analyze_with_fields(&program, &table, &FieldCarrierIntervals::new(), false),
+        };
         (program, facts)
     }
 
@@ -5631,10 +5685,10 @@ fn mixed(w: Word, k: Int) -> Int
         let (program, facts) = word_facts(true);
         let id = fn_id_by_name(&program, "word");
         let f = facts.for_fn(id).unwrap();
-        assert!(f.carrier_record("Word"));
-        assert!(f.carrier_record("Toy.Word"));
-        assert!(!f.carrier_record("Other"));
+        let word = *f.carrier_ids.keys().next().expect("Word is a carrier");
+        assert!(f.carrier_record(Some(word)));
+        assert!(!f.carrier_record(None));
         let (_, wasm) = word_facts(false);
-        assert!(!wasm.for_fn(id).unwrap().carrier_record("Word"));
+        assert!(!wasm.for_fn(id).unwrap().carrier_record(Some(word)));
     }
 }

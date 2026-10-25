@@ -156,6 +156,7 @@ fn transpile_project(
     // `bare_i64` range+escape analysis to tag each fn's `repr` and insert
     // the explicit boundary nodes; the body emitter below then lowers those
     // nodes trivially instead of deciding representation itself.
+    let mut carrier_notes = Vec::new();
     if let Some(prog) = ctx.mir_program.take() {
         // Rust consumes and drops returned aggregate wrappers (`Result`,
         // records, tuples) at projection / `?` boundaries. Refine collection
@@ -171,7 +172,8 @@ fn transpile_project(
         // The refinement carriers this backend holds as a struct over a raw
         // `i64` (see `carrier`). An empty table keeps every carrier's
         // `AverInt` field and the facts the context was built with.
-        let carriers = carrier::i64_carriers(ctx);
+        let (carriers, notes) = carrier::i64_carriers(ctx, &prog);
+        carrier_notes = notes;
         let (prog, facts) = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust_with_facts(
             prog, &boxed, &carriers,
         );
@@ -417,6 +419,7 @@ fn transpile_project(
         files,
         substituted_compile_errors: ctx.substituted_compile_errors.borrow().clone(),
         omitted_verify_cases: ctx.omitted_verify_cases.borrow().clone(),
+        notes: carrier_notes,
         law_claims: Vec::new(),
     }
 }

@@ -241,6 +241,79 @@ fn compile_check_propagates_cargo_failure_and_keeps_generated_project() {
     let _ = fs::remove_dir_all(&workspace);
 }
 
+/// A type shaped as a refinement carrier that the Rust backend keeps on its
+/// `Int` field says why, once, with where.
+#[test]
+fn compile_notes_why_a_refinement_carrier_keeps_its_int_field() {
+    let workspace = temp_output_dir("aver-carrier-notes");
+    fs::create_dir_all(&workspace).expect("create workspace");
+    let source = workspace.join("carriers.av");
+    fs::write(
+        &source,
+        r#"module Carriers
+    intent = "Refinements over Int that do and do not become machine words."
+    exposes opaque [Word, Loose]
+
+record Word
+    value: Int
+
+record Loose
+    value: Int
+
+record Plain
+    value: Int
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "A word below 2^62."
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("out")
+
+fn looseOf(n: Int) -> Result<Loose, String>
+    ? "A loose value below 100."
+    match Bool.and(n >= 0, n < 100)
+        true -> Result.Ok(Loose(value = n))
+        false -> Result.Err("out")
+
+fn widened(l: Loose) -> Loose
+    ? "Builds one past its bound."
+    Loose(value = l.value + 1)
+
+fn plainOf(n: Int) -> Result<Plain, String>
+    ? "Shaped as a smart constructor of a type not listed as opaque."
+    match n >= 0
+        true -> Result.Ok(Plain(value = n))
+        false -> Result.Err("out")
+"#,
+    )
+    .expect("write source");
+    let output = Command::new(aver_bin())
+        .arg("compile")
+        .arg(&source)
+        .arg("--target")
+        .arg("rust")
+        .arg("-o")
+        .arg(workspace.join("out"))
+        .output()
+        .expect("run aver compile --target rust");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = fs::remove_dir_all(&workspace);
+    assert!(output.status.success(), "{}", format_output(&output));
+    assert!(
+        stdout.contains(
+            "`Loose` keeps an `Int` field: `widened` builds it at line 28 from a value other than a literal within [0, 99]"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "`Plain` keeps an `Int` field: it has the smart constructor `plainOf` but is not listed under `exposes opaque`"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("`Word` keeps"), "{stdout}");
+}
+
 #[test]
 fn compile_check_rejects_non_rust_target_before_codegen() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

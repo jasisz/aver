@@ -1857,6 +1857,59 @@ fn unresolved_packed_carrier(type_name: &str, ctx: &MirEmitCtx<'_>) -> String {
     }
 }
 
+/// The values `aver_rt::AverInt` holds in its word (`INLINE_MIN..=
+/// INLINE_MAX` in `aver-rt/src/int.rs`). A literal outside them is a heap
+/// integer every time `AverInt::from_i64` builds it.
+pub(super) const AVERINT_INLINE: std::ops::RangeInclusive<i64> = -(1 << 62)..=(1 << 62) - 1;
+
+/// A comparison of a boxed `Int` with an `Int` literal outside
+/// [`AVERINT_INLINE`] (a smart constructor's `n < 4611686018427387904`):
+/// `AverInt::cmp_i64` compares with the machine integer, which is never
+/// built as an `AverInt`. `None` for any other comparison, and when both
+/// sides are raw, which compare as `i64` anyway.
+fn emit_wide_literal_comparison(
+    bop: &crate::ir::mir::MirBinOp,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let wide = |e: &MirExpr| match e {
+        MirExpr::Literal(l) => match l.node {
+            crate::ast::Literal::Int(k) if !AVERINT_INLINE.contains(&k) => Some(k),
+            _ => None,
+        },
+        _ => None,
+    };
+    // `k < x` is `x > k`.
+    let (value, k, op) = match (wide(&bop.lhs.node), wide(&bop.rhs.node)) {
+        (None, Some(k)) => (&bop.lhs, k, bop.op),
+        (Some(k), None) => (
+            &bop.rhs,
+            k,
+            match bop.op {
+                BinOp::Lt => BinOp::Gt,
+                BinOp::Gt => BinOp::Lt,
+                BinOp::Lte => BinOp::Gte,
+                BinOp::Gte => BinOp::Lte,
+                op => op,
+            },
+        ),
+        _ => return None,
+    };
+    if mir_expr_is_bare_i64(value, ctx) {
+        return None;
+    }
+    let test = match op {
+        BinOp::Eq => "is_eq",
+        BinOp::Neq => "is_ne",
+        BinOp::Lt => "is_lt",
+        BinOp::Lte => "is_le",
+        BinOp::Gt => "is_gt",
+        BinOp::Gte => "is_ge",
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => return None,
+    };
+    let value = emit_mir_expr(value, ctx)?;
+    Some(format!("({value}).cmp_i64({k}i64).{test}()"))
+}
+
 fn pack_u8_list(value: String) -> String {
     format!(
         "aver_rt::into_packed_u8({value}).expect(\"proof-packed U8 construction escaped its refinement gate\")"
@@ -1864,21 +1917,11 @@ fn pack_u8_list(value: String) -> String {
 }
 
 /// Is this record a refinement carrier the backend holds as a raw `i64`
-/// (`codegen::rust::carrier`)? Its name is the only one of its kind in the
-/// program, so the name answers even where the identity is missing.
-fn i64_carrier_record(
-    type_id: Option<crate::ir::TypeId>,
-    type_name: &str,
-    ctx: &MirEmitCtx<'_>,
-) -> bool {
-    let Some(codegen) = ctx.codegen else {
-        return false;
-    };
-    let name = match type_id {
-        Some(id) => ctx.symbol_table.type_entry(id).key.name.as_str(),
-        None => type_name,
-    };
-    super::carrier::is_i64_carrier(codegen, name)
+/// (`codegen::rust::carrier`)? Decided by the type's identity: a record
+/// without one is not.
+fn i64_carrier_record(type_id: Option<crate::ir::TypeId>, ctx: &MirEmitCtx<'_>) -> bool {
+    ctx.codegen
+        .is_some_and(|codegen| super::carrier::is_i64_carrier(codegen, type_id))
 }
 
 /// The `i64` a carrier's field is built from: a value that renders raw (or
@@ -2247,6 +2290,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let bop = &spanned_binop.node;
             if let Some(fused) = mir_emit_slice_equality(bop, emit_ctx) {
                 return Some(fused);
+            }
+            if let Some(compared) = emit_wide_literal_comparison(bop, emit_ctx) {
+                return Some(compared);
             }
             let typed = matches!(bop.op, BinOp::Eq | BinOp::Neq)
                 .then(|| {
@@ -2695,7 +2741,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // A carrier held as a raw `i64`: the read is raw where the facts
             // know it (the rewrite boxed it wherever it meets a general
             // `Int`), and boxed here anywhere else.
-            if i64_carrier_record(*id, name, emit_ctx) {
+            if i64_carrier_record(*id, emit_ctx) {
                 return Some(match emit_ctx.bare.is_carrier_project(&expr.node) {
                     true => projected,
                     false => format!("aver_rt::AverInt::from_i64({projected})"),
@@ -2726,7 +2772,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let Some(packed_u8) = packed_u8_carrier(rec.type_id, &rec.type_name, emit_ctx) else {
                 return Some(unresolved_packed_carrier(&rec.type_name, emit_ctx));
             };
-            let i64_carrier = i64_carrier_record(rec.type_id, &rec.type_name, emit_ctx);
+            let i64_carrier = i64_carrier_record(rec.type_id, emit_ctx);
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
                 if i64_carrier {
@@ -2978,7 +3024,7 @@ fn emit_update_parts(
 ) -> Option<(Vec<(String, String)>, bool)> {
     let mut parts = Vec::with_capacity(upd.updates.len());
     let mut moved_replaced_field = false;
-    let i64_carrier = i64_carrier_record(upd.type_id, &upd.type_name, ctx);
+    let i64_carrier = i64_carrier_record(upd.type_id, ctx);
     for f in &upd.updates {
         if i64_carrier {
             parts.push((
@@ -5455,6 +5501,8 @@ fn try_emit_int_literal_match(
                 // literal; a boxed subject compares against `AverInt`.
                 let cond = if subject_is_bare {
                     format!("{} == {}i64", subject_name, n)
+                } else if !AVERINT_INLINE.contains(n) {
+                    format!("{subject_name}.cmp_i64({n}i64).is_eq()")
                 } else {
                     format!("{} == aver_rt::AverInt::from_i64({})", subject_name, n)
                 };
@@ -6623,6 +6671,9 @@ fn mir_if_cond_and_branches<'a>(
                 && !mir_compares_slice(&spanned_binop.node, ctx) =>
         {
             let bop = &spanned_binop.node;
+            if let Some(cond) = emit_wide_literal_comparison(bop, ctx) {
+                return Some((cond, &ite.then_branch, &ite.else_branch));
+            }
             let (op_str, invert) = canonical_compare(bop.op).expect("checked by guard");
             // Int unboxing: a comparison between two bare `i64` operands
             // emits raw `i64` operands (a bare counter `i == 0` compares

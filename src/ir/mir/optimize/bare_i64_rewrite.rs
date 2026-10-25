@@ -59,7 +59,7 @@ use crate::ir::mir::{
 pub fn rewrite_for_rust(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
-    carrier: &super::bare_i64::CarrierIntervals,
+    carrier: &super::bare_i64::CarrierIds,
 ) -> MirProgram {
     rewrite_for_rust_with_facts(program, boxed_signature_fns, carrier).0
 }
@@ -75,10 +75,16 @@ pub fn rewrite_for_rust(
 pub fn rewrite_for_rust_with_facts(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
-    carrier: &super::bare_i64::CarrierIntervals,
+    carrier: &super::bare_i64::CarrierIds,
 ) -> (MirProgram, BareI64Facts) {
-    let empty_fields = super::bare_i64::FieldCarrierIntervals::new();
-    rewrite(program, boxed_signature_fns, carrier, &empty_fields, true)
+    let facts = super::bare_i64::analyze_rust(&program, carrier);
+    rewrite(
+        program,
+        facts,
+        boxed_signature_fns,
+        &super::bare_i64::CarrierIntervals::new(),
+        &super::bare_i64::FieldCarrierIntervals::new(),
+    )
 }
 
 /// A free value the Rust backend emits outside any function — a verify
@@ -124,26 +130,24 @@ pub fn rewrite_for_wasm_gc(
     field_carrier: &super::bare_i64::FieldCarrierIntervals,
 ) -> MirProgram {
     // No entry check: the wasm-gc emitter has no loop prologue for it.
-    rewrite(program, boxed_signature_fns, carrier, field_carrier, false).0
+    let facts = super::bare_i64::analyze_with_fields(&program, carrier, field_carrier, false);
+    rewrite(program, facts, boxed_signature_fns, carrier, field_carrier).0
 }
 
 /// The shared rewrite both public entries delegate to. Target-agnostic:
 /// it consumes only the analysis output + the caller-supplied
 /// `boxed_signature_fns`. See [`rewrite_for_rust`] /
 /// [`rewrite_for_wasm_gc`] for the two callers and how each computes
-/// `boxed_signature_fns`. `entry_checks` is whether the backend emits the
-/// entry check of a string-walk position whose start is not bounded
-/// ([`super::bare_i64::EntryCheck`]).
+/// `boxed_signature_fns`. `facts` is the analysis of `program` for the
+/// backend (with the Rust lowerings or without them).
 fn rewrite(
     program: MirProgram,
+    facts: BareI64Facts,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
     carrier: &super::bare_i64::CarrierIntervals,
     field_carrier: &super::bare_i64::FieldCarrierIntervals,
-    entry_checks: bool,
 ) -> (MirProgram, BareI64Facts) {
     let mut program = program;
-    let facts =
-        super::bare_i64::analyze_with_fields(&program, carrier, field_carrier, entry_checks);
     // Collect ids first to avoid borrowing `program.fns` while mutating it.
     let ids: Vec<crate::ir::FnId> = program.fns.keys().copied().collect();
     for id in ids {
@@ -204,8 +208,9 @@ fn rewrite(
                 values,
                 carrier_types: carrier.clone(),
                 field_carrier_intervals: field_carrier.clone(),
-                rust: entry_checks,
+                rust: analyzed.rust,
                 raw_ops: analyzed.raw_ops.clone(),
+                carrier_ids: analyzed.carrier_ids.clone(),
                 ..FnBareFacts::default()
             }
         } else {
@@ -929,7 +934,7 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
             Spanned::new(MirExpr::Construct(c), line)
         }
         MirExpr::RecordCreate(mut r) => {
-            let carrier = ctx.facts.carrier_record(&r.node.type_name);
+            let carrier = ctx.facts.carrier_record(r.node.type_id);
             for fld in &mut r.node.fields {
                 let v = std::mem::replace(
                     &mut fld.value,
@@ -940,7 +945,7 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
             Spanned::new(MirExpr::RecordCreate(r), line)
         }
         MirExpr::RecordUpdate(mut u) => {
-            let carrier = ctx.facts.carrier_record(&u.node.type_name);
+            let carrier = ctx.facts.carrier_record(u.node.type_id);
             let base = take_box(&mut u.node.base);
             u.node.base = std::boxed::Box::new(rewrite_value(base, ctx));
             for fld in &mut u.node.updates {
@@ -1185,7 +1190,7 @@ mod tests {
         rewrite_for_rust(
             program,
             &std::collections::HashSet::new(),
-            &super::super::bare_i64::CarrierIntervals::new(),
+            &super::super::bare_i64::CarrierIds::new(),
         )
     }
 
@@ -1194,11 +1199,8 @@ mod tests {
     ) -> (MirProgram, std::collections::HashSet<crate::ir::FnId>) {
         let program = optimized(src);
         let boxed = mutual_recursion_box_set(&program);
-        let rewritten = rewrite_for_rust(
-            program,
-            &boxed,
-            &super::super::bare_i64::CarrierIntervals::new(),
-        );
+        let rewritten =
+            rewrite_for_rust(program, &boxed, &super::super::bare_i64::CarrierIds::new());
         (rewritten, boxed)
     }
 
