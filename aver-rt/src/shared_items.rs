@@ -45,9 +45,15 @@ impl NodeId for Item {
 #[inline]
 fn item<T>(x: &T, alone: bool) -> Item {
     Item {
-        addr: std::ptr::from_ref(x) as usize,
+        addr: addr(x),
         alone,
     }
+}
+
+/// Where `x` is stored, which names it while the values compared live.
+#[inline]
+fn addr<T>(x: &T) -> usize {
+    std::ptr::from_ref(x) as usize
 }
 
 /// The items of a list, each with whether the list alone holds it: every
@@ -152,7 +158,7 @@ fn list_spent<'v, T>(
     eq: impl ItemEq<'v, T>,
 ) -> bool {
     if walk.deep() {
-        return walk.leave(move |walk| list_spent(a, b, walk, eq));
+        return walk.defer(move |walk| list_spent(a, b, walk, eq));
     }
     match (a.as_slice(), b.as_slice()) {
         (Some(x), Some(y)) if list_alone(a) || list_alone(b) => {
@@ -199,7 +205,7 @@ fn vector_spent<'v, T: Clone>(
     eq: impl ItemEq<'v, T>,
 ) -> bool {
     if walk.deep() {
-        return walk.leave(move |walk| vector_spent(a, b, walk, eq));
+        return walk.defer(move |walk| vector_spent(a, b, walk, eq));
     }
     let alone = vector_alone(a) || vector_alone(b);
     a.iter()
@@ -239,7 +245,7 @@ fn map_spent<'v, K: Eq + Hash + Clone, V: Clone>(
     eq: impl ItemEq<'v, V>,
 ) -> bool {
     if walk.deep() {
-        return walk.leave(move |walk| map_spent(a, b, walk, eq));
+        return walk.defer(move |walk| map_spent(a, b, walk, eq));
     }
     let alone = map_alone(a) || map_alone(b);
     a.iter()
@@ -258,13 +264,7 @@ fn eq_item<'v, T: 'v>(
 ) -> bool {
     match alone {
         true => eq(x, y, walk),
-        false => walk.pair(
-            &item(x, false),
-            &item(y, false),
-            false,
-            |walk| eq(x, y, walk),
-            move |walk| eq(x, y, walk),
-        ),
+        false => walk.remember(addr(x), addr(y), |walk| eq(x, y, walk)),
     }
 }
 
@@ -474,6 +474,10 @@ mod tests {
         })
     }
 
+    /// How deep the shared values of the tests go: under Miri, deep enough
+    /// to spend the budget, and no deeper.
+    const N: usize = if cfg!(miri) { 12 } else { 60 };
+
     fn compare(a: &Tree, b: &Tree) -> (bool, usize) {
         VISITS.with(|v| v.set(0));
         let same = a == b;
@@ -482,18 +486,12 @@ mod tests {
 
     #[test]
     fn equal_values_built_apart_cost_the_graph_not_the_tree() {
-        let (same, visits) = compare(&twice(60, 1.0), &twice(60, 1.0));
+        let (same, visits) = compare(&twice(N, 1.0), &twice(N, 1.0));
         assert!(same);
-        assert!(
-            visits <= BUDGET as usize + 4 * 60,
-            "{visits} pairs compared"
-        );
-        let (same, visits) = compare(&spine(60, 1.0, 1.0), &spine(60, 1.0, 1.0));
+        assert!(visits <= BUDGET as usize + 4 * N, "{visits} pairs compared");
+        let (same, visits) = compare(&spine(N, 1.0, 1.0), &spine(N, 1.0, 1.0));
         assert!(same);
-        assert!(
-            visits <= BUDGET as usize + 60 * 60,
-            "{visits} pairs compared"
-        );
+        assert!(visits <= BUDGET as usize + N * N, "{visits} pairs compared");
     }
 
     /// `n` levels, each a list of two lists that put a different leaf in
@@ -511,32 +509,23 @@ mod tests {
 
     #[test]
     fn a_tail_two_lists_share_is_compared_once() {
-        let (same, visits) = compare(&tails(60, 1.0), &tails(60, 1.0));
+        let (same, visits) = compare(&tails(N, 1.0), &tails(N, 1.0));
         assert!(same);
-        assert!(
-            visits <= BUDGET as usize + 4 * 60,
-            "{visits} pairs compared"
-        );
-        let (same, visits) = compare(&tails(60, 1.0), &tails(60, 2.0));
+        assert!(visits <= BUDGET as usize + 4 * N, "{visits} pairs compared");
+        let (same, visits) = compare(&tails(N, 1.0), &tails(N, 2.0));
         assert!(!same);
-        assert!(
-            visits <= BUDGET as usize + 4 * 60,
-            "{visits} pairs compared"
-        );
-        let (a, visits) = hash(&tails(60, 1.0));
-        assert!(visits <= 4 * 61, "{visits} lists hashed from parts");
-        assert_eq!(a, hash(&tails(60, 1.0)).0);
-        assert_ne!(a, hash(&tails(60, 2.0)).0);
+        assert!(visits <= BUDGET as usize + 4 * N, "{visits} pairs compared");
+        let (a, visits) = hash(&tails(N, 1.0));
+        assert!(visits <= 4 * (N + 1), "{visits} lists hashed from parts");
+        assert_eq!(a, hash(&tails(N, 1.0)).0);
+        assert_ne!(a, hash(&tails(N, 2.0)).0);
     }
 
     #[test]
     fn a_difference_deep_in_the_graph_is_still_found() {
-        let (same, visits) = compare(&spine(60, 1.0, 1.0), &spine(60, 1.0, 2.0));
+        let (same, visits) = compare(&spine(N, 1.0, 1.0), &spine(N, 1.0, 2.0));
         assert!(!same);
-        assert!(
-            visits <= BUDGET as usize + 60 * 60,
-            "{visits} pairs compared"
-        );
+        assert!(visits <= BUDGET as usize + N * N, "{visits} pairs compared");
         assert!(twice(12, 1.0) != twice(12, 2.0));
         assert!(twice(12, 1.0) != twice(13, 1.0));
         let nan = twice(12, f64::NAN);
@@ -551,16 +540,19 @@ mod tests {
 
     #[test]
     fn equal_values_built_apart_hash_equally_at_the_cost_of_the_graph() {
-        let (a, visits) = hash(&spine(60, 1.0, 1.0));
-        assert!(visits <= 61 * 61, "{visits} lists hashed from parts");
-        let (b, _) = hash(&spine(60, 1.0, 1.0));
+        let (a, visits) = hash(&spine(N, 1.0, 1.0));
+        assert!(
+            visits <= (N + 1) * (N + 1),
+            "{visits} lists hashed from parts"
+        );
+        let (b, _) = hash(&spine(N, 1.0, 1.0));
         assert_eq!(a, b);
-        assert_ne!(a, hash(&spine(60, 1.0, 2.0)).0);
+        assert_ne!(a, hash(&spine(N, 1.0, 2.0)).0);
         // Each level holds two copies of the list below, stored apart: each
         // is hashed once, and the items under them once.
-        let (a, visits) = hash(&twice(60, 1.0));
-        assert!(visits <= 2 * 61, "{visits} lists hashed from parts");
-        assert_ne!(a, hash(&twice(60, 2.0)).0);
+        let (a, visits) = hash(&twice(N, 1.0));
+        assert!(visits <= 2 * (N + 1), "{visits} lists hashed from parts");
+        assert_ne!(a, hash(&twice(N, 2.0)).0);
         // A value within the budget is fed item by item only.
         let (small, visits) = hash(&twice(5, 1.0));
         assert_eq!(visits, 0);
@@ -584,7 +576,7 @@ mod tests {
     /// found.
     #[test]
     fn a_deep_value_is_compared_on_a_stack_of_fixed_size() {
-        let n = if cfg!(miri) { 3_000 } else { 200_000 };
+        let n = if cfg!(miri) { 1_500 } else { 200_000 };
         let chain = move |last: f64| (0..n).fold(leaf(last), |below, _| node(vec![below]));
         // The walk within the budget is a call per list: a thousand of them
         // fit in a debug build's frames on this stack, two hundred thousand

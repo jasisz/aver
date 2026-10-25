@@ -164,29 +164,6 @@ impl<'v> Walk<'_, 'v> {
         reflexive: bool,
         fields_eq: impl FnOnce(Self) -> bool,
     ) -> bool {
-        self.pair(a, b, reflexive, fields_eq, move |walk| a.walk_eq(b, walk))
-    }
-
-    /// Takes one step of the budget, or answers that it is spent: the
-    /// pairs met from now on are remembered.
-    #[inline]
-    pub(crate) fn step(self) -> bool {
-        let left = self.left.get();
-        self.left.set(left.saturating_sub(1));
-        left > 0
-    }
-
-    /// [`Walk::node`] for any pair `a` and `b` stand for, `later` comparing
-    /// them if they are left for later.
-    #[inline]
-    pub(crate) fn pair<N: NodeId>(
-        self,
-        a: &N,
-        b: &N,
-        reflexive: bool,
-        fields_eq: impl FnOnce(Self) -> bool,
-        later: impl for<'w> FnOnce(Walk<'w, 'v>) -> bool + 'v,
-    ) -> bool {
         if reflexive && a.addr() == b.addr() {
             return true;
         }
@@ -194,7 +171,7 @@ impl<'v> Walk<'_, 'v> {
         if left == 0 {
             // The pairs under way go on where they are; only the ones met
             // from now on are remembered.
-            return self.remembering(a, b, fields_eq, later);
+            return self.remembering(a, b, fields_eq);
         }
         self.left.set(left - 1);
         fields_eq(self)
@@ -206,15 +183,14 @@ impl<'v> Walk<'_, 'v> {
     /// held in one place is reached by one path only.
     #[cold]
     #[inline(never)]
-    fn remembering<N: NodeId>(
+    fn remembering<N: NodeId + WalkEq>(
         self,
-        a: &N,
-        b: &N,
+        a: &'v N,
+        b: &'v N,
         fields_eq: impl FnOnce(Self) -> bool,
-        later: impl for<'w> FnOnce(Walk<'w, 'v>) -> bool + 'v,
     ) -> bool {
         if self.deep() {
-            return self.leave(later);
+            return self.leave(a, b);
         }
         if a.count() == 1 || b.count() == 1 {
             return fields_eq(self);
@@ -252,11 +228,51 @@ impl<'v> Walk<'_, 'v> {
     /// Leaves the pair for later (see [`Walk::rest`]): equal for now.
     #[cold]
     #[inline(never)]
-    pub(crate) fn leave(self, later: impl for<'w> FnOnce(Walk<'w, 'v>) -> bool + 'v) -> bool {
+    fn leave<N: WalkEq>(self, a: &'v N, b: &'v N) -> bool {
+        self.defer(move |walk| a.walk_eq(b, walk))
+    }
+
+    /// Leaves `later` for later (see [`Walk::rest`]): equal for now.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn defer(self, later: impl for<'w> FnOnce(Walk<'w, 'v>) -> bool + 'v) -> bool {
         let mut spent = self.memory.spent.take().unwrap_or_default();
         spent.later.push(Box::new(later));
         self.memory.spent.set(Some(spent));
         true
+    }
+
+    /// Takes one step of the budget, or answers that it is spent: the pairs
+    /// met from now on are remembered.
+    #[inline]
+    pub(crate) fn step(self) -> bool {
+        let left = self.left.get();
+        self.left.set(left.saturating_sub(1));
+        left > 0
+    }
+
+    /// Two values stored at `a` and `b` met once the budget is spent and
+    /// below a check of [`Walk::deep`], `fields_eq` comparing them: looked
+    /// up, and remembered once found equal.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn remember(self, a: usize, b: usize, fields_eq: impl FnOnce(Self) -> bool) -> bool {
+        let pair = (a, b);
+        let spent = self.memory.spent.take();
+        let known = spent
+            .as_ref()
+            .is_some_and(|spent| spent.equal.contains(&pair));
+        self.memory.spent.set(spent);
+        if known {
+            return true;
+        }
+        let same = fields_eq(self);
+        if same {
+            let mut spent = self.memory.spent.take().unwrap_or_default();
+            spent.equal.insert(pair);
+            self.memory.spent.set(Some(spent));
+        }
+        same
     }
 
     /// The pairs left for later, once the rest of the comparison is equal.
