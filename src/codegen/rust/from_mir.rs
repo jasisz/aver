@@ -708,7 +708,6 @@ fn lent_lookups(expr: &MirExpr, body: &MirExpr, ctx: &MirEmitCtx<'_>, out: &mut 
         && let Some((map, _)) = lent_lookup_parts(&binding.node.value.node, ctx)
         && let Some(root) = projection_root_local(&map.node)
         && matches!(binding.node.value.ty(), Some(Type::Option(inner)) if should_borrow_param(inner))
-        && reads_local(&binding.node.body.node, binding.node.binding)
         && super::lent_option::reads_in_place(
             &binding.node.body.node,
             binding.node.binding,
