@@ -943,9 +943,9 @@ pub struct AverList<T> {
     /// stepping is a reference count and an offset, with nothing built. Flat
     /// and indexed bodies carry an offset. The other shapes are whole nodes.
     ///
-    /// It and `segment_index` take 32 bits each, so a list is 16 bytes and a
-    /// `Prepend` node, which holds its tail, 8 bytes smaller. A view further
-    /// in than that is rebuilt to start at its first element ([`Self::view`]).
+    /// It and `segment_index` take 32 bits each, so a list is 16 bytes, and
+    /// so is the tail every `Prepend` node holds. A view further in than 32
+    /// bits is rebuilt to start at its first element ([`Self::view`]).
     start: u32,
     /// Segment containing `start`, when `inner` is `Indexed`.
     ///
@@ -1197,8 +1197,7 @@ impl<T> AverList<T> {
     /// a flat body and once every four billion steps.
     #[inline]
     fn view(&self, start: usize, segment_index: usize) -> Self {
-        if let (Ok(start), Ok(segment_index)) =
-            (u32::try_from(start), u32::try_from(segment_index))
+        if let (Ok(start), Ok(segment_index)) = (u32::try_from(start), u32::try_from(segment_index))
         {
             return Self {
                 inner: self.inner.clone(),
@@ -3199,7 +3198,8 @@ mod tests {
         fn every_shape_reads_in_order_and_drops_each_element_once() {
             let depth = if cfg!(miri) { 200 } else { 100_000 };
             let live = std::sync::Arc::new(AtomicIsize::new(0));
-            let one = |value| AverList::prepend_owned(Counted::new(&live, value), AverList::empty());
+            let one =
+                |value| AverList::prepend_owned(Counted::new(&live, value), AverList::empty());
 
             let mut chain = AverList::empty();
             for value in (0..depth).rev() {
@@ -3269,19 +3269,28 @@ mod tests {
             }
             rope = AverList::concat(&rope, &flat.drop_first(6));
             let indexed = rope.indexed();
-            assert!(matches!(indexed.shape(), Some(AverListInner::Indexed { .. })));
+            assert!(matches!(
+                indexed.shape(),
+                Some(AverListInner::Indexed { .. })
+            ));
 
             for list in [&flat, &indexed] {
                 for start in 0..list.len() {
                     let view = list.drop_first(start);
                     let rebuilt = list.rebased(start, view.segment_index());
-                    assert!(matches!(rebuilt.shape(), Some(AverListInner::Indexed { .. })));
+                    assert!(matches!(
+                        rebuilt.shape(),
+                        Some(AverListInner::Indexed { .. })
+                    ));
                     assert_eq!(rebuilt.start, 0);
                     assert_eq!(values(&rebuilt), values(&view));
                     assert_eq!(rebuilt.len(), view.len());
                     for step in 0..view.len() {
                         assert_eq!(rebuilt.get(step).map(|c| c.1), view.get(step).map(|c| c.1));
-                        assert_eq!(values(&rebuilt.drop_first(step)), values(&view.drop_first(step)));
+                        assert_eq!(
+                            values(&rebuilt.drop_first(step)),
+                            values(&view.drop_first(step))
+                        );
                     }
                     let tail = rebuilt.tail().expect("a view of one or more");
                     assert_eq!(values(&tail), values(&view.drop_first(1)));
@@ -3355,7 +3364,10 @@ mod tests {
             let twice = AverList::concat(&joined, &tail);
             assert_eq!(twice.len(), 2 * edge + 1);
             assert_eq!(twice.drop_first(2 * edge).len(), 1);
-            assert_eq!(AverList::concat(&joined, &AverList::empty()).len(), edge + 1);
+            assert_eq!(
+                AverList::concat(&joined, &AverList::empty()).len(),
+                edge + 1
+            );
         }
     }
 }
