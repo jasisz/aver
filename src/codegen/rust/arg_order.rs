@@ -32,7 +32,6 @@ use crate::codegen::CodegenContext;
 use crate::ir::FnId;
 use crate::ir::mir::{LocalId, MirCallee, MirExpr, MirFn, MirLet, MirLocal};
 
-use super::ownership::projection_root_local;
 use super::syntax::generated_ident;
 
 /// Bind the computed arguments of every call in the program.
@@ -71,8 +70,7 @@ fn rewrite(
     crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
         rewrite(child, mir_fn, boxed_return, builtins, self_bounces)
     });
-    // The collection a write takes, which a later argument must read last.
-    let mut target = None;
+    let mut write = false;
     let args = match &expr.node {
         MirExpr::Call(call) => match call.node.callee {
             MirCallee::Fn(_) => &call.node.args,
@@ -82,15 +80,7 @@ fn rewrite(
                     Some("Map.set" | "Map.remove" | "Vector.set")
                 ) =>
             {
-                let Some(root) = call
-                    .node
-                    .args
-                    .first()
-                    .and_then(|a| projection_root_local(&a.node))
-                else {
-                    return;
-                };
-                target = Some(root.slot);
+                write = true;
                 &call.node.args
             }
             _ => return,
@@ -107,12 +97,16 @@ fn rewrite(
         .filter(|(_, arg)| !read(&arg.node))
         .map_while(|(j, arg)| bindable(arg, boxed_return).then_some(j))
         .collect();
-    if let Some(root) = target {
-        let mut last = Vec::new();
-        for &j in &bound {
-            collect_last_use_slots(&args[j].node, &mut last);
-        }
-        if !last.contains(&root) {
+    // A write is rewritten only when a bound argument reads the collection
+    // it takes (or what holds it) last.
+    if write {
+        let Some((target, path)) = args.first().and_then(|a| read_path(&a.node)) else {
+            return;
+        };
+        if !bound
+            .iter()
+            .any(|&j| reads_last(&args[j].node, target.slot, &path))
+        {
             return;
         }
     }
@@ -248,6 +242,33 @@ fn boxed_int(expr: &MirExpr, boxed_return: &HashSet<FnId>) -> bool {
         MirExpr::Neg(inner) => boxed_int(&inner.node, boxed_return),
         _ => false,
     }
+}
+
+/// The local a read of a variable or of a field path of one starts from,
+/// and the fields it goes through.
+fn read_path(expr: &MirExpr) -> Option<(&MirLocal, Vec<&str>)> {
+    match expr {
+        MirExpr::Local(local) if !local.node.name.is_empty() => Some((&local.node, Vec::new())),
+        MirExpr::Project(project) => {
+            let (local, mut path) = read_path(&project.node.base.node)?;
+            path.push(&project.node.field);
+            Some((local, path))
+        }
+        _ => None,
+    }
+}
+
+/// Whether `expr` reads `slot` for the last time through a part that
+/// overlaps `path` (one path extends the other).
+fn reads_last(expr: &MirExpr, slot: LocalId, path: &[&str]) -> bool {
+    if let Some((local, read)) = read_path(expr) {
+        return local.slot == slot && local.last_use && read.iter().zip(path).all(|(a, b)| a == b);
+    }
+    let mut found = false;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        found = found || reads_last(child, slot, path);
+    });
+    found
 }
 
 fn root_local_mut(expr: &mut MirExpr) -> Option<&mut MirLocal> {
