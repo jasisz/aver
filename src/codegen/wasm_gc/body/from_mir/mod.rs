@@ -77,7 +77,6 @@ pub(super) use super::emit::{
     emit_return_call_insn, emit_string_literal_bytes, sum_or_record_eq_fn,
 };
 pub(super) use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
-pub(super) use super::slots::count_value_params;
 pub(super) use super::{CallerFnCollector, EmitCtx, FnMap, SlotTable, Wasip2Lowering};
 
 mod builtins;
@@ -454,7 +453,7 @@ pub(crate) fn emit_fn_body_via_mir(
     }
     func.instruction(&Instruction::End);
 
-    Ok(Some(slots.extra_locals(count_value_params(&rfd.params))))
+    Ok(Some(slots.extra_locals()))
 }
 
 /// Mirror of `emit_expr`'s `nullary_variant_idx`: if `operand` is a
@@ -623,7 +622,7 @@ pub(crate) fn emit_mir_expr(
             // Unit locals retain an index placeholder, but reading Unit must
             // leave no stack value, just like its literal and function result.
             if produces_value {
-                func.instruction(&Instruction::LocalGet(local.node.slot.0));
+                func.instruction(&Instruction::LocalGet(slots.local(local.node.slot.0)));
             }
             Ok(Some(produces_value))
         }
@@ -1428,7 +1427,7 @@ pub(crate) fn emit_mir_expr(
                             return Ok(None);
                         }
                     }
-                    func.instruction(&Instruction::LocalGet(slot as u32));
+                    func.instruction(&Instruction::LocalGet(slots.local(slot as u32)));
                     func.instruction(&Instruction::CallIndirect {
                         type_index,
                         table_index: 0,
@@ -2114,7 +2113,7 @@ pub(crate) fn emit_mir_int_raw(
             if !ctx.slot_is_bare(local.node.slot.0) {
                 return Ok(None);
             }
-            func.instruction(&Instruction::LocalGet(local.node.slot.0));
+            func.instruction(&Instruction::LocalGet(slots.local(local.node.slot.0)));
             Ok(Some(true))
         }
         MirExpr::Neg(inner) => {

@@ -1093,6 +1093,16 @@ fn emit_hash_for(
     if k_aver == "String" {
         return emit_hash_string(registry);
     }
+    // An eligible carrier is a native `i64` here, as a sum or record key's
+    // field: raw `i32.wrap_i64`, matching its `i64.eq` and the inline
+    // carrier hash, not the underlying `Int`'s ref helper.
+    if registry.is_eligible_carrier(k_aver) {
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::I32WrapI64);
+        f.instruction(&Instruction::End);
+        return Ok(f);
+    }
     // A newtype-erased value record — a `Map<_, V>` whose `V` is a
     // single-primitive-field record — reaches its hash helper as the
     // bare carrier, not the `$V` struct: `aver_to_wasm(V)` and the
@@ -1174,6 +1184,14 @@ fn emit_eq_for(
 ) -> Result<Function, WasmGcError> {
     if k_aver == "String" {
         return emit_eq_string(registry);
+    }
+    if registry.is_eligible_carrier(k_aver) {
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::I64Eq);
+        f.instruction(&Instruction::End);
+        return Ok(f);
     }
     // Mirror of the newtype-erasure guard in `emit_hash_for`: a
     // newtype-erased value record reaches its eq helper as two bare

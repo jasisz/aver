@@ -26,10 +26,17 @@ use super::infer::{
 };
 
 /// Per-fn slot table — one entry per local (param or binding) in
-/// resolver-allocation order. Slot N maps to `wasm local N`.
+/// resolver-allocation order. Slot N maps to `wasm local N`, except for
+/// parameters (see `param_locals`).
 pub(in crate::codegen::wasm_gc) struct SlotTable {
     /// Element index = slot number; element value = wasm ValType.
     pub(super) by_slot: Vec<ValType>,
+    /// The wasm local of each parameter slot. A `Unit` parameter has no
+    /// wasm value and the signature drops it, so the value parameters are
+    /// locals `0..value_params` in order and the `Unit` ones the locals
+    /// right after them; every slot past the parameters keeps its index.
+    param_locals: Vec<u32>,
+    value_params: usize,
     /// Optional scratch slot of `(ref null eq)` reserved for multi-arm
     /// variant dispatch — holds the subject so `ref.test` and
     /// `ref.cast` can read it across arms without recomputing the
@@ -454,8 +461,22 @@ impl SlotTable {
             }
             _ => None,
         };
+        let is_unit = |ty: &Type| ty.display().trim() == "Unit";
+        let value_params = fd.params.iter().filter(|(_, ty)| !is_unit(ty)).count();
+        let (mut value, mut unit) = (0, value_params as u32);
+        let param_locals = fd
+            .params
+            .iter()
+            .map(|(_, ty)| {
+                let next = if is_unit(ty) { &mut unit } else { &mut value };
+                *next += 1;
+                *next - 1
+            })
+            .collect();
         Ok(Self {
             by_slot,
+            param_locals,
+            value_params,
             subject_scratch,
             args_get_scratch,
             vector_set_scratch,
@@ -525,11 +546,28 @@ impl SlotTable {
         (turn, waited, worked)
     }
 
-    pub(super) fn extra_locals(&self, params_count: usize) -> Vec<ValType> {
-        self.by_slot
-            .iter()
-            .skip(params_count)
+    /// The wasm local that holds `slot`.
+    pub(super) fn local(&self, slot: u32) -> u32 {
+        self.param_locals
+            .get(slot as usize)
             .copied()
+            .unwrap_or(slot)
+    }
+
+    /// The types of the locals past the signature's parameters, in local
+    /// order.
+    pub(super) fn extra_locals(&self) -> Vec<ValType> {
+        let mut by_local = self.by_slot.clone();
+        for (slot, &local) in self.param_locals.iter().enumerate() {
+            if let (Some(to), Some(&ty)) =
+                (by_local.get_mut(local as usize), self.by_slot.get(slot))
+            {
+                *to = ty;
+            }
+        }
+        by_local
+            .into_iter()
+            .skip(self.value_params)
             .chain(self.lazy_locals.borrow().iter().copied())
             .collect()
     }
@@ -955,13 +993,6 @@ pub(super) fn expr_needs_scratch(expr: &ResolvedExpr, registry: &TypeRegistry) -
         }),
         _ => false,
     }
-}
-
-pub(super) fn count_value_params(params: &[(String, Type)]) -> usize {
-    params
-        .iter()
-        .filter(|(_, ty)| ty.display().trim() != "Unit")
-        .count()
 }
 
 /// Walks the fn body collecting whitespace-stripped `Vector<T>`
