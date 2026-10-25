@@ -105,16 +105,7 @@ pub fn readPoly(
         let __t = &t;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(__n_fields) => {
-                let (n,) = if t.owns_node() {
-                    let __f = crate::proof_kernel::aver_generated::kernel::term::Term::take::<
-                        crate::proof_kernel::aver_generated::kernel::term::Term__TInt,
-                    >(t);
-                    (__f.0,)
-                } else {
-                    let __c = (__n_fields.0.clone(),);
-                    drop(t);
-                    __c
-                };
+                let n = __n_fields.0.clone();
                 crate::proof_kernel::aver_generated::kernel::ring::Read {
                     poly: crate::proof_kernel::aver_generated::kernel::ring::constant(n),
                     atoms: atoms.clone(),
@@ -173,19 +164,12 @@ pub fn readPoly(
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                let (a,) = if t.owns_node() {
-                    let __f = crate::proof_kernel::aver_generated::kernel::term::Term::take::<
-                        crate::proof_kernel::aver_generated::kernel::term::Term__TNeg,
-                    >(t);
-                    (__f.0,)
-                } else {
-                    let __c = (__a_fields.0.clone(),);
-                    drop(t);
-                    __c
-                };
+                let a = &__a_fields.0;
                 {
-                    let __arg10 @ _ =
-                        crate::proof_kernel::aver_generated::kernel::ring::readPoly(a, atoms);
+                    let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::ring::readPoly(
+                        a.clone(),
+                        atoms,
+                    );
                     crate::proof_kernel::aver_generated::kernel::ring::negated(&__arg10)
                 }
             }

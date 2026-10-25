@@ -438,181 +438,100 @@ pub fn shiftFnIdsInExpr(
         let __t = &expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(__cond_fields) => {
-                let (cond, thenExpr, elseExpr) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprBoolBranch,
-                    >(expr);
-                    (__f.0, __f.1, __f.2)
-                } else {
-                    let __c = (
-                        __cond_fields.0.clone(),
-                        __cond_fields.1.clone(),
-                        __cond_fields.2.clone(),
-                    );
-                    drop(expr);
-                    __c
-                };
+                let cond = &__cond_fields.0;
+                let thenExpr = &__cond_fields.1;
+                let elseExpr = &__cond_fields.2;
                 crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
                     crate::aver_generated::domain::ast::Expr__ExprBoolBranch(
-                        shiftFnIdsInExpr(cond, offset.clone()),
-                        shiftFnIdsInExpr(thenExpr, offset.clone()),
-                        shiftFnIdsInExpr(elseExpr, offset),
+                        shiftFnIdsInExpr(cond.clone(), offset.clone()),
+                        shiftFnIdsInExpr(thenExpr.clone(), offset.clone()),
+                        shiftFnIdsInExpr(elseExpr.clone(), offset),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprVectorGetOrInt(
                 __vecExpr_fields,
             ) => {
-                let (vecExpr, idxExpr, defaultValue) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt,
-                    >(expr);
-                    (__f.0, __f.1, __f.2)
-                } else {
-                    let __c = (
-                        __vecExpr_fields.0.clone(),
-                        __vecExpr_fields.1.clone(),
-                        __vecExpr_fields.2.clone(),
-                    );
-                    drop(expr);
-                    __c
-                };
+                let vecExpr = &__vecExpr_fields.0;
+                let idxExpr = &__vecExpr_fields.1;
+                let defaultValue = __vecExpr_fields.2.clone();
                 crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
                     crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
-                        shiftFnIdsInExpr(vecExpr, offset.clone()),
-                        shiftFnIdsInExpr(idxExpr, offset),
+                        shiftFnIdsInExpr(vecExpr.clone(), offset.clone()),
+                        shiftFnIdsInExpr(idxExpr.clone(), offset),
                         defaultValue,
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprIntModOrInt(__a_fields) => {
-                let (a, b, defaultValue) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprIntModOrInt,
-                    >(expr);
-                    (__f.0, __f.1, __f.2)
-                } else {
-                    let __c = (
-                        __a_fields.0.clone(),
-                        __a_fields.1.clone(),
-                        __a_fields.2.clone(),
-                    );
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
+                let defaultValue = __a_fields.2.clone();
                 crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
                     crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                         defaultValue,
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprAdd(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprAdd,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprAdd(
                     crate::aver_generated::domain::ast::Expr__ExprAdd(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprSub(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprSub,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprSub(
                     crate::aver_generated::domain::ast::Expr__ExprSub(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprMul(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprMul,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprMul(
                     crate::aver_generated::domain::ast::Expr__ExprMul(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprDiv(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprDiv,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprDiv(
                     crate::aver_generated::domain::ast::Expr__ExprDiv(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprEq,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprEq(
                     crate::aver_generated::domain::ast::Expr__ExprEq(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprNeq(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprNeq,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprNeq(
                     crate::aver_generated::domain::ast::Expr__ExprNeq(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
@@ -631,74 +550,42 @@ pub fn shiftFnIdsInExprTail(
         let __t = &expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprLt(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprLt,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprLt(
                     crate::aver_generated::domain::ast::Expr__ExprLt(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprGt,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprGt(
                     crate::aver_generated::domain::ast::Expr__ExprGt(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprLte,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprLte(
                     crate::aver_generated::domain::ast::Expr__ExprLte(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
-                let (a, b) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprGte,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let a = &__a_fields.0;
+                let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprGte(
                     crate::aver_generated::domain::ast::Expr__ExprGte(
-                        shiftFnIdsInExpr(a, offset.clone()),
-                        shiftFnIdsInExpr(b, offset),
+                        shiftFnIdsInExpr(a.clone(), offset.clone()),
+                        shiftFnIdsInExpr(b.clone(), offset),
                     ),
                 )
             }
@@ -736,15 +623,8 @@ pub fn shiftFnIdsInExprTail(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprRecord(__name_fields) => {
-                let __name_own;
-                let (name, fields) = if expr.owns_node() {
-                    __name_own = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprRecord,
-                    >(expr);
-                    (__name_own.0, &__name_own.1)
-                } else {
-                    (__name_fields.0.clone(), &__name_fields.1)
-                };
+                let name = __name_fields.0.clone();
+                let fields = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprRecord(
                     crate::aver_generated::domain::ast::Expr__ExprRecord(name, {
                         let __arg18 @ _ = aver_rt::list_builder_new(
@@ -769,33 +649,18 @@ pub fn shiftFnIdsInExprCalls(
         let __t = &expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(__obj_fields) => {
-                let (obj, field) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprFieldAccess,
-                    >(expr);
-                    (__f.0, __f.1)
-                } else {
-                    let __c = (__obj_fields.0.clone(), __obj_fields.1.clone());
-                    drop(expr);
-                    __c
-                };
+                let obj = &__obj_fields.0;
+                let field = __obj_fields.1.clone();
                 crate::aver_generated::domain::ast::Expr::ExprFieldAccess(
                     crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
-                        shiftFnIdsInExpr(obj, offset),
+                        shiftFnIdsInExpr(obj.clone(), offset),
                         field,
                     ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCall(__name_fields) => {
-                let __name_own;
-                let (name, args) = if expr.owns_node() {
-                    __name_own = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprCall,
-                    >(expr);
-                    (__name_own.0, &__name_own.1)
-                } else {
-                    (__name_fields.0.clone(), &__name_fields.1)
-                };
+                let name = __name_fields.0.clone();
+                let args = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCall(
                     crate::aver_generated::domain::ast::Expr__ExprCall(name, {
                         let __arg17 @ _ = aver_rt::list_builder_new(
@@ -806,15 +671,8 @@ pub fn shiftFnIdsInExprCalls(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
-                let __fnId_own;
-                let (fnId, args) = if expr.owns_node() {
-                    __fnId_own = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprCallDirect,
-                    >(expr);
-                    (__fnId_own.0, &__fnId_own.1)
-                } else {
-                    (__fnId_fields.0.clone(), &__fnId_fields.1)
-                };
+                let fnId = __fnId_fields.0.clone();
+                let args = &__fnId_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallDirect(
                     crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId.add(&offset), {
                         let __arg18 @ _ = aver_rt::list_builder_new(
@@ -825,15 +683,8 @@ pub fn shiftFnIdsInExprCalls(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
-                let __name_own;
-                let (name, args) = if expr.owns_node() {
-                    __name_own = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin,
-                    >(expr);
-                    (__name_own.0, &__name_own.1)
-                } else {
-                    (__name_fields.0.clone(), &__name_fields.1)
-                };
+                let name = __name_fields.0.clone();
+                let args = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, {
                         let __arg19 @ _ = aver_rt::list_builder_new(
@@ -844,15 +695,8 @@ pub fn shiftFnIdsInExprCalls(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(__id_fields) => {
-                let __id_own;
-                let (id, args) = if expr.owns_node() {
-                    __id_own = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId,
-                    >(expr);
-                    (__id_own.0, &__id_own.1)
-                } else {
-                    (__id_fields.0.clone(), &__id_fields.1)
-                };
+                let id = __id_fields.0.clone();
+                let args = &__id_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
                         let __arg20 @ _ = aver_rt::list_builder_new(
@@ -863,18 +707,11 @@ pub fn shiftFnIdsInExprCalls(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprMatch(__scrutinee_fields) => {
-                let __scrutinee_own;
-                let (scrutinee, arms) = if expr.owns_node() {
-                    __scrutinee_own = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprMatch,
-                    >(expr);
-                    (__scrutinee_own.0, &__scrutinee_own.1)
-                } else {
-                    (__scrutinee_fields.0.clone(), &__scrutinee_fields.1)
-                };
+                let scrutinee = &__scrutinee_fields.0;
+                let arms = &__scrutinee_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                     crate::aver_generated::domain::ast::Expr__ExprMatch(
-                        shiftFnIdsInExpr(scrutinee, offset.clone()),
+                        shiftFnIdsInExpr(scrutinee.clone(), offset.clone()),
                         {
                             let __arg21 @ _ = aver_rt::list_builder_new(
                                 (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
@@ -885,34 +722,19 @@ pub fn shiftFnIdsInExprCalls(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprPropagate(__inner_fields) => {
-                let (inner,) = if expr.owns_node() {
-                    let __f = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprPropagate,
-                    >(expr);
-                    (__f.0,)
-                } else {
-                    let __c = (__inner_fields.0.clone(),);
-                    drop(expr);
-                    __c
-                };
+                let inner = &__inner_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprPropagate(
                     crate::aver_generated::domain::ast::Expr__ExprPropagate(shiftFnIdsInExpr(
-                        inner, offset,
+                        inner.clone(),
+                        offset,
                     )),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprIndependentProduct(
                 __exprs_fields,
             ) => {
-                let __exprs_own;
-                let (exprs, unwrap) = if expr.owns_node() {
-                    __exprs_own = crate::aver_generated::domain::ast::Expr::take::<
-                        crate::aver_generated::domain::ast::Expr__ExprIndependentProduct,
-                    >(expr);
-                    (&__exprs_own.0, __exprs_own.1)
-                } else {
-                    (&__exprs_fields.0, __exprs_fields.1.clone())
-                };
+                let exprs = &__exprs_fields.0;
+                let unwrap = __exprs_fields.1.clone();
                 crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
                     crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
                         {

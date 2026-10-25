@@ -720,17 +720,7 @@ fn __mutual_tco_trampoline_1(
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Plan(
                             __name_fields,
                         ) => {
-                            let (name,) = if __t.owns_node() {
-                                let __f =
-                                    crate::proof_std::aver_generated::kernel::std::Tactic::take::<
-                                        crate::proof_std::aver_generated::kernel::std::Tactic__Plan,
-                                    >(__t);
-                                (__f.0,)
-                            } else {
-                                let __c = (__name_fields.0.clone(),);
-                                drop(__t);
-                                __c
-                            };
+                            let name = __name_fields.0.clone();
                             {
                                 let __arg21 @ _ = aver_rt::AverStr::from({
                                     let mut __b = {
@@ -778,40 +768,24 @@ fn __mutual_tco_trampoline_1(
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Cases(
                             __next_fields,
                         ) => {
-                            let (next,) = if __t.owns_node() {
-                                let __f = crate::proof_std::aver_generated::kernel::std::Tactic::take::<crate::proof_std::aver_generated::kernel::std::Tactic__Cases>(__t);
-                                (__f.0,)
-                            } else {
-                                let __c = (__next_fields.0.clone(),);
-                                drop(__t);
-                                __c
-                            };
+                            let next = &__next_fields.0;
                             {
                                 let __arg23 @ _ =
                                     crate::proof_std::aver_generated::kernel::std::down(
                                         n,
                                         ::aver_rt::str_lit!("Cases"),
                                     );
-                                __MutualTco1::CasesAt(__arg23, next)
+                                __MutualTco1::CasesAt(__arg23, next.clone())
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Induction(
                             __v_fields,
                         ) => {
-                            let (v, h, tl, nil, cons) = if __t.owns_node() {
-                                let __f = crate::proof_std::aver_generated::kernel::std::Tactic::take::<crate::proof_std::aver_generated::kernel::std::Tactic__Induction>(__t);
-                                (__f.0, __f.1, __f.2, __f.3, __f.4)
-                            } else {
-                                let __c = (
-                                    __v_fields.0.clone(),
-                                    __v_fields.1.clone(),
-                                    __v_fields.2.clone(),
-                                    __v_fields.3.clone(),
-                                    __v_fields.4.clone(),
-                                );
-                                drop(__t);
-                                __c
-                            };
+                            let v = __v_fields.0.clone();
+                            let h = __v_fields.1.clone();
+                            let tl = __v_fields.2.clone();
+                            let nil = &__v_fields.3;
+                            let cons = &__v_fields.4;
                             {
                                 let __arg25 @ _ = {
                                     let __arg24 @ _ = aver_rt::AverStr::from({
@@ -834,27 +808,25 @@ fn __mutual_tco_trampoline_1(
                                     crate::proof_std::aver_generated::kernel::std::down(n, __arg24)
                                 };
                                 return crate::proof_std::aver_generated::kernel::std::listStep(
-                                    __arg25, v, h, tl, nil, cons, true, &*answers,
+                                    __arg25,
+                                    v,
+                                    h,
+                                    tl,
+                                    nil.clone(),
+                                    cons.clone(),
+                                    true,
+                                    &*answers,
                                 );
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Split(
                             __v_fields,
                         ) => {
-                            let (v, h, tl, nil, cons) = if __t.owns_node() {
-                                let __f = crate::proof_std::aver_generated::kernel::std::Tactic::take::<crate::proof_std::aver_generated::kernel::std::Tactic__Split>(__t);
-                                (__f.0, __f.1, __f.2, __f.3, __f.4)
-                            } else {
-                                let __c = (
-                                    __v_fields.0.clone(),
-                                    __v_fields.1.clone(),
-                                    __v_fields.2.clone(),
-                                    __v_fields.3.clone(),
-                                    __v_fields.4.clone(),
-                                );
-                                drop(__t);
-                                __c
-                            };
+                            let v = __v_fields.0.clone();
+                            let h = __v_fields.1.clone();
+                            let tl = __v_fields.2.clone();
+                            let nil = &__v_fields.3;
+                            let cons = &__v_fields.4;
                             {
                                 let __arg27 @ _ = {
                                     let __arg26 @ _ = aver_rt::AverStr::from({
@@ -877,25 +849,23 @@ fn __mutual_tco_trampoline_1(
                                     crate::proof_std::aver_generated::kernel::std::down(n, __arg26)
                                 };
                                 return crate::proof_std::aver_generated::kernel::std::listStep(
-                                    __arg27, v, h, tl, nil, cons, false, &*answers,
+                                    __arg27,
+                                    v,
+                                    h,
+                                    tl,
+                                    nil.clone(),
+                                    cons.clone(),
+                                    false,
+                                    &*answers,
                                 );
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::SplitBool(
                             __c_fields,
                         ) => {
-                            let (c, yes, no) = if __t.owns_node() {
-                                let __f = crate::proof_std::aver_generated::kernel::std::Tactic::take::<crate::proof_std::aver_generated::kernel::std::Tactic__SplitBool>(__t);
-                                (__f.0, __f.1, __f.2)
-                            } else {
-                                let __c = (
-                                    __c_fields.0.clone(),
-                                    __c_fields.1.clone(),
-                                    __c_fields.2.clone(),
-                                );
-                                drop(__t);
-                                __c
-                            };
+                            let c = &__c_fields.0;
+                            let yes = &__c_fields.1;
+                            let no = &__c_fields.2;
                             {
                                 let __arg28 @ _ =
                                     crate::proof_std::aver_generated::kernel::std::down(
@@ -903,26 +873,23 @@ fn __mutual_tco_trampoline_1(
                                         ::aver_rt::str_lit!("SplitBool"),
                                     );
                                 return crate::proof_std::aver_generated::kernel::std::boolStep(
-                                    &__arg28, c, yes, no, &*answers,
+                                    &__arg28,
+                                    c.clone(),
+                                    yes.clone(),
+                                    no.clone(),
+                                    &*answers,
                                 );
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::First(
                             __ts_fields,
                         ) => {
-                            let (ts,) = if __t.owns_node() {
-                                let __f = crate::proof_std::aver_generated::kernel::std::Tactic::take::<crate::proof_std::aver_generated::kernel::std::Tactic__First>(__t);
-                                (__f.0,)
-                            } else {
-                                let __c = (__ts_fields.0.clone(),);
-                                drop(__t);
-                                __c
-                            };
+                            let ts = &__ts_fields.0;
                             {
                                 let __arg29 @ _ = <aver_rt::AverList<AverStr>>::empty();
                                 return crate::proof_std::aver_generated::kernel::std::first(
                                     &n,
-                                    &ts,
+                                    ts,
                                     aver_rt::AverInt::from_i64(1),
                                     __arg29,
                                     &*answers,
