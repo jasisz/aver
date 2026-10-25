@@ -3301,7 +3301,9 @@ mod tests {
         }
 
         /// `n` elements of `()`, which take no memory, so a list longer than
-        /// 32 bits count fits in a test.
+        /// 32 bits count fits in a test. Filling the vector one element at a
+        /// time would take billions of steps.
+        #[allow(clippy::uninit_vec)]
         fn units(n: usize) -> Vec<()> {
             let mut items = Vec::new();
             // SAFETY: a `Vec` of a zero-sized type has room for `usize::MAX`
