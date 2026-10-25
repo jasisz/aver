@@ -4818,6 +4818,68 @@ fn a_field_copied_by_an_earlier_part_moves_at_its_later_read() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// An `Option` param a function only reads takes `Option<&T>`, so a value
+/// looked up in a Map is lent to it (`hit(memo.get(&key), &e)`) instead of
+/// copied out of the Map for the call. The callee copies only what it hands
+/// on: a payload it returns or stores, or the whole value it returns. A value
+/// passed on to another reading function stays lent, a lookup bound to a
+/// name first is lent too, a caller that holds its own `Option` lends it with
+/// `as_ref()`, and a lookup whose Map a later argument changes is copied as
+/// before. The loop and the mutual trampoline lend the lookup for one call
+/// of their step. Rust must print what the VM prints, and the verify cases
+/// pass.
+#[test]
+fn a_value_looked_up_in_a_map_is_lent_to_a_function_that_only_reads_it() {
+    let relative = "tests/fixtures/lent_map_get_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("lent_map_get", &src);
+    for expected in [
+        "pub fn hit(entry @ _: Option<&(Expr, Expr)>, e @ _: &Expr)",
+        "let __arg3 @ _ = memo.get(&key); hit(__arg3, &e) }; match __subject { Some(_) => { memo }, None => { memo.insert_owned(",
+        "let x @ _ = memo.get(&k);\n    isNode(x)",
+        "pub fn deep(o @ _: Option<&Expr>) -> bool {\n    crate::cancel_checkpoint();\n    isNode(o)",
+        "match o { Some(_) => { o.cloned() }",
+        "Some(e @ _) => { Kept { e: Some(e.clone()), n: n } }",
+        "let __arg2 @ _ = memo.get(&k).cloned();",
+        "both((&__arg2).as_ref(), &__arg3)",
+        "(deep((&o).as_ref()) == isNode((&o).as_ref()))",
+        "if { let __arg6 @ _ = memo.get(&k); isNode(__arg6) }",
+        "let __arg6 @ _ = memo.get(&(i).rem_euclid(&(aver_rt::AverInt::from_i64(5))).unwrap()); hit(__arg6, &e) }",
+    ] {
+        assert!(
+            emitted.contains(expected),
+            "missing `{expected}`:\n{emitted}"
+        );
+    }
+    assert!(
+        !emitted.contains("let __pat0 = __pat0.clone();"),
+        "a nested pattern under `Some` must read the payload in place:\n{emitted}"
+    );
+    let file = repo_root().join(relative);
+    let ws = temp_dir("lent_map_get");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&file, &project, "lent_map_get", None, &[])?;
+        let bin = cargo_build(&project, "lent_map_get")?;
+        for n in ["100", "3000"] {
+            let rust = run_within(&bin, n, 60)?;
+            let vm = Command::new(aver_bin())
+                .current_dir(repo_root())
+                .args(["run", relative, "--", n])
+                .output()
+                .map_err(|e| format!("vm run: {e}"))?;
+            let vm = String::from_utf8_lossy(&vm.stdout).trim().to_string();
+            if rust != vm || !vm.contains("writeAfter 2000 3") {
+                return Err(format!("n = {n}\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"));
+            }
+        }
+        cargo_test_in(&project, &shared_target_dir())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A match subject that looks a key up in a Map handed out of the state
 /// (`found(Map.get(cacheFor(st, true), k), k)`) is bound by a `let` before
 /// the `match`. Matched in place, the Map's clone was a temporary of the
