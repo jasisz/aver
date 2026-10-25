@@ -110,6 +110,11 @@ export async function createWorkHost(module, options = {}) {
         run_wait_starts: () => BigInt(Math.floor(performance.now() * 1e6)),
         run_wait_ends: () => BigInt(Math.floor(performance.now() * 1e6)),
         run_last_turn: (turn, waited, worked) => [turn, waited, worked],
+        // An independent product marks its branches for a recording host;
+        // a live host has nothing to keep.
+        record_enter_group: () => {},
+        record_set_branch: () => {},
+        record_exit_group: () => {},
     })) if (!options.imports?.aver?.[name]) aver[name] = value;
     imports["aver:work/v1"] = {
         submit(kind, task) {
