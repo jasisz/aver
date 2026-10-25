@@ -6298,9 +6298,23 @@ pub(super) fn emit_module_with(
     }
     let bytes = module.finish();
     if let Err(e) = validate(&bytes) {
-        // Dump invalid bytes for `wasm-tools print` inspection.
-        let _ = std::fs::write("/tmp/aver_wasm_gc_invalid.wasm", &bytes);
-        return Err(e);
+        // Keep the invalid bytes for `wasm-tools print`, and name the
+        // function whose body holds the failing offset: code entry `k` is
+        // function `import_count + k`, `_start` first, then the user fns.
+        let path = std::env::temp_dir().join("aver_wasm_gc_invalid.wasm");
+        let _ = std::fs::write(&path, &bytes);
+        let at = match code_entry_at(&bytes, e.offset()) {
+            Some(0) => " in `_start`".to_string(),
+            Some(k) => match resolved_fn_defs.get(k as usize - 1) {
+                Some(fd) => format!(" in fn `{}` (function {})", fd.name, import_count + k),
+                None => format!(" in helper function {}", import_count + k),
+            },
+            None => String::new(),
+        };
+        return Err(WasmGcError::Validation(format!(
+            "{e}{at}; module written to {}",
+            path.display()
+        )));
     }
     // Second return value: how many fns the MIR body emitter actually
     // rendered (the real `emit_fn_body_via_mir` Some/None decision fixed
@@ -11524,7 +11538,7 @@ fn emit_bridge_bodies(codes: &mut CodeSection, registry: &TypeRegistry) -> Resul
     Ok(())
 }
 
-fn validate(bytes: &[u8]) -> Result<(), WasmGcError> {
+fn validate(bytes: &[u8]) -> Result<(), wasmparser::BinaryReaderError> {
     use wasmparser::{Validator, WasmFeatures};
 
     let features = WasmFeatures::default()
@@ -11532,11 +11546,22 @@ fn validate(bytes: &[u8]) -> Result<(), WasmGcError> {
         | WasmFeatures::REFERENCE_TYPES
         | WasmFeatures::FUNCTION_REFERENCES
         | WasmFeatures::TAIL_CALL;
-    let mut validator = Validator::new_with_features(features);
-    validator
-        .validate_all(bytes)
-        .map_err(|e| WasmGcError::Validation(format!("{e}")))?;
+    Validator::new_with_features(features).validate_all(bytes)?;
     Ok(())
+}
+
+/// The position in the code section of the body that holds `offset`.
+fn code_entry_at(bytes: &[u8], offset: usize) -> Option<u32> {
+    let mut k = 0;
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::CodeSectionEntry(body) = payload.ok()? {
+            if body.range().contains(&offset) {
+                return Some(k);
+            }
+            k += 1;
+        }
+    }
+    None
 }
 
 /// The export section's payload with its entries sorted by the certificate
