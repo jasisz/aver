@@ -801,7 +801,7 @@ pub struct SubstitutedCompileError {
 
 /// One line of `--perf-notes`: a place in the program, by its module (`None`
 /// for the entry) and line, and what the generated code does there.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PerfNote {
     pub module: Option<String>,
     pub line: usize,

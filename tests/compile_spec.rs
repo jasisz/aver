@@ -314,6 +314,104 @@ fn plainOf(n: Int) -> Result<Plain, String>
     assert!(!stdout.contains("`Word` keeps"), "{stdout}");
 }
 
+/// `--perf-notes` names a collection copied before a write and a machine
+/// word boxed at every call, at the file and line, in a dependency too; a
+/// type that misses `exposes opaque` and nothing else still gets its note.
+#[test]
+fn compile_perf_notes_name_copies_and_boxing_only_when_asked() {
+    let workspace = temp_output_dir("aver-perf-notes");
+    fs::create_dir_all(workspace.join("lib")).expect("create workspace");
+    fs::write(
+        workspace.join("main.av"),
+        r#"module Main
+    intent = "Perf notes."
+    depends [Lib.Words]
+
+fn again(n: Int) -> Int
+    ? "A map read again after a write."
+    m = Map.fromList([(1, n)])
+    m2 = Map.set(m, 2, n)
+    Map.len(m2) + Map.len(m)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{again(1)} {Lib.Words.spread(3)}")
+"#,
+    )
+    .expect("write main");
+    fs::write(
+        workspace.join("lib/words.av"),
+        r#"module Words
+    intent = "A word, and a tag that is not opaque."
+    exposes [spread, tagOf]
+    exposes opaque [Word]
+
+record Word
+    value: Int
+
+record Tag
+    value: Int
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "A word below 2^62."
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("out")
+
+fn tagOf(n: Int) -> Result<Tag, String>
+    ? "A tag below 2^11."
+    match Bool.and(n >= 0, n < 2048)
+        true -> Result.Ok(Tag(value = n))
+        false -> Result.Err("out")
+
+fn half(i: Int) -> Int
+    ? "Works on an Int."
+    Int.div(i, 2) + Int.mod(i, 2)
+
+fn spread(n: Int) -> Int
+    ? "Half of a word."
+    match fromInt(n)
+        Result.Ok(w) -> half(w.value)
+        Result.Err(_) -> 0
+"#,
+    )
+    .expect("write lib");
+    let compile = |extra: &[&str]| {
+        Command::new(aver_bin())
+            .current_dir(&workspace)
+            .args(["compile", "main.av", "-o", "out"])
+            .args(extra)
+            .output()
+            .expect("run aver compile")
+    };
+    let plain = compile(&[]);
+    let noted = compile(&["--perf-notes"]);
+    let wasm = compile(&["--perf-notes", "--target", "wasm-gc"]);
+    let _ = fs::remove_dir_all(&workspace);
+    assert!(noted.status.success(), "{}", format_output(&noted));
+    let stdout = String::from_utf8_lossy(&noted.stdout);
+    for line in [
+        "main.av:8: `again` copies the whole map `m` before `Map.set`: `m` is read again at line 9",
+        "lib/words.av:31: `half` takes `i` as an `Int`, and its one call (this one) boxes a machine word into it: taking the `Word` itself would keep it a machine word",
+        "`Lib.Words.Tag` keeps an `Int` field: it has the smart constructor `tagOf` but is not listed under `exposes opaque`",
+    ] {
+        assert!(stdout.contains(line), "{line}\n{stdout}");
+    }
+    let plain_stdout = String::from_utf8_lossy(&plain.stdout);
+    assert!(plain.status.success(), "{}", format_output(&plain));
+    assert!(!plain_stdout.contains("perf notes"), "{plain_stdout}");
+    assert!(
+        plain_stdout.contains("`Lib.Words.Tag` keeps"),
+        "{plain_stdout}"
+    );
+    assert_eq!(wasm.status.code(), Some(1), "{}", format_output(&wasm));
+    assert!(
+        String::from_utf8_lossy(&wasm.stderr).contains("--perf-notes requires --target rust"),
+        "{}",
+        format_output(&wasm)
+    );
+}
+
 #[test]
 fn compile_check_rejects_non_rust_target_before_codegen() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
