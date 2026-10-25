@@ -478,11 +478,7 @@ impl HashHelperRegistry {
             slot();
         }
         if !self.walks.is_empty() {
-            self.table = Some(TableSlots::assign(
-                Entry::Hash,
-                next_fn_idx,
-                next_type_idx,
-            ));
+            self.table = Some(TableSlots::assign(Entry::Hash, next_fn_idx, next_type_idx));
             if self.string_type.is_some() {
                 self.string_slot = Some((*next_fn_idx, *next_type_idx));
                 *next_fn_idx += 1;

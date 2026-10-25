@@ -2284,7 +2284,14 @@ pub(super) fn emit_record_eq_inline(
             let node = |f: &mut Function| {
                 f.instruction(&Instruction::LocalGet(head_local));
             };
-            r.recall(f, (head_local, needle_local), record_idx, &tys, registry, &node);
+            r.recall(
+                f,
+                (head_local, needle_local),
+                record_idx,
+                &tys,
+                registry,
+                &node,
+            );
             Some(r)
         }
         _ => None,

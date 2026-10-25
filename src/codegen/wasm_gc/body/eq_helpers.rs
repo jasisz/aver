@@ -151,7 +151,6 @@ fn step_prologue(f: &mut Function, reflexive: bool) {
     same_object(f, reflexive, Instruction::LocalGet(2));
 }
 
-
 /// The registered helpers a field of type `field_ty` compares through:
 /// the field's own type and every type named inside it.
 fn field_helpers<'a>(field_ty: &str, kinds: &'a HashMap<String, EqKind>) -> Vec<&'a str> {
@@ -528,11 +527,7 @@ impl EqHelperRegistry {
             slot();
         }
         if !self.walks.is_empty() {
-            self.table = Some(TableSlots::assign(
-                Entry::Pair,
-                next_fn_idx,
-                next_type_idx,
-            ));
+            self.table = Some(TableSlots::assign(Entry::Pair, next_fn_idx, next_type_idx));
         }
     }
 

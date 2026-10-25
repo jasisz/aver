@@ -1,24 +1,24 @@
 //! The table a comparison or a hash in steps remembers nodes in once its
 //! budget is spent (`eq_helpers`, `hash_helpers`).
 //!
-//! Wasm-gc gives a node no address to key a table on, so an entry is keyed
-//! by what the node holds that a step can read at once: its constructor and
-//! its `Int`, `Float`, `Bool` and carrier fields, with the length of each
-//! `String`. A node is found by `ref.eq` among the entries of its key, so a
-//! key two nodes share costs a probe, never a wrong answer. A key spreads as
-//! well as those fields tell nodes apart: a node that carries its own
-//! structural hash, as a term of a proof checker does, has a key of its own.
-//! The entries of one key sit within [`PROBES`] slots of where it falls, and
-//! a key whose slots are all taken writes over one of them in turn, so nodes
-//! that hold nothing but other nodes share a window of the last [`PROBES`]
-//! of their constructor.
+//! Wasm-gc gives a node no address to key a table on, so an entry falls
+//! where the key of its node says: the node's constructor mixed with its
+//! `Int`, `Float`, `Bool` and carrier fields and the length of each of its
+//! `String`s, all a step reads at once. A node is found by `ref.eq` among the
+//! entries within [`PROBES`] slots of its key, so a key two nodes share costs
+//! a probe, never a wrong answer, and a key whose slots are all taken writes
+//! over one of them in turn. A key spreads as well as those fields tell nodes
+//! apart: a node that carries its own structural hash, as a term of a proof
+//! checker does, falls where no other node falls, and nodes that hold nothing
+//! but other nodes share the last [`PROBES`] of their constructor.
 //!
-//! The table is open addressing over arrays: [`TABLE_START`] slots when the
-//! first entry comes, doubled at half full up to [`TABLE_MAX`], and emptied
-//! when half full at that size, so a walk over a large value that shares
-//! nothing pays a bounded table rather than one entry per node it meets. A
-//! comparison that starts within another one with memory keeps the table,
-//! and the outermost one drops it when it ends.
+//! The table is an array of nodes: [`TABLE_START`] entries when the first
+//! one comes, twice as many, empty, whenever it is half full, up to
+//! [`TABLE_MAX`], at which size it starts again empty when half full. A
+//! walk over a large value that shares nothing so pays a table that stays
+//! small, rather than one entry for every node it meets. A comparison that
+//! starts within another one with memory keeps the table, and the outermost
+//! one drops it when it ends.
 
 use wasm_encoder::{
     BlockType, ConstExpr, Function, GlobalSection, GlobalType, HeapType, Instruction, RefType,
@@ -27,14 +27,14 @@ use wasm_encoder::{
 
 use super::super::types::TypeRegistry;
 
-/// Slots of a table when its first entry comes.
+/// Entries of a table when its first one comes.
 const TABLE_START: i32 = 1 << 10;
-/// Slots a table grows to at most.
-const TABLE_MAX: i32 = 1 << 16;
+/// Entries a table grows to at most.
+const TABLE_MAX: i32 = 1 << 15;
 /// Slots a lookup or an insert tries from where a key falls.
 const PROBES: i32 = 8;
 
-/// What an entry of a table holds besides its key.
+/// What an entry of a table holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Entry {
     /// Two nodes found equal (`==`).
@@ -51,20 +51,14 @@ impl Entry {
         }
     }
 
-    /// The params of the insert and place: the nodes, the key, and for a hash
-    /// the hash. The lookup takes the nodes and the key.
-    fn params(self) -> Vec<ValType> {
-        let mut out = vec![eq_ref(); self.refs() as usize];
-        out.push(ValType::I32);
-        if self == Entry::Hash {
-            out.push(ValType::I32);
-        }
-        out
+    fn hashes(self) -> bool {
+        self == Entry::Hash
     }
 }
 
-/// The five functions of a table from `fns` (lookup, insert, place, enter,
-/// leave), their types from `types`, then the key and node array types.
+/// The four functions of a table from `fns` (lookup, insert, enter, leave),
+/// their types from `types`, then the node array type and for a hash the
+/// hash array type.
 #[derive(Clone, Copy)]
 pub(crate) struct TableSlots {
     entry: Entry,
@@ -72,9 +66,9 @@ pub(crate) struct TableSlots {
     types: u32,
 }
 
-/// The globals of a table from `first`: keys, nodes, for a hash the hashes,
-/// then the count of entries, the depth of comparisons with memory under
-/// way, and the turn of the next slot written over.
+/// The globals of a table from `first`: the nodes, for a hash the hashes,
+/// then the count of entries, the depth of comparisons with memory under way
+/// and the turn of the next slot written over.
 #[derive(Clone, Copy)]
 pub(crate) struct TableGlobals {
     first: u32,
@@ -110,8 +104,8 @@ impl TableSlots {
             fns: *next_fn_idx,
             types: *next_type_idx,
         };
-        *next_fn_idx += 5;
-        *next_type_idx += 7;
+        *next_fn_idx += 4;
+        *next_type_idx += 5 + u32::from(entry.hashes());
         slots
     }
 
@@ -123,46 +117,51 @@ impl TableSlots {
         self.fns + 1
     }
 
-    fn place(&self) -> u32 {
+    pub(crate) fn enter(&self) -> u32 {
         self.fns + 2
     }
 
-    pub(crate) fn enter(&self) -> u32 {
+    pub(crate) fn leave(&self) -> u32 {
         self.fns + 3
     }
 
-    pub(crate) fn leave(&self) -> u32 {
-        self.fns + 4
+    fn nodes_type(&self) -> u32 {
+        self.types + 4
     }
 
-    fn keys_type(&self) -> u32 {
+    fn hashes_type(&self) -> u32 {
         self.types + 5
     }
 
-    fn nodes_type(&self) -> u32 {
-        self.types + 6
-    }
-
-    /// The function types of the five functions, in function order.
-    pub(crate) fn function_types(&self) -> [u32; 5] {
-        [0, 1, 2, 3, 4].map(|i| self.types + i)
+    /// The function types of the four functions, in function order.
+    pub(crate) fn function_types(&self) -> [u32; 4] {
+        [0, 1, 2, 3].map(|i| self.types + i)
     }
 
     pub(crate) fn emit_types(&self, types: &mut TypeSection) {
-        let params = self.entry.params();
+        // The lookup takes the nodes and the key, the insert for a hash the
+        // hash too.
+        let lookup = [
+            vec![eq_ref(); self.entry.refs() as usize],
+            vec![ValType::I32],
+        ]
+        .concat();
         let found = match self.entry {
             Entry::Pair => ValType::I32,
             Entry::Hash => ValType::I64,
         };
-        types
-            .ty()
-            .function(params[..=self.entry.refs() as usize].to_vec(), [found]);
-        types.ty().function(params.clone(), []);
-        types.ty().function(params, []);
+        let mut insert = lookup.clone();
+        if self.entry.hashes() {
+            insert.push(ValType::I32);
+        }
+        types.ty().function(lookup, [found]);
+        types.ty().function(insert, []);
         types.ty().function([], []);
         types.ty().function([], []);
-        types.ty().array(&StorageType::Val(ValType::I32), true);
         types.ty().array(&StorageType::Val(eq_ref()), true);
+        if self.entry.hashes() {
+            types.ty().array(&StorageType::Val(ValType::I32), true);
+        }
     }
 
     pub(crate) fn emit_globals(
@@ -171,22 +170,17 @@ impl TableSlots {
         next_global_idx: &mut u32,
     ) -> TableGlobals {
         let first = *next_global_idx;
-        let array = |idx: u32| {
-            (
-                GlobalType {
-                    val_type: array_ref(idx),
-                    mutable: true,
-                    shared: false,
-                },
-                ConstExpr::ref_null(HeapType::Concrete(idx)),
-            )
-        };
-        let mut arrays = vec![array(self.keys_type()), array(self.nodes_type())];
-        if self.entry == Entry::Hash {
-            arrays.push(array(self.keys_type()));
+        let mut arrays = vec![self.nodes_type()];
+        if self.entry.hashes() {
+            arrays.push(self.hashes_type());
         }
-        for (ty, init) in &arrays {
-            globals.global(*ty, init);
+        for idx in &arrays {
+            let ty = GlobalType {
+                val_type: array_ref(*idx),
+                mutable: true,
+                shared: false,
+            };
+            globals.global(ty, &ConstExpr::ref_null(HeapType::Concrete(*idx)));
         }
         let int = GlobalType {
             val_type: ValType::I32,
@@ -200,42 +194,69 @@ impl TableSlots {
         TableGlobals { first }
     }
 
-    /// The bodies of the five functions, in function order.
-    pub(crate) fn emit_bodies(&self, globals: &TableGlobals) -> [Function; 5] {
-        [
-            self.emit_lookup(globals),
-            self.emit_insert(globals),
-            self.emit_place(globals),
-            self.emit_enter(globals),
-            self.emit_leave(globals),
-        ]
-    }
-
-    fn g_keys(&self, g: &TableGlobals) -> u32 {
-        g.first
-    }
-
-    fn g_nodes(&self, g: &TableGlobals) -> u32 {
-        g.first + 1
-    }
-
-    fn g_hashes(&self, g: &TableGlobals) -> u32 {
-        g.first + 2
+    /// The bodies of the four functions, in function order.
+    pub(crate) fn emit_bodies(&self, g: &TableGlobals) -> [Function; 4] {
+        let depth = self.g_count(g) + 1;
+        let enter = {
+            let mut f = Function::new(Vec::new());
+            emit(
+                &mut f,
+                &[
+                    Instruction::GlobalGet(depth),
+                    Instruction::I32Const(1),
+                    Instruction::I32Add,
+                    Instruction::GlobalSet(depth),
+                    Instruction::End,
+                ],
+            );
+            f
+        };
+        // The outermost comparison with memory drops the table as it ends.
+        let leave = {
+            let mut f = Function::new(Vec::new());
+            emit(
+                &mut f,
+                &[
+                    Instruction::GlobalGet(depth),
+                    Instruction::I32Const(1),
+                    Instruction::I32Sub,
+                    Instruction::GlobalSet(depth),
+                    Instruction::GlobalGet(depth),
+                    Instruction::I32Eqz,
+                    Instruction::If(BlockType::Empty),
+                    Instruction::RefNull(HeapType::Concrete(self.nodes_type())),
+                    Instruction::GlobalSet(g.first),
+                ],
+            );
+            if self.entry.hashes() {
+                emit(
+                    &mut f,
+                    &[
+                        Instruction::RefNull(HeapType::Concrete(self.hashes_type())),
+                        Instruction::GlobalSet(g.first + 1),
+                    ],
+                );
+            }
+            emit(
+                &mut f,
+                &[
+                    Instruction::I32Const(0),
+                    Instruction::GlobalSet(self.g_count(g)),
+                    Instruction::End,
+                    Instruction::End,
+                ],
+            );
+            f
+        };
+        [self.emit_lookup(g), self.emit_insert(g), enter, leave]
     }
 
     fn g_count(&self, g: &TableGlobals) -> u32 {
-        g.first + 2 + u32::from(self.entry == Entry::Hash)
+        g.first + 1 + u32::from(self.entry.hashes())
     }
 
-    fn g_depth(&self, g: &TableGlobals) -> u32 {
-        self.g_count(g) + 1
-    }
-
-    fn g_turn(&self, g: &TableGlobals) -> u32 {
-        self.g_count(g) + 2
-    }
-
-    /// Pushes the index of node `r` of slot `slot` in the node array.
+    /// Pushes the index in the node array of node `r` of the slot in local
+    /// `slot`.
     fn node_index(&self, f: &mut Function, slot: u32, r: u32) {
         f.instruction(&Instruction::LocalGet(slot));
         if self.entry.refs() == 2 {
@@ -246,12 +267,19 @@ impl TableSlots {
         }
     }
 
-    /// Sets local `slot` to where `key` (a local) falls in a table of
-    /// `mask + 1` slots.
-    fn home(f: &mut Function, key: u32, mask: u32, slot: u32) {
+    /// Sets local `mask` to the slots of the node array in local `nodes`
+    /// less one, and local `slot` to where the key in local `key` falls.
+    fn home(&self, f: &mut Function, nodes: u32, key: u32, mask: u32, slot: u32) {
+        emit(f, &[Instruction::LocalGet(nodes), Instruction::ArrayLen]);
+        if self.entry.refs() == 2 {
+            emit(f, &[Instruction::I32Const(1), Instruction::I32ShrU]);
+        }
         emit(
             f,
             &[
+                Instruction::I32Const(1),
+                Instruction::I32Sub,
+                Instruction::LocalSet(mask),
                 Instruction::LocalGet(key),
                 Instruction::I32Const(1),
                 Instruction::I32ShrU,
@@ -262,18 +290,18 @@ impl TableSlots {
         );
     }
 
-    /// `lookup(nodes.., key)`: 1 for a remembered pair and 0 otherwise; for
-    /// a hash its remembered hash, or -1.
+    /// `lookup(nodes.., key)`: 1 for a remembered pair and 0 otherwise; for a
+    /// hash its remembered hash, or -1.
     fn emit_lookup(&self, g: &TableGlobals) -> Function {
         let refs = self.entry.refs();
         let key = refs;
-        // Locals: keys, nodes, mask, slot, probes left, the key read.
-        let (keys, nodes, mask, slot, left, read) =
-            (key + 1, key + 2, key + 3, key + 4, key + 5, key + 6);
+        // Locals: the node array, its mask, the slot, the probes left, the
+        // first node of the slot.
+        let (nodes, mask, slot, left, first) = (key + 1, key + 2, key + 3, key + 4, key + 5);
         let mut f = Function::new(vec![
-            (1, array_ref(self.keys_type())),
             (1, array_ref(self.nodes_type())),
-            (4, ValType::I32),
+            (3, ValType::I32),
+            (1, eq_ref()),
         ]);
         let missing = match self.entry {
             Entry::Pair => Instruction::I32Const(0),
@@ -282,58 +310,53 @@ impl TableSlots {
         emit(
             &mut f,
             &[
-                Instruction::GlobalGet(self.g_keys(g)),
-                Instruction::LocalTee(keys),
+                Instruction::GlobalGet(g.first),
+                Instruction::LocalTee(nodes),
                 Instruction::RefIsNull,
                 Instruction::If(BlockType::Empty),
                 missing.clone(),
                 Instruction::Return,
                 Instruction::End,
-                Instruction::GlobalGet(self.g_nodes(g)),
-                Instruction::LocalSet(nodes),
-                Instruction::LocalGet(keys),
-                Instruction::ArrayLen,
-                Instruction::I32Const(1),
-                Instruction::I32Sub,
-                Instruction::LocalSet(mask),
             ],
         );
-        Self::home(&mut f, key, mask, slot);
+        self.home(&mut f, nodes, key, mask, slot);
         emit(
             &mut f,
             &[
                 Instruction::I32Const(PROBES),
                 Instruction::LocalSet(left),
                 Instruction::Loop(BlockType::Empty),
-                Instruction::LocalGet(keys),
-                Instruction::LocalGet(slot),
-                Instruction::ArrayGet(self.keys_type()),
-                Instruction::LocalTee(read),
-                Instruction::I32Eqz,
+                Instruction::LocalGet(nodes),
+            ],
+        );
+        self.node_index(&mut f, slot, 0);
+        emit(
+            &mut f,
+            &[
+                Instruction::ArrayGet(self.nodes_type()),
+                Instruction::LocalTee(first),
+                Instruction::RefIsNull,
                 Instruction::If(BlockType::Empty),
                 missing.clone(),
                 Instruction::Return,
                 Instruction::End,
-                Instruction::LocalGet(read),
-                Instruction::LocalGet(key),
-                Instruction::I32Eq,
-                Instruction::If(BlockType::Empty),
+                Instruction::LocalGet(first),
+                Instruction::LocalGet(0),
+                Instruction::RefEq,
             ],
         );
-        for r in 0..refs {
+        if refs == 2 {
             f.instruction(&Instruction::LocalGet(nodes));
-            self.node_index(&mut f, slot, r);
+            self.node_index(&mut f, slot, 1);
             emit(
                 &mut f,
                 &[
                     Instruction::ArrayGet(self.nodes_type()),
-                    Instruction::LocalGet(r),
+                    Instruction::LocalGet(1),
                     Instruction::RefEq,
+                    Instruction::I32And,
                 ],
             );
-            if r > 0 {
-                f.instruction(&Instruction::I32And);
-            }
         }
         f.instruction(&Instruction::If(BlockType::Empty));
         match self.entry {
@@ -343,18 +366,17 @@ impl TableSlots {
             Entry::Hash => emit(
                 &mut f,
                 &[
-                    Instruction::GlobalGet(self.g_hashes(g)),
+                    Instruction::GlobalGet(g.first + 1),
                     Instruction::LocalGet(slot),
-                    Instruction::ArrayGet(self.keys_type()),
+                    Instruction::ArrayGet(self.hashes_type()),
                     Instruction::I64ExtendI32U,
                 ],
             ),
-        };
+        }
         emit(
             &mut f,
             &[
                 Instruction::Return,
-                Instruction::End,
                 Instruction::End,
                 Instruction::LocalGet(left),
                 Instruction::I32Const(1),
@@ -380,119 +402,85 @@ impl TableSlots {
         f
     }
 
-    /// Pushes every param of the insert or place.
-    fn forward(&self, f: &mut Function) {
-        for p in 0..self.entry.params().len() as u32 {
-            f.instruction(&Instruction::LocalGet(p));
+    /// Sets the arrays to `size` (pushed by `size`) empty entries.
+    fn new_arrays(&self, f: &mut Function, g: &TableGlobals, size: &dyn Fn(&mut Function)) {
+        size(f);
+        if self.entry.refs() == 2 {
+            emit(f, &[Instruction::I32Const(1), Instruction::I32Shl]);
+        }
+        emit(
+            f,
+            &[
+                Instruction::ArrayNewDefault(self.nodes_type()),
+                Instruction::GlobalSet(g.first),
+            ],
+        );
+        if self.entry.hashes() {
+            size(f);
+            emit(
+                f,
+                &[
+                    Instruction::ArrayNewDefault(self.hashes_type()),
+                    Instruction::GlobalSet(g.first + 1),
+                ],
+            );
         }
     }
 
-    /// `insert(..)`: makes the table on the first entry and doubles it at
-    /// half full, then places the entry.
+    /// `insert(nodes.., key, [hash])`: makes the table on the first entry and
+    /// a larger, empty one when it is half full, then writes the entry in the
+    /// first free slot within reach of its key, or over one of them in turn.
     fn emit_insert(&self, g: &TableGlobals) -> Function {
         let refs = self.entry.refs();
-        let params = self.entry.params().len() as u32;
-        // Locals: the old keys, nodes and hashes, the old size, the slot.
-        let (old_keys, old_nodes, old_hashes, size, slot, read) = (
-            params,
-            params + 1,
-            params + 2,
-            params + 3,
-            params + 4,
-            params + 5,
-        );
-        let mut f = Function::new(vec![
-            (1, array_ref(self.keys_type())),
-            (1, array_ref(self.nodes_type())),
-            (1, array_ref(self.keys_type())),
-            (3, ValType::I32),
-        ]);
-        let new_arrays = |f: &mut Function, size: &dyn Fn(&mut Function)| {
-            size(f);
-            emit(
-                f,
-                &[
-                    Instruction::ArrayNewDefault(self.keys_type()),
-                    Instruction::GlobalSet(self.g_keys(g)),
-                ],
-            );
-            size(f);
-            if refs == 2 {
-                emit(f, &[Instruction::I32Const(1), Instruction::I32Shl]);
-            }
-            emit(
-                f,
-                &[
-                    Instruction::ArrayNewDefault(self.nodes_type()),
-                    Instruction::GlobalSet(self.g_nodes(g)),
-                ],
-            );
-            if self.entry == Entry::Hash {
-                size(f);
-                emit(
-                    f,
-                    &[
-                        Instruction::ArrayNewDefault(self.keys_type()),
-                        Instruction::GlobalSet(self.g_hashes(g)),
-                    ],
-                );
-            }
-            emit(
-                f,
-                &[
-                    Instruction::I32Const(0),
-                    Instruction::GlobalSet(self.g_count(g)),
-                ],
-            );
-        };
+        let key = refs;
+        let params = refs + 1 + u32::from(self.entry.hashes());
+        // Locals: the node array, its mask, the slot, the probes left.
+        let (nodes, mask, slot, left) = (params, params + 1, params + 2, params + 3);
+        let mut f = Function::new(vec![(1, array_ref(self.nodes_type())), (3, ValType::I32)]);
+        let count = self.g_count(g);
+        let turn = count + 2;
         emit(
             &mut f,
             &[
-                Instruction::GlobalGet(self.g_keys(g)),
+                Instruction::GlobalGet(g.first),
                 Instruction::RefIsNull,
                 Instruction::If(BlockType::Empty),
             ],
         );
-        new_arrays(&mut f, &|f| {
+        self.new_arrays(&mut f, g, &|f| {
             f.instruction(&Instruction::I32Const(TABLE_START));
         });
+        // Half full: twice the size up to the largest, empty either way.
         emit(
             &mut f,
             &[
                 Instruction::Else,
-                Instruction::GlobalGet(self.g_count(g)),
-                Instruction::I32Const(1),
-                Instruction::I32Shl,
-                Instruction::GlobalGet(self.g_keys(g)),
+                Instruction::GlobalGet(g.first),
                 Instruction::ArrayLen,
-                Instruction::LocalTee(size),
-                Instruction::I32GeU,
-                Instruction::If(BlockType::Empty),
-                Instruction::LocalGet(size),
-                Instruction::I32Const(TABLE_MAX),
-                Instruction::I32LtU,
-                Instruction::If(BlockType::Empty),
-                Instruction::GlobalGet(self.g_keys(g)),
-                Instruction::LocalSet(old_keys),
-                Instruction::GlobalGet(self.g_nodes(g)),
-                Instruction::LocalSet(old_nodes),
             ],
         );
-        if self.entry == Entry::Hash {
-            emit(
-                &mut f,
-                &[
-                    Instruction::GlobalGet(self.g_hashes(g)),
-                    Instruction::LocalSet(old_hashes),
-                ],
-            );
-        }
-        new_arrays(&mut f, &|f| {
+        // Local `mask` holds half the slots for now.
+        emit(
+            &mut f,
+            &[
+                Instruction::I32Const(refs as i32),
+                Instruction::I32ShrU,
+                Instruction::LocalTee(mask),
+                Instruction::GlobalGet(count),
+                Instruction::I32LeU,
+                Instruction::If(BlockType::Empty),
+                Instruction::LocalGet(mask),
+                Instruction::I32Const(TABLE_MAX / 2),
+                Instruction::I32LtU,
+                Instruction::If(BlockType::Empty),
+            ],
+        );
+        self.new_arrays(&mut f, g, &|f| {
             emit(
                 f,
                 &[
-                    Instruction::LocalGet(size),
-                    Instruction::I32Const(1),
+                    Instruction::LocalGet(mask),
+                    Instruction::I32Const(2),
                     Instruction::I32Shl,
                 ],
             );
@@ -500,101 +488,26 @@ impl TableSlots {
         emit(
             &mut f,
             &[
-                Instruction::I32Const(0),
-                Instruction::LocalSet(slot),
-                Instruction::Loop(BlockType::Empty),
-                Instruction::LocalGet(old_keys),
-                Instruction::LocalGet(slot),
-                Instruction::ArrayGet(self.keys_type()),
-                Instruction::LocalTee(read),
-                Instruction::If(BlockType::Empty),
-            ],
-        );
-        for r in 0..refs {
-            f.instruction(&Instruction::LocalGet(old_nodes));
-            self.node_index(&mut f, slot, r);
-            f.instruction(&Instruction::ArrayGet(self.nodes_type()));
-        }
-        f.instruction(&Instruction::LocalGet(read));
-        if self.entry == Entry::Hash {
-            emit(
-                &mut f,
-                &[
-                    Instruction::LocalGet(old_hashes),
-                    Instruction::LocalGet(slot),
-                    Instruction::ArrayGet(self.keys_type()),
-                ],
-            );
-        }
-        emit(
-            &mut f,
-            &[
-                Instruction::Call(self.place()),
-                Instruction::End,
-                Instruction::LocalGet(slot),
-                Instruction::I32Const(1),
-                Instruction::I32Add,
-                Instruction::LocalTee(slot),
-                Instruction::LocalGet(size),
-                Instruction::I32LtU,
-                Instruction::BrIf(0),
-                Instruction::End,
-                // Half full at its largest: the table starts again empty.
                 Instruction::Else,
-                Instruction::GlobalGet(self.g_keys(g)),
-                Instruction::I32Const(0),
-                Instruction::I32Const(0),
-                Instruction::LocalGet(size),
-                Instruction::ArrayFill(self.keys_type()),
-                Instruction::GlobalGet(self.g_nodes(g)),
+                Instruction::GlobalGet(g.first),
                 Instruction::I32Const(0),
                 Instruction::RefNull(HeapType::Abstract {
                     shared: false,
                     ty: wasm_encoder::AbstractHeapType::Eq,
                 }),
-                Instruction::LocalGet(size),
-            ],
-        );
-        if refs == 2 {
-            emit(&mut f, &[Instruction::I32Const(1), Instruction::I32Shl]);
-        }
-        emit(
-            &mut f,
-            &[
-                Instruction::ArrayFill(self.nodes_type()),
-                Instruction::I32Const(0),
-                Instruction::GlobalSet(self.g_count(g)),
-                Instruction::End,
-                Instruction::End,
-                Instruction::End,
-            ],
-        );
-        self.forward(&mut f);
-        emit(&mut f, &[Instruction::Call(self.place()), Instruction::End]);
-        f
-    }
-
-    /// `place(..)`: writes the entry in the first free slot within reach of
-    /// its key, or over one of them in turn.
-    fn emit_place(&self, g: &TableGlobals) -> Function {
-        let refs = self.entry.refs();
-        let key = refs;
-        let params = self.entry.params().len() as u32;
-        // Locals: keys, mask, slot, probes left.
-        let (keys, mask, slot, left) = (params, params + 1, params + 2, params + 3);
-        let mut f = Function::new(vec![(1, array_ref(self.keys_type())), (3, ValType::I32)]);
-        emit(
-            &mut f,
-            &[
-                Instruction::GlobalGet(self.g_keys(g)),
-                Instruction::LocalTee(keys),
+                Instruction::GlobalGet(g.first),
                 Instruction::ArrayLen,
-                Instruction::I32Const(1),
-                Instruction::I32Sub,
-                Instruction::LocalSet(mask),
+                Instruction::ArrayFill(self.nodes_type()),
+                Instruction::End,
+                Instruction::I32Const(0),
+                Instruction::GlobalSet(count),
+                Instruction::End,
+                Instruction::End,
+                Instruction::GlobalGet(g.first),
+                Instruction::LocalSet(nodes),
             ],
         );
-        Self::home(&mut f, key, mask, slot);
+        self.home(&mut f, nodes, key, mask, slot);
         emit(
             &mut f,
             &[
@@ -602,15 +515,20 @@ impl TableSlots {
                 Instruction::LocalSet(left),
                 Instruction::Block(BlockType::Empty),
                 Instruction::Loop(BlockType::Empty),
-                Instruction::LocalGet(keys),
-                Instruction::LocalGet(slot),
-                Instruction::ArrayGet(self.keys_type()),
-                Instruction::I32Eqz,
+                Instruction::LocalGet(nodes),
+            ],
+        );
+        self.node_index(&mut f, slot, 0);
+        emit(
+            &mut f,
+            &[
+                Instruction::ArrayGet(self.nodes_type()),
+                Instruction::RefIsNull,
                 Instruction::If(BlockType::Empty),
-                Instruction::GlobalGet(self.g_count(g)),
+                Instruction::GlobalGet(count),
                 Instruction::I32Const(1),
                 Instruction::I32Add,
-                Instruction::GlobalSet(self.g_count(g)),
+                Instruction::GlobalSet(count),
                 Instruction::Br(2),
                 Instruction::End,
                 Instruction::LocalGet(left),
@@ -628,11 +546,11 @@ impl TableSlots {
                 Instruction::End,
                 Instruction::End,
                 // Every slot within reach is taken: write over one in turn.
-                Instruction::GlobalGet(self.g_turn(g)),
+                Instruction::GlobalGet(turn),
                 Instruction::I32Const(1),
                 Instruction::I32Add,
-                Instruction::GlobalSet(self.g_turn(g)),
-                Instruction::GlobalGet(self.g_turn(g)),
+                Instruction::GlobalSet(turn),
+                Instruction::GlobalGet(turn),
                 Instruction::I32Const(PROBES - 1),
                 Instruction::I32And,
                 Instruction::LocalGet(key),
@@ -643,14 +561,10 @@ impl TableSlots {
                 Instruction::I32And,
                 Instruction::LocalSet(slot),
                 Instruction::End,
-                Instruction::LocalGet(keys),
-                Instruction::LocalGet(slot),
-                Instruction::LocalGet(key),
-                Instruction::ArraySet(self.keys_type()),
             ],
         );
         for r in 0..refs {
-            f.instruction(&Instruction::GlobalGet(self.g_nodes(g)));
+            f.instruction(&Instruction::LocalGet(nodes));
             self.node_index(&mut f, slot, r);
             emit(
                 &mut f,
@@ -660,73 +574,18 @@ impl TableSlots {
                 ],
             );
         }
-        if self.entry == Entry::Hash {
+        if self.entry.hashes() {
             emit(
                 &mut f,
                 &[
-                    Instruction::GlobalGet(self.g_hashes(g)),
+                    Instruction::GlobalGet(g.first + 1),
                     Instruction::LocalGet(slot),
                     Instruction::LocalGet(key + 1),
-                    Instruction::ArraySet(self.keys_type()),
+                    Instruction::ArraySet(self.hashes_type()),
                 ],
             );
         }
         f.instruction(&Instruction::End);
-        f
-    }
-
-    fn emit_enter(&self, g: &TableGlobals) -> Function {
-        let mut f = Function::new(Vec::new());
-        emit(
-            &mut f,
-            &[
-                Instruction::GlobalGet(self.g_depth(g)),
-                Instruction::I32Const(1),
-                Instruction::I32Add,
-                Instruction::GlobalSet(self.g_depth(g)),
-                Instruction::End,
-            ],
-        );
-        f
-    }
-
-    /// Ends a comparison with memory; the outermost drops the table.
-    fn emit_leave(&self, g: &TableGlobals) -> Function {
-        let mut f = Function::new(Vec::new());
-        emit(
-            &mut f,
-            &[
-                Instruction::GlobalGet(self.g_depth(g)),
-                Instruction::I32Const(1),
-                Instruction::I32Sub,
-                Instruction::GlobalSet(self.g_depth(g)),
-                Instruction::GlobalGet(self.g_depth(g)),
-                Instruction::I32Eqz,
-                Instruction::If(BlockType::Empty),
-                Instruction::RefNull(HeapType::Concrete(self.keys_type())),
-                Instruction::GlobalSet(self.g_keys(g)),
-                Instruction::RefNull(HeapType::Concrete(self.nodes_type())),
-                Instruction::GlobalSet(self.g_nodes(g)),
-            ],
-        );
-        if self.entry == Entry::Hash {
-            emit(
-                &mut f,
-                &[
-                    Instruction::RefNull(HeapType::Concrete(self.keys_type())),
-                    Instruction::GlobalSet(self.g_hashes(g)),
-                ],
-            );
-        }
-        emit(
-            &mut f,
-            &[
-                Instruction::I32Const(0),
-                Instruction::GlobalSet(self.g_count(g)),
-                Instruction::End,
-                Instruction::End,
-            ],
-        );
         f
     }
 }
