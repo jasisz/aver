@@ -109,16 +109,6 @@ impl<'a, T> Iterator for Held<'a, T> {
     }
 }
 
-fn vector_alone<T>(vector: &AverVector<T>) -> bool {
-    Rc::strong_count(&vector.inner) == 1
-}
-
-fn map_alone<K, V>(map: &AverMap<K, V>) -> bool {
-    map.inner
-        .as_ref()
-        .is_none_or(|table| Rc::strong_count(table) == 1)
-}
-
 /// A collection that holds its items alone: no other collection holds any
 /// of them, so each is reached by as many paths as the collection is.
 trait Alone {
@@ -148,13 +138,15 @@ impl<T> Alone for AverList<T> {
 
 impl<T> Alone for AverVector<T> {
     fn alone(&self) -> bool {
-        vector_alone(self)
+        Rc::strong_count(&self.inner) == 1
     }
 }
 
 impl<K, V> Alone for AverMap<K, V> {
     fn alone(&self) -> bool {
-        map_alone(self)
+        self.inner
+            .as_ref()
+            .is_none_or(|table| Rc::strong_count(table) == 1)
     }
 }
 
@@ -309,7 +301,7 @@ fn vector_spent<'v, T: Clone>(
     if walk.deep() {
         return walk.defer(move |walk| vector_spent(a, b, walk, eq));
     }
-    let alone = vector_alone(a) || vector_alone(b);
+    let alone = a.alone() || b.alone();
     a.iter()
         .zip(b.iter())
         .all(|(x, y)| eq_item(x, y, alone, walk, eq))
@@ -349,7 +341,7 @@ fn map_spent<'v, K: Eq + Hash + Clone, V: Clone>(
     if walk.deep() {
         return walk.defer(move |walk| map_spent(a, b, walk, eq));
     }
-    let alone = map_alone(a) || map_alone(b);
+    let alone = a.alone() || b.alone();
     a.iter()
         .all(|(k, v)| b.get(k).is_some_and(|w| eq_item(v, w, alone, walk, eq)))
 }
@@ -423,7 +415,7 @@ pub fn parts_vector<T: Clone>(
     walk: HashWalk<'_>,
     hash: impl Fn(&T, HashWalk<'_>) -> u64,
 ) -> u64 {
-    let alone = vector_alone(vector);
+    let alone = vector.alone();
     parts_items(vector.len(), vector.iter().map(|x| (x, alone)), walk, hash)
 }
 
@@ -447,7 +439,7 @@ pub fn parts_map<K: Eq + Hash + Clone + Ord, V: Clone>(
     walk: HashWalk<'_>,
     hash: impl Fn(&V, HashWalk<'_>) -> u64,
 ) -> u64 {
-    let alone = map_alone(map);
+    let alone = map.alone();
     let mut entries: Vec<(&K, &V)> = map.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
     let mut h = node_hasher();
@@ -471,8 +463,8 @@ mod tests {
     }
 
     /// The shape the Rust backend gives a sum holding itself through a list:
-    /// `Node` counts the pairs of lists it compares and the lists it hashes
-    /// from parts.
+    /// `Node` counts the pairs of lists it compares, with a walk and without,
+    /// and the lists it hashes from parts.
     #[derive(Clone, Debug)]
     enum Tree {
         Leaf(f64),
@@ -496,9 +488,23 @@ mod tests {
         }
     }
 
+    impl Tree {
+        fn fast_eq(&self, other: &Self) -> bool {
+            match (self, other) {
+                (Tree::Leaf(a), Tree::Leaf(b)) => a == b,
+                (Tree::Node(a), Tree::Node(b)) => {
+                    VISITS.with(|v| v.set(v.get() + 1));
+                    super::fast_list(a, b, Tree::fast_eq)
+                }
+                (Tree::Named(a), Tree::Named(b)) => super::fast_map(a, b, Tree::fast_eq),
+                _ => false,
+            }
+        }
+    }
+
     impl PartialEq for Tree {
         fn eq(&self, other: &Self) -> bool {
-            walk_eq(self, other)
+            super::top(self, other, Tree::fast_eq)
         }
     }
 
@@ -590,10 +596,16 @@ mod tests {
     fn equal_values_built_apart_cost_the_graph_not_the_tree() {
         let (same, visits) = compare(&twice(N, 1.0), &twice(N, 1.0));
         assert!(same);
-        assert!(visits <= BUDGET as usize + 4 * N, "{visits} pairs compared");
+        assert!(
+            visits <= 4 * BUDGET as usize + 4 * N,
+            "{visits} pairs compared"
+        );
         let (same, visits) = compare(&spine(N, 1.0, 1.0), &spine(N, 1.0, 1.0));
         assert!(same);
-        assert!(visits <= BUDGET as usize + N * N, "{visits} pairs compared");
+        assert!(
+            visits <= 4 * BUDGET as usize + N * N,
+            "{visits} pairs compared"
+        );
     }
 
     /// `n` levels, each a list of two lists that put a different leaf in
@@ -613,10 +625,16 @@ mod tests {
     fn a_tail_two_lists_share_is_compared_once() {
         let (same, visits) = compare(&tails(N, 1.0), &tails(N, 1.0));
         assert!(same);
-        assert!(visits <= BUDGET as usize + 4 * N, "{visits} pairs compared");
+        assert!(
+            visits <= 4 * BUDGET as usize + 4 * N,
+            "{visits} pairs compared"
+        );
         let (same, visits) = compare(&tails(N, 1.0), &tails(N, 2.0));
         assert!(!same);
-        assert!(visits <= BUDGET as usize + 4 * N, "{visits} pairs compared");
+        assert!(
+            visits <= 4 * BUDGET as usize + 4 * N,
+            "{visits} pairs compared"
+        );
         let (a, visits) = hash(&tails(N, 1.0));
         assert!(visits <= 4 * (N + 1), "{visits} lists hashed from parts");
         assert_eq!(a, hash(&tails(N, 1.0)).0);
@@ -627,7 +645,10 @@ mod tests {
     fn a_difference_deep_in_the_graph_is_still_found() {
         let (same, visits) = compare(&spine(N, 1.0, 1.0), &spine(N, 1.0, 2.0));
         assert!(!same);
-        assert!(visits <= BUDGET as usize + N * N, "{visits} pairs compared");
+        assert!(
+            visits <= 4 * BUDGET as usize + N * N,
+            "{visits} pairs compared"
+        );
         assert!(twice(12, 1.0) != twice(12, 2.0));
         assert!(twice(12, 1.0) != twice(13, 1.0));
         let nan = twice(12, f64::NAN);
@@ -687,10 +708,12 @@ mod tests {
             .stack_size(8 << 20)
             .spawn(move || {
                 let (a, b, c) = (chain(1.0), chain(1.0), chain(2.0));
-                let (same, visits) = compare(&a, &b);
-                assert!(same);
-                assert_eq!(visits, n);
-                assert!(a != c && c != b);
+                // A walk-free `==` goes a call deep per list, as a derived
+                // one does; only the walk leaves pairs for later.
+                VISITS.with(|v| v.set(0));
+                assert!(walk_eq(&a, &b));
+                assert_eq!(VISITS.with(Cell::get), n);
+                assert!(!walk_eq(&a, &c) && !walk_eq(&c, &b));
                 for tree in [a, b, c] {
                     let_go(tree);
                 }
