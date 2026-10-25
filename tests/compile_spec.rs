@@ -317,6 +317,8 @@ fn plainOf(n: Int) -> Result<Plain, String>
 /// `--perf-notes` names a collection copied before a write and a machine
 /// word boxed at every call, at the file and line, in a dependency too; a
 /// type that misses `exposes opaque` and nothing else still gets its note.
+/// A write the collection's only other reads are arguments of copies
+/// nothing, and gets no note.
 #[test]
 fn compile_perf_notes_name_copies_and_boxing_only_when_asked() {
     let workspace = temp_output_dir("aver-perf-notes");
@@ -333,9 +335,15 @@ fn again(n: Int) -> Int
     m2 = Map.set(m, 2, n)
     Map.len(m2) + Map.len(m)
 
+fn sibling(n: Int) -> Int
+    ? "A map read only by the other arguments of its write is not copied."
+    m = Map.fromList([(1, n)])
+    m2 = Map.set(m, Map.len(m) + 1, Map.len(m))
+    Map.len(m2)
+
 fn main() -> Unit
     ! [Console.print]
-    Console.print("{again(1)} {Lib.Words.spread(3)}")
+    Console.print("{again(1)} {sibling(1)} {Lib.Words.spread(3)}")
 "#,
     )
     .expect("write main");
@@ -397,6 +405,7 @@ fn spread(n: Int) -> Int
     ] {
         assert!(stdout.contains(line), "{line}\n{stdout}");
     }
+    assert!(!stdout.contains("main.av:14:"), "{stdout}");
     let plain_stdout = String::from_utf8_lossy(&plain.stdout);
     assert!(plain.status.success(), "{}", format_output(&plain));
     assert!(!plain_stdout.contains("perf notes"), "{plain_stdout}");

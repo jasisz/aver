@@ -4491,6 +4491,36 @@ fn a_map_threaded_through_record_results_is_moved_not_cloned() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A write whose other arguments read the collection it writes, behind a
+/// `?` as well (`Map.set(table, fresh(n, table)?, sizeOf(table)?)`, the
+/// shape of the proof kernel's `define`): the arguments run first, in
+/// order, and `Map.set`, `Map.remove` and `Vector.set` take the collection
+/// over, a record's field too. A `?` that fails returns before the write;
+/// a map read again after its write is still copied.
+#[test]
+fn a_write_takes_its_collection_after_the_arguments_that_read_it() {
+    let relative = "tests/fixtures/write_after_sibling_reads_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("write_after_sibling_reads", &src);
+    for moved in [
+        "table.insert_owned(__arg",
+        "b.names.insert_owned(__arg",
+        "m.remove_owned(&__arg",
+        "v.set_owned(__i, __arg",
+        "(m.clone().insert_owned(",
+    ] {
+        assert!(emitted.contains(moved), "{moved}\n{emitted}");
+    }
+    assert_plain_parity_then(relative, None, |_, vm| {
+        let want = "define 2000 last 1999\ntwice #a is defined twice\nbook 2000 2000\nbook twice #a is defined twice\ndropped 2000\ngrown axxxx 5\nkept 2 1";
+        match vm == want {
+            true => Ok(()),
+            false => Err(format!("VM output changed:\n{vm}")),
+        }
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Runs `bin arg` and returns its stdout, or an error when it does not end
 /// within `secs` seconds.
 fn run_within(bin: &Path, arg: &str, secs: u64) -> Result<String, String> {

@@ -1,0 +1,94 @@
+module WriteAfterSiblingReads
+    intent = "Maps and Vectors written while the other arguments of the write read them, before a `?` that fails too, and read again after the write."
+    effects [Console.print]
+
+record Book
+    names: Map<String, Int>
+    count: Int
+
+fn fresh(n: String, table: Map<String, Int>) -> Result<String, String>
+    ? "A name not defined yet."
+    match Map.has(table, n)
+        true -> Result.Err("{n} is defined twice")
+        false -> Result.Ok(n)
+
+fn sizeOf(table: Map<String, Int>) -> Result<Int, String>
+    ? "How many names there are, refused past a bound."
+    match Map.len(table) > 1000000
+        true -> Result.Err("too many names")
+        false -> Result.Ok(Map.len(table))
+
+fn define(names: List<String>, table: Map<String, Int>) -> Result<Map<String, Int>, String>
+    ? "Each name in order, numbered by how many came before it; a repeated name is refused."
+    match names
+        [] -> Result.Ok(table)
+        [n, ..rest] -> define(rest, Map.set(table, fresh(n, table)?, sizeOf(table)?))
+
+fn enter(names: List<String>, b: Book) -> Result<Book, String>
+    ? "The same through a field of a record."
+    match names
+        [] -> Result.Ok(b)
+        [n, ..rest] -> enter(rest, Book(count = b.count + 1, names = Map.set(b.names, fresh(n, b.names)?, Map.len(b.names))))
+
+fn smallest(keys: List<String>) -> String
+    ? "The first key, or the empty text."
+    match keys
+        [] -> ""
+        [k, .._] -> k
+
+fn dropAll(m: Map<String, Int>, done: Int) -> Int
+    ? "Remove the smallest key until none is left; how many were removed."
+    match Map.len(m) == 0
+        true -> done
+        false -> dropAll(Map.remove(m, smallest(Map.keys(m))), done + 1)
+
+fn at(v: Vector<String>, i: Int) -> String
+    ? "Slot i, or the empty text."
+    Option.withDefault(Vector.get(v, i), "")
+
+fn grow(v: Vector<String>, i: Int) -> Vector<String>
+    ? "Every slot from i on set to the slot before it with one more letter."
+    match i >= Vector.len(v)
+        true -> v
+        false -> match Vector.set(v, i, "{at(v, i - 1)}x")
+            Option.Some(w) -> grow(w, i + 1)
+            Option.None -> Vector.fromList([])
+
+fn keepOld(m: Map<String, Int>) -> Tuple<Map<String, Int>, Map<String, Int>>
+    ? "A write and the map it started from: read again after the write, the map is copied."
+    (Map.set(m, "k{Map.len(m)}", Map.len(m)), m)
+
+fn namesUpTo(i: Int, n: Int, acc: List<String>) -> List<String>
+    ? "#0 .. #(n-1), in order."
+    match i >= n
+        true -> List.reverse(acc)
+        false -> namesUpTo(i + 1, n, List.prepend("#{i}", acc))
+
+fn shown(r: Result<Map<String, Int>, String>) -> String
+    ? "The size of a table and the number of #1999, or why there is none."
+    lastName = "#1999"
+    match r
+        Result.Ok(t) -> "{Map.len(t)} last {Option.withDefault(Map.get(t, lastName), 0 - 1)}"
+        Result.Err(e) -> e
+
+fn shownBook(r: Result<Book, String>) -> String
+    ? "The size of a book, or why there is none."
+    match r
+        Result.Ok(b) -> "{Map.len(b.names)} {b.count}"
+        Result.Err(e) -> e
+
+fn main() -> Unit
+    ! [Console.print]
+    names = namesUpTo(0, 2000, [])
+    Console.print("define {shown(define(names, {}))}")
+    twice = define(["#a", "#b", "#a"], {})
+    Console.print("twice {shown(twice)}")
+    Console.print("book {shownBook(enter(names, Book(names = {}, count = 0)))}")
+    bookTwice = enter(["#a", "#a"], Book(names = {}, count = 0))
+    Console.print("book twice {shownBook(bookTwice)}")
+    Console.print("dropped {dropAll(Result.withDefault(define(names, {}), {}), 0)}")
+    v = grow(Vector.fromList(["a", "", "", "", ""]), 1)
+    Console.print("grown {at(v, 4)} {Vector.len(v)}")
+    pair = keepOld(Map.fromList([("a", 1)]))
+    match pair
+        (written, old) -> Console.print("kept {Map.len(written)} {Map.len(old)}")
