@@ -1680,9 +1680,14 @@ fn emit_fn_params_with_bare(
             // A lent `Option` is `Option<&T>` (see `lent_option`).
             let rust_type = type_annotation_to_rust_scoped(type_ann, ctx, scope);
             if lent_options.contains(&i)
-                && let Some(inner) = rust_type.strip_prefix("Option<").and_then(|t| t.strip_suffix('>'))
+                && let Some(inner) = rust_type
+                    .strip_prefix("Option<")
+                    .and_then(|t| t.strip_suffix('>'))
             {
-                return format!("{}: Option<&{inner}>", explicit_parameter_pattern(name, false));
+                return format!(
+                    "{}: Option<&{inner}>",
+                    explicit_parameter_pattern(name, false)
+                );
             }
             // Fall back to the single-param shape the inner emitter would
             // produce for a non-bare param; a lent string is `&AverStr`.

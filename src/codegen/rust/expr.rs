@@ -191,7 +191,11 @@ pub(super) fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenCont
 
 /// Which params of the callee take `Option<&T>` (see `lent_option`); each of
 /// them is borrowed in [`callee_borrow_mask`] too.
-pub(super) fn callee_lent_option_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
+pub(super) fn callee_lent_option_mask(
+    name: &str,
+    arg_count: usize,
+    ctx: &CodegenContext,
+) -> Vec<bool> {
     let fn_id = resolved_callee(name, ctx).map(|(fn_id, _)| fn_id);
     (0..arg_count)
         .map(|i| fn_id.is_some_and(|id| super::lent_option::is_lent(&ctx.rust_lent_options, id, i)))

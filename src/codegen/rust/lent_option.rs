@@ -49,10 +49,11 @@ pub(super) fn compute(ctx: &CodegenContext) -> LentOptions {
             let flags: Vec<bool> = resolved
                 .params
                 .iter()
-                .map(|(_, ty)| candidate && matches!(ty, Type::Option(inner) if should_borrow_param(inner)))
+                .map(|(_, ty)| {
+                    candidate && matches!(ty, Type::Option(inner) if should_borrow_param(inner))
+                })
                 .collect();
-            (flags.iter().any(|f| *f) && flags.len() == mir_fn.params.len())
-                .then_some((*id, flags))
+            (flags.iter().any(|f| *f) && flags.len() == mir_fn.params.len()).then_some((*id, flags))
         })
         .collect();
     loop {
@@ -90,14 +91,22 @@ pub(super) fn is_lent(lent: &LentOptions, fn_id: FnId, index: usize) -> bool {
 
 /// Whether every read of the `Option` local in `slot` within `expr` is one
 /// the module doc allows; `tail` says `expr` is the function's result.
-pub(super) fn reads_in_place(expr: &MirExpr, slot: LocalId, lent: &LentOptions, tail: bool) -> bool {
+pub(super) fn reads_in_place(
+    expr: &MirExpr,
+    slot: LocalId,
+    lent: &LentOptions,
+    tail: bool,
+) -> bool {
     let is_slot = |e: &MirExpr| matches!(e, MirExpr::Local(local) if local.node.slot == slot);
     match expr {
         MirExpr::Local(local) => tail || local.node.slot != slot,
         MirExpr::Match(m) if is_slot(&m.node.subject.node) => m.node.arms.iter().all(|arm| {
             matches!(
                 arm.pattern,
-                MirPattern::Ctor { ctor: MirCtor::Builtin(_), .. } | MirPattern::Wildcard
+                MirPattern::Ctor {
+                    ctor: MirCtor::Builtin(_),
+                    ..
+                } | MirPattern::Wildcard
             ) && reads_in_place(&arm.body.node, slot, lent, tail)
         }),
         MirExpr::Match(m) => {

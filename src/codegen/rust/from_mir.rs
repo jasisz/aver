@@ -583,15 +583,29 @@ impl MirFnEmitPolicy {
     /// that only such reads use: the binding is then `map.get(&key)`, an
     /// `Option<&V>`, when nothing in its scope moves the map's root. Runs
     /// after the param facts and the field moves it reads.
-    pub(super) fn apply_lent_options(&mut self, mir_fn: &crate::ir::mir::MirFn, ctx: &CodegenContext) {
+    pub(super) fn apply_lent_options(
+        &mut self,
+        mir_fn: &crate::ir::mir::MirFn,
+        ctx: &CodegenContext,
+    ) {
         let flags = ctx.rust_lent_options.get(&mir_fn.fn_id);
-        for (param, _) in mir_fn.params.iter().zip(flags.into_iter().flatten()).filter(|(_, lent)| **lent) {
+        for (param, _) in mir_fn
+            .params
+            .iter()
+            .zip(flags.into_iter().flatten())
+            .filter(|(_, lent)| **lent)
+        {
             if self.borrowed_params.contains(&param.name) {
                 self.lent_options.insert(param.name.clone());
             }
         }
         let mut found = Vec::new();
-        lent_lookups(&mir_fn.body.node, &mir_fn.body.node, &MirEmitCtx::for_fn(ctx, self), &mut found);
+        lent_lookups(
+            &mir_fn.body.node,
+            &mir_fn.body.node,
+            &MirEmitCtx::for_fn(ctx, self),
+            &mut found,
+        );
         for name in found {
             self.borrowed_params.insert(name.clone());
             self.lent_options.insert(name);
@@ -730,7 +744,11 @@ fn emit_lent_lookup(binding: &crate::ir::mir::MirLet, ctx: &MirEmitCtx<'_>) -> O
         return None;
     }
     let (map, key) = lent_lookup_parts(&binding.value.node, ctx)?;
-    Some(format!("{}.get(&{})", emit_mir_expr(map, ctx)?, emit_mir_expr(key, ctx)?))
+    Some(format!(
+        "{}.get(&{})",
+        emit_mir_expr(map, ctx)?,
+        emit_mir_expr(key, ctx)?
+    ))
 }
 
 /// How many `let`s and patterns in `expr` bind `name`.
