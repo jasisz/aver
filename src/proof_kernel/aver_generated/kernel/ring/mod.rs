@@ -244,12 +244,13 @@ pub fn constant(n @ _: aver_rt::AverInt) -> aver_rt::AverList<Mono> {
     if (n == aver_rt::AverInt::from_i64(0)) {
         aver_rt::AverList::empty()
     } else {
-        aver_rt::AverList::from_vec(vec![
+        aver_rt::AverList::prepend_owned(
             crate::proof_kernel::aver_generated::kernel::ring::Mono {
                 atoms: aver_rt::AverIntList::empty(),
                 coef: n,
             },
-        ])
+            aver_rt::AverList::empty(),
+        )
     }
 }
 
@@ -266,24 +267,29 @@ pub fn atom(
         aver_rt::AverInt::from_i64(0),
     ) {
         Some(i @ _) => crate::proof_kernel::aver_generated::kernel::ring::Read {
-            poly: aver_rt::AverList::from_vec(vec![
+            poly: aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::ring::Mono {
                     atoms: aver_rt::AverIntList::from_vec(vec![i]),
                     coef: aver_rt::AverInt::from_i64(1),
                 },
-            ]),
+                aver_rt::AverList::empty(),
+            ),
             atoms: atoms.clone(),
         },
         None => crate::proof_kernel::aver_generated::kernel::ring::Read {
-            poly: aver_rt::AverList::from_vec(vec![
+            poly: aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::ring::Mono {
                     atoms: aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(
                         atoms.len() as i64,
                     )]),
                     coef: aver_rt::AverInt::from_i64(1),
                 },
-            ]),
-            atoms: aver_rt::AverList::concat(&atoms.clone(), &aver_rt::AverList::from_vec(vec![t])),
+                aver_rt::AverList::empty(),
+            ),
+            atoms: aver_rt::AverList::concat(
+                &atoms.clone(),
+                &aver_rt::AverList::prepend_owned(t, aver_rt::AverList::empty()),
+            ),
         },
     }
 }
@@ -425,7 +431,7 @@ pub fn nonzero(mut m @ _: Mono) -> aver_rt::AverList<Mono> {
     if (m.coef == aver_rt::AverInt::from_i64(0)) {
         aver_rt::AverList::empty()
     } else {
-        aver_rt::AverList::from_vec(vec![m])
+        aver_rt::AverList::prepend_owned(m, aver_rt::AverList::empty())
     }
 }
 
@@ -678,7 +684,10 @@ pub fn readRows(
                                     let __tco0 = fs;
                                     let __tco1 = aver_rt::AverList::concat(
                                         &rows,
-                                        &aver_rt::AverList::from_vec(vec![read.poly]),
+                                        &aver_rt::AverList::prepend_owned(
+                                            read.poly,
+                                            aver_rt::AverList::empty(),
+                                        ),
                                     );
                                     let __tco2 = read.atoms;
                                     __hold0 = __tco0;
@@ -786,7 +795,10 @@ pub fn withCuts(
                                     Some(row @ _) => {
                                         let __tco0 = aver_rt::AverList::concat(
                                             &rows,
-                                            &aver_rt::AverList::from_vec(vec![row]),
+                                            &aver_rt::AverList::prepend_owned(
+                                                row,
+                                                aver_rt::AverList::empty(),
+                                            ),
                                         );
                                         let __tco1 = rest;
                                         rows = __tco0;

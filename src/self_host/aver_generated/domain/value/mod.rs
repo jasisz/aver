@@ -1138,7 +1138,8 @@ pub fn mapKeyRepr(v @ _: &Val) -> AverStr {
             crate::aver_generated::domain::value::Val__view::ValSome(__inner_fields) => {
                 let inner = &__inner_fields.0;
                 {
-                    let __arg12 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
+                    let __arg12 @ _ =
+                        aver_rt::AverList::prepend_owned(inner.clone(), aver_rt::AverList::empty());
                     crate::aver_generated::domain::value::partsKey(
                         ::aver_rt::str_lit!("S"),
                         &__arg12,
@@ -1148,7 +1149,8 @@ pub fn mapKeyRepr(v @ _: &Val) -> AverStr {
             crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
                 let inner = &__inner_fields.0;
                 {
-                    let __arg13 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
+                    let __arg13 @ _ =
+                        aver_rt::AverList::prepend_owned(inner.clone(), aver_rt::AverList::empty());
                     crate::aver_generated::domain::value::partsKey(
                         ::aver_rt::str_lit!("O"),
                         &__arg13,
@@ -1158,7 +1160,8 @@ pub fn mapKeyRepr(v @ _: &Val) -> AverStr {
             crate::aver_generated::domain::value::Val__view::ValErr(__inner_fields) => {
                 let inner = &__inner_fields.0;
                 {
-                    let __arg14 @ _ = aver_rt::AverList::from_vec(vec![inner.clone()]);
+                    let __arg14 @ _ =
+                        aver_rt::AverList::prepend_owned(inner.clone(), aver_rt::AverList::empty());
                     crate::aver_generated::domain::value::partsKey(
                         ::aver_rt::str_lit!("E"),
                         &__arg14,

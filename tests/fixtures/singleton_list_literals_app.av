@@ -1,0 +1,103 @@
+module SingletonListLiterals
+    intent =
+        "Fixture: one-element list literals of words, records, sums and lists, as an argument, a match subject, a result, a constructor field and either side of a join, read and compared as the VM reads them."
+    effects [Console.print]
+
+record Pt
+    x: Int
+    tag: String
+
+type Tree
+    Leaf(Int)
+    Node(List<Tree>)
+
+fn render(words: List<String>) -> String
+    ? "The words, comma separated."
+    String.join(words, ",")
+
+verify render
+    render(["a", "b"]) => "a,b"
+
+fn firstOr(words: List<String>, fallback: String) -> String
+    ? "The first word, or the fallback."
+    match words
+        [w, .._] -> w
+        [] -> fallback
+
+verify firstOr
+    firstOr(["a"], "z") => "a"
+
+fn one(p: Pt) -> List<Pt>
+    ? "A point as a one-element list."
+    [p]
+
+verify one
+    List.len(one(Pt(x = 1, tag = "a"))) => 1
+
+fn total(xs: List<Pt>, acc: Int) -> Int
+    ? "The x fields added up."
+    match xs
+        [] -> acc
+        [p, ..rest] -> total(rest, acc + p.x)
+
+verify total
+    total([Pt(x = 2, tag = "b")], 1) => 3
+
+fn sizeOf(t: Tree) -> Int
+    ? "How many leaves the tree has."
+    match t
+        Tree.Leaf(_) -> 1
+        Tree.Node(kids) -> sizes(kids, 0)
+
+fn sizes(kids: List<Tree>, acc: Int) -> Int
+    ? "The leaves of each tree added up."
+    match kids
+        [] -> acc
+        [k, ..rest] -> sizes(rest, acc + sizeOf(k))
+
+verify sizeOf
+    sizeOf(Tree.Node([Tree.Leaf(1)])) => 1
+
+verify sizes
+    sizes([Tree.Leaf(1), Tree.Leaf(2)], 0) => 2
+
+fn wrap(n: Int, t: Tree) -> Tree
+    ? "The tree wrapped n times, each time in a node of one child."
+    match n == 0
+        true -> t
+        false -> wrap(n - 1, Tree.Node([t]))
+
+verify wrap
+    sizeOf(wrap(3, Tree.Leaf(0))) => 1
+
+fn snoc(n: Int, acc: List<String>) -> List<String>
+    ? "acc with the words s1 to sn joined at its end, one at a time."
+    match n == 0
+        true -> acc
+        false -> snoc(n - 1, List.concat(acc, ["s{n}"]))
+
+verify snoc
+    snoc(2, []) => ["s2", "s1"]
+
+fn cons(n: Int, acc: List<String>) -> List<String>
+    ? "The words c1 to cn joined at the front of acc, one at a time."
+    match n == 0
+        true -> acc
+        false -> cons(n - 1, List.concat(["c{n}"], acc))
+
+verify cons
+    cons(2, []) => ["c1", "c2"]
+
+fn main() -> Unit
+    ? "Prints every part."
+    ! [Console.print]
+    w = "w"
+    Console.print("arg {render(["x"])} {firstOr(["y"], "none")} {firstOr([], "none")} {List.len([w])}")
+    Console.print("match {match [w]
+        [only] -> only
+        _ -> "?"}")
+    Console.print("records {total(one(Pt(x = 4, tag = "d")), 0)} {total(List.concat(one(Pt(x = 1, tag = "a")), [Pt(x = 2, tag = "b")]), 0)} {one(Pt(x = 1, tag = "a")) == [Pt(x = 1, tag = "a")]}")
+    Console.print("trees {sizeOf(wrap(5000, Tree.Leaf(1)))} {sizeOf(Tree.Node([Tree.Leaf(1), Tree.Node([Tree.Leaf(2)])]))} {Tree.Node([Tree.Leaf(1)]) == Tree.Node([Tree.Leaf(1)])}")
+    Console.print("joins {render(List.take(snoc(3000, ["start"]), 4))} {List.len(snoc(3000, []))} {render(List.drop(cons(3000, ["end"]), 2998))}")
+    Console.print("eq {["a"] == List.drop(["z", "a"], 1)} {["a"] == ["b"]} {[["a"]] == [List.concat([], ["a"])]} {List.reverse(["a"]) == ["a"]}")
+    Console.print("map {Map.len(Map.set(Map.set({}, ["k"], 1), List.take(["k", "j"], 1), 2))}")

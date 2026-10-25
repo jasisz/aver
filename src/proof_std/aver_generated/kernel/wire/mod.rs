@@ -88,7 +88,7 @@ pub fn withGiven(
         __record0.obligation = crate::proof_std::aver_generated::kernel::proof::Law {
             givens: aver_rt::AverList::concat(
                 &g0.obligation.givens.clone(),
-                &aver_rt::AverList::from_vec(vec![g.clone()]),
+                &aver_rt::AverList::prepend_owned(g.clone(), aver_rt::AverList::empty()),
             ),
             ..g0.obligation.clone()
         };
@@ -123,7 +123,10 @@ pub fn withGiven(
                         crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
                             lists: aver_rt::AverList::concat(
                                 &base.lists,
-                                &aver_rt::AverList::from_vec(vec![g.name.clone()]),
+                                &aver_rt::AverList::prepend_owned(
+                                    g.name.clone(),
+                                    aver_rt::AverList::empty(),
+                                ),
                             ),
                             ..*base
                         },
@@ -133,7 +136,10 @@ pub fn withGiven(
                     crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
                         ints: aver_rt::AverList::concat(
                             &base.ints,
-                            &aver_rt::AverList::from_vec(vec![g.name.clone()]),
+                            &aver_rt::AverList::prepend_owned(
+                                g.name.clone(),
+                                aver_rt::AverList::empty(),
+                            ),
                         ),
                         ..*base
                     },
@@ -142,12 +148,13 @@ pub fn withGiven(
                     crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
                         finite: aver_rt::AverList::concat(
                             &base.finite,
-                            &aver_rt::AverList::from_vec(vec![
+                            &aver_rt::AverList::prepend_owned(
                                 crate::proof_std::aver_generated::kernel::proof::Given {
                                     name: g.name.clone(),
                                     fin: f.clone(),
                                 },
-                            ]),
+                                aver_rt::AverList::empty(),
+                            ),
                         ),
                         ..*base
                     },
