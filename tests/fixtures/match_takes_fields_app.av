@@ -1,0 +1,150 @@
+module MatchTakesFieldsApp
+    intent =
+        "A match on a value at its end takes the fields out of a node only it holds, and copies them out of one it shares: a recursive sum rebuilt from its parameter and from a computed value, a value matched and read after the match, one held by two values, a record's field in a loop, a chain taken apart node by node, a deferred value, and a sum with one large constructor."
+    effects [Console.print]
+
+type T
+    Leaf(Int)
+    Node(T, T)
+    Tag(String, Int, T)
+
+record Holder
+    t: T
+    n: Int
+
+type Shape
+    Dot(Int)
+    Big(Int, Int, Int, Int, Int, Int, Int, Int, Int, Int)
+
+fn build(d: Int, k: Int) -> T
+    ? "A tree of depth d with tags on every third level."
+    match d == 0
+        true -> T.Leaf(k)
+        false -> match Int.mod(k, 3) == 0
+            true -> T.Tag("t{k}", k, build(d - 1, k + 1))
+            false -> T.Node(build(d - 1, k * 2), build(d - 1, k * 2 + 1))
+
+fn inc(t: T) -> T
+    ? "Every leaf one more; a leaf of -1 is the value itself, so the other arms take the fields of the parameter."
+    match t
+        T.Leaf(n) -> match n == -1
+            true -> t
+            false -> T.Leaf(n + 1)
+        T.Node(a, b) -> T.Node(inc(a), inc(b))
+        T.Tag(s, n, x) -> T.Tag(s, n + 1, inc(x))
+
+fn swap(t: T) -> T
+    ? "Children swapped below the top: the matched value is computed, so the match owns it."
+    match inc(t)
+        T.Node(a, b) -> T.Node(b, a)
+        T.Tag(s, _, x) -> T.Tag(s, 0, x)
+        other -> other
+
+fn total(t: T) -> Int
+    ? "The sum of the leaves and the tags."
+    match t
+        T.Leaf(n) -> n
+        T.Node(a, b) -> total(a) + total(b)
+        T.Tag(_, n, x) -> n + total(x)
+
+fn show(t: T) -> String
+    ? "The value written out."
+    match t
+        T.Leaf(n) -> "{n}"
+        T.Node(a, b) -> "({show(a)} {show(b)})"
+        T.Tag(s, n, x) -> "{s}:{n}[{show(x)}]"
+
+fn fold(t: T) -> T
+    ? "A field the arm only reads beside one it hands on: the read one is borrowed whether the node gives its fields up or not."
+    match t
+        T.Node(a, b) -> T.Tag("n", total(a), b)
+        _ -> t
+
+fn readAfter(t: T) -> Holder
+    ? "The value is matched and handed on after the match, so its fields are copied."
+    left = match t
+        T.Node(a, _) -> inc(a)
+        T.Tag(_, _, x) -> inc(x)
+        T.Leaf(n) -> T.Leaf(n)
+    Holder(t = t, n = total(left))
+
+fn nested(t: T) -> T
+    ? "A pattern inside a pattern: the inner value is a field taken out of the outer one."
+    match t
+        T.Node(T.Leaf(n), b) -> T.Node(b, T.Leaf(n * 10))
+        T.Node(a, T.Tag(s, n, x)) -> T.Tag(s, n, T.Node(x, a))
+        other -> other
+
+fn steps(r: Int, h: Holder) -> Holder
+    ? "r rounds on the tree a record holds: its field is matched at its end."
+    match r == 0
+        true -> h
+        false -> match h.t
+            T.Node(a, b) -> steps(r - 1, Holder(t = T.Node(inc(b), a), n = h.n + 1))
+            T.Tag(s, k, x) -> steps(r - 1, Holder(t = T.Tag(s, k, inc(x)), n = h.n + total(x)))
+            T.Leaf(k) -> steps(r - 1, Holder(t = T.Leaf(k + 1), n = h.n))
+
+fn chain(n: Int, acc: T) -> T
+    ? "A chain n tags long."
+    match n == 0
+        true -> acc
+        false -> chain(n - 1, T.Tag("c", n, acc))
+
+fn unwind(t: T, acc: Int) -> Int
+    ? "A chain taken apart in a loop, one node at a time."
+    match t
+        T.Tag(_, n, x) -> unwind(x, acc + n)
+        T.Node(a, b) -> unwind(b, acc + total(a))
+        T.Leaf(n) -> acc + n
+
+fn later(d: Int) -> T
+    ? "A deferred call, made when the value is first looked at."
+    lazy build(d, 1)
+
+fn grow(s: Shape) -> Shape
+    ? "A sum whose large constructor keeps its fields in one shared node."
+    match s
+        Shape.Dot(n) -> Shape.Dot(n + 1)
+        Shape.Big(a, b, c, d, e, f, g, h, i, j) -> Shape.Big(b, c, d, e, f, g, h, i, j, a + 1)
+
+fn shapeSum(s: Shape) -> Int
+    ? "The sum of the fields."
+    match s
+        Shape.Dot(n) -> n
+        Shape.Big(a, b, c, d, e, f, g, h, i, j) -> a + b + c + d + e + f + g + h + i + j
+
+fn regrow(s: Shape) -> Shape
+    ? "The match's own value, computed: the large constructor's shared node is taken."
+    match grow(s)
+        Shape.Dot(n) -> Shape.Dot(n * 2)
+        Shape.Big(a, b, c, d, e, f, g, h, i, j) -> Shape.Big(j, a, b, c, d, e, f, g, h, i + 1)
+
+fn twice(s: Shape) -> Int
+    ? "One shape grown twice, the first one kept."
+    kept = grow(s)
+    shapeSum(regrow(kept)) * 1000 + shapeSum(kept)
+
+fn main() -> Unit
+    ? "Prints what each shape gives."
+    ! [Console.print]
+    t = build(4, 1)
+    Console.print(show(t))
+    Console.print(show(inc(build(4, 1))))
+    Console.print(show(inc(T.Node(T.Leaf(-1), T.Leaf(5)))))
+    Console.print(show(swap(build(3, 2))))
+    kept = build(3, 1)
+    Console.print("{show(fold(build(3, 1)))} {show(fold(kept))} {show(kept)} {show(fold(T.Leaf(2)))}")
+    after = readAfter(build(3, 1))
+    Console.print("read after {after.n} {total(after.t)} {show(after.t)} {readAfter(build(2, 3)).n}")
+    shared = build(3, 1)
+    h = Holder(t = shared, n = 7)
+    moved = inc(shared)
+    Console.print("shared {total(moved)} {total(h.t)} {show(h.t)}")
+    Console.print(show(nested(T.Node(T.Leaf(4), build(1, 1)))) + " " + show(nested(T.Node(T.Leaf(1), T.Tag("q", 2, T.Leaf(3))))))
+    Console.print(show(nested(T.Node(build(1, 2), T.Tag("p", 5, T.Leaf(6))))) + " " + show(nested(T.Leaf(9))))
+    done = steps(25, Holder(t = build(5, 1), n = 0))
+    Console.print("steps {done.n} {total(done.t)}")
+    Console.print("unwind {unwind(chain(100000, T.Leaf(1)), 0)}")
+    deferred = later(4)
+    Console.print("later {total(inc(deferred))} {total(deferred)} {total(inc(later(3)))}")
+    Console.print("grow {shapeSum(regrow(regrow(Shape.Big(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))))} {shapeSum(regrow(Shape.Dot(3)))} {twice(Shape.Big(1, 1, 1, 1, 1, 1, 1, 1, 1, 1))}")

@@ -4505,9 +4505,13 @@ fn emit_mir_match_with(
     // an arm only reads are borrowed in its body (see [`lent_parts`]).
     let path = match_path(m, &arms, emit_ctx);
     let reuse = list_reuse_target(m, path, emit_ctx);
+    let subject_temp = generated_ident("t");
+    let takes: Vec<Option<TakenFields>> = (0..arms.len())
+        .map(|idx| taken_fields(m, idx, &arms[idx].pattern, path, &subject_temp, emit_ctx))
+        .collect();
     let mut lent: Vec<HashSet<String>> = Vec::with_capacity(m.arms.len());
     let mut arm_bodies: Vec<String> = Vec::with_capacity(m.arms.len());
-    for (arm, resolved) in m.arms.iter().zip(&arms) {
+    for ((arm, resolved), take) in m.arms.iter().zip(&arms).zip(&takes) {
         let slot_ctx;
         let emit_ctx = match (reuse, &arm.pattern) {
             (Some(target), MirPattern::Cons { .. }) => {
@@ -4527,6 +4531,8 @@ fn emit_mir_match_with(
             // `lends_wrapper` has checked that nothing moves what the
             // payload borrows from.
             (MatchPath::LentWrapper, Some(_)) => lent_payload(&arm.pattern, &arm.body),
+            // An arm that takes its fields lends those it only reads.
+            _ if take.is_some() => take.as_ref().map(|t| t.lent.clone()).unwrap_or_default(),
             _ if !keeps_subject => HashSet::new(),
             (MatchPath::Generic { by_ref }, Some(codegen)) => {
                 lent_parts(&arm.pattern, &resolved.pattern, &arm.body, by_ref, codegen)
@@ -4847,7 +4853,6 @@ fn emit_mir_match_with(
         shape.merge(ViewShape::of(&arm.pattern, codegen))
     });
     let viewed = !matches!(shape, ViewShape::Plain);
-    let subject_temp = generated_ident("t");
     // A tuple with a viewed part is matched by reference throughout: its
     // other parts are borrowed beside the views, and what an arm binds is
     // cloned out.
@@ -4876,7 +4881,10 @@ fn emit_mir_match_with(
             None => pat,
         };
         let body = arm_bodies[idx].clone();
-        let rebindings = emit_pattern_rebindings(&pattern, codegen, by_ref, &lent[idx]);
+        let rebindings = match &takes[idx] {
+            Some(take) => take.rebindings.clone(),
+            None => emit_pattern_rebindings(&pattern, codegen, by_ref, &lent[idx]),
+        };
         let whole: String = whole
             .iter()
             .map(|line| format!("{line}\n            "))
@@ -4892,6 +4900,143 @@ fn emit_mir_match_with(
         true => format!("{{ let {subject_temp} = {subj}; {matched} }}"),
         false => matched,
     }))
+}
+
+/// How an arm that takes the fields of the constructor it matches out of
+/// the node they are in binds them (see [`taken_fields`]).
+struct TakenFields {
+    /// The bound fields the arm only reads, which it borrows.
+    lent: HashSet<String>,
+    /// The lines that take the fields and bind them.
+    rebindings: String,
+}
+
+/// An arm that takes the fields of the constructor it matches out of their
+/// node rather than copy the ones it hands on: when the subject is the
+/// node's only owner (`owns_node` of a thin sum, the count of a `Shared`),
+/// the fields move out and the node is freed (`take`,
+/// `Shared::unwrap_or_clone`); otherwise the arm copies them out of the node
+/// as before. A wrong guess here is a move rustc rejects, never another
+/// value.
+///
+/// The subject must end in the arm: the match's own value (moved into it or
+/// computed), or an owned local the arm does not read and some arm reads
+/// last, so nothing reads it after the match. Through a borrow only a thin
+/// sum's value is taken, which `take` moves whole. The arm must hand on a
+/// field; the ones it only reads it borrows either way.
+fn taken_fields(
+    m: &MirMatch,
+    idx: usize,
+    pattern: &ResolvedPattern,
+    path: MatchPath,
+    subject_temp: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<TakenFields> {
+    let codegen = ctx.codegen?;
+    let (
+        MatchPath::Generic { by_ref },
+        ResolvedPattern::Ctor(ctor, names),
+        MirPattern::Ctor { bindings, .. },
+    ) = (path, pattern, &m.arms[idx].pattern)
+    else {
+        return None;
+    };
+    let fields = super::pattern::shared_fields_binder(ctor, names, codegen).filter(|b| b != "_")?;
+    let thin = super::pattern::thin_ctor(ctor, codegen);
+    let place = match by_ref {
+        false if super::ownership::moves_when_owned(&m.subject.node, ctx) => match thin {
+            true => subject_temp.to_string(),
+            false => fields.clone(),
+        },
+        false => return None,
+        true => {
+            let local = local_of(&m.subject.node)?;
+            let ends_here = thin
+                && super::ownership::root_is_owned(local, ctx)
+                && owned_read_clones(&m.subject.node, ctx)
+                && !reads_local(&m.arms[idx].body.node, local.slot)
+                && m.arms
+                    .iter()
+                    .any(|arm| has_last_use(&arm.body.node, local.slot));
+            ends_here.then(|| aver_name_to_rust(&local.name))?
+        }
+    };
+    let body = &m.arms[idx].body.node;
+    let bound: Vec<(usize, &String, bool)> = names
+        .iter()
+        .zip(bindings)
+        .enumerate()
+        .filter(|(_, (name, _))| *name != "_")
+        .map(|(i, (name, slot))| {
+            let lent = read_type(body, *slot).is_some_and(should_borrow_param)
+                && reads_only_borrow(body, *slot, ctx);
+            (i, name, lent)
+        })
+        .collect();
+    if bound.iter().all(|(_, _, lent)| *lent) {
+        return None;
+    }
+    let (owns, taken) = match thin {
+        true => {
+            let (ty, variant) = super::pattern::ctor_type_path(ctor, codegen)?;
+            (
+                format!("{place}.owns_node()"),
+                format!("{ty}::take::<{ty}__{variant}>({place})"),
+            )
+        }
+        false => (
+            format!("aver_rt::Shared::strong_count(&{place}) == 1"),
+            format!("aver_rt::Shared::unwrap_or_clone({place})"),
+        ),
+    };
+    let lent: HashSet<String> = bound
+        .iter()
+        .filter(|(_, _, lent)| *lent)
+        .map(|(_, name, _)| (*name).clone())
+        .collect();
+    let tuple = |parts: Vec<String>| match parts.len() {
+        1 => format!("({},)", parts[0]),
+        _ => format!("({})", parts.join(", ")),
+    };
+    let binders = tuple(
+        bound
+            .iter()
+            .map(|(_, name, _)| aver_name_to_rust(name))
+            .collect(),
+    );
+    let parts = |at: &str, copy: bool| {
+        tuple(
+            bound
+                .iter()
+                .map(|(i, _, lent)| match (lent, copy) {
+                    (true, _) => format!("&{at}.{i}"),
+                    (false, true) => format!("{at}.{i}.clone()"),
+                    (false, false) => format!("{at}.{i}"),
+                })
+                .collect(),
+        )
+    };
+    let copied = parts(&fields, true);
+    // With nothing lent, the fields taken and the value copied from go at
+    // once, so neither needs a flag for its drop. A field lent is a borrow
+    // of the fields taken, which the arm keeps, or of the node.
+    let rebindings = match lent.is_empty() {
+        true => format!(
+            "let {binders} = if {owns} {{ let __f = {taken}; {} }} else {{ let __c = {copied}; drop({place}); __c }};",
+            parts("__f", false)
+        ),
+        false => {
+            let own = format!("{}_own", fields.trim_end_matches("_fields"));
+            format!(
+                "let {own};\n            let {binders} = if {owns} {{ {own} = {taken}; {} }} else {{ {copied} }};",
+                parts(&own, false)
+            )
+        }
+    };
+    Some(TakenFields {
+        lent,
+        rebindings: format!("{rebindings}\n            "),
+    })
 }
 
 /// `match List.drop(xs, k)` with arms `[x, .._]` and `[]` (or `_`) reads

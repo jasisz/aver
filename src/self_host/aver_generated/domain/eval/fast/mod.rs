@@ -116,7 +116,16 @@ pub fn fastBoolSlotBranch(
         let __t = slotV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValBool(__cond_fields) => {
-                let cond = __cond_fields.0.clone();
+                let (cond,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValBool,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__cond_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 crate::aver_generated::domain::eval::fast::selectFastLeaf(
                     cond, thenLeaf, elseLeaf, calleeEnv,
                 )
@@ -140,7 +149,16 @@ pub fn fastEqIntBranch(
         let __t = slotV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValInt(__actual_fields) => {
-                let actual = __actual_fields.0.clone();
+                let (actual,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValInt,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__actual_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 {
                     let __arg7 @ _ = (actual == expected);
                     crate::aver_generated::domain::eval::fast::selectFastLeaf(
@@ -167,7 +185,16 @@ pub fn fastEqStringBranch(
         let __t = slotV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValStr(__actual_fields) => {
-                let actual = __actual_fields.0.clone();
+                let (actual,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValStr,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__actual_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 {
                     let __arg7 @ _ = (&(actual) == expected);
                     crate::aver_generated::domain::eval::fast::selectFastLeaf(
@@ -197,12 +224,30 @@ pub fn fastLtIntSlotsBranch(
         let __t = lhsV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValInt(__lhs_fields) => {
-                let lhs = __lhs_fields.0.clone();
+                let (lhs,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValInt,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__lhs_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 {
                     let __t = rhsV;
                     match __t.view() {
                         crate::aver_generated::domain::value::Val__view::ValInt(__rhs_fields) => {
-                            let rhs = __rhs_fields.0.clone();
+                            let (rhs,) = if __t.owns_node() {
+                                let __f = crate::aver_generated::domain::value::Val::take::<
+                                    crate::aver_generated::domain::value::Val__ValInt,
+                                >(__t);
+                                (__f.0,)
+                            } else {
+                                let __c = (__rhs_fields.0.clone(),);
+                                drop(__t);
+                                __c
+                            };
                             {
                                 let __arg9 @ _ = (lhs < rhs);
                                 crate::aver_generated::domain::eval::fast::selectFastLeaf(
@@ -535,11 +580,19 @@ pub fn fastMapRemoveSlot(
         let __t = mapV;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = &__m_fields.0;
+                let (m,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValMap,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__m_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 Ok(crate::aver_generated::domain::value::Val::ValMap(
                     crate::aver_generated::domain::value::Val__ValMap(
-                        m.clone()
-                            .remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
+                        m.remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
                     ),
                 ))
             }

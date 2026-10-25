@@ -242,10 +242,19 @@ pub fn builtinVectorFromList(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
-                let items = &__items_fields.0;
+                let (items,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValList,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__items_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 Ok(crate::aver_generated::domain::value::Val::ValVector(
                     crate::aver_generated::domain::value::Val__ValVector(
-                        aver_rt::AverVector::from_list(items),
+                        aver_rt::AverVector::from_list(&items),
                     ),
                 ))
             }
@@ -264,7 +273,16 @@ pub fn builtinVectorToList(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = &__vec_fields.0;
+                let (vec,) = if __t.owns_node() {
+                    let __f = crate::aver_generated::domain::value::Val::take::<
+                        crate::aver_generated::domain::value::Val__ValVector,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (__vec_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 Ok(crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList(vec.to_list()),
                 ))

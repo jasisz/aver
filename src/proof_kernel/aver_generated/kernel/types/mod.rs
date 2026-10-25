@@ -526,7 +526,16 @@ pub fn rebuild(
         let __t = &t;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let (a,) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyList,
+                    >(t);
+                    (__f.0,)
+                } else {
+                    let __c = (__a_fields.0.clone(),);
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
                         crate::proof_kernel::aver_generated::kernel::types::nth(
@@ -537,7 +546,16 @@ pub fn rebuild(
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let (a,) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption,
+                    >(t);
+                    (__f.0,)
+                } else {
+                    let __c = (__a_fields.0.clone(),);
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(
                         crate::proof_kernel::aver_generated::kernel::types::nth(
@@ -548,7 +566,16 @@ pub fn rebuild(
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
-                let a = __a_fields.0.clone();
+                let (a,) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector,
+                    >(t);
+                    (__f.0,)
+                } else {
+                    let __c = (__a_fields.0.clone(),);
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector(
                         crate::proof_kernel::aver_generated::kernel::types::nth(
@@ -559,8 +586,16 @@ pub fn rebuild(
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let (a, b) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult,
+                    >(t);
+                    (__f.0, __f.1)
+                } else {
+                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(
                         crate::proof_kernel::aver_generated::kernel::types::nth(
@@ -575,8 +610,16 @@ pub fn rebuild(
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
-                let a = __a_fields.0.clone();
-                let b = __a_fields.1.clone();
+                let (a, b) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap,
+                    >(t);
+                    (__f.0, __f.1)
+                } else {
+                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap(
                         crate::proof_kernel::aver_generated::kernel::types::nth(
@@ -591,7 +634,16 @@ pub fn rebuild(
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
-                let xs = __xs_fields.0.clone();
+                let (xs,) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyTuple,
+                    >(t);
+                    (__f.0,)
+                } else {
+                    let __c = (__xs_fields.0.clone(),);
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyTuple(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyTuple(parts.clone()),
                 )
@@ -818,8 +870,16 @@ pub fn rigid(
         let __t = &t;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
-                let n = __n_fields.0.clone();
-                let eq = __n_fields.1.clone();
+                let (n, eq) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyVar,
+                    >(t);
+                    (__f.0, __f.1)
+                } else {
+                    let __c = (__n_fields.0.clone(), __n_fields.1.clone());
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyRigid(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyRigid(n, eq),
                 )
@@ -2709,73 +2769,103 @@ pub fn instantiate(
         let __t = &t;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
-                let n = __n_fields.0.clone();
-                let eq = __n_fields.1.clone();
+                let (n, eq) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyVar,
+                    >(t);
+                    (__f.0, __f.1)
+                } else {
+                    let __c = (__n_fields.0.clone(), __n_fields.1.clone());
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::types::find(n, bound)
                     .unwrap_or(crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny)
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
-                let a = &__a_fields.0;
+                let (a,) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyList,
+                    >(t);
+                    (__f.0,)
+                } else {
+                    let __c = (__a_fields.0.clone(),);
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyList(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyList(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
-                        ),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
                     ),
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
-                let a = &__a_fields.0;
+                let (a,) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption,
+                    >(t);
+                    (__f.0,)
+                } else {
+                    let __c = (__a_fields.0.clone(),);
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyOption(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyOption(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
-                        ),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
                     ),
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyVector(__a_fields) => {
-                let a = &__a_fields.0;
+                let (a,) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector,
+                    >(t);
+                    (__f.0,)
+                } else {
+                    let __c = (__a_fields.0.clone(),);
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyVector(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyVector(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
-                        ),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
                     ),
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
-                let a = &__a_fields.0;
-                let b = &__a_fields.1;
+                let (a, b) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult,
+                    >(t);
+                    (__f.0, __f.1)
+                } else {
+                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyResult(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyResult(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
-                        ),
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
-                            b.clone(),
-                            bound,
-                        ),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(b, bound),
                     ),
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
-                let a = &__a_fields.0;
-                let b = &__a_fields.1;
+                let (a, b) = if t.owns_node() {
+                    let __f = crate::proof_kernel::aver_generated::kernel::term::Ty::take::<
+                        crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap,
+                    >(t);
+                    (__f.0, __f.1)
+                } else {
+                    let __c = (__a_fields.0.clone(), __a_fields.1.clone());
+                    drop(t);
+                    __c
+                };
                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyMap(
                     crate::proof_kernel::aver_generated::kernel::term::Ty__TyMap(
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
-                        ),
-                        crate::proof_kernel::aver_generated::kernel::types::instantiate(
-                            b.clone(),
-                            bound,
-                        ),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(a, bound),
+                        crate::proof_kernel::aver_generated::kernel::types::instantiate(b, bound),
                     ),
                 )
             }
@@ -3077,7 +3167,16 @@ pub fn patVars(
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(
                         __n_fields,
                     ) => {
-                        let n = __n_fields.0.clone();
+                        let (n,) = if __t.owns_node() {
+                            let __f = crate::proof_kernel::aver_generated::kernel::term::Term::take::<
+                                crate::proof_kernel::aver_generated::kernel::term::Term__TInt,
+                            >(__t);
+                            (__f.0,)
+                        } else {
+                            let __c = (__n_fields.0.clone(),);
+                            drop(__t);
+                            __c
+                        };
                         {
                             let __arg17 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyInt;
@@ -3089,7 +3188,16 @@ pub fn patVars(
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(
                         __b_fields,
                     ) => {
-                        let b = __b_fields.0.clone();
+                        let (b,) = if __t.owns_node() {
+                            let __f = crate::proof_kernel::aver_generated::kernel::term::Term::take::<
+                                crate::proof_kernel::aver_generated::kernel::term::Term__TBool,
+                            >(__t);
+                            (__f.0,)
+                        } else {
+                            let __c = (__b_fields.0.clone(),);
+                            drop(__t);
+                            __c
+                        };
                         {
                             let __arg18 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyBool;
@@ -3101,7 +3209,16 @@ pub fn patVars(
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TStr(
                         __s_fields,
                     ) => {
-                        let s = __s_fields.0.clone();
+                        let (s,) = if __t.owns_node() {
+                            let __f = crate::proof_kernel::aver_generated::kernel::term::Term::take::<
+                                crate::proof_kernel::aver_generated::kernel::term::Term__TStr,
+                            >(__t);
+                            (__f.0,)
+                        } else {
+                            let __c = (__s_fields.0.clone(),);
+                            drop(__t);
+                            __c
+                        };
                         {
                             let __arg19 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::term::Ty::TyStr;
