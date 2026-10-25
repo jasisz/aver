@@ -539,6 +539,7 @@ impl TypeChecker {
             }
         }
         self.globals = self.locals.clone();
+        self.check_binding_reads(items);
     }
 
     pub(super) fn check_verify_blocks(&mut self, items: &[TopLevel]) {

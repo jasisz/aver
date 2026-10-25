@@ -360,6 +360,112 @@ fn only_an_exposed_typed_binding_is_read_from_another_module() {
     );
 }
 
+/// `aver check` on the modules `files` (the first is the entry): whether it
+/// passed, and what it printed.
+fn check_files(files: &[(&str, &str)]) -> (bool, String) {
+    let dir = project("reads", files);
+    let out = Command::new(aver_bin())
+        .current_dir(&dir)
+        .arg("check")
+        .arg(files[0].0)
+        .arg("--module-root")
+        .arg(".")
+        .output()
+        .expect("aver executes");
+    let _ = fs::remove_dir_all(dir);
+    (out.status.success(), format_output(&out))
+}
+
+/// A module of `body` under a header that leaves nothing else to report.
+fn module(name: &str, body: &str) -> String {
+    format!("module {name}\n    intent = \"What a binding may read.\"\n    effects []\n\n{body}")
+}
+
+/// A binding's value may read only the bindings written before it: the VM
+/// computes them in order before `main`. A read of itself or of a later one
+/// through the functions it calls, or hands on as a value, is refused with
+/// the path the read takes, also in an arm that never runs.
+#[test]
+fn a_binding_that_reads_itself_or_a_later_binding_through_calls_is_refused() {
+    let cases = [
+        (
+            "fn f(n: Int) -> Int\n    ? \"Reads x.\"\n    x + n\n\nx = f(1)\n",
+            "Module-level binding 'x' reads itself while it is computed: x -> f -> x.",
+        ),
+        (
+            "fn f() -> Int\n    ? \"Calls g.\"\n    g() + 1\n\nfn g() -> Int\n    ? \"Reads x.\"\n    x * 2\n\nx = f()\n",
+            "Module-level binding 'x' reads itself while it is computed: x -> f -> g -> x.",
+        ),
+        (
+            "fn f() -> Int\n    ? \"Reads y.\"\n    y + 1\n\nfn g() -> Int\n    ? \"Reads x.\"\n    x * 2\n\nx = f()\n\ny = g()\n",
+            "Module-level binding 'x' reads itself while it is computed: x -> f -> y -> g -> x.",
+        ),
+        (
+            "fn apply(h: Fn() -> Int) -> Int\n    ? \"Calls h.\"\n    h()\n\nfn h() -> Int\n    ? \"Reads x.\"\n    x + 1\n\nx = apply(h)\n",
+            "Module-level binding 'x' reads itself while it is computed: x -> h -> x.",
+        ),
+        (
+            "fn f(n: Int) -> Int\n    ? \"Reads x only when n is not 0.\"\n    match n == 0\n        true -> 1\n        false -> x\n\nx = f(0)\n",
+            "Module-level binding 'x' reads itself while it is computed: x -> f -> x.",
+        ),
+        (
+            "fn f() -> Int\n    ? \"Reads b.\"\n    b + 1\n\na = f()\n\nb = 7\n",
+            "Module-level binding 'a' reads 'b' before it is computed: a -> f -> b, and 'b' is written after 'a'. Write 'b' above 'a'",
+        ),
+    ];
+    for (body, message) in cases {
+        let source = module("Reads", body);
+        let (passed, out) = check_files(&[("main.av", &source)]);
+        assert!(!passed && out.contains(message), "{source}\n{out}");
+    }
+
+    // A direct read is an unknown name where the value is checked, and is
+    // not reported twice.
+    let (passed, out) = check_files(&[("main.av", &module("Direct", "x = x + 1\n"))]);
+    assert!(
+        !passed && out.contains("Unknown identifier 'x'") && !out.contains("reads itself"),
+        "{out}"
+    );
+}
+
+/// The message names the binding's line and points at the read that closes
+/// the cycle; a cycle in a dependency is reported in its file, and a function
+/// of the entry handed to a dependency's function counts as read.
+#[test]
+fn a_cycle_through_calls_is_reported_where_it_is_read_in_every_module() {
+    let lib = "module Lib\n    intent = \"Calls the function it is given.\"\n    exposes [apply]\n    effects []\n\nfn apply(h: Fn() -> Int) -> Int\n    ? \"Calls h.\"\n    h()\n\nfn read() -> Int\n    ? \"Reads base.\"\n    base + 1\n\nbase: Int = read()\n";
+    let app = "module Main\n    intent = \"Hands a function reading x to Lib.\"\n    depends [Lib]\n    effects []\n\nfn h() -> Int\n    ? \"Reads x.\"\n    x + 1\n\nx = Lib.apply(h)\n";
+    let (passed, out) = check_files(&[("main.av", app), ("lib.av", lib)]);
+    assert!(!passed, "{out}");
+    for expected in [
+        "Module-level binding 'base' reads itself while it is computed: base -> read -> base.",
+        "lib.av:14:1",
+        "Module-level binding 'x' reads itself while it is computed: x -> h -> x.",
+        "main.av:10:1",
+        "'x' is read here",
+    ] {
+        assert!(out.contains(expected), "missing `{expected}`:\n{out}");
+    }
+}
+
+/// A value may call a function that reads only earlier bindings, or none, or
+/// whose parameters and pattern binders carry a binding's name; a function
+/// that reads a later binding is fine when no binding's value calls it.
+#[test]
+fn a_binding_that_reads_earlier_bindings_through_calls_is_accepted() {
+    let body = "base = 40\n\n\
+        fn plus(n: Int) -> Int\n    ? \"Adds base.\"\n    base + n\n\nverify plus\n    plus(1) => 41\n\n\
+        fn twice(n: Int) -> Int\n    ? \"Reads no binding.\"\n    n * 2\n\nverify twice\n    twice(2) => 4\n\n\
+        offset = plus(2)\n\ndoubled = twice(offset)\n\n\
+        fn own(x: Int) -> Int\n    ? \"A parameter named like a binding.\"\n    x + 1\n\nverify own\n    own(1) => 2\n\n\
+        fn first(o: Option<Int>) -> Int\n    ? \"A pattern binder named like a binding.\"\n    match o\n        Option.Some(x) -> x\n        Option.None -> 0\n\nverify first\n    first(Option.Some(3)) => 3\n    first(Option.None) => 0\n\n\
+        x = own(first(Option.Some(1)))\n\n\
+        fn late() -> Int\n    ? \"Reads a later binding; no binding calls it.\"\n    last\n\nverify late\n    late() => 9\n\n\
+        last = 9\n";
+    let (passed, out) = check_files(&[("main.av", &module("Earlier", body))]);
+    assert!(passed, "{out}");
+}
+
 #[cfg(feature = "wasm")]
 #[test]
 fn wasm_gc_agrees_with_the_vm_on_run_and_verify() {
