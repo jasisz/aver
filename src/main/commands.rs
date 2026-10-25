@@ -4437,27 +4437,30 @@ fn report_codegen_output(
     println!("  {}", build_hint.cyan());
 }
 
-/// `--perf-notes`: one line per note, at the file and line it is about.
+/// `--perf-notes`: one line per note, at the file and line it is about. A
+/// note in a standard module, which the program cannot change, is left out.
 fn print_perf_notes(file: &str, module_root: &str, notes: &[codegen::PerfNote]) {
-    if notes.is_empty() {
+    let lines: Vec<String> = notes
+        .iter()
+        .filter_map(|note| {
+            let path = match &note.module {
+                None => file.to_string(),
+                Some(module) => {
+                    let path = aver::source::find_module_file(module, module_root)?;
+                    let relative = path.strip_prefix(module_root).unwrap_or(&path);
+                    relative.display().to_string()
+                }
+            };
+            Some(format!("{path}:{}: {}", note.line, note.text))
+        })
+        .collect();
+    if lines.is_empty() {
         println!("  {}", "perf notes: none".green());
         return;
     }
     println!("  {}", "perf notes:".yellow());
-    for note in notes {
-        let path = match &note.module {
-            None => file.to_string(),
-            Some(module) => aver::source::find_module_file(module, module_root)
-                .map(|path| {
-                    let relative = path.strip_prefix(module_root).unwrap_or(&path);
-                    relative.display().to_string()
-                })
-                .unwrap_or_else(|| module.clone()),
-        };
-        println!(
-            "    {}",
-            format!("{path}:{}: {}", note.line, note.text).dimmed()
-        );
+    for line in lines {
+        println!("    {}", line.dimmed());
     }
 }
 

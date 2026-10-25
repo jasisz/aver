@@ -85,12 +85,12 @@ pub(super) fn owned_write_target(
     owned
 }
 
-/// The notes of the transpile that `ctx` has just emitted, in source order.
-pub(super) fn collect(ctx: &CodegenContext) -> Vec<PerfNote> {
+/// The notes of the transpile that `ctx` has just emitted, with the
+/// `boxing` notes read before, in source order.
+pub(super) fn collect(ctx: &CodegenContext, mut notes: Vec<PerfNote>) -> Vec<PerfNote> {
     let Some(program) = ctx.mir_program.as_ref() else {
-        return Vec::new();
+        return notes;
     };
-    let mut notes = Vec::new();
     let copied = ctx.rust_copied_targets.borrow();
     for (id, f) in program.iter() {
         let module = ctx
@@ -102,8 +102,7 @@ pub(super) fn collect(ctx: &CodegenContext) -> Vec<PerfNote> {
         let mut sites = Vec::new();
         find_copied(&f.body.node, &copied, &mut sites);
         for (target, copy) in sites {
-            if let Some(text) = copied_note(f, target, copy) {
-                let line = read_of(target).map_or(f.body.line, |read| read.line);
+            if let Some((line, text)) = copied_note(f, target, copy) {
                 notes.push(PerfNote {
                     module: module.clone(),
                     line,
@@ -112,7 +111,6 @@ pub(super) fn collect(ctx: &CodegenContext) -> Vec<PerfNote> {
             }
         }
     }
-    boxing_notes(ctx, program, &mut notes);
     notes.sort_by(|a, b| (&a.module, a.line, &a.text).cmp(&(&b.module, b.line, &b.text)));
     notes.dedup();
     notes
@@ -129,7 +127,8 @@ fn find_copied<'e>(
     walk_children(e, &mut |child| find_copied(child, copied, out));
 }
 
-fn copied_note(f: &MirFn, target: &MirExpr, copy: CopiedTarget) -> Option<String> {
+/// The line of the copy and what the note says about it.
+fn copied_note(f: &MirFn, target: &MirExpr, copy: CopiedTarget) -> Option<(usize, String)> {
     let read = read_of(target)?;
     let what = read.spelled();
     let kind = match copy.write {
@@ -140,7 +139,8 @@ fn copied_note(f: &MirFn, target: &MirExpr, copy: CopiedTarget) -> Option<String
         target: addr(target),
         keep: copy.keep,
         read: &read,
-        seen: false,
+        seen: None,
+        around: 0,
     };
     let why = match (search.walk(&f.body.node), copy.held) {
         (Some(line), _) => format!("`{what}` is read again at line {line}"),
@@ -157,9 +157,12 @@ fn copied_note(f: &MirFn, target: &MirExpr, copy: CopiedTarget) -> Option<String
         },
         (None, Held::Again) => format!("`{what}` is read again later"),
     };
-    Some(format!(
-        "`{}` copies the whole {kind} `{what}` before `{}`: {why}",
-        f.name, copy.write
+    Some((
+        search.seen.unwrap_or(read.line),
+        format!(
+            "`{}` copies the whole {kind} `{what}` before `{}`: {why}",
+            f.name, copy.write
+        ),
     ))
 }
 
@@ -211,21 +214,40 @@ struct Search<'r, 'e> {
     target: usize,
     keep: Option<usize>,
     read: &'r Read<'e>,
-    seen: bool,
+    /// The target's line, once the walk has passed it.
+    seen: Option<usize>,
+    /// The last line of the calls and `let`s around the walk. A read inside
+    /// an interpolated string counts its line from the string; the call the
+    /// string became says where it is.
+    around: usize,
 }
 
 impl Search<'_, '_> {
     fn walk(&mut self, e: &MirExpr) -> Option<usize> {
         if addr(e) == self.target {
-            self.seen = true;
+            self.seen = Some(self.read.line.max(self.around));
             return None;
         }
         if Some(addr(e)) == self.keep {
             return None;
         }
         if let Some(read) = read_of(e) {
-            return (self.seen && read.overlaps(self.read)).then_some(read.line);
+            return (self.seen.is_some() && read.overlaps(self.read))
+                .then_some(read.line.max(self.around));
         }
+        let around = self.around;
+        if let MirExpr::Let(Spanned { line, .. })
+        | MirExpr::Call(Spanned { line, .. })
+        | MirExpr::TailCall(Spanned { line, .. }) = e
+        {
+            self.around = self.around.max(*line);
+        }
+        let found = self.walk_children(e);
+        self.around = around;
+        found
+    }
+
+    fn walk_children(&mut self, e: &MirExpr) -> Option<usize> {
         let (head, branches): (&MirExpr, Vec<&MirExpr>) = match e {
             MirExpr::Match(m) => (
                 &m.node.subject.node,
@@ -254,7 +276,7 @@ impl Search<'_, '_> {
             if let Some(line) = self.walk(branch) {
                 return Some(line);
             }
-            if self.seen {
+            if before.is_none() && self.seen.is_some() {
                 // The target was in this branch: the others are not after it.
                 return None;
             }
@@ -289,23 +311,22 @@ fn visit<'e>(e: &'e MirExpr, f: &mut dyn FnMut(&'e MirExpr)) {
     walk_children(e, &mut |child| visit(child, f));
 }
 
-/// One call of a user function: its arguments, whether the call narrows
-/// the result straight into a machine word, and where it is.
+/// One call of a user function: its arguments and where it is.
 struct Call<'e> {
     args: &'e [Spanned<MirExpr>],
-    narrowed: bool,
     module: Option<String>,
     line: usize,
 }
 
-/// The boundaries where a machine word becomes an `Int` at every call of a
-/// function (see the module doc).
-fn boxing_notes(ctx: &CodegenContext, program: &MirProgram, notes: &mut Vec<PerfNote>) {
-    let carrier_ctors: HashSet<FnId> = program
-        .iter()
-        .filter(|(_, f)| builds_carrier_from_param(ctx, f))
-        .map(|(id, _)| *id)
-        .collect();
+/// The parameters an `Int` of which every call boxes from a machine word
+/// (see the module doc), read from the program as the representation
+/// rewrite left it: before the computed arguments of a call are bound to
+/// locals of their own.
+pub(super) fn boxing(ctx: &CodegenContext) -> Vec<PerfNote> {
+    let mut notes = Vec::new();
+    let Some(program) = ctx.mir_program.as_ref() else {
+        return notes;
+    };
     let mut calls: HashMap<FnId, Vec<Call<'_>>> = HashMap::new();
     let mut taken = HashSet::new();
     for (id, f) in program.iter() {
@@ -330,155 +351,86 @@ fn boxing_notes(ctx: &CodegenContext, program: &MirProgram, notes: &mut Vec<Perf
             };
             calls.entry(callee).or_default().push(Call {
                 args,
-                narrowed: false,
                 module: module.clone(),
                 line,
             });
         });
-        // A call is narrowed when its result is unboxed at once or handed
-        // to the smart constructor of a carrier held as a raw `i64`.
-        visit(&f.body.node, &mut |e| {
-            let inner = match e {
-                MirExpr::Unbox(inner) => &inner.node,
-                MirExpr::Call(call) if matches!(call.node.callee, MirCallee::Fn(ctor) if carrier_ctors.contains(&ctor)) => {
-                    match call.node.args.first() {
-                        Some(arg) => &arg.node,
-                        None => return,
-                    }
-                }
-                _ => return,
-            };
-            let (MirExpr::Call(call), Some(sites)) =
-                (inner, called(inner).and_then(|c| calls.get_mut(&c)))
-            else {
-                return;
-            };
-            if let Some(site) = sites
-                .iter_mut()
-                .find(|s| std::ptr::eq(s.args, call.node.args.as_slice()))
-            {
-                site.narrowed = true;
-            }
-        });
     }
-    let raw = |e: &MirExpr| matches!(e, MirExpr::Box(inner) if !matches!(inner.node, MirExpr::Literal(_)));
-    let literal = |e: &MirExpr| match e {
-        MirExpr::Box(inner) => matches!(inner.node, MirExpr::Literal(_)),
-        _ => matches!(e, MirExpr::Literal(_)),
-    };
     for (id, f) in program.iter() {
-        let key = &ctx.symbol_table.fn_entry(*id).key;
         // A function the compiler made (`__` in its name) has no signature
-        // the program could change.
-        let Some(sites) = calls
-            .get(id)
-            .filter(|_| !f.name.contains("__") && !taken.contains(&key.canonical()))
-        else {
+        // the program could change, and a smart constructor takes an `Int`.
+        let Some(sites) = calls.get(id).filter(|_| {
+            !f.name.contains("__")
+                && !taken.contains(&ctx.symbol_table.fn_entry(*id).key.canonical())
+                && !builds_carrier_from_param(ctx, f)
+        }) else {
             continue;
         };
         let facts = ctx.bare_i64.for_fn(*id);
-        let (count, boxes, narrow) = match sites.len() {
-            1 => ("its one call (this one)".to_string(), "boxes", "narrows"),
-            n => (
-                format!("all {n} of its calls (this is the first)"),
-                "box",
-                "narrow",
-            ),
-        };
-        let mut note = |at: &[&Call<'_>], text: String| {
-            if let Some(site) = at.iter().min_by_key(|site| (&site.module, site.line)) {
-                notes.push(PerfNote {
-                    module: site.module.clone(),
-                    line: site.line,
-                    text,
-                });
-            }
+        let (count, boxes) = match sites.len() {
+            1 => ("its one call (this one)".to_string(), "boxes"),
+            n => (format!("all {n} of its calls (this is the first)"), "box"),
         };
         for (index, param) in f.params.iter().enumerate() {
             if param.ty != "Int" || facts.is_some_and(|facts| facts.param_is_bare(index)) {
                 continue;
             }
-            let at = |site: &Call<'_>, is: &dyn Fn(&MirExpr) -> bool| {
-                site.args.get(index).is_some_and(|arg| is(&arg.node))
+            // Every argument boxes a machine word or is a literal.
+            let (mut boxed, mut first, mut all) = (Vec::new(), None::<&Call<'_>>, true);
+            for site in sites {
+                match site.args.get(index).map(|arg| &arg.node) {
+                    Some(MirExpr::Box(inner)) if !matches!(inner.node, MirExpr::Literal(_)) => {
+                        boxed.push(&inner.node);
+                        if first.is_none_or(|f| (&site.module, site.line) < (&f.module, f.line)) {
+                            first = Some(site);
+                        }
+                    }
+                    Some(MirExpr::Literal(_) | MirExpr::Box(_)) => {}
+                    _ => all = false,
+                }
+            }
+            let (true, Some(first)) = (all, first) else {
+                continue;
             };
-            let boxed: Vec<&Call<'_>> = sites.iter().filter(|site| at(site, &raw)).collect();
-            if sites
-                .iter()
-                .all(|site| at(site, &raw) || at(site, &literal))
-            {
-                note(
-                    &boxed,
-                    format!(
-                        "`{}` takes `{}` as an `Int`, and {count} {boxes} a machine word into it: a refinement over `Int` for `{}` in its signature would keep it a machine word",
-                        f.name, param.name, param.name
-                    ),
-                );
-            }
-        }
-        let mut leaves = Vec::new();
-        result_leaves(&f.body.node, &mut leaves);
-        if f.return_type == "Int"
-            && !facts.is_some_and(|facts| facts.bare_return)
-            && sites.iter().all(|site| site.narrowed)
-            && leaves.iter().all(|leaf| raw(leaf) || literal(leaf))
-            && leaves.iter().any(|leaf| raw(leaf))
-        {
-            note(
-                &sites.iter().collect::<Vec<_>>(),
-                format!(
-                    "`{}` boxes the machine word it computes into the `Int` it returns, and {count} {narrow} it straight back: returning a refinement over `Int` would keep it a machine word",
-                    f.name
+            let then = match carrier_read(ctx, &boxed) {
+                Some(carrier) => {
+                    format!("taking the `{carrier}` itself would keep it a machine word")
+                }
+                None => format!("`{}` works on it as an `Int`", f.name),
+            };
+            notes.push(PerfNote {
+                module: first.module.clone(),
+                line: first.line,
+                text: format!(
+                    "`{}` takes `{}` as an `Int`, and {count} {boxes} a machine word into it: {then}",
+                    f.name, param.name
                 ),
-            );
+            });
         }
     }
+    notes
 }
 
-fn called(e: &MirExpr) -> Option<FnId> {
-    match e {
-        MirExpr::Call(call) => match call.node.callee {
-            MirCallee::Fn(callee) => Some(callee),
-            _ => None,
-        },
-        _ => None,
+/// The carrier every one of `reads` is the `value` of, when they all are.
+fn carrier_read<'c>(ctx: &'c CodegenContext, reads: &[&MirExpr]) -> Option<&'c str> {
+    let mut carrier = None;
+    for read in reads {
+        let MirExpr::Project(project) = read else {
+            return None;
+        };
+        let Some(crate::ast::Type::Named { id: Some(id), .. }) = project.node.base.ty() else {
+            return None;
+        };
+        if !super::carrier::is_i64_carrier(ctx, Some(*id)) || carrier.is_some_and(|c| c != *id) {
+            return None;
+        }
+        carrier = Some(*id);
     }
-}
-
-/// The values `e` can return: its tail positions and every early return.
-fn result_leaves<'e>(e: &'e MirExpr, out: &mut Vec<&'e MirExpr>) {
-    match e {
-        MirExpr::Let(l) => {
-            returns_in(&l.node.value.node, out);
-            result_leaves(&l.node.body.node, out);
-        }
-        MirExpr::Match(m) => {
-            returns_in(&m.node.subject.node, out);
-            for arm in &m.node.arms {
-                result_leaves(&arm.body.node, out);
-            }
-        }
-        MirExpr::IfThenElse(ite) => {
-            returns_in(&ite.node.cond.node, out);
-            result_leaves(&ite.node.then_branch.node, out);
-            result_leaves(&ite.node.else_branch.node, out);
-        }
-        MirExpr::Return(inner) => result_leaves(&inner.node, out),
-        _ => {
-            returns_in(e, out);
-            out.push(e);
-        }
-    }
-}
-
-fn returns_in<'e>(e: &'e MirExpr, out: &mut Vec<&'e MirExpr>) {
-    walk_children(e, &mut |child| match child {
-        MirExpr::Return(inner) => result_leaves(&inner.node, out),
-        _ => returns_in(child, out),
-    });
+    carrier.map(|id| ctx.symbol_table.type_entry(id).key.name.as_str())
 }
 
 /// Whether `f` is the smart constructor of a carrier held as a raw `i64`:
-/// it builds one from its one parameter, which it narrows to do so.
+/// it builds one from its one parameter, narrowed to do so.
 fn builds_carrier_from_param(ctx: &CodegenContext, f: &MirFn) -> bool {
     let [param] = f.params.as_slice() else {
         return false;
@@ -487,8 +439,11 @@ fn builds_carrier_from_param(ctx: &CodegenContext, f: &MirFn) -> bool {
     visit(&f.body.node, &mut |e| {
         if let MirExpr::RecordCreate(r) = e
             && super::carrier::is_i64_carrier(ctx, r.node.type_id)
-            && r.node.fields.iter().any(|field| {
-                read_of(&field.value.node).is_some_and(|read| read.slot == param.local)
+            && r.node.fields.iter().any(|field| match &field.value.node {
+                MirExpr::Unbox(value) => {
+                    read_of(&value.node).is_some_and(|read| read.slot == param.local)
+                }
+                _ => false,
             })
         {
             builds = true;
