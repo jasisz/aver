@@ -7,7 +7,8 @@ module Main
         "and a variant matched by literal; literal arithmetic and a call that"
         "returns a raw i64 on the right of a verify case; literal arithmetic in a"
         "module binding; comparisons and a match with literals past the integers"
-        "AverInt holds in one word."
+        "AverInt holds in one word; a bounded counter of a mutual tail-call"
+        "group, called with literals from outside it and returned."
     exposes opaque [Word]
     effects [Console.print]
 
@@ -110,6 +111,18 @@ fn plusBase(i: Int) -> Int
     ? "Reads the module binding."
     i + base
 
+fn spin(n: Int, phase: Int) -> Int
+    ? "Goes round on itself, and out through hop when phase runs out; gives the phase it ends with."
+    match n <= 0
+        true -> phase
+        false -> match phase == 0
+            true -> hop(n - 1)
+            false -> spin(n - 1, phase - 1)
+
+fn hop(n: Int) -> Int
+    ? "Back to spin with a fresh phase."
+    spin(n, 3)
+
 verify varsOfId
     varsOfId(3 * 1024) => 1023
     varsOfId(7 * 1024 + 4) => 4
@@ -135,6 +148,7 @@ fn main() -> Unit
     ! [Console.print]
     Console.print(sweep(0, 20, ""))
     Console.print("countdown {countdown(5)} base {plusBase(0)}")
+    Console.print("spin {spin(10, 2)} {spin(25, 3)} {hop(7)}")
     Console.print(wide(4611686018427387903 + 1))
     Console.print(wide(4611686018427387903))
     Console.print(wide(0 - 4611686018427387904 - 1))
