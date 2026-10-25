@@ -593,7 +593,12 @@ pub fn evalNode(
                 {
                     let __arg18 @ _ =
                         crate::proof_std::aver_generated::kernel::lib::lookupKnown(x, &s.known);
-                    crate::proof_std::aver_generated::kernel::lib::evalVar(s, t, &__arg18, depth)
+                    crate::proof_std::aver_generated::kernel::lib::evalVar(
+                        s,
+                        t,
+                        (&__arg18).as_ref(),
+                        depth,
+                    )
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TList(____pat0_fields) => {
@@ -739,7 +744,11 @@ pub fn evalGet(
                 {
                     let __arg9 @ _ = crate::proof_std::aver_generated::kernel::lib::fieldOf(fs, f);
                     crate::proof_std::aver_generated::kernel::lib::projected(
-                        s, t, inner, &__arg9, depth,
+                        s,
+                        t,
+                        inner,
+                        (&__arg9).as_ref(),
+                        depth,
                     )
                 }
             }
@@ -754,7 +763,7 @@ pub fn projected(
     s @ _: &Scope,
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
     mut inner @ _: Rw,
-    v @ _: &Option<crate::proof_std::aver_generated::kernel::term::Term>,
+    v @ _: Option<&crate::proof_std::aver_generated::kernel::term::Term>,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
     crate::proof_std::cancel_checkpoint();
@@ -890,7 +899,7 @@ pub fn evalArm(
 pub fn evalVar(
     s @ _: &Scope,
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
-    known @ _: &Option<Known>,
+    known @ _: Option<&Known>,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
     crate::proof_std::cancel_checkpoint();
@@ -1226,7 +1235,7 @@ pub fn literalValue(
             crate::proof_std::aver_generated::kernel::lib::intOp(o, __pat2, __pat3)
         },
         _ => {
-            { let __arg8 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(t); crate::proof_std::aver_generated::kernel::lib::scalarOf(&__arg8) }
+            { let __arg8 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(t); crate::proof_std::aver_generated::kernel::lib::scalarOf((&__arg8).as_ref()) }
         }
     }
                             }
@@ -1234,7 +1243,9 @@ pub fn literalValue(
                         _ => {
                             let __arg9 @ _ =
                                 crate::proof_std::aver_generated::kernel::eval::evalClosed(t);
-                            crate::proof_std::aver_generated::kernel::lib::scalarOf(&__arg9)
+                            crate::proof_std::aver_generated::kernel::lib::scalarOf(
+                                (&__arg9).as_ref(),
+                            )
                         }
                     }
                 }
@@ -1244,7 +1255,7 @@ pub fn literalValue(
                 let xs = __n_fields.1.clone();
                 {
                     let __arg10 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(t);
-                    crate::proof_std::aver_generated::kernel::lib::scalarOf(&__arg10)
+                    crate::proof_std::aver_generated::kernel::lib::scalarOf((&__arg10).as_ref())
                 }
             }
             _ => None,
@@ -1254,26 +1265,25 @@ pub fn literalValue(
 
 /// An Int or Bool value as a literal; a list value is left alone, since evaluate writes lists as cells.
 pub fn scalarOf(
-    v @ _: &Option<crate::proof_std::aver_generated::kernel::eval::Val>,
+    v @ _: Option<&crate::proof_std::aver_generated::kernel::eval::Val>,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
     match v {
-        Some(__pat0) => {
-            let __pat0 = __pat0.clone();
-            match __pat0 {
-                crate::proof_std::aver_generated::kernel::eval::Val::VInt(n) => {
-                    Some(crate::proof_std::aver_generated::kernel::term::Term::TInt(
-                        crate::proof_std::aver_generated::kernel::term::Term__TInt(n),
-                    ))
-                }
-                crate::proof_std::aver_generated::kernel::eval::Val::VBool(b) => {
-                    Some(crate::proof_std::aver_generated::kernel::term::Term::TBool(
-                        crate::proof_std::aver_generated::kernel::term::Term__TBool(b),
-                    ))
-                }
-                _ => None,
+        Some(__pat0) => match __pat0 {
+            crate::proof_std::aver_generated::kernel::eval::Val::VInt(n) => {
+                let n = n.clone();
+                Some(crate::proof_std::aver_generated::kernel::term::Term::TInt(
+                    crate::proof_std::aver_generated::kernel::term::Term__TInt(n),
+                ))
             }
-        }
+            crate::proof_std::aver_generated::kernel::eval::Val::VBool(b) => {
+                let b = b.clone();
+                Some(crate::proof_std::aver_generated::kernel::term::Term::TBool(
+                    crate::proof_std::aver_generated::kernel::term::Term__TBool(b),
+                ))
+            }
+            _ => None,
+        },
         _ => None,
     }
 }

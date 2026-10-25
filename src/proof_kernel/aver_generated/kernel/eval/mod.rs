@@ -210,7 +210,7 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
                 {
                     let __arg20 @ _ =
                         crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a);
-                    crate::proof_kernel::aver_generated::kernel::eval::negated(&__arg20)
+                    crate::proof_kernel::aver_generated::kernel::eval::negated((&__arg20).as_ref())
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TList(__xs_fields) => {
@@ -310,7 +310,7 @@ pub fn listOf(mut vs @ _: aver_rt::AverList<Option<Val>>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
     aver_list_match!(vs, [] => Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VList(aver_rt::AverList::empty())), [__pat0, rest] => { match __pat0 {
         Some(v) => {
-            { let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::eval::listOf(rest); crate::proof_kernel::aver_generated::kernel::eval::consOnto(&v, &__arg4) }
+            { let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::eval::listOf(rest); crate::proof_kernel::aver_generated::kernel::eval::consOnto(&v, (&__arg4).as_ref()) }
         },
         _ => {
             None
@@ -319,39 +319,36 @@ pub fn listOf(mut vs @ _: aver_rt::AverList<Option<Val>>) -> Option<Val> {
 }
 
 /// v in front of a list value.
-pub fn consOnto(v @ _: &Val, rest @ _: &Option<Val>) -> Option<Val> {
+pub fn consOnto(v @ _: &Val, rest @ _: Option<&Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
     match rest {
-        Some(__pat0) => {
-            let __pat0 = __pat0.clone();
-            match __pat0 {
-                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
-                    crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
-                        aver_rt::AverList::prepend_owned(v.clone(), vs),
-                    ),
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
+                    aver_rt::AverList::prepend(v.clone(), vs),
                 ),
-                _ => None,
-            }
-        }
+            ),
+            _ => None,
+        },
         _ => None,
     }
 }
 
 /// The negation of an Int value.
-pub fn negated(a @ _: &Option<Val>) -> Option<Val> {
+pub fn negated(a @ _: Option<&Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
     match a {
-        Some(__pat0) => {
-            let __pat0 = __pat0.clone();
-            match __pat0 {
-                crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x) => Some(
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x) => {
+                let x = x.clone();
+                Some(
                     crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
                         aver_rt::AverInt::from_i64(0).sub(&x),
                     ),
-                ),
-                _ => None,
+                )
             }
-        }
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -584,7 +581,7 @@ pub fn evalBuiltin(
                                     if __list_subject.is_empty() {
                                         {
                                             let __arg30 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a);
-                                            crate::proof_kernel::aver_generated::kernel::eval::negate(&__arg30)
+                                            crate::proof_kernel::aver_generated::kernel::eval::negate((&__arg30).as_ref())
                                         }
                                     } else {
                                         crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
@@ -744,18 +741,16 @@ pub fn both(a @ _: &Option<Val>, b @ _: &Option<Val>, isAnd @ _: bool) -> Option
 }
 
 /// Bool.not of a value.
-pub fn negate(a @ _: &Option<Val>) -> Option<Val> {
+pub fn negate(a @ _: Option<&Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
     match a {
-        Some(__pat0) => {
-            let __pat0 = __pat0.clone();
-            match __pat0 {
-                crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(x) => {
-                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((!x)))
-                }
-                _ => None,
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(x) => {
+                let x = x.clone();
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((!x)))
             }
-        }
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -933,7 +928,7 @@ pub fn listBuiltin(
                                     if __list_subject.is_empty() {
                                         {
                                             let __arg28 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(l);
-                                            crate::proof_kernel::aver_generated::kernel::eval::lengthOf(&__arg28)
+                                            crate::proof_kernel::aver_generated::kernel::eval::lengthOf((&__arg28).as_ref())
                                         }
                                     } else {
                                         None
@@ -955,7 +950,7 @@ pub fn listBuiltin(
                                         if __list_subject.is_empty() {
                                             {
                                                 let __arg29 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(l);
-                                                crate::proof_kernel::aver_generated::kernel::eval::reversed(&__arg29)
+                                                crate::proof_kernel::aver_generated::kernel::eval::reversed((&__arg29).as_ref())
                                             }
                                         } else {
                                             None
@@ -1093,39 +1088,31 @@ pub fn concatenated(a @ _: &Option<Val>, b @ _: &Option<Val>) -> Option<Val> {
 }
 
 /// How many elements.
-pub fn lengthOf(l @ _: &Option<Val>) -> Option<Val> {
+pub fn lengthOf(l @ _: Option<&Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
     match l {
-        Some(__pat0) => {
-            let __pat0 = __pat0.clone();
-            match __pat0 {
-                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
-                    crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
-                        aver_rt::AverInt::from_i64(vs.len() as i64),
-                    ),
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
+                    aver_rt::AverInt::from_i64(vs.len() as i64),
                 ),
-                _ => None,
-            }
-        }
+            ),
+            _ => None,
+        },
         _ => None,
     }
 }
 
 /// The elements backwards.
-pub fn reversed(l @ _: &Option<Val>) -> Option<Val> {
+pub fn reversed(l @ _: Option<&Val>) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
     match l {
-        Some(__pat0) => {
-            let __pat0 = __pat0.clone();
-            match __pat0 {
-                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
-                    crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
-                        (vs).reverse_owned(),
-                    ),
-                ),
-                _ => None,
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => {
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs.reverse()))
             }
-        }
+            _ => None,
+        },
         _ => None,
     }
 }

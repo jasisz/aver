@@ -631,7 +631,9 @@ pub fn linearContradiction(
                                 __arg7,
                             )
                         };
-                        crate::proof_kernel::aver_generated::kernel::ring::negativeConstant(&__arg8)
+                        crate::proof_kernel::aver_generated::kernel::ring::negativeConstant(
+                            (&__arg8).as_ref(),
+                        )
                     }
                 }
             }
@@ -1050,26 +1052,23 @@ pub fn lessConstant(r @ _: &Read, k @ _: aver_rt::AverInt) -> Read {
 }
 
 /// A constant below zero.
-pub fn negativeConstant(p @ _: &Option<aver_rt::AverList<Mono>>) -> bool {
+pub fn negativeConstant(p @ _: Option<&aver_rt::AverList<Mono>>) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     match p {
         Some(__pat0) => {
-            let __pat0 = __pat0.clone();
-            {
-                let __list_subject = __pat0;
-                if let (Some(m), Some(__pat1)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __list_subject = __pat1;
-                        if __list_subject.is_empty() {
-                            ((m.atoms == aver_rt::AverIntList::empty())
-                                && (m.coef < aver_rt::AverInt::from_i64(0)))
-                        } else {
-                            false
-                        }
+            let __list_subject = __pat0;
+            if let (Some(m), Some(__pat1)) = (__list_subject.first(), __list_subject.tail()) {
+                {
+                    let __list_subject = __pat1;
+                    if __list_subject.is_empty() {
+                        ((m.atoms == aver_rt::AverIntList::empty())
+                            && (m.coef < aver_rt::AverInt::from_i64(0)))
+                    } else {
+                        false
                     }
-                } else {
-                    false
                 }
+            } else {
+                false
             }
         }
         _ => false,

@@ -6935,7 +6935,7 @@ pub fn inductCaseNamed(
         },
     );
     let here @ _ = crate::proof_kernel::aver_generated::kernel::check::caseValue(
-        &r.guard,
+        (&r.guard).as_ref(),
         a.arm.pattern.clone(),
         vr.v.clone(),
         ys,
@@ -6969,7 +6969,7 @@ pub fn inductCaseNamed(
         };
         {
             let __arg23 @ _ = crate::proof_kernel::aver_generated::kernel::check::caseVarsOf(
-                &r.guard,
+                (&r.guard).as_ref(),
                 a.arm.pattern,
                 &c.binders,
                 vr.v.clone(),
@@ -7058,7 +7058,7 @@ pub fn inductCaseNamed(
 /// The case's names with the types of the pattern's parts over the given inducted on; none in a count toward zero, whose one name is a hypothesis.
 #[inline(always)]
 pub fn caseVarsOf(
-    guard @ _: &Option<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    guard @ _: Option<&crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut p @ _: crate::proof_kernel::aver_generated::kernel::term::Pat,
     binders @ _: &aver_rt::AverList<AverStr>,
     v @ _: AverStr,
@@ -7135,7 +7135,7 @@ pub fn namedParts(
 /// Where the case puts the given inducted on: at the arm's pattern over the case's names; left as it is in a count toward zero.
 #[inline(always)]
 pub fn caseValue(
-    guard @ _: &Option<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    guard @ _: Option<&crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut p @ _: crate::proof_kernel::aver_generated::kernel::term::Pat,
     v @ _: AverStr,
     ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,

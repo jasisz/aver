@@ -3363,7 +3363,7 @@ pub fn finOf(
                 {
                     let __arg5 @ _ =
                         crate::proof_std::aver_generated::kernel::types::finAll(xs, e, seen);
-                    crate::proof_std::aver_generated::kernel::types::finTuple(&__arg5)
+                    crate::proof_std::aver_generated::kernel::types::finTuple((&__arg5).as_ref())
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyNamed(__n_fields) => {
@@ -3378,7 +3378,7 @@ pub fn finOf(
 /// A tuple of finite parts.
 #[inline(always)]
 pub fn finTuple(
-    parts @ _: &Option<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Fin>>,
+    parts @ _: Option<&aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Fin>>,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Fin> {
     crate::proof_std::cancel_checkpoint();
     match parts {
@@ -3424,7 +3424,7 @@ pub fn finNamed(
             (_, Some(r)) => {
                 let __arg5 @ _ =
                     crate::proof_std::aver_generated::kernel::types::finFields(&r.fields, e, seen);
-                crate::proof_std::aver_generated::kernel::types::finRec(n, &__arg5)
+                crate::proof_std::aver_generated::kernel::types::finRec(n, (&__arg5).as_ref())
             }
             _ => None,
         }
@@ -3450,8 +3450,8 @@ pub fn finSum(
 #[inline(always)]
 pub fn finRec(
     n @ _: AverStr,
-    fields @ _: &Option<
-        aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::FinField>,
+    fields @ _: Option<
+        &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::FinField>,
     >,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Fin> {
     crate::proof_std::cancel_checkpoint();

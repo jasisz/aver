@@ -1394,7 +1394,10 @@ pub fn callsDescend(
                                 &c.args,
                                 j.clone(),
                             );
-                        crate::proof_kernel::aver_generated::kernel::induct::descends(&__arg6, &p)
+                        crate::proof_kernel::aver_generated::kernel::induct::descends(
+                            (&__arg6).as_ref(),
+                            &p,
+                        )
                     } && (!c.inner.contains(&p))))
                     && crate::proof_kernel::aver_generated::kernel::induct::callsDescend(
                         &rest, p, j, n,
@@ -1408,29 +1411,27 @@ pub fn callsDescend(
 
 /// Whether t is p - 1, or p / k for a literal k of at least 2: for p > 0 each is at least 0 and below p.
 pub fn descends(
-    t @ _: &Option<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    t @ _: Option<&crate::proof_kernel::aver_generated::kernel::term::Term>,
     p @ _: &AverStr,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     match t {
         Some(__pat0) => {
-            let __pat0 = __pat0.clone();
-            {
-                let __t = __pat0;
-                match __t.view() {
-                    crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(
-                        ____pat1_fields,
-                    ) => {
-                        let __pat1 = ____pat1_fields.0.clone();
-                        let __pat2 = &____pat1_fields.1;
-                        let __pat3 = &____pat1_fields.2;
-                        {
-                            let __int_match_subject =
-                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat1));
-                            if __int_match_subject == aver_rt::AverInt::from_i64(45) {
-                                {
-                                    let __t = __pat2;
-                                    match __t.view() {
+            let __t = __pat0;
+            match __t.view() {
+                crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(
+                    ____pat1_fields,
+                ) => {
+                    let __pat1 = ____pat1_fields.0.clone();
+                    let __pat2 = &____pat1_fields.1;
+                    let __pat3 = &____pat1_fields.2;
+                    {
+                        let __int_match_subject =
+                            aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat1));
+                        if __int_match_subject == aver_rt::AverInt::from_i64(45) {
+                            {
+                                let __t = __pat2;
+                                match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__q_fields) => {
             let q = __q_fields.0.clone();
             { let __t = __pat3; match __t.view() {
@@ -1447,26 +1448,26 @@ pub fn descends(
             false
         }
     }
-                                }
-                            } else {
-                                false
                             }
+                        } else {
+                            false
                         }
                     }
-                    crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(
-                        ____pat5_fields,
-                    ) => {
-                        let __pat5 = ____pat5_fields.0.clone();
-                        let __pat6 = &____pat5_fields.1;
-                        match &*__pat5 {
-                            "__int_div_euclid" => {
-                                let __list_subject = __pat6;
-                                if let (Some(__pat7), Some(__pat8)) =
-                                    (__list_subject.first(), __list_subject.tail())
+                }
+                crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(
+                    ____pat5_fields,
+                ) => {
+                    let __pat5 = ____pat5_fields.0.clone();
+                    let __pat6 = &____pat5_fields.1;
+                    match &*__pat5 {
+                        "__int_div_euclid" => {
+                            let __list_subject = __pat6;
+                            if let (Some(__pat7), Some(__pat8)) =
+                                (__list_subject.first(), __list_subject.tail())
+                            {
                                 {
-                                    {
-                                        let __t = __pat7;
-                                        match __t.view() {
+                                    let __t = __pat7;
+                                    match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__q_fields) => {
             let q = __q_fields.0.clone();
             { let __list_subject = __pat8; if let (Some(__pat9), Some(__pat10)) = (__list_subject.first(), __list_subject.tail()) { { let __t = __pat9; match __t.view() {
@@ -1483,16 +1484,15 @@ pub fn descends(
             false
         }
     }
-                                    }
-                                } else {
-                                    false
                                 }
+                            } else {
+                                false
                             }
-                            _ => false,
                         }
+                        _ => false,
                     }
-                    _ => false,
                 }
+                _ => false,
             }
         }
         _ => false,
