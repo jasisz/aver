@@ -1,0 +1,122 @@
+module Main
+    intent =
+        "Values the Rust backend holds as a raw i64 where a match, a verify"
+        "case and a module binding read them: a match whose subject is computed"
+        "raw (a mask, a remainder, a carrier field, possibly negative), with"
+        "literal arms, a binding and a wildcard; raw values inside a tuple, an option"
+        "and a variant matched by literal; literal arithmetic and a call that"
+        "returns a raw i64 on the right of a verify case; literal arithmetic in a"
+        "module binding."
+    exposes opaque [Word]
+    effects [Console.print]
+
+record Word
+    value: Int
+
+type Shape
+    Dot(Int)
+    Pair(Int, Int)
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "Smart constructor: a word is below 2^62."
+    match Bool.and(n >= 0, n < 4611686018427387904)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+fn word(n: Int) -> Word
+    ? "A word from an Int in range, zero otherwise."
+    match fromInt(n)
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 0)
+
+base = 9 + 8
+
+fn varsOfId(i: Int) -> Int
+    ? "The ten low bits, all of them when none is set."
+    match Bits.and(i, 1023)
+        0 -> 1023
+        b -> b
+
+fn signed(i: Int) -> String
+    ? "Literal arms over a raw subject that may be negative."
+    match Bits.and(i, 15) - 8
+        0 -> "zero"
+        1 -> "one"
+        7 -> "top"
+        k -> "other {k}"
+
+fn lowBits(i: Int) -> Int
+    ? "One literal arm and a wildcard."
+    match Int.mod(i, 4)
+        3 -> 30
+        _ -> 0
+
+fn fieldTag(w: Word) -> Int
+    ? "A match on a carrier's field."
+    match Bits.and(w.value, 7)
+        0 -> 100
+        1 -> 101
+        t -> t
+
+fn rawField(w: Word) -> Int
+    ? "A match on a carrier's field itself."
+    match w.value
+        0 -> -1
+        _ -> Int.div(w.value, 2)
+
+fn inTuple(i: Int) -> Int
+    ? "Raw values in a tuple, matched by literal."
+    match (Bits.and(i, 3), Int.mod(i, 5))
+        (0, 0) -> 1
+        (0, _) -> 2
+        (_, 4) -> 3
+        _ -> 4
+
+fn inOption(i: Int) -> Int
+    ? "A raw value in an option, matched by literal."
+    match Option.Some(Int.mod(i, 5))
+        Option.Some(4) -> 40
+        Option.Some(k) -> k
+        Option.None -> -1
+
+fn inVariant(i: Int) -> Int
+    ? "Raw values in a variant, read back."
+    match Shape.Pair(Bits.and(i, 1), Int.mod(i, 3))
+        Shape.Pair(a, k) -> a * 10 + k
+        Shape.Dot(_) -> 0
+
+fn countdown(n: Int) -> Int
+    ? "A counter down to zero."
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn plusBase(i: Int) -> Int
+    ? "Reads the module binding."
+    i + base
+
+verify varsOfId
+    varsOfId(3 * 1024) => 1023
+    varsOfId(7 * 1024 + 4) => 4
+
+verify lowBits
+    lowBits(7) => 10 + 20
+    lowBits(8) => 0
+
+verify countdown
+    countdown(3) => 0
+    countdown(2 + 1) => 9 - 9
+
+verify plusBase
+    plusBase(1) => 9 + 9
+
+fn sweep(i: Int, n: Int, acc: String) -> String
+    ? "Every shape for i below n."
+    match i >= n
+        true -> acc
+        false -> sweep(i + 1, n, "{acc} {varsOfId(i * 1023)}/{signed(i)}/{lowBits(i)}/{fieldTag(word(i))}/{rawField(word(i))}/{inTuple(i)}/{inOption(i)}/{inVariant(i)}")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(sweep(0, 20, ""))
+    Console.print("countdown {countdown(5)} base {plusBase(0)}")

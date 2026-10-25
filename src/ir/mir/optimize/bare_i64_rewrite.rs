@@ -81,6 +81,30 @@ pub fn rewrite_for_rust_with_facts(
     rewrite(program, boxed_signature_fns, carrier, &empty_fields, true)
 }
 
+/// A free value the Rust backend emits outside any function — a verify
+/// case, a module binding, a law's right side — in the general `Int`
+/// world it is compared or stored in. The same boundaries a function body
+/// gets: a raw literal tree is boxed, a call that returns a raw `i64` is
+/// boxed, and an argument at a callee's raw parameter is narrowed. `all` is
+/// the program's facts, which say which callees take and give `i64`;
+/// `boxed_signature_fns` keeps their boxed signatures (see
+/// [`rewrite_for_rust`]).
+pub fn rewrite_free_value(
+    e: Spanned<MirExpr>,
+    all: &BareI64Facts,
+    boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
+) -> Spanned<MirExpr> {
+    let facts = FnBareFacts::default();
+    let ctx = RewriteCtx {
+        facts: &facts,
+        all,
+        boxed_signature_fns,
+        // A free value has no function of its own to call back into.
+        self_fn: crate::ir::FnId(u32::MAX),
+    };
+    rewrite_boxed(e, &ctx)
+}
+
 /// ETAP-2 SLICE 2b: the wasm-gc entry. Identical body to
 /// [`rewrite_for_rust`] (the rewrite itself is target-agnostic — it only
 /// reads the [`super::bare_i64`] analysis output), differing ONLY in who
@@ -803,8 +827,10 @@ fn rewrite_children(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExp
 
 fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
     let line = e.line;
-    // A builtin computed raw over raw operands keeps them raw.
-    let raw_op = ctx.facts.raw_op_call(&e.node).is_some() && renders_raw(&e.node, ctx.facts);
+    // A builtin computed raw, or a negation, over raw operands keeps them
+    // raw.
+    let raw_node = renders_raw(&e.node, ctx.facts);
+    let raw_op = raw_node && ctx.facts.raw_op_call(&e.node).is_some();
     match e.node {
         MirExpr::BinOp(mut b) => {
             let op = b.node.op;
@@ -861,10 +887,13 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
             Spanned::new(MirExpr::BinOp(b), line)
         }
         MirExpr::Neg(inner) => {
-            // Negation over a bare operand renders boxed by codegen (the
-            // bare `Neg` path bails to `AverInt::neg`), so the operand is a
-            // boxed context.
-            let r = rewrite_boxed(*inner, ctx);
+            // A negation whose result the interval keeps within `i64` (so
+            // never of `i64::MIN`) renders raw over a raw operand; any other
+            // is `AverInt::neg` over a boxed one.
+            let r = match raw_node {
+                true => rewrite_raw(*inner, ctx),
+                false => rewrite_boxed(*inner, ctx),
+            };
             Spanned::new(MirExpr::Neg(std::boxed::Box::new(r)), line)
         }
         MirExpr::Call(mut c) if raw_op => {

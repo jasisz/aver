@@ -481,6 +481,18 @@ fn refinement_carriers_held_as_i64_match_vm() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A match whose subject is computed on a raw `i64` (a mask or a remainder
+/// a raw binding aliases, a carrier's field) compares its literal arms as
+/// `i64`; raw values put in a tuple, an option or a variant are matched as
+/// `Int`; a module binding of literal arithmetic is an `Int`. Its verify
+/// cases, literal arithmetic on the right of them included, type-check in
+/// `rust_codegen_emits_buildable_project_for_every_corpus_example`.
+#[test]
+fn raw_int_match_subjects_and_free_values_match_vm() {
+    assert_plain_parity("tests/fixtures/rust_raw_int_shapes.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// `lazy f(…)` keeps the call in a node until the value is first looked at:
 /// a value never looked into, one looked at many times and from two threads
 /// at once, compared both ways with the value built at once, a spine a
