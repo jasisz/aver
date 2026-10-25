@@ -1,0 +1,15 @@
+module FloatTextApp
+    intent =
+        "String.fromFloat and interpolation print NaN, the infinities, -0.0 and ordinary numbers the same on every backend."
+
+fn main()
+    ! [Console.print]
+    zero = Float.fromInt(List.len([1]) - 1)
+    nan = Float.sqrt(zero - 1.0)
+    inf = Float.pow(10.0, 400.0)
+    ninf = zero - inf
+    negz = zero * -1.0
+    Console.print(String.fromFloat(nan) + " " + String.fromFloat(inf) + " " + String.fromFloat(ninf) + " " + String.fromFloat(negz) + " " + String.fromFloat(zero))
+    Console.print("{nan} {inf} {ninf} {negz} {zero}")
+    Console.print(String.fromFloat(-1.5) + " " + String.fromFloat(1000000000000000.0) + " " + String.fromFloat(Float.pow(10.0, 19.0)) + " " + String.fromFloat(123456.789))
+    Console.print(String.fromFloat(0.001) + " " + String.fromFloat(Float.pow(10.0, -10.0)) + " " + String.fromFloat(0.1 + 0.2) + " " + String.fromFloat(Float.pi()))

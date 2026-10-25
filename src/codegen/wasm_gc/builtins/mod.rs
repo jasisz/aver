@@ -2183,8 +2183,13 @@ fn emit_float_from_string(registry: &TypeRegistry) -> Result<Function, WasmGcErr
 /// port of the legacy `rt_float_to_str` algorithm but writing into a
 /// 32-byte scratch `(array i8)` instead of linear memory, then
 /// `array.copy` into a result string sized to the actual output.
+/// NaN, the infinities and `-0.0` print as Rust's `Display` prints them,
+/// which is what the VM and the Rust backend print.
 fn emit_string_from_float(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let (_, preamble) = string_module_preamble(registry)?;
+    let nan = endian::string_literal("NaN");
+    let inf = endian::string_literal("inf");
+    let neg_inf = endian::string_literal("-inf");
     let wat = format!(
         r#"
         (module
@@ -2208,15 +2213,32 @@ fn emit_string_from_float(registry: &TypeRegistry) -> Result<Function, WasmGcErr
             (local $out_len i32)
             (local $out (ref null $string))
 
+            ;; The digit loops below would trap on a NaN and print an
+            ;; infinity as a saturated integer.
+            local.get $val
+            local.get $val
+            f64.ne
+            (if (then {nan} return))
+            local.get $val
+            f64.const inf
+            f64.eq
+            (if (then {inf} return))
+            local.get $val
+            f64.const -inf
+            f64.eq
+            (if (then {neg_inf} return))
+
             ;; 64-byte scratch buffer; integer part right-to-left at [0..21],
             ;; '.' at 21, fractional digits at [22..22+n].
             i32.const 64
             array.new_default $string
             local.set $buf
 
+            ;; The sign bit, so `-0.0` prints as `-0`.
             local.get $val
-            f64.const 0
-            f64.lt
+            i64.reinterpret_f64
+            i64.const 0
+            i64.lt_s
             local.set $is_neg
 
             local.get $val
