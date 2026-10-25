@@ -5056,6 +5056,17 @@ fn handed_lists_are_taken_apart_and_reuse_their_nodes_like_vm() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Lists in every shape the runtime keeps them in: a flat body, a chain of
+/// prepends, a deep join, joins of those, each cut with `drop` and `take`,
+/// walked by matching and stepped through by `drop`; lists of numbers,
+/// words and records; equal and unequal lists of different shapes compared,
+/// and used as map keys. The compiled program must print what the VM does.
+#[test]
+fn lists_of_every_shape_match_vm() {
+    assert_plain_parity("tests/fixtures/list_shapes_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// The same with a bounce between two mutually recursive functions
 /// (`step(st, t, localValue(st.lctx, n), n)`), a field read by an earlier
 /// argument (`putFirst(readOnly(w.st, w.e), w.st, w.e)`), and a field read

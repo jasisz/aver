@@ -207,14 +207,15 @@ jobs:
 
       # The nodes of user values and of the runtime's collections are
       # reference counted by hand-written unsafe code; Miri checks it for
-      # undefined behaviour and data races. Only those modules: the rest of
-      # the crate's tests take most of an hour under Miri.
+      # undefined behaviour and data races. Only those modules and the list
+      # tests that take nodes apart: the rest of the crate's tests take most
+      # of an hour under Miri.
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
 
       - name: Miri on the reference-counted nodes
-        run: cargo +nightly miri test -p aver-rt --lib -- shared::tests shared_eq::tests thin::tests
+        run: cargo +nightly miri test -p aver-rt --lib -- shared::tests shared_eq::tests thin::tests tests::list_node tests::owned_prepend_and_uncons tests::uncons_reuse_builds
 
   wasm_lanes:
     name: WASM (${{ matrix.lane }})

@@ -45,6 +45,14 @@ it is an alias for `Arc` because lists may be captured by parallel branches.
 | `Concat` | Persistent `List.concat` | Construction is O(1), copies no values, and may form an arbitrarily skewed rope. |
 | `Indexed` | Sequential consumption of a concat rope | All tails share one traversal table and advance a constant-size cursor. |
 
+A list value is 16 bytes: the node pointer, and the offset and segment index
+in 32 bits each. A node is as large as its largest shape, and a `Concat` keeps
+its length in 32 bits, so no shape is larger than a `Prepend` of an element of
+a word or more: a cons cell of an 8-byte element is 48 bytes with its count.
+A view whose offset does not fit in 32 bits (a body of more than four billion
+elements) is rebuilt as an `Indexed` table that starts where the view does,
+and a join longer than that is built as an `Indexed` table of both halves.
+
 The first `uncons` of a `Concat` performs an iterative, explicit-stack DFS and
 compiles its topology into `Indexed`. Values are not flattened or cloned. An
 index entry is deliberately restricted to a constant-time source: either a

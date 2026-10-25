@@ -98,7 +98,7 @@ impl<'a, T> Iterator for Held<'a, T> {
             }
             AverListInner::Flat { items } => {
                 self.alone &= Rc::strong_count(items) == 1;
-                self.flat = items.get(list.start..).unwrap_or(&[]).iter();
+                self.flat = items.get(list.start()..).unwrap_or(&[]).iter();
                 self.next()
             }
             _ => {

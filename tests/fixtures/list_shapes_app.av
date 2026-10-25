@@ -1,0 +1,122 @@
+module ListShapes
+    intent =
+        "Fixture: lists in every shape the runtime keeps them in (a flat body, a chain of prepends, a deep join, joins of those, and each of them cut with drop and take), walked by matching, stepped through by drop, compared with each other and used as map keys, all read as the VM reads them."
+    effects [Console.print]
+
+record Pt
+    x: Int
+    tag: String
+
+fn upTo(n: Int, acc: List<Int>) -> List<Int>
+    ? "The numbers 1 to n in front of acc, by prepending."
+    match n == 0
+        true -> acc
+        false -> upTo(n - 1, List.prepend(n, acc))
+
+verify upTo
+    upTo(3, []) => [1, 2, 3]
+
+fn joined(n: Int, acc: List<Int>) -> List<Int>
+    ? "acc with n, n - 1, ..., 1 joined at its end, one join each."
+    match n == 0
+        true -> acc
+        false -> joined(n - 1, List.concat(acc, [n * 7]))
+
+verify joined
+    joined(2, [0]) => [0, 14, 7]
+
+fn words(n: Int, acc: List<String>) -> List<String>
+    ? "The words w1 to wn in front of acc."
+    match n == 0
+        true -> acc
+        false -> words(n - 1, List.prepend("w{n}", acc))
+
+verify words
+    words(2, []) => ["w1", "w2"]
+
+fn points(n: Int, acc: List<Pt>) -> List<Pt>
+    ? "The points 1 to n in front of acc."
+    match n == 0
+        true -> acc
+        false -> points(n - 1, List.prepend(Pt(x = n, tag = "p{n}"), acc))
+
+verify points
+    List.len(points(3, [])) => 3
+
+fn digest(xs: List<Int>, acc: Int) -> Int
+    ? "An order-sensitive digest of the numbers, read by matching."
+    match xs
+        [] -> acc
+        [x, ..rest] -> digest(rest, Int.mod(acc * 31 + x, 1000003))
+
+verify digest
+    digest([1, 2], 0) => 33
+
+fn pointDigest(xs: List<Pt>, acc: Int) -> Int
+    ? "An order-sensitive digest of the points and their tags."
+    match xs
+        [] -> acc
+        [p, ..rest] -> pointDigest(rest, Int.mod(acc * 31 + p.x + String.len(p.tag), 1000003))
+
+verify pointDigest
+    pointDigest([Pt(x = 1, tag = "a")], 0) => 2
+
+fn stride(xs: List<Int>, k: Int, acc: Int) -> Int
+    ? "The digest of every k-th number, stepping by drop."
+    match xs
+        [] -> acc
+        [x, .._] -> stride(List.drop(xs, k), k, Int.mod(acc * 31 + x, 1000003))
+
+verify stride
+    stride([1, 2, 3], 2, 0) => 34
+
+fn render(xs: List<Int>) -> String
+    ? "The numbers, comma separated."
+    match xs
+        [] -> ""
+        [x] -> String.fromInt(x)
+        [x, ..rest] -> "{x},{render(rest)}"
+
+verify render
+    render([1, 2]) => "1,2"
+
+fn renderKeys(keys: List<List<Int>>) -> String
+    ? "Each key in brackets."
+    match keys
+        [] -> ""
+        [k, ..rest] -> "[{render(k)}]{renderKeys(rest)}"
+
+verify renderKeys
+    renderKeys([[1], []]) => "[1][]"
+
+fn shape(name: String, xs: List<Int>) -> String
+    ? "Length, digest, a few cuts and steps of one list."
+    "{name} len={List.len(xs)} d={digest(xs, 0)} take={render(List.take(xs, 4))} drop={digest(List.drop(xs, 3), 0)} s3={stride(xs, 3, 0)} s50={stride(xs, 50, 0)} has={List.contains(xs, 14)}"
+
+fn main() -> Unit
+    ? "Prints every shape, the comparisons and the map."
+    ! [Console.print]
+    chain = upTo(2000, [])
+    flat = List.reverse(chain)
+    rope = joined(400, [0])
+    mixed = List.concat(List.concat(chain, rope), flat)
+    Console.print(shape("chain", chain))
+    Console.print(shape("flat", flat))
+    Console.print(shape("rope", rope))
+    Console.print(shape("mixed", mixed))
+    Console.print(shape("mixedCut", List.drop(mixed, 1990)))
+    Console.print(shape("mixedTake", List.take(List.drop(mixed, 1500), 950)))
+    Console.print(shape("flatEnd", List.drop(flat, 1998)))
+    Console.print(shape("ropeEnd", List.drop(rope, 399)))
+    Console.print(shape("past", List.drop(rope, 5000)))
+    Console.print(shape("onto", List.prepend(-1, List.drop(mixed, 2001))))
+    Console.print(shape("deep", joined(20000, [])))
+    ten = upTo(10, [])
+    Console.print("eq {ten == List.reverse(List.reverse(ten))} {ten == List.concat(upTo(5, []), [6, 7, 8, 9, 10])} {ten == List.drop(List.prepend(0, ten), 1)} {List.drop(rope, 0) == rope} {List.drop(mixed, 2401) == flat}")
+    Console.print("ne {ten == upTo(9, [])} {ten == List.concat(upTo(5, []), [6, 7, 8, 9, 11])} {List.drop(ten, 1) == List.take(ten, 9)} {[] == List.drop(ten, 10)}")
+    Console.print("words {String.join(List.drop(List.concat(words(3, []), words(2, [])), 1), ",")} {List.concat(words(3, []), []) == words(3, [])} {List.len(List.drop(words(300, []), 299))}")
+    Console.print("points {pointDigest(List.concat(points(50, []), List.drop(points(60, []), 20)), 0)} {List.drop(points(3, []), 1) == List.drop(points(3, []), 1)}")
+    m = Map.set(Map.set(Map.set({}, [1, 2, 3], "flat"), List.concat([1], List.prepend(2, [3])), "joined"), List.drop([0, 1, 2], 1), "cut")
+    Console.print("map {Map.len(m)} {Option.withDefault(Map.get(m, List.prepend(1, [2, 3])), "none")} {Option.withDefault(Map.get(m, List.take(ten, 2)), "none")} {renderKeys(Map.keys(m))}")
+    nested = [List.drop(ten, 8), List.concat([9], [10]), [9, 10]]
+    Console.print("nested {Map.len(Map.set(Map.set({}, nested, 1), [[9, 10], [9, 10], List.drop(ten, 8)], 2))}")
