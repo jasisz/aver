@@ -38,6 +38,11 @@
 //!    path must stay an error, and the file's bytes must survive.
 //! 9. `disk_sync_repeated_does_not_exhaust_descriptors` — 500 syncs;
 //!    each opens a descriptor that the emitter has to drop again.
+//! 10. `disk_reads_larger_than_linear_memory` — a file larger than the
+//!     module's 128 MiB of linear memory read whole and in chunks. Each
+//!     chunk the host hands over lands where the one before it did and
+//!     every read gives its linear memory back, so reading never grows
+//!     with the file; before, the reads ran out of linear memory.
 //!
 //! All fixtures run in a per-test tempdir which we preopen as the
 //! component's working directory (the embedded runner in
@@ -664,5 +669,46 @@ fn main() -> Unit
         elapsed < 2000,
         "10×50ms loop should be well under 2s, got {elapsed}ms"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn disk_reads_larger_than_linear_memory() {
+    let dir = tempdir("disk-large");
+    let size: usize = 136 << 20;
+    let mut content = vec![b'a'; size];
+    content[size - 1] = b'z';
+    std::fs::write(dir.join("large.txt"), &content).expect("write large fixture");
+    drop(content);
+    let src = r#"module Probe
+    intent = "Read a file larger than linear memory, whole and a chunk at a time."
+    depends [Bytes]
+    exposes [main]
+    effects [Console.print, Disk.readText, Disk.readBytesAt]
+
+fn chunks(offset: Int, left: Int, total: Int) -> Result<Int, String>
+    ? "Reads left chunks of 1 MiB, 3 MiB apart, and adds up their lengths."
+    ! [Disk.readBytesAt]
+    match left == 0
+        true -> Result.Ok(total)
+        false -> chunk(offset, left, total, Disk.readBytesAt("large.txt", offset, 1048576)?)
+
+fn chunk(offset: Int, left: Int, total: Int, bytes: Bytes) -> Result<Int, String>
+    ? "Goes on after one chunk."
+    ! [Disk.readBytesAt]
+    chunks(offset + 3145728, left - 1, total + Bytes.len(bytes))
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.readText, Disk.readBytesAt]
+    text = Disk.readText("large.txt")?
+    read = chunks(0, 46, 0)?
+    ends = String.endsWith(text, "az")
+    Console.print("{String.byteLength(text)}:{ends}:{read}")
+    Result.Ok(Unit)
+"#;
+    let fixture = write_fixture(&dir, "disk_large.av", src);
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "disk_large.av");
+    assert_eq!(stdout(&out).trim(), format!("{size}:true:{}", 46 << 20));
     let _ = std::fs::remove_dir_all(&dir);
 }

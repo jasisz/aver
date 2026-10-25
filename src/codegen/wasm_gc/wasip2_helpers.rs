@@ -1613,19 +1613,24 @@ pub(super) fn emit_disk_exists(
 ///      `Err("read-via-stream failed")`; on Ok stash the
 ///      input-stream handle.
 ///   5. Loop `[method]input-stream.blocking-read(stream, 65536,
-///      retptr)`: on Ok-with-bytes append into the cabi_realloc
-///      growing buffer (doubles when full); on Ok-empty or
+///      retptr)`: on Ok-with-bytes copy the chunk into a GC
+///      `(array i8)` that doubles when full; on Ok-empty or
 ///      Err-closed exit cleanly; on Err-failure drop both
-///      resources and return `Err("read failed")`.
+///      resources and return `Err("read failed")`. Each chunk
+///      lands in the linear memory of the one before it
+///      (`emit_stream_into_array`), so a file of any size is read
+///      in the same 64 KiB.
 ///   6. Drop the input-stream and file descriptor (per-call
-///      resources, mandatory or they leak host-side).
-///   7. Materialise the buffer bytes into a fresh GC
-///      `(array i8)` and wrap in `Result.Ok`.
+///      resources, mandatory or they leak host-side), and give
+///      back the linear memory the call took.
+///   7. Copy the bytes into an `(array i8)` of exactly their
+///      length and wrap it in `Result.Ok`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_disk_read_text(
     string_type_idx: u32,
     result_type_idx: u32,
     preopen_global: u32,
+    bump_global: u32,
     cabi_realloc_fn: u32,
     str_to_lm_fn: u32,
     get_directories_fn: u32,
@@ -1643,11 +1648,11 @@ pub(super) fn emit_disk_read_text(
     });
 
     // Locals:
-    // i32 (16): preopen, path_len, retptr_open, retptr_stream,
-    //           retptr_read, fd, stream, buf_ptr, buf_cap, buf_len,
-    //           data_ptr, data_len, j, list_ptr, list_len, new_cap
-    // ref s: arr (Ok payload OR per-call err string scratch)
-    let mut f = Function::new(vec![(16, ValType::I32), (1, s_ref)]);
+    // i32 (15): preopen, path_len, retptr_open, retptr_stream,
+    //           retptr_read, fd, stream, saved, mark, buf_len,
+    //           data_ptr, data_len, j, list_ptr, list_len
+    // ref s (3): arr (err string scratch), buf (the bytes read), fresh
+    let mut f = Function::new(vec![(15, ValType::I32), (3, s_ref)]);
     let p_path = 0u32;
     let l_preopen = 1u32;
     let l_path_len = 2u32;
@@ -1656,16 +1661,17 @@ pub(super) fn emit_disk_read_text(
     let l_retptr_read = 5u32;
     let l_fd = 6u32;
     let l_stream = 7u32;
-    let l_buf_ptr = 8u32;
-    let l_buf_cap = 9u32;
+    let l_saved = 8u32;
+    let l_mark = 9u32;
     let l_buf_len = 10u32;
     let l_data_ptr = 11u32;
     let l_data_len = 12u32;
     let l_j = 13u32;
     let l_list_ptr = 14u32;
     let l_list_len = 15u32;
-    let l_new_cap = 16u32;
-    let l_arr = 17u32;
+    let l_arr = 16u32;
+    let l_buf = 17u32;
+    let l_fresh = 18u32;
 
     let mem4 = MemArg {
         offset: 0,
@@ -1674,11 +1680,6 @@ pub(super) fn emit_disk_read_text(
     };
     let mem4_o4 = MemArg {
         offset: 4,
-        align: 2,
-        memory_index: 0,
-    };
-    let mem4_o8 = MemArg {
-        offset: 8,
         align: 2,
         memory_index: 0,
     };
@@ -1702,6 +1703,8 @@ pub(super) fn emit_disk_read_text(
             f.instruction(&Instruction::I32Const(*b as i32));
             f.instruction(&Instruction::ArraySet(string_type_idx));
         }
+        f.instruction(&Instruction::LocalGet(l_saved));
+        f.instruction(&Instruction::GlobalSet(bump_global));
         // tag=0 (Err), ok=null, err=arr
         f.instruction(&Instruction::I32Const(0));
         f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
@@ -1709,6 +1712,10 @@ pub(super) fn emit_disk_read_text(
         f.instruction(&Instruction::StructNew(result_type_idx));
         f.instruction(&Instruction::Return);
     };
+
+    // Every exit gives back the linear memory the call took.
+    f.instruction(&Instruction::GlobalGet(bump_global));
+    f.instruction(&Instruction::LocalSet(l_saved));
 
     // ── lazy-init preopen (mirrors emit_disk_exists) ─────────
     f.instruction(&Instruction::GlobalGet(preopen_global));
@@ -1821,170 +1828,68 @@ pub(super) fn emit_disk_read_text(
     f.instruction(&Instruction::I32Load(mem4_o4));
     f.instruction(&Instruction::LocalSet(l_stream));
 
-    // ── allocate growing buffer + per-iteration retptr (12B) ─
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Const(4096));
-    f.instruction(&Instruction::Call(cabi_realloc_fn));
-    f.instruction(&Instruction::LocalSet(l_buf_ptr));
-    f.instruction(&Instruction::I32Const(4096));
-    f.instruction(&Instruction::LocalSet(l_buf_cap));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(l_buf_len));
-
+    // ── per-iteration retptr (12B); chunks land just past it ─
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(4));
     f.instruction(&Instruction::I32Const(12));
     f.instruction(&Instruction::Call(cabi_realloc_fn));
     f.instruction(&Instruction::LocalSet(l_retptr_read));
-
-    // ── read loop: blocking-read(stream, 65536, retptr_read) ─
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-
-    f.instruction(&Instruction::LocalGet(l_stream));
-    f.instruction(&Instruction::I64Const(65_536));
-    f.instruction(&Instruction::LocalGet(l_retptr_read));
-    f.instruction(&Instruction::Call(blocking_read_fn));
-
-    f.instruction(&Instruction::LocalGet(l_retptr_read));
-    f.instruction(&Instruction::I32Load8U(mem1));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Eq);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    {
-        // Err — at retptr+4 sits the stream-error tag (0=
-        // last-operation-failed, 1=closed). closed is EOF (good);
-        // last-operation-failed is a real failure → drop + Err.
-        f.instruction(&Instruction::LocalGet(l_retptr_read));
-        f.instruction(&Instruction::I32Load8U(MemArg {
-            offset: 4,
-            align: 0,
-            memory_index: 0,
-        }));
-        f.instruction(&Instruction::I32Const(1));
-        f.instruction(&Instruction::I32Eq);
-        f.instruction(&Instruction::If(BlockType::Empty));
-        {
-            // closed → exit loop, build Ok(buf).
-            f.instruction(&Instruction::Br(3));
-        }
-        f.instruction(&Instruction::End);
-        // last-operation-failed → drop both, return Err.
-        f.instruction(&Instruction::LocalGet(l_stream));
-        f.instruction(&Instruction::Call(drop_input_stream_fn));
-        f.instruction(&Instruction::LocalGet(l_fd));
-        f.instruction(&Instruction::Call(drop_descriptor_fn));
-        emit_err(&mut f, b"read failed");
-    }
-    f.instruction(&Instruction::End);
-
-    // Ok branch — read (data_ptr, data_len) at retptr+4 / +8.
-    f.instruction(&Instruction::LocalGet(l_retptr_read));
-    f.instruction(&Instruction::I32Load(mem4_o4));
-    f.instruction(&Instruction::LocalSet(l_data_ptr));
-    f.instruction(&Instruction::LocalGet(l_retptr_read));
-    f.instruction(&Instruction::I32Load(mem4_o8));
-    f.instruction(&Instruction::LocalSet(l_data_len));
-
-    // Empty Ok = EOF; exit loop. Depth 0=Loop, 1=Block — br 1
-    // jumps to the Block end (= falls through to drops + Ok build).
-    f.instruction(&Instruction::LocalGet(l_data_len));
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::BrIf(1));
-
-    // Grow buffer if needed: while buf_cap < buf_len + data_len,
-    // buf_cap *= 2; then realloc.
-    f.instruction(&Instruction::LocalGet(l_buf_cap));
-    f.instruction(&Instruction::LocalSet(l_new_cap));
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(l_new_cap));
-    f.instruction(&Instruction::LocalGet(l_buf_len));
-    f.instruction(&Instruction::LocalGet(l_data_len));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I32GeU);
-    f.instruction(&Instruction::BrIf(1));
-    f.instruction(&Instruction::LocalGet(l_new_cap));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Shl);
-    f.instruction(&Instruction::LocalSet(l_new_cap));
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End); // grow loop
-    f.instruction(&Instruction::End); // grow block
-    // Realloc only if cap actually grew.
-    f.instruction(&Instruction::LocalGet(l_new_cap));
-    f.instruction(&Instruction::LocalGet(l_buf_cap));
-    f.instruction(&Instruction::I32GtU);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    {
-        f.instruction(&Instruction::LocalGet(l_buf_ptr));
-        f.instruction(&Instruction::LocalGet(l_buf_cap));
-        f.instruction(&Instruction::I32Const(1));
-        f.instruction(&Instruction::LocalGet(l_new_cap));
-        f.instruction(&Instruction::Call(cabi_realloc_fn));
-        f.instruction(&Instruction::LocalSet(l_buf_ptr));
-        f.instruction(&Instruction::LocalGet(l_new_cap));
-        f.instruction(&Instruction::LocalSet(l_buf_cap));
-    }
-    f.instruction(&Instruction::End);
-
-    // memory.copy(dst=buf_ptr+buf_len, src=data_ptr, n=data_len)
-    f.instruction(&Instruction::LocalGet(l_buf_ptr));
-    f.instruction(&Instruction::LocalGet(l_buf_len));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalGet(l_data_ptr));
-    f.instruction(&Instruction::LocalGet(l_data_len));
-    f.instruction(&Instruction::MemoryCopy {
-        src_mem: 0,
-        dst_mem: 0,
-    });
-
-    // buf_len += data_len
-    f.instruction(&Instruction::LocalGet(l_buf_len));
-    f.instruction(&Instruction::LocalGet(l_data_len));
-    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::GlobalGet(bump_global));
+    f.instruction(&Instruction::LocalSet(l_mark));
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+    f.instruction(&Instruction::LocalSet(l_buf));
+    f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(l_buf_len));
 
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End); // read loop
-    f.instruction(&Instruction::End); // read block
+    // ── read loop: blocking-read(stream, 65536, retptr_read) ─
+    super::wasip2_disk_read_at::emit_stream_into_array(
+        &mut f,
+        &super::wasip2_disk_read_at::StreamLocals {
+            stream: l_stream,
+            retptr: l_retptr_read,
+            mark: l_mark,
+            data_ptr: l_data_ptr,
+            data_len: l_data_len,
+            index: l_j,
+            len: l_buf_len,
+            buf: l_buf,
+            fresh: l_fresh,
+            bound: None,
+        },
+        string_type_idx,
+        bump_global,
+        blocking_read_fn,
+        &|f, msg| {
+            f.instruction(&Instruction::LocalGet(l_stream));
+            f.instruction(&Instruction::Call(drop_input_stream_fn));
+            f.instruction(&Instruction::LocalGet(l_fd));
+            f.instruction(&Instruction::Call(drop_descriptor_fn));
+            emit_err(f, msg);
+        },
+    );
 
     // ── drops ───────────────────────────────────────────────
     f.instruction(&Instruction::LocalGet(l_stream));
     f.instruction(&Instruction::Call(drop_input_stream_fn));
     f.instruction(&Instruction::LocalGet(l_fd));
     f.instruction(&Instruction::Call(drop_descriptor_fn));
+    f.instruction(&Instruction::LocalGet(l_saved));
+    f.instruction(&Instruction::GlobalSet(bump_global));
 
-    // ── Result.Ok(arr) — copy buf_ptr[0..buf_len] into a fresh
-    //   `(array i8)` of size buf_len ───────────────────────────
+    // ── Result.Ok(arr) — the bytes read, in an array of exactly their length ─
     f.instruction(&Instruction::LocalGet(l_buf_len));
     f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
-    f.instruction(&Instruction::LocalSet(l_arr));
+    f.instruction(&Instruction::LocalTee(l_arr));
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(l_j));
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_buf));
+    f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalGet(l_buf_len));
-    f.instruction(&Instruction::I32GeU);
-    f.instruction(&Instruction::BrIf(1));
-    f.instruction(&Instruction::LocalGet(l_arr));
-    f.instruction(&Instruction::LocalGet(l_j));
-    f.instruction(&Instruction::LocalGet(l_buf_ptr));
-    f.instruction(&Instruction::LocalGet(l_j));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I32Load8U(mem1));
-    f.instruction(&Instruction::ArraySet(string_type_idx));
-    f.instruction(&Instruction::LocalGet(l_j));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(l_j));
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End); // copy loop
-    f.instruction(&Instruction::End); // copy block
+    f.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: string_type_idx,
+        array_type_index_src: string_type_idx,
+    });
 
     // tag=1 (Ok), ok=arr, err=null
     f.instruction(&Instruction::I32Const(1));
