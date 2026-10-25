@@ -2294,11 +2294,14 @@ fn emit_binop_typed(
         Lt => fc.emit_op(lt_op),
         Gt => fc.emit_op(gt_op),
         // `Neq` / `Lte` / `Gte` invert the corresponding
-        // comparison (same composition HIR uses).
+        // comparison (same composition HIR uses), except `<=` and `>=` on
+        // two `Float`s, which are false with a NaN either side.
         Neq => {
             fc.emit_op(eq_op);
             fc.emit_op(NOT);
         }
+        Lte if both_float => fc.emit_op(LE_FLOAT),
+        Gte if both_float => fc.emit_op(GE_FLOAT),
         Lte => {
             fc.emit_op(gt_op);
             fc.emit_op(NOT);

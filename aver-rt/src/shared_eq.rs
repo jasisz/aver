@@ -101,6 +101,15 @@ pub trait NodeId {
     fn count(&self) -> usize;
 }
 
+/// The payload of a shared constructor of a sum that is not thin, compared
+/// by [`Walk::node`] as one node.
+impl<T: WalkEq> WalkEq for Shared<T> {
+    #[inline]
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
+        (**self).walk_eq(&**other, walk)
+    }
+}
+
 impl<T> NodeId for Shared<T> {
     #[inline]
     fn addr(&self) -> usize {
@@ -180,10 +189,7 @@ impl<'v> Walk<'_, 'v> {
         b: &'v N,
         fields_eq: impl FnOnce(Self) -> bool,
     ) -> bool {
-        let (here, top) = (stack_here(), self.memory.top.get());
-        if top == 0 {
-            self.memory.top.set(here);
-        } else if top.saturating_sub(here) > DEEP {
+        if self.deep() {
             return self.leave(a, b);
         }
         if a.count() == 1 || b.count() == 1 {
@@ -207,16 +213,66 @@ impl<'v> Walk<'_, 'v> {
         same
     }
 
+    /// Whether the walk is [`DEEP`] bytes below where its memory began,
+    /// which the first pair met with memory marks.
+    #[inline]
+    pub(crate) fn deep(self) -> bool {
+        let (here, top) = (stack_here(), self.memory.top.get());
+        if top == 0 {
+            self.memory.top.set(here);
+            return false;
+        }
+        top.saturating_sub(here) > DEEP
+    }
+
     /// Leaves the pair for later (see [`Walk::rest`]): equal for now.
     #[cold]
     #[inline(never)]
     fn leave<N: WalkEq>(self, a: &'v N, b: &'v N) -> bool {
+        self.defer(move |walk| a.walk_eq(b, walk))
+    }
+
+    /// Leaves `later` for later (see [`Walk::rest`]): equal for now.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn defer(self, later: impl for<'w> FnOnce(Walk<'w, 'v>) -> bool + 'v) -> bool {
         let mut spent = self.memory.spent.take().unwrap_or_default();
-        spent
-            .later
-            .push(Box::new(move |walk: Walk<'_, 'v>| a.walk_eq(b, walk)));
+        spent.later.push(Box::new(later));
         self.memory.spent.set(Some(spent));
         true
+    }
+
+    /// Takes one step of the budget, or answers that it is spent: the pairs
+    /// met from now on are remembered.
+    #[inline]
+    pub(crate) fn step(self) -> bool {
+        let left = self.left.get();
+        self.left.set(left.saturating_sub(1));
+        left > 0
+    }
+
+    /// Two values stored at `a` and `b` met once the budget is spent and
+    /// below a check of [`Walk::deep`], `fields_eq` comparing them: looked
+    /// up, and remembered once found equal.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn remember(self, a: usize, b: usize, fields_eq: impl FnOnce(Self) -> bool) -> bool {
+        let pair = (a, b);
+        let spent = self.memory.spent.take();
+        let known = spent
+            .as_ref()
+            .is_some_and(|spent| spent.equal.contains(&pair));
+        self.memory.spent.set(spent);
+        if known {
+            return true;
+        }
+        let same = fields_eq(self);
+        if same {
+            let mut spent = self.memory.spent.take().unwrap_or_default();
+            spent.equal.insert(pair);
+            self.memory.spent.set(Some(spent));
+        }
+        same
     }
 
     /// The pairs left for later, once the rest of the comparison is equal.

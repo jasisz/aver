@@ -20,6 +20,7 @@ mod service_types;
 mod shared;
 mod shared_eq;
 pub mod shared_hash;
+pub mod shared_items;
 pub mod strcursor;
 mod string_index;
 pub mod tcp;

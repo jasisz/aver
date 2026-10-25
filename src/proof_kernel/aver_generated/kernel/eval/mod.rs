@@ -2,11 +2,107 @@
 use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub enum Val {
     VInt(aver_rt::AverInt),
     VBool(bool),
     VList(aver_rt::AverList<Val>),
+}
+
+impl std::hash::Hash for Val {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        aver_rt::shared_hash::hash(self, state)
+    }
+}
+
+impl aver_rt::WalkHash for Val {
+    fn stream<H: std::hash::Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        match self {
+            Val::VInt(f0) => {
+                std::hash::Hash::hash(&0u32, state);
+                std::hash::Hash::hash(&(*f0), state);
+                left
+            }
+            Val::VBool(f0) => {
+                std::hash::Hash::hash(&1u32, state);
+                std::hash::Hash::hash(&(*f0), state);
+                left
+            }
+            Val::VList(f0) => {
+                std::hash::Hash::hash(&2u32, state);
+                let left = aver_rt::shared_items::stream_items(
+                    (*f0).iter(),
+                    state,
+                    left,
+                    |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
+                );
+                left
+            }
+        }
+    }
+
+    fn walk_hash(&self, walk: aver_rt::HashWalk<'_>) -> u64 {
+        match self {
+            Val::VInt(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&0u32, h);
+                std::hash::Hash::hash(&(*f0), h);
+                std::hash::Hasher::finish(h)
+            }
+            Val::VBool(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&1u32, h);
+                std::hash::Hash::hash(&(*f0), h);
+                std::hash::Hasher::finish(h)
+            }
+            Val::VList(f0) => {
+                let h = &mut aver_rt::shared_hash::node_hasher();
+                std::hash::Hash::hash(&2u32, h);
+                std::hash::Hasher::write_u64(
+                    h,
+                    aver_rt::shared_items::parts_list(&(*f0), walk, |x, walk| {
+                        aver_rt::WalkHash::walk_hash(&(*x), walk)
+                    }),
+                );
+                std::hash::Hasher::finish(h)
+            }
+        }
+    }
+}
+
+impl aver_rt::WalkEq for Val {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        match (self, other) {
+            (Val::VInt(a0), Val::VInt(b0)) => a0 == b0,
+            (Val::VBool(a0), Val::VBool(b0)) => a0 == b0,
+            (Val::VList(a0), Val::VList(b0)) => {
+                aver_rt::shared_items::eq_list(&(*a0), &(*b0), walk, |x, y, walk| {
+                    (*x).walk_eq(&(*y), walk)
+                })
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Val {
+    fn aver_fast_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Val::VInt(a0), Val::VInt(b0)) => (*a0) == (*b0),
+            (Val::VBool(a0), Val::VBool(b0)) => (*a0) == (*b0),
+            (Val::VList(a0), Val::VList(b0)) => {
+                aver_rt::shared_items::fast_list(&(*a0), &(*b0), |x, y| (*x).aver_fast_eq(&(*y)))
+            }
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for Val {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        aver_rt::shared_items::top(self, other, Self::aver_fast_eq)
+    }
 }
 
 impl Val {
