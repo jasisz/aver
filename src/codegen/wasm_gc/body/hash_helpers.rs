@@ -19,12 +19,13 @@
 //! shape-specific DJB2 fold. Symmetric to how `__eq_<X>` works on
 //! the equality side.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::{Function, Instruction};
 
 use super::super::WasmGcError;
 use super::super::types::TypeRegistry;
+use super::node_table::{Entry, TableGlobals, TableSlots};
 
 /// What kind of type a registered hash helper covers. Same shapes
 /// as `EqKind`, separate enum to keep the two registries
@@ -54,9 +55,10 @@ pub(crate) struct HashHelperRegistry {
     /// in slot order, each with the first `(wasm_fn_idx, wasm_type_idx)` of
     /// its two steps: against the budget, then with memory.
     walks: Vec<(String, (u32, u32))>,
-    /// Slots of the remembered-hash insert and clear, and of the byte hash
-    /// of a string, which follow the walks when there are any.
-    memory: Option<(u32, u32)>,
+    /// The table of the remembered hashes, and the slot of the byte hash of
+    /// a string, which follow the walks when there are any.
+    table: Option<TableSlots>,
+    string_slot: Option<(u32, u32)>,
     /// The string array type, when the walks hash a string field by its
     /// bytes.
     string_type: Option<u32>,
@@ -64,13 +66,20 @@ pub(crate) struct HashHelperRegistry {
 
 /// Nodes a hash takes before it starts again with memory.
 const WALK_BUDGET: i32 = 1024;
-/// Hashes of nodes a hash with memory remembers.
-const WALK_MEMORY: u32 = 2;
 
-/// The state of a hash in steps: the budget left, then the remembered
-/// nodes and their hashes in turn, most recent first.
+/// The state of a hash in steps: the budget left, and the table of the
+/// remembered hashes.
 pub(crate) struct HashWalkGlobals {
     budget: u32,
+    table: TableGlobals,
+}
+
+/// What a step with memory calls: the lookup and insert of the remembered
+/// hashes, and the helpers that hash in steps.
+struct Remember<'a> {
+    lookup: u32,
+    insert: u32,
+    walked: &'a HashSet<String>,
 }
 
 fn eq_ref_type() -> wasm_encoder::ValType {
@@ -104,13 +113,68 @@ impl HashKind {
 enum Body<'a> {
     Plain,
     Step(&'a HashWalkGlobals),
-    Memory(&'a HashWalkGlobals, u32),
+    Memory(&'a Remember<'a>),
 }
 
 impl Body<'_> {
+    /// The locals a body declares after its own, the last of which is local
+    /// `h`: for a step with memory the key of its node, whether it holds the
+    /// walk, and what the lookup found.
+    fn locals(self) -> Vec<(u32, wasm_encoder::ValType)> {
+        match self {
+            Body::Memory(_) => vec![
+                (2, wasm_encoder::ValType::I32),
+                (1, wasm_encoder::ValType::I64),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    /// In a step with memory, a node of struct `struct_idx` (pushed typed
+    /// by `node`) whose fields of `field_tys` hold the walk answers its
+    /// remembered hash, and is remembered once hashed.
+    #[allow(clippy::too_many_arguments)]
+    fn recall(
+        self,
+        f: &mut Function,
+        h: u32,
+        owner: &str,
+        field_tys: &[String],
+        wasm_tys: &dyn Fn() -> Result<Vec<wasm_encoder::ValType>, WasmGcError>,
+        struct_idx: u32,
+        registry: &TypeRegistry,
+        node: &dyn Fn(&mut Function),
+    ) -> Result<(), WasmGcError> {
+        let Body::Memory(memory) = self else {
+            return Ok(());
+        };
+        if !super::node_table::holds_walk(field_tys, owner, memory.walked, registry) {
+            return Ok(());
+        }
+        let (key, holds, found) = (h + 1, h + 2, h + 3);
+        super::node_table::emit_node_key(f, struct_idx, &wasm_tys()?, registry, node, key);
+        for op in [
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(key),
+            Instruction::Call(memory.lookup),
+            Instruction::LocalTee(found),
+            Instruction::I64Const(0),
+            Instruction::I64GeS,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(found),
+            Instruction::I32WrapI64,
+            Instruction::Return,
+            Instruction::End,
+            Instruction::I32Const(1),
+            Instruction::LocalSet(holds),
+        ] {
+            f.instruction(&op);
+        }
+        Ok(())
+    }
+
     /// What a step does before its node is hashed: one against the budget
-    /// takes one from it and answers 0 once it is spent; one with memory
-    /// answers a remembered node's hash.
+    /// takes one from it and answers 0 once it is spent.
     fn prologue(self, f: &mut Function) {
         match self {
             Body::Plain => {}
@@ -126,18 +190,7 @@ impl Body<'_> {
                 f.instruction(&Instruction::I32Sub);
                 f.instruction(&Instruction::GlobalSet(globals.budget));
             }
-            Body::Memory(globals, _) => {
-                for i in 0..WALK_MEMORY {
-                    let node = globals.budget + 1 + 2 * i;
-                    f.instruction(&Instruction::LocalGet(0));
-                    f.instruction(&Instruction::GlobalGet(node));
-                    f.instruction(&Instruction::RefEq);
-                    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-                    f.instruction(&Instruction::GlobalGet(node + 1));
-                    f.instruction(&Instruction::Return);
-                    f.instruction(&Instruction::End);
-                }
-            }
+            Body::Memory(_) => {}
         }
     }
 
@@ -160,10 +213,18 @@ impl Body<'_> {
                 f.instruction(&Instruction::LocalSet(h));
             }
         }
-        if let Body::Memory(_, insert) = self {
-            f.instruction(&Instruction::LocalGet(0));
-            f.instruction(&Instruction::LocalGet(h));
-            f.instruction(&Instruction::Call(insert));
+        if let Body::Memory(memory) = self {
+            for op in [
+                Instruction::LocalGet(h + 2),
+                Instruction::If(wasm_encoder::BlockType::Empty),
+                Instruction::LocalGet(0),
+                Instruction::LocalGet(h + 1),
+                Instruction::LocalGet(h),
+                Instruction::Call(memory.insert),
+                Instruction::End,
+            ] {
+                f.instruction(&op);
+            }
         }
         f.instruction(&Instruction::LocalGet(h));
     }
@@ -172,7 +233,7 @@ impl Body<'_> {
 /// The start of a hash in steps of a value of a type that reaches itself:
 /// against the budget, then from the start with memory if that ran out.
 /// The budget of a hash this one is part of is kept and given back.
-fn emit_walk_start(globals: &HashWalkGlobals, step: u32, clear: u32) -> Function {
+fn emit_walk_start(globals: &HashWalkGlobals, step: u32, table: &TableSlots) -> Function {
     // Locals: 1 = the budget of the enclosing hash, 2 = the hash.
     let mut f = Function::new(vec![(2, wasm_encoder::ValType::I32)]);
     f.instruction(&Instruction::GlobalGet(globals.budget));
@@ -185,42 +246,17 @@ fn emit_walk_start(globals: &HashWalkGlobals, step: u32, clear: u32) -> Function
     f.instruction(&Instruction::GlobalGet(globals.budget));
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Call(table.enter()));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::Call(step + 1));
     f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::Call(clear));
+    f.instruction(&Instruction::Call(table.leave()));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::GlobalSet(globals.budget));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::End);
     f
-}
-
-/// The insert `(node, hash)` as the most recent of the remembered hashes,
-/// and their clear.
-fn emit_walk_memory(globals: &HashWalkGlobals) -> [Function; 2] {
-    let first = globals.budget + 1;
-    let mut insert = Function::new(Vec::new());
-    for g in (2..2 * WALK_MEMORY).rev() {
-        insert.instruction(&Instruction::GlobalGet(first + g - 2));
-        insert.instruction(&Instruction::GlobalSet(first + g));
-    }
-    for side in 0..2 {
-        insert.instruction(&Instruction::LocalGet(side));
-        insert.instruction(&Instruction::GlobalSet(first + side));
-    }
-    insert.instruction(&Instruction::End);
-    let mut clear = Function::new(Vec::new());
-    for i in 0..WALK_MEMORY {
-        clear.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Abstract {
-            shared: false,
-            ty: wasm_encoder::AbstractHeapType::Eq,
-        }));
-        clear.instruction(&Instruction::GlobalSet(first + 2 * i));
-    }
-    clear.instruction(&Instruction::End);
-    [insert, clear]
 }
 
 impl HashHelperRegistry {
@@ -442,10 +478,15 @@ impl HashHelperRegistry {
             slot();
         }
         if !self.walks.is_empty() {
-            self.memory = Some(slot());
-            slot();
+            self.table = Some(TableSlots::assign(
+                Entry::Hash,
+                next_fn_idx,
+                next_type_idx,
+            ));
             if self.string_type.is_some() {
-                slot();
+                self.string_slot = Some((*next_fn_idx, *next_type_idx));
+                *next_fn_idx += 1;
+                *next_type_idx += 1;
             }
         }
     }
@@ -456,8 +497,8 @@ impl HashHelperRegistry {
     /// hash of a value of such a type made node by node meets a subterm held
     /// under several nodes once for every path to it; a step takes one of a
     /// budget of [`WALK_BUDGET`] nodes, and a hash that runs out starts again
-    /// with steps that remember the hashes of the last [`WALK_MEMORY`] nodes
-    /// met, found by `ref.eq`. Only a key is hashed for what the program
+    /// with steps that remember the hash of every node they hash in a table
+    /// (`node_table`). Only a key is hashed for what the program
     /// does, so a program with no such key keeps its bytes. Runs once every
     /// helper is registered.
     pub(crate) fn find_walks(&mut self, registry: &TypeRegistry, keys: &[String]) {
@@ -488,12 +529,10 @@ impl HashHelperRegistry {
     pub(crate) fn function_types(&self) -> Vec<u32> {
         let mut out: Vec<u32> = self.order.iter().map(|n| self.slots[n].1).collect();
         out.extend(self.walks.iter().flat_map(|(_, (_, t))| [*t, t + 1]));
-        if let Some((_, t)) = self.memory {
-            out.extend([t, t + 1]);
-            if self.string_type.is_some() {
-                out.push(t + 2);
-            }
+        if let Some(table) = &self.table {
+            out.extend(table.function_types());
         }
+        out.extend(self.string_slot.map(|(_, t)| t));
         out
     }
 
@@ -503,29 +542,17 @@ impl HashHelperRegistry {
         globals: &mut wasm_encoder::GlobalSection,
         next_global_idx: &mut u32,
     ) -> Option<HashWalkGlobals> {
-        self.memory?;
+        let table = self.table?;
         let budget = *next_global_idx;
         let i32_global = wasm_encoder::GlobalType {
             val_type: wasm_encoder::ValType::I32,
             mutable: true,
             shared: false,
         };
-        let node_global = wasm_encoder::GlobalType {
-            val_type: eq_ref_type(),
-            mutable: true,
-            shared: false,
-        };
-        let null = wasm_encoder::ConstExpr::ref_null(wasm_encoder::HeapType::Abstract {
-            shared: false,
-            ty: wasm_encoder::AbstractHeapType::Eq,
-        });
         globals.global(i32_global, &wasm_encoder::ConstExpr::i32_const(0));
-        for _ in 0..WALK_MEMORY {
-            globals.global(node_global, &null);
-            globals.global(i32_global, &wasm_encoder::ConstExpr::i32_const(0));
-        }
-        *next_global_idx += 1 + 2 * WALK_MEMORY;
-        Some(HashWalkGlobals { budget })
+        *next_global_idx += 1;
+        let table = table.emit_globals(globals, next_global_idx);
+        Some(HashWalkGlobals { budget, table })
     }
 
     pub(crate) fn lookup_fn_idx(&self, type_name: &str) -> Option<u32> {
@@ -549,9 +576,8 @@ impl HashHelperRegistry {
             types.ty().function([eq_ref], [i32]);
             types.ty().function([eq_ref], [i32]);
         }
-        if self.memory.is_some() {
-            types.ty().function([eq_ref, i32], []);
-            types.ty().function([], []);
+        if let Some(table) = &self.table {
+            table.emit_types(types);
             if let Some(string_type) = self.string_type {
                 let string_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
                     nullable: true,
@@ -582,19 +608,19 @@ impl HashHelperRegistry {
         }
         // The steps hash a walked field by the step of the same kind, and a
         // string field by its bytes rather than its length.
-        let walk_parts = match (self.memory, walk_globals) {
-            (Some((insert, _)), Some(globals)) => {
+        let walk_parts = match (self.table, walk_globals) {
+            (Some(table), Some(globals)) => {
                 let mut step_map = helper_idx_map.clone();
                 let mut memory_map = helper_idx_map.clone();
                 for (name, (step, _)) in &self.walks {
                     step_map.insert(name.clone(), *step);
                     memory_map.insert(name.clone(), step + 1);
                 }
-                if self.string_type.is_some() {
-                    step_map.insert("String".into(), insert + 2);
-                    memory_map.insert("String".into(), insert + 2);
+                if let Some((string_fn, _)) = self.string_slot {
+                    step_map.insert("String".into(), string_fn);
+                    memory_map.insert("String".into(), string_fn);
                 }
-                Some((globals, insert, step_map, memory_map))
+                Some((globals, table, step_map, memory_map))
             }
             (None, _) => None,
             (Some(_), None) => {
@@ -607,22 +633,28 @@ impl HashHelperRegistry {
             let walk = self.walks.iter().find(|(walked, _)| walked == name);
             match (&walk_parts, walk, self.kinds[name]) {
                 (
-                    Some((globals, insert, _, _)),
+                    Some((globals, table, _, _)),
                     Some((_, (step, _))),
                     HashKind::Record | HashKind::Sum,
                 ) => {
-                    codes.function(&emit_walk_start(globals, *step, insert + 1));
+                    codes.function(&emit_walk_start(globals, *step, table));
                 }
                 _ => self.emit_body(codes, name, registry, &helper_idx_map, Body::Plain)?,
             }
         }
-        if let Some((globals, insert, step_map, memory_map)) = &walk_parts {
+        if let Some((globals, table, step_map, memory_map)) = &walk_parts {
+            let walked = self.walks.iter().map(|(n, _)| n.clone()).collect();
+            let remember = Remember {
+                lookup: table.lookup(),
+                insert: table.insert(),
+                walked: &walked,
+            };
             for (name, _) in &self.walks {
                 self.emit_body(codes, name, registry, step_map, Body::Step(globals))?;
-                let memory = Body::Memory(globals, *insert);
+                let memory = Body::Memory(&remember);
                 self.emit_body(codes, name, registry, memory_map, memory)?;
             }
-            for f in emit_walk_memory(globals) {
+            for f in table.emit_bodies(&globals.table) {
                 codes.function(&f);
             }
             if self.string_type.is_some() {
@@ -813,12 +845,31 @@ fn emit_record_hash_body(
         heap_type: wasm_encoder::HeapType::Concrete(r_idx),
     });
     // Locals: 1 = typed record ref, 2 = h accumulator.
-    let mut f = Function::new(vec![(1, r_ref), (1, wasm_encoder::ValType::I32)]);
+    let mut f = Function::new(
+        [
+            vec![(1, r_ref), (1, wasm_encoder::ValType::I32)],
+            body.locals(),
+        ]
+        .concat(),
+    );
     body.prologue(&mut f);
     let r_heap = wasm_encoder::HeapType::Concrete(r_idx);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::RefCastNonNull(r_heap));
     f.instruction(&Instruction::LocalSet(1));
+    let field_tys: Vec<String> = fields.iter().map(|(_, t)| t.clone()).collect();
+    let wasm_tys = || -> Result<Vec<wasm_encoder::ValType>, WasmGcError> {
+        fields
+            .iter()
+            .map(|(n, t)| super::super::types::record_field_val_type(name, n, t, registry))
+            .collect()
+    };
+    let node = |f: &mut Function| {
+        f.instruction(&Instruction::LocalGet(1));
+    };
+    body.recall(
+        &mut f, 2, name, &field_tys, &wasm_tys, r_idx, registry, &node,
+    )?;
     f.instruction(&Instruction::I32Const(5381));
     f.instruction(&Instruction::LocalSet(2));
     for (i, (field_name, field_ty)) in fields.iter().enumerate() {
@@ -882,7 +933,7 @@ fn emit_sum_hash_body(
     // inside the if-arm via `RefCastNonNull` → `StructGet`; we read
     // each field directly off the casted ref so no scratch slot
     // for the variant ref is needed.)
-    let mut f = Function::new(vec![(1, wasm_encoder::ValType::I32)]);
+    let mut f = Function::new([vec![(1, wasm_encoder::ValType::I32)], body.locals()].concat());
     body.prologue(&mut f);
     f.instruction(&Instruction::I32Const(5381));
     f.instruction(&Instruction::LocalSet(1));
@@ -892,6 +943,29 @@ fn emit_sum_hash_body(
         f.instruction(&Instruction::LocalGet(0));
         f.instruction(&Instruction::RefTestNonNull(v_heap));
         f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+        let wasm_tys = || -> Result<Vec<wasm_encoder::ValType>, WasmGcError> {
+            info.fields
+                .iter()
+                .map(|t| {
+                    Ok(super::super::types::aver_to_wasm(t, Some(registry))?
+                        .unwrap_or(wasm_encoder::ValType::I32))
+                })
+                .collect()
+        };
+        let node = |f: &mut Function| {
+            f.instruction(&Instruction::LocalGet(0));
+            f.instruction(&Instruction::RefCastNonNull(v_heap));
+        };
+        body.recall(
+            &mut f,
+            1,
+            parent_name,
+            &info.fields,
+            &wasm_tys,
+            v_idx,
+            registry,
+            &node,
+        )?;
         // Mix variant tag (its type_idx) into hash.
         f.instruction(&Instruction::LocalGet(1));
         f.instruction(&Instruction::I32Const(5));

@@ -2095,8 +2095,10 @@ fn emit_list_contains(
 pub(super) enum EqFold<'a> {
     /// Every field is compared and the answers are and-ed.
     And,
-    /// The first field that differs returns 0 from the function.
-    FirstDifference,
+    /// One step of a comparison with memory (`body::eq_helpers`): the first
+    /// field that differs returns 0 from the function, and a node holding
+    /// the walk looks its pair up first and remembers it once equal.
+    Remember(&'a RememberFold<'a>),
     /// One step of a comparison against a budget (`body::eq_helpers`).
     Budget(&'a BudgetFold<'a>),
 }
@@ -2109,9 +2111,58 @@ pub(super) struct BudgetFold<'a> {
     /// equal), 0 (different) or -1 (out of budget).
     pub(super) walked: &'a std::collections::HashSet<String>,
     /// At the start of a comparison, the walk with memory of this value and
-    /// the clear of its pairs, to start again with when the budget ran out.
-    /// Without it the step passes a 0 or -1 up and answers the budget left.
-    pub(super) restart: Option<(u32, u32)>,
+    /// the enter and leave of its table, to start again with when the budget
+    /// ran out. Without it the step passes a 0 or -1 up and answers the
+    /// budget left.
+    pub(super) restart: Option<(u32, u32, u32)>,
+}
+
+/// A step with memory: the lookup and insert of the remembered pairs, the
+/// local the key of a node goes in, and the helpers that walk.
+pub(super) struct RememberFold<'a> {
+    pub(super) lookup: u32,
+    pub(super) insert: u32,
+    pub(super) key: u32,
+    pub(super) walked: &'a std::collections::HashSet<String>,
+}
+
+impl RememberFold<'_> {
+    /// Whether a node with fields of `field_tys` holds the walk: one of them
+    /// is compared by a step.
+    fn holds_walk(&self, field_tys: &[String], owner: &str, registry: &TypeRegistry) -> bool {
+        super::body::node_table::holds_walk(field_tys, owner, self.walked, registry)
+    }
+
+    /// Looks the pair in locals `head` and `needle` up by the key of `head`
+    /// (a node of struct `struct_idx` with fields of `fields`, pushed typed
+    /// by `node`), answering 1 for a remembered one.
+    fn recall(
+        &self,
+        f: &mut Function,
+        (head, needle): (u32, u32),
+        struct_idx: u32,
+        fields: &[ValType],
+        registry: &TypeRegistry,
+        node: &dyn Fn(&mut Function),
+    ) {
+        super::body::node_table::emit_node_key(f, struct_idx, fields, registry, node, self.key);
+        f.instruction(&Instruction::LocalGet(head));
+        f.instruction(&Instruction::LocalGet(needle));
+        f.instruction(&Instruction::LocalGet(self.key));
+        f.instruction(&Instruction::Call(self.lookup));
+        f.instruction(&Instruction::If(BlockType::Empty));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::Return);
+        f.instruction(&Instruction::End);
+    }
+
+    /// Remembers the pair in locals `head` and `needle`, found equal.
+    fn remember(&self, f: &mut Function, (head, needle): (u32, u32)) {
+        f.instruction(&Instruction::LocalGet(head));
+        f.instruction(&Instruction::LocalGet(needle));
+        f.instruction(&Instruction::LocalGet(self.key));
+        f.instruction(&Instruction::Call(self.insert));
+    }
 }
 
 impl EqFold<'_> {
@@ -2141,21 +2192,22 @@ impl EqFold<'_> {
                 f.instruction(&Instruction::I32LtS);
                 f.instruction(&Instruction::If(BlockType::Empty));
                 f.instruction(&Instruction::LocalGet(fold.budget));
-                if let Some((memory, clear)) = fold.restart {
+                if let Some((memory, enter, leave)) = fold.restart {
                     f.instruction(&Instruction::I32Eqz);
                     f.instruction(&Instruction::If(BlockType::Empty));
                     f.instruction(&Instruction::I32Const(0));
                     f.instruction(&Instruction::Return);
                     f.instruction(&Instruction::End);
+                    f.instruction(&Instruction::Call(enter));
                     f.instruction(&Instruction::LocalGet(0));
                     f.instruction(&Instruction::LocalGet(1));
                     f.instruction(&Instruction::Call(memory));
-                    f.instruction(&Instruction::Call(clear));
+                    f.instruction(&Instruction::Call(leave));
                 }
                 f.instruction(&Instruction::Return);
                 f.instruction(&Instruction::End);
             }
-            EqFold::FirstDifference | EqFold::Budget(_) => {
+            EqFold::Remember(_) | EqFold::Budget(_) => {
                 f.instruction(&Instruction::I32Eqz);
                 f.instruction(&Instruction::If(BlockType::Empty));
                 f.instruction(&Instruction::I32Const(0));
@@ -2217,6 +2269,26 @@ pub(super) fn emit_record_eq_inline(
         fold.equal(f, true);
         return Ok(());
     }
+    let remember = match fold {
+        EqFold::Remember(r)
+            if r.holds_walk(
+                &fields.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(),
+                record_name,
+                registry,
+            ) =>
+        {
+            let tys = fields
+                .iter()
+                .map(|(n, t)| super::types::record_field_val_type(record_name, n, t, registry))
+                .collect::<Result<Vec<_>, _>>()?;
+            let node = |f: &mut Function| {
+                f.instruction(&Instruction::LocalGet(head_local));
+            };
+            r.recall(f, (head_local, needle_local), record_idx, &tys, registry, &node);
+            Some(r)
+        }
+        _ => None,
+    };
     for (i, (field_name, field_ty)) in fields.iter().enumerate() {
         // push head.f
         f.instruction(&Instruction::LocalGet(head_local));
@@ -2320,6 +2392,9 @@ pub(super) fn emit_record_eq_inline(
         }
         fold.field(f, i, walked);
     }
+    if let Some(r) = remember {
+        r.remember(f, (head_local, needle_local));
+    }
     fold.equal(f, false);
     Ok(())
 }
@@ -2375,6 +2450,25 @@ pub(super) fn emit_sum_eq_inline(
         if info.fields.is_empty() {
             fold.equal(f, true);
         } else {
+            let remember = match fold {
+                EqFold::Remember(r) if r.holds_walk(&info.fields, parent_name, registry) => {
+                    let tys = info
+                        .fields
+                        .iter()
+                        .map(|t| {
+                            Ok(super::types::aver_to_wasm(t, Some(registry))?
+                                .unwrap_or(ValType::I32))
+                        })
+                        .collect::<Result<Vec<_>, WasmGcError>>()?;
+                    let node = |f: &mut Function| {
+                        f.instruction(&Instruction::LocalGet(head_local));
+                        f.instruction(&Instruction::RefCastNonNull(v_heap));
+                    };
+                    r.recall(f, (head_local, needle_local), v_idx, &tys, registry, &node);
+                    Some(r)
+                }
+                _ => None,
+            };
             for (i, field_ty) in info.fields.iter().enumerate() {
                 f.instruction(&Instruction::LocalGet(head_local));
                 f.instruction(&Instruction::RefCastNonNull(v_heap));
@@ -2462,6 +2556,9 @@ pub(super) fn emit_sum_eq_inline(
                     }
                 }
                 fold.field(f, i, walked);
+            }
+            if let Some(r) = remember {
+                r.remember(f, (head_local, needle_local));
             }
             fold.equal(f, false);
         }
