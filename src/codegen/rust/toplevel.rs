@@ -1810,7 +1810,9 @@ fn resolved_fn_has_tailcall_to(
 /// the code: a member that tail-calls itself, so it can go round without
 /// leaving, and every member such a loop hands over to directly, since each
 /// time the loop stops it goes on in one of those. A group with no such
-/// loop goes round through all its members, so all of them count.
+/// loop goes round through all its members, so all of them count. The set
+/// moves only with the loop's own path: a member that starts calling
+/// itself, or a loop that starts calling a member directly.
 pub(super) fn hot_mutual_members(
     group_fns: &[&crate::ir::hir::ResolvedFnDef],
 ) -> HashSet<crate::ir::FnId> {
