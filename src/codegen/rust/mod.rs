@@ -12,6 +12,7 @@ mod knowing;
 pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers};
 mod ownership;
 mod pattern;
+pub(crate) mod perf_notes;
 mod policy;
 mod project;
 mod provider;
@@ -148,6 +149,7 @@ fn transpile_project(
     // transpile reports its own, not a previous one's.
     ctx.substituted_compile_errors.borrow_mut().clear();
     ctx.omitted_verify_cases.borrow_mut().clear();
+    ctx.rust_copied_targets.borrow_mut().clear();
     // ETAP-2 SLICE 1: make Int representation EXPLICIT in the MIR the Rust
     // backend codegens from. This runs ONLY here (the Rust entry) — the VM,
     // wasm-gc and Lean proof backends never call `transpile`, so
@@ -157,6 +159,7 @@ fn transpile_project(
     // the explicit boundary nodes; the body emitter below then lowers those
     // nodes trivially instead of deciding representation itself.
     let mut carrier_notes = Vec::new();
+    let mut boxing_notes = Vec::new();
     if let Some(prog) = ctx.mir_program.take() {
         // Rust consumes and drops returned aggregate wrappers (`Result`,
         // records, tuples) at projection / `?` boundaries. Refine collection
@@ -184,6 +187,7 @@ fn transpile_project(
         }
         ctx.rust_i64_carriers = carriers;
         ctx.mir_program = Some(prog);
+        boxing_notes = perf_notes::boxing(ctx);
         arg_order::bind_computed_arguments(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
@@ -420,6 +424,7 @@ fn transpile_project(
         substituted_compile_errors: ctx.substituted_compile_errors.borrow().clone(),
         omitted_verify_cases: ctx.omitted_verify_cases.borrow().clone(),
         notes: carrier_notes,
+        perf_notes: perf_notes::collect(ctx, boxing_notes),
         law_claims: Vec::new(),
     }
 }

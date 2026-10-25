@@ -23,6 +23,8 @@ aver compile examples/core/hello.av -o /tmp/hello-rs --check
 
 For the Rust target, `--check` runs `cargo check` against the generated manifest, forwards Cargo's diagnostics, and exits non-zero when Cargo or rustc rejects the project. The generated files stay on disk after a failure so you can inspect them. Without the flag, `aver compile` only emits the project and never invokes Cargo.
 
+Add `--perf-notes` to hear where the generated code is slower than it could be because of a decision the backend took, one line each, as `file:line: note`. It names a `Map` or `Vector` the generated code copies whole before `Map.set`, `Map.remove` or `Vector.set`, with what kept the copy alive (the line that reads it again, a loop that passes it on unchanged, a parameter the function only borrows), and an `Int` parameter that every call of a function fills with a machine word boxed back into an `Int`. It says only what the emitted code does: a copy the runtime makes because a value sits in two places without a clone in the code, such as a record cloned at a call and written further down, is not named. Notes in standard modules are left out.
+
 ## Check, iterate, release
 
 Generated projects keep three workflows apart:

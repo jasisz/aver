@@ -500,6 +500,12 @@ pub(super) enum Commands {
             conflicts_with_all = ["emit_ir_after", "explain_passes", "explain_mir_coverage"]
         )]
         check: bool,
+        /// Rust only: also print where the generated code is slower than it
+        /// could be because of a decision the backend took, one line each
+        /// (a Map or Vector copied whole before a write, a machine word
+        /// boxed into an `Int` at every call of a function).
+        #[arg(long)]
+        perf_notes: bool,
         /// Emit optional record/replay runtime support into the generated project
         #[arg(long)]
         with_replay: bool,

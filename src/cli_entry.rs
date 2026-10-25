@@ -375,6 +375,7 @@ fn main_impl(
             module_root,
             target,
             check,
+            perf_notes,
             with_replay,
             policy,
             guest_entry,
@@ -418,6 +419,11 @@ fn main_impl(
             if let Some(error) = cli::compile_check_target_rejection(*check, effective_target) {
                 use colored::Colorize;
                 eprintln!("{}", error.red());
+                std::process::exit(1);
+            }
+            if *perf_notes && !matches!(effective_target, cli::CompileTarget::Rust) {
+                use colored::Colorize;
+                eprintln!("{}", "--perf-notes requires --target rust".red());
                 std::process::exit(1);
             }
             if let Some(error) =
@@ -488,6 +494,7 @@ fn main_impl(
                 module_root_override: module_root.as_deref(),
                 target: effective_target,
                 check: *check,
+                perf_notes: *perf_notes,
                 with_replay: *with_replay,
                 policy_mode: &policy_mode,
                 guest_entry: guest_entry.as_deref(),
