@@ -1724,7 +1724,8 @@ fn helper(n: Int) -> Int
     /// allocation: the value is one pointer to a node holding the
     /// constructor's tag and fields (`aver_rt::thin_sum!`), and copying the
     /// value copies the pointer, so the node holds two pointers to the one
-    /// `x` instead of two fresh copies of it. A match reads the value's view.
+    /// `x` instead of two fresh copies of it. A match reads the value's view,
+    /// and where the value ends takes the fields out of a node it alone holds.
     /// A record on the cycle (`E`
     /// holds `Node`, `Node` holds `E`) gets its fixed size from the same
     /// pointer, and a sum that recurses only through a list keeps its fields
@@ -1769,7 +1770,7 @@ fn left(t: T) -> T
             "pub struct T__Pair(pub T, pub T);",
             "T::Pair(T__Pair(x.clone(), x))",
             "T__view::Pair(__a_fields) => {",
-            "let a = &__a_fields.0;",
+            "let (a,) = if t.owns_node() { let __f = T::take::<T__Pair>(t); (__f.0,) } else { let __c = (__a_fields.0.clone(),); drop(t); __c };",
             "pub node: Node,",
             "1 App(Node__App),",
             "pub struct Node__App(pub E, pub E);",
