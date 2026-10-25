@@ -412,6 +412,47 @@ pub fn main_exit_status(code: &AverInt) -> i32 {
     }
 }
 
+/// The value of a module-level binding, computed once, by the first thread
+/// that reads it.
+#[inline]
+pub fn module_value<T>(
+    cell: &'static std::sync::OnceLock<T>,
+    compute: impl FnOnce() -> T,
+) -> &'static T {
+    match cell.get() {
+        Some(value) => value,
+        None => first_module_value(cell, compute),
+    }
+}
+
+/// A value that reads itself while this thread computes it is computed
+/// again rather than waited for: the same pure computation reads itself
+/// again, so the thread runs out of stack, as it did with a thread-local
+/// cell, instead of waiting for itself for ever.
+#[cold]
+#[inline(never)]
+fn first_module_value<T>(
+    cell: &'static std::sync::OnceLock<T>,
+    compute: impl FnOnce() -> T,
+) -> &'static T {
+    thread_local! {
+        static COMPUTING: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    struct Computing(usize);
+    impl Drop for Computing {
+        fn drop(&mut self) {
+            COMPUTING.with(|cells| cells.borrow_mut().retain(|cell| *cell != self.0));
+        }
+    }
+    let key = std::ptr::from_ref(cell).addr();
+    if COMPUTING.with(|cells| cells.borrow().contains(&key)) {
+        return Box::leak(Box::new(compute()));
+    }
+    COMPUTING.with(|cells| cells.borrow_mut().push(key));
+    let _computing = Computing(key);
+    cell.get_or_init(compute)
+}
+
 static EXIT_AFTER_MAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Lets the entry `main` end the process itself (see [`exit_after_main`]).
@@ -2012,6 +2053,35 @@ mod tests {
     /// left-leaning concat rope.
     fn snoc<T>(list: &AverList<T>, item: T) -> AverList<T> {
         AverList::concat(list, &AverList::prepend(item, &AverList::empty()))
+    }
+
+    /// Threads reading a module-level binding at once get one value computed
+    /// once; a computation that panics leaves the binding to the next read.
+    #[test]
+    fn a_module_value_is_computed_once_for_every_thread() {
+        use std::sync::OnceLock;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COMPUTED: AtomicUsize = AtomicUsize::new(0);
+        static VALUE: OnceLock<AverStr> = OnceLock::new();
+        let read = || {
+            super::module_value(&VALUE, || {
+                COMPUTED.fetch_add(1, Ordering::Relaxed);
+                std::thread::yield_now();
+                AverStr::from("nat")
+            })
+            .clone()
+        };
+        let reads: Vec<AverStr> = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..8).map(|_| scope.spawn(read)).collect();
+            threads.into_iter().map(|t| t.join().unwrap()).collect()
+        });
+        assert!(reads.iter().all(|value| &**value == "nat"));
+        assert_eq!(COMPUTED.load(Ordering::Relaxed), 1);
+
+        static STOPPED: OnceLock<i64> = OnceLock::new();
+        let stopped = std::panic::catch_unwind(|| *super::module_value(&STOPPED, || panic!()));
+        assert!(stopped.is_err());
+        assert_eq!(*super::module_value(&STOPPED, || 7), 7);
     }
 
     #[test]

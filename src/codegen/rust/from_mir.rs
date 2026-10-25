@@ -3927,7 +3927,7 @@ pub(super) fn module_binding_getter(name: &str) -> String {
 /// cannot live as a `let` in `main` the way it once did: a fn reading it
 /// named a variable that did not exist there, and rustc rejected the
 /// program. Each binding becomes `__binding_<name>()`, which evaluates the
-/// value once per thread and hands out clones; a read of the binding
+/// value once per process and hands out clones; a read of the binding
 /// anywhere in the module renders as a call to it
 /// ([`emit_mir_static_ref`]). The checker allows no effects in a binding's
 /// value, so evaluating it on first read gives the value the VM computes
@@ -3966,10 +3966,8 @@ pub(super) fn emit_module_binding_getters(scope: Option<&str>, ctx: &CodegenCont
                     "/// The module-level binding `{name}`.\n\
                      #[allow(non_snake_case)]\n\
                      pub fn {getter}() -> {rust_ty} {{\n    \
-                     thread_local! {{\n        \
-                     static VALUE: std::cell::OnceCell<{rust_ty}> = const {{ std::cell::OnceCell::new() }};\n    \
-                     }}\n    \
-                     VALUE.with(|value| value.get_or_init(|| {value}).clone())\n}}\n\n",
+                     static VALUE: std::sync::OnceLock<{rust_ty}> = std::sync::OnceLock::new();\n    \
+                     aver_rt::module_value(&VALUE, || {value}).clone()\n}}\n\n",
                     name = binding.name,
                 ));
             }

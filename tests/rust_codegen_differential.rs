@@ -371,6 +371,23 @@ fn deep_recursion_in_a_product_branch_matches_main_on_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A module-level binding is computed once per process and shared by every
+/// thread: the branches of an independent product read it first, at once,
+/// and `main` reads it after.
+#[test]
+fn module_bindings_read_first_on_product_branches_match_vm() {
+    assert_plain_parity("tests/fixtures/module_bindings_on_threads_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// An `Int` in an interpolated string writes its digits straight into the
+/// buffer when it fits a machine word, and through `Display` past it.
+#[test]
+fn int_interpolation_at_the_ends_of_a_word_matches_vm() {
+    assert_plain_parity("tests/fixtures/int_interpolation_edges_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A `main` returning a `Result` other than `Result<Unit, String>` runs on
 /// the same big-stack thread as every other `main`, not on the process's
 /// own 8 MB main thread, where this recursion overflows.
