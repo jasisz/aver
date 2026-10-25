@@ -4660,6 +4660,51 @@ fn a_param_field_stored_into_a_literal_moves_and_the_param_is_taken_by_value() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A field read by an earlier part of a record or constructor is copied
+/// there, so a later read of the same field in the same literal is its last
+/// and moves (`SR(e = r.e, memo = Map.set(r.memo, key, (e, r.e)))`, a memo's
+/// write). The earlier part must keep the value it copied: a Map copied into
+/// `before` and set in `after` keeps its old entries.
+#[test]
+fn a_field_copied_by_an_earlier_part_moves_at_its_later_read() {
+    let relative = "tests/fixtures/record_part_copy_then_move_app.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("record_part_copy_then_move", &src);
+    for expected in [
+        "SR { e: r.e.clone(), memo: r.memo.insert_owned(key, (e, r.e)) }",
+        "Two { before: t.after.clone(), after: t.after.insert_owned(k.clone(), k) }",
+        "Pair::Kept(t.after.clone(), t.after.insert_owned(k.clone(), k))",
+        "MX { e: x.e.clone(), ms: MS { forced: x.ms.forced.insert_owned(id, x.e), ..x.ms } }",
+        "return Done { run: run.clone(), at: run.pos };",
+    ] {
+        assert!(
+            emitted.contains(expected),
+            "missing `{expected}`:\n{emitted}"
+        );
+    }
+    let file = repo_root().join(relative);
+    let ws = temp_dir("record_part_copy_then_move");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&file, &project, "record_part_copy_then_move", None, &[])?;
+        let bin = cargo_build(&project, "record_part_copy_then_move")?;
+        let rust = run_within(&bin, "300", 60)?;
+        let vm = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .args(["run", relative, "--", "300"])
+            .output()
+            .map_err(|e| format!("vm run: {e}"))?;
+        let vm = String::from_utf8_lossy(&vm.stdout).trim().to_string();
+        match rust == vm && vm.contains("split before 299 after 300 has false true") {
+            true => Ok(()),
+            false => Err(format!("--- VM ---\n{vm}\n--- Rust ---\n{rust}")),
+        }
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A match subject that looks a key up in a Map handed out of the state
 /// (`found(Map.get(cacheFor(st, true), k), k)`) is bound by a `let` before
 /// the `match`. Matched in place, the Map's clone was a temporary of the

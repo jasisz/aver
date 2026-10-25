@@ -352,7 +352,7 @@ pub fn chain(
                 to: b.to.clone(),
                 proof: crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(
                     crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(
-                        aver_rt::AverList::from_vec(vec![t, a.to, b.to.clone()]),
+                        aver_rt::AverList::from_vec(vec![t, a.to, b.to]),
                         aver_rt::AverList::from_vec(vec![a.proof, b.proof]),
                     ),
                 ),
