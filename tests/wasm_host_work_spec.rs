@@ -141,25 +141,31 @@ fn suitable_node() -> Result<(std::ffi::OsString, u32), String> {
     Err(tried.join("; "))
 }
 
-#[test]
-fn javascript_workers_run_the_coordinator_and_progress_independently() {
-    let (node, major) = match suitable_node() {
-        Ok(found) => found,
+/// A suitable Node, or `None` after saying why the named test skips.
+fn node_or_skip(test: &str) -> Option<(std::ffi::OsString, u32)> {
+    match suitable_node() {
+        Ok(found) => Some(found),
         // CI installs a suitable Node for this lane, so a missing one there
         // is a broken lane, not a reason to skip.
         Err(why) if std::env::var_os("CI").is_some() => {
-            panic!(
-                "the JS Work host test needs Node {MIN_NODE_MAJOR}+ with WasmGC and tail calls: {why}"
-            )
+            panic!("{test} needs Node {MIN_NODE_MAJOR}+ with WasmGC and tail calls: {why}")
         }
         Err(why) => {
             eprintln!(
-                "SKIP javascript_workers_run_the_coordinator_and_progress_independently: \
-                 needs Node {MIN_NODE_MAJOR}+ with WasmGC and tail calls ({why}); \
+                "SKIP {test}: needs Node {MIN_NODE_MAJOR}+ with WasmGC and tail calls ({why}); \
                  set AVER_NODE to a suitable node"
             );
-            return;
+            None
         }
+    }
+}
+
+#[test]
+fn javascript_workers_run_the_coordinator_and_progress_independently() {
+    let Some((node, major)) =
+        node_or_skip("javascript_workers_run_the_coordinator_and_progress_independently")
+    else {
+        return;
     };
     let out = tempfile::tempdir().expect("wasm artifacts");
     for name in [
@@ -225,4 +231,54 @@ fn javascript_workers_run_the_coordinator_and_progress_independently() {
     if major >= 24 {
         assert!(String::from_utf8_lossy(&output.stdout).contains("JSPI Work main passed"));
     }
+}
+
+/// `tools/wasm-work/run.mjs` runs a plain program's `main` under Node with the
+/// output the VM gives: its arguments, Console, positional and whole-file Disk
+/// reads, and the exit status `main -> Int` names.
+#[test]
+fn node_runner_runs_a_plain_main_like_the_vm() {
+    let Some((node, _)) = node_or_skip("node_runner_runs_a_plain_main_like_the_vm") else {
+        return;
+    };
+    let fixture = repo_root().join("tests/fixtures/node_runner");
+    let out = tempfile::tempdir().expect("wasm artifacts");
+    let data = out.path().join("data.txt");
+    std::fs::write(&data, "read in chunks of five, then whole\n").expect("data file");
+    let missing = out.path().join("missing.txt");
+    let compiled = bounded(
+        Command::new(aver_bin())
+            .arg("compile")
+            .arg(fixture.join("main.av"))
+            .arg("--module-root")
+            .arg(&fixture)
+            .args(["--target", "wasm-gc", "-o"])
+            .arg(out.path()),
+    );
+    assert!(compiled.status.success(), "{}", format_output(&compiled));
+    let vm = bounded(
+        Command::new(aver_bin())
+            .arg("run")
+            .arg(fixture.join("main.av"))
+            .arg("--module-root")
+            .arg(&fixture)
+            .arg("--")
+            .arg(&data)
+            .arg(&missing),
+    );
+    let v8 = bounded(
+        Command::new(node)
+            .arg(repo_root().join("tools/wasm-work/run.mjs"))
+            .arg(out.path().join("main.wasm"))
+            .arg(&data)
+            .arg(&missing),
+    );
+    assert_eq!(vm.status.code(), Some(3), "{}", format_output(&vm));
+    assert_eq!(v8.status.code(), Some(3), "{}", format_output(&v8));
+    assert_eq!(
+        String::from_utf8_lossy(&v8.stdout),
+        String::from_utf8_lossy(&vm.stdout)
+    );
+    assert!(String::from_utf8_lossy(&vm.stdout).contains("end at 35"));
+    assert_eq!(String::from_utf8_lossy(&v8.stderr), "missing file fails\n");
 }

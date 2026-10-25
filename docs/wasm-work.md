@@ -45,9 +45,11 @@ For a generated coordinator:
 ```sh
 aver compile tests/fixtures/run_guide_example/main.av \
   --module-root tests/fixtures/run_guide_example --target wasm-gc -o out
-node tools/wasm-work/run.mjs out/main.wasm 2
+node tools/wasm-work/run.mjs --max-jobs 2 out/main.wasm
 # scored 60
 ```
+
+`run.mjs` also runs a program without Work: it calls `main`, hands the arguments after the module to `Args.get`, writes Console output synchronously, reads `Disk.readBytesAt` and `Disk.readText` with `node:fs`, and exits with the status `main -> Int` names. The positional read goes straight into the module's transport memory, so a large file is read a chunk at a time and never held whole. The program runs on a worker thread, because only a worker's stack size can be chosen; `--stack-mb` sets it (1024 by default). The heap limit is Node's own flag, given before the script: `node --max-old-space-size=20000 tools/wasm-work/run.mjs app.wasm`.
 
 In a browser application, serve the adapter's three modules together:
 
@@ -70,7 +72,7 @@ it was begun. Cancelling a running job terminates its Worker at once, so its
 place is free at once and a replacement Worker starts; cancelling a queued job
 takes it out of the queue.
 
-The adapter provides Console.print, Time.unixMs and cooperative stopping.
+The adapter provides Console.print, Time.unixMs, cooperative stopping and the branch markers of an independent product.
 Pass other synchronous imports through `options.imports`. A combined socket
 wait also needs `options.pollSockets(entries, timeoutMs, signal)`, which
 returns a promise of ready keys. Entries are `[key, decoded Wait.Item]` pairs.
