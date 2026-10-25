@@ -22,8 +22,9 @@ pub(super) enum RustValueMode {
     /// A value represented as `T`. It may move when its MIR place is at its
     /// final use; otherwise an owning consumer clones it.
     Owned,
-    /// A logical Aver value reached through `&T` or a TCO wrapper. An owning
-    /// consumer clones the referent; a borrowing consumer reuses its borrow.
+    /// A logical Aver value reached through `&T`, a TCO wrapper or, for an
+    /// `Option`, `Option<&T>`. An owning consumer clones the referent; a
+    /// borrowing consumer reuses its borrow.
     Borrowed,
 }
 
@@ -43,6 +44,8 @@ pub(super) const PROVIDER_RESOURCE_POLICY: ProviderResourcePolicy =
 enum BorrowShape {
     Direct,
     DerefWrapper,
+    /// `Option<&T>` standing for an `Option<T>` (see `lent_option`).
+    LentOption,
 }
 
 /// Complete lowering facts needed to cross a Rust ownership boundary.
@@ -107,6 +110,7 @@ fn local_value_facts(local: &MirLocal, ctx: &MirEmitCtx<'_>) -> RustValueFacts {
     let copy = ctx.bare.is_bare(local.slot) || ctx.local_types.get(name).is_some_and(is_copy_type);
     let wrapped = ctx.rc_wrapped.contains(name);
     let borrowed = ctx.borrowed_params.contains(name) || wrapped;
+    let lent_option = borrowed && !wrapped && ctx.lent_options.contains(name);
     let mode = if copy {
         RustValueMode::Copy
     } else if borrowed {
@@ -118,6 +122,8 @@ fn local_value_facts(local: &MirLocal, ctx: &MirEmitCtx<'_>) -> RustValueFacts {
         mode,
         borrow_shape: if wrapped {
             BorrowShape::DerefWrapper
+        } else if lent_option {
+            BorrowShape::LentOption
         } else {
             BorrowShape::Direct
         },
@@ -157,6 +163,9 @@ pub(super) fn materialize_borrowed(code: String, expr: &MirExpr, ctx: &MirEmitCt
     match facts.mode {
         RustValueMode::Copy => code,
         RustValueMode::Borrowed if facts.borrow_shape == BorrowShape::Direct => code,
+        RustValueMode::Borrowed if facts.borrow_shape == BorrowShape::LentOption => {
+            format!("&{}.cloned()", code)
+        }
         RustValueMode::Borrowed => format!("&*{}", code),
         RustValueMode::Owned => format!("&{}", code),
     }
@@ -208,6 +217,14 @@ pub(super) fn emits_direct_borrow(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool 
         && (facts.borrow_shape == BorrowShape::Direct || ctx.rc_wrapped_are_borrowed_refs)
 }
 
+/// Whether the expression is an `Option` emitted as `Option<&T>`: a param a
+/// lent-option analysis lends, or a lookup bound to a local (see
+/// `lent_option`). A match reads it with the same patterns as `&Option<T>`.
+pub(super) fn is_lent_option(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    let facts = value_facts(expr, ctx);
+    facts.mode == RustValueMode::Borrowed && facts.borrow_shape == BorrowShape::LentOption
+}
+
 /// Align equality operands to one Rust representation. If either expression
 /// emits `&T`, compare two borrows; otherwise retain the original `T == T`
 /// shape. String-literal dereferencing remains a representation-specific
@@ -248,6 +265,7 @@ fn clone_borrowed(code: String, shape: BorrowShape) -> String {
     match shape {
         BorrowShape::Direct => format!("{}.clone()", code),
         BorrowShape::DerefWrapper => format!("(*{}).clone()", code),
+        BorrowShape::LentOption => format!("{}.cloned()", code),
     }
 }
 

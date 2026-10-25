@@ -1,0 +1,207 @@
+module LentMapGet
+    intent = "A value looked up in a Map and handed to a function that only reads it is lent from the Map, not copied out; the answers must not change."
+    depends []
+    effects [Console.print, Args.get]
+
+type Expr
+    Leaf(Int)
+    Node(Int, Expr, Expr)
+
+record Kept
+    e: Option<Expr>
+    n: Int
+
+fn hit(entry: Option<Tuple<Expr, Expr>>, e: Expr) -> Option<Expr>
+    ? "The remembered result when the entry is for this very node; only the result is copied out."
+    match entry
+        Option.Some((k, v)) -> match k == e
+            true -> Option.Some(v)
+            false -> Option.None
+        Option.None -> Option.None
+
+verify hit
+    hit(Option.Some((Expr.Leaf(0), Expr.Leaf(1))), Expr.Leaf(0)) => Option.Some(Expr.Leaf(1))
+    hit(Option.Some((Expr.Leaf(0), Expr.Leaf(1))), Expr.Leaf(2)) => Option.None
+    hit(Option.None, Expr.Leaf(2)) => Option.None
+
+fn isNode(o: Option<Expr>) -> Bool
+    ? "Whether the value is a node, looked at through a nested pattern."
+    match o
+        Option.Some(Expr.Node(_, _, _)) -> true
+        _ -> false
+
+verify isNode
+    isNode(Option.Some(Expr.Node(1, Expr.Leaf(0), Expr.Leaf(0)))) => true
+    isNode(Option.Some(Expr.Leaf(0))) => false
+    isNode(Option.None) => false
+
+fn deep(o: Option<Expr>) -> Bool
+    ? "Hands the whole value on to another function that only reads it."
+    isNode(o)
+
+verify deep
+    deep(Option.Some(Expr.Leaf(0))) => false
+
+fn orLeaf(o: Option<Expr>, n: Int) -> Option<Expr>
+    ? "Returns the value as it is when there is one."
+    match o
+        Option.Some(_) -> o
+        Option.None -> Option.Some(Expr.Leaf(n))
+
+verify orLeaf
+    orLeaf(Option.None, 3) => Option.Some(Expr.Leaf(3))
+    orLeaf(Option.Some(Expr.Leaf(1)), 3) => Option.Some(Expr.Leaf(1))
+
+fn keep(o: Option<Expr>, n: Int) -> Kept
+    ? "Puts the value it finds into a record."
+    match o
+        Option.Some(e) -> Kept(e = Option.Some(e), n = n)
+        Option.None -> Kept(e = Option.None, n = n + 1)
+
+verify keep
+    keep(Option.None, 3).n => 4
+
+fn leftOf(o: Option<Expr>) -> Int
+    ? "The leftmost leaf of the value, read through a borrow."
+    match o
+        Option.Some(e) -> leftmost(e)
+        Option.None -> 0 - 1
+
+verify leftOf
+    leftOf(Option.None) => -1
+
+fn leftmost(e: Expr) -> Int
+    ? "The leftmost leaf."
+    match e
+        Expr.Leaf(n) -> n
+        Expr.Node(_, l, _) -> leftmost(l)
+
+verify leftmost
+    leftmost(Expr.Node(1, Expr.Leaf(5), Expr.Leaf(6))) => 5
+
+fn memoed(memo: Map<Int, Tuple<Expr, Expr>>, key: Int, e: Expr) -> Map<Int, Tuple<Expr, Expr>>
+    ? "Writes the entry after the lookup, in the same function."
+    match hit(Map.get(memo, key), e)
+        Option.Some(_) -> memo
+        Option.None -> Map.set(memo, key, (e, Expr.Node(key, e, e)))
+
+verify memoed
+    Map.len(memoed({}, 1, Expr.Leaf(1))) => 1
+
+fn bound(memo: Map<Int, Expr>, k: Int) -> Bool
+    ? "A lookup bound to a name first and then read."
+    x = Map.get(memo, k)
+    isNode(x)
+
+verify bound
+    bound({}, 1) => false
+
+fn both(o: Option<Expr>, m: Map<Int, Expr>) -> Int
+    ? "Reads the value and the Map it may have come from."
+    match isNode(o)
+        true -> Map.len(m) * 1000
+        false -> Map.len(m)
+
+verify both
+    both(Option.None, {}) => 0
+
+fn writeAfter(memo: Map<Int, Expr>, k: Int) -> Int
+    ? "A later argument changes the Map the lookup reads; the value is copied out as before."
+    both(Map.get(memo, k), Map.set(memo, k, Expr.Node(k, Expr.Leaf(k), Expr.Leaf(k))))
+
+verify writeAfter
+    writeAfter({}, 1) => 1
+
+fn own(n: Int) -> Bool
+    ? "A caller that holds its own value lends it."
+    o = Option.Some(Expr.Node(n, Expr.Leaf(n), Expr.Leaf(n)))
+    deep(o) == isNode(o)
+
+verify own
+    own(1) => true
+
+fn walk(ks: List<Int>, memo: Map<Int, Expr>, nodes: Int, lefts: Int) -> Tuple<Int, Int>
+    ? "A loop that looks every key up in the memo it threads, and adds what it misses."
+    match ks
+        [] -> (nodes, lefts)
+        [k, ..rest] -> match isNode(Map.get(memo, k))
+            true -> walk(rest, memo, nodes + 1, lefts + leftOf(Map.get(memo, k)))
+            false -> walk(rest, Map.set(memo, k, Expr.Node(k, Expr.Leaf(k), Expr.Leaf(k + 1))), nodes, lefts + leftOf(Map.get(memo, k)))
+
+verify walk
+    walk([1, 2, 1], {}, 0, 0) => (1, -1)
+
+fn keys(i: Int, n: Int, acc: List<Int>) -> List<Int>
+    ? "Keys i mod 7 for i below n."
+    match i >= n
+        true -> acc
+        false -> keys(i + 1, n, List.prepend(Int.mod(i, 7), acc))
+
+verify keys
+    List.len(keys(0, 3, [])) => 3
+
+fn hits(i: Int, n: Int, memo: Map<Int, Tuple<Expr, Expr>>, found: Int) -> Int
+    ? "Looks nodes up in a memo of node pairs, writing each one it misses."
+    match i >= n
+        true -> found
+        false -> hitsNext(i, n, Expr.Leaf(Int.mod(i, 5)), memo, found)
+
+verify hits
+    hits(0, 3, {}, 0) => 0
+
+fn hitsNext(i: Int, n: Int, e: Expr, memo: Map<Int, Tuple<Expr, Expr>>, found: Int) -> Int
+    ? "One step of hits."
+    match hit(Map.get(memo, Int.mod(i, 5)), e)
+        Option.Some(r) -> hits(i + 1, n, memo, found + leftmost(r))
+        Option.None -> hits(i + 1, n, memoed(memo, Int.mod(i, 5), e), found)
+
+verify hitsNext
+    hitsNext(0, 1, Expr.Leaf(0), {}, 0) => 0
+
+fn showE(e: Expr) -> String
+    ? "An expression as text."
+    match e
+        Expr.Leaf(n) -> "L{n}"
+        Expr.Node(h, l, r) -> "N{h}({showE(l)},{showE(r)})"
+
+verify showE
+    showE(Expr.Leaf(1)) => "L1"
+
+fn showO(o: Option<Expr>) -> String
+    ? "An optional expression as text."
+    match o
+        Option.Some(e) -> showE(e)
+        Option.None -> "-"
+
+verify showO
+    showO(Option.None) => "-"
+
+fn showPair(p: Tuple<Int, Int>) -> String
+    ? "A pair of counts as text."
+    match p
+        (a, b) -> "{a}/{b}"
+
+verify showPair
+    showPair((1, 2)) => "1/2"
+
+fn argInt(i: Int, fallback: Int) -> Int
+    ? "The i-th program argument as an Int."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), i)
+        Option.Some(s) -> Result.withDefault(Int.fromString(s), fallback)
+        Option.None -> fallback
+
+fn main() -> Unit
+    ? "Runs every shape on n keys."
+    ! [Console.print, Args.get]
+    n = argInt(0, 100)
+    memo = {1 => Expr.Node(1, Expr.Leaf(7), Expr.Leaf(8)), 2 => Expr.Leaf(2)}
+    w = walk(keys(0, n, []), memo, 0, 0)
+    Console.print("walk {showPair(w)}")
+    Console.print("hits {hits(0, n, {}, 0)}")
+    Console.print("deep {deep(Map.get(memo, 1))} {deep(Map.get(memo, 2))} {deep(Map.get(memo, 3))}")
+    Console.print("orLeaf {showO(orLeaf(Map.get(memo, 2), 5))} {showO(orLeaf(Map.get(memo, 3), 5))}")
+    Console.print("keep {showO(keep(Map.get(memo, 1), 1).e)} {keep(Map.get(memo, 3), 1).n}")
+    Console.print("bound {bound(memo, 1)} {bound(memo, 2)} {bound(memo, 9)}")
+    Console.print("writeAfter {writeAfter(memo, 1)} {writeAfter(memo, 5)}")
+    Console.print("own {own(n)} memoed {Map.len(memoed(memoed({}, 1, Expr.Leaf(1)), 1, Expr.Leaf(1)))}")
