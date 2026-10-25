@@ -1309,7 +1309,16 @@ pub fn oneEach(
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(
                         __x_fields,
                     ) => {
-                        let x = __x_fields.0.clone();
+                        let (x,) = if __t.owns_node() {
+                            let __f = crate::proof_kernel::aver_generated::kernel::term::Term::take::<
+                                crate::proof_kernel::aver_generated::kernel::term::Term__TBool,
+                            >(__t);
+                            (__f.0,)
+                        } else {
+                            let __c = (__x_fields.0.clone(),);
+                            drop(__t);
+                            __c
+                        };
                         match __pat1 {
                             crate::proof_kernel::aver_generated::kernel::term::Pat::PLit(
                                 __pat3,
@@ -1317,7 +1326,7 @@ pub fn oneEach(
                                 let __t = __pat3;
                                 match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TBool(__y_fields) => {
-            let y = __y_fields.0.clone();
+            let (y,) = if __t.owns_node() { let __f = crate::proof_kernel::aver_generated::kernel::term::Term::take::<crate::proof_kernel::aver_generated::kernel::term::Term__TBool>(__t); (__f.0,) } else { let __c = (__y_fields.0.clone(),); drop(__t); __c };
             (x != y)
         },
         _ => {
@@ -2275,14 +2284,31 @@ pub fn smaller(
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(
                         __b_fields,
                     ) => {
-                        let b = __b_fields.0.clone();
+                        let (b,) = if __t.owns_node() {
+                            let __f = crate::proof_kernel::aver_generated::kernel::term::Term::take::<
+                                crate::proof_kernel::aver_generated::kernel::term::Term__TVar,
+                            >(__t);
+                            (__f.0,)
+                        } else {
+                            let __c = (__b_fields.0.clone(),);
+                            drop(__t);
+                            __c
+                        };
                         return (parts.contains(&b) && (!inner.contains(&b)));
                     }
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(
                         ____pat1_fields,
                     ) => {
-                        let __pat1 = ____pat1_fields.0.clone();
-                        let __pat2 = &____pat1_fields.1;
+                        let ____pat1_own;
+                        let (__pat1, __pat2) = if __t.owns_node() {
+                            ____pat1_own =
+                                crate::proof_kernel::aver_generated::kernel::term::Term::take::<
+                                    crate::proof_kernel::aver_generated::kernel::term::Term__TBi,
+                                >(__t);
+                            (____pat1_own.0, &____pat1_own.1)
+                        } else {
+                            (____pat1_fields.0.clone(), &____pat1_fields.1)
+                        };
                         match &*__pat1 {
                             "List.drop" => {
                                 let __list_subject = __pat2;
@@ -2856,7 +2882,16 @@ pub fn varied(
             let __t = __pat0;
             match __t.view() {
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__v_fields) => {
-                    let v = __v_fields.0.clone();
+                    let (v,) = if __t.owns_node() {
+                        let __f = crate::proof_kernel::aver_generated::kernel::term::Term::take::<
+                            crate::proof_kernel::aver_generated::kernel::term::Term__TVar,
+                        >(__t);
+                        (__f.0,)
+                    } else {
+                        let __c = (__v_fields.0.clone(),);
+                        drop(__t);
+                        __c
+                    };
                     if givens.contains(&v) {
                         Ok(
                             crate::proof_kernel::aver_generated::kernel::induct::Varied {

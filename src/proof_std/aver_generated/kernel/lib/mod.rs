@@ -488,7 +488,16 @@ pub fn whenRefutes(
         let __t = r.to;
         match __t.view() {
             crate::proof_std::aver_generated::kernel::term::Term__view::TBool(____pat0_fields) => {
-                let __pat0 = ____pat0_fields.0.clone();
+                let (__pat0,) = if __t.owns_node() {
+                    let __f = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TBool,
+                    >(__t);
+                    (__f.0,)
+                } else {
+                    let __c = (____pat0_fields.0.clone(),);
+                    drop(__t);
+                    __c
+                };
                 match __pat0 {
         false => {
             Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PAbsurd(crate::proof_std::aver_generated::kernel::proof::Proof__PAbsurd(crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(true)), premise, crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(false))]), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::proof::Proof::PSymm(crate::proof_std::aver_generated::kernel::proof::Proof__PSymm(crate::proof_std::aver_generated::kernel::lib::whenHolds())), r.proof]))), lhs, rhs)))
@@ -672,16 +681,21 @@ pub fn evalNode(
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
-                let o = __o_fields.0.clone();
-                let a = &__o_fields.1;
-                let b = &__o_fields.2;
-                crate::proof_std::aver_generated::kernel::lib::evalOp(
-                    s,
-                    o,
-                    a.clone(),
-                    b.clone(),
-                    depth,
-                )
+                let (o, a, b) = if t.owns_node() {
+                    let __f = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TOp,
+                    >(t);
+                    (__f.0, __f.1, __f.2)
+                } else {
+                    let __c = (
+                        __o_fields.0.clone(),
+                        __o_fields.1.clone(),
+                        __o_fields.2.clone(),
+                    );
+                    drop(t);
+                    __c
+                };
+                crate::proof_std::aver_generated::kernel::lib::evalOp(s, o, a, b, depth)
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TMatch(
                 __subject_fields,
@@ -739,8 +753,15 @@ pub fn evalGet(
         let __t = rr.to;
         match __t.view() {
             crate::proof_std::aver_generated::kernel::term::Term__view::TRec(__ty_fields) => {
-                let ty = __ty_fields.0.clone();
-                let fs = &__ty_fields.1;
+                let __ty_own;
+                let (ty, fs) = if __t.owns_node() {
+                    __ty_own = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TRec,
+                    >(__t);
+                    (__ty_own.0, &__ty_own.1)
+                } else {
+                    (__ty_fields.0.clone(), &__ty_fields.1)
+                };
                 {
                     let __arg9 @ _ = crate::proof_std::aver_generated::kernel::lib::fieldOf(fs, f);
                     crate::proof_std::aver_generated::kernel::lib::projected(
@@ -1372,9 +1393,17 @@ pub fn headStep(
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
-                let f = __f_fields.0.clone();
-                let xs = &__f_fields.1;
-                crate::proof_std::aver_generated::kernel::lib::unfoldWithin(s, f, xs, depth)
+                let (f, xs) = if t.owns_node() {
+                    let __f = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TCall,
+                    >(t);
+                    (__f.0, __f.1)
+                } else {
+                    let __c = (__f_fields.0.clone(), __f_fields.1.clone());
+                    drop(t);
+                    __c
+                };
+                crate::proof_std::aver_generated::kernel::lib::unfoldWithin(s, f, &xs, depth)
             }
             _ => Ok(None),
         }

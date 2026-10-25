@@ -611,18 +611,33 @@ pub fn subst(
                 .unwrap_or(t))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
-                let o = &__o_fields.0;
-                let f = __o_fields.1.clone();
+                let (o, f) = if t.owns_node() {
+                    let __f = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TGet,
+                    >(t);
+                    (__f.0, __f.1)
+                } else {
+                    let __c = (__o_fields.0.clone(), __o_fields.1.clone());
+                    drop(t);
+                    __c
+                };
                 Ok(crate::proof_std::aver_generated::kernel::term::Term::TGet(
                     crate::proof_std::aver_generated::kernel::term::Term__TGet(
-                        crate::proof_std::aver_generated::kernel::subst::subst(o.clone(), bs)?,
+                        crate::proof_std::aver_generated::kernel::subst::subst(o, bs)?,
                         f,
                     ),
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
-                let f = __f_fields.0.clone();
-                let xs = &__f_fields.1;
+                let __f_own;
+                let (f, xs) = if t.owns_node() {
+                    __f_own = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TCall,
+                    >(t);
+                    (__f_own.0, &__f_own.1)
+                } else {
+                    (__f_fields.0.clone(), &__f_fields.1)
+                };
                 Ok(crate::proof_std::aver_generated::kernel::term::Term::TCall(
                     crate::proof_std::aver_generated::kernel::term::Term__TCall(
                         f,
@@ -631,8 +646,15 @@ pub fn subst(
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
-                let f = __f_fields.0.clone();
-                let xs = &__f_fields.1;
+                let __f_own;
+                let (f, xs) = if t.owns_node() {
+                    __f_own = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TBi,
+                    >(t);
+                    (__f_own.0, &__f_own.1)
+                } else {
+                    (__f_fields.0.clone(), &__f_fields.1)
+                };
                 Ok(crate::proof_std::aver_generated::kernel::term::Term::TBi(
                     crate::proof_std::aver_generated::kernel::term::Term__TBi(
                         f,
@@ -641,28 +663,55 @@ pub fn subst(
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
-                let o = __o_fields.0.clone();
-                let a = &__o_fields.1;
-                let b = &__o_fields.2;
+                let (o, a, b) = if t.owns_node() {
+                    let __f = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TOp,
+                    >(t);
+                    (__f.0, __f.1, __f.2)
+                } else {
+                    let __c = (
+                        __o_fields.0.clone(),
+                        __o_fields.1.clone(),
+                        __o_fields.2.clone(),
+                    );
+                    drop(t);
+                    __c
+                };
                 Ok(crate::proof_std::aver_generated::kernel::term::Term::TOp(
                     crate::proof_std::aver_generated::kernel::term::Term__TOp(
                         o,
-                        crate::proof_std::aver_generated::kernel::subst::subst(a.clone(), bs)?,
-                        crate::proof_std::aver_generated::kernel::subst::subst(b.clone(), bs)?,
+                        crate::proof_std::aver_generated::kernel::subst::subst(a, bs)?,
+                        crate::proof_std::aver_generated::kernel::subst::subst(b, bs)?,
                     ),
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
-                let a = &__a_fields.0;
+                let (a,) = if t.owns_node() {
+                    let __f = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TNeg,
+                    >(t);
+                    (__f.0,)
+                } else {
+                    let __c = (__a_fields.0.clone(),);
+                    drop(t);
+                    __c
+                };
                 Ok(crate::proof_std::aver_generated::kernel::term::Term::TNeg(
                     crate::proof_std::aver_generated::kernel::term::Term__TNeg(
-                        crate::proof_std::aver_generated::kernel::subst::subst(a.clone(), bs)?,
+                        crate::proof_std::aver_generated::kernel::subst::subst(a, bs)?,
                     ),
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
-                let c = __c_fields.0.clone();
-                let xs = &__c_fields.1;
+                let __c_own;
+                let (c, xs) = if t.owns_node() {
+                    __c_own = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TCtor,
+                    >(t);
+                    (__c_own.0, &__c_own.1)
+                } else {
+                    (__c_fields.0.clone(), &__c_fields.1)
+                };
                 Ok(crate::proof_std::aver_generated::kernel::term::Term::TCtor(
                     crate::proof_std::aver_generated::kernel::term::Term__TCtor(
                         c,
@@ -671,12 +720,19 @@ pub fn subst(
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TMatch(__s_fields) => {
-                let s = &__s_fields.0;
-                let arms = &__s_fields.1;
+                let __s_own;
+                let (s, arms) = if t.owns_node() {
+                    __s_own = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TMatch,
+                    >(t);
+                    (__s_own.0, &__s_own.1)
+                } else {
+                    (__s_fields.0.clone(), &__s_fields.1)
+                };
                 Ok(
                     crate::proof_std::aver_generated::kernel::term::Term::TMatch(
                         crate::proof_std::aver_generated::kernel::term::Term__TMatch(
-                            crate::proof_std::aver_generated::kernel::subst::subst(s.clone(), bs)?,
+                            crate::proof_std::aver_generated::kernel::subst::subst(s, bs)?,
                             crate::proof_std::aver_generated::kernel::subst::substArms(arms, bs)?,
                         ),
                     ),
@@ -711,8 +767,15 @@ pub fn subst(
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TRec(__n_fields) => {
-                let n = __n_fields.0.clone();
-                let fs = &__n_fields.1;
+                let __n_own;
+                let (n, fs) = if t.owns_node() {
+                    __n_own = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TRec,
+                    >(t);
+                    (__n_own.0, &__n_own.1)
+                } else {
+                    (__n_fields.0.clone(), &__n_fields.1)
+                };
                 Ok(crate::proof_std::aver_generated::kernel::term::Term::TRec(
                     crate::proof_std::aver_generated::kernel::term::Term__TRec(
                         n,
@@ -721,13 +784,19 @@ pub fn subst(
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TUpd(__n_fields) => {
-                let n = __n_fields.0.clone();
-                let b = &__n_fields.1;
-                let fs = &__n_fields.2;
+                let __n_own;
+                let (n, b, fs) = if t.owns_node() {
+                    __n_own = crate::proof_std::aver_generated::kernel::term::Term::take::<
+                        crate::proof_std::aver_generated::kernel::term::Term__TUpd,
+                    >(t);
+                    (__n_own.0, __n_own.1, &__n_own.2)
+                } else {
+                    (__n_fields.0.clone(), __n_fields.1.clone(), &__n_fields.2)
+                };
                 Ok(crate::proof_std::aver_generated::kernel::term::Term::TUpd(
                     crate::proof_std::aver_generated::kernel::term::Term__TUpd(
                         n,
-                        crate::proof_std::aver_generated::kernel::subst::subst(b.clone(), bs)?,
+                        crate::proof_std::aver_generated::kernel::subst::subst(b, bs)?,
                         crate::proof_std::aver_generated::kernel::subst::substFields(fs, bs)?,
                     ),
                 ))
