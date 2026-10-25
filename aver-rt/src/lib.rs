@@ -942,12 +942,16 @@ pub struct AverList<T> {
     /// a flat list is the very same node read from one element further in —
     /// stepping is a reference count and an offset, with nothing built. Flat
     /// and indexed bodies carry an offset. The other shapes are whole nodes.
-    start: usize,
+    ///
+    /// It and `segment_index` take 32 bits each, so a list is 16 bytes and a
+    /// `Prepend` node, which holds its tail, 8 bytes smaller. A view further
+    /// in than that is rebuilt to start at its first element ([`Self::view`]).
+    start: u32,
     /// Segment containing `start`, when `inner` is `Indexed`.
     ///
     /// Keeping the cursor on the cheap list wrapper makes the next `uncons`
     /// O(1): a tail shares the segment table and advances these two integers.
-    segment_index: usize,
+    segment_index: u32,
 }
 
 struct TraversalSegment<T> {
@@ -996,6 +1000,10 @@ impl<T> TraversalSegment<T> {
     }
 }
 
+/// A list node. Every node is as large as its largest shape, and nearly
+/// every node is a `Prepend`, so the other shapes are kept no larger than it:
+/// a `Concat` counts its length in 32 bits, which its tag leaves room for
+/// (a longer join is built as an `Indexed` table, [`AverList::concat_node`]).
 enum AverListInner<T> {
     Flat {
         items: Rc<Vec<T>>,
@@ -1008,7 +1016,7 @@ enum AverListInner<T> {
     Concat {
         left: AverList<T>,
         right: AverList<T>,
-        len: usize,
+        len: u32,
     },
     Indexed {
         parts: Rc<Vec<TraversalSegment<T>>>,
@@ -1169,6 +1177,55 @@ impl<T> AverList<T> {
         self.inner.as_deref()
     }
 
+    /// How many elements of a flat or indexed body this list starts past.
+    #[inline]
+    fn start(&self) -> usize {
+        self.start as usize
+    }
+
+    #[inline]
+    fn segment_index(&self) -> usize {
+        self.segment_index as usize
+    }
+
+    /// This list's flat or indexed body read from `start`, which lies in
+    /// segment `segment_index` of an indexed body.
+    ///
+    /// Both numbers are kept in 32 bits. One past that — a body of more than
+    /// four billion elements — gets a table of its own that starts where the
+    /// view does, so the view starts at 0 again; that is one table entry for
+    /// a flat body and once every four billion steps.
+    #[inline]
+    fn view(&self, start: usize, segment_index: usize) -> Self {
+        if let (Ok(start), Ok(segment_index)) =
+            (u32::try_from(start), u32::try_from(segment_index))
+        {
+            return Self {
+                inner: self.inner.clone(),
+                start,
+                segment_index,
+            };
+        }
+        self.rebased(start, segment_index)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn rebased(&self, start: usize, segment_index: usize) -> Self {
+        let mut parts = Vec::new();
+        match self.shape() {
+            Some(AverListInner::Flat { items }) => {
+                let len = items.len().saturating_sub(start);
+                Self::push_flat_segment(&mut parts, Rc::clone(items), start, len);
+            }
+            Some(AverListInner::Indexed { parts: table, .. }) => {
+                Self::push_indexed_view(&mut parts, table, start, segment_index);
+            }
+            _ => unreachable!("only a flat or an indexed body is read from an offset"),
+        }
+        Self::from_indexed(parts)
+    }
+
     /// The node, taken out of the list, when this list alone holds it.
     #[inline]
     fn take_sole_node(&mut self) -> Option<Rc<AverListInner<T>>> {
@@ -1181,12 +1238,18 @@ impl<T> AverList<T> {
         self.inner.as_ref().expect("a non-empty list has a node")
     }
 
+    /// A join of two lists. Its length is kept in 32 bits; a longer join is
+    /// compiled into a table of the pieces of both, as stepping into a
+    /// concat would compile it.
     fn concat_node(left: &Self, right: &Self) -> Self {
-        Self::node(AverListInner::Concat {
-            left: left.clone(),
-            right: right.clone(),
-            len: left.len() + right.len(),
-        })
+        match u32::try_from(left.len() + right.len()) {
+            Ok(len) => Self::node(AverListInner::Concat {
+                left: left.clone(),
+                right: right.clone(),
+                len,
+            }),
+            Err(_) => Self::indexed_from(vec![right, left]),
+        }
     }
 
     fn next_segment_end(parts: &[TraversalSegment<T>], len: usize) -> usize {
@@ -1265,9 +1328,12 @@ impl<T> AverList<T> {
         if matches!(self.shape(), Some(AverListInner::Indexed { .. })) {
             return self.clone();
         }
+        Self::indexed_from(vec![self])
+    }
 
+    /// The table of the lists on the `pending` stack, the last one first.
+    fn indexed_from(mut pending: Vec<&Self>) -> Self {
         let mut parts = Vec::new();
-        let mut pending = vec![self];
         while let Some(list) = pending.pop() {
             let Some(node) = &list.inner else { continue };
             if list.is_empty() {
@@ -1275,7 +1341,7 @@ impl<T> AverList<T> {
             }
             match node.as_ref() {
                 AverListInner::Flat { items } => {
-                    Self::push_flat_segment(&mut parts, Rc::clone(items), list.start, list.len());
+                    Self::push_flat_segment(&mut parts, Rc::clone(items), list.start(), list.len());
                 }
                 AverListInner::Prepend { tail, .. } => {
                     pending.push(tail);
@@ -1285,26 +1351,33 @@ impl<T> AverList<T> {
                     pending.push(right);
                     pending.push(left);
                 }
-                AverListInner::Indexed {
-                    parts: indexed_parts,
-                    ..
-                } => {
-                    let previous_end = list
-                        .segment_index
-                        .checked_sub(1)
-                        .map_or(0, |index| indexed_parts[index].end);
-                    for (index, segment) in indexed_parts[list.segment_index..].iter().enumerate() {
-                        let skip = if index == 0 {
-                            list.start.saturating_sub(previous_end)
-                        } else {
-                            0
-                        };
-                        Self::push_indexed_segment(&mut parts, segment, skip);
-                    }
+                AverListInner::Indexed { parts: table, .. } => {
+                    Self::push_indexed_view(&mut parts, table, list.start(), list.segment_index());
                 }
             }
         }
         Self::from_indexed(parts)
+    }
+
+    /// The segments of the indexed body `table` read from `start`, which lies
+    /// in segment `segment_index`.
+    fn push_indexed_view(
+        parts: &mut Vec<TraversalSegment<T>>,
+        table: &[TraversalSegment<T>],
+        start: usize,
+        segment_index: usize,
+    ) {
+        let previous_end = segment_index
+            .checked_sub(1)
+            .map_or(0, |index| table[index].end);
+        for (index, segment) in table[segment_index..].iter().enumerate() {
+            let skip = if index == 0 {
+                start.saturating_sub(previous_end)
+            } else {
+                0
+            };
+            Self::push_indexed_segment(parts, segment, skip);
+        }
     }
 
     fn segment_for_offset(parts: &[TraversalSegment<T>], offset: usize) -> usize {
@@ -1312,34 +1385,30 @@ impl<T> AverList<T> {
     }
 
     fn indexed_tail(&self, len: usize, parts: &[TraversalSegment<T>]) -> Option<Self> {
-        if self.start >= len {
+        if self.start() >= len {
             return None;
         }
-        if self.start + 1 >= len {
+        if self.start() + 1 >= len {
             return Some(Self::empty());
         }
 
-        let start = self.start + 1;
-        let segment_index = if parts[self.segment_index].end <= start {
-            self.segment_index + 1
+        let start = self.start() + 1;
+        let segment_index = if parts[self.segment_index()].end <= start {
+            self.segment_index() + 1
         } else {
-            self.segment_index
+            self.segment_index()
         };
-        Some(Self {
-            inner: self.inner.clone(),
-            start,
-            segment_index,
-        })
+        Some(self.view(start, segment_index))
     }
 
     fn indexed_head<'a>(&'a self, parts: &'a [TraversalSegment<T>]) -> Option<&'a T> {
         let previous_end = self
-            .segment_index
+            .segment_index()
             .checked_sub(1)
             .map_or(0, |index| parts[index].end);
         parts
-            .get(self.segment_index)?
-            .get(self.start.saturating_sub(previous_end))
+            .get(self.segment_index())?
+            .get(self.start().saturating_sub(previous_end))
     }
 
     fn indexed_drop(&self, n: usize, len: usize, parts: &[TraversalSegment<T>]) -> Self {
@@ -1349,15 +1418,11 @@ impl<T> AverList<T> {
         if n == 1 {
             return self.indexed_tail(len, parts).unwrap_or_else(Self::empty);
         }
-        let start = self.start.saturating_add(n);
+        let start = self.start().saturating_add(n);
         if start >= len {
             return Self::empty();
         }
-        Self {
-            inner: self.inner.clone(),
-            start,
-            segment_index: Self::segment_for_offset(parts, start),
-        }
+        self.view(start, Self::segment_for_offset(parts, start))
     }
 
     /// The rest of a flat body of `len` elements: the same node, read from one
@@ -1368,23 +1433,19 @@ impl<T> AverList<T> {
     /// than a spent view, so a list walked to its end stops holding the body
     /// it walked over.
     fn flat_tail(&self, len: usize) -> Option<Self> {
-        if self.start >= len {
+        if self.start() >= len {
             return None;
         }
-        if self.start + 1 >= len {
+        if self.start() + 1 >= len {
             return Some(Self::empty());
         }
-        Some(Self {
-            inner: self.inner.clone(),
-            start: self.start + 1,
-            segment_index: 0,
-        })
+        Some(self.view(self.start() + 1, 0))
     }
 
     fn uncons(&self) -> Option<(&T, Self)> {
         match self.shape()? {
             AverListInner::Flat { items } => {
-                let head = items.get(self.start)?;
+                let head = items.get(self.start())?;
                 Some((head, self.flat_tail(items.len())?))
             }
             AverListInner::Prepend { head, tail, .. } => Some((head, tail.clone())),
@@ -1433,11 +1494,7 @@ impl<T> AverList<T> {
             };
             match shape {
                 AverListInner::Flat { .. } => {
-                    return Self {
-                        inner: current.inner.clone(),
-                        start: current.start + remaining,
-                        segment_index: 0,
-                    };
+                    return current.view(current.start() + remaining, 0);
                 }
                 AverListInner::Prepend { tail, .. } => {
                     remaining -= 1;
@@ -1559,9 +1616,10 @@ impl<T> AverList<T> {
             return 0;
         };
         match shape {
-            AverListInner::Flat { items } => items.len().saturating_sub(self.start),
-            AverListInner::Prepend { len, .. } | AverListInner::Concat { len, .. } => *len,
-            AverListInner::Indexed { len, .. } => len.saturating_sub(self.start),
+            AverListInner::Flat { items } => items.len().saturating_sub(self.start()),
+            AverListInner::Prepend { len, .. } => *len,
+            AverListInner::Concat { len, .. } => *len as usize,
+            AverListInner::Indexed { len, .. } => len.saturating_sub(self.start()),
         }
     }
 
@@ -1576,7 +1634,7 @@ impl<T> AverList<T> {
         loop {
             match current.shape()? {
                 AverListInner::Flat { items } => {
-                    return items.get(current.start.saturating_add(remaining));
+                    return items.get(current.start().saturating_add(remaining));
                 }
                 AverListInner::Prepend { head, tail, .. } => {
                     if remaining == 0 {
@@ -1595,7 +1653,7 @@ impl<T> AverList<T> {
                     }
                 }
                 AverListInner::Indexed { parts, len } => {
-                    let offset = current.start.checked_add(remaining)?;
+                    let offset = current.start().checked_add(remaining)?;
                     if offset >= *len {
                         return None;
                     }
@@ -1616,7 +1674,7 @@ impl<T> AverList<T> {
             return Some(&[]);
         };
         match shape {
-            AverListInner::Flat { items } => Some(items.get(self.start..).unwrap_or(&[])),
+            AverListInner::Flat { items } => Some(items.get(self.start()..).unwrap_or(&[])),
             AverListInner::Prepend { .. }
             | AverListInner::Concat { .. }
             | AverListInner::Indexed { .. } => None,
@@ -1723,7 +1781,7 @@ impl<T> AverList<T> {
                     rest = tail;
                 }
                 Some(AverListInner::Flat { .. }) => {
-                    let start = rest.start;
+                    let start = rest.start();
                     if let Some(AverListInner::Flat { items }) =
                         rest.inner.as_mut().and_then(Rc::get_mut)
                         && let Some(items) = Rc::get_mut(items)
@@ -1768,7 +1826,7 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
                 ListCursor::Node(list) => match list.shape() {
                     None => {}
                     Some(AverListInner::Flat { items }) => {
-                        let slice = items.get(list.start..).unwrap_or(&[]);
+                        let slice = items.get(list.start()..).unwrap_or(&[]);
                         if !slice.is_empty() {
                             self.push(ListCursor::Slice(slice, 0));
                         }
@@ -1784,12 +1842,12 @@ impl<'a, T> Iterator for AverListIter<'a, T> {
                     }
                     Some(AverListInner::Indexed { parts, .. }) => {
                         let previous_end = list
-                            .segment_index
+                            .segment_index()
                             .checked_sub(1)
                             .map_or(0, |index| parts[index].end);
-                        let offset = list.start.saturating_sub(previous_end);
-                        if let Some(segment) = parts.get(list.segment_index) {
-                            self.push(ListCursor::TraversalSlice(parts, list.segment_index + 1));
+                        let offset = list.start().saturating_sub(previous_end);
+                        if let Some(segment) = parts.get(list.segment_index()) {
+                            self.push(ListCursor::TraversalSlice(parts, list.segment_index() + 1));
                             self.push(ListCursor::TraversalSegment(segment, offset));
                         }
                     }
@@ -3082,6 +3140,222 @@ mod tests {
             AverListInner::Prepend { .. } => "Prepend",
             AverListInner::Concat { .. } => "Concat",
             AverListInner::Indexed { .. } => "Indexed",
+        }
+    }
+
+    /// The layout of a list and its nodes, and every shape built, walked,
+    /// taken apart and dropped. Small enough for Miri, which CI runs on this
+    /// module.
+    mod list_node {
+        use super::super::{AverList, AverListInner, AverStr};
+        use std::sync::atomic::{AtomicIsize, Ordering};
+
+        /// A list is two words, and a node is no larger than a `Prepend` of a
+        /// word: 40 bytes, and 48 with its count, where it was 64 and 72.
+        #[test]
+        #[cfg(target_pointer_width = "64")]
+        fn a_list_is_two_words_and_a_node_the_size_of_a_cons_cell() {
+            use std::mem::size_of;
+            assert_eq!(size_of::<AverList<u64>>(), 16);
+            assert_eq!(size_of::<AverListInner<u64>>(), 40);
+            assert_eq!(size_of::<AverListInner<AverStr>>(), 48);
+            assert_eq!(size_of::<AverListInner<AverList<u64>>>(), 48);
+            assert_eq!(size_of::<AverListInner<u8>>(), 40, "a join's size");
+        }
+
+        /// Counts how many of it are alive, clones included.
+        struct Counted(std::sync::Arc<AtomicIsize>, usize);
+
+        impl Counted {
+            fn new(live: &std::sync::Arc<AtomicIsize>, value: usize) -> Self {
+                live.fetch_add(1, Ordering::Relaxed);
+                Self(std::sync::Arc::clone(live), value)
+            }
+        }
+
+        impl Clone for Counted {
+            fn clone(&self) -> Self {
+                Self::new(&self.0, self.1)
+            }
+        }
+
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+
+        fn values(list: &AverList<Counted>) -> Vec<usize> {
+            list.iter().map(|item| item.1).collect()
+        }
+
+        /// A chain of prepends, a flat body and a join leaning each way, each
+        /// walked by `uncons`, stepped through by `drop_first` (which builds
+        /// a table for a join) and read by `get`; then the chain taken apart
+        /// into a new one built in its own nodes, and that one taken apart by
+        /// `uncons_owned`. Every element is dropped once, and none of it
+        /// recurses on the depth.
+        #[test]
+        fn every_shape_reads_in_order_and_drops_each_element_once() {
+            let depth = if cfg!(miri) { 200 } else { 100_000 };
+            let live = std::sync::Arc::new(AtomicIsize::new(0));
+            let one = |value| AverList::prepend_owned(Counted::new(&live, value), AverList::empty());
+
+            let mut chain = AverList::empty();
+            for value in (0..depth).rev() {
+                chain = AverList::prepend_owned(Counted::new(&live, value), chain);
+            }
+            let flat = AverList::from_vec((0..depth).map(|v| Counted::new(&live, v)).collect());
+            let mut left = AverList::empty();
+            let mut right = AverList::empty();
+            for value in 0..depth {
+                left = AverList::concat(&left, &one(value));
+                right = AverList::concat(&one(depth - 1 - value), &right);
+            }
+
+            for list in [&chain, &flat, &left, &right] {
+                assert_eq!(values(list), (0..depth).collect::<Vec<_>>());
+                let mut rest = list.clone();
+                let mut at = 0;
+                while let Some((head, tail)) = rest.uncons_cloned() {
+                    assert_eq!(head.1, at);
+                    at += 1;
+                    rest = tail;
+                }
+                assert_eq!(at, depth);
+                let mut rest = list.clone();
+                let mut at = 0;
+                while let Some(head) = rest.first() {
+                    assert_eq!(head.1, at);
+                    rest = rest.drop_first(7);
+                    at += 7;
+                }
+                assert_eq!(list.get(depth / 2).map(|c| c.1), Some(depth / 2));
+                assert_eq!(list.drop_first(depth - 2).len(), 2);
+            }
+
+            let mut rest = chain;
+            let mut rebuilt = AverList::empty();
+            while let Some((head, tail, slot)) = rest.uncons_reuse() {
+                rebuilt = slot.prepend(head, rebuilt);
+                rest = tail;
+            }
+            assert_eq!(values(&rebuilt), (0..depth).rev().collect::<Vec<_>>());
+            let mut rest = rebuilt;
+            let mut taken = 0;
+            while let Some((_, tail)) = rest.uncons_owned() {
+                taken += 1;
+                rest = tail;
+            }
+            assert_eq!(taken, depth);
+            drop((flat, left, right));
+            assert_eq!(live.load(Ordering::Relaxed), 0);
+        }
+
+        /// A view whose offset 32 bits do not hold is a table of its own that
+        /// starts where it does: for every offset into a flat body and into
+        /// an indexed one, the rebuilt list reads as the view.
+        #[test]
+        fn a_rebuilt_view_reads_as_the_view() {
+            let live = std::sync::Arc::new(AtomicIsize::new(0));
+            let flat: AverList<Counted> =
+                AverList::from_vec((0..12).map(|v| Counted::new(&live, v)).collect());
+            let mut rope = AverList::from_vec((0..3).map(|v| Counted::new(&live, v)).collect());
+            for value in 3..6 {
+                rope = AverList::concat(
+                    &rope,
+                    &AverList::prepend_owned(Counted::new(&live, value), AverList::empty()),
+                );
+            }
+            rope = AverList::concat(&rope, &flat.drop_first(6));
+            let indexed = rope.indexed();
+            assert!(matches!(indexed.shape(), Some(AverListInner::Indexed { .. })));
+
+            for list in [&flat, &indexed] {
+                for start in 0..list.len() {
+                    let view = list.drop_first(start);
+                    let rebuilt = list.rebased(start, view.segment_index());
+                    assert!(matches!(rebuilt.shape(), Some(AverListInner::Indexed { .. })));
+                    assert_eq!(rebuilt.start, 0);
+                    assert_eq!(values(&rebuilt), values(&view));
+                    assert_eq!(rebuilt.len(), view.len());
+                    for step in 0..view.len() {
+                        assert_eq!(rebuilt.get(step).map(|c| c.1), view.get(step).map(|c| c.1));
+                        assert_eq!(values(&rebuilt.drop_first(step)), values(&view.drop_first(step)));
+                    }
+                    let tail = rebuilt.tail().expect("a view of one or more");
+                    assert_eq!(values(&tail), values(&view.drop_first(1)));
+                }
+            }
+            drop((flat, rope, indexed));
+            assert_eq!(live.load(Ordering::Relaxed), 0);
+        }
+
+        /// `n` elements of `()`, which take no memory, so a list longer than
+        /// 32 bits count fits in a test.
+        fn units(n: usize) -> Vec<()> {
+            let mut items = Vec::new();
+            // SAFETY: a `Vec` of a zero-sized type has room for `usize::MAX`
+            // elements, and `()` has no bytes to initialise.
+            unsafe { items.set_len(n) };
+            items
+        }
+
+        /// Stepping a flat body past 32 bits of offset rebuilds the view as a
+        /// table that starts at 0, and it reads on from there.
+        #[test]
+        #[cfg(target_pointer_width = "64")]
+        fn a_view_past_32_bits_starts_a_table_of_its_own() {
+            let edge = u32::MAX as usize;
+            let big = AverList::from_vec(units(edge + 6));
+            let at_edge = big.drop_first(edge);
+            assert!(matches!(at_edge.shape(), Some(AverListInner::Flat { .. })));
+            assert_eq!((at_edge.start, at_edge.len()), (u32::MAX, 6));
+
+            let over = at_edge.tail().expect("six elements");
+            assert!(matches!(over.shape(), Some(AverListInner::Indexed { .. })));
+            assert_eq!((over.start, over.len()), (0, 5));
+            assert_eq!(over.iter().count(), 5);
+            assert_eq!(over.drop_first(2).len(), 3);
+            assert_eq!(big.drop_first(edge + 3).len(), 3);
+            assert_eq!(big.get(edge + 5), Some(&()));
+            assert_eq!(big.get(edge + 6), None);
+
+            let mut rest = big.drop_first(edge - 1);
+            let mut steps = 0;
+            while let Some((_, tail)) = rest.uncons_cloned() {
+                steps += 1;
+                rest = tail;
+            }
+            assert_eq!(steps, 7);
+        }
+
+        /// A join longer than 32 bits count is a table of both halves, which
+        /// reads, steps and joins on as a join would.
+        #[test]
+        #[cfg(target_pointer_width = "64")]
+        fn a_join_past_32_bits_is_a_table_of_both_halves() {
+            let edge = u32::MAX as usize;
+            let one = AverList::prepend((), &AverList::empty());
+            let fits = AverList::concat(&AverList::from_vec(units(edge - 1)), &one);
+            assert!(matches!(fits.shape(), Some(AverListInner::Concat { .. })));
+            assert_eq!(fits.len(), edge);
+
+            let joined = AverList::concat(&AverList::from_vec(units(edge)), &one);
+            let Some(AverListInner::Indexed { parts, len }) = joined.shape() else {
+                panic!("a join past 32 bits is a table")
+            };
+            assert_eq!((*len, parts.len()), (edge + 1, 2));
+            assert_eq!(joined.drop_first(edge).len(), 1);
+            assert_eq!(joined.get(edge), Some(&()));
+            assert_eq!(joined.get(edge + 1), None);
+            let (_, tail) = joined.uncons().expect("a long list");
+            assert_eq!(tail.len(), edge);
+
+            let twice = AverList::concat(&joined, &tail);
+            assert_eq!(twice.len(), 2 * edge + 1);
+            assert_eq!(twice.drop_first(2 * edge).len(), 1);
+            assert_eq!(AverList::concat(&joined, &AverList::empty()).len(), edge + 1);
         }
     }
 }
