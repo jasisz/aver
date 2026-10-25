@@ -19,13 +19,34 @@ pub trait AverDisplay {
     }
 }
 
+/// Appends the decimal digits of `n`, what `{n}` writes, without going
+/// through a `fmt::Formatter`.
+fn push_i64(out: &mut String, n: i64) {
+    let mut digits = [0u8; 20];
+    let mut at = digits.len();
+    let mut rest = n.unsigned_abs();
+    loop {
+        at -= 1;
+        digits[at] = b'0' + (rest % 10) as u8;
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    if n < 0 {
+        out.push('-');
+    }
+    // SAFETY: only ASCII digits were written to `digits[at..]`.
+    out.push_str(unsafe { std::str::from_utf8_unchecked(&digits[at..]) });
+}
+
 impl AverDisplay for i64 {
     fn aver_display(&self) -> String {
         self.to_string()
     }
 
     fn push_display(&self, out: &mut String) {
-        let _ = write!(out, "{self}");
+        push_i64(out, *self);
     }
 }
 
@@ -37,7 +58,12 @@ impl AverDisplay for crate::AverInt {
     }
 
     fn push_display(&self, out: &mut String) {
-        let _ = write!(out, "{self}");
+        match self.to_i64() {
+            Some(n) => push_i64(out, n),
+            None => {
+                let _ = write!(out, "{self}");
+            }
+        }
     }
 }
 
@@ -245,3 +271,39 @@ tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8);
 tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9);
 tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10);
 tuple_display!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11);
+
+#[cfg(test)]
+mod tests {
+    use super::AverDisplay;
+    use crate::AverInt;
+
+    /// An `Int` written into a buffer reads as its `Display`, at the ends of
+    /// `i64`, around the inline range and past `i64` either way.
+    #[test]
+    fn an_int_is_written_as_its_display() {
+        let mut texts = vec![
+            "0".to_string(),
+            "-0".to_string(),
+            "9".to_string(),
+            "-10".to_string(),
+            "4611686018427387904".to_string(),
+            "-4611686018427387905".to_string(),
+            "99999999999999999999999999".to_string(),
+            "-99999999999999999999999999".to_string(),
+        ];
+        for n in [i64::MIN, i64::MIN + 1, -1, 1, i64::MAX - 1, i64::MAX] {
+            texts.push(n.to_string());
+        }
+        for text in texts {
+            let n: AverInt = text.parse().expect("an integer");
+            let mut out = String::from("<");
+            n.push_display(&mut out);
+            assert_eq!(out, format!("<{n}"), "{text}");
+            if let Some(word) = n.to_i64() {
+                let mut out = String::from("<");
+                word.push_display(&mut out);
+                assert_eq!(out, format!("<{word}"), "{text}");
+            }
+        }
+    }
+}
