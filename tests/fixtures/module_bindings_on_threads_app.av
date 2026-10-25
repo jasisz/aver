@@ -1,0 +1,59 @@
+module BindingsOnThreads
+    intent = "Module-level bindings read for the first time inside the branches of an independent product, then on main."
+    effects [Console.print]
+
+type Name
+    Str(String)
+    Num(Int)
+
+base = 40
+
+names = ["nat", "int", "str"]
+
+nat: Name = Name.Str("Nat")
+
+fn weight(n: Name) -> Int
+    ? "A number for a name."
+    match n
+        Name.Str(s) -> String.len(s)
+        Name.Num(k) -> k
+
+verify weight
+    weight(Name.Num(2)) => 2
+    weight(Name.Str("ab")) => 2
+
+fn left(n: Int) -> Int
+    ? "Reads base and nat."
+    base + weight(nat) + n
+
+verify left
+    left(1) => 44
+
+fn right(n: Int) -> Int
+    ? "Reads names."
+    List.len(names) * n
+
+verify right
+    right(2) => 6
+
+fn joined() -> String
+    ? "The names, comma-separated."
+    String.join(names, ",")
+
+verify joined
+    joined() => "nat,int,str"
+
+fn both(n: Int) -> Int
+    ? "Four branches at once, each on a thread of its own, two of them reading each binding."
+    m = n + 1
+    match (left(n), right(n), left(m), right(m))!
+        (a, b, c, d) -> a + b + c + d
+
+verify both
+    both(1) => 98
+
+fn main() -> Unit
+    ? "Prints the product, then reads the bindings again on main."
+    ! [Console.print]
+    Console.print("product: {both(1)}")
+    Console.print("main: {left(0)} {right(1)} {base} {joined()}")

@@ -1,0 +1,29 @@
+module IntInterpolationEdges
+    intent = "Ints written into interpolated strings at the ends of a machine word, around the values one word holds, and past them."
+    effects [Console.print]
+
+fn shown(n: Int) -> String
+    ? "n between brackets."
+    "[{n}]"
+
+verify shown
+    shown(-7) => "[-7]"
+    shown(100000000000000000000) => "[100000000000000000000]"
+
+fn main() -> Unit
+    ? "Prints each edge."
+    ! [Console.print]
+    Console.print(shown(0))
+    Console.print(shown(7))
+    Console.print(shown(-10))
+    Console.print(shown(9223372036854775807))
+    Console.print(shown(-9223372036854775807 - 1))
+    Console.print(shown(9223372036854775807 + 1))
+    Console.print(shown(-9223372036854775807 - 2))
+    Console.print(shown(4611686018427387903))
+    Console.print(shown(4611686018427387904))
+    Console.print(shown(-4611686018427387904))
+    Console.print(shown(-4611686018427387905))
+    Console.print(shown(99999999999999999999 * 99999999999999999999))
+    Console.print(shown(0 - 99999999999999999999 * 99999999999999999999))
+    Console.print("{List.len([1, 2, 3])} items, {-1 - 1} below")
