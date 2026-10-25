@@ -15,9 +15,9 @@ if (!file) throw new Error("Usage: node tools/wasm-work/run.mjs [--max-jobs N] [
 // Synchronous writes keep stdout and stderr in program order and lose nothing
 // when the process ends right after main.
 const line = fd => text => fs.writeSync(fd, `${text}\n`);
-// The program runs on a thread of its own because only a worker's stack size
-// can be chosen: the main thread's is the system's 8 MB, which a deeply
-// recursive program outgrows.
+// The program runs on a thread of its own because only a worker's stack can be
+// sized from here: the main thread's is about 1 MB, which a deeply recursive
+// program outgrows, and the system caps how far a flag can raise it.
 if (isMainThread) {
     const stackSizeMb = options["--stack-mb"] ?? 1024;
     const worker = new Worker(new URL(import.meta.url), { argv: process.argv.slice(2), resourceLimits: { stackSizeMb } });
