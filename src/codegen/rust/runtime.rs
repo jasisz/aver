@@ -184,18 +184,22 @@ pub fn cancel_checkpoint() {
     }
 }
 
-#[inline(never)]
+#[inline]
 fn cancel_step() {
-    let left = CANCEL_STEPS_LEFT.with(Cell::get);
-    if left == 0 {
-        return;
+    let due = CANCEL_STEPS_LEFT.with(|left| match left.get() {
+        0 => false,
+        1 => {
+            left.set(CANCEL_CHECK_EVERY);
+            true
+        }
+        steps => {
+            left.set(steps - 1);
+            false
+        }
+    });
+    if due {
+        cancel_checkpoint_now();
     }
-    if left > 1 {
-        CANCEL_STEPS_LEFT.with(|steps| steps.set(left - 1));
-        return;
-    }
-    CANCEL_STEPS_LEFT.with(|steps| steps.set(CANCEL_CHECK_EVERY));
-    cancel_checkpoint_now();
 }
 
 /// Before an effect and where a branch starts: reads the flags now, so a
