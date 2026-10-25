@@ -1935,6 +1935,50 @@ fn main() -> Int
     }
 
     #[test]
+    fn mutual_tco_side_choice_reads_only_the_members_own_params() {
+        let group = |flip: &str| {
+            format!(
+                r#"
+module Demo
+
+fn spin(n: Int, acc: Int, flag: Bool) -> Int
+    match n <= 0
+        true -> acc
+        false -> match n == 7
+            true -> hop(n - 1, acc, flag)
+            false -> spin(n - 1, acc + 1, flag)
+
+fn hop(n: Int, acc: Int, flag: Bool) -> Int
+    near(n, acc, [n], [acc], "w", n, 1, flag)
+
+fn near(n: Int, acc: Int, xs: List<Int>, ys: List<Int>, label: String, k: Int, m: Int, flag: Bool) -> Int
+    match n == 3
+        true -> {next}(n - 1, acc, flag)
+        false -> spin(n - 1, acc + List.len(xs) + List.len(ys) + String.len(label) + k + m, flag)
+{flip}"#,
+                next = if flip.is_empty() { "spin" } else { "flip" },
+            )
+        };
+        let flip = "
+fn flip(n: Int, acc: Int, flag: Bool) -> Int
+    spin(n, acc, Bool.not(flag))
+";
+        for source in [group(""), group(flip)] {
+            let mut ctx = ctx_from_source(&source, "demo");
+            let out = transpile(&mut ctx);
+            let entry = generated_rust_entry_file(&out);
+            // Without `flip`, `flag` is handed on unchanged and is not in
+            // the state, which leaves `near` 128 bytes; with it, 129. Its
+            // declared params weigh 129 either way, so `near` goes aside in
+            // both, and the loop and its neighbour stay in the enum.
+            assert!(entry.contains("struct __MutualTco1Side {"), "{entry}");
+            assert!(entry.contains("    Near: Option<("), "{entry}");
+            assert!(!entry.contains("    Spin: Option<("));
+            assert!(!entry.contains("    Hop: Option<("));
+        }
+    }
+
+    #[test]
     fn mutual_tco_variant_for_keyword_named_fn_is_an_identifier() {
         // A function whose Aver name is a Rust keyword takes part in a
         // mutual-TCO group. The trampoline variant is the function name

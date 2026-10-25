@@ -6986,12 +6986,14 @@ fn mir_if_cond_and_branches<'a>(
 
 // ── mutual-recursion trampoline from MIR ────────────────────────────────
 
-/// Bytes the state of a member that is not hot (see
-/// [`super::toplevel::hot_mutual_members`]) may take in the trampoline's
-/// enum before it goes to the group's side (see [`MutualBounce::side`]):
-/// the bound a record takes inline (`representation::BOXED_RECORD_BYTES`).
+/// Bytes the declared params of a member that is not hot (see
+/// [`super::toplevel::hot_mutual_members`]) may take before its state goes
+/// to the group's side (see [`MutualBounce::side`]): the bound a record
+/// takes inline (`representation::BOXED_RECORD_BYTES`), by the same measure.
 /// Every bounce moves the enum, and the larger its variants, the more each
-/// bounce of a small one carries too.
+/// bounce of a small one carries too. The params are weighed as the member
+/// declares them, the group's invariants included, so what another member
+/// does with an invariant never moves this one across the bound.
 const BOXED_STATE_BYTES: usize = 128;
 
 /// How a bounce to one member builds the trampoline's state: which of the
@@ -7083,14 +7085,12 @@ pub(super) fn emit_mir_mutual_tco_block(
                 .iter()
                 .map(|(name, _)| invariant_names.contains(name))
                 .collect();
-            let state_bytes: usize = fd
+            let declared_bytes: usize = fd
                 .params
                 .iter()
-                .zip(&invariants)
-                .filter(|(_, invariant)| !**invariant)
-                .map(|((_, ty), _)| super::representation::type_inline_size(ty, ctx, scope))
+                .map(|(_, ty)| super::representation::type_inline_size(ty, ctx, scope))
                 .sum();
-            let side = (!hot.contains(&fd.fn_id) && state_bytes > BOXED_STATE_BYTES)
+            let side = (!hot.contains(&fd.fn_id) && declared_bytes > BOXED_STATE_BYTES)
                 .then(|| side_fn.clone());
             (fd.fn_id, MutualBounce { invariants, side })
         })
