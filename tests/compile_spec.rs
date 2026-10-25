@@ -618,9 +618,11 @@ fn compiled_rust_runtime_policy_cancel_stops_sibling_branch_early() {
     let complete_root = workspace.join("runtime-complete");
     let cancel_root = workspace.join("runtime-cancel");
     let marker_file = workspace.join("markers.txt");
+    let spin_file = workspace.join("spin.txt");
     let binary_name = format!("cancel_probe{}", std::env::consts::EXE_SUFFIX);
     let generated_binary = generated_target_dir.join("debug").join(binary_name);
     let marker_literal = aver_string_literal(&marker_file);
+    let spin_literal = aver_string_literal(&spin_file);
 
     fs::create_dir_all(&workspace).expect("create temp workspace");
     fs::write(
@@ -647,9 +649,27 @@ fn appendMany(path: String, remaining: Int) -> Result<Unit, String>
         true -> Result.Ok(Unit)
         false -> appendMore(path, remaining)
 
+fn spinA(n: Int, acc: Int) -> Int
+    ? "A long loop through a trampoline, with no effect to stop at."
+    match n == 0
+        true -> acc
+        false -> spinB(n - 1, acc + 1)
+
+fn spinB(n: Int, acc: Int) -> Int
+    ? "The other half of the loop."
+    match n == 0
+        true -> acc
+        false -> spinA(n - 1, acc + 2)
+
+fn spinThenMark(path: String, n: Int) -> Result<Unit, String>
+    ? "Writes a marker only after the whole loop."
+    ! [Disk.appendText]
+    total = spinA(n, 0)
+    Disk.appendText(path, "{{total}}\n")
+
 fn main() -> Result<Unit, String>
     ! [Disk.appendText]
-    _ = (failFast(), appendMany("{marker_literal}", {append_count}))?!
+    _ = (failFast(), appendMany("{marker_literal}", {append_count}), spinThenMark("{spin_literal}", 20000000))?!
     Result.Ok(Unit)
 "#
         ),
@@ -718,8 +738,14 @@ fn main() -> Result<Unit, String>
         complete_count, append_count,
         "complete mode should finish all sibling work"
     );
+    assert_eq!(
+        marker_count(&spin_file),
+        1,
+        "complete mode should finish the long loop"
+    );
 
     let _ = fs::remove_file(&marker_file);
+    let _ = fs::remove_file(&spin_file);
 
     let run_cancel = Command::new(&generated_binary)
         .env("AVER_REPLAY_MODULE_ROOT", &cancel_root)
@@ -742,6 +768,13 @@ fn main() -> Result<Unit, String>
         "cancel mode should not do MORE work than complete mode, got cancel_count={} vs complete_count={}",
         cancel_count,
         complete_count
+    );
+    // A step reads the flags every 1024 steps, so the loop stops long
+    // before its 20 million.
+    assert_eq!(
+        marker_count(&spin_file),
+        0,
+        "cancel mode should stop the long loop through its trampoline"
     );
 
     let _ = fs::remove_dir_all(&workspace);

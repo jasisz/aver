@@ -2873,10 +2873,13 @@ fn main() -> Unit
 }
 
 /// A mutual tail-call group keeps a param every member hands on unchanged
-/// (an invariant) out of the trampoline's state. Two shapes used to break
-/// the build: a member that names the invariant differently (`o` for `op`),
-/// and a bounce that passes the invariant at a second, ordinary position
-/// too (`walkB(op, op, ..)`).
+/// (an invariant) out of the trampoline's state: a record behind `&T`, a
+/// `Bool` or `Float` by value. Two shapes used to break the build: a member
+/// that names the invariant differently (`o` for `op`), and a bounce that
+/// passes the invariant at a second, ordinary position too (`walkB(op, op,
+/// ..)`). Members of different arity that hold two invariants in another
+/// order (`orderB`) used to get them swapped. A flag renamed between members,
+/// passed twice, or changed on one path stays in the state.
 #[test]
 fn mutual_tail_group_invariant_renamed_or_passed_twice_matches_vm() {
     let src = r#"module MutualInvariant
@@ -2911,14 +2914,75 @@ fn twiceB(op: Op, x: Op, n: Int) -> Int
         true -> x.shift + 1
         false -> twiceA(op, Op(shift = x.shift + 1, label = x.label), n - 1)
 
+fn pick(flag: Bool, x: Int, y: Int) -> Int
+    ? "x when the flag is set."
+    match flag
+        true -> x
+        false -> y
+
+fn orderA(op: Op, cfg: Op, flag: Bool, n: Int) -> Int
+    ? "Two records and a flag, op first."
+    match n == 0
+        true -> pick(flag, op.shift * 10 + cfg.shift, 0)
+        false -> orderB(n - 1, cfg, flag, op, 0)
+
+fn orderB(n: Int, cfg: Op, flag: Bool, op: Op, k: Int) -> Int
+    ? "The same three, cfg first, and one param more."
+    match n == 0
+        true -> pick(flag, op.shift * 10 + cfg.shift + k, 1)
+        false -> orderA(op, cfg, flag, n - 1)
+
+fn renA(flag: Bool, n: Int, acc: Int) -> Int
+    ? "A flag the other member calls f."
+    match n == 0
+        true -> acc
+        false -> renB(flag, n - 1, pick(flag, acc + 1, acc + 2))
+
+fn renB(f: Bool, n: Int, acc: Int) -> Int
+    ? "The same flag as f."
+    match n == 0
+        true -> acc
+        false -> renA(f, n - 1, pick(f, acc + 3, acc + 4))
+
+fn flagTwiceA(flag: Bool, other: Bool, n: Int) -> Int
+    ? "Hands the flag on, and in place of other as well."
+    match n == 0
+        true -> pick(other, 1, 2)
+        false -> flagTwiceB(flag, flag, n - 1)
+
+fn flagTwiceB(flag: Bool, other: Bool, n: Int) -> Int
+    ? "Turns other over."
+    match n == 0
+        true -> pick(other, 3, 4)
+        false -> flagTwiceA(flag, Bool.not(other), n - 1)
+
+fn onePathA(flag: Bool, scale: Float, n: Int, acc: Int) -> Int
+    ? "Turns the flag over on one path; the float goes on unchanged."
+    match n == 0
+        true -> acc + Float.floor(scale)
+        false -> match n == 3
+            true -> onePathB(Bool.not(flag), scale, n - 1, acc + 1)
+            false -> onePathB(flag, scale, n - 1, acc + 1)
+
+fn onePathB(flag: Bool, scale: Float, n: Int, acc: Int) -> Int
+    ? "Reads the flag."
+    match n == 0
+        true -> acc
+        false -> onePathA(flag, scale, n - 1, pick(flag, acc + 10, acc - 10))
+
 fn main() -> Unit
-    ? "Runs both groups deep."
+    ? "Runs every group deep."
     ! [Console.print]
     op = Op(shift = 3, label = "op")
     Console.print("{walkA(op, 1000001, 0)} {walkB(op, 10, 0)}")
     Console.print("{twiceA(op, op, 1000001)} {twiceB(op, op, 10)}")
+    cfg = Op(shift = 5, label = "cfg")
+    Console.print("{orderA(op, cfg, true, 1000001)} {orderB(1000001, cfg, true, op, 7)} {orderB(10, cfg, false, op, 7)}")
+    Console.print("{renA(true, 1000001, 0)} {renB(false, 1000001, 0)}")
+    Console.print("{flagTwiceA(true, false, 1000001)} {flagTwiceB(false, true, 10)}")
+    Console.print("{onePathA(true, 2.5, 1000001, 0)} {onePathB(false, 2.5, 10, 0)}")
 "#;
-    let expected = "1000004 11\n4 4";
+    let expected = "1000004 11\n4 4\n35 35 1\n2000001 3000004\n3 4\n5499981 -25";
     let vm = run_vm_inline("mutual_invariant", src).expect("vm run");
     assert_eq!(vm, expected, "VM contract changed");
     let rust = build_run_rust_inline("mutual_invariant", src).expect("rust build + run");

@@ -3460,7 +3460,7 @@ fn emit_mir_capability_call(
             .collect::<Vec<_>>();
         let policy_path = generated_ident("policy_path");
         let mut lines = vec!["{".to_string()];
-        lines.push("    crate::cancel_checkpoint();".to_string());
+        lines.push("    crate::cancel_checkpoint_now();".to_string());
         for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
             lines.push(format!("    let {name}: {ty} = {value};"));
         }
@@ -3506,7 +3506,7 @@ fn emit_mir_capability_call(
         // without it, a cancelled `!`/`?!` branch could no longer
         // interrupt a service that moved onto a provider.
         if operation.is_effectful() {
-            lines.push("    crate::cancel_checkpoint();".to_string());
+            lines.push("    crate::cancel_checkpoint_now();".to_string());
         }
         for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
             lines.push(format!("    let {name}: {ty} = {value};"));
@@ -3529,7 +3529,7 @@ fn emit_mir_capability_call(
     for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
         lines.push(format!("    let {name}: {ty} = {value};"));
     }
-    lines.push("    crate::cancel_checkpoint();".to_string());
+    lines.push("    crate::cancel_checkpoint_now();".to_string());
     lines.push(format!(
         "    crate::aver_replay::invoke_capability_effect({:?}, {:?}, crate::aver_replay::effect_args({:?}, || vec![{}]), || {})",
         operation.canonical_name,
@@ -6863,7 +6863,9 @@ pub(super) fn emit_mir_mutual_tco_block(
     scope: Option<&str>,
     visibility: &str,
 ) -> Option<String> {
-    use super::toplevel::{compute_resolved_rc_params, fn_name_to_variant};
+    use super::toplevel::{
+        compute_resolved_copy_invariants, compute_resolved_rc_params, fn_name_to_variant,
+    };
 
     if group_fns.is_empty() {
         return None;
@@ -6874,16 +6876,25 @@ pub(super) fn emit_mir_mutual_tco_block(
     let state_name = super::syntax::generated_ident("state");
     let ret_type = super::types::type_to_rust_scoped(&group_fns[0].return_type, ctx, scope);
 
-    let rc_indices = compute_resolved_rc_params(group_fns);
-    let rc_names: HashSet<String> = rc_indices
-        .iter()
-        .filter_map(|&i| group_fns[0].params.get(i).map(|(name, _)| name.clone()))
-        .collect();
+    let names_at = |indices: HashSet<usize>| -> HashSet<String> {
+        indices
+            .iter()
+            .filter_map(|&i| group_fns[0].params.get(i).map(|(name, _)| name.clone()))
+            .collect()
+    };
+    // Invariants read through `&T`, and invariants of a Copy type taken by
+    // value; neither is in the state, and every member calls each the same.
+    let rc_names = names_at(compute_resolved_rc_params(group_fns));
+    let copy_names = names_at(compute_resolved_copy_invariants(group_fns));
+    let invariant_names: HashSet<String> = rc_names.union(&copy_names).cloned().collect();
     // Which params of each member are the group's invariants, by position.
     let members: HashMap<crate::ir::FnId, Vec<bool>> = group_fns
         .iter()
         .map(|fd| {
-            let invariants = fd.params.iter().map(|(name, _)| rc_names.contains(name));
+            let invariants = fd
+                .params
+                .iter()
+                .map(|(name, _)| invariant_names.contains(name));
             (fd.fn_id, invariants.collect())
         })
         .collect();
@@ -6940,7 +6951,7 @@ pub(super) fn emit_mir_mutual_tco_block(
         let param_types: Vec<String> = fd
             .params
             .iter()
-            .filter(|(name, _)| !rc_names.contains(name))
+            .filter(|(name, _)| !invariant_names.contains(name))
             .map(|(_, ty)| super::types::type_to_rust_scoped(ty, ctx, scope))
             .collect();
         if param_types.is_empty() {
@@ -6952,8 +6963,10 @@ pub(super) fn emit_mir_mutual_tco_block(
     enum_lines.push("}".to_string());
     sections.push(enum_lines.join("\n"));
 
-    // 2. Trampoline fn — rc params are extra `&T` args.
-    let rc_extra_params: String = mutual_rc_param_sig(group_fns[0], &rc_names, ctx, scope);
+    // 2. Trampoline fn — invariants are extra args, `&T` or a Copy value,
+    //    in the first member's order.
+    let rc_extra_params: String =
+        mutual_rc_param_sig(group_fns[0], &rc_names, &copy_names, ctx, scope);
     let mut tramp_lines = Vec::new();
     tramp_lines.push(format!(
         "fn {}(mut {}: {}{}) -> {} {{",
@@ -6966,7 +6979,7 @@ pub(super) fn emit_mir_mutual_tco_block(
         let param_bindings: Vec<String> = fd
             .params
             .iter()
-            .filter(|(name, _)| !rc_names.contains(name))
+            .filter(|(name, _)| !invariant_names.contains(name))
             .map(|(name, _)| explicit_parameter_pattern(name, true))
             .collect();
         let binding = if param_bindings.is_empty() {
@@ -6984,7 +6997,18 @@ pub(super) fn emit_mir_mutual_tco_block(
     sections.push(tramp_lines.join("\n"));
 
     // 3. Wrapper fns — borrow-by-default params, clone borrowed into the
-    //    enum variant, pass rc params as `&T` extra trampoline args.
+    //    enum variant, pass the invariants as extra trampoline args in the
+    //    trampoline's order (every member has each under the same name, not
+    //    necessarily at the same place).
+    let rc_extra_args: String = group_fns[0]
+        .params
+        .iter()
+        .filter(|(name, _)| invariant_names.contains(name))
+        .map(|(name, _)| match rc_names.contains(name) {
+            true => format!(", &{}", aver_name_to_rust(name)),
+            false => format!(", {}", aver_name_to_rust(name)),
+        })
+        .collect();
     for fd in group_fns {
         let fn_name = aver_name_to_rust(&fd.name);
         let variant = fn_name_to_variant(&fd.name);
@@ -6996,7 +7020,7 @@ pub(super) fn emit_mir_mutual_tco_block(
             .params
             .iter()
             .enumerate()
-            .filter(|(_, (name, _))| !rc_names.contains(name))
+            .filter(|(_, (name, _))| !invariant_names.contains(name))
             .map(|(i, (name, ty))| {
                 let rust_name = aver_name_to_rust(name);
                 if should_borrow_param(ty) && !by_value[i] {
@@ -7015,19 +7039,6 @@ pub(super) fn emit_mir_mutual_tco_block(
                 variant,
                 variant_arg_names.join(", ")
             )
-        };
-        let rc_extra_args: String = {
-            let parts: Vec<String> = fd
-                .params
-                .iter()
-                .filter(|(name, _)| rc_names.contains(name))
-                .map(|(name, _)| format!("&{}", aver_name_to_rust(name)))
-                .collect();
-            if parts.is_empty() {
-                String::new()
-            } else {
-                format!(", {}", parts.join(", "))
-            }
         };
         let mut wrapper = Vec::new();
         if let Some(desc) = &fd.desc {
@@ -7048,27 +7059,34 @@ pub(super) fn emit_mir_mutual_tco_block(
     Some(sections.join("\n\n"))
 }
 
-/// Build the rc-param extra `&T` argument list for the mutual
-/// trampoline signature (`, x: &T, y: &U`), or empty when no rc params.
+/// Build the invariants' extra params of the mutual trampoline signature
+/// (`, x: &T, mut b: bool`), or empty when there are none: `&T` for an rc
+/// invariant, the value for a Copy one.
 fn mutual_rc_param_sig(
     fd: &crate::ir::hir::ResolvedFnDef,
     rc_names: &HashSet<String>,
+    copy_names: &HashSet<String>,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
-    if rc_names.is_empty() {
-        return String::new();
-    }
     let parts: Vec<String> = fd
         .params
         .iter()
-        .filter(|(name, _)| rc_names.contains(name))
-        .map(|(name, ty)| {
-            format!(
-                "{}: &{}",
-                explicit_parameter_pattern(name, false),
-                super::types::type_to_rust_scoped(ty, ctx, scope)
-            )
+        .filter_map(|(name, ty)| {
+            let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
+            if rc_names.contains(name) {
+                Some(format!(
+                    "{}: &{rust_type}",
+                    explicit_parameter_pattern(name, false)
+                ))
+            } else if copy_names.contains(name) {
+                Some(format!(
+                    "{}: {rust_type}",
+                    explicit_parameter_pattern(name, true)
+                ))
+            } else {
+                None
+            }
         })
         .collect();
     if parts.is_empty() {

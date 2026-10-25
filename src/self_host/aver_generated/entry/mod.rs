@@ -872,7 +872,7 @@ pub fn loadProgramFromFile(
     crate::cancel_checkpoint();
     let source @ _ = {
         let __provider_arg0: AverStr = path;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
             "recorded",
@@ -1003,7 +1003,7 @@ pub fn printIfNotUnit(s @ _: AverStr) -> () {
     if (&*s == "()") {
         {
             let __provider_arg0: AverStr = ::aver_rt::str_lit!("");
-            crate::cancel_checkpoint();
+            crate::cancel_checkpoint_now();
             crate::aver_replay::invoke_capability_effect(
                 "Console.print",
                 "reissued",
@@ -1026,7 +1026,7 @@ pub fn printIfNotUnit(s @ _: AverStr) -> () {
     } else {
         {
             let __provider_arg0: AverStr = s;
-            crate::cancel_checkpoint();
+            crate::cancel_checkpoint_now();
             crate::aver_replay::invoke_capability_effect(
                 "Console.print",
                 "reissued",
@@ -1059,7 +1059,7 @@ pub fn runDemo() -> Result<(), AverStr> {
     ));
     {
         let __provider_arg0: AverStr = ::aver_rt::str_lit!("=== Self-Hosted Mini Aver ===");
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
@@ -1081,7 +1081,7 @@ pub fn runDemo() -> Result<(), AverStr> {
     };
     {
         let __provider_arg0: AverStr = ::aver_rt::str_lit!("");
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
@@ -1105,7 +1105,7 @@ pub fn runDemo() -> Result<(), AverStr> {
         let __provider_arg0: AverStr = ::aver_rt::str_lit!(
             "Usage: aver run self_hosted/main.av --module-root self_hosted -- <file.av> <module-root> [guest args...]"
         );
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
@@ -1127,7 +1127,7 @@ pub fn runDemo() -> Result<(), AverStr> {
     };
     {
         let __provider_arg0: AverStr = ::aver_rt::str_lit!("");
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
@@ -1149,7 +1149,7 @@ pub fn runDemo() -> Result<(), AverStr> {
     };
     {
         let __provider_arg0: AverStr = ::aver_rt::str_lit!("Built-in demos:");
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
@@ -1181,7 +1181,7 @@ pub fn runDemo() -> Result<(), AverStr> {
             __b.push_display(&(demoArithmetic));
             __b
         });
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
@@ -1213,7 +1213,7 @@ pub fn runDemo() -> Result<(), AverStr> {
             __b.push_display(&(demoDouble));
             __b
         });
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
@@ -1245,7 +1245,7 @@ pub fn runDemo() -> Result<(), AverStr> {
             __b.push_display(&(demoFib));
             __b
         });
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
@@ -1292,7 +1292,7 @@ pub fn loadOneModule__indexed(
     );
     let source @ _ = {
         let __provider_arg0: AverStr = path;
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
             "recorded",
@@ -1346,7 +1346,7 @@ pub fn findModulePath__indexed(
         let path @ _ = modulePathFromName__indexed(dep.clone(), root.clone(), __str_index.clone());
         if {
             let __provider_arg0: AverStr = path.clone();
-            crate::cancel_checkpoint();
+            crate::cancel_checkpoint_now();
             crate::aver_replay::invoke_capability_effect(
                 "Disk.exists",
                 "recorded",
@@ -1659,7 +1659,7 @@ pub fn shiftFnIdsInArms__collected(
 pub fn main() -> Result<(), AverStr> {
     crate::cancel_checkpoint();
     let args @ _ = {
-        crate::cancel_checkpoint();
+        crate::cancel_checkpoint_now();
         crate::aver_replay::invoke_capability_effect(
             "Args.get",
             "recorded",

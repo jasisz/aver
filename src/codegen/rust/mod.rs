@@ -3378,7 +3378,7 @@ fn main() -> Result<String, String>
         // goes through the typed provider door — but the cancel
         // checkpoint must still fire before the host boundary, exactly
         // like the builtin table always did.
-        assert!(entry.contains("crate::cancel_checkpoint();"));
+        assert!(entry.contains("crate::cancel_checkpoint_now();"));
         assert!(entry.contains("crate::provider_support::invoke"));
         assert!(!entry.contains("aver_rt::read_text"));
     }

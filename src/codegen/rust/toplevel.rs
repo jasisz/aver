@@ -1828,16 +1828,34 @@ fn is_expensive_clone_type(ty: &crate::types::Type) -> bool {
 pub(super) fn compute_resolved_rc_params(
     group_fns: &[&crate::ir::hir::ResolvedFnDef],
 ) -> HashSet<usize> {
+    compute_resolved_invariants(group_fns, is_expensive_clone_type)
+}
+
+/// The group's invariants of a Copy type (`Bool`, `Float`, `Unit`): kept out
+/// of the trampoline's state as by-value params of the trampoline, so a
+/// bounce neither writes nor reads them.
+pub(super) fn compute_resolved_copy_invariants(
+    group_fns: &[&crate::ir::hir::ResolvedFnDef],
+) -> HashSet<usize> {
+    compute_resolved_invariants(group_fns, super::emit_ctx::is_copy_type)
+}
+
+/// Positions in the first member of the params of a type `kind` takes that
+/// every member hands on unchanged in every tail call within the group.
+fn compute_resolved_invariants(
+    group_fns: &[&crate::ir::hir::ResolvedFnDef],
+    kind: fn(&crate::types::Type) -> bool,
+) -> HashSet<usize> {
     if group_fns.is_empty() {
         return HashSet::new();
     }
 
     let arity = group_fns[0].params.len();
     if group_fns.iter().all(|fd| fd.params.len() == arity) {
-        return compute_resolved_rc_params_by_index(group_fns);
+        return compute_resolved_rc_params_by_index(group_fns, kind);
     }
 
-    compute_resolved_rc_params_by_name(group_fns)
+    compute_resolved_rc_params_by_name(group_fns, kind)
 }
 
 /// Parameter positions a self-tail call passes through unchanged. Unlike the
@@ -1854,6 +1872,7 @@ pub(super) fn compute_resolved_self_passthrough_params(
 
 fn compute_resolved_rc_params_by_index(
     group_fns: &[&crate::ir::hir::ResolvedFnDef],
+    kind: fn(&crate::types::Type) -> bool,
 ) -> HashSet<usize> {
     let arity = group_fns[0].params.len();
     let member_ids: HashSet<crate::ir::FnId> = group_fns.iter().map(|fd| fd.fn_id).collect();
@@ -1862,7 +1881,7 @@ fn compute_resolved_rc_params_by_index(
             // The emitter finds an invariant by name, so every member has to
             // call it the same.
             let param = &group_fns[0].params[i];
-            group_fns.iter().all(|fd| fd.params[i] == *param) && is_expensive_clone_type(&param.1)
+            group_fns.iter().all(|fd| fd.params[i] == *param) && kind(&param.1)
         })
         .collect();
 
@@ -1877,6 +1896,7 @@ fn compute_resolved_rc_params_by_index(
 
 fn compute_resolved_rc_params_by_name(
     group_fns: &[&crate::ir::hir::ResolvedFnDef],
+    kind: fn(&crate::types::Type) -> bool,
 ) -> HashSet<usize> {
     let fn_param_map: HashMap<crate::ir::FnId, HashMap<&str, (usize, &crate::types::Type)>> =
         group_fns
@@ -1897,7 +1917,7 @@ fn compute_resolved_rc_params_by_name(
         .params
         .iter()
         .filter(|(name, ty)| {
-            is_expensive_clone_type(ty)
+            kind(ty)
                 && group_fns
                     .iter()
                     .all(|fd| fd.params.iter().any(|(n, t)| n == name && t == ty))
