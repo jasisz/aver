@@ -22,11 +22,12 @@
 //! one drops it when it ends.
 
 use wasm_encoder::{
-    BlockType, ConstExpr, Function, GlobalSection, GlobalType, HeapType, Instruction, RefType,
-    StorageType, TypeSection, ValType,
+    ConstExpr, Function, GlobalSection, GlobalType, HeapType, Instruction, RefType, StorageType,
+    TypeSection, ValType,
 };
 
 use super::super::types::TypeRegistry;
+use super::super::{WasmGcError, wat_helper};
 
 /// Entries of a table when its first one comes.
 const TABLE_START: i32 = 1 << 10;
@@ -196,398 +197,151 @@ impl TableSlots {
     }
 
     /// The bodies of the four functions, in function order.
-    pub(crate) fn emit_bodies(&self, g: &TableGlobals) -> [Function; 4] {
-        let depth = self.g_count(g) + 1;
-        let enter = {
-            let mut f = Function::new(Vec::new());
-            emit(
-                &mut f,
-                &[
-                    Instruction::GlobalGet(depth),
-                    Instruction::I32Const(1),
-                    Instruction::I32Add,
-                    Instruction::GlobalSet(depth),
-                    Instruction::End,
-                ],
-            );
-            f
+    pub(crate) fn emit_bodies(&self, g: &TableGlobals) -> Result<[Function; 4], WasmGcError> {
+        let pair = self.entry == Entry::Pair;
+        // A slot holds two nodes of a pair, so its first is at twice its index.
+        let first = if pair { "i32.const 1 i32.shl" } else { "" };
+        let nodes_param = if pair {
+            "(param $a eqref) (param $b eqref)"
+        } else {
+            "(param $a eqref)"
         };
+        let (found_ty, missing, found, second) = if pair {
+            (
+                "i32",
+                "i32.const 0",
+                "i32.const 1",
+                "local.get $nodes local.get $slot i32.const 1 i32.shl i32.const 1 i32.add
+                 array.get $nodes local.get $b ref.eq i32.and",
+            )
+        } else {
+            (
+                "i64",
+                "i64.const -1",
+                "global.get $hashes local.get $slot array.get $hashes i64.extend_i32_u",
+                "",
+            )
+        };
+        let locals = "(local $nodes (ref null $nodes)) (local $mask i32) (local $slot i32)
+                      (local $left i32)";
+        // Sets $mask to the slots less one and $slot to where $key falls.
+        let home = format!(
+            "local.get $nodes array.len i32.const {shift} i32.shr_u i32.const 1 i32.sub
+             local.set $mask
+             local.get $key i32.const 1 i32.shr_u local.get $mask i32.and local.set $slot
+             i32.const {PROBES} local.set $left",
+            shift = u32::from(pair),
+        );
+        let lookup = format!(
+            r#"{nodes_param} (param $key i32) (result {found_ty}) {locals} (local $first eqref)
+            global.get $nodes local.tee $nodes ref.is_null
+            (if (then {missing} return))
+            {home}
+            (loop $probe
+              local.get $nodes local.get $slot {first} array.get $nodes local.tee $first
+              ref.is_null (if (then {missing} return))
+              local.get $first local.get $a ref.eq {second}
+              (if (then {found} return))
+              local.get $left i32.const 1 i32.sub local.tee $left
+              (if (then
+                    local.get $slot i32.const 1 i32.add local.get $mask i32.and local.set $slot
+                    br $probe)))
+            {missing}"#
+        );
+        // Makes `slots` (pushed by `slots`) empty entries.
+        let new_arrays = |slots: &str| {
+            let mut out = format!(
+                "{slots} {double} array.new_default $nodes global.set $nodes",
+                double = if pair { "i32.const 1 i32.shl" } else { "" },
+            );
+            if !pair {
+                out += &format!(" {slots} array.new_default $hashes global.set $hashes");
+            }
+            out
+        };
+        let insert = format!(
+            r#"{nodes_param} (param $key i32) {hash_param} {locals}
+            global.get $nodes ref.is_null
+            (if (then {start} i32.const 0 global.set $count)
+              (else
+                ;; Half full: twice the size up to the largest, empty either way.
+                global.get $nodes array.len i32.const {half} i32.shr_u local.tee $mask
+                global.get $count i32.le_u
+                (if (then
+                      local.get $mask i32.const {max_half} i32.lt_u
+                      (if (then {grow})
+                        (else
+                          global.get $nodes i32.const 0 ref.null eq
+                          global.get $nodes array.len array.fill $nodes))
+                      i32.const 0 global.set $count))))
+            global.get $nodes local.set $nodes
+            {home}
+            (block $free
+              (loop $probe
+                local.get $nodes local.get $slot {first} array.get $nodes ref.is_null
+                (if (then global.get $count i32.const 1 i32.add global.set $count br $free))
+                local.get $left i32.const 1 i32.sub local.tee $left
+                (if (then
+                      local.get $slot i32.const 1 i32.add local.get $mask i32.and local.set $slot
+                      br $probe)))
+              ;; Every slot within reach is taken: write over one in turn.
+              global.get $turn i32.const 1 i32.add global.set $turn
+              global.get $turn i32.const {window} i32.and
+              local.get $key i32.const 1 i32.shr_u i32.add local.get $mask i32.and
+              local.set $slot)
+            local.get $nodes local.get $slot {first} local.get $a array.set $nodes
+            {store}"#,
+            hash_param = if pair { "" } else { "(param $hash i32)" },
+            start = new_arrays(&format!("i32.const {TABLE_START}")),
+            half = 1 + u32::from(pair),
+            max_half = TABLE_MAX / 2,
+            grow = new_arrays("local.get $mask i32.const 2 i32.shl"),
+            window = PROBES - 1,
+            store = if pair {
+                "local.get $nodes local.get $slot i32.const 1 i32.shl i32.const 1 i32.add
+                 local.get $b array.set $nodes"
+            } else {
+                "global.get $hashes local.get $slot local.get $hash array.set $hashes"
+            },
+        );
+        let enter = "global.get $depth i32.const 1 i32.add global.set $depth";
         // The outermost comparison with memory drops the table as it ends.
-        let leave = {
-            let mut f = Function::new(Vec::new());
-            emit(
-                &mut f,
-                &[
-                    Instruction::GlobalGet(depth),
-                    Instruction::I32Const(1),
-                    Instruction::I32Sub,
-                    Instruction::GlobalSet(depth),
-                    Instruction::GlobalGet(depth),
-                    Instruction::I32Eqz,
-                    Instruction::If(BlockType::Empty),
-                    Instruction::RefNull(HeapType::Concrete(self.nodes_type())),
-                    Instruction::GlobalSet(g.first),
-                ],
+        let leave = format!(
+            "global.get $depth i32.const 1 i32.sub global.set $depth
+             global.get $depth i32.eqz
+             (if (then ref.null $nodes global.set $nodes {hashes} i32.const 0 global.set $count))",
+            hashes = if pair {
+                ""
+            } else {
+                "ref.null $hashes global.set $hashes"
+            },
+        );
+        let module = |body: &str| {
+            let mut wat = format!(
+                "(module\n{}(type $nodes (array (mut eqref)))\n",
+                wat_helper::padding_types(self.nodes_type())
             );
-            if self.entry.hashes() {
-                emit(
-                    &mut f,
-                    &[
-                        Instruction::RefNull(HeapType::Concrete(self.hashes_type())),
-                        Instruction::GlobalSet(g.first + 1),
-                    ],
-                );
+            if !pair {
+                wat += "(type $hashes (array (mut i32)))\n";
             }
-            emit(
-                &mut f,
-                &[
-                    Instruction::I32Const(0),
-                    Instruction::GlobalSet(self.g_count(g)),
-                    Instruction::End,
-                    Instruction::End,
-                ],
-            );
-            f
-        };
-        [self.emit_lookup(g), self.emit_insert(g), enter, leave]
-    }
-
-    fn g_count(&self, g: &TableGlobals) -> u32 {
-        g.first + 1 + u32::from(self.entry.hashes())
-    }
-
-    /// Pushes the index in the node array of node `r` of the slot in local
-    /// `slot`.
-    fn node_index(&self, f: &mut Function, slot: u32, r: u32) {
-        f.instruction(&Instruction::LocalGet(slot));
-        if self.entry.refs() == 2 {
-            emit(f, &[Instruction::I32Const(1), Instruction::I32Shl]);
-        }
-        if r > 0 {
-            emit(f, &[Instruction::I32Const(r as i32), Instruction::I32Add]);
-        }
-    }
-
-    /// Sets local `mask` to the slots of the node array in local `nodes`
-    /// less one, and local `slot` to where the key in local `key` falls.
-    fn home(&self, f: &mut Function, nodes: u32, key: u32, mask: u32, slot: u32) {
-        emit(f, &[Instruction::LocalGet(nodes), Instruction::ArrayLen]);
-        if self.entry.refs() == 2 {
-            emit(f, &[Instruction::I32Const(1), Instruction::I32ShrU]);
-        }
-        emit(
-            f,
-            &[
-                Instruction::I32Const(1),
-                Instruction::I32Sub,
-                Instruction::LocalSet(mask),
-                Instruction::LocalGet(key),
-                Instruction::I32Const(1),
-                Instruction::I32ShrU,
-                Instruction::LocalGet(mask),
-                Instruction::I32And,
-                Instruction::LocalSet(slot),
-            ],
-        );
-    }
-
-    /// `lookup(nodes.., key)`: 1 for a remembered pair and 0 otherwise; for a
-    /// hash its remembered hash, or -1.
-    fn emit_lookup(&self, g: &TableGlobals) -> Function {
-        let refs = self.entry.refs();
-        let key = refs;
-        // Locals: the node array, its mask, the slot, the probes left, the
-        // first node of the slot.
-        let (nodes, mask, slot, left, first) = (key + 1, key + 2, key + 3, key + 4, key + 5);
-        let mut f = Function::new(vec![
-            (1, array_ref(self.nodes_type())),
-            (3, ValType::I32),
-            (1, eq_ref()),
-        ]);
-        let missing = match self.entry {
-            Entry::Pair => Instruction::I32Const(0),
-            Entry::Hash => Instruction::I64Const(-1),
-        };
-        emit(
-            &mut f,
-            &[
-                Instruction::GlobalGet(g.first),
-                Instruction::LocalTee(nodes),
-                Instruction::RefIsNull,
-                Instruction::If(BlockType::Empty),
-                missing.clone(),
-                Instruction::Return,
-                Instruction::End,
-            ],
-        );
-        self.home(&mut f, nodes, key, mask, slot);
-        emit(
-            &mut f,
-            &[
-                Instruction::I32Const(PROBES),
-                Instruction::LocalSet(left),
-                Instruction::Loop(BlockType::Empty),
-                Instruction::LocalGet(nodes),
-            ],
-        );
-        self.node_index(&mut f, slot, 0);
-        emit(
-            &mut f,
-            &[
-                Instruction::ArrayGet(self.nodes_type()),
-                Instruction::LocalTee(first),
-                Instruction::RefIsNull,
-                Instruction::If(BlockType::Empty),
-                missing.clone(),
-                Instruction::Return,
-                Instruction::End,
-                Instruction::LocalGet(first),
-                Instruction::LocalGet(0),
-                Instruction::RefEq,
-            ],
-        );
-        if refs == 2 {
-            f.instruction(&Instruction::LocalGet(nodes));
-            self.node_index(&mut f, slot, 1);
-            emit(
-                &mut f,
-                &[
-                    Instruction::ArrayGet(self.nodes_type()),
-                    Instruction::LocalGet(1),
-                    Instruction::RefEq,
-                    Instruction::I32And,
-                ],
-            );
-        }
-        f.instruction(&Instruction::If(BlockType::Empty));
-        match self.entry {
-            Entry::Pair => {
-                f.instruction(&Instruction::I32Const(1));
+            for _ in 0..g.first {
+                wat += "(global (mut i32) (i32.const 0))\n";
             }
-            Entry::Hash => emit(
-                &mut f,
-                &[
-                    Instruction::GlobalGet(g.first + 1),
-                    Instruction::LocalGet(slot),
-                    Instruction::ArrayGet(self.hashes_type()),
-                    Instruction::I64ExtendI32U,
-                ],
-            ),
-        }
-        emit(
-            &mut f,
-            &[
-                Instruction::Return,
-                Instruction::End,
-                Instruction::LocalGet(left),
-                Instruction::I32Const(1),
-                Instruction::I32Sub,
-                Instruction::LocalTee(left),
-                Instruction::I32Eqz,
-                Instruction::If(BlockType::Empty),
-                missing,
-                Instruction::Return,
-                Instruction::End,
-                Instruction::LocalGet(slot),
-                Instruction::I32Const(1),
-                Instruction::I32Add,
-                Instruction::LocalGet(mask),
-                Instruction::I32And,
-                Instruction::LocalSet(slot),
-                Instruction::Br(0),
-                Instruction::End,
-                Instruction::Unreachable,
-                Instruction::End,
-            ],
-        );
-        f
-    }
-
-    /// Sets the arrays to `size` (pushed by `size`) empty entries.
-    fn new_arrays(&self, f: &mut Function, g: &TableGlobals, size: &dyn Fn(&mut Function)) {
-        size(f);
-        if self.entry.refs() == 2 {
-            emit(f, &[Instruction::I32Const(1), Instruction::I32Shl]);
-        }
-        emit(
-            f,
-            &[
-                Instruction::ArrayNewDefault(self.nodes_type()),
-                Instruction::GlobalSet(g.first),
-            ],
-        );
-        if self.entry.hashes() {
-            size(f);
-            emit(
-                f,
-                &[
-                    Instruction::ArrayNewDefault(self.hashes_type()),
-                    Instruction::GlobalSet(g.first + 1),
-                ],
-            );
-        }
-    }
-
-    /// `insert(nodes.., key, [hash])`: makes the table on the first entry and
-    /// a larger, empty one when it is half full, then writes the entry in the
-    /// first free slot within reach of its key, or over one of them in turn.
-    fn emit_insert(&self, g: &TableGlobals) -> Function {
-        let refs = self.entry.refs();
-        let key = refs;
-        let params = refs + 1 + u32::from(self.entry.hashes());
-        // Locals: the node array, its mask, the slot, the probes left.
-        let (nodes, mask, slot, left) = (params, params + 1, params + 2, params + 3);
-        let mut f = Function::new(vec![(1, array_ref(self.nodes_type())), (3, ValType::I32)]);
-        let count = self.g_count(g);
-        let turn = count + 2;
-        emit(
-            &mut f,
-            &[
-                Instruction::GlobalGet(g.first),
-                Instruction::RefIsNull,
-                Instruction::If(BlockType::Empty),
-            ],
-        );
-        self.new_arrays(&mut f, g, &|f| {
-            f.instruction(&Instruction::I32Const(TABLE_START));
-        });
-        // Half full: twice the size up to the largest, empty either way.
-        emit(
-            &mut f,
-            &[
-                Instruction::Else,
-                Instruction::GlobalGet(g.first),
-                Instruction::ArrayLen,
-            ],
-        );
-        // Local `mask` holds half the slots for now.
-        emit(
-            &mut f,
-            &[
-                Instruction::I32Const(refs as i32),
-                Instruction::I32ShrU,
-                Instruction::LocalTee(mask),
-                Instruction::GlobalGet(count),
-                Instruction::I32LeU,
-                Instruction::If(BlockType::Empty),
-                Instruction::LocalGet(mask),
-                Instruction::I32Const(TABLE_MAX / 2),
-                Instruction::I32LtU,
-                Instruction::If(BlockType::Empty),
-            ],
-        );
-        self.new_arrays(&mut f, g, &|f| {
-            emit(
-                f,
-                &[
-                    Instruction::LocalGet(mask),
-                    Instruction::I32Const(2),
-                    Instruction::I32Shl,
-                ],
-            );
-        });
-        emit(
-            &mut f,
-            &[
-                Instruction::Else,
-                Instruction::GlobalGet(g.first),
-                Instruction::I32Const(0),
-                Instruction::RefNull(HeapType::Abstract {
-                    shared: false,
-                    ty: wasm_encoder::AbstractHeapType::Eq,
-                }),
-                Instruction::GlobalGet(g.first),
-                Instruction::ArrayLen,
-                Instruction::ArrayFill(self.nodes_type()),
-                Instruction::End,
-                Instruction::I32Const(0),
-                Instruction::GlobalSet(count),
-                Instruction::End,
-                Instruction::End,
-                Instruction::GlobalGet(g.first),
-                Instruction::LocalSet(nodes),
-            ],
-        );
-        self.home(&mut f, nodes, key, mask, slot);
-        emit(
-            &mut f,
-            &[
-                Instruction::I32Const(PROBES),
-                Instruction::LocalSet(left),
-                Instruction::Block(BlockType::Empty),
-                Instruction::Loop(BlockType::Empty),
-                Instruction::LocalGet(nodes),
-            ],
-        );
-        self.node_index(&mut f, slot, 0);
-        emit(
-            &mut f,
-            &[
-                Instruction::ArrayGet(self.nodes_type()),
-                Instruction::RefIsNull,
-                Instruction::If(BlockType::Empty),
-                Instruction::GlobalGet(count),
-                Instruction::I32Const(1),
-                Instruction::I32Add,
-                Instruction::GlobalSet(count),
-                Instruction::Br(2),
-                Instruction::End,
-                Instruction::LocalGet(left),
-                Instruction::I32Const(1),
-                Instruction::I32Sub,
-                Instruction::LocalTee(left),
-                Instruction::If(BlockType::Empty),
-                Instruction::LocalGet(slot),
-                Instruction::I32Const(1),
-                Instruction::I32Add,
-                Instruction::LocalGet(mask),
-                Instruction::I32And,
-                Instruction::LocalSet(slot),
-                Instruction::Br(1),
-                Instruction::End,
-                Instruction::End,
-                // Every slot within reach is taken: write over one in turn.
-                Instruction::GlobalGet(turn),
-                Instruction::I32Const(1),
-                Instruction::I32Add,
-                Instruction::GlobalSet(turn),
-                Instruction::GlobalGet(turn),
-                Instruction::I32Const(PROBES - 1),
-                Instruction::I32And,
-                Instruction::LocalGet(key),
-                Instruction::I32Const(1),
-                Instruction::I32ShrU,
-                Instruction::I32Add,
-                Instruction::LocalGet(mask),
-                Instruction::I32And,
-                Instruction::LocalSet(slot),
-                Instruction::End,
-            ],
-        );
-        for r in 0..refs {
-            f.instruction(&Instruction::LocalGet(nodes));
-            self.node_index(&mut f, slot, r);
-            emit(
-                &mut f,
-                &[
-                    Instruction::LocalGet(r),
-                    Instruction::ArraySet(self.nodes_type()),
-                ],
-            );
-        }
-        if self.entry.hashes() {
-            emit(
-                &mut f,
-                &[
-                    Instruction::GlobalGet(g.first + 1),
-                    Instruction::LocalGet(slot),
-                    Instruction::LocalGet(key + 1),
-                    Instruction::ArraySet(self.hashes_type()),
-                ],
-            );
-        }
-        f.instruction(&Instruction::End);
-        f
+            wat += "(global $nodes (mut (ref null $nodes)) (ref.null $nodes))\n";
+            if !pair {
+                wat += "(global $hashes (mut (ref null $hashes)) (ref.null $hashes))\n";
+            }
+            for name in ["count", "depth", "turn"] {
+                wat += &format!("(global ${name} (mut i32) (i32.const 0))\n");
+            }
+            wat_helper::compile_wat_helper(&format!("{wat}(func (export \"helper\") {body}))"))
+        };
+        Ok([
+            module(&lookup)?,
+            module(&insert)?,
+            module(enter)?,
+            module(&leave)?,
+        ])
     }
 }
 

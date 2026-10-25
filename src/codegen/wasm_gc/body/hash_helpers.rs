@@ -650,7 +650,7 @@ impl HashHelperRegistry {
                 let memory = Body::Memory(&remember);
                 self.emit_body(codes, name, registry, memory_map, memory)?;
             }
-            for f in table.emit_bodies(&globals.table) {
+            for f in table.emit_bodies(&globals.table)? {
                 codes.function(&f);
             }
             if self.string_type.is_some() {

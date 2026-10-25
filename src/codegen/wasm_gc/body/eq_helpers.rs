@@ -698,7 +698,7 @@ impl EqHelperRegistry {
                     )?;
                 }
             }
-            for f in walks.table.emit_bodies(globals) {
+            for f in walks.table.emit_bodies(globals)? {
                 codes.function(&f);
             }
         }
