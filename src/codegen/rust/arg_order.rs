@@ -15,7 +15,11 @@
 //!
 //! Every call to a function counts, a tail call to another function too,
 //! including a bounce of a mutual trampoline, to itself as well; the self
-//! loop keeps its params in place and is emitted apart. An argument that cannot be bound (a raw `i64` the callee takes
+//! loop keeps its params in place and is emitted apart. So does a write
+//! (`Map.set`, `Map.remove`, `Vector.set`) whose later argument reads the
+//! collection last (`Map.set(t, fresh(n, t)?, v)`): the write then takes the
+//! collection over instead of copying it. A write is rewritten only then, so
+//! the shapes the emitter fuses keep theirs. An argument that cannot be bound (a raw `i64` the callee takes
 //! bare) ends the bound run, so what follows it is left in place and the
 //! order still holds. It runs on the Rust backend's own copy of the MIR,
 //! after the representation rewrite and before the by-value parameter facts
@@ -28,6 +32,7 @@ use crate::codegen::CodegenContext;
 use crate::ir::FnId;
 use crate::ir::mir::{LocalId, MirCallee, MirExpr, MirFn, MirLet, MirLocal};
 
+use super::ownership::projection_root_local;
 use super::syntax::generated_ident;
 
 /// Bind the computed arguments of every call in the program.
@@ -41,6 +46,7 @@ pub(super) fn bind_computed_arguments(ctx: &mut CodegenContext) {
         .filter(|(_, mir_fn)| !mir_fn.repr.bare_return)
         .map(|(id, _)| *id)
         .collect();
+    let builtins = &program.builtins;
     for mir_fn in program.fns.values_mut() {
         // A member of a mutual trampoline calls itself by a bounce too.
         let self_bounces = ctx.mutual_tco_members.contains(&mir_fn.fn_id);
@@ -48,7 +54,7 @@ pub(super) fn bind_computed_arguments(ctx: &mut CodegenContext) {
             &mut mir_fn.body,
             Spanned::bare(MirExpr::Literal(Spanned::bare(crate::ast::Literal::Unit))),
         );
-        rewrite(&mut body, mir_fn, &boxed_return, self_bounces);
+        rewrite(&mut body, mir_fn, &boxed_return, builtins, self_bounces);
         mir_fn.body = body;
     }
     ctx.mir_program = Some(program);
@@ -59,13 +65,36 @@ fn rewrite(
     expr: &mut Spanned<MirExpr>,
     mir_fn: &mut MirFn,
     boxed_return: &HashSet<FnId>,
+    builtins: &[String],
     self_bounces: bool,
 ) {
     crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
-        rewrite(child, mir_fn, boxed_return, self_bounces)
+        rewrite(child, mir_fn, boxed_return, builtins, self_bounces)
     });
+    // The collection a write takes, which a later argument must read last.
+    let mut target = None;
     let args = match &expr.node {
-        MirExpr::Call(call) if matches!(call.node.callee, MirCallee::Fn(_)) => &call.node.args,
+        MirExpr::Call(call) => match call.node.callee {
+            MirCallee::Fn(_) => &call.node.args,
+            MirCallee::Builtin(id)
+                if matches!(
+                    builtins.get(id.0 as usize).map(String::as_str),
+                    Some("Map.set" | "Map.remove" | "Vector.set")
+                ) =>
+            {
+                let Some(root) = call
+                    .node
+                    .args
+                    .first()
+                    .and_then(|a| projection_root_local(&a.node))
+                else {
+                    return;
+                };
+                target = Some(root.slot);
+                &call.node.args
+            }
+            _ => return,
+        },
         MirExpr::TailCall(call) if self_bounces || call.node.target != mir_fn.fn_id => {
             &call.node.args
         }
@@ -78,6 +107,15 @@ fn rewrite(
         .filter(|(_, arg)| !read(&arg.node))
         .map_while(|(j, arg)| bindable(arg, boxed_return).then_some(j))
         .collect();
+    if let Some(root) = target {
+        let mut last = Vec::new();
+        for &j in &bound {
+            collect_last_use_slots(&args[j].node, &mut last);
+        }
+        if !last.contains(&root) {
+            return;
+        }
+    }
     if !bound.is_empty() {
         apply(expr, mir_fn, &bound);
     }
