@@ -12,6 +12,7 @@ mod knowing;
 pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers};
 mod ownership;
 mod pattern;
+pub(crate) mod perf_notes;
 mod policy;
 mod project;
 mod provider;
@@ -148,6 +149,7 @@ fn transpile_project(
     // transpile reports its own, not a previous one's.
     ctx.substituted_compile_errors.borrow_mut().clear();
     ctx.omitted_verify_cases.borrow_mut().clear();
+    ctx.rust_copied_targets.borrow_mut().clear();
     // ETAP-2 SLICE 1: make Int representation EXPLICIT in the MIR the Rust
     // backend codegens from. This runs ONLY here (the Rust entry) — the VM,
     // wasm-gc and Lean proof backends never call `transpile`, so
@@ -420,6 +422,7 @@ fn transpile_project(
         substituted_compile_errors: ctx.substituted_compile_errors.borrow().clone(),
         omitted_verify_cases: ctx.omitted_verify_cases.borrow().clone(),
         notes: carrier_notes,
+        perf_notes: perf_notes::collect(ctx),
         law_claims: Vec::new(),
     }
 }

@@ -603,6 +603,11 @@ pub struct CodegenContext {
     /// run as `cargo test` — but it must not be a secret either: `compile`
     /// reports what it left behind.
     pub omitted_verify_cases: std::cell::RefCell<Vec<String>>,
+    /// The Map and Vector write targets the Rust emitter cloned before the
+    /// write, by node address, and why (see `rust::perf_notes`). Written as
+    /// the emitter renders them; read into [`ProjectOutput::perf_notes`].
+    pub rust_copied_targets:
+        std::cell::RefCell<HashMap<usize, crate::codegen::rust::perf_notes::CopiedTarget>>,
     /// Universal law-claims of a certificate-model Lean emission, in emit
     /// order — see [`UniversalLawClaim`].
     ///
@@ -794,6 +799,15 @@ pub struct SubstitutedCompileError {
     pub message: String,
 }
 
+/// One line of `--perf-notes`: a place in the program, by its module (`None`
+/// for the entry) and line, and what the generated code does there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerfNote {
+    pub module: Option<String>,
+    pub line: usize,
+    pub text: String,
+}
+
 /// Output files from a codegen backend.
 pub struct ProjectOutput {
     /// Files to write: (relative_path, content).
@@ -811,6 +825,9 @@ pub struct ProjectOutput {
     /// one line each: a type shaped as a refinement carrier that keeps its
     /// `Int` field, and why.
     pub notes: Vec<String>,
+    /// Where the generated code is slower than it could be because of a
+    /// decision the backend took, for `--perf-notes`; empty for Lean.
+    pub perf_notes: Vec<PerfNote>,
     /// Universal law-claims the emission carries, in emit order. Populated by
     /// the certificate-model Lean emission only; empty everywhere else.
     pub law_claims: Vec<UniversalLawClaim>,
@@ -825,6 +842,7 @@ impl ProjectOutput {
             substituted_compile_errors: Vec::new(),
             omitted_verify_cases: Vec::new(),
             notes: Vec::new(),
+            perf_notes: Vec::new(),
             law_claims: Vec::new(),
         }
     }
@@ -1137,6 +1155,7 @@ pub fn build_context(
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
+        rust_copied_targets: Default::default(),
         universal_law_claims: std::cell::RefCell::new(Vec::new()),
         program_shape,
         resolved_program,
@@ -1641,6 +1660,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
+        rust_copied_targets: Default::default(),
         universal_law_claims: std::cell::RefCell::new(Vec::new()),
         resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
         program_shape: None,

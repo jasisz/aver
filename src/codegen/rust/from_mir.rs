@@ -7639,9 +7639,11 @@ fn try_emit_mir_fusion(
                 emit_mir_expr(&inner_args[0], ctx)?
             } else {
                 // HIR: vector via `clone_arg` (borrowed / not-proven-owned).
-                mir_clone_arg(
+                super::perf_notes::owned_write_target(
                     emit_mir_expr(&inner_args[0], ctx)?,
                     &inner_args[0].node,
+                    "Vector.set",
+                    Some(&args[1].node),
                     ctx,
                 )
             };
@@ -7796,6 +7798,18 @@ fn emit_mir_builtin_call(
     macro_rules! clone {
         ($i:expr) => {
             mir_clone_arg(emit_operand(&args[$i])?, &args[$i].node, ctx)
+        };
+    }
+    // The collection a write takes, owned (see `perf_notes`).
+    macro_rules! target {
+        ($write:expr) => {
+            super::perf_notes::owned_write_target(
+                emit_operand(&args[0])?,
+                &args[0].node,
+                $write,
+                None,
+                ctx,
+            )
         };
     }
 
@@ -8211,14 +8225,19 @@ fn emit_mir_builtin_call(
             let key = arg!(1);
             format!("{}.get(&{}).cloned()", map, key)
         }
-        "Map.set" => format!("{}.insert_owned({}, {})", clone!(0), clone!(1), clone!(2)),
+        "Map.set" => format!(
+            "{}.insert_owned({}, {})",
+            target!("Map.set"),
+            clone!(1),
+            clone!(2)
+        ),
         "Map.has" => {
             let map = arg!(0);
             let key = arg!(1);
             format!("{}.contains_key(&{})", map, key)
         }
         "Map.remove" => {
-            let map = clone!(0);
+            let map = target!("Map.remove");
             let key = arg!(1);
             format!("{}.remove_owned(&{})", map, key)
         }
@@ -8358,7 +8377,7 @@ fn emit_mir_builtin_call(
             format!("({idx}).to_usize().and_then(|{index}| {vec}.get({index}).cloned())")
         }
         "Vector.set" => {
-            let vec = clone!(0);
+            let vec = target!("Vector.set");
             let idx = arg!(1);
             let val = clone!(2);
             let index = generated_ident("i");

@@ -4437,6 +4437,30 @@ fn report_codegen_output(
     println!("  {}", build_hint.cyan());
 }
 
+/// `--perf-notes`: one line per note, at the file and line it is about.
+fn print_perf_notes(file: &str, module_root: &str, notes: &[codegen::PerfNote]) {
+    if notes.is_empty() {
+        println!("  {}", "perf notes: none".green());
+        return;
+    }
+    println!("  {}", "perf notes:".yellow());
+    for note in notes {
+        let path = match &note.module {
+            None => file.to_string(),
+            Some(module) => aver::source::find_module_file(module, module_root)
+                .map(|path| {
+                    let relative = path.strip_prefix(module_root).unwrap_or(&path);
+                    relative.display().to_string()
+                })
+                .unwrap_or_else(|| module.clone()),
+        };
+        println!(
+            "    {}",
+            format!("{path}:{}: {}", note.line, note.text).dimmed()
+        );
+    }
+}
+
 fn write_codegen_output(
     file: &str,
     output_dir: &str,
@@ -6752,6 +6776,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         module_root_override,
         target,
         check,
+        perf_notes,
         with_replay,
         policy_mode,
         guest_entry,
@@ -6951,6 +6976,9 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         process::exit(exit_code);
     }
     report_codegen_output(file, output_dir, "Rust", &build_hint, &output, check);
+    if perf_notes {
+        print_perf_notes(file, &module_root, &output.perf_notes);
+    }
     print_capability_target_accounting(
         &ctx.items,
         &ctx.modules,
@@ -8097,6 +8125,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) module_root_override: Option<&'a str>,
     pub(super) target: super::cli::CompileTarget,
     pub(super) check: bool,
+    pub(super) perf_notes: bool,
     pub(super) with_replay: bool,
     pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
     pub(super) guest_entry: Option<&'a str>,
@@ -13601,6 +13630,7 @@ error: build failed";
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
             omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
+            rust_copied_targets: Default::default(),
             universal_law_claims: std::cell::RefCell::new(Vec::new()),
             resolved_program: aver::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
