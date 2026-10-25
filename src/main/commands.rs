@@ -4428,6 +4428,12 @@ fn report_codegen_output(
             println!("    {}", note.dimmed());
         }
     }
+    if !output.notes.is_empty() {
+        println!("  {}", "notes:".yellow());
+        for note in &output.notes {
+            println!("    {}", note.dimmed());
+        }
+    }
     println!("  {}", build_hint.cyan());
 }
 

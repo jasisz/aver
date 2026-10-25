@@ -218,7 +218,7 @@ fn emit_record_impl(
     };
     // A carrier held as a raw `i64` records and replays its field as the
     // `Int` it is.
-    let i64_carrier = super::carrier::is_i64_carrier(ctx, name);
+    let i64_carrier = super::carrier::declared_i64_carrier(ctx, scope, name);
     let to_fields = fields
         .iter()
         .map(|(field_name, _)| {

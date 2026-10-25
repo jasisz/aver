@@ -1038,7 +1038,7 @@ fn emit_product_type(
     representation: RepresentationContract,
 ) -> String {
     let packed_u8 = super::uses_packed_u8(ctx, name);
-    let i64_carrier = super::carrier::is_i64_carrier(ctx, name);
+    let i64_carrier = super::carrier::declared_i64_carrier(ctx, scope, name);
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     // A boxed record (see `is_boxed_record`) keeps its fields in

@@ -6,7 +6,8 @@ module Main
         "literal arms, a binding and a wildcard; raw values inside a tuple, an option"
         "and a variant matched by literal; literal arithmetic and a call that"
         "returns a raw i64 on the right of a verify case; literal arithmetic in a"
-        "module binding."
+        "module binding; comparisons and a match with literals past the integers"
+        "AverInt holds in one word."
     exposes opaque [Word]
     effects [Console.print]
 
@@ -85,6 +86,20 @@ fn inVariant(i: Int) -> Int
         Shape.Pair(a, k) -> a * 10 + k
         Shape.Dot(_) -> 0
 
+fn wide(x: Int) -> String
+    ? "Comparisons and a match with literals past the integers held in one word."
+    a = x < 4611686018427387904
+    b = 4611686018427387904 <= x
+    c = x == -4611686018427387905
+    d = x != 9223372036854775807
+    k = match x
+        4611686018427387904 -> "two to the 62"
+        9223372036854775807 -> "the largest i64"
+        _ -> "other"
+    match x >= 4611686018427387904
+        true -> "{a} {b} {c} {d} {k} big"
+        false -> "{a} {b} {c} {d} {k} small"
+
 fn countdown(n: Int) -> Int
     ? "A counter down to zero."
     match n
@@ -120,3 +135,7 @@ fn main() -> Unit
     ! [Console.print]
     Console.print(sweep(0, 20, ""))
     Console.print("countdown {countdown(5)} base {plusBase(0)}")
+    Console.print(wide(4611686018427387903 + 1))
+    Console.print(wide(4611686018427387903))
+    Console.print(wide(0 - 4611686018427387904 - 1))
+    Console.print(wide(9223372036854775807 + 1))

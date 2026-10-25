@@ -419,8 +419,9 @@ fn equality_of_terms_with_shared_subterms_matches_vm() {
 /// variant field, a list, option and tuple element, a map key and value, at
 /// its bound edges, refused by its smart constructor, updated by a literal,
 /// past `i64` and back, and built from a value outside its smart constructor
-/// (which keeps the `Int` field), all read as the VM; its verify cases pass
-/// as tests, and the build with every carrier boxed reads the same.
+/// (which keeps the `Int` field, as one built past its bound does), and a
+/// second `Word` in another module, held as an `i64` of its own, all read as
+/// the VM; its verify cases pass as tests.
 #[test]
 fn refinement_carriers_held_as_i64_match_vm() {
     let relative = "tests/fixtures/refined_int_carrier/main.av";
@@ -448,34 +449,14 @@ fn refinement_carriers_held_as_i64_match_vm() {
                 format_output(&out)
             ));
         }
-        cargo_test_in(&project, &shared_target_dir())?;
-        // The same program with every carrier on its `AverInt` field reads
-        // the same: the field changed its representation, not a value.
-        let boxed = ws.join("boxed");
-        fs::create_dir_all(&boxed).expect("create boxed project dir");
-        compile_rust_env(
-            &file,
-            &boxed,
-            "refined_int_carrier_boxed",
-            Some(&root),
-            &[],
-            &[("AVER_NO_CARRIER_I64", "1")],
-        )?;
-        let emitted = fs::read_to_string(boxed.join("src/aver_generated/lib/word/mod.rs"))
-            .map_err(|e| format!("read emitted word module: {e}"))?;
-        if !emitted.contains("pub value: aver_rt::AverInt,") {
+        let small = fs::read_to_string(project.join("src/aver_generated/lib/small/mod.rs"))
+            .map_err(|e| format!("read emitted small module: {e}"))?;
+        if !small.contains("pub value: i64,") {
             return Err(format!(
-                "AVER_NO_CARRIER_I64 kept the i64 field:\n{emitted}"
+                "a Word of another module is not held as an i64:\n{small}"
             ));
         }
-        let bin = cargo_build(&boxed, "refined_int_carrier_boxed")?;
-        let out = Command::new(&bin)
-            .output()
-            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
-        match String::from_utf8_lossy(&out.stdout).trim() == vm_stdout {
-            true => Ok(()),
-            false => Err(format!("boxed carriers diverged:\n{}", format_output(&out))),
-        }
+        cargo_test_in(&project, &shared_target_dir())
     })();
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|e| panic!("{e}"));

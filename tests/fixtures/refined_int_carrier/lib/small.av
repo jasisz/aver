@@ -1,0 +1,30 @@
+module Small
+    intent =
+        "A second refinement named Word, in another module and with another"
+        "bound: a residue below 1000. The two are told apart by identity."
+    exposes [fromInt, small, doubled, value]
+    exposes opaque [Word]
+    effects []
+
+record Word
+    value: Int
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "Smart constructor: a residue below 1000."
+    match Bool.and(n >= 0, n < 1000)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("small word out of range")
+
+fn small(n: Int) -> Word
+    ? "The residue of n."
+    match fromInt(Int.mod(n, 1000))
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 0)
+
+fn doubled(w: Word) -> Word
+    ? "Twice the residue, again a residue."
+    small(w.value * 2)
+
+fn value(w: Word) -> Int
+    ? "The residue as an Int."
+    w.value

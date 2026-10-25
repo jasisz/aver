@@ -985,6 +985,30 @@ fn cmp_slow(a: &AverInt, b: &AverInt) -> Ordering {
     }
 }
 
+impl AverInt {
+    /// `self` compared with the machine integer `k`, which is never built
+    /// as an `AverInt`: one outside the inline range would be a heap integer
+    /// at every comparison (a smart constructor's `n < 2^62`).
+    #[inline]
+    pub fn cmp_i64(&self, k: i64) -> Ordering {
+        match self.view() {
+            View::Small(n) => n.cmp(&k),
+            View::Big(b) => cmp_big_i64(b, k),
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn cmp_big_i64(b: &BigInt, k: i64) -> Ordering {
+    match b.to_i64() {
+        Some(n) => n.cmp(&k),
+        // Past `i64`, the sign decides.
+        None if b.sign() == Sign::Minus => Ordering::Less,
+        None => Ordering::Greater,
+    }
+}
+
 impl Ord for AverInt {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
@@ -1286,6 +1310,29 @@ mod tests {
     fn div_by_zero_is_none() {
         assert!(AverInt::from_i64(5).div_euclid(&AverInt::zero()).is_none());
         assert!(AverInt::from_i64(5).rem_euclid(&AverInt::zero()).is_none());
+    }
+
+    #[test]
+    fn cmp_i64_agrees_with_cmp_around_the_inline_range() {
+        let edges = [
+            i64::MIN,
+            INLINE_MIN - 1,
+            INLINE_MIN,
+            -1,
+            0,
+            INLINE_MAX,
+            INLINE_MAX + 1,
+            i64::MAX,
+        ];
+        let wide = [
+            AverInt::from_i64(i64::MIN).sub(&AverInt::from_i64(1)),
+            AverInt::from_i64(i64::MAX).add(&AverInt::from_i64(1)),
+        ];
+        for k in edges {
+            for v in edges.map(AverInt::from_i64).iter().chain(&wide) {
+                assert_eq!(v.cmp_i64(k), v.cmp(&AverInt::from_i64(k)), "{v} vs {k}");
+            }
+        }
     }
 
     #[test]

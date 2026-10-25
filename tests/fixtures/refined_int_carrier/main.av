@@ -7,9 +7,11 @@ module Main
         "variable, record and variant field, list, option, tuple, map key and"
         "value, its bound edges, a smart constructor refusing, an update by a"
         "literal, a transient past i64, and a carrier built from a value"
-        "outside its smart constructor, which keeps the Int field."
-    exposes opaque [Pct, Loose]
-    depends [Lib.Hash, Lib.Word]
+        "outside its smart constructor, which keeps the Int field, as one built"
+        "past its bound does; a second Word from another module is a carrier of"
+        "its own."
+    exposes opaque [Pct, Loose, Twice]
+    depends [Lib.Hash, Lib.Word, Lib.Small]
     effects [Console.print]
 
 type Expr
@@ -20,6 +22,9 @@ record Pct
     value: Int
 
 record Loose
+    value: Int
+
+record Twice
     value: Int
 
 record Sample
@@ -38,6 +43,28 @@ fn loose(n: Int) -> Result<Loose, String>
     match Bool.and(n >= 0, n <= 100)
         true -> Result.Ok(Loose(value = n))
         false -> Result.Err("loose out of range")
+
+fn twiceOf(n: Int) -> Result<Twice, String>
+    ? "Smart constructor of a carrier also built past its bound."
+    match Bool.and(n >= 0, n <= 100)
+        true -> Result.Ok(Twice(value = n))
+        false -> Result.Err("twice out of range")
+
+fn twice(t: Twice) -> Twice
+    ? "Builds the carrier from a value past its bound, so it keeps the Int field."
+    Twice(value = t.value * 2)
+
+fn twiced(n: Int) -> Int
+    ? "Doubles a valid value twice."
+    match twiceOf(n)
+        Result.Ok(t) -> twice(twice(t)).value
+        Result.Err(_) -> -1
+
+fn smalls(n: Int) -> String
+    ? "The Word of the other module beside this program's own."
+    s = Lib.Small.doubled(Lib.Small.small(n))
+    w = Lib.Word.word(n)
+    "{Lib.Small.value(s)} {Lib.Word.value(w)} {Lib.Small.value(Lib.Small.doubled(s))}"
 
 fn looseRaw(n: Int) -> Loose
     ? "Builds the carrier past its smart constructor, so it keeps the Int field."
@@ -210,3 +237,4 @@ fn main() -> Unit
     Console.print("list {sumPcts(pcts([5, 200, 95, -3, 50], []), 0)}")
     Console.print("map {scores()}")
     Console.print("loose {loosened(12345678901234567890123)}")
+    Console.print("twice {twiced(30)} {twiced(101)} small {smalls(987654321987)}")
