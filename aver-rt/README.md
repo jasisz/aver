@@ -72,10 +72,13 @@ destructor releases every retained node without recursing through the chain.
 
 The resulting guarantees are separate: construction performs no pathological
 copying, sequential consumption performs no pathological reconstruction, and
-destruction performs no pathological recursion. `AverListInner::drop` detaches
-uniquely owned children onto an explicit work stack, including prepend heads
-retained by a traversal index, so a deep persistent structure cannot overflow
-the Rust call stack while its `Arc` chain is released.
+destruction performs no pathological recursion. `AverListInner::drop` takes a
+chain of prepends it alone holds apart node after node, taking each node's tail
+out of it before the node goes, with nothing put aside; a concat or an indexed
+node detaches the uniquely owned nodes below it, including prepend heads
+retained by a traversal index, onto an explicit work stack. Either way a deep
+persistent structure cannot overflow the Rust call stack while its `Arc` chain
+is released.
 
 ## Features
 

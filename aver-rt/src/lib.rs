@@ -1030,13 +1030,32 @@ impl<T> DropPending<T> {
 
 impl<T> Drop for AverListInner<T> {
     fn drop(&mut self) {
-        if matches!(self, AverListInner::Flat { .. }) {
-            return;
+        // A chain of prepends this node alone holds is taken apart here, one
+        // node after another, so a list of any length takes no stack: each
+        // node's tail is taken out of it before it goes, and its own drop
+        // then finds nothing below it. A tail someone else also holds only
+        // loses this count when the fields drop.
+        let mut next = match self {
+            AverListInner::Flat { .. } => return,
+            AverListInner::Prepend { tail, .. } => tail.take_sole_node(),
+            _ => return self.drop_tree(),
+        };
+        while let Some(mut node) = next {
+            next = match Rc::get_mut(&mut node) {
+                Some(AverListInner::Prepend { tail, .. }) => tail.take_sole_node(),
+                _ => None,
+            };
         }
+    }
+}
 
-        // Children this node alone holds are taken apart here, one at a time,
-        // so a deep list does not recurse through its nested nodes on the
-        // Rust call stack; a shared child only loses a count.
+impl<T> AverListInner<T> {
+    /// The drop of a concat or an indexed node: the nodes below it that it
+    /// alone holds are taken apart one at a time, so a deep rope does not
+    /// recurse on the Rust call stack either.
+    #[cold]
+    #[inline(never)]
+    fn drop_tree(&mut self) {
         let mut pending = DropPending {
             next: None,
             rest: Vec::new(),
@@ -1107,6 +1126,13 @@ impl<T> AverList<T> {
     /// The node's shape, or none for the empty list.
     fn shape(&self) -> Option<&AverListInner<T>> {
         self.inner.as_deref()
+    }
+
+    /// The node, taken out of the list, when this list alone holds it.
+    #[inline]
+    fn take_sole_node(&mut self) -> Option<Rc<AverListInner<T>>> {
+        Rc::get_mut(self.inner.as_mut()?)?;
+        self.inner.take()
     }
 
     #[cfg(test)]
@@ -2755,6 +2781,79 @@ mod tests {
         assert_eq!(other.len() as i64, count + 2);
         drop(other);
         assert_eq!(tail.to_vec(), vec![-1]);
+    }
+
+    /// Counts its drops, so a test sees each element dropped exactly once.
+    struct Counted(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// A chain of prepends a list alone holds is dropped node after node,
+    /// each element once, on a thread with a small stack too, through a
+    /// concat it alone holds; it stops at a node someone else holds, whose
+    /// elements stay.
+    #[test]
+    fn dropping_a_chain_drops_each_element_once_and_stops_at_a_held_node() {
+        let long = if cfg!(miri) { 100 } else { 1_000_000 };
+        for count in [1, 2, 3, long] {
+            let drops = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let dropped = || drops.load(std::sync::atomic::Ordering::Relaxed);
+            let chain = |onto: AverList<Counted>| {
+                (0..count).fold(onto, |list, _| {
+                    AverList::prepend_owned(Counted(std::sync::Arc::clone(&drops)), list)
+                })
+            };
+            let held = chain(AverList::empty());
+            let over_held = chain(held.clone());
+            let (left, right) = (chain(AverList::empty()), chain(AverList::empty()));
+            let over_rope = chain(AverList::concat(&left, &right));
+            drop((left, right));
+            std::thread::Builder::new()
+                .stack_size(64 * 1024)
+                .spawn(move || drop((over_held, over_rope)))
+                .expect("thread spawn")
+                .join()
+                .expect("the drop fits in a small stack");
+            assert_eq!(dropped(), 4 * count);
+            assert_eq!(held.len(), count);
+            drop(held);
+            assert_eq!(dropped(), 5 * count);
+        }
+    }
+
+    /// Lists in the elements of lists, as closures in environments, where a
+    /// node's element also holds the node's tail (a `let` pushes a closure
+    /// over the environment it pushes it onto): each element is dropped
+    /// once, and only by the last of the lists that hold it.
+    #[test]
+    fn dropping_nested_lists_drops_each_element_once() {
+        /// Its fields are held only to be dropped.
+        #[allow(dead_code)]
+        struct Closure(Counted, AverList<Closure>);
+
+        let depth = if cfg!(miri) { 50 } else { 1_000 };
+        let drops = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let dropped = || drops.load(std::sync::atomic::Ordering::Relaxed);
+        let closure = |env: AverList<Closure>| Closure(Counted(std::sync::Arc::clone(&drops)), env);
+        let mut env = AverList::empty();
+        for _ in 0..depth {
+            let inner = AverList::prepend_owned(closure(AverList::empty()), env.clone());
+            env = AverList::prepend_owned(closure(inner), env);
+        }
+        let shared = env.clone();
+        drop(env);
+        assert_eq!(dropped(), 0);
+        std::thread::Builder::new()
+            .stack_size(16 << 20)
+            .spawn(move || drop(shared))
+            .expect("thread spawn")
+            .join()
+            .expect("drop");
+        assert_eq!(dropped(), 2 * depth);
     }
 
     #[test]
