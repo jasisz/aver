@@ -318,6 +318,25 @@ pub enum RustAllocator {
     Mimalloc,
 }
 
+/// `[rust] panic`: what a panic does in the crate that
+/// `aver compile --target rust` generates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RustPanic {
+    /// The stack unwinds, as Rust does by default.
+    #[default]
+    Unwind,
+    /// The process ends at the panic, with the status an unwinding panic
+    /// ends with, and the stack does not unwind.
+    Abort,
+}
+
+/// The `[rust]` table of `aver.toml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RustOptions {
+    pub allocator: RustAllocator,
+    pub panic: RustPanic,
+}
+
 /// Project-level configuration loaded from `aver.toml`.
 #[derive(Debug, Clone)]
 pub struct ProjectConfig {
@@ -347,8 +366,8 @@ pub struct ProjectConfig {
     /// `[work] max-jobs`: how many jobs of this program may run at once.
     /// `None` means the host's own available parallelism.
     pub work_max_jobs: Option<usize>,
-    /// `[rust] allocator`: the generated Rust crate's global allocator.
-    pub rust_allocator: RustAllocator,
+    /// `[rust]`: the generated Rust crate's allocator and panic.
+    pub rust: RustOptions,
 }
 
 impl ProjectConfig {
@@ -493,7 +512,7 @@ impl ProjectConfig {
         let (shape_layers, shape_expected) = parse_shape(&table)?;
         let provider_manifest = providers::parse_provider_manifest(&table)?;
         let work_max_jobs = parse_work_max_jobs(&table)?;
-        let rust_allocator = parse_rust_allocator(&table)?;
+        let rust = parse_rust_options(&table)?;
         providers::reject_run_table(&table)?;
 
         Ok(ProjectConfig {
@@ -507,7 +526,7 @@ impl ProjectConfig {
             shape_expected,
             provider_manifest,
             work_max_jobs,
-            rust_allocator,
+            rust,
         })
     }
 
@@ -2742,14 +2761,33 @@ helpers = 30
     #[test]
     fn rust_allocator_defaults_to_system_and_names_its_values() {
         let default = ProjectConfig::parse("").unwrap();
-        assert_eq!(default.rust_allocator, RustAllocator::System);
+        assert_eq!(default.rust.allocator, RustAllocator::System);
         let chosen = ProjectConfig::parse("[rust]\nallocator = \"mimalloc\"\n").unwrap();
-        assert_eq!(chosen.rust_allocator, RustAllocator::Mimalloc);
+        assert_eq!(chosen.rust.allocator, RustAllocator::Mimalloc);
 
         let unknown = ProjectConfig::parse("[rust]\nallocator = \"jemalloc\"\n").unwrap_err();
         assert!(unknown.contains("\"system\" or \"mimalloc\", got \"jemalloc\""));
         let misplaced = ProjectConfig::parse("[rust]\nalloc = \"mimalloc\"\n").unwrap_err();
         assert!(misplaced.contains("[rust] has no key 'alloc'"));
+    }
+
+    #[test]
+    fn rust_panic_defaults_to_unwind_and_names_its_values() {
+        assert_eq!(
+            ProjectConfig::parse("").unwrap().rust.panic,
+            RustPanic::Unwind
+        );
+        let both =
+            ProjectConfig::parse("[rust]\nallocator = \"mimalloc\"\npanic = \"abort\"\n").unwrap();
+        assert_eq!(
+            both.rust,
+            RustOptions {
+                allocator: RustAllocator::Mimalloc,
+                panic: RustPanic::Abort
+            }
+        );
+        let unknown = ProjectConfig::parse("[rust]\npanic = \"exit\"\n").unwrap_err();
+        assert!(unknown.contains("[rust].panic must be \"unwind\" or \"abort\", got \"exit\""));
     }
 
     #[test]
@@ -2794,30 +2832,45 @@ fn parse_work_max_jobs(table: &toml::Table) -> Result<Option<usize>, String> {
         .map_err(|_| format!("aver.toml: [work].max-jobs {limit} is larger than this host allows"))
 }
 
-/// `[rust] allocator`: `"system"` (the default) or `"mimalloc"`.
-fn parse_rust_allocator(table: &toml::Table) -> Result<RustAllocator, String> {
+/// `[rust] allocator`: `"system"` (the default) or `"mimalloc"`;
+/// `[rust] panic`: `"unwind"` (the default) or `"abort"`.
+fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
     let Some(value) = table.get("rust") else {
-        return Ok(RustAllocator::default());
+        return Ok(RustOptions::default());
     };
     let rust = value
         .as_table()
         .ok_or_else(|| "aver.toml: [rust] must be a table".to_string())?;
-    for key in rust.keys() {
-        if key != "allocator" {
-            return Err(format!("aver.toml: [rust] has no key '{key}'"));
-        }
+    if let Some(key) = rust
+        .keys()
+        .find(|key| !["allocator", "panic"].contains(&key.as_str()))
+    {
+        return Err(format!("aver.toml: [rust] has no key '{key}'"));
     }
-    match rust.get("allocator") {
-        None => Ok(RustAllocator::default()),
-        Some(toml::Value::String(name)) => match name.as_str() {
-            "system" => Ok(RustAllocator::System),
-            "mimalloc" => Ok(RustAllocator::Mimalloc),
-            other => Err(format!(
-                "aver.toml: [rust].allocator must be \"system\" or \"mimalloc\", got {other:?}"
+    let choice = |key: &str, values: [&str; 2]| -> Result<bool, String> {
+        match rust.get(key) {
+            None => Ok(false),
+            Some(toml::Value::String(name)) if values.contains(&name.as_str()) => {
+                Ok(name == values[1])
+            }
+            Some(toml::Value::String(other)) => Err(format!(
+                "aver.toml: [rust].{key} must be \"{}\" or \"{}\", got {other:?}",
+                values[0], values[1]
             )),
+            Some(_) => Err(format!(
+                "aver.toml: [rust].{key} must be a string, \"{}\" or \"{}\"",
+                values[0], values[1]
+            )),
+        }
+    };
+    Ok(RustOptions {
+        allocator: match choice("allocator", ["system", "mimalloc"])? {
+            true => RustAllocator::Mimalloc,
+            false => RustAllocator::System,
         },
-        Some(_) => Err(
-            "aver.toml: [rust].allocator must be a string, \"system\" or \"mimalloc\"".to_string(),
-        ),
-    }
+        panic: match choice("panic", ["unwind", "abort"])? {
+            true => RustPanic::Abort,
+            false => RustPanic::Unwind,
+        },
+    })
 }

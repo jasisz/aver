@@ -6959,7 +6959,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
             .and_then(|config| config.work_max_jobs),
         project_config
             .as_ref()
-            .map(|config| config.rust_allocator)
+            .map(|config| config.rust)
             .unwrap_or_default(),
     ) {
         Ok(output) => output,

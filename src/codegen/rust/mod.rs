@@ -99,7 +99,7 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         required,
         composition::ProviderComposition::default(),
         None,
-        crate::config::RustAllocator::default(),
+        crate::config::RustOptions::default(),
     )
 }
 
@@ -112,8 +112,29 @@ pub fn transpile_with_provider_manifest_for_project(
     manifest: Option<&crate::config::ProviderPackageManifest>,
     known_capabilities: &BTreeSet<String>,
     work_max_jobs: Option<usize>,
-    allocator: crate::config::RustAllocator,
+    rust: crate::config::RustOptions,
 ) -> Result<ProjectOutput, String> {
+    if rust.panic == crate::config::RustPanic::Abort {
+        let cancel = ctx.policy.as_ref().is_some_and(|config| {
+            config.independence_mode == crate::config::IndependenceMode::Cancel
+        });
+        let why = if cancel {
+            Some(
+                "[independence] mode = \"cancel\": a cancelled branch stops by unwinding its stack",
+            )
+        } else if ctx.emit_replay_runtime {
+            Some(
+                "--with-replay or --policy runtime: the program then reads its independence mode when it starts, and a cancelled branch stops by unwinding its stack",
+            )
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            return Err(format!(
+                "aver.toml: [rust] panic = \"abort\" cannot be used with {why}"
+            ));
+        }
+    }
     let required = provider::required_operations(ctx);
     let composition =
         composition::plan_for_project(&ctx.capabilities, &required, manifest, known_capabilities)?;
@@ -122,7 +143,7 @@ pub fn transpile_with_provider_manifest_for_project(
         required,
         composition,
         work_max_jobs,
-        allocator,
+        rust,
     ))
 }
 
@@ -131,7 +152,7 @@ fn transpile_project(
     required_provider_operations: BTreeSet<String>,
     provider_composition: composition::ProviderComposition,
     work_max_jobs: Option<usize>,
-    allocator: crate::config::RustAllocator,
+    rust: crate::config::RustOptions,
 ) -> ProjectOutput {
     // A program that never names `Run.Turn` carries no struct for it.
     if let Some(modules) = crate::codegen::without_unread_run_turn(
@@ -266,7 +287,7 @@ fn transpile_project(
                 has_runtime_policy,
                 ctx.emit_replay_runtime,
                 &provider_composition,
-                allocator,
+                rust,
             ),
         ),
         (
@@ -297,7 +318,8 @@ fn transpile_project(
         ),
     ];
     if let Some((_, root_main)) = files.iter_mut().find(|(path, _)| path == "src/main.rs") {
-        project::declare_global_allocator(root_main, allocator);
+        project::declare_global_allocator(root_main, rust.allocator);
+        project::exit_on_panic(root_main, rust.panic);
     }
 
     if has_provider_runtime {
@@ -3099,7 +3121,10 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
                 None,
                 &std::collections::BTreeSet::new(),
                 None,
-                allocator,
+                crate::config::RustOptions {
+                    allocator,
+                    ..Default::default()
+                },
             )
             .expect("transpile")
         };
@@ -3293,7 +3318,7 @@ fn main() -> Result<String, String>
             shape_expected: Vec::new(),
             provider_manifest: None,
             work_max_jobs: None,
-            rust_allocator: crate::config::RustAllocator::default(),
+            rust: crate::config::RustOptions::default(),
         });
 
         let out = transpile(&mut ctx);
@@ -3390,7 +3415,7 @@ fn main() -> Result<Tuple<Int, Int>, String>
             shape_expected: Vec::new(),
             provider_manifest: None,
             work_max_jobs: None,
-            rust_allocator: crate::config::RustAllocator::default(),
+            rust: crate::config::RustOptions::default(),
         });
 
         let out = transpile(&mut ctx);
