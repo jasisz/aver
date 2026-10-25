@@ -7075,9 +7075,15 @@ fn mutual_rc_param_sig(
         .filter_map(|(name, ty)| {
             let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
             if rc_names.contains(name) {
-                Some(format!("{}: &{rust_type}", explicit_parameter_pattern(name, false)))
+                Some(format!(
+                    "{}: &{rust_type}",
+                    explicit_parameter_pattern(name, false)
+                ))
             } else if copy_names.contains(name) {
-                Some(format!("{}: {rust_type}", explicit_parameter_pattern(name, true)))
+                Some(format!(
+                    "{}: {rust_type}",
+                    explicit_parameter_pattern(name, true)
+                ))
             } else {
                 None
             }
