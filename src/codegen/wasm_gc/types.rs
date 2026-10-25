@@ -2875,6 +2875,22 @@ pub(super) fn aver_to_wasm(
     {
         return Ok(Some(struct_ref(idx)));
     }
+    // The compiler's hidden `String.Index` goes ahead of the program's types
+    // too: their lookups also try the bare name, so a program `record Index`
+    // would take it.
+    if trimmed == "String.Index" {
+        if let Some(reg) = registry
+            && let Some(idx) = reg.string_index_array_type_idx
+        {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+        return Err(WasmGcError::Validation(
+            "String.Index reached wasm-gc without its hidden array slot".into(),
+        ));
+    }
     if let Some(reg) = registry {
         if reg.is_capability_resource(trimmed) {
             return Ok(Some(ValType::Ref(RefType {
@@ -2986,19 +3002,6 @@ pub(super) fn aver_to_wasm(
         }
         return Err(WasmGcError::Validation(
             "compiler String buffer reached wasm-gc without its hidden builder slot".into(),
-        ));
-    }
-    if trimmed == "String.Index" {
-        if let Some(reg) = registry
-            && let Some(idx) = reg.string_index_array_type_idx
-        {
-            return Ok(Some(ValType::Ref(RefType {
-                nullable: true,
-                heap_type: HeapType::Concrete(idx),
-            })));
-        }
-        return Err(WasmGcError::Validation(
-            "String.Index reached wasm-gc without its hidden array slot".into(),
         ));
     }
     // `Vector<T>` resolves to `(ref null $vector_version_T)`, a version

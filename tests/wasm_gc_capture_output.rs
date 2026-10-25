@@ -953,3 +953,86 @@ fn wasm_gc_cross_module_indexed_call_matches_the_vm() {
         "ab|😀ą||tail\n10\n"
     );
 }
+
+/// Three shapes from one program that failed wasm-gc validation while the VM
+/// ran it: a `Unit` parameter ahead of value parameters (the signature drops
+/// it, so the body read the wrong locals), a program `record Index` beside the
+/// compiler's hidden `String.Index` (the bare-name lookup handed the index
+/// the record's struct), and an `i64` carrier inside a map key's sum (its
+/// helper hashed it as a boxed `Int`).
+#[test]
+fn wasm_gc_unit_params_index_name_and_carrier_keys_match_the_vm() {
+    let src = r#"module M
+    intent =
+        "Unit parameters, a record named Index, and a carrier in a map key."
+    exposes opaque [Word]
+    effects [Console]
+
+record Index
+    value: Int
+
+record Word
+    value: Int
+
+type Node
+    Leaf(Word)
+    Pair(Word, Node, Node)
+
+fn checkAll(most: Int, xs: List<Int>) -> Result<Unit, String>
+    match xs
+        [] -> Result.Ok(Unit)
+        [x, ..rest] -> afterOne(checkOne(most, x)?, most, rest)
+
+fn checkOne(most: Int, x: Int) -> Result<Unit, String>
+    match x > most
+        true -> Result.Err("{x} is over {most}")
+        false -> Result.Ok(Unit)
+
+fn afterOne(done: Unit, most: Int, rest: List<Int>) -> Result<Unit, String>
+    checkAll(most, rest)
+
+fn shown(r: Result<Unit, String>) -> String
+    match r
+        Result.Ok(_) -> "ok"
+        Result.Err(e) -> e
+
+fn quoteAt(s: String, i: Int) -> Int
+    match String.charAt(s, i)
+        Option.Some("\"") -> i
+        Option.Some -> quoteAt(s, i + 1)
+        Option.None -> 0 - 1
+
+fn wordOf(n: Int) -> Result<Word, String>
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+fn lookup(m: Map<Node, Int>, k: Node) -> Int
+    Option.withDefault(Map.get(m, k), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{shown(checkAll(5, [1, 2, 3]))} {shown(checkAll(2, [1, 2, 3]))}")
+    Console.print("{quoteAt("ab\"c", Index(value = 0).value)}")
+    match wordOf(List.len([1, 2]))
+        Result.Ok(w) -> Console.print("{lookup(Map.set({}, Node.Leaf(w), 5), Node.Leaf(w))}")
+        Result.Err(e) -> Console.print(e)
+"#;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join("main.av");
+    std::fs::write(&entry, src).expect("write entry");
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_aver"))
+            .arg("run")
+            .arg(&entry)
+            .args(args)
+            .output()
+            .expect("run aver");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "aver run {args:?} failed:\n{stderr}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let vm = run(&[]);
+    assert_eq!(vm, "ok 3 is over 2\n2\n5\n");
+    assert_eq!(run(&["--wasm-gc"]), vm);
+}
