@@ -14,7 +14,9 @@
 //! of their constructor.
 //!
 //! The table is open addressing over arrays: [`TABLE_START`] slots when the
-//! first entry comes, doubled at half full up to [`TABLE_MAX`]. A
+//! first entry comes, doubled at half full up to [`TABLE_MAX`], and emptied
+//! when half full at that size, so a walk over a large value that shares
+//! nothing pays a bounded table rather than one entry per node it meets. A
 //! comparison that starts within another one with memory keeps the table,
 //! and the outermost one drops it when it ends.
 
@@ -28,7 +30,7 @@ use super::super::types::TypeRegistry;
 /// Slots of a table when its first entry comes.
 const TABLE_START: i32 = 1 << 10;
 /// Slots a table grows to at most.
-const TABLE_MAX: i32 = 1 << 22;
+const TABLE_MAX: i32 = 1 << 16;
 /// Slots a lookup or an insert tries from where a key falls.
 const PROBES: i32 = 8;
 
@@ -465,10 +467,10 @@ impl TableSlots {
                 Instruction::ArrayLen,
                 Instruction::LocalTee(size),
                 Instruction::I32GeU,
+                Instruction::If(BlockType::Empty),
                 Instruction::LocalGet(size),
                 Instruction::I32Const(TABLE_MAX),
                 Instruction::I32LtU,
-                Instruction::I32And,
                 Instruction::If(BlockType::Empty),
                 Instruction::GlobalGet(self.g_keys(g)),
                 Instruction::LocalSet(old_keys),
@@ -536,6 +538,32 @@ impl TableSlots {
                 Instruction::LocalGet(size),
                 Instruction::I32LtU,
                 Instruction::BrIf(0),
+                Instruction::End,
+                // Half full at its largest: the table starts again empty.
+                Instruction::Else,
+                Instruction::GlobalGet(self.g_keys(g)),
+                Instruction::I32Const(0),
+                Instruction::I32Const(0),
+                Instruction::LocalGet(size),
+                Instruction::ArrayFill(self.keys_type()),
+                Instruction::GlobalGet(self.g_nodes(g)),
+                Instruction::I32Const(0),
+                Instruction::RefNull(HeapType::Abstract {
+                    shared: false,
+                    ty: wasm_encoder::AbstractHeapType::Eq,
+                }),
+                Instruction::LocalGet(size),
+            ],
+        );
+        if refs == 2 {
+            emit(&mut f, &[Instruction::I32Const(1), Instruction::I32Shl]);
+        }
+        emit(
+            &mut f,
+            &[
+                Instruction::ArrayFill(self.nodes_type()),
+                Instruction::I32Const(0),
+                Instruction::GlobalSet(self.g_count(g)),
                 Instruction::End,
                 Instruction::End,
                 Instruction::End,
