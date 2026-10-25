@@ -2704,6 +2704,34 @@ fn dropKey(m: Map<String, Int>, key: String) -> Map<String, Int>
         assert!(entry.contains(".remove_owned(&"));
     }
 
+    /// A write whose later argument reads its map last takes the map after
+    /// that argument; a fused self-keep `Vector.set`, whose default reads the
+    /// vector last, keeps its shape.
+    #[test]
+    fn a_write_takes_its_target_after_the_arguments_that_read_it_last() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn numbered(names: List<String>, m: Map<String, Int>) -> Map<String, Int>
+    match names
+        [] -> m
+        [n, ..rest] -> numbered(rest, Map.set(m, n, Map.len(m)))
+
+fn kept(vec: Vector<Int>, idx: Int) -> Vector<Int>
+    Option.withDefault(Vector.set(vec, idx, Vector.len(vec)), vec)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("m.insert_owned(n, __arg"), "{entry}");
+        assert!(!entry.contains("m.clone()"), "{entry}");
+        assert!(entry.contains("set_unchecked"), "{entry}");
+    }
+
     #[test]
     fn semantic_keeps_known_leaf_wrapper_call_structured() {
         let mut ctx = ctx_from_source(

@@ -679,7 +679,7 @@ pub fn define(
             let n = n.clone();
             { let __list_subject = __pat3; if let (Some(s), Some(__pat4)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat4; if __list_subject.is_empty() { {
             let __tco0 = rest;
-            let __tco1 = table.clone().insert_owned(crate::proof_kernel::aver_generated::kernel::sexp::fresh(n, &table)?, { let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::sexp::within(s.clone(), &table)?; crate::proof_kernel::aver_generated::kernel::sexp::bounded(&__arg10) }?);
+            let __tco1 = { let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::sexp::fresh(n, &table)?; { let __arg12 @ _ = { let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::sexp::within(s.clone(), &table)?; crate::proof_kernel::aver_generated::kernel::sexp::bounded(&__arg10) }?; table.insert_owned(__arg11, __arg12) } };
             __hold0 = __tco0;
             parts = &__hold0;
             table = __tco1;

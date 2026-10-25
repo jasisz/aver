@@ -15,7 +15,11 @@
 //!
 //! Every call to a function counts, a tail call to another function too,
 //! including a bounce of a mutual trampoline, to itself as well; the self
-//! loop keeps its params in place and is emitted apart. An argument that cannot be bound (a raw `i64` the callee takes
+//! loop keeps its params in place and is emitted apart. So does a write
+//! (`Map.set`, `Map.remove`, `Vector.set`) whose later argument reads the
+//! collection last (`Map.set(t, fresh(n, t)?, v)`): the write then takes the
+//! collection over instead of copying it. A write is rewritten only then, so
+//! the shapes the emitter fuses keep theirs. An argument that cannot be bound (a raw `i64` the callee takes
 //! bare) ends the bound run, so what follows it is left in place and the
 //! order still holds. It runs on the Rust backend's own copy of the MIR,
 //! after the representation rewrite and before the by-value parameter facts
@@ -41,6 +45,7 @@ pub(super) fn bind_computed_arguments(ctx: &mut CodegenContext) {
         .filter(|(_, mir_fn)| !mir_fn.repr.bare_return)
         .map(|(id, _)| *id)
         .collect();
+    let builtins = &program.builtins;
     for mir_fn in program.fns.values_mut() {
         // A member of a mutual trampoline calls itself by a bounce too.
         let self_bounces = ctx.mutual_tco_members.contains(&mir_fn.fn_id);
@@ -48,7 +53,7 @@ pub(super) fn bind_computed_arguments(ctx: &mut CodegenContext) {
             &mut mir_fn.body,
             Spanned::bare(MirExpr::Literal(Spanned::bare(crate::ast::Literal::Unit))),
         );
-        rewrite(&mut body, mir_fn, &boxed_return, self_bounces);
+        rewrite(&mut body, mir_fn, &boxed_return, builtins, self_bounces);
         mir_fn.body = body;
     }
     ctx.mir_program = Some(program);
@@ -59,13 +64,27 @@ fn rewrite(
     expr: &mut Spanned<MirExpr>,
     mir_fn: &mut MirFn,
     boxed_return: &HashSet<FnId>,
+    builtins: &[String],
     self_bounces: bool,
 ) {
     crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
-        rewrite(child, mir_fn, boxed_return, self_bounces)
+        rewrite(child, mir_fn, boxed_return, builtins, self_bounces)
     });
+    let mut write = false;
     let args = match &expr.node {
-        MirExpr::Call(call) if matches!(call.node.callee, MirCallee::Fn(_)) => &call.node.args,
+        MirExpr::Call(call) => match call.node.callee {
+            MirCallee::Fn(_) => &call.node.args,
+            MirCallee::Builtin(id)
+                if matches!(
+                    builtins.get(id.0 as usize).map(String::as_str),
+                    Some("Map.set" | "Map.remove" | "Vector.set")
+                ) =>
+            {
+                write = true;
+                &call.node.args
+            }
+            _ => return,
+        },
         MirExpr::TailCall(call) if self_bounces || call.node.target != mir_fn.fn_id => {
             &call.node.args
         }
@@ -78,6 +97,19 @@ fn rewrite(
         .filter(|(_, arg)| !read(&arg.node))
         .map_while(|(j, arg)| bindable(arg, boxed_return).then_some(j))
         .collect();
+    // A write is rewritten only when a bound argument reads the collection
+    // it takes (or what holds it) last.
+    if write {
+        let Some((target, path)) = args.first().and_then(|a| read_path(&a.node)) else {
+            return;
+        };
+        if !bound
+            .iter()
+            .any(|&j| reads_last(&args[j].node, target.slot, &path))
+        {
+            return;
+        }
+    }
     if !bound.is_empty() {
         apply(expr, mir_fn, &bound);
     }
@@ -210,6 +242,33 @@ fn boxed_int(expr: &MirExpr, boxed_return: &HashSet<FnId>) -> bool {
         MirExpr::Neg(inner) => boxed_int(&inner.node, boxed_return),
         _ => false,
     }
+}
+
+/// The local a read of a variable or of a field path of one starts from,
+/// and the fields it goes through.
+fn read_path(expr: &MirExpr) -> Option<(&MirLocal, Vec<&str>)> {
+    match expr {
+        MirExpr::Local(local) if !local.node.name.is_empty() => Some((&local.node, Vec::new())),
+        MirExpr::Project(project) => {
+            let (local, mut path) = read_path(&project.node.base.node)?;
+            path.push(&project.node.field);
+            Some((local, path))
+        }
+        _ => None,
+    }
+}
+
+/// Whether `expr` reads `slot` for the last time through a part that
+/// overlaps `path` (one path extends the other).
+fn reads_last(expr: &MirExpr, slot: LocalId, path: &[&str]) -> bool {
+    if let Some((local, read)) = read_path(expr) {
+        return local.slot == slot && local.last_use && read.iter().zip(path).all(|(a, b)| a == b);
+    }
+    let mut found = false;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        found = found || reads_last(child, slot, path);
+    });
+    found
 }
 
 fn root_local_mut(expr: &mut MirExpr) -> Option<&mut MirLocal> {
