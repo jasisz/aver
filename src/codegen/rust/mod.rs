@@ -1690,6 +1690,8 @@ fn isOdd(n: Int) -> Bool
 
         // Should NOT contain direct recursive calls between the two
         assert!(!entry.contains("isOdd((n - 1i64))"));
+        // Small states stay in the enum.
+        assert!(!entry.contains("Side"));
     }
 
     #[test]
@@ -1860,6 +1862,42 @@ fn width(s: Shape) -> Int
                 && !entry.contains("impl PartialEq for Shape {"),
             "an equality already in cheap-first order is not hand-written:\n{entry}"
         );
+    }
+
+    #[test]
+    fn mutual_tco_keeps_a_large_state_off_the_loop_on_the_side() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn spin(n: Int, acc: Int) -> Int
+    match n <= 0
+        true -> acc
+        false -> match n == 7
+            true -> hop(n - 1, acc)
+            false -> spin(n - 1, acc + 1)
+
+fn hop(n: Int, acc: Int) -> Int
+    wide(n, acc, [n], [acc], [], "w", n, 1)
+
+fn wide(n: Int, acc: Int, xs: List<Int>, ys: List<Int>, zs: List<Int>, label: String, k: Int, m: Int) -> Int
+    match n <= 0
+        true -> acc + k + m
+        false -> spin(n - 1, acc + List.len(xs) + List.len(ys) + List.len(zs) + String.len(label))
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // `spin` loops on itself and hands over to `hop`, so both stay in the
+        // enum; `wide` is large and further off, so its params go aside.
+        assert!(entry.contains("struct __MutualTco1Side {"));
+        assert!(entry.contains("    Wide,\n"));
+        assert!(entry.contains("    Spin("));
+        assert!(entry.contains("__mutual_tco_side_1(&mut __side).Wide = Some(("));
+        assert!(!entry.contains("Hop: Option<"));
     }
 
     #[test]

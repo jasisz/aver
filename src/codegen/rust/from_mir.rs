@@ -6843,6 +6843,45 @@ fn mir_if_cond_and_branches<'a>(
 
 // ── mutual-recursion trampoline from MIR ────────────────────────────────
 
+/// Bytes the state of a member that is not hot (see
+/// [`super::toplevel::hot_mutual_members`]) may take in the trampoline's
+/// enum before it goes to the group's side (see [`MutualBounce::side`]):
+/// the bound a record takes inline (`representation::BOXED_RECORD_BYTES`).
+/// Every bounce moves the enum, and the larger its variants, the more each
+/// bounce of a small one carries too.
+const BOXED_STATE_BYTES: usize = 128;
+
+/// How a bounce to one member builds the trampoline's state: which of the
+/// member's params the state leaves out (the group's invariants, by
+/// position), and whether the rest go to the group's side.
+struct MutualBounce {
+    invariants: Vec<bool>,
+    /// The function that hands out the group's side, when this member's
+    /// params go there: one struct with a field per such member, allocated
+    /// at the first bounce that needs it and reused by every later one, so
+    /// the enum carries only the member's tag and no bounce allocates.
+    side: Option<String>,
+}
+
+/// `E::V`, `E::V(a, b)`, or for a member whose params go to the side
+/// `{ side_fn(&mut __side).V = Some((a, b,)); E::V }`.
+fn mutual_variant_value(
+    enum_name: &str,
+    variant: &str,
+    args: &[String],
+    side: Option<&str>,
+) -> String {
+    match (args.is_empty(), side) {
+        (true, _) => format!("{enum_name}::{variant}"),
+        (false, None) => format!("{enum_name}::{variant}({})", args.join(", ")),
+        (false, Some(side_fn)) => format!(
+            "{{ {side_fn}(&mut {}).{variant} = Some(({},)); {enum_name}::{variant} }}",
+            super::syntax::generated_ident("side"),
+            args.join(", ")
+        ),
+    }
+}
+
 /// Emit a mutual-TCO block from MIR: a state enum (one variant per
 /// member, payload = non-rc param values), a trampoline dispatch loop
 /// (member-`TailCall` bounces to a new enum variant, a value `return`s),
@@ -6887,15 +6926,30 @@ pub(super) fn emit_mir_mutual_tco_block(
     let rc_names = names_at(compute_resolved_rc_params(group_fns));
     let copy_names = names_at(compute_resolved_copy_invariants(group_fns));
     let invariant_names: HashSet<String> = rc_names.union(&copy_names).cloned().collect();
-    // Which params of each member are the group's invariants, by position.
-    let members: HashMap<crate::ir::FnId, Vec<bool>> = group_fns
+    // Which params of each member are the group's invariants, by position,
+    // and which members put the rest of their state on the group's side.
+    let side_name = super::syntax::generated_ident(&format!("MutualTco{group_id}Side"));
+    let side_fn = super::syntax::generated_ident(&format!("mutual_tco_side_{group_id}"));
+    let side_var = super::syntax::generated_ident("side");
+    let hot = super::toplevel::hot_mutual_members(group_fns);
+    let members: HashMap<crate::ir::FnId, MutualBounce> = group_fns
         .iter()
         .map(|fd| {
-            let invariants = fd
+            let invariants: Vec<bool> = fd
                 .params
                 .iter()
-                .map(|(name, _)| invariant_names.contains(name));
-            (fd.fn_id, invariants.collect())
+                .map(|(name, _)| invariant_names.contains(name))
+                .collect();
+            let state_bytes: usize = fd
+                .params
+                .iter()
+                .zip(&invariants)
+                .filter(|(_, invariant)| !**invariant)
+                .map(|((_, ty), _)| super::representation::type_inline_size(ty, ctx, scope))
+                .sum();
+            let side = (!hot.contains(&fd.fn_id) && state_bytes > BOXED_STATE_BYTES)
+                .then(|| side_fn.clone());
+            (fd.fn_id, MutualBounce { invariants, side })
         })
         .collect();
 
@@ -6941,20 +6995,52 @@ pub(super) fn emit_mir_mutual_tco_block(
     }
 
     let mut sections = Vec::new();
+    let state_types = |fd: &crate::ir::hir::ResolvedFnDef| -> Vec<String> {
+        fd.params
+            .iter()
+            .filter(|(name, _)| !invariant_names.contains(name))
+            .map(|(_, ty)| super::types::type_to_rust_scoped(ty, ctx, scope))
+            .collect()
+    };
+    let on_side = |fd: &crate::ir::hir::ResolvedFnDef| members[&fd.fn_id].side.is_some();
+    let has_side = group_fns.iter().any(|fd| on_side(fd));
 
-    // 1. Enum — one variant per member, payload = non-rc param types.
+    // 0. The side: a field per member whose params go there, and the
+    //    function that allocates it once.
+    if has_side {
+        let side_members: Vec<_> = group_fns.iter().filter(|fd| on_side(fd)).collect();
+        let mut side_lines = vec![
+            "#[allow(non_camel_case_types, non_snake_case)]".to_string(),
+            format!("struct {side_name} {{"),
+        ];
+        for fd in &side_members {
+            let types = state_types(fd).join(", ");
+            side_lines.push(format!(
+                "    {}: Option<({types},)>,",
+                fn_name_to_variant(&fd.name)
+            ));
+        }
+        side_lines.push("}".to_string());
+        let empty: Vec<String> = side_members
+            .iter()
+            .map(|fd| format!("{}: None", fn_name_to_variant(&fd.name)))
+            .collect();
+        side_lines.push(format!(
+            "fn {side_fn}(side: &mut Option<Box<{side_name}>>) -> &mut {side_name} {{\n    side.get_or_insert_with(|| Box::new({side_name} {{ {} }}))\n}}",
+            empty.join(", ")
+        ));
+        sections.push(side_lines.join("\n"));
+    }
+
+    // 1. Enum — one variant per member, payload = non-rc param types; a
+    //    member whose params go to the side is a bare tag.
     let mut enum_lines = Vec::new();
     enum_lines.push("#[allow(non_camel_case_types)]".to_string());
     enum_lines.push(format!("enum {} {{", enum_name));
     for fd in group_fns {
         let variant = fn_name_to_variant(&fd.name);
-        let param_types: Vec<String> = fd
-            .params
-            .iter()
-            .filter(|(name, _)| !invariant_names.contains(name))
-            .map(|(_, ty)| super::types::type_to_rust_scoped(ty, ctx, scope))
-            .collect();
-        if param_types.is_empty() {
+        let param_types = state_types(fd);
+        if param_types.is_empty() || on_side(fd) {
             enum_lines.push(format!("    {},", variant));
         } else {
             enum_lines.push(format!("    {}({}),", variant, param_types.join(", ")));
@@ -6967,9 +7053,13 @@ pub(super) fn emit_mir_mutual_tco_block(
     //    in the first member's order.
     let rc_extra_params: String =
         mutual_rc_param_sig(group_fns[0], &rc_names, &copy_names, ctx, scope);
+    let side_param = match has_side {
+        true => format!(", mut {side_var}: Option<Box<{side_name}>>"),
+        false => String::new(),
+    };
     let mut tramp_lines = Vec::new();
     tramp_lines.push(format!(
-        "fn {}(mut {}: {}{}) -> {} {{",
+        "fn {}(mut {}: {}{side_param}{}) -> {} {{",
         trampoline_name, state_name, enum_name, rc_extra_params, ret_type
     ));
     tramp_lines.push("    loop {".to_string());
@@ -6982,12 +7072,19 @@ pub(super) fn emit_mir_mutual_tco_block(
             .filter(|(name, _)| !invariant_names.contains(name))
             .map(|(name, _)| explicit_parameter_pattern(name, true))
             .collect();
-        let binding = if param_bindings.is_empty() {
+        let binding = if param_bindings.is_empty() || on_side(fd) {
             format!("{}::{}", enum_name, variant)
         } else {
             format!("{}::{}({})", enum_name, variant, param_bindings.join(", "))
         };
         tramp_lines.push(format!("            {} => {{", binding));
+        // Every bounce that builds this tag filled the field just before.
+        if !param_bindings.is_empty() && on_side(fd) {
+            tramp_lines.push(format!(
+                "                let Some(({},)) = {side_var}.as_mut().and_then(|side| side.{variant}.take()) else {{ unreachable!() }};",
+                param_bindings.join(", ")
+            ));
+        }
         tramp_lines.push(arm_body.clone());
         tramp_lines.push("            }".to_string());
     }
@@ -7030,16 +7127,12 @@ pub(super) fn emit_mir_mutual_tco_block(
                 }
             })
             .collect();
-        let variant_call = if variant_arg_names.is_empty() {
-            format!("{}::{}", enum_name, variant)
-        } else {
-            format!(
-                "{}::{}({})",
-                enum_name,
-                variant,
-                variant_arg_names.join(", ")
-            )
-        };
+        let variant_call = mutual_variant_value(
+            &enum_name,
+            &variant,
+            &variant_arg_names,
+            members[&fd.fn_id].side.as_deref(),
+        );
         let mut wrapper = Vec::new();
         if let Some(desc) = &fd.desc {
             wrapper.push(format!("/// {}", desc));
@@ -7048,8 +7141,16 @@ pub(super) fn emit_mir_mutual_tco_block(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
+        let side_arg = match (has_side, on_side(fd)) {
+            (false, _) => String::new(),
+            (true, false) => ", None".to_string(),
+            (true, true) => {
+                wrapper.push(format!("    let mut {side_var} = None;"));
+                format!(", {side_var}")
+            }
+        };
         wrapper.push(format!(
-            "    {}({}{})",
+            "    {}({}{side_arg}{})",
             trampoline_name, variant_call, rc_extra_args
         ));
         wrapper.push("}".to_string());
@@ -7125,7 +7226,7 @@ fn emit_resolved_fn_params(
 /// position (member-`TailCall` → enum variant bounce, value → `return`).
 fn emit_mir_trampoline_body(
     body: &Spanned<MirExpr>,
-    members: &HashMap<crate::ir::FnId, Vec<bool>>,
+    members: &HashMap<crate::ir::FnId, MutualBounce>,
     enum_name: &str,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
@@ -7158,14 +7259,14 @@ fn emit_mir_trampoline_body(
 /// `return`. `Match` / `IfThenElse` recurse (still tail position).
 fn emit_mir_trampoline_tail_expr(
     expr: &Spanned<MirExpr>,
-    members: &HashMap<crate::ir::FnId, Vec<bool>>,
+    members: &HashMap<crate::ir::FnId, MutualBounce>,
     enum_name: &str,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
     match &expr.node {
         MirExpr::TailCall(spanned_tc) => {
             let tc = &spanned_tc.node;
-            if let Some(invariants) = members.get(&tc.target) {
+            if let Some(bounce) = members.get(&tc.target) {
                 // Bounce → enum variant for the TARGET member, excluding
                 // the args at its invariant positions: the caller hands its
                 // own copy of each on unchanged, and the trampoline already
@@ -7173,22 +7274,18 @@ fn emit_mir_trampoline_tail_expr(
                 let target_name = ctx.symbol_table.fn_entry(tc.target).key.name.clone();
                 let variant = super::toplevel::fn_name_to_variant(&target_name);
                 let mut arg_strs = Vec::new();
-                for (a, invariant) in tc.args.iter().zip(invariants) {
+                for (a, invariant) in tc.args.iter().zip(&bounce.invariants) {
                     if *invariant {
                         continue;
                     }
                     arg_strs.push(mir_clone_arg(emit_mir_expr(a, ctx)?, &a.node, ctx));
                 }
-                if arg_strs.is_empty() {
-                    Some(format!("{}::{}", enum_name, variant))
-                } else {
-                    Some(format!(
-                        "{}::{}({})",
-                        enum_name,
-                        variant,
-                        arg_strs.join(", ")
-                    ))
-                }
+                Some(mutual_variant_value(
+                    enum_name,
+                    &variant,
+                    &arg_strs,
+                    bounce.side.as_deref(),
+                ))
             } else {
                 let name = ctx.symbol_table.fn_entry(tc.target).key.canonical();
                 Some(format!("return {}", emit_named_call(&name, &tc.args, ctx)?))
