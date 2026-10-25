@@ -1901,6 +1901,39 @@ fn wide(n: Int, acc: Int, xs: List<Int>, ys: List<Int>, zs: List<Int>, label: St
     }
 
     #[test]
+    fn mutual_tco_member_takes_a_bounded_counter_boxed_from_outside() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn spin(n: Int, phase: Int) -> Int
+    match n <= 0
+        true -> phase
+        false -> match phase == 0
+            true -> hop(n - 1)
+            false -> spin(n - 1, phase - 1)
+
+fn hop(n: Int) -> Int
+    spin(n, 3)
+
+fn main() -> Int
+    spin(10, 2)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // The analysis finds `phase` bounded, but the trampoline's wrapper
+        // takes it as an `AverInt`, so the call from outside gives one.
+        assert!(
+            entry.contains("spin(aver_rt::AverInt::from_i64(10), aver_rt::AverInt::from_i64(2))")
+        );
+        assert!(!entry.contains("2i64)"));
+    }
+
+    #[test]
     fn mutual_tco_variant_for_keyword_named_fn_is_an_identifier() {
         // A function whose Aver name is a Rust keyword takes part in a
         // mutual-TCO group. The trampoline variant is the function name

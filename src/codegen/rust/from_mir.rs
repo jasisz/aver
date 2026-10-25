@@ -7505,6 +7505,20 @@ fn emit_named_call(name: &str, args: &[Spanned<MirExpr>], ctx: &MirEmitCtx<'_>) 
 /// (an already-bare arg directly; a boxed `AverInt` arg narrowed via a
 /// checked `to_i64`). A `None` `callee` (a foreign tail-call helper with
 /// no facts) keeps every arg boxed.
+/// The facts a call to `callee` is rendered by: none for a member of a
+/// mutual tail-call group, whose trampoline wrapper takes every `Int` param
+/// and gives its result as an `AverInt` whatever the analysis found, as the
+/// rewrite reads it (`bare_i64_rewrite`, `RewriteCtx::callee_facts`).
+fn callee_bare_facts(
+    callee: crate::ir::FnId,
+    codegen: &CodegenContext,
+) -> Option<&crate::ir::mir::FnBareFacts> {
+    if codegen.mutual_tco_members.contains(&callee) {
+        return None;
+    }
+    codegen.bare_i64.for_fn(callee)
+}
+
 fn emit_named_call_to(
     name: &str,
     callee: Option<crate::ir::FnId>,
@@ -7527,7 +7541,7 @@ fn emit_named_call_to(
     // arithmetic tree at a `i64` param emits its native `i64` form
     // (`emit_bare_i64`), and an `Unbox`-wrapped boxed arg falls through to
     // `emit_mir_expr` (which lowers the `Unbox`).
-    let callee_bare = callee.and_then(|id| ctx.codegen.and_then(|cg| cg.bare_i64.for_fn(id)));
+    let callee_bare = callee.and_then(|id| ctx.codegen.and_then(|cg| callee_bare_facts(id, cg)));
     let mut arg_strs = Vec::with_capacity(args.len());
     for (i, a) in args.iter().enumerate() {
         if callee_bare.is_some_and(|f| f.param_is_bare(i)) {
@@ -7603,7 +7617,7 @@ fn emit_deferred_call(
     let resolved = codegen.resolved_program.fn_by_id(callee)?;
     let scope = codegen.symbol_table.fn_entry(callee).key.scope_str();
     let borrowed = callee_borrow_mask(name, args.len(), codegen);
-    let bare = codegen.bare_i64.for_fn(callee);
+    let bare = callee_bare_facts(callee, codegen);
     let (mut values, mut pattern) = ("()".to_string(), "()".to_string());
     let mut passed = Vec::with_capacity(args.len());
     // With a law, each argument is computed into its own variable first.
@@ -7691,14 +7705,11 @@ fn emit_deferred_call(
                 true => format!("&{made}"),
                 false => format!("{made}.clone()"),
             };
-            let holds = match codegen
-                .bare_i64
-                .for_fn(law.projection)
-                .is_some_and(|f| f.bare_return)
-            {
-                true => format!("{projected} == {kept}"),
-                false => format!("aver_rt::AverInt::to_i64(&{projected}) == Some({kept})"),
-            };
+            let holds =
+                match callee_bare_facts(law.projection, codegen).is_some_and(|f| f.bare_return) {
+                    true => format!("{projected} == {kept}"),
+                    false => format!("aver_rt::AverInt::to_i64(&{projected}) == Some({kept})"),
+                };
             (
                 format!("(aver_rt::thin::Kept({kept}), {values})"),
                 format!("(aver_rt::thin::Kept({kept}), {pattern})"),
