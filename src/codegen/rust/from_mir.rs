@@ -3460,7 +3460,7 @@ fn emit_mir_capability_call(
             .collect::<Vec<_>>();
         let policy_path = generated_ident("policy_path");
         let mut lines = vec!["{".to_string()];
-        lines.push("    crate::cancel_checkpoint();".to_string());
+        lines.push("    crate::cancel_checkpoint_now();".to_string());
         for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
             lines.push(format!("    let {name}: {ty} = {value};"));
         }
@@ -3506,7 +3506,7 @@ fn emit_mir_capability_call(
         // without it, a cancelled `!`/`?!` branch could no longer
         // interrupt a service that moved onto a provider.
         if operation.is_effectful() {
-            lines.push("    crate::cancel_checkpoint();".to_string());
+            lines.push("    crate::cancel_checkpoint_now();".to_string());
         }
         for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
             lines.push(format!("    let {name}: {ty} = {value};"));
@@ -3529,7 +3529,7 @@ fn emit_mir_capability_call(
     for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
         lines.push(format!("    let {name}: {ty} = {value};"));
     }
-    lines.push("    crate::cancel_checkpoint();".to_string());
+    lines.push("    crate::cancel_checkpoint_now();".to_string());
     lines.push(format!(
         "    crate::aver_replay::invoke_capability_effect({:?}, {:?}, crate::aver_replay::effect_args({:?}, || vec![{}]), || {})",
         operation.canonical_name,

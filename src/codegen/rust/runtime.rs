@@ -15,7 +15,12 @@ fn base_runtime(has_replay: bool, embedded_independence_cancel: bool) -> String 
         "false".to_string()
     };
 
-    BASE_RUNTIME_TEMPLATE.replace("__INDEPENDENCE_MODE_CANCEL__", &independence_mode)
+    // A program that can never run in cancel mode (no mode read at run time,
+    // none compiled in) keeps step checkpoints that compile to nothing.
+    let may_cancel = has_replay || embedded_independence_cancel;
+    BASE_RUNTIME_TEMPLATE
+        .replace("__INDEPENDENCE_MODE_CANCEL__", &independence_mode)
+        .replace("__INDEPENDENCE_MAY_CANCEL__", &may_cancel.to_string())
 }
 
 const BASE_RUNTIME_TEMPLATE: &str = r##"pub mod aver_rt {
@@ -23,7 +28,7 @@ const BASE_RUNTIME_TEMPLATE: &str = r##"pub mod aver_rt {
 }
 
 use ::aver_rt::AverStr;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::{
     Arc,
     atomic::AtomicBool,
@@ -121,17 +126,30 @@ pub enum ParallelBranch<T> {
     Cancelled,
 }
 
+/// Whether this program can run in cancel mode: compiled in it, or reading
+/// its mode at run time.
+const MAY_CANCEL: bool = __INDEPENDENCE_MAY_CANCEL__;
+
+/// How many steps a branch that can be cancelled takes between two reads of
+/// its flags: a cancelled branch stops at most this many steps late.
+const CANCEL_CHECK_EVERY: u32 = 1024;
+
 thread_local! {
     static ACTIVE_CANCEL_FLAGS: RefCell<Vec<Arc<AtomicBool>>> = const { RefCell::new(Vec::new()) };
+    /// Steps left before the next read of the flags; 0 on a thread that
+    /// runs no branch that can be cancelled.
+    static CANCEL_STEPS_LEFT: Cell<u32> = const { Cell::new(0) };
 }
 
-struct CancelFlagGuard;
+/// Pops the branch's flag and gives back the step count it found.
+struct CancelFlagGuard(u32);
 
 impl Drop for CancelFlagGuard {
     fn drop(&mut self) {
         ACTIVE_CANCEL_FLAGS.with(|cell| {
             cell.borrow_mut().pop();
         });
+        CANCEL_STEPS_LEFT.with(|left| left.set(self.0));
     }
 }
 
@@ -142,7 +160,7 @@ where
     ACTIVE_CANCEL_FLAGS.with(|cell| {
         cell.borrow_mut().push(flag);
     });
-    let _guard = CancelFlagGuard;
+    let _guard = CancelFlagGuard(CANCEL_STEPS_LEFT.with(|left| left.replace(CANCEL_CHECK_EVERY)));
     run()
 }
 
@@ -150,7 +168,28 @@ fn is_cancel_panic(payload: &(dyn std::any::Any + Send)) -> bool {
     payload.is::<AverCancelled>()
 }
 
+/// A step: a function entered, a loop or a trampoline going round. Outside
+/// a branch that can be cancelled it reads one counter; inside one it reads
+/// the flags every `CANCEL_CHECK_EVERY` steps.
 pub fn cancel_checkpoint() {
+    if !MAY_CANCEL {
+        return;
+    }
+    let left = CANCEL_STEPS_LEFT.with(Cell::get);
+    if left == 0 {
+        return;
+    }
+    if left > 1 {
+        CANCEL_STEPS_LEFT.with(|steps| steps.set(left - 1));
+        return;
+    }
+    CANCEL_STEPS_LEFT.with(|steps| steps.set(CANCEL_CHECK_EVERY));
+    cancel_checkpoint_now();
+}
+
+/// Before an effect and where a branch starts: reads the flags now, so a
+/// cancelled branch does nothing more that can be seen outside it.
+pub fn cancel_checkpoint_now() {
     if !independence_mode_is_cancel() {
         return;
     }
@@ -171,7 +210,7 @@ where
 {
     with_cancel_flag(flag, || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            cancel_checkpoint();
+            cancel_checkpoint_now();
             run()
         }));
         match result {
