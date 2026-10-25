@@ -147,7 +147,7 @@ pub struct Val__ValVariant(
 impl aver_rt::thin::HandOver for Val__ValVariant {}
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Val__ValMap(pub aver_rt::AverMap<AverStr, (Val, Val)>);
+pub struct Val__ValMap(pub aver_rt::AverMap<AverStr, Val>);
 
 impl aver_rt::thin::HandOver for Val__ValMap {}
 
@@ -609,14 +609,13 @@ impl aver_replay::ReplayValue for Val {
                         .ok_or_else(|| format!("$variant ValVariant missing field #{}", 2))?,
                 )?,
             ))),
-            "ValMap" => Ok(Val::ValMap(Val__ValMap(<aver_rt::AverMap<
-                AverStr,
-                (Val, Val),
-            > as ReplayValue>::from_replay_json(
-                fields
-                    .get(0)
-                    .ok_or_else(|| format!("$variant ValMap missing field #{}", 0))?,
-            )?))),
+            "ValMap" => Ok(Val::ValMap(Val__ValMap(
+                <aver_rt::AverMap<AverStr, Val> as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ValMap missing field #{}", 0))?,
+                )?,
+            ))),
             "ValUnit" => Ok(Val::ValUnit),
             _ => Err(format!(
                 "unknown variant '{}' for Domain.Value.Val",
@@ -868,7 +867,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
             crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
                 let m = &__m_fields.0;
                 {
-                    let __arg17 @ _ = crate::aver_generated::domain::value::mapPairs(m.clone());
+                    let __arg17 @ _ = crate::aver_generated::domain::value::mapEntries(m.clone());
                     crate::aver_generated::domain::value::valMapRepr(
                         &__arg17,
                         ::aver_rt::str_lit!(""),
@@ -968,12 +967,12 @@ pub fn valReprInner(v @ _: &Val) -> AverStr {
 /// Build a stable map repr close to the host interpreter output.
 #[inline(always)]
 pub fn valMapRepr(
-    entries @ _: &aver_rt::AverList<(Val, Val)>,
+    entries @ _: &aver_rt::AverList<Val>,
     mut acc @ _: AverStr,
     mut first @ _: bool,
 ) -> AverStr {
-    let mut __hold0: aver_rt::AverList<(Val, Val)>;
-    let mut entries @ _: &aver_rt::AverList<(Val, Val)> = entries;
+    let mut __hold0: aver_rt::AverList<Val>;
+    let mut entries @ _: &aver_rt::AverList<Val> = entries;
     loop {
         crate::cancel_checkpoint();
         {
@@ -995,37 +994,48 @@ pub fn valMapRepr(
                     __b
                 });
             } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (k, v) = pair;
-                        if first {
-                            {
-                                let __tco0 = rest;
-                                let __tco1 =
-                                    ((crate::aver_generated::domain::value::valReprInner(k)
-                                        + &::aver_rt::str_lit!(": "))
-                                        + &crate::aver_generated::domain::value::valReprInner(v));
-                                let __tco2 = false;
-                                __hold0 = __tco0;
-                                entries = &__hold0;
-                                acc = __tco1;
-                                first = __tco2;
-                                continue;
-                            }
-                        } else {
-                            {
-                                let __tco0 = rest;
-                                let __tco1 = ((((acc + &::aver_rt::str_lit!(", "))
-                                    + &crate::aver_generated::domain::value::valReprInner(k))
-                                    + &::aver_rt::str_lit!(": "))
-                                    + &crate::aver_generated::domain::value::valReprInner(v));
-                                let __tco2 = false;
-                                __hold0 = __tco0;
-                                entries = &__hold0;
-                                acc = __tco1;
-                                first = __tco2;
-                                continue;
-                            }
+                if let (Some(entry), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                    if first {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = (({
+                                let __arg5 @ _ =
+                                    crate::aver_generated::domain::value::entryKey(entry);
+                                crate::aver_generated::domain::value::valReprInner(&__arg5)
+                            } + &::aver_rt::str_lit!(": "))
+                                + &{
+                                    let __arg6 @ _ =
+                                        crate::aver_generated::domain::value::entryValue(entry);
+                                    crate::aver_generated::domain::value::valReprInner(&__arg6)
+                                });
+                            let __tco2 = false;
+                            __hold0 = __tco0;
+                            entries = &__hold0;
+                            acc = __tco1;
+                            first = __tco2;
+                            continue;
+                        }
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = ((((acc + &::aver_rt::str_lit!(", "))
+                                + &{
+                                    let __arg7 @ _ =
+                                        crate::aver_generated::domain::value::entryKey(entry);
+                                    crate::aver_generated::domain::value::valReprInner(&__arg7)
+                                })
+                                + &::aver_rt::str_lit!(": "))
+                                + &{
+                                    let __arg8 @ _ =
+                                        crate::aver_generated::domain::value::entryValue(entry);
+                                    crate::aver_generated::domain::value::valReprInner(&__arg8)
+                                });
+                            let __tco2 = false;
+                            __hold0 = __tco0;
+                            entries = &__hold0;
+                            acc = __tco1;
+                            first = __tco2;
+                            continue;
                         }
                     }
                 } else {
@@ -1036,7 +1046,7 @@ pub fn valMapRepr(
     }
 }
 
-/// The text a map files a key under: two keys of one type get the same text exactly when they are equal. A String, Int or Bool key is its own text. A key with parts writes each part with its length in front, so no part can pass for a separator, and a record takes its fields in name order.
+/// The text a map files a key under: two keys of one type get the same text exactly when they are equal. A String, Int or Bool key is its own text. A key with parts writes each part with its length in front, so no part can pass for a separator, and a record takes its fields in name order. The map files ValTuple([key, value]) under it.
 pub fn mapKeyRepr(v @ _: &Val) -> AverStr {
     crate::cancel_checkpoint();
     {
@@ -1166,28 +1176,72 @@ pub fn partsKey(mut tag @ _: AverStr, items @ _: &aver_rt::AverList<Val>) -> Ave
     }
 }
 
-/// A map's (key, value) pairs in key order, the order every backend iterates a map in. The text a String or Bool key is filed under already sorts that way; any other key is sorted.
-#[inline(always)]
-pub fn mapPairs(mut m @ _: aver_rt::AverMap<AverStr, (Val, Val)>) -> aver_rt::AverList<(Val, Val)> {
+/// The key of a map entry, ValTuple([key, value]).
+pub fn entryKey(entry @ _: &Val) -> Val {
     crate::cancel_checkpoint();
-    let pairs @ _ = {
+    {
+        let __t = entry;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValTuple(__parts_fields) => {
+                let parts = &__parts_fields.0;
+                {
+                    let __list_subject = parts;
+                    if let Some(k) = __list_subject.first() {
+                        k.clone()
+                    } else {
+                        if __list_subject.is_empty() {
+                            crate::aver_generated::domain::value::Val::ValUnit
+                        } else {
+                            panic!("Aver Rust codegen: non-exhaustive list match")
+                        }
+                    }
+                }
+            }
+            _ => crate::aver_generated::domain::value::Val::ValUnit,
+        }
+    }
+}
+
+/// The value of a map entry, ValTuple([key, value]).
+pub fn entryValue(entry @ _: &Val) -> Val {
+    crate::cancel_checkpoint();
+    {
+        let __t = entry;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValTuple(__parts_fields) => {
+                let parts = &__parts_fields.0;
+                match (parts).get(aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)))) {
+                    Some(v) => v.clone(),
+                    None => crate::aver_generated::domain::value::Val::ValUnit,
+                }
+            }
+            _ => crate::aver_generated::domain::value::Val::ValUnit,
+        }
+    }
+}
+
+/// A map's entries, ValTuple([key, value]), in key order, the order every backend iterates a map in. The text a String or Bool key is filed under already sorts that way; any other key is sorted. Keys are distinct, so comparing entries compares their keys.
+#[inline(always)]
+pub fn mapEntries(mut m @ _: aver_rt::AverMap<AverStr, Val>) -> aver_rt::AverList<Val> {
+    crate::cancel_checkpoint();
+    let entries @ _ = {
         let __map = &(m);
         let mut es: Vec<_> = __map.iter().collect();
         es.sort_by(|a, b| a.0.cmp(b.0));
         aver_rt::AverList::from_vec(es.into_iter().map(|(_, v)| v.clone()).collect::<Vec<_>>())
     };
     {
-        let __list_subject = pairs.clone();
+        let __list_subject = entries.clone();
         if __list_subject.is_empty() {
-            pairs
+            entries
         } else {
-            if let Some((pair, _)) = aver_rt::list_uncons_cloned(&__list_subject) {
+            if let Some((entry, _)) = aver_rt::list_uncons_cloned(&__list_subject) {
                 {
-                    let __t = pair;
-                    match (__t.0.view(), &__t.1) {
-                        (crate::aver_generated::domain::value::Val__view::ValStr(_), _) => pairs,
-                        (crate::aver_generated::domain::value::Val__view::ValBool(_), _) => pairs,
-                        _ => crate::aver_generated::domain::value::sortPairs(&pairs),
+                    let __t = crate::aver_generated::domain::value::entryKey(&entry);
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValStr(_) => entries,
+                        crate::aver_generated::domain::value::Val__view::ValBool(_) => entries,
+                        _ => crate::aver_generated::domain::value::sortVals(&entries),
                     }
                 }
             } else {
@@ -1197,42 +1251,42 @@ pub fn mapPairs(mut m @ _: aver_rt::AverMap<AverStr, (Val, Val)>) -> aver_rt::Av
     }
 }
 
-/// Merge sort of (key, value) pairs by key.
+/// Merge sort of values in the order valCmp gives.
 #[inline(always)]
-pub fn sortPairs(pairs @ _: &aver_rt::AverList<(Val, Val)>) -> aver_rt::AverList<(Val, Val)> {
+pub fn sortVals(xs @ _: &aver_rt::AverList<Val>) -> aver_rt::AverList<Val> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = pairs;
+        let __list_subject = xs;
         if __list_subject.is_empty() {
-            pairs.clone()
+            xs.clone()
         } else {
             if let Some((_, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
                 {
                     let __list_subject = rest;
                     if __list_subject.is_empty() {
-                        pairs.clone()
+                        xs.clone()
                     } else {
                         {
                             let (left, right) = {
-                                let __arg4 @ _ = <aver_rt::AverList<(Val, Val)>>::empty();
+                                let __arg4 @ _ = <aver_rt::AverList<Val>>::empty();
                                 {
-                                    let __arg5 @ _ = <aver_rt::AverList<(Val, Val)>>::empty();
-                                    crate::aver_generated::domain::value::splitPairs(
-                                        pairs, __arg4, __arg5,
+                                    let __arg5 @ _ = <aver_rt::AverList<Val>>::empty();
+                                    crate::aver_generated::domain::value::splitVals(
+                                        xs, __arg4, __arg5,
                                     )
                                 }
                             };
                             {
                                 let __arg6 @ _ =
-                                    crate::aver_generated::domain::value::sortPairs(&left);
+                                    crate::aver_generated::domain::value::sortVals(&left);
                                 {
                                     let __arg7 @ _ =
-                                        crate::aver_generated::domain::value::sortPairs(&right);
+                                        crate::aver_generated::domain::value::sortVals(&right);
                                     {
                                         let __arg8 @ _ = aver_rt::list_builder_new(
                                             (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
                                         );
-                                        crate::aver_generated::domain::value::mergePairs__collected(
+                                        crate::aver_generated::domain::value::mergeVals__collected(
                                             __arg6, __arg7, __arg8,
                                         )
                                     }
@@ -1248,29 +1302,29 @@ pub fn sortPairs(pairs @ _: &aver_rt::AverList<(Val, Val)>) -> aver_rt::AverList
     }
 }
 
-/// Deal pairs into two halves alternately.
+/// Deal values into two halves alternately.
 #[inline(always)]
-pub fn splitPairs(
-    pairs @ _: &aver_rt::AverList<(Val, Val)>,
-    mut left @ _: aver_rt::AverList<(Val, Val)>,
-    mut right @ _: aver_rt::AverList<(Val, Val)>,
-) -> (aver_rt::AverList<(Val, Val)>, aver_rt::AverList<(Val, Val)>) {
-    let mut __hold0: aver_rt::AverList<(Val, Val)>;
-    let mut pairs @ _: &aver_rt::AverList<(Val, Val)> = pairs;
+pub fn splitVals(
+    xs @ _: &aver_rt::AverList<Val>,
+    mut left @ _: aver_rt::AverList<Val>,
+    mut right @ _: aver_rt::AverList<Val>,
+) -> (aver_rt::AverList<Val>, aver_rt::AverList<Val>) {
+    let mut __hold0: aver_rt::AverList<Val>;
+    let mut xs @ _: &aver_rt::AverList<Val> = xs;
     loop {
         crate::cancel_checkpoint();
         {
-            let __list_subject = pairs;
+            let __list_subject = xs;
             if __list_subject.is_empty() {
                 return (left, right);
             } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
                     {
                         let __tco0 = rest;
                         let __tco1 = right;
-                        let __tco2 = aver_rt::AverList::prepend_owned(pair.clone(), left);
+                        let __tco2 = aver_rt::AverList::prepend_owned(x.clone(), left);
                         __hold0 = __tco0;
-                        pairs = &__hold0;
+                        xs = &__hold0;
                         left = __tco1;
                         right = __tco2;
                         continue;
@@ -1283,16 +1337,16 @@ pub fn splitPairs(
     }
 }
 
-/// Merge two key-sorted lists of pairs.
+/// Merge two sorted lists of values.
 #[inline(always)]
-pub fn mergePairs(
-    mut xs @ _: aver_rt::AverList<(Val, Val)>,
-    mut ys @ _: aver_rt::AverList<(Val, Val)>,
-    mut acc @ _: aver_rt::AverList<(Val, Val)>,
-) -> aver_rt::AverList<(Val, Val)> {
+pub fn mergeVals(
+    mut xs @ _: aver_rt::AverList<Val>,
+    mut ys @ _: aver_rt::AverList<Val>,
+    mut acc @ _: aver_rt::AverList<Val>,
+) -> aver_rt::AverList<Val> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(xs.clone(), [] => { return aver_rt::AverList::concat(&(acc).reverse_owned(), &ys); }, [x, xr] => { aver_list_match!(ys.clone(), [] => { return aver_rt::AverList::concat(&(acc).reverse_owned(), &xs); }, [y, yr] => { { let ((a, _), (b, _)) = (x.clone(), y.clone()); if (crate::aver_generated::domain::value::valCmp(a, b) < aver_rt::AverInt::from_i64(0)) { {
+        aver_list_match!(xs.clone(), [] => { return aver_rt::AverList::concat(&(acc).reverse_owned(), &ys); }, [x, xr] => { aver_list_match!(ys.clone(), [] => { return aver_rt::AverList::concat(&(acc).reverse_owned(), &xs); }, [y, yr] => { if (crate::aver_generated::domain::value::valCmp(x.clone(), y.clone()) < aver_rt::AverInt::from_i64(0)) { {
             let __tco0 = xr;
             let __tco2 = aver_rt::AverList::prepend_owned(x, acc);
             xs = __tco0;
@@ -1304,7 +1358,7 @@ pub fn mergePairs(
             ys = __tco1;
             acc = __tco2;
             continue;
-        } } } }) })
+        } } }) })
     }
 }
 
@@ -1877,23 +1931,19 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                     let y = &__y_fields.0;
                     return {
                         let __arg38 @ _ = {
-                            let __map = &(x);
-                            let mut es: Vec<_> = __map.iter().collect();
-                            es.sort_by(|a, b| a.0.cmp(b.0));
-                            aver_rt::AverList::from_vec(
-                                es.into_iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(),
-                            )
+                            let mut es: Vec<_> =
+                                x.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                            es.sort_by(|a, b| a.0.cmp(&b.0));
+                            aver_rt::AverList::from_vec(es)
                         };
                         {
                             let __arg39 @ _ = {
-                                let __map = &(y);
-                                let mut es: Vec<_> = __map.iter().collect();
-                                es.sort_by(|a, b| a.0.cmp(b.0));
-                                aver_rt::AverList::from_vec(
-                                    es.into_iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(),
-                                )
+                                let mut es: Vec<_> =
+                                    y.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                                es.sort_by(|a, b| a.0.cmp(&b.0));
+                                aver_rt::AverList::from_vec(es)
                             };
-                            crate::aver_generated::domain::value::pairsEq(&__arg38, &__arg39)
+                            crate::aver_generated::domain::value::entriesEq(&__arg38, &__arg39)
                         }
                     };
                 }
@@ -2028,80 +2078,16 @@ pub fn entriesEq(
     }
 }
 
-/// Whether two lists of (key, value) pairs are equal pair by pair.
+/// Synthesized collecting variant of `mergeVals`. Appends to a builder where `mergeVals` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
-pub fn pairsEq(
-    xs @ _: &aver_rt::AverList<(Val, Val)>,
-    ys @ _: &aver_rt::AverList<(Val, Val)>,
-) -> bool {
-    let mut __hold0: aver_rt::AverList<(Val, Val)>;
-    let mut xs @ _: &aver_rt::AverList<(Val, Val)> = xs;
-    let mut __hold1: aver_rt::AverList<(Val, Val)>;
-    let mut ys @ _: &aver_rt::AverList<(Val, Val)> = ys;
+pub fn mergeVals__collected(
+    mut xs @ _: aver_rt::AverList<Val>,
+    mut ys @ _: aver_rt::AverList<Val>,
+    mut acc @ _: aver_rt::AverList<Val>,
+) -> aver_rt::AverList<Val> {
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = xs;
-            if __list_subject.is_empty() {
-                {
-                    let __list_subject = ys;
-                    if __list_subject.is_empty() {
-                        return true;
-                    } else {
-                        return false;
-                    }
-                }
-            } else {
-                if let (Some(x), Some(xr)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __list_subject = ys;
-                        if __list_subject.is_empty() {
-                            return false;
-                        } else {
-                            if let (Some(y), Some(yr)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
-                                    let ((k, v), (j, w)) = (x.clone(), y.clone());
-                                    if (crate::aver_generated::domain::value::valEq(&k, &j)
-                                        && crate::aver_generated::domain::value::valEq(&v, &w))
-                                    {
-                                        {
-                                            let __tco0 = xr;
-                                            let __tco1 = yr;
-                                            __hold0 = __tco0;
-                                            xs = &__hold0;
-                                            __hold1 = __tco1;
-                                            ys = &__hold1;
-                                            continue;
-                                        }
-                                    } else {
-                                        return false;
-                                    }
-                                }
-                            } else {
-                                panic!("Aver Rust codegen: non-exhaustive list match")
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
-            }
-        }
-    }
-}
-
-/// Synthesized collecting variant of `mergePairs`. Appends to a builder where `mergePairs` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
-#[inline(always)]
-pub fn mergePairs__collected(
-    mut xs @ _: aver_rt::AverList<(Val, Val)>,
-    mut ys @ _: aver_rt::AverList<(Val, Val)>,
-    mut acc @ _: aver_rt::AverList<(Val, Val)>,
-) -> aver_rt::AverList<(Val, Val)> {
-    loop {
-        crate::cancel_checkpoint();
-        aver_list_match!(xs.clone(), [] => { return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &ys); }, [x, xr] => { aver_list_match!(ys.clone(), [] => { return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &xs); }, [y, yr] => { { let ((a, _), (b, _)) = (x.clone(), y.clone()); if (crate::aver_generated::domain::value::valCmp(a, b) < aver_rt::AverInt::from_i64(0)) { {
+        aver_list_match!(xs.clone(), [] => { return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &ys); }, [x, xr] => { aver_list_match!(ys.clone(), [] => { return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &xs); }, [y, yr] => { if (crate::aver_generated::domain::value::valCmp(x.clone(), y.clone()) < aver_rt::AverInt::from_i64(0)) { {
             let __tco0 = xr;
             let __tco2 = aver_rt::list_builder_push(acc, x);
             xs = __tco0;
@@ -2113,6 +2099,6 @@ pub fn mergePairs__collected(
             ys = __tco1;
             acc = __tco2;
             continue;
-        } } } }) })
+        } } }) })
     }
 }

@@ -1,7 +1,7 @@
 module Value
     intent =
         "Runtime values for the mini interpreter."
-    exposes [Val, valRepr, mapKeyRepr, mapPairs, valEq]
+    exposes [Val, valRepr, mapKeyRepr, mapEntries, entryKey, entryValue, valEq]
     effects []
 
 fn quoteString(s: String) -> String
@@ -30,7 +30,7 @@ type Val
     ValTcpDial(Tcp.Dial)
     ValTcpListener(Tcp.Listener)
     ValVariant(Int, String, List<Val>)
-    ValMap(Map<String, Tuple<Val, Val>>)
+    ValMap(Map<String, Val>)
     ValUnit
 
 fn valListRepr(items: List<Val>, acc: String, first: Bool) -> String
@@ -65,7 +65,7 @@ fn valRepr(v: Val) -> String
         Val.ValTcpConnection(_) -> "Tcp.Connection(<resource>)"
         Val.ValTcpDial(_) -> "Tcp.Dial(<resource>)"
         Val.ValTcpListener(_) -> "Tcp.Listener(<resource>)"
-        Val.ValMap(m) -> valMapRepr(mapPairs(m), "", true)
+        Val.ValMap(m) -> valMapRepr(mapEntries(m), "", true)
         Val.ValVariant(_, fullName, fields) -> valVariantReprTagged(fullName, fields)
         Val.ValUnit -> "()"
 
@@ -106,21 +106,20 @@ verify valReprInner
     valReprInner(Val.ValList([Val.ValInt(1)])) => "[1]"
     valReprInner(Val.ValVector(Vector.fromList([]))) => "Vector[]"
 
-fn valMapRepr(entries: List<Tuple<Val, Val>>, acc: String, first: Bool) -> String
+fn valMapRepr(entries: List<Val>, acc: String, first: Bool) -> String
     ? "Build a stable map repr close to the host interpreter output."
     match entries
         [] -> "{{{acc}}}"
-        [pair, ..rest] -> match pair
-            (k, v) -> match first
-                true -> valMapRepr(rest, valReprInner(k) + ": " + valReprInner(v), false)
-                false -> valMapRepr(rest, acc + ", " + valReprInner(k) + ": " + valReprInner(v), false)
+        [entry, ..rest] -> match first
+            true -> valMapRepr(rest, valReprInner(entryKey(entry)) + ": " + valReprInner(entryValue(entry)), false)
+            false -> valMapRepr(rest, acc + ", " + valReprInner(entryKey(entry)) + ": " + valReprInner(entryValue(entry)), false)
 
 verify valMapRepr
     valMapRepr([], "", true) => "{{}}"
-    valMapRepr([(Val.ValStr("alice"), Val.ValInt(2))], "", true) => "{{" + quoteString("alice") + ": 2}"
+    valMapRepr([Val.ValTuple([Val.ValStr("alice"), Val.ValInt(2)])], "", true) => "{{" + quoteString("alice") + ": 2}"
 
 fn mapKeyRepr(v: Val) -> String
-    ? "The text a map files a key under: two keys of one type get the same text exactly when they are equal. A String, Int or Bool key is its own text. A key with parts writes each part with its length in front, so no part can pass for a separator, and a record takes its fields in name order."
+    ? "The text a map files a key under: two keys of one type get the same text exactly when they are equal. A String, Int or Bool key is its own text. A key with parts writes each part with its length in front, so no part can pass for a separator, and a record takes its fields in name order. The map files ValTuple([key, value]) under it."
     match v
         Val.ValInt(n) -> String.fromInt(n)
         Val.ValStr(s) -> s
@@ -152,54 +151,75 @@ verify partsKey
     partsKey("[", []) => "["
     partsKey("[", [Val.ValStr("ab"), Val.ValStr("")]) => "[2:ab0:"
 
-fn mapPairs(m: Map<String, Tuple<Val, Val>>) -> List<Tuple<Val, Val>>
-    ? "A map's (key, value) pairs in key order, the order every backend iterates a map in. The text a String or Bool key is filed under already sorts that way; any other key is sorted."
-    pairs = Map.values(m)
-    match pairs
-        [] -> pairs
-        [pair, .._] -> match pair
-            (Val.ValStr(_), _) -> pairs
-            (Val.ValBool(_), _) -> pairs
-            _ -> sortPairs(pairs)
+fn entryKey(entry: Val) -> Val
+    ? "The key of a map entry, ValTuple([key, value])."
+    match entry
+        Val.ValTuple(parts) -> match parts
+            [k, .._] -> k
+            [] -> Val.ValUnit
+        _ -> Val.ValUnit
 
-verify mapPairs
-    mapPairs({}) => []
-    mapPairs({"10" => (Val.ValInt(10), Val.ValStr("a")), "9" => (Val.ValInt(9), Val.ValStr("b"))}) => [(Val.ValInt(9), Val.ValStr("b")), (Val.ValInt(10), Val.ValStr("a"))]
+verify entryKey
+    entryKey(Val.ValTuple([Val.ValInt(1), Val.ValStr("a")])) => Val.ValInt(1)
 
-fn sortPairs(pairs: List<Tuple<Val, Val>>) -> List<Tuple<Val, Val>>
-    ? "Merge sort of (key, value) pairs by key."
-    match pairs
-        [] -> pairs
+fn entryValue(entry: Val) -> Val
+    ? "The value of a map entry, ValTuple([key, value])."
+    match entry
+        Val.ValTuple(parts) -> match List.drop(parts, 1)
+            [v, .._] -> v
+            [] -> Val.ValUnit
+        _ -> Val.ValUnit
+
+verify entryValue
+    entryValue(Val.ValTuple([Val.ValInt(1), Val.ValStr("a")])) => Val.ValStr("a")
+
+fn mapEntries(m: Map<String, Val>) -> List<Val>
+    ? "A map's entries, ValTuple([key, value]), in key order, the order every backend iterates a map in. The text a String or Bool key is filed under already sorts that way; any other key is sorted. Keys are distinct, so comparing entries compares their keys."
+    entries = Map.values(m)
+    match entries
+        [] -> entries
+        [entry, .._] -> match entryKey(entry)
+            Val.ValStr(_) -> entries
+            Val.ValBool(_) -> entries
+            _ -> sortVals(entries)
+
+verify mapEntries
+    mapEntries({}) => []
+    mapEntries({"10" => Val.ValTuple([Val.ValInt(10), Val.ValStr("a")]), "9" => Val.ValTuple([Val.ValInt(9), Val.ValStr("b")])}) => [Val.ValTuple([Val.ValInt(9), Val.ValStr("b")]), Val.ValTuple([Val.ValInt(10), Val.ValStr("a")])]
+
+fn sortVals(xs: List<Val>) -> List<Val>
+    ? "Merge sort of values in the order valCmp gives."
+    match xs
+        [] -> xs
         [_, ..rest] -> match rest
-            [] -> pairs
-            _ -> match splitPairs(pairs, [], [])
-                (left, right) -> mergePairs(sortPairs(left), sortPairs(right), [])
+            [] -> xs
+            _ -> match splitVals(xs, [], [])
+                (left, right) -> mergeVals(sortVals(left), sortVals(right), [])
 
-verify sortPairs
-    sortPairs([(Val.ValInt(2), Val.ValUnit), (Val.ValInt(-1), Val.ValUnit), (Val.ValInt(1), Val.ValUnit)]) => [(Val.ValInt(-1), Val.ValUnit), (Val.ValInt(1), Val.ValUnit), (Val.ValInt(2), Val.ValUnit)]
+verify sortVals
+    sortVals([Val.ValInt(2), Val.ValInt(-1), Val.ValInt(1)]) => [Val.ValInt(-1), Val.ValInt(1), Val.ValInt(2)]
 
-fn splitPairs(pairs: List<Tuple<Val, Val>>, left: List<Tuple<Val, Val>>, right: List<Tuple<Val, Val>>) -> Tuple<List<Tuple<Val, Val>>, List<Tuple<Val, Val>>>
-    ? "Deal pairs into two halves alternately."
-    match pairs
+fn splitVals(xs: List<Val>, left: List<Val>, right: List<Val>) -> Tuple<List<Val>, List<Val>>
+    ? "Deal values into two halves alternately."
+    match xs
         [] -> (left, right)
-        [pair, ..rest] -> splitPairs(rest, right, List.prepend(pair, left))
+        [x, ..rest] -> splitVals(rest, right, List.prepend(x, left))
 
-verify splitPairs
-    splitPairs([(Val.ValInt(1), Val.ValUnit), (Val.ValInt(2), Val.ValUnit)], [], []) => ([(Val.ValInt(1), Val.ValUnit)], [(Val.ValInt(2), Val.ValUnit)])
+verify splitVals
+    splitVals([Val.ValInt(1), Val.ValInt(2)], [], []) => ([Val.ValInt(1)], [Val.ValInt(2)])
 
-fn mergePairs(xs: List<Tuple<Val, Val>>, ys: List<Tuple<Val, Val>>, acc: List<Tuple<Val, Val>>) -> List<Tuple<Val, Val>>
-    ? "Merge two key-sorted lists of pairs."
+fn mergeVals(xs: List<Val>, ys: List<Val>, acc: List<Val>) -> List<Val>
+    ? "Merge two sorted lists of values."
     match xs
         [] -> List.concat(List.reverse(acc), ys)
         [x, ..xr] -> match ys
             [] -> List.concat(List.reverse(acc), xs)
-            [y, ..yr] -> match (x, y)
-                ((a, _), (b, _)) -> match valCmp(a, b) < 0
-                    true -> mergePairs(xr, ys, List.prepend(x, acc))
-                    false -> mergePairs(xs, yr, List.prepend(y, acc))
+            [y, ..yr] -> match valCmp(x, y) < 0
+                true -> mergeVals(xr, ys, List.prepend(x, acc))
+                false -> mergeVals(xs, yr, List.prepend(y, acc))
 
-verify mergePairs
-    mergePairs([(Val.ValInt(1), Val.ValUnit)], [(Val.ValInt(0), Val.ValUnit)], []) => [(Val.ValInt(0), Val.ValUnit), (Val.ValInt(1), Val.ValUnit)]
+verify mergeVals
+    mergeVals([Val.ValInt(1)], [Val.ValInt(0)], []) => [Val.ValInt(0), Val.ValInt(1)]
 
 fn valCmp(a: Val, b: Val) -> Int
     ? "Order two map keys of one type, -1, 0 or 1: Int by value, String by codepoint, Bool false first, a list or tuple item by item, a record by its fields in name order, a variant by constructor name and then payload, None before Some, Ok before Err."
@@ -306,7 +326,7 @@ fn valEq(a: Val, b: Val) -> Bool
         (Val.ValVariant(_, n, fs), Val.ValVariant(_, m, gs)) -> match n == m
             true -> valsEq(fs, gs)
             false -> false
-        (Val.ValMap(x), Val.ValMap(y)) -> pairsEq(Map.values(x), Map.values(y))
+        (Val.ValMap(x), Val.ValMap(y)) -> entriesEq(Map.entries(x), Map.entries(y))
         _ -> valRepr(a) == valRepr(b)
 
 verify valEq
@@ -355,21 +375,3 @@ verify entriesEq
     entriesEq([], []) => true
     entriesEq([("a", Val.ValInt(1))], [("a", Val.ValInt(1))]) => true
     entriesEq([("a", Val.ValInt(1))], [("b", Val.ValInt(1))]) => false
-
-fn pairsEq(xs: List<Tuple<Val, Val>>, ys: List<Tuple<Val, Val>>) -> Bool
-    ? "Whether two lists of (key, value) pairs are equal pair by pair."
-    match xs
-        [] -> match ys
-            [] -> true
-            _ -> false
-        [x, ..xr] -> match ys
-            [] -> false
-            [y, ..yr] -> match (x, y)
-                ((k, v), (j, w)) -> match Bool.and(valEq(k, j), valEq(v, w))
-                    true -> pairsEq(xr, yr)
-                    false -> false
-
-verify pairsEq
-    pairsEq([], []) => true
-    pairsEq([(Val.ValInt(1), Val.ValInt(2))], [(Val.ValInt(1), Val.ValInt(2))]) => true
-    pairsEq([(Val.ValInt(1), Val.ValInt(2))], [(Val.ValInt(1), Val.ValInt(3))]) => false

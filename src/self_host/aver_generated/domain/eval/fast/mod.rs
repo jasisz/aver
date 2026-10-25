@@ -348,12 +348,11 @@ pub fn fastMapGetSlotInner(
                         .get(&crate::aver_generated::domain::value::mapKeyRepr(keyV))
                         .cloned();
                     match __subject {
-                        Some(pair @ _) => {
-                            let (_, v) = pair;
-                            Ok(crate::aver_generated::domain::value::Val::ValSome(
-                                crate::aver_generated::domain::value::Val__ValSome(v),
-                            ))
-                        }
+                        Some(entry @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+                            crate::aver_generated::domain::value::Val__ValSome(
+                                crate::aver_generated::domain::value::entryValue(&entry),
+                            ),
+                        )),
                         None => Ok(crate::aver_generated::domain::value::Val::ValNone),
                     }
                 }
@@ -392,7 +391,11 @@ pub fn fastMapSetSlotInner(
                 Ok(crate::aver_generated::domain::value::Val::ValMap(
                     crate::aver_generated::domain::value::Val__ValMap(m.clone().insert_owned(
                         crate::aver_generated::domain::value::mapKeyRepr(&keyV),
-                        (keyV, valueV),
+                        crate::aver_generated::domain::value::Val::ValTuple(
+                            crate::aver_generated::domain::value::Val__ValTuple(
+                                aver_rt::AverList::from_vec(vec![keyV, valueV]),
+                            ),
+                        ),
                     )),
                 ))
             }
