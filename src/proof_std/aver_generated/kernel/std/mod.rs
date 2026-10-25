@@ -1603,7 +1603,10 @@ pub fn holeBelow(
                                     aver_rt::AverList::empty(),
                                 ),
                             );
-                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg16, &__arg17)
+                        crate::proof_std::aver_generated::kernel::std::mapSome(
+                            (&__arg16).as_ref(),
+                            &__arg17,
+                        )
                     }
                 }
             }
@@ -1620,7 +1623,10 @@ pub fn holeBelow(
                                 aver_rt::AverList::empty(),
                             ),
                         );
-                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg18, &__arg19)
+                        crate::proof_std::aver_generated::kernel::std::mapSome(
+                            (&__arg18).as_ref(),
+                            &__arg19,
+                        )
                     }
                 }
             }
@@ -1638,7 +1644,10 @@ pub fn holeBelow(
                                     aver_rt::AverList::empty(),
                                 ),
                             );
-                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg20, &__arg21)
+                        crate::proof_std::aver_generated::kernel::std::mapSome(
+                            (&__arg20).as_ref(),
+                            &__arg21,
+                        )
                     }
                 }
             }
@@ -1654,7 +1663,10 @@ pub fn holeBelow(
                                     aver_rt::AverList::empty(),
                                 ),
                             );
-                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg22, &__arg23)
+                        crate::proof_std::aver_generated::kernel::std::mapSome(
+                            (&__arg22).as_ref(),
+                            &__arg23,
+                        )
                     }
                 }
             }
@@ -1670,7 +1682,10 @@ pub fn holeBelow(
                                     aver_rt::AverList::empty(),
                                 ),
                             );
-                        crate::proof_std::aver_generated::kernel::std::mapSome(&__arg24, &__arg25)
+                        crate::proof_std::aver_generated::kernel::std::mapSome(
+                            (&__arg24).as_ref(),
+                            &__arg25,
+                        )
                     }
                 }
             }
@@ -1685,7 +1700,7 @@ pub fn holeBelow(
                         o,
                         a.clone(),
                         b.clone(),
-                        &__arg26,
+                        (&__arg26).as_ref(),
                         target,
                     )
                 }
@@ -1695,7 +1710,7 @@ pub fn holeBelow(
                 {
                     let __arg27 @ _ =
                         crate::proof_std::aver_generated::kernel::std::holeAt(a, target);
-                    crate::proof_std::aver_generated::kernel::std::negWith(&__arg27)
+                    crate::proof_std::aver_generated::kernel::std::negWith((&__arg27).as_ref())
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TGet(__a_fields) => {
@@ -1704,7 +1719,7 @@ pub fn holeBelow(
                 {
                     let __arg28 @ _ =
                         crate::proof_std::aver_generated::kernel::std::holeAt(a, target);
-                    crate::proof_std::aver_generated::kernel::std::getWith(&__arg28, f)
+                    crate::proof_std::aver_generated::kernel::std::getWith((&__arg28).as_ref(), f)
                 }
             }
             _ => None,
@@ -1715,7 +1730,7 @@ pub fn holeBelow(
 /// shape (a call, builtin, constructor, list or tuple) around parts holding the hole.
 #[inline(always)]
 pub fn mapSome(
-    xs @ _: &Option<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>>,
+    xs @ _: Option<&aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>>,
     shape @ _: &crate::proof_std::aver_generated::kernel::term::Term,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
@@ -1758,7 +1773,7 @@ pub fn mapSome(
 /// A negation around a part holding the hole.
 #[inline(always)]
 pub fn negWith(
-    a @ _: &Option<crate::proof_std::aver_generated::kernel::term::Term>,
+    a @ _: Option<&crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
     match a {
@@ -1772,7 +1787,7 @@ pub fn negWith(
 /// A field read around a part holding the hole.
 #[inline(always)]
 pub fn getWith(
-    a @ _: &Option<crate::proof_std::aver_generated::kernel::term::Term>,
+    a @ _: Option<&crate::proof_std::aver_generated::kernel::term::Term>,
     f @ _: AverStr,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
@@ -1790,7 +1805,7 @@ pub fn opWith(
     o @ _: AverStr,
     mut a @ _: crate::proof_std::aver_generated::kernel::term::Term,
     mut b @ _: crate::proof_std::aver_generated::kernel::term::Term,
-    left @ _: &Option<crate::proof_std::aver_generated::kernel::term::Term>,
+    left @ _: Option<&crate::proof_std::aver_generated::kernel::term::Term>,
     target @ _: &crate::proof_std::aver_generated::kernel::term::Term,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
@@ -1826,7 +1841,10 @@ pub fn holeInList(
                         let __arg5 @ _ = crate::proof_std::aver_generated::kernel::std::holeInList(
                             &rest, target,
                         );
-                        crate::proof_std::aver_generated::kernel::std::prependTo(x, &__arg5)
+                        crate::proof_std::aver_generated::kernel::std::prependTo(
+                            x,
+                            (&__arg5).as_ref(),
+                        )
                     }
                 }
             } else {
@@ -1840,7 +1858,7 @@ pub fn holeInList(
 #[inline(always)]
 pub fn prependTo(
     x @ _: &crate::proof_std::aver_generated::kernel::term::Term,
-    xs @ _: &Option<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>>,
+    xs @ _: Option<&aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>>,
 ) -> Option<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>> {
     crate::proof_std::cancel_checkpoint();
     match xs {

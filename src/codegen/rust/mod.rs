@@ -9,6 +9,7 @@ pub mod emit_ctx;
 mod expr;
 mod from_mir;
 mod knowing;
+mod lent_option;
 pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers};
 mod ownership;
 mod pattern;
@@ -190,6 +191,7 @@ fn transpile_project(
         boxing_notes = perf_notes::boxing(ctx);
         arg_order::bind_computed_arguments(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
+        ctx.rust_lent_options = lent_option::compute(ctx);
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
         ctx.rust_knowing = knowing::compute(ctx);
     }

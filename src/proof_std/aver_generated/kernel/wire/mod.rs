@@ -138,23 +138,20 @@ pub fn withGiven(
                         ..*base
                     },
                 ),
-                (_, Some(f)) => {
-                    let f = f.clone();
-                    Box::new(
-                        crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
-                            finite: aver_rt::AverList::concat(
-                                &base.finite,
-                                &aver_rt::AverList::from_vec(vec![
-                                    crate::proof_std::aver_generated::kernel::proof::Given {
-                                        name: g.name.clone(),
-                                        fin: f,
-                                    },
-                                ]),
-                            ),
-                            ..*base
-                        },
-                    )
-                }
+                (_, Some(f)) => Box::new(
+                    crate::proof_std::aver_generated::kernel::proof::Goal__Fields {
+                        finite: aver_rt::AverList::concat(
+                            &base.finite,
+                            &aver_rt::AverList::from_vec(vec![
+                                crate::proof_std::aver_generated::kernel::proof::Given {
+                                    name: g.name.clone(),
+                                    fin: f.clone(),
+                                },
+                            ]),
+                        ),
+                        ..*base
+                    },
+                ),
                 _ => base,
             }
         }

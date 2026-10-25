@@ -391,6 +391,7 @@ mod tests {
             mir_program: None,
             bare_i64: Default::default(),
             rust_owned_record_params: Default::default(),
+            rust_lent_options: Default::default(),
             rust_lazy_sums: Default::default(),
             knowing_trusted: Default::default(),
             rust_knowing: Default::default(),

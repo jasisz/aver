@@ -1345,10 +1345,14 @@ fn emit_fn_def_with_visibility(
                 super::from_mir::lent_string_params(mir_fn, &resolved_fd.params, builtins)
             })
             .unwrap_or_default();
+        let lent_options: HashSet<usize> = (0..fd.params.len())
+            .filter(|&i| super::lent_option::is_lent(&ctx.rust_lent_options, resolved_fd.fn_id, i))
+            .collect();
         emit_fn_params_with_bare(
             &fd.params,
             &owned_collection_params,
             &lent_strings,
+            &lent_options,
             bare_facts,
             ctx,
             scope,
@@ -1661,6 +1665,7 @@ fn emit_fn_params_with_bare(
     params: &[(String, String)],
     owned_params: &HashSet<String>,
     lent_strings: &HashSet<String>,
+    lent_options: &HashSet<usize>,
     bare_facts: Option<&crate::ir::mir::FnBareFacts>,
     ctx: &CodegenContext,
     scope: Option<&str>,
@@ -1671,6 +1676,18 @@ fn emit_fn_params_with_bare(
         .map(|(i, (name, type_ann))| {
             if bare_facts.is_some_and(|f| f.param_is_bare(i)) {
                 return format!("{}: i64", explicit_parameter_pattern(name, false));
+            }
+            // A lent `Option` is `Option<&T>` (see `lent_option`).
+            let rust_type = type_annotation_to_rust_scoped(type_ann, ctx, scope);
+            if lent_options.contains(&i)
+                && let Some(inner) = rust_type
+                    .strip_prefix("Option<")
+                    .and_then(|t| t.strip_suffix('>'))
+            {
+                return format!(
+                    "{}: Option<&{inner}>",
+                    explicit_parameter_pattern(name, false)
+                );
             }
             // Fall back to the single-param shape the inner emitter would
             // produce for a non-bare param; a lent string is `&AverStr`.
@@ -2575,6 +2592,7 @@ mod tests {
             mir_program: None,
             bare_i64: Default::default(),
             rust_owned_record_params: Default::default(),
+            rust_lent_options: Default::default(),
             rust_lazy_sums: Default::default(),
             knowing_trusted: Default::default(),
             rust_knowing: Default::default(),

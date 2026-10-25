@@ -57,7 +57,12 @@ pub(super) fn plan_work_kinds(
                 .first()
                 .copied()
                 .unwrap_or(false);
-            let argument = if borrows { "&__task" } else { "__task" };
+            let lent = super::expr::callee_lent_option_mask(&kind.function, 1, ctx)[0];
+            let argument = match (lent, borrows) {
+                (true, _) => "__task.as_ref()",
+                (false, true) => "&__task",
+                (false, false) => "__task",
+            };
             WorkKindEmit {
                 capability: kind.capability.clone(),
                 // A capability is a dotted path, not one Rust identifier.
