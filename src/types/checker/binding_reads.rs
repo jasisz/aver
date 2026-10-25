@@ -168,12 +168,13 @@ impl TypeChecker {
             // straight from the value is already refused where the value is
             // checked when it is not of an earlier binding.
             let mut came_from: HashMap<Node, (Node, usize)> = HashMap::new();
-            let mut queue: VecDeque<Node> = graph[&start]
-                .iter()
-                .filter(|(next, _)| matches!(next, Node::Fn(_)))
-                .filter(|(next, line)| came_from.insert(*next, (start, *line)).is_none())
-                .map(|(next, _)| *next)
-                .collect();
+            let mut queue: VecDeque<Node> = VecDeque::new();
+            for &(next, line) in &graph[&start] {
+                if matches!(next, Node::Fn(_)) && !came_from.contains_key(&next) {
+                    came_from.insert(next, (start, line));
+                    queue.push_back(next);
+                }
+            }
             let mut later: Option<Node> = None;
             let mut cycle: Option<(Node, usize)> = None;
             'search: while let Some(node) = queue.pop_front() {
@@ -215,17 +216,17 @@ impl TypeChecker {
                     *name,
                     line,
                 ),
-                (None, Some(read)) => (
-                    format!(
-                        "Module-level binding '{name}' reads '{}' before it is computed: {}, and '{}' is written after '{name}'. Write '{}' above '{name}'",
-                        read.name(),
-                        path_to(read),
-                        read.name(),
-                        read.name()
-                    ),
-                    read.name(),
-                    came_from[&read].1,
-                ),
+                (None, Some(later)) => {
+                    let read = later.name();
+                    (
+                        format!(
+                            "Module-level binding '{name}' reads '{read}' before it is computed: {}, and '{read}' is written after '{name}'. Write '{read}' above '{name}'",
+                            path_to(later)
+                        ),
+                        read,
+                        came_from[&later].1,
+                    )
+                }
                 (None, None) => continue,
             };
             self.error_at_line(value.line, message);
