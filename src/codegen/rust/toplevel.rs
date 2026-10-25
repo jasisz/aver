@@ -806,7 +806,10 @@ fn emit_sum_type(
             if recursive && !thin {
                 let fast = match order.len() {
                     0 => "true".to_string(),
-                    _ if shared && walks_on(i) => "(**a0).aver_fast_eq(&**b0)".to_string(),
+                    _ if shared && walks_on(i) => format!(
+                        "aver_rt::shared_items::fast_node(a0, b0, {}, |a, b| a.aver_fast_eq(b))",
+                        capabilities.partial_eq && capabilities.eq
+                    ),
                     _ if shared => "a0 == b0".to_string(),
                     _ => fields_equal(
                         &order,

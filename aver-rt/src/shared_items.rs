@@ -182,6 +182,23 @@ fn shared_pair() -> bool {
     })
 }
 
+/// `==` on the payloads of two nodes of a sum that is not thin from
+/// [`top`], `eq` comparing them: a pair of nodes both held in several places
+/// counts as a pair of collections sharing their items does. `reflexive`
+/// says `==` is (no `Float` in it), so one node equals itself unread.
+#[inline]
+pub fn fast_node<T>(
+    a: &Rc<T>,
+    b: &Rc<T>,
+    reflexive: bool,
+    eq: impl FnOnce(&T, &T) -> bool,
+) -> bool {
+    if reflexive && Rc::ptr_eq(a, b) {
+        return true;
+    }
+    (Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1 || shared_pair()) && eq(a, b)
+}
+
 /// `==` on two lists from [`top`], `eq` comparing two items.
 #[inline(never)]
 pub fn fast_list<T>(a: &AverList<T>, b: &AverList<T>, eq: impl Fn(&T, &T) -> bool) -> bool {
