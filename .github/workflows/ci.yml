@@ -406,6 +406,7 @@ jobs:
             vm_self_qualified_type \
             wasm_gc_capture_output \
             wasm_gc_carrier_i64_differential \
+            wasm_gc_carrier_keys_differential \
             wasm_gc_codegen_regression \
             wasm_gc_container_read_ownership \
             wasm_gc_differential_mir \
