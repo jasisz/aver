@@ -244,3 +244,162 @@ verify roundTrip
         8,
     );
 }
+
+/// Indexed reads over ASCII strings (which get no index table on wasm-gc,
+/// position `i` being byte `i`) and over strings with wider characters
+/// answer alike: the character itself, its codepoint in a dispatch, a slice
+/// at clamped positions, and a slice compared in place with `==` and `!=`,
+/// on either side.
+#[test]
+fn indexed_reads_agree_on_ascii_and_wider_text() {
+    assert_all_pass_on_both(
+        r#"
+fn kept(s: String, i: Int, acc: String) -> String
+    ? "Every character from position i, each but a b once more"
+    match String.charAt(s, i)
+        Option.None -> acc
+        Option.Some(c) -> kept(s, i + 1, keep(c, acc))
+
+fn keep(c: String, acc: String) -> String
+    ? "c added to acc, twice unless it is a b"
+    match c == "b"
+        true -> acc + c
+        false -> acc + c + c
+
+fn countB(s: String, i: Int, acc: Int) -> Int
+    ? "The b's from position i, matched as characters"
+    match String.charAt(s, i)
+        Option.None -> acc
+        Option.Some("b") -> countB(s, i + 1, acc + 1)
+        Option.Some -> countB(s, i + 1, acc)
+
+fn pairs(s: String, i: Int, acc: String) -> String
+    ? "Overlapping two-character slices, the last one cut short"
+    match String.charAt(s, i)
+        Option.None -> acc
+        Option.Some -> pairs(s, i + 1, acc + "[" + String.slice(s, i, i + 2) + "]")
+
+fn find(s: String, i: Int, t: String) -> Int
+    ? "The first position from i where t stands, or -1"
+    match String.charAt(s, i)
+        Option.None -> -1
+        Option.Some -> match String.slice(s, i, i + String.len(t)) == t
+            true -> i
+            false -> find(s, i + 1, t)
+
+fn misses(s: String, i: Int, t: String, acc: Int) -> Int
+    ? "Positions from i where t does not stand, compared the other way round"
+    match String.charAt(s, i)
+        Option.None -> acc
+        Option.Some -> match t != String.slice(s, i, i + String.len(t))
+            true -> misses(s, i + 1, t, acc + 1)
+            false -> misses(s, i + 1, t, acc)
+
+fn edges(s: String, i: Int, acc: String) -> String
+    ? "Slices at negative, reversed and past-the-end positions"
+    match String.charAt(s, i)
+        Option.None -> acc
+        Option.Some -> edges(s, i + 1, acc + String.slice(s, i - 9, i) + "|" + String.slice(s, i + 3, i) + "|" + String.slice(s, i, i + 99) + ";")
+
+verify kept
+    kept("abc", 0, "") => "aabcc"
+    kept("żbł😀", 0, "") => "żżbłł😀😀"
+    kept("abc", -1, "") => ""
+    kept("", 0, "") => ""
+
+verify countB
+    countB("abba", 0, 0) => 2
+    countB("ąbżb😀b", 0, 0) => 3
+    countB("abba", 4, 0) => 0
+
+verify pairs
+    pairs("abc", 0, "") => "[ab][bc][c]"
+    pairs("ż😀x", 0, "") => "[ż😀][😀x][x]"
+    pairs("", 0, "") => ""
+
+verify find
+    find("abcabc", 1, "ca") => 2
+    find("żółwżółw", 1, "wż") => 3
+    find("abc", 0, "") => 0
+    find("abc", 0, "cd") => -1
+    find("ab", 0, "abc") => -1
+
+verify misses
+    misses("abab", 0, "ab", 0) => 2
+    misses("αβαβ", 0, "βα", 0) => 3
+    misses("abab", 0, "", 0) => 0
+
+verify edges
+    edges("abc", 0, "") => "||abc;a||bc;ab||c;"
+    edges("ż😀", 0, "") => "||ż😀;ż||😀;"
+"#,
+        20,
+    );
+}
+
+/// `String.split` on a one-byte separator (searched for from the end on
+/// wasm-gc) gives the parts the search from the start gives, empty ones
+/// included; a longer separator keeps the search from the start.
+#[test]
+fn split_on_one_byte_keeps_every_part() {
+    assert_all_pass_on_both(
+        r#"
+fn parts(s: String, sep: String) -> List<String>
+    ? "The parts of s between separators"
+    String.split(s, sep)
+
+verify parts
+    parts("", "\n") => [""]
+    parts("\n", "\n") => ["", ""]
+    parts("a", "\n") => ["a"]
+    parts("a\n\nb\n", "\n") => ["a", "", "b", ""]
+    parts("\na", "\n") => ["", "a"]
+    parts("αβ,γ,", ",") => ["αβ", "γ", ""]
+    parts("a—b—", "—") => ["a", "b", ""]
+    parts("aaa", "aa") => ["", "a"]
+    parts("abcabc", "bc") => ["a", "a", ""]
+"#,
+        9,
+    );
+}
+
+/// A loop over `String.chars` that reads a character's first code point
+/// takes the character's code at the cursor instead, with no one-character
+/// string; under `Option.withDefault` with a literal default no `Option`
+/// either.
+#[test]
+fn first_code_point_of_each_character_reads_the_cursor() {
+    assert_all_pass_on_both(
+        r#"
+fn ofChars(cs: List<String>, acc: Int) -> Int
+    ? "A hash over code points"
+    match cs
+        [] -> acc
+        [c, ..rest] -> ofChars(rest, acc * 31 + Option.withDefault(String.firstCodePoint(c), 0))
+
+fn ofText(s: String) -> Int
+    ? "The hash of a string"
+    ofChars(String.chars(s), 17)
+
+fn codes(cs: List<String>, acc: List<Option<Int>>) -> List<Option<Int>>
+    ? "Every first code point, last first"
+    match cs
+        [] -> acc
+        [c, ..rest] -> codes(rest, List.prepend(String.firstCodePoint(c), acc))
+
+fn codesOf(s: String) -> List<Option<Int>>
+    ? "The first code point of every character, last first"
+    codes(String.chars(s), [])
+
+verify ofText
+    ofText("") => 17
+    ofText("ab") => (17 * 31 + 97) * 31 + 98
+    ofText("ż😀") => (17 * 31 + 380) * 31 + 128512
+
+verify codesOf
+    codesOf("") => []
+    codesOf("aż😀") => [Option.Some(128512), Option.Some(380), Option.Some(97)]
+"#,
+        5,
+    );
+}
