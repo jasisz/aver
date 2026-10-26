@@ -323,6 +323,22 @@ impl Slots {
     }
 }
 
+/// Whether a second thread that may hold values of the program has been
+/// started: until then the program's one thread uses the table alone and
+/// takes no lock. Set once, before the thread starts (see
+/// [`threads_start`]), and never unset.
+static MANY_THREADS: AtomicBool = AtomicBool::new(false);
+
+/// Called before a thread that may hold values of the program starts: the
+/// table takes its locks from then on. The start of the thread orders this
+/// before anything it does.
+#[inline]
+pub fn threads_start() {
+    if !MANY_THREADS.load(Ordering::Relaxed) {
+        MANY_THREADS.store(true, Ordering::SeqCst);
+    }
+}
+
 /// One part of the table behind its lock: a flag spun on, since it is held
 /// for a probe only.
 struct Shard {
@@ -330,9 +346,10 @@ struct Shard {
     slots: UnsafeCell<Slots>,
 }
 
-/// Holds the lock of one part.
+/// Holds the lock of one part, or stands for it while one thread runs.
 pub(crate) struct Locked<'a> {
     shard: &'a Shard,
+    held: bool,
 }
 
 impl Shard {
@@ -345,6 +362,12 @@ impl Shard {
 
     #[inline]
     fn lock(&self) -> Locked<'_> {
+        if !MANY_THREADS.load(Ordering::Relaxed) {
+            return Locked {
+                shard: self,
+                held: false,
+            };
+        }
         if self
             .locked
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -352,7 +375,10 @@ impl Shard {
         {
             self.lock_slow();
         }
-        Locked { shard: self }
+        Locked {
+            shard: self,
+            held: true,
+        }
     }
 
     #[cold]
@@ -384,7 +410,7 @@ impl std::ops::Deref for Locked<'_> {
 
     #[inline]
     fn deref(&self) -> &Slots {
-        // SAFETY: the lock is held.
+        // SAFETY: the lock is held, or one thread runs.
         unsafe { &*self.shard.slots.get() }
     }
 }
@@ -392,7 +418,7 @@ impl std::ops::Deref for Locked<'_> {
 impl std::ops::DerefMut for Locked<'_> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Slots {
-        // SAFETY: the lock is held, by this guard only.
+        // SAFETY: the lock is held, by this guard only, or one thread runs.
         unsafe { &mut *self.shard.slots.get() }
     }
 }
@@ -400,7 +426,9 @@ impl std::ops::DerefMut for Locked<'_> {
 impl Drop for Locked<'_> {
     #[inline]
     fn drop(&mut self) {
-        self.shard.locked.store(false, Ordering::Release);
+        if self.held {
+            self.shard.locked.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -686,6 +714,8 @@ mod interned_sums {
         full!(many);
         let rounds = if cfg!(miri) { 4 } else { 400 };
         let shared = Arc::new(full(6, 0));
+        // As `spawn_scoped` and the job engine do before a thread starts.
+        super::threads_start();
         let threads: Vec<_> = (0..8)
             .map(|t| {
                 let shared = shared.clone();

@@ -537,6 +537,7 @@ pub fn spawn_scoped<'scope, 'env, T: Send + 'scope>(
     scope: &'scope std::thread::Scope<'scope, 'env>,
     body: impl FnOnce() -> T + Send + 'scope,
 ) -> std::thread::ScopedJoinHandle<'scope, T> {
+    intern::threads_start();
     std::thread::Builder::new()
         .stack_size(THREAD_STACK_BYTES)
         .spawn_scoped(scope, body)
@@ -579,6 +580,7 @@ pub fn par_execute_with_cancel<T: Send, E: Send>(
 ) -> Vec<Result<T, E>> {
     use std::sync::{Arc, atomic::AtomicBool};
     let cancelled = Arc::new(AtomicBool::new(false));
+    intern::threads_start();
     std::thread::scope(|s| {
         let handles: Vec<_> = tasks
             .into_iter()

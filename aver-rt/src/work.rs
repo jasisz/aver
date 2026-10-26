@@ -280,6 +280,7 @@ impl JobEngine {
     fn launch(self: &Arc<Self>, mut starts: Vec<Start>) {
         while let Some(Start { id, cancel, body }) = starts.pop() {
             let engine = Arc::downgrade(self);
+            crate::intern::threads_start();
             let spawned = std::thread::Builder::new()
                 .name(format!("aver-job-{id}"))
                 .stack_size(crate::THREAD_STACK_BYTES)
