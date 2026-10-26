@@ -31,9 +31,6 @@ use crate::shared_hash::NodeHasher;
 /// How many parts the table is split into, each with its own lock.
 pub const SHARDS: usize = 64;
 
-/// The hash of a canonical node is never 0, which marks a node that is not.
-pub(crate) const NOT_CANONICAL: u64 = 0;
-
 /// An entry slot nobody has used.
 const EMPTY: *mut u8 = std::ptr::null_mut();
 /// An entry slot whose node has left.
@@ -42,11 +39,10 @@ const GONE: *mut u8 = std::ptr::without_provenance_mut(1);
 /// The fields of a constructor of an interned sum, as the table compares
 /// them. The Rust backend implements it for each constructor's field struct.
 pub trait InternFields {
-    /// Whether every field of an interned type holds a canonical node, once
-    /// any call `lazy` deferred that has been made is replaced by what it
-    /// returned. A call nobody has made yet is left as it is, and then the
-    /// node built is not canonical.
-    fn settle(&mut self) -> bool;
+    /// Whether every field of an interned type has an identity, given to it
+    /// now if nothing asked before (see `Thin::identity`): not when one holds
+    /// a call `lazy` deferred that nobody has made yet.
+    fn settle(&self) -> bool;
     /// Feeds the fields to the hasher: a field of an interned type as the
     /// hash of its node ([`Canon::canon_hash`]), any other field by value.
     fn hash_into(&self, hasher: &mut NodeHasher);
@@ -59,18 +55,18 @@ pub trait InternFields {
 /// [`InternFields`] sees it. `thin_sum!` implements it for an interned sum.
 pub trait Canon {
     /// See [`InternFields::settle`].
-    fn settle(&mut self) -> bool;
+    fn settle(&self) -> bool;
     /// The hash of the value, made from what it holds, the same for equal
     /// values however they were built.
     fn canon_hash(&self) -> u64;
-    /// Whether two settled values are the same node.
+    /// Whether two settled values have the same identity.
     fn same(&self, other: &Self) -> bool;
 }
 
 impl<T: Canon> Canon for Option<T> {
     #[inline]
-    fn settle(&mut self) -> bool {
-        self.as_mut().is_none_or(Canon::settle)
+    fn settle(&self) -> bool {
+        self.as_ref().is_none_or(Canon::settle)
     }
 
     #[inline]
@@ -85,6 +81,46 @@ impl<T: Canon> Canon for Option<T> {
             (Some(a), Some(b)) => a.same(b),
             (None, None) => true,
             _ => false,
+        }
+    }
+}
+
+/// How far below the outermost one a node may be put in the table, in bytes
+/// of stack: past it the node is left without an identity, and `==` on it
+/// walks.
+const DEEP: usize = 256 * 1024;
+
+thread_local! {
+    /// Where on the stack the outermost [`Deeper`] of this thread began.
+    static TOP: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// One more node being put in the table, inside the ones above it.
+pub(crate) struct Deeper {
+    outermost: bool,
+}
+
+impl Deeper {
+    /// `None` once [`DEEP`] bytes of stack below the outermost one.
+    #[inline]
+    pub(crate) fn enter() -> Option<Self> {
+        let here = crate::shared_eq::stack_here();
+        TOP.with(|top| match top.get() {
+            0 => {
+                top.set(here);
+                Some(Deeper { outermost: true })
+            }
+            start if start.saturating_sub(here) > DEEP => None,
+            _ => Some(Deeper { outermost: false }),
+        })
+    }
+}
+
+impl Drop for Deeper {
+    #[inline]
+    fn drop(&mut self) {
+        if self.outermost {
+            TOP.with(|top| top.set(0));
         }
     }
 }
@@ -445,7 +481,7 @@ mod interned_sums {
                 }
 
                 impl InternFields for E__Leaf {
-                    fn settle(&mut self) -> bool {
+                    fn settle(&self) -> bool {
                         true
                     }
                     fn hash_into(&self, hasher: &mut NodeHasher) {
@@ -457,8 +493,8 @@ mod interned_sums {
                 }
 
                 impl InternFields for E__Pair {
-                    fn settle(&mut self) -> bool {
-                        Canon::settle(&mut self.0) && Canon::settle(&mut self.1)
+                    fn settle(&self) -> bool {
+                        Canon::settle(&self.0) && Canon::settle(&self.1)
                     }
                     fn hash_into(&self, hasher: &mut NodeHasher) {
                         hasher.write_u64(Canon::canon_hash(&self.0));
@@ -529,29 +565,32 @@ mod interned_sums {
     interned_sum!(one, ONE);
 
     #[test]
-    fn equal_fields_build_one_node_and_the_table_empties_when_values_die() {
+    fn equal_values_get_one_identity_when_asked_and_the_table_empties_when_they_die() {
         use one::*;
         full!(one);
         let a = full(10, 0);
-        // 2^11 - 1 nodes, the leaves 1024 different ones.
-        assert_eq!(ONE.len(), 2047);
         let b = full(10, 0);
-        assert!(E::ptr_eq(&a, &b));
-        assert_eq!(ONE.len(), 2047);
+        // Nothing is in the table until something asks for an identity.
+        assert!(ONE.is_empty());
+        assert!(!E::ptr_eq(&a, &b));
+        assert_eq!(E::known_eq(&a, &b), None);
         assert_eq!(E::canon_eq(&a, &b), Some(true));
+        // 2^11 - 1 nodes of `a`; those of `b` stand for them.
+        assert_eq!(ONE.len(), 2047);
+        assert_eq!(E::known_eq(&a, &b), Some(true));
         let c = full(10, 1);
         assert_eq!(E::canon_eq(&a, &c), Some(false));
         assert!(!equal(&a, &c));
         assert_eq!(E::canon_hash(&a), E::canon_hash(&b));
         assert_ne!(E::canon_hash(&a), E::canon_hash(&c));
-        assert!(E::ptr_eq(&nil(), &E::Nil));
-        drop((a, b));
-        assert!(!ONE.is_empty());
-        drop(c);
-        assert_eq!(ONE.len(), 0);
-        // A node built again once the old one is gone is canonical too.
+        assert_eq!(E::canon_eq(&nil(), &E::Nil), Some(true));
+        // `a` dies first: `b` still stands for its nodes, which stay.
+        drop(a);
+        assert_eq!(E::canon_eq(&b, &full(10, 0)), Some(true));
+        drop((b, c));
+        assert!(ONE.is_empty());
         let again = pair(leaf(1), nil(), 0);
-        assert!(E::ptr_eq(&again, &pair(leaf(1), nil(), 0)));
+        assert_eq!(E::canon_eq(&again, &pair(leaf(1), nil(), 0)), Some(true));
         drop(again);
         assert!(ONE.is_empty());
     }
@@ -559,25 +598,28 @@ mod interned_sums {
     interned_sum!(deep, DEEP);
 
     #[test]
-    fn a_deep_chain_of_interned_nodes_frees_without_deep_recursion() {
+    fn a_deep_chain_is_compared_by_walking_and_frees_without_deep_recursion() {
         use deep::*;
-        let mut chain = nil();
-        for i in 0..1_000_000u64 {
-            chain = pair(leaf(i), chain, 0);
-        }
-        assert_eq!(DEEP.len(), 2_000_000);
-        drop(chain);
+        let chain = |n: u64| (0..n).fold(nil(), |chain, i| pair(leaf(i), chain, 0));
+        let (a, b) = (chain(1_000_000), chain(1_000_000));
+        // Too deep to put in the table at once: no identity, `==` walks.
+        assert_eq!(E::canon_eq(&a, &b), None);
+        let (c, d) = (chain(200), chain(200));
+        assert_eq!(E::canon_eq(&c, &d), Some(true));
+        // The leaves met on the way down to where it stopped are in too.
+        assert!(DEEP.len() >= 400);
+        drop((a, b, c, d));
         assert!(DEEP.is_empty());
     }
 
     interned_sum!(many, MANY);
 
-    /// Eight threads build the same terms, let them go and build them
-    /// again, so a node's last owner lets it go while another thread looks
-    /// it up: every value a thread holds is canonical, equal values are one
-    /// node, and the table empties at the end.
+    /// Eight threads build the same terms, ask for their identities, let
+    /// them go and build them again, so a node's last owner lets it go while
+    /// another thread looks it up: equal values get one identity, and the
+    /// table empties at the end.
     #[test]
-    fn threads_building_and_dropping_equal_terms_agree_on_one_node() {
+    fn threads_building_and_dropping_equal_terms_agree_on_one_identity() {
         use many::*;
         full!(many);
         let rounds = if cfg!(miri) { 4 } else { 400 };
@@ -588,13 +630,14 @@ mod interned_sums {
                 std::thread::spawn(move || {
                     for round in 0..rounds {
                         let mine = full(6, 0);
-                        assert!(E::ptr_eq(&mine, &shared));
+                        assert_eq!(E::canon_eq(&mine, &shared), Some(true));
                         // Small terms built and dropped at once: their count
                         // goes 1 to 0 while others look them up.
                         for i in 0..32u64 {
                             let small = pair(leaf(i), leaf((round + t) % 4), 1);
                             let other = pair(leaf(i), leaf((round + t) % 4), 1);
-                            assert!(E::ptr_eq(&small, &other));
+                            assert_eq!(E::canon_eq(&small, &other), Some(true));
+                            assert_eq!(E::canon_hash(&small), E::canon_hash(&other));
                         }
                     }
                 })
@@ -610,7 +653,7 @@ mod interned_sums {
     interned_sum!(lazy, LAZY, lazy 3);
 
     #[test]
-    fn a_deferred_call_once_made_stands_for_the_canonical_node() {
+    fn a_deferred_call_once_made_has_the_identity_of_what_it_returned() {
         use lazy::*;
         static MADE: AtomicUsize = AtomicUsize::new(0);
         let built = pair(leaf(7), nil(), 2);
@@ -618,21 +661,18 @@ mod interned_sums {
             MADE.fetch_add(1, Ordering::SeqCst);
             pair(leaf(n.0), nil(), 2)
         });
-        // Not made: not canonical, and `canon_eq` makes no call.
+        // Not made: no identity, and asking makes no call.
         assert_eq!(E::canon_eq(&deferred, &built), None);
         let over = pair(deferred.clone(), leaf(1), 0);
         assert_eq!(E::canon_eq(&over, &pair(built.clone(), leaf(1), 0)), None);
         assert_eq!(MADE.load(Ordering::SeqCst), 0);
-        // A look makes the call; from then on it is the canonical node.
+        // A look makes the call; from then on it has the identity of what
+        // it returned, and so does a node over it.
         assert!(equal(&deferred, &built));
         assert_eq!(MADE.load(Ordering::SeqCst), 1);
         assert_eq!(E::canon_eq(&deferred, &built), Some(true));
-        // A node over the call made holds the canonical node instead.
-        let after = pair(deferred.clone(), leaf(1), 0);
-        assert!(E::ptr_eq(&after, &pair(built.clone(), leaf(1), 0)));
-        // The node built over the call before it was made is not canonical,
-        // and hashes as the canonical one does.
-        assert!(equal(&over, &after));
+        let after = pair(built.clone(), leaf(1), 0);
+        assert_eq!(E::canon_eq(&over, &after), Some(true));
         assert_eq!(E::canon_hash(&over), E::canon_hash(&after));
         // A call returning a constructor without fields stands for it.
         let empty = E::deferred((), |()| nil());

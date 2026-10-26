@@ -156,7 +156,7 @@ pub(super) fn intern_fields_impl(
         false => {
             let settled: Vec<String> = (0..kinds.len())
                 .filter(|&i| kinds[i] == Field::Canon)
-                .map(|i| format!("{canon}::settle(&mut self.{i})"))
+                .map(|i| format!("{canon}::settle(&self.{i})"))
                 .collect();
             match settled.is_empty() {
                 true => "true".to_string(),
@@ -200,7 +200,7 @@ pub(super) fn intern_fields_impl(
         false => "_other",
     };
     format!(
-        "\nimpl aver_rt::intern::InternFields for {payload} {{\n    #[inline]\n    fn settle(&mut self) -> bool {{\n        {settle}\n    }}\n\n    #[inline]\n    fn hash_into(&self, {hasher}: &mut aver_rt::shared_hash::NodeHasher) {{{hash}\n    }}\n\n    #[inline]\n    fn same(&self, {other}: &Self) -> bool {{\n        {same}\n    }}\n}}\n"
+        "\nimpl aver_rt::intern::InternFields for {payload} {{\n    #[inline]\n    fn settle(&self) -> bool {{\n        {settle}\n    }}\n\n    #[inline]\n    fn hash_into(&self, {hasher}: &mut aver_rt::shared_hash::NodeHasher) {{{hash}\n    }}\n\n    #[inline]\n    fn same(&self, {other}: &Self) -> bool {{\n        {same}\n    }}\n}}\n"
     )
 }
 
@@ -211,23 +211,24 @@ pub(super) fn hash_impls(name: &str) -> String {
     )
 }
 
-/// The `==` of an interned sum: one pointer compare when both values are
-/// canonical, the walk `walk_eq` otherwise.
+/// The `==` of an interned sum: by identity, given to either value now if
+/// nothing asked before; the walk `walk_eq` when either cannot have one.
 pub(super) fn partial_eq_impl(name: &str) -> String {
     format!(
         "\nimpl PartialEq for {name} {{\n    #[inline]\n    fn eq(&self, other: &Self) -> bool {{\n        match {name}::canon_eq(self, other) {{\n            Some(same) => same,\n            None => aver_rt::walk_eq(self, other),\n        }}\n    }}\n}}\n"
     )
 }
 
-/// The `WalkEq` of an interned sum: as [`partial_eq_impl`], `test` being
-/// the walk.
+/// The `WalkEq` of an interned sum: by identity when both values have one
+/// already, else `test`, the walk. Inside a walk nothing is put in the
+/// table: a value too deep to put in would be tried again at every level.
 pub(super) fn walk_eq_impl(name: &str, test: &str, by_node: bool) -> String {
     match by_node {
         true => format!(
-            "\nimpl aver_rt::WalkEq for {name} {{\n    #[inline(always)]\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {{\n        match {name}::canon_eq(self, other) {{\n            Some(same) => same,\n            None => {name}::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk),\n        }}\n    }}\n}}\n\nimpl {name} {{\n    #[inline(never)]\n    fn aver_walk_eq_nodes<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {{\n        use ::aver_rt::WalkEq as _;\n        {test}\n    }}\n}}\n"
+            "\nimpl aver_rt::WalkEq for {name} {{\n    #[inline(always)]\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {{\n        match {name}::known_eq(self, other) {{\n            Some(same) => same,\n            None => {name}::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk),\n        }}\n    }}\n}}\n\nimpl {name} {{\n    #[inline(never)]\n    fn aver_walk_eq_nodes<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {{\n        use ::aver_rt::WalkEq as _;\n        {test}\n    }}\n}}\n"
         ),
         false => format!(
-            "\nimpl aver_rt::WalkEq for {name} {{\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {{\n        if let Some(same) = {name}::canon_eq(self, other) {{\n            return same;\n        }}\n        {test}\n    }}\n}}\n"
+            "\nimpl aver_rt::WalkEq for {name} {{\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {{\n        if let Some(same) = {name}::known_eq(self, other) {{\n            return same;\n        }}\n        {test}\n    }}\n}}\n"
         ),
     }
 }

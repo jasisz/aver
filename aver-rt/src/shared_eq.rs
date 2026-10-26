@@ -126,7 +126,7 @@ impl<T> NodeId for Shared<T> {
 /// making room on the stack, so a call in tail position stays one.
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 #[inline(always)]
-fn stack_here() -> usize {
+pub(crate) fn stack_here() -> usize {
     let sp: usize;
     // SAFETY: reads a register.
     unsafe { std::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags)) };
@@ -135,7 +135,7 @@ fn stack_here() -> usize {
 
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 #[inline(always)]
-fn stack_here() -> usize {
+pub(crate) fn stack_here() -> usize {
     let sp: usize;
     // SAFETY: reads a register.
     unsafe {
@@ -147,7 +147,7 @@ fn stack_here() -> usize {
 /// Where the stack of the caller is: the address of a local of its own.
 #[cfg(any(miri, not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
 #[inline(never)]
-fn stack_here() -> usize {
+pub(crate) fn stack_here() -> usize {
     let marker = 0u8;
     std::hint::black_box(&marker) as *const u8 as usize
 }
