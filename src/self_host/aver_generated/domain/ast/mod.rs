@@ -3752,10 +3752,14 @@ pub fn userCtorTagOffsetLoop(
 pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let next @ _ = ({
-        let __word: Option<i64> =
-            (|| Some((((acc).to_i64()?).checked_mul((131i64))?).checked_add((code).to_i64()?)?))();
+        let __word: Option<i64> = (|| {
+            Some(
+                ((((acc).inline_word()?) >> 1).checked_mul((263i64) ^ 1)? | 1)
+                    .checked_add(((code).inline_word()?) ^ 1)?,
+            )
+        })();
         match __word {
-            Some(__word) => aver_rt::AverInt::from_i64(__word),
+            Some(__word) => aver_rt::AverInt::from_inline_word(__word),
             None => acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code),
         }
     });

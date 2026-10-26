@@ -1635,10 +1635,14 @@ pub fn processAfterNewlineToken(
             if (n < aver_rt::AverInt::from_i64(0)) {
                 crate::aver_generated::domain::lexer::emitIndentChange(
                     ({
-                        let __word: Option<i64> =
-                            (|| Some(((0i64).checked_sub((n).to_i64()?)?).checked_sub((1i64))?))();
+                        let __word: Option<i64> = (|| {
+                            Some(
+                                ((1i64).checked_sub(((n).inline_word()?) ^ 1)?)
+                                    .checked_sub((3i64) ^ 1)?,
+                            )
+                        })();
                         match __word {
-                            Some(__word) => aver_rt::AverInt::from_i64(__word),
+                            Some(__word) => aver_rt::AverInt::from_inline_word(__word),
                             None => aver_rt::AverInt::from_i64(0)
                                 .sub(&n)
                                 .sub(&aver_rt::AverInt::from_i64(1)),
@@ -2586,10 +2590,13 @@ pub fn tokenizeNewline__indexed(
                 crate::aver_generated::domain::token::Token::TkInt(
                     ({
                         let __word: Option<i64> = (|| {
-                            Some(((0i64).checked_sub((indent).to_i64()?)?).checked_sub((1i64))?)
+                            Some(
+                                ((1i64).checked_sub(((indent).inline_word()?) ^ 1)?)
+                                    .checked_sub((3i64) ^ 1)?,
+                            )
                         })();
                         match __word {
-                            Some(__word) => aver_rt::AverInt::from_i64(__word),
+                            Some(__word) => aver_rt::AverInt::from_inline_word(__word),
                             None => aver_rt::AverInt::from_i64(0)
                                 .sub(&indent)
                                 .sub(&aver_rt::AverInt::from_i64(1)),

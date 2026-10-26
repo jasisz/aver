@@ -353,12 +353,13 @@ pub fn readNumberLoop__indexed(
                                     ));
                                 let __word: Option<i64> = (|| {
                                     Some(
-                                        (((acc).to_i64()?).checked_mul((10i64))?)
-                                            .checked_add(__leaf0.to_i64()?)?,
+                                        ((((acc).inline_word()?) >> 1).checked_mul((21i64) ^ 1)?
+                                            | 1)
+                                        .checked_add((__leaf0.inline_word()?) ^ 1)?,
                                     )
                                 })();
                                 match __word {
-                                    Some(__word) => aver_rt::AverInt::from_i64(__word),
+                                    Some(__word) => aver_rt::AverInt::from_inline_word(__word),
                                     None => {
                                         acc.mul(&aver_rt::AverInt::from_i64(10)).add(&(*__leaf0))
                                     }
