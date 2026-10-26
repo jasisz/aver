@@ -376,16 +376,9 @@ pub fn trans(
     proofs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    if ({
-        let __leaf0 = &(aver_rt::AverInt::from_i64(terms.len() as i64));
-        let __leaf1 = &(aver_rt::AverInt::from_i64(proofs.len() as i64));
-        let __word: Option<bool> =
-            (|| Some(__leaf0.to_i64()? == (__leaf1.to_i64()?).checked_add((1i64))?))();
-        match __word {
-            Some(__word) => __word,
-            None => ((*__leaf0) == (*__leaf1).add(&aver_rt::AverInt::from_i64(1))),
-        }
-    }) {
+    if (aver_rt::AverInt::from_i64(terms.len() as i64)
+        == aver_rt::AverInt::from_i64(proofs.len() as i64).add(&aver_rt::AverInt::from_i64(1)))
+    {
         {
             let __list_subject = proofs;
             match aver_rt::list_uncons_cloned(__list_subject) {
