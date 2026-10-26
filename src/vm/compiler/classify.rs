@@ -271,7 +271,7 @@ fn classify_thin_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
             | LIST_NEW | RECORD_NEW | RECORD_NEW_INDEXED | WRAP | TUPLE_NEW | CALL_PAR
             | RECORD_UPDATE | LIST_LEN | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET
             | VECTOR_SET_OR_KEEP | VECTOR_SET_FIELD | STR_INDEX_BUILD | STR_INDEX_CHAR_AT
-            | STR_INDEX_CODE_AT | STR_INDEX_SLICE | TAIL_CALL_SELF_THIN => {
+            | STR_INDEX_CODE_AT | STR_INDEX_SLICE | STR_INDEX_LEN | TAIL_CALL_SELF_THIN => {
                 return Ok(false);
             }
 
@@ -307,7 +307,7 @@ fn classify_thin_ignoring_self_tco(chunk: &FnChunk) -> Result<bool, CompileError
             | RECORD_NEW | RECORD_NEW_INDEXED | WRAP | TUPLE_NEW | CALL_PAR | RECORD_UPDATE
             | LIST_LEN | LIST_PREPEND | VECTOR_GET | VECTOR_GET_OR | VECTOR_SET
             | VECTOR_SET_OR_KEEP | VECTOR_SET_FIELD | STR_INDEX_BUILD | STR_INDEX_CHAR_AT
-            | STR_INDEX_CODE_AT | STR_INDEX_SLICE => {
+            | STR_INDEX_CODE_AT | STR_INDEX_SLICE | STR_INDEX_LEN => {
                 return Ok(false);
             }
 

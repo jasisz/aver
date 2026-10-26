@@ -3986,7 +3986,7 @@ pub fn userCtorTagOffsetLoop__indexed(
         None => {
             crate::cancel_checkpoint();
             let accPlusOne @ _ = acc.add(&aver_rt::AverInt::from_i64(1));
-            if (pos < aver_rt::AverInt::from_i64(name.chars().count() as i64)) {
+            if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                 return accPlusOne;
             } else {
                 return accPlusOne;
@@ -3997,7 +3997,7 @@ pub fn userCtorTagOffsetLoop__indexed(
         crate::cancel_checkpoint();
         let accPlusOne @ _ = acc.add(&aver_rt::AverInt::from_i64(1));
         if (aver_rt::AverInt::from_i64(pos)
-            < aver_rt::AverInt::from_i64(name.chars().count() as i64))
+            < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)))
         {
             match aver_rt::string_index_char_at_i64(&name, &__str_index, pos) {
                 Some(ch @ _) => {
@@ -4031,7 +4031,7 @@ pub fn canonicalCtorName__indexed(
     __str_index @ _: &aver_rt::StringIndex,
 ) -> AverStr {
     crate::cancel_checkpoint();
-    let total @ _ = aver_rt::AverInt::from_i64(name.chars().count() as i64);
+    let total @ _ = aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index));
     let __arg3 @ _ = crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
         name.clone(),
         total.sub(&aver_rt::AverInt::from_i64(1)),

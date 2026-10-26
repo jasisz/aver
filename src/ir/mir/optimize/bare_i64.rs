@@ -2529,14 +2529,19 @@ fn reads_position(e: &MirExpr, slot: LocalId, program: &MirProgram) -> bool {
 }
 
 /// `Some(true)` when `cond` holds only for `slot < String.len(_)`,
-/// `Some(false)` when it fails only then (`slot >= String.len(_)`).
+/// `Some(false)` when it fails only then (`slot >= String.len(_)`). The
+/// length may be read off a loop's index.
 fn below_length(cond: &MirExpr, slot: LocalId, program: &MirProgram) -> Option<bool> {
+    use crate::ir::hir::BuiltinIntrinsic as I;
     let MirExpr::BinOp(b) = cond else {
         return None;
     };
     let is_len = |e: &MirExpr| {
-        matches!(e, MirExpr::Call(c)
-            if matches!(c.node.callee, MirCallee::Builtin(id) if program.builtin_name(id) == "String.len"))
+        matches!(e, MirExpr::Call(c) if match c.node.callee {
+            MirCallee::Builtin(id) => program.builtin_name(id) == "String.len",
+            MirCallee::Intrinsic(intrinsic) => intrinsic == I::StrIndexLen,
+            _ => false,
+        })
     };
     let (l, r) = (&b.node.lhs.node, &b.node.rhs.node);
     match b.node.op {

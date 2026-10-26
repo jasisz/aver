@@ -1346,6 +1346,33 @@ pub(crate) fn emit_mir_expr(
                             MirBuiltinEmit::Fallback | MirBuiltinEmit::NotHandled => Ok(None),
                         };
                     }
+                    // `String.len` read off the index, inline rather than as
+                    // a new helper, so no other function's index moves. An
+                    // ASCII String has no table (null): a character per
+                    // byte. Otherwise the table holds a boundary per
+                    // character and one past the last.
+                    if let (BuiltinIntrinsic::StrIndexLen, [s, index]) = (intr, &call.args[..]) {
+                        use wasm_encoder::BlockType;
+                        func.instruction(&Instruction::Block(BlockType::Result(ValType::I32)));
+                        func.instruction(&Instruction::Block(BlockType::Empty));
+                        if emit_mir_expr(func, index, slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::BrOnNull(0));
+                        func.instruction(&Instruction::ArrayLen);
+                        func.instruction(&Instruction::I32Const(1));
+                        func.instruction(&Instruction::I32Sub);
+                        func.instruction(&Instruction::Br(1));
+                        func.instruction(&Instruction::End);
+                        if emit_mir_expr(func, s, slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::ArrayLen);
+                        func.instruction(&Instruction::End);
+                        func.instruction(&Instruction::I64ExtendI32U);
+                        lift_i64_result_to_aint(func, ctx)?;
+                        return Ok(Some(true));
+                    }
                     // BranchPath is a proof-only opaque `(ref null eq)` on
                     // wasm-gc. Oracle helper signatures remain representable,
                     // but the backend intentionally has no runtime path

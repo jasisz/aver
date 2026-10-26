@@ -2496,6 +2496,16 @@ impl VM {
                     self.stack.push(NanValue::new_int(code, &mut self.arena));
                 }
 
+                // The index holds a boundary per character and one past
+                // the last.
+                STR_INDEX_LEN => {
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let chars = self.arena.vector_ref_value(index).len().saturating_sub(1);
+                    let chars = NanValue::new_int(chars as i64, &mut self.arena);
+                    self.stack.push(chars);
+                }
+
                 STR_INDEX_SLICE => {
                     let to = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let from = self.stack.pop().ok_or(VmError::StackUnderflow)?;

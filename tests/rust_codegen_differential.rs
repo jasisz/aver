@@ -1661,6 +1661,80 @@ fn main() -> Unit
     );
 }
 
+/// `String.len` of an indexed String reads the length off the index: in the
+/// loop's test, before and after the loop, at a slice's end, across mutual
+/// recursion, on ASCII, non-ASCII and empty text. A loop that hands itself a
+/// shorter String must see the shorter String's length, not the one its
+/// index was built for.
+#[test]
+fn rust_indexed_string_len_matches_vm() {
+    let src = r#"module IndexedLen
+    intent = "String.len of an indexed String"
+    effects [Console.print]
+
+fn count(text: String, pos: Int, acc: Int) -> Int
+    match pos < String.len(text)
+        false -> acc
+        true -> match String.charAt(text, pos)
+            Option.None -> 0 - 1
+            Option.Some(_) -> count(text, pos + 1, acc + 1)
+
+fn total(text: String) -> String
+    before = String.len(text)
+    n = count(text, 0, 0)
+    "{before}/{n}/{String.len(text)}"
+
+fn tail(text: String, pos: Int) -> String
+    match String.charAt(text, pos)
+        Option.None -> ""
+        Option.Some(" ") -> String.slice(text, pos + 1, String.len(text))
+        Option.Some(_) -> tail(text, pos + 1)
+
+fn shrink(text: String, pos: Int, acc: String) -> String
+    match pos < String.len(text)
+        false -> acc
+        true -> match String.charAt(text, pos)
+            Option.None -> acc
+            Option.Some(c) -> shrink(String.slice(text, 1, String.len(text)), pos, "{acc}{c}{String.len(text)},")
+
+fn evenLen(text: String, pos: Int) -> Int
+    match pos >= String.len(text)
+        true -> pos
+        false -> match String.charAt(text, pos)
+            Option.None -> 0 - 1
+            Option.Some(_) -> oddLen(text, pos + 1)
+
+fn oddLen(text: String, pos: Int) -> Int
+    match pos >= String.len(text)
+        true -> 0 - pos
+        false -> match String.charAt(text, pos)
+            Option.None -> 0 - 1
+            Option.Some(_) -> evenLen(text, pos + 1)
+
+fn line(text: String) -> String
+    "{total(text)}|{tail(text, 0)}|{shrink(text, 0, "")}|{evenLen(text, 0)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(line("hello world"))
+    Console.print(line("zażółć gęślą 😀jaźń"))
+    Console.print(line(""))
+    Console.print(line("ą"))
+"#;
+    let expected = "11/11/11|world|h11,e10,l9,l8,o7, 6,w5,o4,r3,l2,d1,|-11\n\
+                    18/18/18|gęślą 😀jaźń|z18,a17,ż16,ó15,ł14,ć13, 12,g11,ę10,ś9,l8,ą7, 6,😀5,j4,a3,ź2,ń1,|18\n\
+                    0/0/0|||0\n\
+                    1/1/1||ą1,|-1";
+    let vm = run_vm_inline("string_index_len", src).expect("VM run");
+    let rust =
+        build_run_rust_inline("string_index_len", src).expect("Rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM indexed String.len contract changed");
+    assert_eq!(
+        rust, expected,
+        "Rust indexed String.len diverged from the VM"
+    );
+}
+
 /// A string walk whose start is not bounded (a record field) is checked
 /// once on entry: a start a read can succeed at runs the raw `i64` loop, any
 /// other — negative, past `i64`, right at its edge — runs the failure path

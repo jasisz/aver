@@ -324,7 +324,7 @@ pub fn readNumberLoop__indexed(
         Some(__start) => __start,
         None => {
             crate::cancel_checkpoint();
-            if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+            if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                 return (acc, pos);
             } else {
                 return (acc, pos);
@@ -334,7 +334,7 @@ pub fn readNumberLoop__indexed(
     loop {
         crate::cancel_checkpoint();
         if (aver_rt::AverInt::from_i64(pos)
-            < aver_rt::AverInt::from_i64(src.chars().count() as i64))
+            < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)))
         {
             {
                 let __int_match_subject =
@@ -391,7 +391,7 @@ pub fn readIdentLoopDotted__indexed(
         Some(__start) => __start,
         None => {
             crate::cancel_checkpoint();
-            if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+            if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                 return (acc, pos);
             } else {
                 return (acc, pos);
@@ -401,7 +401,7 @@ pub fn readIdentLoopDotted__indexed(
     loop {
         crate::cancel_checkpoint();
         if (aver_rt::AverInt::from_i64(pos)
-            < aver_rt::AverInt::from_i64(src.chars().count() as i64))
+            < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)))
         {
             match aver_rt::string_index_char_at_i64(&src, &__str_index, pos) {
                 Some(c @ _) => {
@@ -440,7 +440,7 @@ pub fn readIdentLoopPlain__indexed(
         Some(__start) => __start,
         None => {
             crate::cancel_checkpoint();
-            if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+            if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                 return (acc, pos);
             } else {
                 return (acc, pos);
@@ -450,7 +450,7 @@ pub fn readIdentLoopPlain__indexed(
     loop {
         crate::cancel_checkpoint();
         if (aver_rt::AverInt::from_i64(pos)
-            < aver_rt::AverInt::from_i64(src.chars().count() as i64))
+            < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)))
         {
             match aver_rt::string_index_char_at_i64(&src, &__str_index, pos) {
                 Some(c @ _) => {

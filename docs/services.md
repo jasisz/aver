@@ -220,7 +220,7 @@ Source: `src/types/string.rs`
 | `String.toLower` | `String -> String` | Unicode-aware lowercase |
 | `String.toUpper` | `String -> String` | Unicode-aware uppercase |
 
-Repeated `String.charAt` / `String.slice` access through a recursive call cone shares one hidden codepoint-to-UTF-8 boundary index. When a `charAt` result is used only to dispatch on the character, directly or through recognised pure helpers, the runtime reads its Unicode scalar without building the surface `Option<String>`. Public positions and return types do not change. Any String use the compiler cannot eliminate stays on the general indexed path.
+Repeated `String.charAt` / `String.slice` access through a recursive call cone shares one hidden codepoint-to-UTF-8 boundary index. `String.len` of that String reads the length the index holds instead of counting the characters again, so a walk that tests its position against the length on every step stays linear. When a `charAt` result is used only to dispatch on the character, directly or through recognised pure helpers, the runtime reads its Unicode scalar without building the surface `Option<String>`. Public positions and return types do not change. Any String use the compiler cannot eliminate stays on the general indexed path.
 
 ### `Map` namespace
 

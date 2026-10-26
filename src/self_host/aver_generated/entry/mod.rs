@@ -1351,16 +1351,13 @@ pub fn modulePathFromName__indexed(
 ) -> AverStr {
     crate::cancel_checkpoint();
     (((moduleRoot + &::aver_rt::str_lit!("/"))
-        + &{
-            let __arg3 @ _ = aver_rt::AverInt::from_i64(name.chars().count() as i64);
-            dotToSlash__indexed(
-                name,
-                aver_rt::AverInt::from_i64(0),
-                __arg3,
-                ::aver_rt::str_lit!(""),
-                __str_index,
-            )
-        })
+        + &dotToSlash__indexed(
+            name.clone(),
+            aver_rt::AverInt::from_i64(0),
+            aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)),
+            ::aver_rt::str_lit!(""),
+            __str_index,
+        ))
         + &::aver_rt::str_lit!(".av"))
 }
 

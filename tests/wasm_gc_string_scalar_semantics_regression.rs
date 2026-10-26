@@ -173,6 +173,46 @@ verify mutualEven
     );
 }
 
+/// `String.len` of an indexed String reads the index inline: no table for
+/// an ASCII (or empty) String, one boundary per character plus one
+/// otherwise. A loop that hands itself a shorter String sees its length.
+#[test]
+fn indexed_len_reads_the_index_and_follows_a_new_string() {
+    assert_all_pass_on_both(
+        r#"
+fn count(text: String, pos: Int, acc: Int) -> Int
+    match pos < String.len(text)
+        false -> acc
+        true -> match String.charAt(text, pos)
+            Option.None -> 0 - 1
+            Option.Some(_) -> count(text, pos + 1, acc + 1)
+
+fn total(text: String) -> String
+    before = String.len(text)
+    n = count(text, 0, 0)
+    "{before}/{n}/{String.len(text)}"
+
+fn shrink(text: String, pos: Int, acc: String) -> String
+    match pos < String.len(text)
+        false -> acc
+        true -> match String.charAt(text, pos)
+            Option.None -> acc
+            Option.Some(" ") -> shrink(text, pos + 1, "{acc}_{String.len(text)},")
+            Option.Some(c) -> shrink(String.slice(text, 1, String.len(text)), pos, "{acc}{c}{String.len(text)},")
+
+verify total
+    total("") => "0/0/0"
+    total("hello") => "5/5/5"
+    total("aą😀z") => "4/4/4"
+
+verify shrink
+    shrink("a b", 0, "") => "a3,_2,b2,"
+    shrink("ą 😀z", 0, "") => "ą4,_3,😀3,z2,"
+"#,
+        5,
+    );
+}
+
 /// `String.slice` takes scalar indices with the VM's clamping rules
 /// (negatives to 0, past-the-end to the end, `start >= end` empty).
 #[test]
