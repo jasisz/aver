@@ -27,6 +27,10 @@
 //! call returns. Making the call writes what it returned into the call's own
 //! node, which from then on is a node of that constructor (see [`Lazy`]).
 //!
+//! A sum `[rust] intern` names in `aver.toml` builds each node through the
+//! table of its canonical nodes (see [`crate::intern`] and [`Thin::intern`]),
+//! and keeps the hash of the node's fields in the word before its header.
+//!
 //! The atomic operations and their orderings are those `Shared` uses, which
 //! are `std::sync::Arc`'s strong count (library/alloc/src/sync.rs). The count
 //! is 32 bits: a clone past `i32::MAX` aborts, as `Arc` does past
@@ -34,11 +38,14 @@
 //! pointers to it alone.
 
 use std::alloc::Layout;
+use std::hash::Hasher;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 use std::sync::atomic::{self, AtomicU32, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
+
+use crate::intern::{InternFields, NOT_CANONICAL, Table, retain};
 
 /// Past it, a clone aborts rather than let the count wrap around.
 const MAX_REFCOUNT: u32 = i32::MAX as u32;
@@ -61,6 +68,15 @@ pub struct Header {
 struct Node<P> {
     header: Header,
     fields: P,
+}
+
+/// A node of an interned sum: the hash of its fields, or
+/// [`NOT_CANONICAL`] for a node not in the table, then the node as any other
+/// sum lays it out. A value points at the header.
+#[repr(C)]
+struct CanonNode<P> {
+    hash: u64,
+    node: Node<P>,
 }
 
 /// What [`thin_sum!`] implements for a sum.
@@ -109,6 +125,11 @@ pub unsafe trait ThinSum: Sized + 'static {
     unsafe fn hand_over_fields(_node: NonNull<Header>, _tag: u32, _pending: Pending<'_>) {
         unreachable!("only a sum some `lazy f(…)` returns has deferred calls")
     }
+
+    /// Whether the sum is interned: every node is a [`CanonNode`], and a
+    /// call `lazy` deferred, once made, stands for what it returned rather
+    /// than taking its fields in, so what it gives is the canonical node.
+    const INTERNED: bool = false;
 }
 
 /// One value of the recursive sum `S` (see the module docs).
@@ -251,6 +272,170 @@ impl<S: ThinSum> Thin<S> {
         while let Some((node, release)) = put_aside.pop() {
             unsafe { release(node, Pending::new(&mut put_aside)) };
         }
+    }
+}
+
+/// The nodes of an interned sum (see [`crate::intern`]).
+impl<S: ThinSum> Thin<S> {
+    /// A node of an interned sum, holding `hash` before its header.
+    ///
+    /// # Safety
+    /// As [`Thin::new`], and `S` is interned.
+    #[inline]
+    unsafe fn new_canon<P>(tag: u32, fields: P, hash: u64) -> NonNull<Header> {
+        const {
+            assert!(
+                align_of::<Node<P>>() <= 8,
+                "an interned sum holds no field aligned past 8 bytes"
+            )
+        };
+        let whole = Box::into_raw(Box::new(CanonNode {
+            hash,
+            node: Node {
+                header: Header {
+                    count: AtomicU32::new(1),
+                    tag: AtomicU32::new(tag),
+                },
+                fields,
+            },
+        }));
+        // From the whole allocation, so the word before it can be read back.
+        let ptr = unsafe { NonNull::new_unchecked((&raw mut (*whole).node).cast::<Header>()) };
+        assert!(ptr.as_ptr().addr() > MAX_TAGS);
+        ptr
+    }
+
+    /// The word before the header of a node of an interned sum.
+    ///
+    /// # Safety
+    /// `node` is a node of an interned sum made by [`Thin::new_canon`].
+    #[inline]
+    unsafe fn hash_word(node: NonNull<Header>) -> u64 {
+        unsafe { node.cast::<u64>().sub(1).read() }
+    }
+
+    /// The canonical node holding `fields` for constructor `tag`: the one
+    /// in `table` if one is alive, else a new one put there. When a field
+    /// of an interned type holds a call nobody has made yet, the node is
+    /// built as it would be without the table, and is not canonical.
+    ///
+    /// # Safety
+    /// As [`Thin::new`]; `S` is interned and `table` is its table.
+    #[inline]
+    pub unsafe fn intern<P: InternFields>(tag: u32, mut fields: P, table: &Table) -> Self {
+        if !fields.settle() {
+            return Self::from_ptr(unsafe { Self::new_canon(tag, fields, NOT_CANONICAL) });
+        }
+        let mut hasher = crate::shared_hash::node_hasher();
+        hasher.write_u32(tag);
+        fields.hash_into(&mut hasher);
+        let hash = hasher.finish() | 1;
+        let found = {
+            let mut slots = table.lock(hash);
+            let found = slots.find(hash, |node| {
+                let node = unsafe { NonNull::new_unchecked(node.cast::<Header>()) };
+                // A node in the table is alive until it is taken out, which
+                // waits for the lock this holds.
+                let header = unsafe { node.as_ref() };
+                header.tag.load(Ordering::Relaxed) == tag
+                    && unsafe { &(*node.cast::<Node<P>>().as_ptr()).fields }.same(&fields)
+                    && retain(&header.count, MAX_REFCOUNT)
+            });
+            match found {
+                Some(node) => node,
+                None => {
+                    let node = unsafe { Self::new_canon(tag, fields, hash) };
+                    slots.insert(hash, node.as_ptr().cast());
+                    return Self::from_ptr(node);
+                }
+            }
+        };
+        // The fields the node already holds go once the lock is let go: a
+        // drop may free a node, which takes the lock of its part.
+        drop(fields);
+        Self::from_ptr(unsafe { NonNull::new_unchecked(found.cast::<Header>()) })
+    }
+
+    /// For [`ThinSum::free`] of an interned sum: takes a node made by
+    /// [`Thin::intern`] out of `table`, then frees it and hands its fields
+    /// over to `pending`.
+    ///
+    /// # Safety
+    /// The node was made by `Thin::intern::<P>` with `table`, and its count
+    /// is 0.
+    #[inline]
+    pub unsafe fn free_interned<P: HandOver>(node: NonNull<Header>, pending: Pending<'_>, table: &Table) {
+        let hash = unsafe { Self::hash_word(node) };
+        if hash != NOT_CANONICAL {
+            table.remove(hash, node.as_ptr().cast());
+        }
+        let whole = unsafe { node.cast::<u64>().sub(1) }.cast::<CanonNode<P>>().as_ptr();
+        unsafe { std::ptr::read(&raw const (*whole).node.fields) }.hand_over(pending);
+        drop(unsafe { Box::from_raw(whole.cast::<ManuallyDrop<CanonNode<P>>>()) });
+    }
+
+    /// For [`crate::intern::Canon::settle`]: whether the value is a
+    /// canonical node, or a constructor without fields, once a call `lazy`
+    /// deferred that has been made is replaced by what it returned; a call
+    /// nobody has made yet is left as it is, and is not. `lazy` is the
+    /// hidden constructor of the sum, if it has one.
+    #[inline]
+    pub fn settle(&mut self, lazy: Option<u32>) -> bool {
+        loop {
+            if self.is_empty_ctor() {
+                return true;
+            }
+            if let Some(lazy) = lazy {
+                let tag = self.header().tag.load(Ordering::Acquire);
+                if tag & CTOR == lazy {
+                    if tag & FORWARD == 0 {
+                        return false;
+                    }
+                    *self = unsafe { self.fields::<Thin<S>>() }.clone();
+                    continue;
+                }
+            }
+            return unsafe { Self::hash_word(self.ptr) } != NOT_CANONICAL;
+        }
+    }
+
+    /// The canonical node the value is, or stands for once its call is
+    /// made, without making any call; `None` when it is not canonical or
+    /// its call is not made yet (see [`Thin::settle`]).
+    #[inline]
+    pub fn canonical(&self, lazy: Option<u32>) -> Option<&Self> {
+        let mut this = self;
+        loop {
+            if this.is_empty_ctor() {
+                return Some(this);
+            }
+            if let Some(lazy) = lazy {
+                let tag = this.header().tag.load(Ordering::Acquire);
+                if tag & CTOR == lazy {
+                    if tag & FORWARD == 0 {
+                        return None;
+                    }
+                    this = unsafe { this.fields::<Thin<S>>() };
+                    continue;
+                }
+            }
+            return (unsafe { Self::hash_word(this.ptr) } != NOT_CANONICAL).then_some(this);
+        }
+    }
+
+    /// The hash a node of an interned sum keeps of its fields, or that of a
+    /// constructor without fields; `None` for a node not in the table.
+    ///
+    /// # Safety
+    /// `S` is interned, and the value is not a call deferred (it is one a
+    /// look at the value gives, such as `view`'s).
+    #[inline]
+    pub unsafe fn stored_hash(&self) -> Option<u64> {
+        if self.is_empty_ctor() {
+            return Some(crate::shared_hash::tag_hash(self.tag()));
+        }
+        let hash = unsafe { Self::hash_word(self.ptr) };
+        (hash != NOT_CANONICAL).then_some(hash)
     }
 }
 
@@ -729,9 +914,12 @@ impl<S: ThinSum + HandOver> Thin<S> {
             let node = ManuallyDrop::new(value).ptr;
             value = unsafe { (calls(node).make)(node, true) }.into_thin();
         }
-        let made = if value.is_empty_ctor() {
+        // A call of an interned sum stands for the node it returned, the
+        // canonical one, rather than taking that node's fields in: the table
+        // holds the node under its fields, and a copy would not be canonical.
+        let made = if value.is_empty_ctor() && !S::INTERNED {
             value.lazy_tag()
-        } else if value.lazy_tag() == lazy {
+        } else if S::INTERNED || value.lazy_tag() == lazy {
             unsafe { (&raw mut (*self.ptr.cast::<Node<Thin<S>>>().as_ptr()).fields).write(value) };
             lazy | FORWARD
         } else {
@@ -911,7 +1099,7 @@ macro_rules! thin_sum {
         $(#[$view_meta:meta])*
         $vis:vis $name:ident / $view:ident / $pair:ident {
             $( $tag:literal $ctor:ident $( ( $fields:ty ) )? ),+ $(,)?
-        } $( lazy $lazy:literal )?
+        } $( lazy $lazy:literal )? $( interned $table:ident )?
     ) => {
         #[derive(Clone)]
         #[allow(non_camel_case_types)]
@@ -964,6 +1152,8 @@ macro_rules! thin_sum {
             }
 
             $crate::thin_sum!(@lazy $name $( $lazy )? ; $( $tag $( ( $fields ) )? ),+);
+
+            $( const INTERNED: bool = $crate::thin_sum!(@true $table); )?
         }
 
         impl $crate::thin::HandOver for $name {
@@ -1063,6 +1253,8 @@ macro_rules! thin_sum {
             }
         }
 
+        $crate::thin_sum!(@canon $vis [$( $table )?] [$( $lazy )?] $name $( $tag $( ( $fields ) )? ),+);
+
         // A comparison or a hash reaches a node through `view`, which has
         // made the call already; it goes on with the node the call returned.
         impl $crate::NodeId for $name {
@@ -1142,15 +1334,126 @@ macro_rules! thin_sum {
         ()
     };
     (@free $name:ident $node:ident $pending:ident $fields:ty) => {
-        unsafe { $crate::thin::Thin::<$name>::free_node::<$fields>($node, $pending) }
+        unsafe { $name::__free::<$fields>($node, $pending) }
     };
     (@free $name:ident $node:ident $pending:ident) => {
+        unreachable!("a constructor without fields has no node")
+    };
+    (@true $table:ident) => {
+        true
+    };
+    (@lazy_tag) => {
+        ::std::option::Option::None
+    };
+    (@lazy_tag $lazy:literal) => {
+        ::std::option::Option::Some($lazy)
+    };
+    // How a sum not interned builds and frees a node.
+    (@canon $vis:vis [] [$( $lazy:literal )?] $name:ident $( $tag:literal $( ( $fields:ty ) )? ),+) => {
+        #[allow(dead_code)]
+        impl $name {
+            #[inline]
+            unsafe fn __node<P>(tag: u32, fields: P) -> $crate::thin::Thin<$name> {
+                unsafe { $crate::thin::Thin::new(tag, fields) }
+            }
+
+            #[inline]
+            unsafe fn __free<P: $crate::thin::HandOver>(
+                node: ::std::ptr::NonNull<$crate::thin::Header>,
+                pending: $crate::thin::Pending<'_>,
+            ) {
+                unsafe { $crate::thin::Thin::<$name>::free_node::<P>(node, pending) }
+            }
+        }
+    };
+    // An interned sum (see `aver_rt::intern`): its table, a constructor
+    // that looks a node up in it, `==` by identity on canonical nodes, and
+    // a hash made from the fields, kept in the node.
+    (@canon $vis:vis [$table:ident] [$( $lazy:literal )?] $name:ident $( $tag:literal $( ( $fields:ty ) )? ),+) => {
+        /// The canonical nodes of the sum.
+        #[allow(non_upper_case_globals)]
+        $vis static $table: $crate::intern::Table = $crate::intern::Table::new();
+
+        #[allow(dead_code)]
+        impl $name {
+            #[inline]
+            unsafe fn __node<P: $crate::intern::InternFields>(tag: u32, fields: P) -> $crate::thin::Thin<$name> {
+                unsafe { $crate::thin::Thin::intern(tag, fields, &$table) }
+            }
+
+            #[inline]
+            unsafe fn __free<P: $crate::thin::HandOver>(
+                node: ::std::ptr::NonNull<$crate::thin::Header>,
+                pending: $crate::thin::Pending<'_>,
+            ) {
+                unsafe { $crate::thin::Thin::<$name>::free_interned::<P>(node, pending, &$table) }
+            }
+
+            /// `==` when both values are canonical, which is whether they
+            /// are one node; `None` when either may not be. Makes no call.
+            #[inline]
+            $vis fn canon_eq(a: &Self, b: &Self) -> ::std::option::Option<bool> {
+                let lazy = $crate::thin_sum!(@lazy_tag $( $lazy )?);
+                ::std::option::Option::Some($crate::thin::Thin::ptr_eq(
+                    a.0.canonical(lazy)?,
+                    b.0.canonical(lazy)?,
+                ))
+            }
+
+            /// The hash of the value made from its fields: the one its node
+            /// keeps, or made again for a node not in the table.
+            #[inline]
+            $vis fn canon_hash(&self) -> u64 {
+                let (this, tag) = self.made();
+                // SAFETY: `made` gives a node, or a constructor without
+                // fields, never a call.
+                if let ::std::option::Option::Some(hash) = unsafe { this.stored_hash() } {
+                    return hash;
+                }
+                Self::fields_hash(this, tag)
+            }
+
+            #[cold]
+            #[inline(never)]
+            fn fields_hash(this: &$crate::thin::Thin<$name>, tag: u32) -> u64 {
+                let mut hasher = $crate::shared_hash::node_hasher();
+                ::std::hash::Hasher::write_u32(&mut hasher, tag);
+                match tag {
+                    $( $tag => $crate::thin_sum!(@hash_fields this hasher $( $fields )?), )+
+                    // As in `view`.
+                    _ => unsafe { ::std::hint::unreachable_unchecked() },
+                }
+                ::std::hash::Hasher::finish(&hasher) | 1
+            }
+        }
+
+        impl $crate::intern::Canon for $name {
+            #[inline]
+            fn settle(&mut self) -> bool {
+                self.0.settle($crate::thin_sum!(@lazy_tag $( $lazy )?))
+            }
+
+            #[inline]
+            fn canon_hash(&self) -> u64 {
+                $name::canon_hash(self)
+            }
+
+            #[inline]
+            fn same(&self, other: &Self) -> bool {
+                $crate::thin::Thin::ptr_eq(&self.0, &other.0)
+            }
+        }
+    };
+    (@hash_fields $this:ident $hasher:ident $fields:ty) => {
+        $crate::intern::InternFields::hash_into(unsafe { $this.fields::<$fields>() }, &mut $hasher)
+    };
+    (@hash_fields $this:ident $hasher:ident) => {
         unreachable!("a constructor without fields has no node")
     };
     (@ctor $vis:vis $name:ident $tag:literal $ctor:ident $fields:ty) => {
         #[inline]
         $vis fn $ctor(fields: $fields) -> Self {
-            $name(unsafe { $crate::thin::Thin::new($tag, fields) })
+            $name(unsafe { Self::__node($tag, fields) })
         }
     };
     (@ctor $vis:vis $name:ident $tag:literal $ctor:ident) => {
