@@ -1566,7 +1566,8 @@ impl CodeCaller<'_> {
             hot.calls += 1;
             return Ok(());
         }
-        if let Some(fold) = decoded_head(&expr.node, h) {
+        let point = head_code_point(&expr.node, h);
+        if let Some(fold) = decoded_head(&expr.node, h).or(point.map(|_| CodeFold::Bare)) {
             if shadows.iter().any(|n| n == code_name) {
                 return Err(CharsFusionDecline::CodeBindShadowed);
             }
@@ -1575,7 +1576,10 @@ impl CodeCaller<'_> {
                 line,
                 crate::types::Type::Int,
             );
-            *expr = fold.apply(code, line);
+            *expr = match point {
+                Some(false) => some_of(code, line),
+                _ => fold.apply(code, line),
+            };
             hot.decodes += 1;
             return Ok(());
         }
@@ -1628,6 +1632,48 @@ fn decoded_head(expr: &Expr, h: &str) -> Option<CodeFold> {
     let fold = CodeFold::of(intrinsic)?;
     matches!(args.as_slice(), [arg] if matches!(&arg.node, Expr::Ident(x) if x == h))
         .then_some(fold)
+}
+
+/// `String.firstCodePoint(h)` of the head (`Some(false)`), or that under
+/// `Option.withDefault` with a literal default (`Some(true)`). The head of
+/// a peel is one character, so the first is `Option.Some` of its code and
+/// the second the code itself.
+fn head_code_point(expr: &Expr, h: &str) -> Option<bool> {
+    let first = |e: &Expr| {
+        matches!(e, Expr::FnCall(callee, args)
+            if is_dotted(&callee.node, STRING_NAMESPACE, "firstCodePoint")
+                && matches!(args.as_slice(), [a] if matches!(&a.node, Expr::Ident(x) if x == h)))
+    };
+    if first(expr) {
+        return Some(false);
+    }
+    let Expr::FnCall(callee, args) = expr else {
+        return None;
+    };
+    let [opt, default] = args.as_slice() else {
+        return None;
+    };
+    (is_dotted(&callee.node, "Option", "withDefault")
+        && matches!(default.node, Expr::Literal(_))
+        && first(&opt.node))
+    .then_some(true)
+}
+
+/// `Option.Some(code)`, as the parser writes it.
+fn some_of(code: Spanned<Expr>, line: crate::ast::SourceLine) -> Spanned<Expr> {
+    let option = sp(Expr::Ident("Option".to_string()), line);
+    let callee = sp(
+        Expr::Attr(crate::ast::Shared::new(option), "Some".to_string()),
+        line,
+    );
+    sp_typed(
+        Expr::FnCall(
+            crate::ast::Shared::new(callee),
+            crate::ast::shared::vec(vec![code]),
+        ),
+        line,
+        crate::types::Type::Option(Box::new(crate::types::Type::Int)),
+    )
 }
 
 /// Does any identifier read or tail-call target under `expr` carry
