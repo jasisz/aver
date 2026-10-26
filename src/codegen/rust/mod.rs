@@ -3203,7 +3203,7 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
     }
 
     #[cfg(feature = "runtime")]
-    fn transpile_interning(source: &str, intern: &[&str]) -> Result<ProjectOutput, String> {
+    fn transpile_interning(source: &str, intern: &[&str]) -> Result<super::ProjectOutput, String> {
         let mut ctx = ctx_from_source(source, "demo");
         super::transpile_with_provider_manifest_for_project(
             &mut ctx,
