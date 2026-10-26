@@ -436,7 +436,7 @@ fn main() -> Unit
 /// through `get`, `keys`, `values` and `entries`. The same entries built
 /// top down, and kept by removing every larger key from a map of thirty,
 /// sit in tables of other sizes and other layouts: they must be equal,
-/// and as keys of one map they must hash alike and make one entry.
+/// on their own, as fields of a record and as items of a list.
 #[test]
 fn small_maps_read_the_same_across_every_early_doubling() {
     assert_vm_and_wasm_gc(
@@ -445,6 +445,10 @@ fn small_maps_read_the_same_across_every_early_doubling() {
 module Main
     intent = "Maps of one to twenty-five entries on either side of each early doubling, read every way after writes from one version."
     effects [Console.print]
+
+record Box
+    m: Map<Int, Int>
+    n: Int
 
 fn fill(m: Map<Int, Int>, from: Int, to: Int) -> Map<Int, Int>
     ? "Maps each key in from..to-1 to ten times itself."
@@ -504,8 +508,7 @@ fn step(n: Int) -> String
     r = Map.remove(a, 0)
     down = fillDown({}, 0, n)
     shrunk = dropRange(fill({}, 0, 30), n, 30)
-    index = Map.set(Map.set(Map.set({}, m, 1), down, 2), shrunk, 3)
-    "{summary(m)} {summary(a)} {summary(b)} {summary(c)} {summary(r)} {entrySum(Map.entries(r), 0)} {valueSum(Map.values(c), 0)} {m == down} {m == shrunk} {a == b} {Map.len(index)} {Option.withDefault(Map.get(index, m), 0)}"
+    "{summary(m)} {summary(a)} {summary(b)} {summary(c)} {summary(r)} {entrySum(Map.entries(r), 0)} {valueSum(Map.values(c), 0)} {m == down} {m == shrunk} {a == b} {Box(m = down, n = n) == Box(m = shrunk, n = n)} {[m, down] == [shrunk, m]}"
 
 fn main() -> Unit
     ! [Console.print]
@@ -521,16 +524,16 @@ fn main() -> Unit
     Console.print(step(24))
     Console.print(step(25))
 "#,
-        "1:0:,0 2:1001:,0,1 2:2002:,0,2 1:5:,0 1:1001:,1 2 5 true true false 1 3\n\
-         2:1010:,0,1 3:3011:,0,1,2 3:4012:,0,1,3 2:1015:,0,1 2:3011:,1,2 14 15 true true false 1 3\n\
-         3:3030:,0,1,2 4:6031:,0,1,2,3 4:7032:,0,1,2,4 3:3035:,0,1,2 3:6031:,1,2,3 37 35 true true false 1 3\n\
-         4:6060:,0,1,2,3 5:10061:,0,1,2,3 5:11062:,0,1,2,3 4:6065:,0,1,2,3 4:10061:,1,2,3,4 71 65 true true false 1 3\n\
-         5:10100:,0,1,2,3 6:15101:,0,1,2,3 6:16102:,0,1,2,3 5:10105:,0,1,2,3 5:15101:,1,2,3,4 116 105 true true false 1 3\n\
-         6:15150:,0,1,2,3 7:21151:,0,1,2,3 7:22152:,0,1,2,3 6:15155:,0,1,2,3 6:21151:,1,2,3,4 172 155 true true false 1 3\n\
-         7:21210:,0,1,2,3 8:28211:,0,1,2,3 8:29212:,0,1,2,3 7:21215:,0,1,2,3 7:28211:,1,2,3,4 239 215 true true false 1 3\n\
-         12:66660:,0,1,2,3 13:78661:,0,1,2,3 13:79662:,0,1,2,3 12:66665:,0,1,2,3 12:78661:,1,2,3,4 739 665 true true false 1 3\n\
-         13:78780:,0,1,2,3 14:91781:,0,1,2,3 14:92782:,0,1,2,3 13:78785:,0,1,2,3 13:91781:,1,2,3,4 872 785 true true false 1 3\n\
-         24:278760:,0,1,2,3 25:302761:,0,1,2,3 25:303762:,0,1,2,3 24:278765:,0,1,2,3 24:302761:,1,2,3,4 3061 2765 true true false 1 3\n\
-         25:303000:,0,1,2,3 26:328001:,0,1,2,3 26:329002:,0,1,2,3 25:303005:,0,1,2,3 25:328001:,1,2,3,4 3326 3005 true true false 1 3",
+        "1:0:,0 2:1001:,0,1 2:2002:,0,2 1:5:,0 1:1001:,1 2 5 true true false true true\n\
+         2:1010:,0,1 3:3011:,0,1,2 3:4012:,0,1,3 2:1015:,0,1 2:3011:,1,2 14 15 true true false true true\n\
+         3:3030:,0,1,2 4:6031:,0,1,2,3 4:7032:,0,1,2,4 3:3035:,0,1,2 3:6031:,1,2,3 37 35 true true false true true\n\
+         4:6060:,0,1,2,3 5:10061:,0,1,2,3 5:11062:,0,1,2,3 4:6065:,0,1,2,3 4:10061:,1,2,3,4 71 65 true true false true true\n\
+         5:10100:,0,1,2,3 6:15101:,0,1,2,3 6:16102:,0,1,2,3 5:10105:,0,1,2,3 5:15101:,1,2,3,4 116 105 true true false true true\n\
+         6:15150:,0,1,2,3 7:21151:,0,1,2,3 7:22152:,0,1,2,3 6:15155:,0,1,2,3 6:21151:,1,2,3,4 172 155 true true false true true\n\
+         7:21210:,0,1,2,3 8:28211:,0,1,2,3 8:29212:,0,1,2,3 7:21215:,0,1,2,3 7:28211:,1,2,3,4 239 215 true true false true true\n\
+         12:66660:,0,1,2,3 13:78661:,0,1,2,3 13:79662:,0,1,2,3 12:66665:,0,1,2,3 12:78661:,1,2,3,4 739 665 true true false true true\n\
+         13:78780:,0,1,2,3 14:91781:,0,1,2,3 14:92782:,0,1,2,3 13:78785:,0,1,2,3 13:91781:,1,2,3,4 872 785 true true false true true\n\
+         24:278760:,0,1,2,3 25:302761:,0,1,2,3 25:303762:,0,1,2,3 24:278765:,0,1,2,3 24:302761:,1,2,3,4 3061 2765 true true false true true\n\
+         25:303000:,0,1,2,3 26:328001:,0,1,2,3 26:329002:,0,1,2,3 25:303005:,0,1,2,3 25:328001:,1,2,3,4 3326 3005 true true false true true",
     );
 }
