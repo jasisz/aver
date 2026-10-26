@@ -13624,6 +13624,7 @@ error: build failed";
             synthesized_buffered_fns: Vec::new(),
             packed_sequence_layouts: HashMap::new(),
             rust_i64_carriers: HashMap::new(),
+            rust_i64_carrier_ctors: HashMap::new(),
             proof_ir: aver::ir::ProofIR::default(),
             symbol_table: aver::ir::SymbolTable::default(),
             current_module_scope: std::cell::RefCell::new(None),

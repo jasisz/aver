@@ -434,6 +434,8 @@ pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
         ("perf-shared-update", split_repair(msg))
     } else if msg.contains("recomputed every recursive call") {
         ("perf-loop-invariant", split_repair(msg))
+    } else if msg.contains("keeps an `Int` field") {
+        ("perf-int-carrier", split_repair(msg))
     } else if msg.contains("computed in both the match condition") {
         ("cse-match", split_repair(msg))
     } else if msg.contains("computed") && msg.contains("times in this function") {

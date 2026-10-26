@@ -192,6 +192,22 @@ fn edges(lo: Int, hi: Int) -> String
     ? "The smart constructor at and past both edges."
     "{showResult(pct(lo))} {showResult(pct(hi))} {showResult(pct(lo - 1))} {showResult(pct(hi + 1))}"
 
+fn steps(p: Pct) -> String
+    ? "The smart constructor on the field one step either way, checked on the machine word, at and past both edges."
+    "{showResult(pct(p.value + 1))} {showResult(pct(p.value - 1))} {showResult(pct(p.value * 2))} {wordStep(p)}"
+
+fn wordStep(p: Pct) -> String
+    ? "The smart constructor of another module on a machine word, at and past its lower edge."
+    match Lib.Word.fromInt(p.value - 1)
+        Result.Ok(w) -> "word {Lib.Word.value(w)}"
+        Result.Err(e) -> e
+
+fn stepsAt(n: Int) -> String
+    ? "The steps from the percentage n."
+    match pct(n)
+        Result.Ok(p) -> steps(p)
+        Result.Err(e) -> e
+
 fn onPct(n: Int, e: Expr) -> String
     ? "Every operation on one percentage."
     match pct(n)
@@ -232,6 +248,7 @@ fn main() -> Unit
     Console.print("equal {e == f} {wordOf(e) == wordOf(f)} {e == build(0, 300, leaf(1))}")
     Console.print("top {Lib.Word.value(Option.withDefault(biggest(ws, Option.None), wordOf(e)))}")
     Console.print("edges {edges(0, 100)}")
+    Console.print("steps {stepsAt(0)} | {stepsAt(50)} | {stepsAt(99)} | {stepsAt(100)}")
     Console.print(onPct(87, e))
     Console.print("sample {sample(ws)}")
     Console.print("list {sumPcts(pcts([5, 200, 95, -3, 50], []), 0)}")
