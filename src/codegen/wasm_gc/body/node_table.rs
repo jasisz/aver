@@ -12,14 +12,20 @@
 //! checker does, falls where no other node falls, and nodes that hold nothing
 //! but other nodes share the last [`PROBES`] of their constructor.
 //!
+//! The last two entries are kept apart and answer first. A comparison keeps
+//! its first [`FIRST_ENTRIES`] entries there only, as wasm-gc did before it
+//! had a table, so one that ends within them pays no table, which would
+//! make each of its steps cost about twice as much. From then on every entry
+//! also goes to the table.
+//!
 //! The table is an array of nodes: [`TABLE_START`] entries when the first
 //! one comes, twice as many, empty, whenever it is half full, up to
 //! [`TABLE_MAX`], at which size it starts again empty when half full. So it
 //! remembers every pair, half its largest size at a time, and a walk over a
 //! large value that shares nothing pays a table that stays small rather than
-//! one entry for every node it meets. A comparison that
-//! starts within another one with memory keeps the table, and the outermost
-//! one drops it when it ends.
+//! one entry for every node it meets. A comparison that starts within another
+//! one with memory keeps the table, and the outermost one drops it when it
+//! ends.
 
 use wasm_encoder::{
     ConstExpr, Function, GlobalSection, GlobalType, HeapType, Instruction, RefType, StorageType,
@@ -35,6 +41,8 @@ const TABLE_START: i32 = 1 << 10;
 const TABLE_MAX: i32 = 1 << 15;
 /// Slots a lookup or an insert tries from where a key falls.
 const PROBES: i32 = 8;
+/// Entries a comparison keeps in its last two only, before the table.
+const FIRST_ENTRIES: i32 = 4096;
 
 /// What an entry of a table holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -68,12 +76,18 @@ pub(crate) struct TableSlots {
     types: u32,
 }
 
-/// The globals of a table from `first`: the nodes, for a hash the hashes,
-/// then the count of entries, the depth of comparisons with memory under way
-/// and the turn of the next slot written over.
+/// The globals of a table, from `first` on ([`TableSlots::globals`]).
 #[derive(Clone, Copy)]
 pub(crate) struct TableGlobals {
     first: u32,
+}
+
+/// What a global of a table holds.
+#[derive(Clone, Copy)]
+enum Global {
+    Array(u32),
+    Int,
+    Node,
 }
 
 fn eq_ref() -> ValType {
@@ -166,33 +180,58 @@ impl TableSlots {
         }
     }
 
+    /// The globals of a table, in order, by their names in the helpers: the
+    /// arrays, the count of entries, the depth of comparisons with memory
+    /// under way, the turn of the next slot written over, the entries of
+    /// this comparison so far, and its last two entries.
+    fn globals(&self) -> Vec<(&'static str, Global)> {
+        let mut out = vec![("nodes", Global::Array(self.nodes_type()))];
+        if self.entry.hashes() {
+            out.push(("hashes", Global::Array(self.hashes_type())));
+        }
+        out.extend(["count", "depth", "turn", "seen"].map(|n| (n, Global::Int)));
+        let second = if self.entry.hashes() {
+            Global::Int
+        } else {
+            Global::Node
+        };
+        out.extend([
+            ("l0", Global::Node),
+            ("r0", second),
+            ("l1", Global::Node),
+            ("r1", second),
+        ]);
+        out
+    }
+
     pub(crate) fn emit_globals(
         &self,
         globals: &mut GlobalSection,
         next_global_idx: &mut u32,
     ) -> TableGlobals {
         let first = *next_global_idx;
-        let mut arrays = vec![self.nodes_type()];
-        if self.entry.hashes() {
-            arrays.push(self.hashes_type());
-        }
-        for idx in &arrays {
+        for (_, global) in self.globals() {
+            let (val_type, init) = match global {
+                Global::Array(idx) => {
+                    (array_ref(idx), ConstExpr::ref_null(HeapType::Concrete(idx)))
+                }
+                Global::Int => (ValType::I32, ConstExpr::i32_const(0)),
+                Global::Node => (
+                    eq_ref(),
+                    ConstExpr::ref_null(HeapType::Abstract {
+                        shared: false,
+                        ty: wasm_encoder::AbstractHeapType::Eq,
+                    }),
+                ),
+            };
             let ty = GlobalType {
-                val_type: array_ref(*idx),
+                val_type,
                 mutable: true,
                 shared: false,
             };
-            globals.global(ty, &ConstExpr::ref_null(HeapType::Concrete(*idx)));
+            globals.global(ty, &init);
+            *next_global_idx += 1;
         }
-        let int = GlobalType {
-            val_type: ValType::I32,
-            mutable: true,
-            shared: false,
-        };
-        for _ in 0..3 {
-            globals.global(int, &ConstExpr::i32_const(0));
-        }
-        *next_global_idx += arrays.len() as u32 + 3;
         TableGlobals { first }
     }
 
@@ -232,8 +271,25 @@ impl TableSlots {
              i32.const {PROBES} local.set $left",
             shift = u32::from(pair),
         );
+        // The last two entries answer before the table.
+        let recent = ["0", "1"]
+            .map(|i| {
+                if pair {
+                    format!(
+                        "local.get $a global.get $l{i} ref.eq local.get $b global.get $r{i} ref.eq
+                         i32.and (if (then i32.const 1 return))"
+                    )
+                } else {
+                    format!(
+                        "local.get $a global.get $l{i} ref.eq
+                         (if (then global.get $r{i} i64.extend_i32_u return))"
+                    )
+                }
+            })
+            .join("\n");
         let lookup = format!(
             r#"{nodes_param} (param $key i32) (result {found_ty}) {locals} (local $first eqref)
+            {recent}
             global.get $nodes local.tee $nodes ref.is_null
             (if (then {missing} return))
             {home}
@@ -261,6 +317,11 @@ impl TableSlots {
         };
         let insert = format!(
             r#"{nodes_param} (param $key i32) {hash_param} {locals}
+            global.get $l0 global.set $l1 global.get $r0 global.set $r1
+            local.get $a global.set $l0 local.get {second_param} global.set $r0
+            ;; A comparison keeps its first entries in the last two only.
+            global.get $seen i32.const {first_entries} i32.lt_u
+            (if (then global.get $seen i32.const 1 i32.add global.set $seen return))
             global.get $nodes ref.is_null
             (if (then {start} i32.const 0 global.set $count)
               (else
@@ -292,6 +353,8 @@ impl TableSlots {
             local.get $nodes local.get $slot {first} local.get $a array.set $nodes
             {store}"#,
             hash_param = if pair { "" } else { "(param $hash i32)" },
+            second_param = if pair { "$b" } else { "$hash" },
+            first_entries = FIRST_ENTRIES,
             start = new_arrays(&format!("i32.const {TABLE_START}")),
             half = 1 + u32::from(pair),
             max_half = TABLE_MAX / 2,
@@ -309,11 +372,19 @@ impl TableSlots {
         let leave = format!(
             "global.get $depth i32.const 1 i32.sub global.set $depth
              global.get $depth i32.eqz
-             (if (then ref.null $nodes global.set $nodes {hashes} i32.const 0 global.set $count))",
+             (if (then
+                   ref.null $nodes global.set $nodes {hashes}
+                   i32.const 0 global.set $count i32.const 0 global.set $seen
+                   ref.null eq global.set $l0 ref.null eq global.set $l1 {forget}))",
             hashes = if pair {
                 ""
             } else {
                 "ref.null $hashes global.set $hashes"
+            },
+            forget = if pair {
+                "ref.null eq global.set $r0 ref.null eq global.set $r1"
+            } else {
+                ""
             },
         );
         let module = |body: &str| {
@@ -327,12 +398,14 @@ impl TableSlots {
             for _ in 0..g.first {
                 wat += "(global (mut i32) (i32.const 0))\n";
             }
-            wat += "(global $nodes (mut (ref null $nodes)) (ref.null $nodes))\n";
-            if !pair {
-                wat += "(global $hashes (mut (ref null $hashes)) (ref.null $hashes))\n";
-            }
-            for name in ["count", "depth", "turn"] {
-                wat += &format!("(global ${name} (mut i32) (i32.const 0))\n");
+            for (name, global) in self.globals() {
+                wat += &match global {
+                    Global::Array(_) => {
+                        format!("(global ${name} (mut (ref null ${name})) (ref.null ${name}))\n")
+                    }
+                    Global::Int => format!("(global ${name} (mut i32) (i32.const 0))\n"),
+                    Global::Node => format!("(global ${name} (mut eqref) (ref.null eq))\n"),
+                };
             }
             wat_helper::compile_wat_helper(&format!("{wat}(func (export \"helper\") {body}))"))
         };
