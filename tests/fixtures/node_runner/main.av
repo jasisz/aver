@@ -1,0 +1,51 @@
+module Main
+    intent =
+        "A command line program for the Node host test: it reads the file its"
+        "first argument names five bytes at a time and then whole, tries a"
+        "missing file, and ends with exit status 3."
+    depends [Bytes]
+    effects [Args.get, Console.print, Console.error, Disk.readBytesAt, Disk.readText]
+
+fn main() -> Int
+    ? "Reads the file in chunks and whole: status 3, or 2 without two paths."
+    ! [Args.get, Console.print, Console.error, Disk.readBytesAt, Disk.readText]
+    match Args.get()
+        [path, missing] -> read(path, missing)
+        _ -> 2
+
+fn read(path: String, missing: String) -> Int
+    ? "The chunks, the whole text, then the missing file on stderr."
+    ! [Console.print, Console.error, Disk.readBytesAt, Disk.readText]
+    chunks(path, 0)
+    whole(path)
+    gone(missing)
+    3
+
+fn chunks(path: String, offset: Int) -> Unit
+    ? "Prints the file five bytes at a time until a read comes back empty."
+    ! [Console.print, Disk.readBytesAt]
+    match Disk.readBytesAt(path, offset, 5)
+        Result.Err(_) -> Console.print("chunk at {offset} failed")
+        Result.Ok(b) -> match Bytes.len(b) == 0
+            true -> Console.print("end at {offset}")
+            false -> chunk(path, offset, b)
+
+fn chunk(path: String, offset: Int, b: Bytes) -> Unit
+    ? "Prints one chunk and reads the next."
+    ! [Console.print, Disk.readBytesAt]
+    Console.print("at {offset}: {Bytes.toHex(b)}")
+    chunks(path, offset + Bytes.len(b))
+
+fn whole(path: String) -> Unit
+    ? "Prints the whole file as text."
+    ! [Console.print, Disk.readText]
+    match Disk.readText(path)
+        Result.Ok(t) -> Console.print("whole: {t}")
+        Result.Err(_) -> Console.print("whole failed")
+
+fn gone(path: String) -> Unit
+    ? "A file that is not there fails to read; only that it failed is printed, since each host words the reason its own way."
+    ! [Console.error, Disk.readBytesAt]
+    match Disk.readBytesAt(path, 0, 5)
+        Result.Ok(_) -> Console.error("missing file read")
+        Result.Err(_) -> Console.error("missing file fails")
