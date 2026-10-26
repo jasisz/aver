@@ -1438,7 +1438,8 @@ struct CodeCaller<'a> {
 }
 
 /// How one peel's head is read: handed to a classifier, decoded in place
-/// by `__str_code1*`, or needed as the string itself.
+/// by `__str_code1*` or `String.firstCodePoint`, or needed as the string
+/// itself.
 #[derive(Default)]
 struct HeadReads {
     calls: usize,
