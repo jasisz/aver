@@ -183,7 +183,10 @@ pub fn string_index_code_at_i64(text: &AverStr, index: &StringIndex, position: i
     };
     if index.blocks.is_none() {
         // As in `string_index_char_at_i64`.
-        return text.as_bytes().get(position).map_or(-1, |&byte| i64::from(byte));
+        return text
+            .as_bytes()
+            .get(position)
+            .map_or(-1, |&byte| i64::from(byte));
     }
     if position >= index.char_len() {
         return -1;
