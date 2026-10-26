@@ -3307,8 +3307,9 @@ pub(super) fn emit_module_with(
     // reads a fn with trees as it would without them, so it declines that fn
     // for the reason it has.
     let mut plain_locals_for: Vec<Option<Vec<ValType>>> = vec![None; fn_defs.len()];
-    // The boxed `Int` literals of those fns, each made once, into a global.
+    // The boxed `Int` literals of those fns: each is made once, in a global.
     let mut pooled_literals = std::collections::BTreeSet::new();
+    let _reset = super::body::IntTreeReset;
     // The emitter's view the certificate plan printer reads: this compile's
     // registry and function indices.
     let cert_layout = super::cert_layout::CertLayout {
@@ -3393,30 +3394,26 @@ pub(super) fn emit_module_with(
             }));
         }
     }
-    let literal_pool: HashMap<i64, u32> = match registry.aint_struct_idx {
-        Some(aint) => pooled_literals
-            .into_iter()
-            .map(|n| {
-                let value = [
-                    Instruction::I64Const(n),
-                    Instruction::RefNull(HeapType::Concrete(
-                        registry.aint_mag_array_idx.unwrap_or(0),
-                    )),
-                    Instruction::I32Const(0),
-                    Instruction::StructNew(aint),
-                ];
-                let ty = wasm_encoder::GlobalType {
-                    val_type: super::types::struct_ref(aint),
-                    mutable: false,
-                    shared: false,
-                };
-                globals.global(ty, &wasm_encoder::ConstExpr::extended(value));
-                next_global_idx += 1;
-                (n, next_global_idx - 1)
-            })
-            .collect(),
-        None => HashMap::new(),
-    };
+    // A Small `$AverInt` per literal, as `__aint_from_i64` makes it.
+    let mut literal_pool = HashMap::new();
+    if let (Some(aint), Some(mag)) = (registry.aint_struct_idx, registry.aint_mag_array_idx) {
+        for n in pooled_literals {
+            let small = wasm_encoder::ConstExpr::extended([
+                Instruction::I64Const(n),
+                Instruction::RefNull(HeapType::Concrete(mag)),
+                Instruction::I32Const(0),
+                Instruction::StructNew(aint),
+            ]);
+            let ty = wasm_encoder::GlobalType {
+                val_type: super::types::struct_ref(aint),
+                mutable: false,
+                shared: false,
+            };
+            globals.global(ty, &small);
+            literal_pool.insert(n, next_global_idx);
+            next_global_idx += 1;
+        }
+    }
     if next_global_idx > 0 {
         module.section(&globals);
     }
@@ -6432,7 +6429,6 @@ pub(super) fn emit_module_with(
             )
         })
         .collect();
-    super::body::set_int_literal_pool(HashMap::new());
     let cert_plans = crate::codegen::cert::print_module(
         &planned,
         &cert_layout,
@@ -6465,6 +6461,7 @@ fn int_trees_allowed(
         && rfd.params.iter().all(|(_, t)| is_int(t))
         && is_int(&rfd.return_type);
     layout.registry.bignum
+        && std::env::var_os("AVER_NO_INT_TREE").is_none()
         && !int_binop_type
         && crate::codegen::cert::print_fn(mir_fn, rfd, extra, layout, types).is_err()
 }

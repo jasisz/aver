@@ -39,8 +39,8 @@ fn bits(a: Int) -> String
     "{Bits.and(a, 255) + 1} {Bits.or(a, 6) - 1} {Bits.xor(a, -1) + 0} {Bits.not(a) + 0} {Bits.shiftLeft(a, 62) + 0} {Bits.shiftLeft(a, 70) + 0} {Bits.shiftRight(a, 1) + 0} {Bits.shiftRight(a, 100) + 0} {Bits.low(a, 8) + 0} {Bits.low(a, 63) + 0} {Bits.low(a, 64) + 0} {Bits.low(a, 0) + 1}"
 
 fn compare(a: Int, b: Int) -> String
-    ? "Comparisons whose sides overflow."
-    "{a * b > a} {a * b == b * a} {a + b < a} {a - b >= 0} {Int.max(a, b) * 2 != a}"
+    ? "Comparisons whose sides overflow, and of two values without an operation."
+    "{a * b > a} {a * b == b * a} {a + b < a} {a - b >= 0} {Int.max(a, b) * 2 != a} {a < b} {a >= b} {a == b} {a != b}"
 
 fn mixed(s: Small, p: Pair, a: Int) -> Int
     ? "A carrier's machine word, a record field and a boxed value in one tree."

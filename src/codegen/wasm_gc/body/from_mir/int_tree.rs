@@ -39,6 +39,18 @@ pub(crate) fn set_allowed(allowed: bool) {
     ALLOWED.with(|a| a.set(allowed));
 }
 
+/// Back to no fn in particular when a module's emission ends, however it
+/// ends: trees allowed, no literal pool, nothing recorded.
+pub(crate) struct IntTreeReset;
+
+impl Drop for IntTreeReset {
+    fn drop(&mut self) {
+        set_allowed(true);
+        set_literal_pool(HashMap::new());
+        record_literals(false);
+    }
+}
+
 /// Start recording the boxed `Int` literals emitted, or stop and return them.
 pub(crate) fn record_literals(on: bool) -> std::collections::BTreeSet<i64> {
     LITERALS
@@ -197,7 +209,6 @@ fn enabled(ctx: &EmitCtx<'_>, roots: &[Node<'_>]) -> bool {
         && ctx.registry.aint_struct_idx.is_some()
         && EXACT.with(|d| d.get() == 0)
         && ALLOWED.with(|a| a.get())
-        && std::env::var_os("AVER_NO_INT_TREE").is_none()
         && weights().is_some_and(|w| w > 0 || leaves)
 }
 

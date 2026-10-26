@@ -11,6 +11,7 @@ fn add(a: Int, b: Int) -> Int
     Bits.and(a + b * 7, 255) + 1
 
 fn main() -> Unit
-    ? "Prints both."
+    ? "Prints both. No Int literal here: this fn is not one the certificate reads, so it would share them."
     ! [Console.print]
-    Console.print("{poly(2, 3, 4)} {add(5, 6)}")
+    n = String.len("abc")
+    Console.print("{poly(n, n, n)} {add(n, n)}")

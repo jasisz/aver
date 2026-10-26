@@ -41,7 +41,7 @@ mod slots;
 
 pub(super) use emit::{emit_caller_fn_idx, emit_default_value, emit_string_literal_bytes};
 pub(super) use from_mir::int_tree::{
-    record_literals as record_int_literals, set_allowed as set_int_trees_allowed,
+    IntTreeReset, record_literals as record_int_literals, set_allowed as set_int_trees_allowed,
     set_literal_pool as set_int_literal_pool,
 };
 pub use from_mir::{CoverageReport, coverage_report};
