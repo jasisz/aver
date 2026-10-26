@@ -5723,15 +5723,7 @@ fn try_emit_int_literal_match(
                     // (pure bindings / wildcards) — it closes the chain.
                     plans.push((ArmPlan::Default { prelude }, body));
                 } else {
-                    // The tests that bind (an uncons) go last, after every
-                    // test that only compares.
-                    let (binds, tests): (Vec<_>, Vec<_>) =
-                        conds.into_iter().partition(|cond| cond.starts_with("let "));
-                    let cond = tests
-                        .into_iter()
-                        .chain(binds)
-                        .collect::<Vec<_>>()
-                        .join(" && ");
+                    let cond = conds.join(" && ");
                     plans.push((ArmPlan::Guard { cond, prelude }, body));
                 }
             }
@@ -5816,26 +5808,25 @@ fn lower_int_literal_subpatterns(
             conds.push(format!("{}.is_empty()", place));
             true
         }
-        // The uncons that binds head and tail is the test: it misses on an
-        // empty list. Both names `_` needs no uncons, only `is_empty`.
+        // The guard proves the list non-empty, so the uncons on the taken
+        // arm cannot miss; both names `_` needs no uncons at all.
         ResolvedPattern::Cons(head, tail) => {
-            if head == "_" && tail == "_" {
-                conds.push(format!("!{}.is_empty()", place));
-                return true;
+            conds.push(format!("!{}.is_empty()", place));
+            if head != "_" || tail != "_" {
+                let leaf = |name: &str| {
+                    if name == "_" {
+                        "_".to_string()
+                    } else {
+                        aver_name_to_rust(name)
+                    }
+                };
+                prelude.push_str(&format!(
+                    "let Some(({}, {})) = aver_rt::list_uncons_cloned(&{}) else {{ unreachable!(\"Aver Rust codegen: tuple element list mismatch\") }}; ",
+                    leaf(head),
+                    leaf(tail),
+                    place
+                ));
             }
-            let leaf = |name: &str| {
-                if name == "_" {
-                    "_".to_string()
-                } else {
-                    aver_name_to_rust(name)
-                }
-            };
-            conds.push(format!(
-                "let Some(({}, {})) = aver_rt::list_uncons_cloned(&{})",
-                leaf(head),
-                leaf(tail),
-                place
-            ));
             true
         }
         // A built-in constructor tests its tag; the payload, when named, is
