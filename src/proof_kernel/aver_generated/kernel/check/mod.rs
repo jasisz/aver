@@ -2448,9 +2448,16 @@ pub fn trans(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(ts.len() as i64)
-        == aver_rt::AverInt::from_i64(ps.len() as i64).add(&aver_rt::AverInt::from_i64(1)))
-    {
+    if ({
+        let __leaf0 = &(aver_rt::AverInt::from_i64(ts.len() as i64));
+        let __leaf1 = &(aver_rt::AverInt::from_i64(ps.len() as i64));
+        let __word: Option<bool> =
+            (|| Some(__leaf0.to_i64()? == (__leaf1.to_i64()?).checked_add((1i64))?))();
+        match __word {
+            Some(__word) => __word,
+            None => ((*__leaf0) == (*__leaf1).add(&aver_rt::AverInt::from_i64(1))),
+        }
+    }) {
         crate::proof_kernel::aver_generated::kernel::check::transFrom(
             ts,
             ps,
