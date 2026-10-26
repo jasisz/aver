@@ -3927,10 +3927,16 @@ pub fn tryVariantConstructor__indexed(
     mut __str_index @ _: aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::builtins::splitDotted__indexed(name.clone(), __str_index) {
+    match crate::aver_generated::domain::builtins::splitDotted__indexed(
+        name.clone(),
+        __str_index.clone(),
+    ) {
         Some(_) => Ok(crate::aver_generated::domain::value::Val::ValVariant(
             crate::aver_generated::domain::value::Val__ValVariant(
-                crate::aver_generated::domain::ast::ctorNameToTag(name.clone()),
+                crate::aver_generated::domain::ast::ctorNameToTag__indexed(
+                    name.clone(),
+                    __str_index,
+                ),
                 name,
                 args.clone(),
             ),

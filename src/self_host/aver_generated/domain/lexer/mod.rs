@@ -760,11 +760,12 @@ fn __mutual_tco_trampoline_3(
                         let (word, newPos) = {
                             let __arg6 @ _ =
                                 crate::aver_generated::domain::lexer::chars::isUpper(c);
-                            crate::aver_generated::domain::lexer::chars::readIdent(
+                            crate::aver_generated::domain::lexer::chars::readIdent__indexed(
                                 src.clone(),
                                 pos,
                                 ::aver_rt::str_lit!(""),
                                 __arg6,
+                                (*__str_index).clone(),
                             )
                         };
                         return aver_rt::AverList::prepend_owned(
@@ -1826,10 +1827,11 @@ pub fn tokenizeDigit__indexed(
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     {
-        let (n, newPos) = crate::aver_generated::domain::lexer::chars::readNumber(
+        let (n, newPos) = crate::aver_generated::domain::lexer::chars::readNumber__indexed(
             src.clone(),
             pos,
             aver_rt::AverInt::from_i64(0),
+            __str_index.clone(),
         );
         crate::aver_generated::domain::lexer::tokenizeAfterInt__indexed(src, newPos, n, __str_index)
     }
@@ -1910,10 +1912,11 @@ pub fn tokenizeFloat__indexed(
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     {
-        let (decPart, newPos) = crate::aver_generated::domain::lexer::chars::readNumber(
+        let (decPart, newPos) = crate::aver_generated::domain::lexer::chars::readNumber__indexed(
             src.clone(),
             pos.clone(),
             aver_rt::AverInt::from_i64(0),
+            __str_index.clone(),
         );
         crate::aver_generated::domain::lexer::buildFloat__indexed(
             src,
@@ -1978,11 +1981,12 @@ pub fn tokenizeAlphaWith__indexed(
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     {
-        let (word, newPos) = crate::aver_generated::domain::lexer::chars::readIdent(
+        let (word, newPos) = crate::aver_generated::domain::lexer::chars::readIdent__indexed(
             src.clone(),
             pos,
             ::aver_rt::str_lit!(""),
             dotted,
+            __str_index.clone(),
         );
         aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::lexer::chars::keywordOrIdent(word),
@@ -2121,10 +2125,11 @@ pub fn tokenizeInterpDigit__indexed(
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     {
-        let (n, newPos) = crate::aver_generated::domain::lexer::chars::readNumber(
+        let (n, newPos) = crate::aver_generated::domain::lexer::chars::readNumber__indexed(
             src.clone(),
             pos,
             aver_rt::AverInt::from_i64(0),
+            __str_index.clone(),
         );
         crate::aver_generated::domain::lexer::tokenizeInterpAfterInt__indexed(
             src,
@@ -2226,10 +2231,11 @@ pub fn tokenizeInterpFloat__indexed(
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     {
-        let (decPart, newPos) = crate::aver_generated::domain::lexer::chars::readNumber(
+        let (decPart, newPos) = crate::aver_generated::domain::lexer::chars::readNumber__indexed(
             src.clone(),
             pos.clone(),
             aver_rt::AverInt::from_i64(0),
+            __str_index.clone(),
         );
         crate::aver_generated::domain::lexer::tokenizeInterpBuildFloat__indexed(
             src,

@@ -674,6 +674,46 @@ impl Program {
         modules
     }
 
+    /// The positions in [`Self::dependencies`] that `member` marks, in
+    /// waves: each sits in a later wave than every marked module it imports,
+    /// directly or through unmarked ones, so a caller that prepares one wave
+    /// at a time can hand a module what those dependencies became. The first
+    /// wave holds the marked modules nothing marked sits below; each wave
+    /// keeps the program's order. An import of a later module (a cycle, which
+    /// the module's own check reports) does not move it.
+    pub fn dependency_waves(&self, member: &[bool]) -> Vec<Vec<usize>> {
+        let dependencies = self.dependencies();
+        let position: HashMap<&str, usize> = dependencies
+            .iter()
+            .enumerate()
+            .map(|(index, module)| (module.dep_name.as_str(), index))
+            .collect();
+        // How many waves an importer of each module has to wait for.
+        let mut below = Vec::with_capacity(dependencies.len());
+        let mut waves: Vec<Vec<usize>> = Vec::new();
+        for (index, module) in dependencies.iter().enumerate() {
+            let wave = direct_dependency_names(module)
+                .map(|(names, _)| names)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|name| position.get(name.as_str()).copied())
+                .filter(|&dependency| dependency < index)
+                .map(|dependency| below[dependency])
+                .max()
+                .unwrap_or(0);
+            if !member[index] {
+                below.push(wave);
+                continue;
+            }
+            below.push(wave + 1);
+            if waves.len() <= wave {
+                waves.resize_with(wave + 1, Vec::new);
+            }
+            waves[wave].push(index);
+        }
+        waves
+    }
+
     /// The modules a report walks, leaves-first with the entry last: every
     /// project module of the program. Embedded standard modules are typed
     /// and compiled like any other but are not units of a report — their
@@ -911,16 +951,11 @@ fn validate_program_module_name(module: &ProgramModule, dep_name: &str) -> Resul
     })
 }
 
-fn collect_dependency_keys(
-    module: &ProgramModule,
-    by_name: &HashMap<&str, &ProgramModule>,
-    reachable: &mut HashSet<PathBuf>,
-    loading: &mut Vec<PathBuf>,
-    canonical: &dyn Fn(&Path) -> PathBuf,
-) -> Result<(), LoadError> {
-    let Some(declaration) = visibility::module_decl(&module.items) else {
-        return Ok(());
-    };
+/// The modules `module` imports itself: the ones its `depends` names, then
+/// the standard modules its own builtin calls imply, with the written names
+/// apart. `None` for a file without a `module` declaration.
+fn direct_dependency_names(module: &ProgramModule) -> Option<(Vec<String>, HashSet<String>)> {
+    let declaration = visibility::module_decl(&module.items)?;
     let explicit = declaration.depends.iter().cloned().collect::<HashSet<_>>();
     let mut names = declaration.depends.clone();
     for implied in crate::stdlib::implicit_stdlib_deps(&module.items) {
@@ -928,7 +963,19 @@ fn collect_dependency_keys(
             names.push(implied);
         }
     }
+    Some((names, explicit))
+}
 
+fn collect_dependency_keys(
+    module: &ProgramModule,
+    by_name: &HashMap<&str, &ProgramModule>,
+    reachable: &mut HashSet<PathBuf>,
+    loading: &mut Vec<PathBuf>,
+    canonical: &dyn Fn(&Path) -> PathBuf,
+) -> Result<(), LoadError> {
+    let Some((names, explicit)) = direct_dependency_names(module) else {
+        return Ok(());
+    };
     let module_key = canonical(&module.path);
     for name in names {
         let Some(dependency) = by_name.get(name.as_str()).copied() else {
@@ -1612,6 +1659,9 @@ fn load_compile_deps_with_runtime_strings(
     let marked = program.marked.clone();
     let neutral_policy = crate::ir::NeutralAllocPolicy;
     let mut modules = Vec::with_capacity(program.dependencies().len());
+    // Leaves first, so a module's indexed workers can call the workers the
+    // modules below it grew (see `crate::ir::foreign_indexed_wrappers`).
+    let mut indexed_wrappers = std::collections::BTreeMap::new();
     for module in program.dependencies() {
         let loaded = program
             .loaded_dependencies_for(module)
@@ -1628,6 +1678,7 @@ fn load_compile_deps_with_runtime_strings(
                 run_string_index: true,
                 run_list_build: false,
                 run_byte_sink: runtime_strings,
+                indexed_wrappers: &indexed_wrappers,
                 alloc_policy: Some(&neutral_policy),
                 ..Default::default()
             },
@@ -1645,11 +1696,13 @@ fn load_compile_deps_with_runtime_strings(
                     .join("\n")
             ));
         }
-        modules.push(crate::codegen::ModuleInfo::from_items(
+        let info = crate::codegen::ModuleInfo::from_items(
             module.dep_name.clone(),
             &module_items,
             pipeline_result.analysis,
-        ));
+        );
+        indexed_wrappers.extend(crate::ir::indexed_wrappers_in(&info.prefix, &info.fn_defs));
+        modules.push(info);
     }
 
     let loaded = program

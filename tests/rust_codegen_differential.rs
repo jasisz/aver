@@ -781,6 +781,47 @@ fn a_cross_module_indexed_call_forwards_the_index_on_rust_and_vm() {
     );
 }
 
+/// Two dependencies that walk a String by position hand it to a worker of a
+/// third module they share. Dependencies are prepared leaves first, so each
+/// walker passes the index it holds; a slice of the String and a String that
+/// shrinks every step keep the wrapper, which indexes them anew.
+#[test]
+fn indexed_workers_of_dependencies_forward_the_index_to_each_other() {
+    let root = repo_root().join("tests/fixtures/string_index_dep_waves");
+    let file = root.join("main.av");
+    assert_eq!(
+        run_vm(&file, Some(&root)).expect("vm run"),
+        "ab|😀ą||tail\nbc\n13 3 4"
+    );
+    assert_plain_parity(
+        "tests/fixtures/string_index_dep_waves/main.av",
+        Some("tests/fixtures/string_index_dep_waves"),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+
+    let ws = temp_dir("string_index_dep_waves");
+    compile_rust(&file, &ws, "p_string_index_dep_waves", Some(&root), &[])
+        .expect("compile to Rust");
+    let read = |module: &str| {
+        fs::read_to_string(ws.join(format!("src/aver_generated/{module}/mod.rs")))
+            .expect("read a generated module")
+    };
+    let (left, right) = (read("left"), read("right"));
+    let _ = fs::remove_dir_all(&ws);
+    assert!(
+        left.contains("scan::skipTo__indexed("),
+        "Left's worker forwards its index:\n{left}"
+    );
+    assert_eq!(
+        (
+            right.matches("scan::skipTo__indexed(").count(),
+            right.matches("scan::skipTo(").count()
+        ),
+        (1, 2),
+        "Right forwards only the String it walks:\n{right}"
+    );
+}
+
 /// `Bytes.toHex` builds its string with the list-driven loop that the
 /// deforestation pass now recognises, and BOTH backends now fuse it —
 /// but by different routes. The Rust build reads the dependency out of

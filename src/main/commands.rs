@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -12544,12 +12544,17 @@ pub(super) fn load_compile_deps_prepared(
         .iter()
         .map(|module| (module.dep_name.clone(), module.source.clone()))
         .collect();
-    // Each dependency is prepared against the program alone, never against
-    // another one's preparation, so they are prepared side by side; what
-    // they report is read in the program's order, so the first broken
-    // module is still the one named.
+    // A module whose indexed workers may call the workers of a module below
+    // it is prepared after that module, so they pass the index they hold
+    // instead of calling its wrapper, which would index the String again
+    // (see `aver::ir::foreign_indexed_wrappers`). The modules that can grow
+    // workers are prepared in waves, leaves first; every other module from
+    // the start, beside them. What they report is read in the program's
+    // order, so the first broken module is still the one named.
     use rayon::prelude::*;
-    let prepare = |module: &aver::source::ProgramModule| {
+    let dependencies = program.dependencies();
+    let prepare = |module: &aver::source::ProgramModule,
+                   indexed_wrappers: &BTreeMap<String, usize>| {
         let loaded = program.loaded_dependencies_for(module)?;
         let mut module_items = module.items.clone();
         let neutral_policy = aver::ir::NeutralAllocPolicy;
@@ -12570,34 +12575,75 @@ pub(super) fn load_compile_deps_prepared(
                 run_list_build: lowering.list_build,
                 run_byte_sink: lowering.byte_sink,
                 keep_printable_unfused: lowering.keep_printable_unfused,
+                indexed_wrappers,
                 alloc_policy: Some(&neutral_policy),
                 ..Default::default()
             },
         );
-        Ok::<_, LoadError>((module_items, pipeline_result))
+        let errors = pipeline_result
+            .typecheck
+            .map(|tc| tc.errors)
+            .unwrap_or_default();
+        let info = ModuleInfo::from_items(
+            module.dep_name.clone(),
+            &module_items,
+            pipeline_result.analysis,
+        );
+        Ok::<_, LoadError>((errors, info))
     };
     // The checks recurse over the module's syntax: each worker gets the
     // stack the main thread has, and more.
-    let prepared: Vec<_> = match rayon::ThreadPoolBuilder::new()
+    let pool = rayon::ThreadPoolBuilder::new()
         .stack_size(64 * 1024 * 1024)
         .build()
-    {
-        Ok(pool) => pool.install(|| program.dependencies().par_iter().map(prepare).collect()),
-        Err(_) => program.dependencies().iter().map(prepare).collect(),
+        .ok();
+    let grows: Vec<bool> = dependencies
+        .iter()
+        .map(|module| lowering.string_index && aver::ir::has_string_index_shape(&module.items))
+        .collect();
+    let prepare_all = |indices: &[usize], wrappers: &BTreeMap<String, usize>| -> Vec<_> {
+        let one = |index: &usize| (*index, prepare(&dependencies[*index], wrappers));
+        if pool.is_some() {
+            indices.par_iter().map(one).collect()
+        } else {
+            indices.iter().map(one).collect()
+        }
     };
-    let mut modules = Vec::with_capacity(program.dependencies().len());
-    for (module, prepared) in program.dependencies().iter().zip(prepared) {
-        let (module_items, pipeline_result) =
-            prepared.unwrap_or_else(|error| fail(error.to_string()));
-        if let Some(tc) = pipeline_result.typecheck.as_ref()
-            && !tc.errors.is_empty()
-        {
+    let in_waves = || {
+        let mut known = BTreeMap::new();
+        let mut done = Vec::new();
+        for wave in program.dependency_waves(&grows) {
+            for (index, result) in prepare_all(&wave, &known) {
+                if let Ok((_, info)) = &result {
+                    known.extend(aver::ir::indexed_wrappers_in(&info.prefix, &info.fn_defs));
+                }
+                done.push((index, result));
+            }
+        }
+        done
+    };
+    let others: Vec<usize> = (0..dependencies.len()).filter(|&i| !grows[i]).collect();
+    let beside = || prepare_all(&others, &BTreeMap::new());
+    let (waved, rest) = match &pool {
+        Some(pool) => pool.install(|| rayon::join(in_waves, beside)),
+        None => (in_waves(), beside()),
+    };
+    let mut prepared: Vec<_> = dependencies.iter().map(|_| None).collect();
+    for (index, result) in waved.into_iter().chain(rest) {
+        prepared[index] = Some(result);
+    }
+    let mut modules = Vec::with_capacity(dependencies.len());
+    for (module, prepared) in dependencies.iter().zip(prepared) {
+        let (errors, info) = prepared
+            .expect("every dependency is prepared once")
+            .unwrap_or_else(|error| fail(error.to_string()));
+        if !errors.is_empty() {
             eprintln!(
                 "{}",
                 format!(
                     "Type errors in dependency module '{}':\n{}",
                     module.dep_name,
-                    tc.errors
+                    errors
                         .iter()
                         .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
                         .collect::<Vec<_>>()
@@ -12607,11 +12653,7 @@ pub(super) fn load_compile_deps_prepared(
             );
             process::exit(1);
         }
-        modules.push(ModuleInfo::from_items(
-            module.dep_name.clone(),
-            &module_items,
-            pipeline_result.analysis,
-        ));
+        modules.push(info);
     }
 
     let loaded = program

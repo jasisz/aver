@@ -954,6 +954,32 @@ fn wasm_gc_cross_module_indexed_call_matches_the_vm() {
     );
 }
 
+/// Dependencies whose workers hand their String to a worker of a module they
+/// share, with the index they hold; wasm-gc must print what the VM prints.
+#[test]
+fn wasm_gc_indexed_workers_of_dependencies_match_the_vm() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/string_index_dep_waves");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(root.join("main.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .arg("--wasm-gc")
+        .env("AVER_WASMGC_REQUIRE_MIR", "1")
+        .output()
+        .expect("run aver --wasm-gc");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "ab|😀ą||tail\nbc\n13 3 4\n"
+    );
+}
+
 /// Three shapes from one program that failed wasm-gc validation while the VM
 /// ran it: a `Unit` parameter ahead of value parameters (the signature drops
 /// it, so the body read the wrong locals), a program `record Index` beside the

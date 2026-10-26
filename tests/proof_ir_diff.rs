@@ -66,6 +66,7 @@ fn build_ctx(src: &str) -> CodegenContext {
             // form. Cheap traversal — no analysis.
             run_build_symbols: true,
             dep_modules: &[],
+            indexed_wrappers: &Default::default(),
             plans_root: None,
             proof_command: false,
             alloc_policy: None,
@@ -147,6 +148,7 @@ fn build_ctx_with_modules(entry_src: &str, deps: &[(&str, &str)]) -> CodegenCont
             run_law_lower: true,
             run_build_symbols: true,
             dep_modules: &modules,
+            indexed_wrappers: &Default::default(),
             plans_root: None,
             proof_command: false,
             alloc_policy: None,
@@ -515,6 +517,7 @@ fn persisted_classification_equals_explain_passes_interval_analysis() {
             run_law_lower: false,
             run_build_symbols: true,
             dep_modules: &[],
+            indexed_wrappers: &Default::default(),
             plans_root: None,
             proof_command: false,
             alloc_policy: None,
