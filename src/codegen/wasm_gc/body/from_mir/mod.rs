@@ -507,7 +507,7 @@ pub(crate) fn emit_mir_expr(
     if let Some(produced) = int_tree::emit_hoisted_leaf(func, expr, ctx)? {
         return Ok(Some(produced));
     }
-    if !result_raw && let Some(r) = int_tree::try_emit_boxed(func, expr, slots, ctx)? {
+    if !result_raw && let Some(r) = int_tree::try_emit_value(func, expr, None, slots, ctx)? {
         return Ok(r);
     }
     match &expr.node {
@@ -1817,7 +1817,7 @@ pub(crate) fn emit_mir_expr(
             Ok(Some(true))
         }
         MirExpr::Unbox(inner) => {
-            if let Some(r) = int_tree::try_emit_unboxed(func, expr, inner, slots, ctx)? {
+            if let Some(r) = int_tree::try_emit_value(func, inner, Some(expr), slots, ctx)? {
                 return Ok(r);
             }
             // `inner` is a boxed `$AverInt`; emit it boxed, then checked-narrow.

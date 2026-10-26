@@ -3304,7 +3304,9 @@ pub(super) fn emit_module_with(
     // Whether each fn computes its `Int` trees on `i64` first (see
     // `int_trees_allowed`), decided in the pre-pass below.
     let mut trees_for: Vec<bool> = vec![false; fn_defs.len()];
-    let trees_layout = super::cert_layout::CertLayout {
+    // The emitter's view the certificate plan printer reads: this compile's
+    // registry and function indices.
+    let cert_layout = super::cert_layout::CertLayout {
         registry: &registry,
         fn_map: &fn_map,
         symbol_table: &symbol_table,
@@ -3315,7 +3317,7 @@ pub(super) fn emit_module_with(
             .collect(),
         builtins: &mir_program.builtins,
     };
-    let mut trees_types = crate::codegen::cert::TypeTableBuilder::new(&trees_layout);
+    let mut trees_types = crate::codegen::cert::TypeTableBuilder::new(&cert_layout);
     // Why each fn the body emitter gave up on was left behind, in words.
     let mut stub_reasons: Vec<Option<String>> = vec![None; fn_defs.len()];
 
@@ -3368,7 +3370,7 @@ pub(super) fn emit_module_with(
                 mir_fn,
                 &resolved_fn_defs[i],
                 extra,
-                &trees_layout,
+                &cert_layout,
                 &mut trees_types,
             ),
             _ => false,
@@ -6374,17 +6376,6 @@ pub(super) fn emit_module_with(
     // The certificate plans: every emitted user fn's MIR printed 1:1 against
     // the registry and function indices of THIS compile. Read-only: printing
     // never changes a byte.
-    let cert_layout = super::cert_layout::CertLayout {
-        registry: &registry,
-        fn_map: &fn_map,
-        symbol_table: &symbol_table,
-        fn_idx: resolved_fn_defs
-            .iter()
-            .enumerate()
-            .map(|(i, rfd)| (rfd.fn_id, import_count + 1 + i as u32))
-            .collect(),
-        builtins: &mir_program.builtins,
-    };
     let planned: Vec<_> = resolved_fn_defs
         .iter()
         .enumerate()
@@ -6405,20 +6396,18 @@ pub(super) fn emit_module_with(
     Ok((bytes, mir_emitted, cert_plans))
 }
 
-/// Whether `mir_fn` may compute its `Int` trees on `i64` first
-/// (`body/from_mir/int_tree.rs`). `extra` are the locals of its body emitted
-/// without them. Two kinds of fn keep the ordinary lowering, so a
-/// certificate reads the same bytes it reads today:
-///
-/// - a fn the certificate plan printer admits: the certificate checker
-///   lowers the printed plan the one ordinary way and compares the result
-///   with the emitted code, the rule `ir::cert_shape` keeps for the
-///   fabricating passes;
-/// - a fn taking two `Int`s and returning an `Int`: the certificate checker
-///   finds the runtime's `Int` add, sub and mul helpers as the functions of
-///   that type whose first machine arithmetic is an add, a sub or a mul, so
-///   a user fn of that type computing on `i64` would look like a second
-///   helper, and no module holding one could be certified.
+/// Whether `mir_fn` computes its `Int` trees on `i64` first
+/// (`body/from_mir/int_tree.rs`); `extra` are its locals emitted without
+/// them. Two kinds of fn keep the ordinary lowering, so a certificate reads
+/// the bytes it reads without trees:
+/// - one the certificate plan printer admits: the checker lowers the printed
+///   plan the ordinary way and compares it with the code (the rule
+///   `ir::cert_shape` keeps for the fabricating passes);
+/// - one taking two `Int`s to an `Int`: the checker finds the runtime's `Int`
+///   add, sub and mul helpers as the fns of that type whose first machine
+///   arithmetic is an add, a sub or a mul, so such a user fn computing on
+///   `i64` would pass for a second helper and no module holding it could be
+///   certified.
 fn int_trees_allowed(
     mir_fn: &crate::ir::mir::MirFn,
     rfd: &crate::ir::hir::ResolvedFnDef,

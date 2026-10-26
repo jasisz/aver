@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn fixture(name: &str) -> PathBuf {
-    aver_cmd::repo_root().join("tests/fixtures/wasm_gc_int_tree").join(name)
+    aver_cmd::repo_root()
+        .join("tests/fixtures/wasm_gc_int_tree")
+        .join(name)
 }
 
 fn run(file: &Path, wasm_gc: bool) -> String {
@@ -47,7 +49,10 @@ fn module(file: &Path, trees: bool) -> Vec<u8> {
     }
     let out = cmd.output().expect("aver compile executes");
     assert!(out.status.success(), "{}", aver_cmd::format_output(&out));
-    let stem = file.file_stem().and_then(|s| s.to_str()).expect("file stem");
+    let stem = file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .expect("file stem");
     let bytes = std::fs::read(dir.join(format!("{stem}.wasm"))).expect("module written");
     let _ = std::fs::remove_dir_all(&dir);
     bytes
