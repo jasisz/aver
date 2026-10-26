@@ -31,10 +31,6 @@ use crate::shared_hash::NodeHasher;
 /// How many parts the table is split into, each with its own lock.
 pub const SHARDS: usize = 64;
 
-/// An entry slot nobody has used.
-const EMPTY: *mut u8 = std::ptr::null_mut();
-/// An entry slot whose node has left.
-const GONE: *mut u8 = std::ptr::without_provenance_mut(1);
 
 /// The fields of a constructor of an interned sum, as the table compares
 /// them. The Rust backend implements it for each constructor's field struct.
@@ -145,33 +141,85 @@ pub(crate) fn retain(count: &AtomicU32, max: u32) -> bool {
     }
 }
 
-/// Where a probe for `hash` starts: past its lowest bit, which is 1 in every
-/// hash of a canonical node.
+/// How many nodes one [`Chunk`] holds.
+const CHUNK: usize = 7;
+
+/// A tag byte of a slot nobody has used.
+const EMPTY: u8 = 0;
+/// A tag byte of a slot whose node has left.
+const GONE: u8 = 1;
+
+/// Seven slots and their tag bytes in one cache line: a probe reads the
+/// tags of a chunk, and the node of a slot only when its tag is the hash's.
+#[derive(Clone, Copy)]
+#[repr(C, align(64))]
+struct Chunk {
+    /// One per slot, then one unused: [`EMPTY`], [`GONE`], or
+    /// [`tag_of`] the hash of the node in the slot.
+    tags: [u8; 8],
+    nodes: [*mut u8; CHUNK],
+}
+
+const NO_CHUNK: Chunk = Chunk {
+    tags: [EMPTY; 8],
+    nodes: [std::ptr::null_mut(); CHUNK],
+};
+
+/// The tag byte of `hash`: seven of its bits, apart from the ones that pick
+/// the part ([`Table::shard`]) and the chunk ([`first_chunk`]), with the
+/// high bit set so it is never [`EMPTY`] or [`GONE`].
 #[inline]
-fn slot(hash: u64) -> usize {
+fn tag_of(hash: u64) -> u8 {
+    0x80 | ((hash >> 40) & 0x7f) as u8
+}
+
+/// The chunk a probe for `hash` starts at, past its lowest bit, which is 1
+/// in every hash of a canonical node.
+#[inline]
+fn first_chunk(hash: u64) -> usize {
     (hash >> 1) as usize
 }
 
-/// One canonical node: its hash, and where it is (or [`EMPTY`], [`GONE`]).
-#[derive(Clone, Copy)]
-struct Entry {
-    hash: u64,
-    node: *mut u8,
+/// The slots of the first [`CHUNK`] tags of `tags` equal to `tag`, one bit
+/// per slot.
+#[inline]
+fn matching(tags: [u8; 8], tag: u8) -> u32 {
+    let word = u64::from_le_bytes(tags) ^ (u64::from(tag) * 0x0101_0101_0101_0101);
+    // A zero byte of `word` is a slot whose tag is `tag`; the test can also
+    // mark a byte after one that is, which the caller checks again.
+    let zero = word.wrapping_sub(0x0101_0101_0101_0101) & !word & 0x8080_8080_8080_8080;
+    let mut slots = 0;
+    let mut bits = zero & 0x0080_8080_8080_8080;
+    while bits != 0 {
+        slots |= 1 << (bits.trailing_zeros() / 8);
+        bits &= bits - 1;
+    }
+    slots
 }
 
-/// One part of the table: open addressing, probed one slot after another.
+/// The hash a node in the table keeps in the word before its header.
+///
+/// # Safety
+/// `node` is a node in the table.
+#[inline]
+unsafe fn hash_in(node: *mut u8) -> u64 {
+    unsafe { node.cast::<u64>().sub(1).read() }
+}
+
+/// One part of the table: chunks of seven slots, probed one chunk after
+/// another, filled to seven eighths.
 pub(crate) struct Slots {
-    entries: Vec<Entry>,
-    /// Entries holding a node.
+    chunks: Vec<Chunk>,
+    /// Slots holding a node.
     live: usize,
-    /// Entries a node has left, which a probe goes past.
+    /// Slots a node has left, which a probe goes past.
     gone: usize,
 }
 
 impl Slots {
     const fn new() -> Self {
         Slots {
-            entries: Vec::new(),
+            chunks: Vec::new(),
             live: 0,
             gone: 0,
         }
@@ -179,7 +227,7 @@ impl Slots {
 
     #[inline]
     fn mask(&self) -> usize {
-        self.entries.len().wrapping_sub(1)
+        self.chunks.len().wrapping_sub(1)
     }
 
     /// The first node of hash `hash` that `take` accepts.
@@ -188,89 +236,90 @@ impl Slots {
         if self.live == 0 {
             return None;
         }
-        let mask = self.mask();
-        let mut at = slot(hash) & mask;
+        let (mask, tag) = (self.mask(), tag_of(hash));
+        let mut at = first_chunk(hash) & mask;
         loop {
-            let entry = self.entries[at];
-            if entry.node == EMPTY {
-                return None;
+            let chunk = &self.chunks[at];
+            let mut slots = matching(chunk.tags, tag);
+            while slots != 0 {
+                let slot = slots.trailing_zeros() as usize;
+                slots &= slots - 1;
+                if chunk.tags[slot] == tag && take(chunk.nodes[slot]) {
+                    return Some(chunk.nodes[slot]);
+                }
             }
-            if entry.hash == hash && entry.node != GONE && take(entry.node) {
-                return Some(entry.node);
+            // A node of this hash would have taken an empty slot here.
+            if chunk.tags[..CHUNK].contains(&EMPTY) {
+                return None;
             }
             at = (at + 1) & mask;
         }
     }
 
     pub(crate) fn insert(&mut self, hash: u64, node: *mut u8) {
-        if (self.live + self.gone + 1) * 2 > self.entries.len() {
+        if (self.live + self.gone + 1) * 8 > self.chunks.len() * CHUNK * 7 {
             self.resize();
         }
+        self.put(hash, node);
+        self.live += 1;
+    }
+
+    /// Puts `node` in the first free slot from where `hash` starts.
+    fn put(&mut self, hash: u64, node: *mut u8) {
         let mask = self.mask();
-        let mut at = slot(hash) & mask;
+        let mut at = first_chunk(hash) & mask;
         loop {
-            let held = self.entries[at].node;
-            if held == EMPTY {
-                break;
-            }
-            if held == GONE {
-                self.gone -= 1;
-                break;
+            let chunk = &mut self.chunks[at];
+            if let Some(slot) = chunk.tags[..CHUNK].iter().position(|&t| t == EMPTY || t == GONE) {
+                if chunk.tags[slot] == GONE {
+                    self.gone -= 1;
+                }
+                chunk.tags[slot] = tag_of(hash);
+                chunk.nodes[slot] = node;
+                return;
             }
             at = (at + 1) & mask;
         }
-        self.entries[at] = Entry { hash, node };
-        self.live += 1;
     }
 
     fn remove(&mut self, hash: u64, node: *mut u8) {
         let mask = self.mask();
-        let mut at = slot(hash) & mask;
+        let mut at = first_chunk(hash) & mask;
         loop {
-            let entry = self.entries[at];
-            assert_ne!(entry.node, EMPTY, "a canonical node is in the table");
-            if entry.node == node {
+            let chunk = &mut self.chunks[at];
+            if let Some(slot) = (0..CHUNK).find(|&slot| chunk.nodes[slot] == node && chunk.tags[slot] > GONE) {
+                chunk.tags[slot] = GONE;
                 break;
             }
+            assert!(!chunk.tags[..CHUNK].contains(&EMPTY), "a canonical node is in the table");
             at = (at + 1) & mask;
         }
-        self.entries[at].node = GONE;
         self.live -= 1;
         self.gone += 1;
         if self.live == 0 {
             // Nothing left to find: no probe needs to go past the gone ones.
-            self.entries.iter_mut().for_each(|entry| entry.node = EMPTY);
+            self.chunks.iter_mut().for_each(|chunk| *chunk = NO_CHUNK);
             self.gone = 0;
         }
     }
 
-    /// Room for twice the live entries, at least 16, without the gone ones.
+    /// Room for twice the live nodes, at least two chunks, without the gone
+    /// slots. Each node's hash is read from the node.
     #[cold]
     #[inline(never)]
     fn resize(&mut self) {
-        let size = ((self.live + 1) * 4).next_power_of_two().max(16);
-        let old = std::mem::replace(
-            &mut self.entries,
-            vec![
-                Entry {
-                    hash: 0,
-                    node: EMPTY,
-                };
-                size
-            ],
-        );
-        let mask = self.mask();
-        for entry in old
-            .into_iter()
-            .filter(|entry| entry.node != EMPTY && entry.node != GONE)
-        {
-            let mut at = slot(entry.hash) & mask;
-            while self.entries[at].node != EMPTY {
-                at = (at + 1) & mask;
-            }
-            self.entries[at] = entry;
-        }
+        let chunks = ((self.live + 1) * 2).div_ceil(CHUNK).next_power_of_two().max(2);
+        let old = std::mem::replace(&mut self.chunks, vec![NO_CHUNK; chunks]);
         self.gone = 0;
+        for chunk in &old {
+            for slot in 0..CHUNK {
+                if chunk.tags[slot] > GONE {
+                    let node = chunk.nodes[slot];
+                    // SAFETY: a node is alive while it is in the table.
+                    self.put(unsafe { hash_in(node) }, node);
+                }
+            }
+        }
     }
 }
 
@@ -410,39 +459,52 @@ impl Table {
 
 #[cfg(test)]
 mod tests {
-    use super::{EMPTY, Slots};
+    use super::Slots;
 
-    fn at(n: usize) -> *mut u8 {
-        std::ptr::without_provenance_mut(n * 8)
+    /// Room for a node at a distinct address with `hash` before it, as the
+    /// table reads it on a resize.
+    fn nodes(hashes: impl Iterator<Item = u64>) -> Vec<Box<[u64; 2]>> {
+        hashes.map(|hash| Box::new([hash, 0])).collect()
+    }
+
+    fn at(node: &mut [u64; 2]) -> *mut u8 {
+        (&raw mut node[1]).cast()
     }
 
     #[test]
     fn slots_find_insert_and_remove_by_address() {
         let mut slots = Slots::new();
-        for node in 2..1000usize {
-            slots.insert((node % 7) as u64, at(node));
+        let mut held = nodes((0..1000u64).map(|n| n.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1));
+        for node in held.iter_mut() {
+            slots.insert(node[0], at(node));
         }
-        assert_eq!(slots.live, 998);
-        assert_eq!(slots.find(3, |node| node == at(81)), None);
-        assert_eq!(slots.find(3, |node| node == at(3)), Some(at(3)));
-        for node in 2..1000usize {
-            slots.remove((node % 7) as u64, at(node));
+        assert_eq!(slots.live, 1000);
+        // Every node is found from its own hash, past the others its probe
+        // meets.
+        for node in held.iter_mut() {
+            let (hash, this) = (node[0], at(node));
+            assert_eq!(slots.find(hash, |found| found == this), Some(this));
+        }
+        for node in held.iter_mut() {
+            slots.remove(node[0], at(node));
         }
         assert_eq!(slots.live, 0);
-        assert!(slots.entries.iter().all(|entry| entry.node == EMPTY));
-        assert_eq!(slots.find(3, |_| true), None);
+        assert!(slots.chunks.iter().all(|chunk| chunk.tags == [super::EMPTY; 8]));
+        assert_eq!(slots.find(held[3][0], |_| true), None);
     }
 
     #[test]
-    fn two_entries_of_one_hash_are_told_apart_by_address() {
+    fn two_nodes_of_one_hash_are_told_apart_by_address() {
         let mut slots = Slots::new();
-        slots.insert(5, at(100));
-        slots.insert(5, at(200));
-        slots.remove(5, at(100));
-        assert_eq!(slots.find(5, |_| true), Some(at(200)));
-        slots.insert(5, at(300));
-        slots.remove(5, at(200));
-        assert_eq!(slots.find(5, |_| true), Some(at(300)));
+        let mut held = nodes([5, 5, 5].into_iter());
+        let [a, b, c] = [0, 1, 2].map(|i| at(&mut held[i]));
+        slots.insert(5, a);
+        slots.insert(5, b);
+        slots.remove(5, a);
+        assert_eq!(slots.find(5, |_| true), Some(b));
+        slots.insert(5, c);
+        slots.remove(5, b);
+        assert_eq!(slots.find(5, |_| true), Some(c));
     }
 }
 
