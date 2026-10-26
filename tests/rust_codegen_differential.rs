@@ -491,6 +491,46 @@ fn raw_int_match_subjects_and_free_values_match_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Pure `Int` trees are computed on `i64` first and exactly when a leaf is
+/// past `i64` or an operation overflows (`codegen/rust/from_mir/int_tree.rs`):
+/// overflow in the middle of a tree, Big leaves, `i64::MIN`, Euclidean
+/// `Int.div` / `Int.mod` by literals of both signs and by powers of two,
+/// `Bits` on negative and Big values, comparisons whose sides overflow,
+/// record fields in a tree, and leaves with effects (each runs once, in
+/// order), all read as the VM. The fixture is the one wasm-gc's trees use.
+#[test]
+fn int_trees_on_machine_words_match_vm() {
+    let relative = "tests/fixtures/wasm_gc_int_tree/shapes.av";
+    let file = repo_root().join(relative);
+    let vm_stdout = run_vm(&file, None).unwrap_or_else(|e| panic!("{e}"));
+    let ws = temp_dir("int_tree");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&file, &project, "int_tree", None, &[])?;
+        let emitted = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|e| format!("read emitted module: {e}"))?;
+        // Not vacuous: the trees are computed on `i64`.
+        if !emitted.contains(".checked_mul(") {
+            return Err(format!("no tree is computed on i64:\n{emitted}"));
+        }
+        let bin = cargo_build(&project, "int_tree")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !out.status.success() || rust_stdout != vm_stdout {
+            return Err(format!(
+                "stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{}",
+                format_output(&out)
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// `lazy f(…)` keeps the call in a node until the value is first looked at:
 /// a value never looked into, one looked at many times and from two threads
 /// at once, compared both ways with the value built at once, a spine a

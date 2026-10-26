@@ -6837,6 +6837,9 @@ fn mir_if_cond_and_branches<'a>(
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => None,
         }
     };
+    if let Some(cond) = int_tree::try_emit(&ite.cond, ctx) {
+        return Some((cond, &ite.then_branch, &ite.else_branch));
+    }
     match &ite.cond.node {
         // A slice compared in place goes through `emit_mir_expr`.
         MirExpr::BinOp(spanned_binop)
