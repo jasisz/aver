@@ -191,7 +191,7 @@ pub(super) struct HttpGetHelperFns {
 /// The bucket count `emit_map_empty` starts a map at, imported
 /// rather than restated so the two cannot drift. This one allocates
 /// a header map per `Http.get` call whose slots v1 never fills; at
-/// sixteen buckets that is a rounding error, where the old fixed
+/// four buckets that is a rounding error, where the old fixed
 /// 16384 was ~128 KB of zeroes per call. The map grows on its own
 /// when the v2 follow-up starts filling it.
 use super::maps::INITIAL_CAP;

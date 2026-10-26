@@ -184,7 +184,7 @@ The wasip2 connected-socket pool is fixed at 256 slots for now, which matches th
 
 ### Header maps grow with the headers
 
-Request and response headers reach Aver as a `Map<String, List<String>>`, built one header at a time through the same `Map.set` helper every Aver map uses. They grow the same way any map does: the map starts at 16 buckets and doubles as header names arrive. A request with an ordinary handful of headers allocates a table sized for a handful, and there is no header count at which the guest suddenly fails. The table used to be fixed at 16384 buckets, and a peer sending more distinct header names than that could stop the guest. That can no longer happen. Any cap the host places on header count still applies first; the guest imposes none of its own. See the `Map` size note in [`docs/cli.md`](cli.md).
+Request and response headers reach Aver as a `Map<String, List<String>>`, built one header at a time through the same `Map.set` helper every Aver map uses. They grow the same way any map does: the map starts at 4 buckets and grows as header names arrive. A request with an ordinary handful of headers allocates a table sized for a handful, and there is no header count at which the guest suddenly fails. The table used to be fixed at 16384 buckets, and a peer sending more distinct header names than that could stop the guest. That can no longer happen. Any cap the host places on header count still applies first; the guest imposes none of its own. See the `Map` size note in [`docs/cli.md`](cli.md).
 
 ### Generated coordinators
 

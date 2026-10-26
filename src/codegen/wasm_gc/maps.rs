@@ -40,7 +40,8 @@
 //! The table grows. The insert helper checks, before it probes,
 //! whether the entry it is about to add would push occupancy past
 //! three quarters of capacity (see [`LOAD_SHIFT`]); when it would,
-//! it allocates keys/values/hashes arrays at twice the capacity, rehashes every
+//! it allocates keys/values/hashes arrays at twice the capacity (four
+//! times below [`QUADRUPLE_BELOW`] buckets), rehashes every
 //! live entry into the wider mask using its cached hash, and probes there
 //! instead. `Map.set`
 //! is therefore total up to memory exhaustion, the same promise the
@@ -89,20 +90,21 @@ use versions::{VersionedWrite, emit_versioned_write};
 pub(super) use versions::{emit_no_diff, emit_reroot_local};
 
 /// Bucket count of the first arrays a map gets — power of two so masking
-/// with `cap-1` instead of `i32.rem_u` works, and every doubling keeps it
+/// with `cap-1` instead of `i32.rem_u` works, and every grow keeps it
 /// one.
 ///
-/// The first insert into the shared empty map makes them. Sixteen
-/// buckets hold twelve entries before the first doubling. Doubling
-/// makes the total cost of reaching `n` entries linear in `n`, so
-/// starting small costs a few extra rehashes early and nothing after
+/// The first insert into the shared empty map makes them. Four buckets
+/// hold three entries, and most maps never get more: sixteen made each
+/// of them allocate four times the slots it used. A map that does get a
+/// fourth entry grows to sixteen buckets (see [`QUADRUPLE_BELOW`]), so
+/// starting small costs it one rehash of three entries and nothing after
 /// that.
 ///
 /// Shared with the three places that inline a fresh header map instead
 /// of calling the `empty` helper: `wasip2_http`, `wasip2_http_handler`
 /// and `body::builtins_wasip2`. They used to carry their own copy of the
 /// number with a comment saying it had to match this one.
-pub(super) const INITIAL_CAP: i32 = 16;
+pub(super) const INITIAL_CAP: i32 = 4;
 
 /// Bucket count of the shared empty map: one bucket, which stays null.
 ///
@@ -112,6 +114,14 @@ pub(super) const INITIAL_CAP: i32 = 16;
 /// quarter of the capacity up, so a table of one holds no entry and the
 /// first insert grows it to [`INITIAL_CAP`] before it probes.
 const EMPTY_CAP: i32 = 1;
+
+/// A table with fewer buckets than this grows fourfold rather than
+/// twofold: the shared empty map to [`INITIAL_CAP`], and that to sixteen.
+/// Doubling from four would put a second grow, at six entries, on every
+/// map that passes three, and on a program of maps of four to twenty
+/// entries that cost twice what the one grow at three does.
+const QUADRUPLE_BELOW: i32 = 16;
+const _: () = assert!(EMPTY_CAP << 2 == INITIAL_CAP && INITIAL_CAP < QUADRUPLE_BELOW);
 
 /// Load factor the insert helpers grow at, expressed as the shift in
 /// `threshold = cap - ((cap + 2^LOAD_SHIFT - 1) >> LOAD_SHIFT)`, the
@@ -1931,19 +1941,16 @@ fn emit_insert_prologue(f: &mut Function, slots: MapSlots) {
     f.instruction(&Instruction::If(BlockType::Empty));
 
     // ── grow ──────────────────────────────────────────────────────
-    // cap = max(cap * 2, INITIAL_CAP); mask = cap - 1. The floor is
-    // for the shared empty map, whose first insert lands here.
+    // cap <<= 1 + (cap < QUADRUPLE_BELOW); mask = cap - 1. The shared
+    // empty map's one bucket becomes INITIAL_CAP here.
     f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(QUADRUPLE_BELOW));
+    f.instruction(&Instruction::I32LtU);
     f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Shl);
     f.instruction(&Instruction::LocalTee(3));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::I32LtU);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::LocalSet(3));
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::LocalSet(4));

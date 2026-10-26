@@ -2061,8 +2061,8 @@ fn main() -> Int
     );
 }
 
-/// Sixteen thousand keys into a table that starts at sixteen buckets:
-/// eleven doublings, each one rehashing everything inserted so far. `len`
+/// Sixteen thousand keys into a table that has sixteen buckets from its
+/// fourth key on: eleven doublings, each one rehashing everything inserted so far. `len`
 /// counting them all is the cheapest statement that nothing was
 /// dropped or duplicated on the way through.
 #[test]
@@ -2280,7 +2280,7 @@ fn main() -> Int
 /// themselves and the bucket is `hash & (cap - 1)`, so `1` and `16385`
 /// collide at every capacity a three-entry map can have — 16384 is a
 /// multiple of all of them. The map here never grows (three entries in
-/// sixteen buckets), so inserting `1`, `2`, `16385` in that order puts
+/// four buckets), so inserting `1`, `2`, `16385` in that order puts
 /// them in slots 1, 2, 3. `16385` is reachable only by probing through
 /// slot 1, so removing `1` has to walk the rest of the run and pull
 /// `16385` back into the hole it left.
@@ -2314,8 +2314,8 @@ fn map_remove_keeps_a_key_that_probed_past_the_removed_bucket() {
 }
 
 /// The same question over two probe runs, one of which crosses the end
-/// of the table. Ten entries stay inside the sixteen buckets a map
-/// starts with, so the table never grows here and the buckets are
+/// of the table. Ten entries stay inside the sixteen buckets a map has
+/// from its fourth entry on, so the table grows no further here and the buckets are
 /// `key & 15`. After the ten inserts the run in slots 5..10 is:
 /// 5(home 5), 6(home 6), 16389(home 5), 7(home 7, displaced), 32773
 /// (home 5), 8(home 8, displaced). Removing `5` reads one entry that
@@ -2374,7 +2374,7 @@ fn map_remove_keeps_every_survivor_of_a_colliding_run() {
     assert_eq!(run_int(REMOVE_CLUSTER_SRC), 8 * 100 + 2 * 10 + 8);
 }
 
-/// The two witnesses above stay inside the initial sixteen buckets, so
+/// The two witnesses above stay inside sixteen buckets, so
 /// they say nothing about removal from a table that has grown. These do.
 /// A grow rehashes every entry under a wider mask and resets the
 /// displacements the old mask built up, which is exactly the state the
