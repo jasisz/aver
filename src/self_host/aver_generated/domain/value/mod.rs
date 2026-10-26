@@ -707,24 +707,8 @@ pub fn valListRepr(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            if __list_subject.is_empty() {
-                return aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
-                            );
-                            __b.push_str(&::aver_rt::str_lit!("["));
-                            __b
-                        };
-                        __b.push_display(&(acc));
-                        __b
-                    };
-                    __b.push_str(&::aver_rt::str_lit!("]"));
-                    __b
-                });
-            } else {
-                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((v, rest)) => {
                     if first {
                         {
                             let __tco0 = rest;
@@ -749,8 +733,21 @@ pub fn valListRepr(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(18usize);
+                                __b.push_str(&::aver_rt::str_lit!("["));
+                                __b
+                            };
+                            __b.push_display(&(acc));
+                            __b
+                        };
+                        __b.push_str(&::aver_rt::str_lit!("]"));
+                        __b
+                    });
                 }
             }
         }
@@ -784,9 +781,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(21usize);
                             __b.push_str(&::aver_rt::str_lit!("<fn "));
                             __b
                         };
@@ -822,9 +817,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(27)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(27usize);
                             __b.push_str(&::aver_rt::str_lit!("Result.Ok("));
                             __b
                         };
@@ -842,9 +835,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(28)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(28usize);
                             __b.push_str(&::aver_rt::str_lit!("Result.Err("));
                             __b
                         };
@@ -862,9 +853,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(18usize);
                             __b.push_str(&::aver_rt::str_lit!("("));
                             __b
                         };
@@ -886,9 +875,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(29usize);
                             __b.push_str(&::aver_rt::str_lit!("Option.Some("));
                             __b
                         };
@@ -908,9 +895,7 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
                 let name = __name_fields.0.clone();
                 aver_rt::AverStr::from({
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(21usize);
                         __b.push_display(&(name));
                         __b
                     };
@@ -965,9 +950,7 @@ pub fn valReprInner(v @ _: &Val) -> AverStr {
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(21usize);
                             __b.push_str(&::aver_rt::str_lit!("<fn "));
                             __b
                         };
@@ -983,9 +966,7 @@ pub fn valReprInner(v @ _: &Val) -> AverStr {
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(18usize);
                             __b.push_str(&::aver_rt::str_lit!("("));
                             __b
                         };
@@ -1040,24 +1021,8 @@ pub fn valMapRepr(
         crate::cancel_checkpoint();
         {
             let __list_subject = entries;
-            if __list_subject.is_empty() {
-                return aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
-                            );
-                            __b.push_str(&::aver_rt::str_lit!("{"));
-                            __b
-                        };
-                        __b.push_display(&(acc));
-                        __b
-                    };
-                    __b.push_str(&::aver_rt::str_lit!("}"));
-                    __b
-                });
-            } else {
-                if let (Some(entry), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((entry, rest)) => {
                     if first {
                         {
                             let __tco0 = rest;
@@ -1101,8 +1066,21 @@ pub fn valMapRepr(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity(18usize);
+                                __b.push_str(&::aver_rt::str_lit!("{"));
+                                __b
+                            };
+                            __b.push_display(&(acc));
+                            __b
+                        };
+                        __b.push_str(&::aver_rt::str_lit!("}"));
+                        __b
+                    });
                 }
             }
         }
@@ -1213,29 +1191,26 @@ pub fn partsKey(mut tag @ _: AverStr, items @ _: &aver_rt::AverList<Val>) -> Ave
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            if __list_subject.is_empty() {
-                return tag;
-            } else {
-                if let (Some(item), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = (((tag
-                            + &aver_rt::display_str(
-                                &(aver_rt::AverInt::from_i64(
-                                    crate::aver_generated::domain::value::mapKeyRepr(item)
-                                        .chars()
-                                        .count() as i64,
-                                )),
-                            ))
-                            + &::aver_rt::str_lit!(":"))
-                            + &crate::aver_generated::domain::value::mapKeyRepr(item));
-                        let __tco1 = rest;
-                        tag = __tco0;
-                        __hold1 = __tco1;
-                        items = &__hold1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((item, rest)) => {
+                    let __tco0 = (((tag
+                        + &aver_rt::display_str(
+                            &(aver_rt::AverInt::from_i64(
+                                crate::aver_generated::domain::value::mapKeyRepr(item)
+                                    .chars()
+                                    .count() as i64,
+                            )),
+                        ))
+                        + &::aver_rt::str_lit!(":"))
+                        + &crate::aver_generated::domain::value::mapKeyRepr(item));
+                    let __tco1 = rest;
+                    tag = __tco0;
+                    __hold1 = __tco1;
+                    items = &__hold1;
+                    continue;
+                }
+                None => {
+                    return tag;
                 }
             }
         }
@@ -1252,14 +1227,9 @@ pub fn entryKey(entry @ _: &Val) -> Val {
                 let parts = &__parts_fields.0;
                 {
                     let __list_subject = parts;
-                    if let Some(k) = __list_subject.first() {
-                        k.clone()
-                    } else {
-                        if __list_subject.is_empty() {
-                            crate::aver_generated::domain::value::Val::ValUnit
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
+                    match __list_subject.first() {
+                        Some(k) => k.clone(),
+                        None => crate::aver_generated::domain::value::Val::ValUnit,
                     }
                 }
             }
@@ -1276,7 +1246,7 @@ pub fn entryValue(entry @ _: &Val) -> Val {
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValTuple(__parts_fields) => {
                 let parts = &__parts_fields.0;
-                match (parts).get(aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)))) {
+                match (parts).get(1usize) {
                     Some(v) => v.clone(),
                     None => crate::aver_generated::domain::value::Val::ValUnit,
                 }
@@ -1298,21 +1268,16 @@ pub fn mapEntries(mut m @ _: aver_rt::AverMap<AverStr, Val>) -> aver_rt::AverLis
     };
     {
         let __list_subject = entries.clone();
-        if __list_subject.is_empty() {
-            entries
-        } else {
-            if let Some((entry, _)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                {
-                    let __t = crate::aver_generated::domain::value::entryKey(&entry);
-                    match __t.view() {
-                        crate::aver_generated::domain::value::Val__view::ValStr(_) => entries,
-                        crate::aver_generated::domain::value::Val__view::ValBool(_) => entries,
-                        _ => crate::aver_generated::domain::value::sortVals(&entries),
-                    }
+        match aver_rt::list_uncons_cloned(&__list_subject) {
+            Some((entry, _)) => {
+                let __t = crate::aver_generated::domain::value::entryKey(&entry);
+                match __t.view() {
+                    crate::aver_generated::domain::value::Val__view::ValStr(_) => entries,
+                    crate::aver_generated::domain::value::Val__view::ValBool(_) => entries,
+                    _ => crate::aver_generated::domain::value::sortVals(&entries),
                 }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => entries,
         }
     }
 }
@@ -1323,47 +1288,37 @@ pub fn sortVals(xs @ _: &aver_rt::AverList<Val>) -> aver_rt::AverList<Val> {
     crate::cancel_checkpoint();
     {
         let __list_subject = xs;
-        if __list_subject.is_empty() {
-            xs.clone()
-        } else {
-            if let Some((_, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                {
-                    let __list_subject = rest;
-                    if __list_subject.is_empty() {
-                        xs.clone()
-                    } else {
-                        {
-                            let (left, right) = {
-                                let __arg4 @ _ = <aver_rt::AverList<Val>>::empty();
-                                {
-                                    let __arg5 @ _ = <aver_rt::AverList<Val>>::empty();
-                                    crate::aver_generated::domain::value::splitVals(
-                                        xs, __arg4, __arg5,
-                                    )
-                                }
-                            };
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((_, rest)) => {
+                let __list_subject = rest;
+                if __list_subject.is_empty() {
+                    xs.clone()
+                } else {
+                    {
+                        let (left, right) = {
+                            let __arg4 @ _ = <aver_rt::AverList<Val>>::empty();
                             {
-                                let __arg6 @ _ =
-                                    crate::aver_generated::domain::value::sortVals(&left);
+                                let __arg5 @ _ = <aver_rt::AverList<Val>>::empty();
+                                crate::aver_generated::domain::value::splitVals(xs, __arg4, __arg5)
+                            }
+                        };
+                        {
+                            let __arg6 @ _ = crate::aver_generated::domain::value::sortVals(&left);
+                            {
+                                let __arg7 @ _ =
+                                    crate::aver_generated::domain::value::sortVals(&right);
                                 {
-                                    let __arg7 @ _ =
-                                        crate::aver_generated::domain::value::sortVals(&right);
-                                    {
-                                        let __arg8 @ _ = aver_rt::list_builder_new(
-                                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                                        );
-                                        crate::aver_generated::domain::value::mergeVals__collected(
-                                            __arg6, __arg7, __arg8,
-                                        )
-                                    }
+                                    let __arg8 @ _ = aver_rt::list_builder_new(0usize);
+                                    crate::aver_generated::domain::value::mergeVals__collected(
+                                        __arg6, __arg7, __arg8,
+                                    )
                                 }
                             }
                         }
                     }
                 }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => xs.clone(),
         }
     }
 }
@@ -1381,22 +1336,19 @@ pub fn splitVals(
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            if __list_subject.is_empty() {
-                return (left, right);
-            } else {
-                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = right;
-                        let __tco2 = aver_rt::AverList::prepend_owned(x.clone(), left);
-                        __hold0 = __tco0;
-                        xs = &__hold0;
-                        left = __tco1;
-                        right = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((x, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = right;
+                    let __tco2 = aver_rt::AverList::prepend_owned(x.clone(), left);
+                    __hold0 = __tco0;
+                    xs = &__hold0;
+                    left = __tco1;
+                    right = __tco2;
+                    continue;
+                }
+                None => {
+                    return (left, right);
                 }
             }
         }
@@ -1638,53 +1590,40 @@ pub fn valsCmp(
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            if __list_subject.is_empty() {
-                {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((x, xr)) => {
+                    let __list_subject = ys;
+                    match aver_rt::list_uncons(__list_subject) {
+                        Some((y, yr)) => {
+                            let __int_match_subject =
+                                crate::aver_generated::domain::value::valCmp(x.clone(), y.clone());
+                            if __int_match_subject == aver_rt::AverInt::from_i64(0) {
+                                {
+                                    let __tco0 = xr;
+                                    let __tco1 = yr;
+                                    __hold0 = __tco0;
+                                    xs = &__hold0;
+                                    __hold1 = __tco1;
+                                    ys = &__hold1;
+                                    continue;
+                                }
+                            } else {
+                                let c = __int_match_subject.clone();
+                                return c;
+                            }
+                        }
+                        None => {
+                            return aver_rt::AverInt::from_i64(1);
+                        }
+                    }
+                }
+                None => {
                     let __list_subject = ys;
                     if __list_subject.is_empty() {
                         return aver_rt::AverInt::from_i64(0);
                     } else {
                         return aver_rt::AverInt::from_i64(-1);
                     }
-                }
-            } else {
-                if let (Some(x), Some(xr)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __list_subject = ys;
-                        if __list_subject.is_empty() {
-                            return aver_rt::AverInt::from_i64(1);
-                        } else {
-                            if let (Some(y), Some(yr)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
-                                    let __int_match_subject =
-                                        crate::aver_generated::domain::value::valCmp(
-                                            x.clone(),
-                                            y.clone(),
-                                        );
-                                    if __int_match_subject == aver_rt::AverInt::from_i64(0) {
-                                        {
-                                            let __tco0 = xr;
-                                            let __tco1 = yr;
-                                            __hold0 = __tco0;
-                                            xs = &__hold0;
-                                            __hold1 = __tco1;
-                                            ys = &__hold1;
-                                            continue;
-                                        }
-                                    } else {
-                                        let c = __int_match_subject.clone();
-                                        return c;
-                                    }
-                                }
-                            } else {
-                                panic!("Aver Rust codegen: non-exhaustive list match")
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
                 }
             }
         }
@@ -1714,9 +1653,7 @@ pub fn valVariantReprTagged(fullName @ _: AverStr, fields @ _: &aver_rt::AverLis
                 let mut __b = {
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(34)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(34usize);
                             __b.push_display(&(fullName));
                             __b
                         };
@@ -1752,10 +1689,8 @@ pub fn valFieldsRepr(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((v, rest)) => {
                     if first {
                         {
                             let __tco0 = rest;
@@ -1780,8 +1715,9 @@ pub fn valFieldsRepr(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return acc;
                 }
             }
         }
@@ -2033,45 +1969,37 @@ pub fn valsEq(xs @ _: &aver_rt::AverList<Val>, ys @ _: &aver_rt::AverList<Val>) 
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            if __list_subject.is_empty() {
-                {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((x, xr)) => {
+                    let __list_subject = ys;
+                    match aver_rt::list_uncons(__list_subject) {
+                        Some((y, yr)) => {
+                            if crate::aver_generated::domain::value::valEq(x, y) {
+                                {
+                                    let __tco0 = xr;
+                                    let __tco1 = yr;
+                                    __hold0 = __tco0;
+                                    xs = &__hold0;
+                                    __hold1 = __tco1;
+                                    ys = &__hold1;
+                                    continue;
+                                }
+                            } else {
+                                return false;
+                            }
+                        }
+                        None => {
+                            return false;
+                        }
+                    }
+                }
+                None => {
                     let __list_subject = ys;
                     if __list_subject.is_empty() {
                         return true;
                     } else {
                         return false;
                     }
-                }
-            } else {
-                if let (Some(x), Some(xr)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __list_subject = ys;
-                        if __list_subject.is_empty() {
-                            return false;
-                        } else {
-                            if let (Some(y), Some(yr)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                if crate::aver_generated::domain::value::valEq(x, y) {
-                                    {
-                                        let __tco0 = xr;
-                                        let __tco1 = yr;
-                                        __hold0 = __tco0;
-                                        xs = &__hold0;
-                                        __hold1 = __tco1;
-                                        ys = &__hold1;
-                                        continue;
-                                    }
-                                } else {
-                                    return false;
-                                }
-                            } else {
-                                panic!("Aver Rust codegen: non-exhaustive list match")
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
                 }
             }
         }
@@ -2092,52 +2020,42 @@ pub fn entriesEq(
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            if __list_subject.is_empty() {
-                {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((x, xr)) => {
+                    let __list_subject = ys;
+                    match aver_rt::list_uncons(__list_subject) {
+                        Some((y, yr)) => {
+                            let ((k, v), (j, w)) = (x.clone(), y.clone());
+                            if (k == j) {
+                                if crate::aver_generated::domain::value::valEq(&v, &w) {
+                                    {
+                                        let __tco0 = xr;
+                                        let __tco1 = yr;
+                                        __hold0 = __tco0;
+                                        xs = &__hold0;
+                                        __hold1 = __tco1;
+                                        ys = &__hold1;
+                                        continue;
+                                    }
+                                } else {
+                                    return false;
+                                }
+                            } else {
+                                return false;
+                            }
+                        }
+                        None => {
+                            return false;
+                        }
+                    }
+                }
+                None => {
                     let __list_subject = ys;
                     if __list_subject.is_empty() {
                         return true;
                     } else {
                         return false;
                     }
-                }
-            } else {
-                if let (Some(x), Some(xr)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __list_subject = ys;
-                        if __list_subject.is_empty() {
-                            return false;
-                        } else {
-                            if let (Some(y), Some(yr)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
-                                    let ((k, v), (j, w)) = (x.clone(), y.clone());
-                                    if (k == j) {
-                                        if crate::aver_generated::domain::value::valEq(&v, &w) {
-                                            {
-                                                let __tco0 = xr;
-                                                let __tco1 = yr;
-                                                __hold0 = __tco0;
-                                                xs = &__hold0;
-                                                __hold1 = __tco1;
-                                                ys = &__hold1;
-                                                continue;
-                                            }
-                                        } else {
-                                            return false;
-                                        }
-                                    } else {
-                                        return false;
-                                    }
-                                }
-                            } else {
-                                panic!("Aver Rust codegen: non-exhaustive list match")
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
                 }
             }
         }

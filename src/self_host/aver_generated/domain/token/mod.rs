@@ -527,9 +527,7 @@ pub fn tokenRepr(t @ _: &Token) -> AverStr {
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(21usize);
                         __b.push_str(&::aver_rt::str_lit!("Int("));
                         __b
                     };
@@ -549,9 +547,7 @@ pub fn tokenRepr(t @ _: &Token) -> AverStr {
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(21usize);
                         __b.push_str(&::aver_rt::str_lit!("Str("));
                         __b
                     };
@@ -567,9 +563,7 @@ pub fn tokenRepr(t @ _: &Token) -> AverStr {
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(23usize);
                         __b.push_str(&::aver_rt::str_lit!("Ident("));
                         __b
                     };

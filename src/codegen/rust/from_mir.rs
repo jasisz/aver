@@ -4909,6 +4909,27 @@ fn emit_mir_match_with(
     }))
 }
 
+/// An `Int` literal as the `usize` a count or a capacity is: a negative one
+/// is 0, which `aver_rt::clamp_list_count` and `to_usize().unwrap_or(0)`
+/// both make of it. `None` for any other value, and for a literal past
+/// `u32::MAX`, which a 32-bit `usize` would have to clamp.
+fn literal_usize(expr: &Spanned<MirExpr>) -> Option<String> {
+    let MirExpr::Literal(l) = &expr.node else {
+        return None;
+    };
+    let crate::ast::Literal::Int(k) = l.node else {
+        return None;
+    };
+    (k <= i64::from(u32::MAX)).then(|| format!("{}usize", k.max(0)))
+}
+
+/// A count of list elements as `aver_rt::clamp_list_count` makes it, read
+/// off a literal while emitting rather than built as an `Int` and clamped
+/// at each call.
+fn emit_list_count(count: &Spanned<MirExpr>, emitted: String) -> String {
+    literal_usize(count).unwrap_or_else(|| format!("aver_rt::clamp_list_count(&({emitted}))"))
+}
+
 /// `match List.drop(xs, k)` with arms `[x, .._]` and `[]` (or `_`) reads
 /// element `k` of `xs` in place, `match xs.get(k)`, instead of making the
 /// rest of the list to read its head. A head the arm only reads stays a
@@ -4963,9 +4984,9 @@ fn emit_dropped_head_match(
         })
         .collect();
     Some(format!(
-        "match ({}).get(aver_rt::clamp_list_count(&({}))) {{ {} }}",
+        "match ({}).get({}) {{ {} }}",
         emit_mir_expr(list, ctx)?,
-        emit_mir_expr(count, ctx)?,
+        emit_list_count(count, emit_mir_expr(count, ctx)?),
         rendered.join(", ")
     ))
 }
@@ -8476,7 +8497,7 @@ fn emit_mir_builtin_call(
         }
         "List.take" => {
             let list = arg!(0);
-            let count = arg!(1);
+            let count = emit_list_count(&args[1], arg!(1));
             let count_temp = generated_ident("n");
             // `clamp_list_count` is the same clamp the VM and the interpreter
             // apply: a negative count takes nothing, a count past `usize`
@@ -8484,24 +8505,20 @@ fn emit_mir_builtin_call(
             // straight had those two backwards, so a negative count took the
             // whole list here and nothing everywhere else.
             if type_is_int_list(args[0].ty()) {
-                format!(
-                    "{{ let {count_temp} = aver_rt::clamp_list_count(&({count})); ({list}).take_first({count_temp}) }}"
-                )
+                format!("{{ let {count_temp} = {count}; ({list}).take_first({count_temp}) }}")
             } else {
                 format!(
-                    "{{ let {count_temp} = aver_rt::clamp_list_count(&({count})); aver_rt::AverList::from_vec(({list}).iter().take({count_temp}).cloned().collect::<Vec<_>>()) }}"
+                    "{{ let {count_temp} = {count}; aver_rt::AverList::from_vec(({list}).iter().take({count_temp}).cloned().collect::<Vec<_>>()) }}"
                 )
             }
         }
         "List.drop" => {
             let list = arg!(0);
-            let count = arg!(1);
+            let count = emit_list_count(&args[1], arg!(1));
             let count_temp = generated_ident("n");
             // `drop_first` shares the body and advances the offset, so the
             // step costs what it steps over rather than what is left behind.
-            format!(
-                "{{ let {count_temp} = aver_rt::clamp_list_count(&({count})); ({list}).drop_first({count_temp}) }}"
-            )
+            format!("{{ let {count_temp} = {count}; ({list}).drop_first({count_temp}) }}")
         }
         "List.concat" => {
             // A `List<Int>` handed over (its last read, or a computed one)
@@ -8803,10 +8820,9 @@ fn emit_mir_intrinsic_call(
             // on demand). This is the one site where `unwrap_or(0)` is sound
             // because the value never reaches output — not a silent wrong
             // value, a sizing hint.
-            Some(format!(
-                "aver_rt::Buffer::with_capacity(({}).to_usize().unwrap_or(0))",
-                cap
-            ))
+            let cap = literal_usize(&args[0])
+                .unwrap_or_else(|| format!("({cap}).to_usize().unwrap_or(0)"));
+            Some(format!("aver_rt::Buffer::with_capacity({cap})"))
         }
         BuiltinIntrinsic::BufAppend => {
             let buf = emit_mir_expr(&args[0], ctx)?;
@@ -9020,10 +9036,9 @@ fn emit_mir_intrinsic_call(
             } else {
                 "list_builder_new"
             };
-            Some(format!(
-                "aver_rt::{builder}(({}).to_usize().unwrap_or(0))",
-                capacity,
-            ))
+            let capacity = literal_usize(&args[0])
+                .unwrap_or_else(|| format!("({capacity}).to_usize().unwrap_or(0)"));
+            Some(format!("aver_rt::{builder}({capacity})"))
         }
         BuiltinIntrinsic::LstPush => {
             let builder = emit_mir_expr(&args[0], ctx)?;
@@ -9060,10 +9075,9 @@ fn emit_mir_intrinsic_call(
         // AST around the call wraps its `Ok` into the `Bytes` record.
         BuiltinIntrinsic::BytNew => {
             let capacity = emit_mir_expr(&args[0], ctx)?;
-            Some(format!(
-                "aver_rt::byte_builder_new(({}).to_usize().unwrap_or(0))",
-                capacity
-            ))
+            let capacity = literal_usize(&args[0])
+                .unwrap_or_else(|| format!("({capacity}).to_usize().unwrap_or(0)"));
+            Some(format!("aver_rt::byte_builder_new({capacity})"))
         }
         BuiltinIntrinsic::BytPush => {
             let builder = emit_mir_expr(&args[0], ctx)?;

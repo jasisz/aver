@@ -35,9 +35,7 @@ pub fn evalVarFallbackNamed(
             )),
             None => Err(aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
-                    );
+                    let mut __b = aver_rt::Buffer::with_capacity(36usize);
                     __b.push_str(&::aver_rt::str_lit!("undefined variable: "));
                     __b
                 };
@@ -113,25 +111,22 @@ pub fn lookupField(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return Err((::aver_rt::str_lit!("unknown field: ") + &name));
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (k, v) = pair.clone();
-                        if (k == name) {
-                            return Ok(v);
-                        } else {
-                            {
-                                let __tco0 = rest;
-                                __hold0 = __tco0;
-                                fields = &__hold0;
-                                continue;
-                            }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (k, v) = pair.clone();
+                    if (k == name) {
+                        return Ok(v);
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            fields = &__hold0;
+                            continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Err((::aver_rt::str_lit!("unknown field: ") + &name));
                 }
             }
         }

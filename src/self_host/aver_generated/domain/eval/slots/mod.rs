@@ -36,30 +36,27 @@ pub fn buildSlotEnvLoop(
         crate::cancel_checkpoint();
         {
             let __list_subject = args;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = {
-                            let __vec = acc;
-                            match (idx).to_usize() {
-                                Some(__idx) if __idx < __vec.len() => {
-                                    __vec.set_unchecked(__idx, a.clone())
-                                }
-                                _ => __vec,
+            match aver_rt::list_uncons(__list_subject) {
+                Some((a, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = {
+                        let __vec = acc;
+                        match (idx).to_usize() {
+                            Some(__idx) if __idx < __vec.len() => {
+                                __vec.set_unchecked(__idx, a.clone())
                             }
-                        };
-                        let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-                        __hold0 = __tco0;
-                        args = &__hold0;
-                        acc = __tco1;
-                        idx = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                            _ => __vec,
+                        }
+                    };
+                    let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                    __hold0 = __tco0;
+                    args = &__hold0;
+                    acc = __tco1;
+                    idx = __tco2;
+                    continue;
+                }
+                None => {
+                    return acc;
                 }
             }
         }
@@ -77,9 +74,7 @@ pub fn lookupSlot(
         Some(v @ _) => Ok(v),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(36usize);
                 __b.push_str(&::aver_rt::str_lit!("slot out of bounds: "));
                 __b
             };

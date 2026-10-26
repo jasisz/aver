@@ -36,14 +36,11 @@ pub fn isNamedSentinel(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let Some((_, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            crate::aver_generated::domain::eval::records::isNamedSentinelInner(&rest)
-        } else {
-            if __list_subject.is_empty() {
-                false
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((_, rest)) => {
+                crate::aver_generated::domain::eval::records::isNamedSentinelInner(&rest)
             }
+            None => false,
         }
     }
 }
@@ -56,8 +53,8 @@ pub fn isNamedSentinelInner(
     crate::cancel_checkpoint();
     {
         let __list_subject = rest;
-        if let (Some(v), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((v, ignored)) => {
                 let __t = v;
                 match __t.view() {
                     crate::aver_generated::domain::value::Val__view::ValRecord(
@@ -69,12 +66,7 @@ pub fn isNamedSentinelInner(
                     _ => false,
                 }
             }
-        } else {
-            if __list_subject.is_empty() {
-                false
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+            None => false,
         }
     }
 }
@@ -87,16 +79,13 @@ pub fn doRecordUpdate(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(baseVal), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            crate::aver_generated::domain::eval::records::doRecordUpdateInner(baseVal, &rest)
-        } else {
-            if __list_subject.is_empty() {
-                Err(::aver_rt::str_lit!(
-                    "record update requires (record, named fields)"
-                ))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
+        match aver_rt::list_uncons(__list_subject) {
+            Some((baseVal, rest)) => {
+                crate::aver_generated::domain::eval::records::doRecordUpdateInner(baseVal, &rest)
             }
+            None => Err(::aver_rt::str_lit!(
+                "record update requires (record, named fields)"
+            )),
         }
     }
 }
@@ -110,8 +99,8 @@ pub fn doRecordUpdateInner(
     crate::cancel_checkpoint();
     {
         let __list_subject = rest;
-        if let (Some(namedVal), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((namedVal, ignored)) => {
                 let __t = namedVal;
                 match __t.view() {
                     crate::aver_generated::domain::value::Val__view::ValRecord(
@@ -126,12 +115,7 @@ pub fn doRecordUpdateInner(
                     _ => Err(::aver_rt::str_lit!("record update requires named fields")),
                 }
             }
-        } else {
-            if __list_subject.is_empty() {
-                Err(::aver_rt::str_lit!("record update requires named fields"))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+            None => Err(::aver_rt::str_lit!("record update requires named fields")),
         }
     }
 }
@@ -170,8 +154,7 @@ pub fn mergeRecordFields(
     overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
-    let __arg2 @ _ =
-        aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+    let __arg2 @ _ = aver_rt::list_builder_new(0usize);
     crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc__collected(
         existing,
         overrides.clone(),
@@ -193,42 +176,39 @@ pub fn mergeRecordFieldsAcc(
         crate::cancel_checkpoint();
         {
             let __list_subject = existing;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::concat(&(acc).reverse_owned(), &overrides);
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (k, v) = pair.clone();
-                        match crate::aver_generated::domain::eval::records::findOverride(
-                            k.clone(),
-                            &overrides,
-                        ) {
-                            Some(__stp0 @ _) => {
-                                let __tco0 = rest;
-                                let __tco1 =
-                                    crate::aver_generated::domain::eval::records::removeOverride(
-                                        k.clone(),
-                                        &overrides,
-                                    );
-                                let __tco2 = aver_rt::AverList::prepend_owned((k, __stp0), acc);
-                                __hold0 = __tco0;
-                                existing = &__hold0;
-                                overrides = __tco1;
-                                acc = __tco2;
-                                continue;
-                            }
-                            None => {
-                                let __tco0 = rest;
-                                let __tco2 = aver_rt::AverList::prepend_owned((k, v), acc);
-                                __hold0 = __tco0;
-                                existing = &__hold0;
-                                acc = __tco2;
-                                continue;
-                            }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (k, v) = pair.clone();
+                    match crate::aver_generated::domain::eval::records::findOverride(
+                        k.clone(),
+                        &overrides,
+                    ) {
+                        Some(__stp0 @ _) => {
+                            let __tco0 = rest;
+                            let __tco1 =
+                                crate::aver_generated::domain::eval::records::removeOverride(
+                                    k.clone(),
+                                    &overrides,
+                                );
+                            let __tco2 = aver_rt::AverList::prepend_owned((k, __stp0), acc);
+                            __hold0 = __tco0;
+                            existing = &__hold0;
+                            overrides = __tco1;
+                            acc = __tco2;
+                            continue;
+                        }
+                        None => {
+                            let __tco0 = rest;
+                            let __tco2 = aver_rt::AverList::prepend_owned((k, v), acc);
+                            __hold0 = __tco0;
+                            existing = &__hold0;
+                            acc = __tco2;
+                            continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return aver_rt::AverList::concat(&(acc).reverse_owned(), &overrides);
                 }
             }
         }
@@ -282,25 +262,22 @@ pub fn findOverride(
         crate::cancel_checkpoint();
         {
             let __list_subject = overrides;
-            if __list_subject.is_empty() {
-                return None;
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (ok, ov) = pair.clone();
-                        if (ok == k) {
-                            return Some(ov);
-                        } else {
-                            {
-                                let __tco1 = rest;
-                                __hold1 = __tco1;
-                                overrides = &__hold1;
-                                continue;
-                            }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (ok, ov) = pair.clone();
+                    if (ok == k) {
+                        return Some(ov);
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            overrides = &__hold1;
+                            continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return None;
                 }
             }
         }
@@ -336,27 +313,24 @@ pub fn removeOverrideAcc(
         let reversed @ _ = acc.reverse();
         {
             let __list_subject = overrides;
-            if __list_subject.is_empty() {
-                return reversed;
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (ok, ov) = pair.clone();
-                        if (ok == k) {
-                            return aver_rt::AverList::concat(&reversed, &rest);
-                        } else {
-                            {
-                                let __tco1 = rest;
-                                let __tco2 = aver_rt::AverList::prepend_owned((ok, ov), acc);
-                                __hold1 = __tco1;
-                                overrides = &__hold1;
-                                acc = __tco2;
-                                continue;
-                            }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (ok, ov) = pair.clone();
+                    if (ok == k) {
+                        return aver_rt::AverList::concat(&reversed, &rest);
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            let __tco2 = aver_rt::AverList::prepend_owned((ok, ov), acc);
+                            __hold1 = __tco1;
+                            overrides = &__hold1;
+                            acc = __tco2;
+                            continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return reversed;
                 }
             }
         }
@@ -377,42 +351,42 @@ pub fn mergeRecordFieldsAcc__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = existing;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::concat(&aver_rt::list_builder_finalize(acc), &overrides);
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (k, v) = pair.clone();
-                        match crate::aver_generated::domain::eval::records::findOverride(
-                            k.clone(),
-                            &overrides,
-                        ) {
-                            Some(__stp0 @ _) => {
-                                let __tco0 = rest;
-                                let __tco1 =
-                                    crate::aver_generated::domain::eval::records::removeOverride(
-                                        k.clone(),
-                                        &overrides,
-                                    );
-                                let __tco2 = aver_rt::list_builder_push(acc, (k, __stp0));
-                                __hold0 = __tco0;
-                                existing = &__hold0;
-                                overrides = __tco1;
-                                acc = __tco2;
-                                continue;
-                            }
-                            None => {
-                                let __tco0 = rest;
-                                let __tco2 = aver_rt::list_builder_push(acc, (k, v));
-                                __hold0 = __tco0;
-                                existing = &__hold0;
-                                acc = __tco2;
-                                continue;
-                            }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (k, v) = pair.clone();
+                    match crate::aver_generated::domain::eval::records::findOverride(
+                        k.clone(),
+                        &overrides,
+                    ) {
+                        Some(__stp0 @ _) => {
+                            let __tco0 = rest;
+                            let __tco1 =
+                                crate::aver_generated::domain::eval::records::removeOverride(
+                                    k.clone(),
+                                    &overrides,
+                                );
+                            let __tco2 = aver_rt::list_builder_push(acc, (k, __stp0));
+                            __hold0 = __tco0;
+                            existing = &__hold0;
+                            overrides = __tco1;
+                            acc = __tco2;
+                            continue;
+                        }
+                        None => {
+                            let __tco0 = rest;
+                            let __tco2 = aver_rt::list_builder_push(acc, (k, v));
+                            __hold0 = __tco0;
+                            existing = &__hold0;
+                            acc = __tco2;
+                            continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return aver_rt::AverList::concat(
+                        &aver_rt::list_builder_finalize(acc),
+                        &overrides,
+                    );
                 }
             }
         }

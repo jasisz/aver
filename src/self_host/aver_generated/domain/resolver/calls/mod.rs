@@ -14,22 +14,19 @@ pub fn buildFnMap(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
-                        let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-                        __hold0 = __tco0;
-                        fns = &__hold0;
-                        acc = __tco1;
-                        idx = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((f, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
+                    let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                    __hold0 = __tco0;
+                    fns = &__hold0;
+                    acc = __tco1;
+                    idx = __tco2;
+                    continue;
+                }
+                None => {
+                    return acc;
                 }
             }
         }
@@ -49,26 +46,23 @@ pub fn resolveCallsInFns(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            if __list_subject.is_empty() {
-                return (acc).reverse_owned();
-            } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::calls::resolveCallsInFn(
-                                f.clone(),
-                                fnMap,
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        fns = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((f, rest)) => {
+                    let __tco0 = rest;
+                    let __tco2 = aver_rt::AverList::prepend_owned(
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInFn(
+                            f.clone(),
+                            fnMap,
+                        ),
+                        acc,
+                    );
+                    __hold0 = __tco0;
+                    fns = &__hold0;
+                    acc = __tco2;
+                    continue;
+                }
+                None => {
+                    return (acc).reverse_owned();
                 }
             }
         }
@@ -85,8 +79,7 @@ pub fn resolveCallsInFn(
         name: fd.name,
         params: fd.params,
         body: {
-            let __arg2 @ _ =
-                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            let __arg2 @ _ = aver_rt::list_builder_new(0usize);
             crate::aver_generated::domain::resolver::calls::resolveCallsInStmts__collected(
                 &fd.body, fnMap, __arg2,
             )
@@ -195,9 +188,7 @@ pub fn resolveCallsInExpr(
                 let args = &__fnId_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallDirect(
                     crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, {
-                        let __arg14 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg14 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg14)
                     }),
                 )
@@ -208,17 +199,13 @@ pub fn resolveCallsInExpr(
                 match crate::aver_generated::domain::ast::builtinNameToId(name.clone()) {
                     Some(id @ _) => crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
-                            let __arg15 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg15 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg15)
                         }),
                     ),
                     None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, {
-                            let __arg16 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg16 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg16)
                         }),
                     ),
@@ -229,9 +216,7 @@ pub fn resolveCallsInExpr(
                 let args = &__id_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
-                        let __arg17 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg17 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg17)
                     }),
                 )
@@ -491,9 +476,7 @@ pub fn resolveCallsInExprTail(
                             fnMap,
                         ),
                         {
-                            let __arg26 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg26 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::calls::resolveCallsInArms__collected(arms, fnMap, __arg26)
                         },
                     ),
@@ -514,9 +497,7 @@ pub fn resolveCallsInExprTail(
                 let parts = &__parts_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprConcat(
                     crate::aver_generated::domain::ast::Expr__ExprConcat({
-                        let __arg27 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg27 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(parts, fnMap, __arg27)
                     }),
                 )
@@ -525,9 +506,7 @@ pub fn resolveCallsInExprTail(
                 let exprs = &__exprs_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprTuple(
                     crate::aver_generated::domain::ast::Expr__ExprTuple({
-                        let __arg28 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg28 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(exprs, fnMap, __arg28)
                     }),
                 )
@@ -540,9 +519,7 @@ pub fn resolveCallsInExprTail(
                 crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
                     crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
                         {
-                            let __arg29 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg29 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(exprs, fnMap, __arg29)
                         },
                         unwrap,
@@ -553,9 +530,7 @@ pub fn resolveCallsInExprTail(
                 let exprs = &__exprs_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprList(
                     crate::aver_generated::domain::ast::Expr__ExprList({
-                        let __arg30 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg30 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(exprs, fnMap, __arg30)
                     }),
                 )
@@ -565,9 +540,7 @@ pub fn resolveCallsInExprTail(
                 let fields = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprRecord(
                     crate::aver_generated::domain::ast::Expr__ExprRecord(name, {
-                        let __arg31 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg31 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::calls::resolveCallsInFields__collected(fields, fnMap, __arg31)
                     }),
                 )
@@ -599,8 +572,7 @@ pub fn resolveOneCall(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     let resolvedArgs @ _ = {
-        let __arg5 @ _ =
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+        let __arg5 @ _ = aver_rt::list_builder_new(0usize);
         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(
             args, fnMap, __arg5,
         )
@@ -689,19 +661,17 @@ pub fn isNonzeroIntLiteralDivisor(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let Some((_, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            {
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((_, rest)) => {
                 let __list_subject = rest;
-                if let (Some(divisor), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::calls::isNonzeroIntLiteral(divisor)
-                } else {
-                    false
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((divisor, ignored)) => {
+                        crate::aver_generated::domain::resolver::calls::isNonzeroIntLiteral(divisor)
+                    }
+                    None => false,
                 }
             }
-        } else {
-            false
+            None => false,
         }
     }
 }
@@ -893,10 +863,8 @@ pub fn isBuiltinCallNameFrom(
         crate::cancel_checkpoint();
         {
             let __list_subject = knownNames;
-            if __list_subject.is_empty() {
-                return false;
-            } else {
-                if let Some((knownName, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((knownName, rest)) => {
                     if (name == knownName) {
                         return true;
                     } else {
@@ -907,8 +875,9 @@ pub fn isBuiltinCallNameFrom(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return false;
                 }
             }
         }
@@ -985,25 +954,22 @@ pub fn resolveCallsInStmts__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(
-                                s, fnMap,
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        stmts = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((s, rest)) => {
+                    let __tco0 = rest;
+                    let __tco2 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(
+                            s, fnMap,
+                        ),
+                    );
+                    __hold0 = __tco0;
+                    stmts = &__hold0;
+                    acc = __tco2;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -1023,26 +989,23 @@ pub fn resolveCallsInExprs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                                e.clone(),
-                                fnMap,
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        exprs = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((e, rest)) => {
+                    let __tco0 = rest;
+                    let __tco2 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
+                            e.clone(),
+                            fnMap,
+                        ),
+                    );
+                    __hold0 = __tco0;
+                    exprs = &__hold0;
+                    acc = __tco2;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -1062,20 +1025,28 @@ pub fn resolveCallsInArms__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(arm.body.clone(), fnMap), bindingSlots: arm.bindingSlots.clone() });
-                        __hold0 = __tco0;
-                        arms = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((arm, rest)) => {
+                    let __tco0 = rest;
+                    let __tco2 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::ast::MatchArm {
+                            pattern: arm.pattern.clone(),
+                            body:
+                                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
+                                    arm.body.clone(),
+                                    fnMap,
+                                ),
+                            bindingSlots: arm.bindingSlots.clone(),
+                        },
+                    );
+                    __hold0 = __tco0;
+                    arms = &__hold0;
+                    acc = __tco2;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -1096,23 +1067,28 @@ pub fn resolveCallsInFields__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (name, expr) = pair.clone();
                     {
-                        let (name, expr) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::list_builder_push(acc, (name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap)));
-                            __hold0 = __tco0;
-                            fields = &__hold0;
-                            acc = __tco2;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::list_builder_push(
+                            acc,
+                            (
+                                name,
+                                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
+                                    expr, fnMap,
+                                ),
+                            ),
+                        );
+                        __hold0 = __tco0;
+                        fields = &__hold0;
+                        acc = __tco2;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }

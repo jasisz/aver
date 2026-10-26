@@ -1742,9 +1742,7 @@ pub fn parseAtom(
         }
         _ => Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(41usize);
                 __b.push_str(&::aver_rt::str_lit!("Expected expression, got "));
                 __b
             };

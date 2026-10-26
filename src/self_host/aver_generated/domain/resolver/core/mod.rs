@@ -344,23 +344,20 @@ pub fn resolveFns(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            if __list_subject.is_empty() {
-                return (acc).reverse_owned();
-            } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::core::resolveFn(f),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        fns = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((f, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::AverList::prepend_owned(
+                        crate::aver_generated::domain::resolver::core::resolveFn(f),
+                        acc,
+                    );
+                    __hold0 = __tco0;
+                    fns = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return (acc).reverse_owned();
                 }
             }
         }
@@ -402,22 +399,19 @@ pub fn buildParamSlots(
         crate::cancel_checkpoint();
         {
             let __list_subject = params;
-            if __list_subject.is_empty() {
-                return (slots, next);
-            } else {
-                if let Some((p, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = slots.insert_owned(p, next.clone());
-                        let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
-                        __hold0 = __tco0;
-                        params = &__hold0;
-                        slots = __tco1;
-                        next = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((p, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = slots.insert_owned(p, next.clone());
+                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+                    __hold0 = __tco0;
+                    params = &__hold0;
+                    slots = __tco1;
+                    next = __tco2;
+                    continue;
+                }
+                None => {
+                    return (slots, next);
                 }
             }
         }
@@ -432,8 +426,7 @@ pub fn resolveBody(
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
     let resolved @ _ = {
-        let __arg7 @ _ =
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+        let __arg7 @ _ = aver_rt::list_builder_new(0usize);
         crate::aver_generated::domain::resolver::core::resolveStmts__collected(
             &fd.body, slots, nextSlot, __arg7,
         )
@@ -484,21 +477,18 @@ pub fn maxSlotInStmts(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 =
-                            crate::aver_generated::domain::resolver::core::maxSlotInStmt(s, acc);
-                        __hold0 = __tco0;
-                        stmts = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((s, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 =
+                        crate::aver_generated::domain::resolver::core::maxSlotInStmt(s, acc);
+                    __hold0 = __tco0;
+                    stmts = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return acc;
                 }
             }
         }
@@ -540,23 +530,20 @@ pub fn maxSlotInExprs(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
-                            e.clone(),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        exprs = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((e, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
+                        e.clone(),
+                        acc,
+                    );
+                    __hold0 = __tco0;
+                    exprs = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return acc;
                 }
             }
         }
@@ -576,27 +563,23 @@ pub fn maxSlotInFields(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (_, expr) = pair;
                     {
-                        let (_, expr) = pair;
-                        {
-                            let __tco0 = rest;
-                            let __tco1 =
-                                crate::aver_generated::domain::resolver::core::maxSlotInExpr(
-                                    expr.clone(),
-                                    acc,
-                                );
-                            __hold0 = __tco0;
-                            fields = &__hold0;
-                            acc = __tco1;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
+                            expr.clone(),
+                            acc,
+                        );
+                        __hold0 = __tco0;
+                        fields = &__hold0;
+                        acc = __tco1;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return acc;
                 }
             }
         }
@@ -615,23 +598,20 @@ pub fn maxSlotInArms(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
-                            arm.body.clone(),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        arms = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((arm, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
+                        arm.body.clone(),
+                        acc,
+                    );
+                    __hold0 = __tco0;
+                    arms = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return acc;
                 }
             }
         }
@@ -663,83 +643,78 @@ pub fn resolveStmts(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return ((acc).reverse_owned(), next, slots);
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    match s {
-                        crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
-                            let __stp1 = __stp1.clone();
-                            {
-                                let (__stp3, __stp2) =
-                                    crate::aver_generated::domain::resolver::core::resolveExpr(
-                                        __stp0.clone(),
-                                        slots,
-                                    );
-                                {
-                                    let __stp4 = __stp2.insert_owned(__stp1, next.clone());
-                                    {
-                                        let __tco0 = rest;
-                                        let __tco1 = __stp4;
-                                        let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
-                                        let __tco3 = aver_rt::AverList::prepend_owned(
-                                            crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
-                                                next, __stp3,
-                                            ),
-                                            acc,
-                                        );
-                                        __hold0 = __tco0;
-                                        stmts = &__hold0;
-                                        slots = __tco1;
-                                        next = __tco2;
-                                        acc = __tco3;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                        crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp0) => {
-                            let (__stp6, __stp5) =
+            match aver_rt::list_uncons(__list_subject) {
+                Some((s, rest)) => match s {
+                    crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
+                        let __stp1 = __stp1.clone();
+                        {
+                            let (__stp3, __stp2) =
                                 crate::aver_generated::domain::resolver::core::resolveExpr(
                                     __stp0.clone(),
                                     slots,
                                 );
                             {
-                                let __tco0 = rest;
-                                let __tco1 = __stp5.clone();
-                                let __tco2 = {
-                                    let __arg14 @ _ =
-                                        crate::aver_generated::domain::resolver::core::mapMaxVal(
-                                            &__stp5,
-                                        )
-                                        .add(&aver_rt::AverInt::from_i64(1));
-                                    crate::aver_generated::domain::resolver::core::maxInt(
-                                        next, __arg14,
-                                    )
-                                };
-                                let __tco3 = aver_rt::AverList::prepend_owned(
-                                    crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6),
-                                    acc,
-                                );
-                                __hold0 = __tco0;
-                                stmts = &__hold0;
-                                slots = __tco1;
-                                next = __tco2;
-                                acc = __tco3;
-                                continue;
+                                let __stp4 = __stp2.insert_owned(__stp1, next.clone());
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = __stp4;
+                                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+                                    let __tco3 = aver_rt::AverList::prepend_owned(
+                                        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
+                                            next, __stp3,
+                                        ),
+                                        acc,
+                                    );
+                                    __hold0 = __tco0;
+                                    stmts = &__hold0;
+                                    slots = __tco1;
+                                    next = __tco2;
+                                    acc = __tco3;
+                                    continue;
+                                }
                             }
                         }
-                        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
+                    }
+                    crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp0) => {
+                        let (__stp6, __stp5) =
+                            crate::aver_generated::domain::resolver::core::resolveExpr(
+                                __stp0.clone(),
+                                slots,
+                            );
+                        {
                             let __tco0 = rest;
-                            let __tco3 = aver_rt::AverList::prepend_owned(s.clone(), acc);
+                            let __tco1 = __stp5.clone();
+                            let __tco2 = {
+                                let __arg14 @ _ =
+                                    crate::aver_generated::domain::resolver::core::mapMaxVal(
+                                        &__stp5,
+                                    )
+                                    .add(&aver_rt::AverInt::from_i64(1));
+                                crate::aver_generated::domain::resolver::core::maxInt(next, __arg14)
+                            };
+                            let __tco3 = aver_rt::AverList::prepend_owned(
+                                crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6),
+                                acc,
+                            );
                             __hold0 = __tco0;
                             stmts = &__hold0;
+                            slots = __tco1;
+                            next = __tco2;
                             acc = __tco3;
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                    crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
+                        let __tco0 = rest;
+                        let __tco3 = aver_rt::AverList::prepend_owned(s.clone(), acc);
+                        __hold0 = __tco0;
+                        stmts = &__hold0;
+                        acc = __tco3;
+                        continue;
+                    }
+                },
+                None => {
+                    return ((acc).reverse_owned(), next, slots);
                 }
             }
         }
@@ -1121,9 +1096,7 @@ pub fn resolveExprAfterArith(
                 (
                     crate::aver_generated::domain::ast::Expr::ExprCallDirect(
                         crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, {
-                            let __arg23 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg23 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                                 args,
                                 slots.clone(),
@@ -1140,9 +1113,7 @@ pub fn resolveExprAfterArith(
                 (
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, {
-                            let __arg24 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg24 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                                 args,
                                 slots.clone(),
@@ -1159,9 +1130,7 @@ pub fn resolveExprAfterArith(
                 (
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
-                            let __arg25 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg25 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                                 args,
                                 slots.clone(),
@@ -1375,9 +1344,7 @@ pub fn resolveCallExpr(
     (
         crate::aver_generated::domain::ast::Expr::ExprCall(
             crate::aver_generated::domain::ast::Expr__ExprCall(name, {
-                let __arg3 @ _ = aver_rt::list_builder_new(
-                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                );
+                let __arg3 @ _ = aver_rt::list_builder_new(0usize);
                 crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                     args,
                     slots.clone(),
@@ -1402,8 +1369,7 @@ pub fn resolveMatchExpr(
     let rs @ _ =
         crate::aver_generated::domain::resolver::core::resolveExprSimple(subj, slots.clone());
     let armsResult @ _ = {
-        let __arg7 @ _ =
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+        let __arg7 @ _ = aver_rt::list_builder_new(0usize);
         crate::aver_generated::domain::resolver::core::resolveArms__collected(arms, slots, __arg7)
     };
     {
@@ -1451,9 +1417,7 @@ pub fn resolveConcatExpr(
     (
         crate::aver_generated::domain::ast::Expr::ExprConcat(
             crate::aver_generated::domain::ast::Expr__ExprConcat({
-                let __arg2 @ _ = aver_rt::list_builder_new(
-                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                );
+                let __arg2 @ _ = aver_rt::list_builder_new(0usize);
                 crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                     parts,
                     slots.clone(),
@@ -1477,9 +1441,7 @@ pub fn resolveTupleExpr(
     (
         crate::aver_generated::domain::ast::Expr::ExprTuple(
             crate::aver_generated::domain::ast::Expr__ExprTuple({
-                let __arg2 @ _ = aver_rt::list_builder_new(
-                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                );
+                let __arg2 @ _ = aver_rt::list_builder_new(0usize);
                 crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                     exprs,
                     slots.clone(),
@@ -1505,9 +1467,7 @@ pub fn resolveIndependentProductExpr(
         crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
             crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
                 {
-                    let __arg3 @ _ = aver_rt::list_builder_new(
-                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                    );
+                    let __arg3 @ _ = aver_rt::list_builder_new(0usize);
                     crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                         exprs,
                         slots.clone(),
@@ -1533,9 +1493,7 @@ pub fn resolveListExpr(
     (
         crate::aver_generated::domain::ast::Expr::ExprList(
             crate::aver_generated::domain::ast::Expr__ExprList({
-                let __arg2 @ _ = aver_rt::list_builder_new(
-                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                );
+                let __arg2 @ _ = aver_rt::list_builder_new(0usize);
                 crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                     exprs,
                     slots.clone(),
@@ -1560,9 +1518,7 @@ pub fn resolveRecordExpr(
     (
         crate::aver_generated::domain::ast::Expr::ExprRecord(
             crate::aver_generated::domain::ast::Expr__ExprRecord(name, {
-                let __arg3 @ _ = aver_rt::list_builder_new(
-                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                );
+                let __arg3 @ _ = aver_rt::list_builder_new(0usize);
                 crate::aver_generated::domain::resolver::core::resolveFields__collected(
                     fields,
                     slots.clone(),
@@ -1672,26 +1628,23 @@ pub fn resolveArms(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            if __list_subject.is_empty() {
-                return ((acc).reverse_owned(), slots);
-            } else {
-                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((arm, rest)) => {
+                    let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(
+                        arm.clone(),
+                        &slots,
+                    );
                     {
-                        let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(
-                            arm.clone(),
-                            &slots,
-                        );
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend_owned(__stp0, acc);
-                            __hold0 = __tco0;
-                            arms = &__hold0;
-                            acc = __tco2;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::AverList::prepend_owned(__stp0, acc);
+                        __hold0 = __tco0;
+                        arms = &__hold0;
+                        acc = __tco2;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return ((acc).reverse_owned(), slots);
                 }
             }
         }
@@ -1872,22 +1825,19 @@ pub fn patternBindingSlotsConstructor(
         crate::cancel_checkpoint();
         {
             let __list_subject = bindings;
-            if __list_subject.is_empty() {
-                return (bindingSlots, next);
-            } else {
-                if let Some((name, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = bindingSlots.insert_owned(name, next.clone());
-                        let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
-                        __hold0 = __tco0;
-                        bindings = &__hold0;
-                        bindingSlots = __tco1;
-                        next = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((name, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = bindingSlots.insert_owned(name, next.clone());
+                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+                    __hold0 = __tco0;
+                    bindings = &__hold0;
+                    bindingSlots = __tco1;
+                    next = __tco2;
+                    continue;
+                }
+                None => {
+                    return (bindingSlots, next);
                 }
             }
         }
@@ -1910,30 +1860,27 @@ pub fn patternBindingSlotsTuple(
         crate::cancel_checkpoint();
         {
             let __list_subject = pats;
-            if __list_subject.is_empty() {
-                return (bindingSlots, next);
-            } else {
-                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((p, rest)) => {
+                    let (newBindingSlots, newNext) =
+                        crate::aver_generated::domain::resolver::core::patternBindingSlotsInner(
+                            p,
+                            bindingSlots,
+                            next,
+                        );
                     {
-                        let (newBindingSlots, newNext) =
-                            crate::aver_generated::domain::resolver::core::patternBindingSlotsInner(
-                                p,
-                                bindingSlots,
-                                next,
-                            );
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = newBindingSlots;
-                            let __tco2 = newNext;
-                            __hold0 = __tco0;
-                            pats = &__hold0;
-                            bindingSlots = __tco1;
-                            next = __tco2;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco1 = newBindingSlots;
+                        let __tco2 = newNext;
+                        __hold0 = __tco0;
+                        pats = &__hold0;
+                        bindingSlots = __tco1;
+                        next = __tco2;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return (bindingSlots, next);
                 }
             }
         }
@@ -1979,10 +1926,8 @@ pub fn maxInList(
         crate::cancel_checkpoint();
         {
             let __list_subject = vals;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((v, rest)) => {
                     if (v > acc) {
                         {
                             let __tco0 = rest;
@@ -2000,8 +1945,9 @@ pub fn maxInList(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return acc;
                 }
             }
         }
@@ -2082,22 +2028,19 @@ pub fn addConstructorSlots(
         crate::cancel_checkpoint();
         {
             let __list_subject = bindings;
-            if __list_subject.is_empty() {
-                return (slots, next);
-            } else {
-                if let Some((name, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = slots.insert_owned(name, next.clone());
-                        let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
-                        __hold0 = __tco0;
-                        bindings = &__hold0;
-                        slots = __tco1;
-                        next = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((name, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = slots.insert_owned(name, next.clone());
+                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+                    __hold0 = __tco0;
+                    bindings = &__hold0;
+                    slots = __tco1;
+                    next = __tco2;
+                    continue;
+                }
+                None => {
+                    return (slots, next);
                 }
             }
         }
@@ -2120,28 +2063,25 @@ pub fn addTuplePatternSlots(
         crate::cancel_checkpoint();
         {
             let __list_subject = pats;
-            if __list_subject.is_empty() {
-                return (slots, next);
-            } else {
-                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((p, rest)) => {
+                    let (newSlots, newNext) =
+                        crate::aver_generated::domain::resolver::core::addPatternSlotsInner(
+                            p, slots, next,
+                        );
                     {
-                        let (newSlots, newNext) =
-                            crate::aver_generated::domain::resolver::core::addPatternSlotsInner(
-                                p, slots, next,
-                            );
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = newSlots;
-                            let __tco2 = newNext;
-                            __hold0 = __tco0;
-                            pats = &__hold0;
-                            slots = __tco1;
-                            next = __tco2;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco1 = newSlots;
+                        let __tco2 = newNext;
+                        __hold0 = __tco0;
+                        pats = &__hold0;
+                        slots = __tco1;
+                        next = __tco2;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return (slots, next);
                 }
             }
         }
@@ -2166,83 +2106,78 @@ pub fn resolveStmts__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return (aver_rt::list_builder_finalize(acc), next, slots);
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    match s {
-                        crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
-                            let __stp1 = __stp1.clone();
-                            {
-                                let (__stp3, __stp2) =
-                                    crate::aver_generated::domain::resolver::core::resolveExpr(
-                                        __stp0.clone(),
-                                        slots,
-                                    );
-                                {
-                                    let __stp4 = __stp2.insert_owned(__stp1, next.clone());
-                                    {
-                                        let __tco0 = rest;
-                                        let __tco1 = __stp4;
-                                        let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
-                                        let __tco3 = aver_rt::list_builder_push(
-                                            acc,
-                                            crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
-                                                next, __stp3,
-                                            ),
-                                        );
-                                        __hold0 = __tco0;
-                                        stmts = &__hold0;
-                                        slots = __tco1;
-                                        next = __tco2;
-                                        acc = __tco3;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                        crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp0) => {
-                            let (__stp6, __stp5) =
+            match aver_rt::list_uncons(__list_subject) {
+                Some((s, rest)) => match s {
+                    crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
+                        let __stp1 = __stp1.clone();
+                        {
+                            let (__stp3, __stp2) =
                                 crate::aver_generated::domain::resolver::core::resolveExpr(
                                     __stp0.clone(),
                                     slots,
                                 );
                             {
-                                let __tco0 = rest;
-                                let __tco1 = __stp5.clone();
-                                let __tco2 = {
-                                    let __arg14 @ _ =
-                                        crate::aver_generated::domain::resolver::core::mapMaxVal(
-                                            &__stp5,
-                                        )
-                                        .add(&aver_rt::AverInt::from_i64(1));
-                                    crate::aver_generated::domain::resolver::core::maxInt(
-                                        next, __arg14,
-                                    )
-                                };
-                                let __tco3 = aver_rt::list_builder_push(
-                                    acc,
-                                    crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6),
-                                );
-                                __hold0 = __tco0;
-                                stmts = &__hold0;
-                                slots = __tco1;
-                                next = __tco2;
-                                acc = __tco3;
-                                continue;
+                                let __stp4 = __stp2.insert_owned(__stp1, next.clone());
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = __stp4;
+                                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+                                    let __tco3 = aver_rt::list_builder_push(
+                                        acc,
+                                        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
+                                            next, __stp3,
+                                        ),
+                                    );
+                                    __hold0 = __tco0;
+                                    stmts = &__hold0;
+                                    slots = __tco1;
+                                    next = __tco2;
+                                    acc = __tco3;
+                                    continue;
+                                }
                             }
                         }
-                        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
+                    }
+                    crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp0) => {
+                        let (__stp6, __stp5) =
+                            crate::aver_generated::domain::resolver::core::resolveExpr(
+                                __stp0.clone(),
+                                slots,
+                            );
+                        {
                             let __tco0 = rest;
-                            let __tco3 = aver_rt::list_builder_push(acc, s.clone());
+                            let __tco1 = __stp5.clone();
+                            let __tco2 = {
+                                let __arg14 @ _ =
+                                    crate::aver_generated::domain::resolver::core::mapMaxVal(
+                                        &__stp5,
+                                    )
+                                    .add(&aver_rt::AverInt::from_i64(1));
+                                crate::aver_generated::domain::resolver::core::maxInt(next, __arg14)
+                            };
+                            let __tco3 = aver_rt::list_builder_push(
+                                acc,
+                                crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6),
+                            );
                             __hold0 = __tco0;
                             stmts = &__hold0;
+                            slots = __tco1;
+                            next = __tco2;
                             acc = __tco3;
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                    crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
+                        let __tco0 = rest;
+                        let __tco3 = aver_rt::list_builder_push(acc, s.clone());
+                        __hold0 = __tco0;
+                        stmts = &__hold0;
+                        acc = __tco3;
+                        continue;
+                    }
+                },
+                None => {
+                    return (aver_rt::list_builder_finalize(acc), next, slots);
                 }
             }
         }
@@ -2262,26 +2197,23 @@ pub fn resolveExprs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                e.clone(),
-                                slots.clone(),
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        exprs = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((e, rest)) => {
+                    let __tco0 = rest;
+                    let __tco2 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::resolver::core::resolveExprSimple(
+                            e.clone(),
+                            slots.clone(),
+                        ),
+                    );
+                    __hold0 = __tco0;
+                    exprs = &__hold0;
+                    acc = __tco2;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -2302,23 +2234,29 @@ pub fn resolveFields__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (name, expr) = pair.clone();
                     {
-                        let (name, expr) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::list_builder_push(acc, (name, crate::aver_generated::domain::resolver::core::resolveExprSimple(expr, slots.clone())));
-                            __hold0 = __tco0;
-                            fields = &__hold0;
-                            acc = __tco2;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::list_builder_push(
+                            acc,
+                            (
+                                name,
+                                crate::aver_generated::domain::resolver::core::resolveExprSimple(
+                                    expr,
+                                    slots.clone(),
+                                ),
+                            ),
+                        );
+                        __hold0 = __tco0;
+                        fields = &__hold0;
+                        acc = __tco2;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -2341,26 +2279,23 @@ pub fn resolveArms__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            if __list_subject.is_empty() {
-                return (aver_rt::list_builder_finalize(acc), slots);
-            } else {
-                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((arm, rest)) => {
+                    let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(
+                        arm.clone(),
+                        &slots,
+                    );
                     {
-                        let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(
-                            arm.clone(),
-                            &slots,
-                        );
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::list_builder_push(acc, __stp0);
-                            __hold0 = __tco0;
-                            arms = &__hold0;
-                            acc = __tco2;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::list_builder_push(acc, __stp0);
+                        __hold0 = __tco0;
+                        arms = &__hold0;
+                        acc = __tco2;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return (aver_rt::list_builder_finalize(acc), slots);
                 }
             }
         }

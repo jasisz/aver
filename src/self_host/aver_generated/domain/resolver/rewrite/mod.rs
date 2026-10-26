@@ -13,25 +13,22 @@ pub fn rewriteInternalFns(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            if __list_subject.is_empty() {
-                return (acc).reverse_owned();
-            } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(
-                                f.clone(),
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        fns = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((f, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::AverList::prepend_owned(
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(
+                            f.clone(),
+                        ),
+                        acc,
+                    );
+                    __hold0 = __tco0;
+                    fns = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return (acc).reverse_owned();
                 }
             }
         }
@@ -47,8 +44,7 @@ pub fn rewriteInternalFn(
         name: fd.name,
         params: fd.params,
         body: {
-            let __arg1 @ _ =
-                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            let __arg1 @ _ = aver_rt::list_builder_new(0usize);
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmts__collected(
                 &fd.body, __arg1,
             )
@@ -72,25 +68,20 @@ pub fn rewriteInternalStmts(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return (acc).reverse_owned();
-            } else {
-                if let (Some(stmt), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(
-                                stmt,
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        stmts = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((stmt, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::AverList::prepend_owned(
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(stmt),
+                        acc,
+                    );
+                    __hold0 = __tco0;
+                    stmts = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return (acc).reverse_owned();
                 }
             }
         }
@@ -429,9 +420,7 @@ pub fn rewriteInternalExprAfterArith(
                         );
                     {
                         let __arg24 @ _ = {
-                            let __arg22 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg22 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalArms__collected(arms, __arg22)
                         };
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalMatch(
@@ -454,9 +443,7 @@ pub fn rewriteInternalExprAfterArith(
                 let parts = &__parts_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprConcat(
                     crate::aver_generated::domain::ast::Expr__ExprConcat({
-                        let __arg25 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg25 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(parts, __arg25)
                     }),
                 )
@@ -465,9 +452,7 @@ pub fn rewriteInternalExprAfterArith(
                 let exprs = &__exprs_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprTuple(
                     crate::aver_generated::domain::ast::Expr__ExprTuple({
-                        let __arg26 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg26 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(exprs, __arg26)
                     }),
                 )
@@ -480,9 +465,7 @@ pub fn rewriteInternalExprAfterArith(
                 crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
                     crate::aver_generated::domain::ast::Expr__ExprIndependentProduct(
                         {
-                            let __arg27 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg27 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(exprs, __arg27)
                         },
                         unwrap,
@@ -493,9 +476,7 @@ pub fn rewriteInternalExprAfterArith(
                 let exprs = &__exprs_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprList(
                     crate::aver_generated::domain::ast::Expr__ExprList({
-                        let __arg28 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg28 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(exprs, __arg28)
                     }),
                 )
@@ -505,9 +486,7 @@ pub fn rewriteInternalExprAfterArith(
                 let fields = &__name_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprRecord(
                     crate::aver_generated::domain::ast::Expr__ExprRecord(name, {
-                        let __arg29 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg29 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalFields__collected(fields, __arg29)
                     }),
                 )
@@ -539,9 +518,7 @@ pub fn rewriteInternalExprAfterArith(
                     crate::aver_generated::domain::ast::Expr__ExprCall(
                         crate::aver_generated::domain::ast::canonicalCtorName(name),
                         {
-                            let __arg30 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg30 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(args, __arg30)
                         },
                     ),
@@ -552,9 +529,7 @@ pub fn rewriteInternalExprAfterArith(
                 let args = &__fnId_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallDirect(
                     crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, {
-                        let __arg31 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg31 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(args, __arg31)
                     }),
                 )
@@ -564,9 +539,7 @@ pub fn rewriteInternalExprAfterArith(
                 let args = &__name_fields.1;
                 {
                     let __arg33 @ _ = {
-                        let __arg32 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg32 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(args, __arg32)
                     };
                     crate::aver_generated::domain::resolver::rewrite::rewriteInternalBuiltin(
@@ -579,9 +552,7 @@ pub fn rewriteInternalExprAfterArith(
                 let args = &__id_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
-                        let __arg34 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg34 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs__collected(args, __arg34)
                     }),
                 )
@@ -657,9 +628,7 @@ pub fn rewritePattern(
         }
         crate::aver_generated::domain::ast::Pattern::PatTuple(pats) => {
             crate::aver_generated::domain::ast::Pattern::PatTuple({
-                let __arg4 @ _ = aver_rt::list_builder_new(
-                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                );
+                let __arg4 @ _ = aver_rt::list_builder_new(0usize);
                 crate::aver_generated::domain::resolver::rewrite::rewritePatterns__collected(
                     pats, __arg4,
                 )
@@ -882,29 +851,17 @@ pub fn rewriteInternalOptionWithDefault(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let Some((optionExpr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            {
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((optionExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(defaultExpr), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalOptionWithDefaultArgs(optionExpr, defaultExpr.clone())
-                } else {
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                            ::aver_rt::str_lit!("Option.withDefault"),
-                            args.clone(),
-                        ),
-                    )
-                }
+                match aver_rt::list_uncons(&__list_subject) { Some((defaultExpr, ignored)) => { crate::aver_generated::domain::resolver::rewrite::rewriteInternalOptionWithDefaultArgs(optionExpr, defaultExpr.clone()) }, None => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), args.clone())) } }
             }
-        } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+            None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                     ::aver_rt::str_lit!("Option.withDefault"),
                     args.clone(),
                 ),
-            )
+            ),
         }
     }
 }
@@ -966,34 +923,12 @@ pub fn rewriteInternalVectorGetOrInt(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let Some((vecExpr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            {
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((vecExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(idxExpr), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrIntArgs(vecExpr, idxExpr.clone(), defaultValue)
-                } else {
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                            ::aver_rt::str_lit!("Option.withDefault"),
-                            aver_rt::AverList::from_vec(vec![
-                                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        ::aver_rt::str_lit!("Vector.get"),
-                                        args.clone(),
-                                    ),
-                                ),
-                                crate::aver_generated::domain::ast::Expr::ExprInt(
-                                    crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue),
-                                ),
-                            ]),
-                        ),
-                    )
-                }
+                match aver_rt::list_uncons(&__list_subject) { Some((idxExpr, ignored)) => { crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrIntArgs(vecExpr, idxExpr.clone(), defaultValue) }, None => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.get"), args.clone())), crate::aver_generated::domain::ast::Expr::ExprInt(crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue))]))) } }
             }
-        } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+            None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                     ::aver_rt::str_lit!("Option.withDefault"),
                     aver_rt::AverList::from_vec(vec![
@@ -1008,7 +943,7 @@ pub fn rewriteInternalVectorGetOrInt(
                         ),
                     ]),
                 ),
-            )
+            ),
         }
     }
 }
@@ -1066,29 +1001,17 @@ pub fn rewriteInternalResultWithDefault(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let Some((resultExpr, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            {
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((resultExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(defaultExpr), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalResultWithDefaultArgs(resultExpr, defaultExpr.clone())
-                } else {
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                            ::aver_rt::str_lit!("Result.withDefault"),
-                            args.clone(),
-                        ),
-                    )
-                }
+                match aver_rt::list_uncons(&__list_subject) { Some((defaultExpr, ignored)) => { crate::aver_generated::domain::resolver::rewrite::rewriteInternalResultWithDefaultArgs(resultExpr, defaultExpr.clone()) }, None => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Result.withDefault"), args.clone())) } }
             }
-        } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+            None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                     ::aver_rt::str_lit!("Result.withDefault"),
                     args.clone(),
                 ),
-            )
+            ),
         }
     }
 }
@@ -1150,36 +1073,12 @@ pub fn rewriteInternalIntModOrInt(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let Some((a, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            {
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((a, rest)) => {
                 let __list_subject = rest;
-                if let (Some(b), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
-                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalIntModOrIntArgs(
-                        a,
-                        b.clone(),
-                        defaultValue,
-                    )
-                } else {
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                            ::aver_rt::str_lit!("Result.withDefault"),
-                            aver_rt::AverList::from_vec(vec![
-                                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                                        ::aver_rt::str_lit!("Int.mod"),
-                                        args.clone(),
-                                    ),
-                                ),
-                                crate::aver_generated::domain::ast::Expr::ExprInt(
-                                    crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue),
-                                ),
-                            ]),
-                        ),
-                    )
-                }
+                match aver_rt::list_uncons(&__list_subject) { Some((b, ignored)) => { crate::aver_generated::domain::resolver::rewrite::rewriteInternalIntModOrIntArgs(a, b.clone(), defaultValue) }, None => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Result.withDefault"), aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Int.mod"), args.clone())), crate::aver_generated::domain::ast::Expr::ExprInt(crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue))]))) } }
             }
-        } else {
-            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+            None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                     ::aver_rt::str_lit!("Result.withDefault"),
                     aver_rt::AverList::from_vec(vec![
@@ -1194,7 +1093,7 @@ pub fn rewriteInternalIntModOrInt(
                         ),
                     ]),
                 ),
-            )
+            ),
         }
     }
 }
@@ -1459,24 +1358,21 @@ pub fn rewriteBoolMatchArms(
     crate::cancel_checkpoint();
     {
         let __list_subject = arms;
-        if let (Some(arm1), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((arm1, rest)) => {
                 let __list_subject = rest;
-                if let (Some(arm2), Some(tail)) = (__list_subject.first(), __list_subject.tail()) {
-                    if (tail == aver_rt::AverList::empty()) {
-                        crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArmPair(
-                            arm1.clone(),
-                            arm2.clone(),
-                        )
-                    } else {
-                        None
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((arm2, tail)) => {
+                        if (tail == aver_rt::AverList::empty()) {
+                            crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArmPair(arm1.clone(), arm2.clone())
+                        } else {
+                            None
+                        }
                     }
-                } else {
-                    None
+                    None => None,
                 }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -1555,25 +1451,20 @@ pub fn rewriteInternalStmts__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(stmt), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(
-                                stmt,
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        stmts = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((stmt, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(stmt),
+                    );
+                    __hold0 = __tco0;
+                    stmts = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -1592,25 +1483,22 @@ pub fn rewriteInternalExprs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
-                                expr.clone(),
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        exprs = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((expr, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
+                            expr.clone(),
+                        ),
+                    );
+                    __hold0 = __tco0;
+                    exprs = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -1630,23 +1518,20 @@ pub fn rewriteInternalFields__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (name, expr) = pair.clone();
                     {
-                        let (name, expr) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = aver_rt::list_builder_push(acc, (name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr)));
-                            __hold0 = __tco0;
-                            fields = &__hold0;
-                            acc = __tco1;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco1 = aver_rt::list_builder_push(acc, (name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr)));
+                        __hold0 = __tco0;
+                        fields = &__hold0;
+                        acc = __tco1;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -1665,20 +1550,17 @@ pub fn rewriteInternalArms__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern.clone()), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body.clone()), bindingSlots: arm.bindingSlots.clone() });
-                        __hold0 = __tco0;
-                        arms = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((arm, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern.clone()), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body.clone()), bindingSlots: arm.bindingSlots.clone() });
+                    __hold0 = __tco0;
+                    arms = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -1697,25 +1579,20 @@ pub fn rewritePatterns__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = pats;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::resolver::rewrite::rewritePattern(
-                                p.clone(),
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        pats = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((p, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::resolver::rewrite::rewritePattern(p.clone()),
+                    );
+                    __hold0 = __tco0;
+                    pats = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }

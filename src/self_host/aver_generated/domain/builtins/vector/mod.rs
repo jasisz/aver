@@ -34,11 +34,7 @@ pub fn call(
                             } else {
                                 Err(aver_rt::AverStr::from({
                                     let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(40))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
+                                        let mut __b = aver_rt::Buffer::with_capacity(40usize);
                                         __b.push_str(&::aver_rt::str_lit!(
                                             "unknown vector builtin: "
                                         ));
@@ -121,28 +117,18 @@ pub fn builtinVectorSet(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(vecV), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((vecV, rest)) => {
                 let __list_subject = rest;
-                if let (Some(idxV), Some(rest2)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((idxV, rest2)) => {
                         let __list_subject = rest2;
-                        if let (Some(valV), Some(ignored)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            crate::aver_generated::domain::builtins::vector::builtinVectorSetInner(
-                                vecV, idxV, valV,
-                            )
-                        } else {
-                            Err(::aver_rt::str_lit!("Vector.set: expected 3 args"))
-                        }
+                        match aver_rt::list_uncons(&__list_subject) { Some((valV, ignored)) => { crate::aver_generated::domain::builtins::vector::builtinVectorSetInner(vecV, idxV, valV) }, None => { Err(::aver_rt::str_lit!("Vector.set: expected 3 args")) } }
                     }
-                } else {
-                    Err(::aver_rt::str_lit!("Vector.set: expected 3 args"))
+                    None => Err(::aver_rt::str_lit!("Vector.set: expected 3 args")),
                 }
             }
-        } else {
-            Err(::aver_rt::str_lit!("Vector.set: expected 3 args"))
+            None => Err(::aver_rt::str_lit!("Vector.set: expected 3 args")),
         }
     }
 }

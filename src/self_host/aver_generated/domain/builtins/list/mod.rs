@@ -45,11 +45,7 @@ pub fn call(
                                                 Err(aver_rt::AverStr::from({
                                                     let mut __b = {
                                                         let mut __b =
-                                                            aver_rt::Buffer::with_capacity(
-                                                                (aver_rt::AverInt::from_i64(38))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
-                                                            );
+                                                            aver_rt::Buffer::with_capacity(38usize);
                                                         __b.push_str(&::aver_rt::str_lit!(
                                                             "unknown list builtin: "
                                                         ));
@@ -149,20 +145,15 @@ pub fn listTake(
     if (count > aver_rt::AverInt::from_i64(0)) {
         {
             let __list_subject = items;
-            if __list_subject.is_empty() {
-                aver_rt::AverList::empty()
-            } else {
-                if let (Some(item), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    aver_rt::AverList::prepend_owned(
-                        item.clone(),
-                        crate::aver_generated::domain::builtins::list::listTake(
-                            &rest,
-                            count.sub(&aver_rt::AverInt::from_i64(1)),
-                        ),
-                    )
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((item, rest)) => aver_rt::AverList::prepend_owned(
+                    item.clone(),
+                    crate::aver_generated::domain::builtins::list::listTake(
+                        &rest,
+                        count.sub(&aver_rt::AverInt::from_i64(1)),
+                    ),
+                ),
+                None => aver_rt::AverList::empty(),
             }
         }
     } else {
@@ -296,10 +287,8 @@ pub fn listContainsVal(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            if __list_subject.is_empty() {
-                return false;
-            } else {
-                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((v, rest)) => {
                     if crate::aver_generated::domain::value::valEq(v, needle) {
                         return true;
                     } else {
@@ -310,8 +299,9 @@ pub fn listContainsVal(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return false;
                 }
             }
         }
@@ -372,46 +362,35 @@ pub fn zipListsAcc(
         let reversed @ _ = acc.reverse();
         {
             let __list_subject = a;
-            if __list_subject.is_empty() {
-                return reversed;
-            } else {
-                if let (Some(x), Some(xs)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __list_subject = b;
-                        if __list_subject.is_empty() {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((x, xs)) => {
+                    let __list_subject = b;
+                    match aver_rt::list_uncons(__list_subject) {
+                        Some((y, ys)) => {
+                            let __tco0 = xs;
+                            let __tco1 = ys;
+                            let __tco2 = aver_rt::AverList::prepend_owned(
+                                crate::aver_generated::domain::value::Val::ValTuple(
+                                    crate::aver_generated::domain::value::Val__ValTuple(
+                                        aver_rt::AverList::from_vec(vec![x.clone(), y.clone()]),
+                                    ),
+                                ),
+                                acc,
+                            );
+                            __hold0 = __tco0;
+                            a = &__hold0;
+                            __hold1 = __tco1;
+                            b = &__hold1;
+                            acc = __tco2;
+                            continue;
+                        }
+                        None => {
                             return reversed;
-                        } else {
-                            if let (Some(y), Some(ys)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
-                                    let __tco0 = xs;
-                                    let __tco1 = ys;
-                                    let __tco2 = aver_rt::AverList::prepend_owned(
-                                        crate::aver_generated::domain::value::Val::ValTuple(
-                                            crate::aver_generated::domain::value::Val__ValTuple(
-                                                aver_rt::AverList::from_vec(vec![
-                                                    x.clone(),
-                                                    y.clone(),
-                                                ]),
-                                            ),
-                                        ),
-                                        acc,
-                                    );
-                                    __hold0 = __tco0;
-                                    a = &__hold0;
-                                    __hold1 = __tco1;
-                                    b = &__hold1;
-                                    acc = __tco2;
-                                    continue;
-                                }
-                            } else {
-                                panic!("Aver Rust codegen: non-exhaustive list match")
-                            }
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return reversed;
                 }
             }
         }

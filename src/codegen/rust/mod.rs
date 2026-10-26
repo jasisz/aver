@@ -1556,9 +1556,37 @@ fn headPlusTailLen(xs: List<Int>) -> Int
         let entry = generated_rust_entry_file(&out);
 
         // A borrowed list is matched through its borrow, without the
-        // by-value macro and without cloning the list first.
-        assert!(entry.contains("aver_rt::list_uncons_cloned(__list_subject)"));
+        // by-value macro and without cloning the list first, and the uncons
+        // is the only look at it: no `is_empty` before, no panic after.
+        assert!(
+            entry.contains("match aver_rt::list_uncons_cloned(__list_subject) { Some((h, t)) =>")
+        );
+        assert!(!entry.contains("is_empty()"), "{entry}");
+        assert!(!entry.contains("non-exhaustive list match"), "{entry}");
         assert!(!entry.contains("xs.clone()"));
+    }
+
+    #[test]
+    fn a_literal_count_is_emitted_as_the_usize_it_clamps_to() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn rest(xs: List<String>) -> List<String>
+    List.drop(xs, 1)
+
+fn none(xs: List<String>) -> List<String>
+    List.take(xs, 0)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("let __n = 1usize;"), "{entry}");
+        assert!(entry.contains("let __n = 0usize;"), "{entry}");
+        assert!(!entry.contains("clamp_list_count"), "{entry}");
     }
 
     #[test]

@@ -54,7 +54,10 @@ pub fn callInt(
                                                     } else {
                                                         Err(aver_rt::AverStr::from({
                                                             let mut __b = {
-                                                                let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0));
+                                                                let mut __b =
+                                                                    aver_rt::Buffer::with_capacity(
+                                                                        37usize,
+                                                                    );
                                                                 __b.push_str(&::aver_rt::str_lit!(
                                                                     "unknown int builtin: "
                                                                 ));
@@ -215,7 +218,7 @@ pub fn callString(
                                                                             {
                                                                                 crate::aver_generated::domain::builtins::primitives::builtinStringFirstCodePoint(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "String.fromCodePoint" { crate::aver_generated::domain::builtins::primitives::builtinStringFromCodePoint(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("unknown string builtin: ")); __b }; __b.push_display(&(name)); __b })) }
+                                                                                if &*__dispatch_subject == "String.fromCodePoint" { crate::aver_generated::domain::builtins::primitives::builtinStringFromCodePoint(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(40usize); __b.push_str(&::aver_rt::str_lit!("unknown string builtin: ")); __b }; __b.push_display(&(name)); __b })) }
                                                                             }
                                                                         }
                                                                     }
@@ -435,8 +438,7 @@ pub fn builtinStringJoinInner(
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     let sep @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(sepV)?;
     let strs @ _ = {
-        let __arg5 @ _ =
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+        let __arg5 @ _ = aver_rt::list_builder_new(0usize);
         crate::aver_generated::domain::builtins::primitives::extractStrings__collected(
             &items, __arg5,
         )
@@ -479,17 +481,14 @@ pub fn builtinStringSlice(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(sV), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((sV, rest)) => {
                 let __list_subject = rest;
-                if let (Some(startV), Some(rest2)) = (__list_subject.first(), __list_subject.tail())
-                {
-                    {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((startV, rest2)) => {
                         let __list_subject = rest2;
-                        if let (Some(endV), Some(rest3)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
+                        match aver_rt::list_uncons(&__list_subject) {
+                            Some((endV, rest3)) => {
                                 let __list_subject = rest3;
                                 if __list_subject.is_empty() {
                                     crate::aver_generated::domain::builtins::primitives::builtinStringSliceInner(sV, startV, endV)
@@ -497,16 +496,13 @@ pub fn builtinStringSlice(
                                     Err(::aver_rt::str_lit!("String.slice takes 3 arguments"))
                                 }
                             }
-                        } else {
-                            Err(::aver_rt::str_lit!("String.slice takes 3 arguments"))
+                            None => Err(::aver_rt::str_lit!("String.slice takes 3 arguments")),
                         }
                     }
-                } else {
-                    Err(::aver_rt::str_lit!("String.slice takes 3 arguments"))
+                    None => Err(::aver_rt::str_lit!("String.slice takes 3 arguments")),
                 }
             }
-        } else {
-            Err(::aver_rt::str_lit!("String.slice takes 3 arguments"))
+            None => Err(::aver_rt::str_lit!("String.slice takes 3 arguments")),
         }
     }
 }
@@ -823,7 +819,7 @@ pub fn callFloat(
                                                                 } else {
                                                                     Err(aver_rt::AverStr::from({
                                                                         let mut __b = {
-                                                                            let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0));
+                                                                            let mut __b = aver_rt::Buffer::with_capacity(39usize);
                                                                             __b.push_str(&::aver_rt::str_lit!("unknown float builtin: "));
                                                                             __b
                                                                         };
@@ -1246,8 +1242,7 @@ pub fn builtinStringSplitInner(
     );
     Ok(crate::aver_generated::domain::value::Val::ValList(
         crate::aver_generated::domain::value::Val__ValList({
-            let __arg5 @ _ =
-                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            let __arg5 @ _ = aver_rt::list_builder_new(0usize);
             crate::aver_generated::domain::builtins::primitives::strPartsToVals__collected(
                 &parts, __arg5,
             )
@@ -1344,14 +1339,11 @@ pub fn builtinStringReplaceAllExtract(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(sV), Some(r1)) = (__list_subject.first(), __list_subject.tail()) {
-            aver_list_match!(r1, [] => Err(::aver_rt::str_lit!("String.replace takes 3 arguments")), [fromV, r2] => aver_list_match!(r2, [] => Err(::aver_rt::str_lit!("String.replace takes 3 arguments")), [toV, r3] => crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAllDo(sV, &fromV, &toV)))
-        } else {
-            if __list_subject.is_empty() {
-                Err(::aver_rt::str_lit!("String.replace takes 3 arguments"))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
+        match aver_rt::list_uncons(__list_subject) {
+            Some((sV, r1)) => {
+                aver_list_match!(r1, [] => Err(::aver_rt::str_lit!("String.replace takes 3 arguments")), [fromV, r2] => aver_list_match!(r2, [] => Err(::aver_rt::str_lit!("String.replace takes 3 arguments")), [toV, r3] => crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAllDo(sV, &fromV, &toV)))
             }
+            None => Err(::aver_rt::str_lit!("String.replace takes 3 arguments")),
         }
     }
 }
@@ -1419,33 +1411,30 @@ pub fn extractStrings__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            if __list_subject.is_empty() {
-                return Ok(aver_rt::list_builder_finalize(acc));
-            } else {
-                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __t = v;
-                        match __t.view() {
-                            crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
-                                let s = __s_fields.0.clone();
-                                {
-                                    let __tco0 = rest;
-                                    let __tco1 = aver_rt::list_builder_push(acc, s);
-                                    __hold0 = __tco0;
-                                    items = &__hold0;
-                                    acc = __tco1;
-                                    continue;
-                                }
-                            }
-                            _ => {
-                                return Err(::aver_rt::str_lit!(
-                                    "String.join requires list of strings"
-                                ));
+            match aver_rt::list_uncons(__list_subject) {
+                Some((v, rest)) => {
+                    let __t = v;
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
+                            let s = __s_fields.0.clone();
+                            {
+                                let __tco0 = rest;
+                                let __tco1 = aver_rt::list_builder_push(acc, s);
+                                __hold0 = __tco0;
+                                items = &__hold0;
+                                acc = __tco1;
+                                continue;
                             }
                         }
+                        _ => {
+                            return Err(::aver_rt::str_lit!(
+                                "String.join requires list of strings"
+                            ));
+                        }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(aver_rt::list_builder_finalize(acc));
                 }
             }
         }
@@ -1464,25 +1453,22 @@ pub fn strPartsToVals__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = parts;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let Some((s, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::value::Val::ValStr(
-                                crate::aver_generated::domain::value::Val__ValStr(s),
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        parts = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((s, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::value::Val::ValStr(
+                            crate::aver_generated::domain::value::Val__ValStr(s),
+                        ),
+                    );
+                    __hold0 = __tco0;
+                    parts = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }

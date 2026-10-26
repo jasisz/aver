@@ -553,9 +553,7 @@ fn __mutual_tco_trampoline_1(
                         _ => {
                             return Err(aver_rt::AverStr::from({
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(50)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(50usize);
                                     __b.push_str(&::aver_rt::str_lit!(
                                         "unsupported named-env expression: "
                                     ));
@@ -641,33 +639,19 @@ fn __mutual_tco_trampoline_1(
                 crate::cancel_checkpoint();
                 {
                     let __list_subject = argExprs.clone();
-                    if let Some((optionExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                        {
+                    match aver_rt::list_uncons_cloned(&__list_subject) {
+                        Some((optionExpr, rest)) => {
                             let __list_subject = rest;
-                            if let (Some(defaultExpr), Some(ignored)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                __MutualTco1::EvalOptionWithDefaultExprInner(
-                                    optionExpr,
-                                    defaultExpr.clone(),
-                                    env,
-                                )
-                            } else {
-                                return crate::aver_generated::domain::eval::core::evalCallBuiltin(
-                                    ::aver_rt::str_lit!("Option.withDefault"),
-                                    &argExprs,
-                                    &env,
-                                    &*fns,
-                                );
-                            }
+                            match aver_rt::list_uncons(&__list_subject) { Some((defaultExpr, ignored)) => { __MutualTco1::EvalOptionWithDefaultExprInner(optionExpr, defaultExpr.clone(), env) }, None => { return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &argExprs, &env, &*fns) } }
                         }
-                    } else {
-                        return crate::aver_generated::domain::eval::core::evalCallBuiltin(
-                            ::aver_rt::str_lit!("Option.withDefault"),
-                            &argExprs,
-                            &env,
-                            &*fns,
-                        );
+                        None => {
+                            return crate::aver_generated::domain::eval::core::evalCallBuiltin(
+                                ::aver_rt::str_lit!("Option.withDefault"),
+                                &argExprs,
+                                &env,
+                                &*fns,
+                            );
+                        }
                     }
                 }
             }
@@ -733,40 +717,35 @@ fn __mutual_tco_trampoline_1(
                 crate::cancel_checkpoint();
                 {
                     let __list_subject = vecArgs.clone();
-                    if let Some((vecExpr, r1)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                        {
+                    match aver_rt::list_uncons_cloned(&__list_subject) {
+                        Some((vecExpr, r1)) => {
                             let __list_subject = r1;
-                            if let (Some(idxExpr), Some(r2)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((idxExpr, r2)) => {
                                     let __list_subject = r2;
-                                    if let (Some(valueExpr), Some(ignored)) =
-                                        (__list_subject.first(), __list_subject.tail())
-                                    {
-                                        __MutualTco1::EvalVectorSetWithDefaultExprValues(
-                                            vecExpr,
-                                            idxExpr.clone(),
-                                            valueExpr.clone(),
-                                            defaultExpr,
-                                            env,
-                                        )
-                                    } else {
-                                        {
+                                    match aver_rt::list_uncons(&__list_subject) {
+                                        Some((valueExpr, ignored)) => {
+                                            __MutualTco1::EvalVectorSetWithDefaultExprValues(
+                                                vecExpr,
+                                                idxExpr.clone(),
+                                                valueExpr.clone(),
+                                                defaultExpr,
+                                                env,
+                                            )
+                                        }
+                                        None => {
                                             let __arg10 @ _ = aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.set"), vecArgs)), defaultExpr]);
                                             return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &__arg10, &env, &*fns);
                                         }
                                     }
                                 }
-                            } else {
-                                {
+                                None => {
                                     let __arg11 @ _ = aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.set"), vecArgs)), defaultExpr]);
                                     return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &__arg11, &env, &*fns);
                                 }
                             }
                         }
-                    } else {
-                        {
+                        None => {
                             let __arg12 @ _ = aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
@@ -843,27 +822,25 @@ fn __mutual_tco_trampoline_1(
                 crate::cancel_checkpoint();
                 {
                     let __list_subject = vecArgs.clone();
-                    if let Some((vecExpr, r1)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                        {
+                    match aver_rt::list_uncons_cloned(&__list_subject) {
+                        Some((vecExpr, r1)) => {
                             let __list_subject = r1;
-                            if let (Some(idxExpr), Some(ignored)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                __MutualTco1::EvalVectorGetWithDefaultExprValues(
-                                    vecExpr,
-                                    idxExpr.clone(),
-                                    defaultExpr,
-                                    env,
-                                )
-                            } else {
-                                {
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((idxExpr, ignored)) => {
+                                    __MutualTco1::EvalVectorGetWithDefaultExprValues(
+                                        vecExpr,
+                                        idxExpr.clone(),
+                                        defaultExpr,
+                                        env,
+                                    )
+                                }
+                                None => {
                                     let __arg8 @ _ = aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.get"), vecArgs)), defaultExpr]);
                                     return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &__arg8, &env, &*fns);
                                 }
                             }
                         }
-                    } else {
-                        {
+                        None => {
                             let __arg9 @ _ = aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
@@ -1869,9 +1846,7 @@ fn __mutual_tco_trampoline_3(
                         _ => {
                             return Err(aver_rt::AverStr::from({
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(45)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(45usize);
                                     __b.push_str(&::aver_rt::str_lit!(
                                         "unsupported slot expression: "
                                     ));
@@ -1952,29 +1927,20 @@ fn __mutual_tco_trampoline_3(
                 crate::cancel_checkpoint();
                 {
                     let __list_subject = argExprs.clone();
-                    if let Some((optionExpr, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                        {
+                    match aver_rt::list_uncons_cloned(&__list_subject) {
+                        Some((optionExpr, rest)) => {
                             let __list_subject = rest;
-                            if let (Some(defaultExpr), Some(ignored)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                __MutualTco3::EvalOptionWithDefaultExprSlotInner(
-                                    optionExpr,
-                                    defaultExpr.clone(),
-                                    env,
-                                )
-                            } else {
-                                return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &argExprs, env, &*slotMap, &*fns);
-                            }
+                            match aver_rt::list_uncons(&__list_subject) { Some((defaultExpr, ignored)) => { __MutualTco3::EvalOptionWithDefaultExprSlotInner(optionExpr, defaultExpr.clone(), env) }, None => { return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &argExprs, env, &*slotMap, &*fns) } }
                         }
-                    } else {
-                        return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(
-                            ::aver_rt::str_lit!("Option.withDefault"),
-                            &argExprs,
-                            env,
-                            &*slotMap,
-                            &*fns,
-                        );
+                        None => {
+                            return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(
+                                ::aver_rt::str_lit!("Option.withDefault"),
+                                &argExprs,
+                                env,
+                                &*slotMap,
+                                &*fns,
+                            );
+                        }
                     }
                 }
             }
@@ -2041,40 +2007,35 @@ fn __mutual_tco_trampoline_3(
                 crate::cancel_checkpoint();
                 {
                     let __list_subject = vecArgs.clone();
-                    if let Some((vecExpr, r1)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                        {
+                    match aver_rt::list_uncons_cloned(&__list_subject) {
+                        Some((vecExpr, r1)) => {
                             let __list_subject = r1;
-                            if let (Some(idxExpr), Some(r2)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((idxExpr, r2)) => {
                                     let __list_subject = r2;
-                                    if let (Some(valueExpr), Some(ignored)) =
-                                        (__list_subject.first(), __list_subject.tail())
-                                    {
-                                        __MutualTco3::EvalVectorSetWithDefaultExprSlotValues(
-                                            vecExpr,
-                                            idxExpr.clone(),
-                                            valueExpr.clone(),
-                                            defaultExpr,
-                                            env,
-                                        )
-                                    } else {
-                                        {
+                                    match aver_rt::list_uncons(&__list_subject) {
+                                        Some((valueExpr, ignored)) => {
+                                            __MutualTco3::EvalVectorSetWithDefaultExprSlotValues(
+                                                vecExpr,
+                                                idxExpr.clone(),
+                                                valueExpr.clone(),
+                                                defaultExpr,
+                                                env,
+                                            )
+                                        }
+                                        None => {
                                             let __arg11 @ _ = aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.set"), vecArgs)), defaultExpr]);
                                             return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &__arg11, env, &*slotMap, &*fns);
                                         }
                                     }
                                 }
-                            } else {
-                                {
+                                None => {
                                     let __arg12 @ _ = aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.set"), vecArgs)), defaultExpr]);
                                     return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &__arg12, env, &*slotMap, &*fns);
                                 }
                             }
                         }
-                    } else {
-                        {
+                        None => {
                             let __arg13 @ _ = aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
@@ -2155,27 +2116,25 @@ fn __mutual_tco_trampoline_3(
                 crate::cancel_checkpoint();
                 {
                     let __list_subject = vecArgs.clone();
-                    if let Some((vecExpr, r1)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                        {
+                    match aver_rt::list_uncons_cloned(&__list_subject) {
+                        Some((vecExpr, r1)) => {
                             let __list_subject = r1;
-                            if let (Some(idxExpr), Some(ignored)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                __MutualTco3::EvalVectorGetWithDefaultExprSlotValues(
-                                    vecExpr,
-                                    idxExpr.clone(),
-                                    defaultExpr,
-                                    env,
-                                )
-                            } else {
-                                {
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((idxExpr, ignored)) => {
+                                    __MutualTco3::EvalVectorGetWithDefaultExprSlotValues(
+                                        vecExpr,
+                                        idxExpr.clone(),
+                                        defaultExpr,
+                                        env,
+                                    )
+                                }
+                                None => {
                                     let __arg9 @ _ = aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(::aver_rt::str_lit!("Vector.get"), vecArgs)), defaultExpr]);
                                     return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &__arg9, env, &*slotMap, &*fns);
                                 }
                             }
                         }
-                    } else {
-                        {
+                        None => {
                             let __arg10 @ _ = aver_rt::AverList::from_vec(vec![
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
@@ -3349,8 +3308,7 @@ pub fn evalIndependentProduct(
         crate::aver_generated::domain::eval::core::evalIndependentItems(exprs, env, fns)?;
     if unwrap {
         {
-            let __arg5 @ _ =
-                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            let __arg5 @ _ = aver_rt::list_builder_new(0usize);
             crate::aver_generated::domain::eval::core::unwrapProductResults__collected(
                 &items, __arg5,
             )
@@ -3371,14 +3329,11 @@ pub fn evalIndependentItems(
     crate::cancel_checkpoint();
     {
         let __list_subject = exprs;
-        if __list_subject.is_empty() {
-            Ok(aver_rt::AverList::empty())
-        } else {
-            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((a, rest)) => {
                 aver_list_match!(rest, [] => match crate::aver_generated::domain::eval::core::evalExpr(a.clone(), env, fns) { Ok(va @ _) => { Ok(aver_rt::AverList::prepend_owned(va, aver_rt::AverList::empty())) }, Err(e @ _) => { Err(e) } }, [b, rest2] => { { let __list_subject = rest2; if __list_subject.is_empty() { { let (va, vb) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let __r0 = crate::aver_generated::domain::eval::core::evalExpr(a.clone(), env.clone(), fns); crate::aver_replay::set_effect_branch(1); let __r1 = crate::aver_generated::domain::eval::core::evalExpr(b, env, fns); crate::aver_replay::exit_effect_group(); match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|__s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let __h0 = { let env = env.clone(); let fns = fns; let a = a; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExpr(a.clone(), env.clone(), fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let __h1 = { let env = env; let fns = fns; let b = b; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExpr(b, env, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __b0 = __h0.join().unwrap(); let __b1 = __h1.join().unwrap(); match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok(aver_rt::AverList::from_vec(vec![va, vb])) } } else { { let (leftExprs, rightExprs) = { let __arg15 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty(); { let __arg16 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty(); crate::aver_generated::domain::eval::core::splitIndependentExprs(exprs, __arg15, __arg16, true) } }; { let (leftVals, rightVals) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let __r0 = crate::aver_generated::domain::eval::core::evalIndependentItems(&leftExprs, env.clone(), fns); crate::aver_replay::set_effect_branch(1); let __r1 = crate::aver_generated::domain::eval::core::evalIndependentItems(&rightExprs, env, fns); crate::aver_replay::exit_effect_group(); match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|__s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let __h0 = { let env = env.clone(); let fns = fns; let leftExprs = leftExprs; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItems(&leftExprs, env.clone(), fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let __h1 = { let env = env; let fns = fns; let rightExprs = rightExprs; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItems(&rightExprs, env, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __b0 = __h0.join().unwrap(); let __b1 = __h1.join().unwrap(); match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok({ let __arg17 @ _ = <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty(); crate::aver_generated::domain::eval::core::interleaveIndependentVals(&leftVals, &rightVals, true, __arg17) }) } } } } })
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => Ok(aver_rt::AverList::empty()),
         }
     }
 }
@@ -3400,10 +3355,8 @@ pub fn splitIndependentExprs(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return ((leftAcc).reverse_owned(), (rightAcc).reverse_owned());
-            } else {
-                if let (Some(expr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((expr, rest)) => {
                     if sendLeft {
                         {
                             let __tco0 = rest;
@@ -3427,8 +3380,9 @@ pub fn splitIndependentExprs(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return ((leftAcc).reverse_owned(), (rightAcc).reverse_owned());
                 }
             }
         }
@@ -3452,48 +3406,42 @@ pub fn interleaveIndependentVals(
         if takeLeft {
             {
                 let __list_subject = left;
-                if __list_subject.is_empty() {
-                    return crate::aver_generated::domain::eval::core::finishIndependentVals(
-                        right, acc,
-                    );
-                } else {
-                    if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = false;
-                            let __tco3 = aver_rt::AverList::prepend_owned(v.clone(), acc);
-                            __hold0 = __tco0;
-                            left = &__hold0;
-                            takeLeft = __tco2;
-                            acc = __tco3;
-                            continue;
-                        }
-                    } else {
-                        panic!("Aver Rust codegen: non-exhaustive list match")
+                match aver_rt::list_uncons(__list_subject) {
+                    Some((v, rest)) => {
+                        let __tco0 = rest;
+                        let __tco2 = false;
+                        let __tco3 = aver_rt::AverList::prepend_owned(v.clone(), acc);
+                        __hold0 = __tco0;
+                        left = &__hold0;
+                        takeLeft = __tco2;
+                        acc = __tco3;
+                        continue;
+                    }
+                    None => {
+                        return crate::aver_generated::domain::eval::core::finishIndependentVals(
+                            right, acc,
+                        );
                     }
                 }
             }
         } else {
             {
                 let __list_subject = right;
-                if __list_subject.is_empty() {
-                    return crate::aver_generated::domain::eval::core::finishIndependentVals(
-                        left, acc,
-                    );
-                } else {
-                    if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                        {
-                            let __tco1 = rest;
-                            let __tco2 = true;
-                            let __tco3 = aver_rt::AverList::prepend_owned(v.clone(), acc);
-                            __hold1 = __tco1;
-                            right = &__hold1;
-                            takeLeft = __tco2;
-                            acc = __tco3;
-                            continue;
-                        }
-                    } else {
-                        panic!("Aver Rust codegen: non-exhaustive list match")
+                match aver_rt::list_uncons(__list_subject) {
+                    Some((v, rest)) => {
+                        let __tco1 = rest;
+                        let __tco2 = true;
+                        let __tco3 = aver_rt::AverList::prepend_owned(v.clone(), acc);
+                        __hold1 = __tco1;
+                        right = &__hold1;
+                        takeLeft = __tco2;
+                        acc = __tco3;
+                        continue;
+                    }
+                    None => {
+                        return crate::aver_generated::domain::eval::core::finishIndependentVals(
+                            left, acc,
+                        );
                     }
                 }
             }
@@ -3513,20 +3461,17 @@ pub fn finishIndependentVals(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            if __list_subject.is_empty() {
-                return (acc).reverse_owned();
-            } else {
-                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(v.clone(), acc);
-                        __hold0 = __tco0;
-                        items = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((v, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::AverList::prepend_owned(v.clone(), acc);
+                    __hold0 = __tco0;
+                    items = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return (acc).reverse_owned();
                 }
             }
         }
@@ -3674,12 +3619,8 @@ pub fn evalConcatParts(
         crate::cancel_checkpoint();
         {
             let __list_subject = parts;
-            if __list_subject.is_empty() {
-                return Ok(crate::aver_generated::domain::value::Val::ValStr(
-                    crate::aver_generated::domain::value::Val__ValStr(acc),
-                ));
-            } else {
-                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((p, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExpr(
                         p.clone(),
                         env.clone(),
@@ -3697,8 +3638,11 @@ pub fn evalConcatParts(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(crate::aver_generated::domain::value::Val::ValStr(
+                        crate::aver_generated::domain::value::Val__ValStr(acc),
+                    ));
                 }
             }
         }
@@ -3742,19 +3686,14 @@ pub fn evalRecordFields(
     crate::cancel_checkpoint();
     {
         let __list_subject = fieldExprs;
-        if __list_subject.is_empty() {
-            Ok(aver_rt::AverList::empty())
-        } else {
-            if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                {
-                    let (fname, expr) = pair.clone();
-                    crate::aver_generated::domain::eval::core::evalRecordFieldOne(
-                        fname, expr, &rest, env, fns,
-                    )
-                }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
+        match aver_rt::list_uncons(__list_subject) {
+            Some((pair, rest)) => {
+                let (fname, expr) = pair.clone();
+                crate::aver_generated::domain::eval::core::evalRecordFieldOne(
+                    fname, expr, &rest, env, fns,
+                )
             }
+            None => Ok(aver_rt::AverList::empty()),
         }
     }
 }
@@ -3834,10 +3773,8 @@ pub fn evalListItemsRev(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return Ok((acc).reverse_owned());
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExpr(
                         e.clone(),
                         env.clone(),
@@ -3855,8 +3792,9 @@ pub fn evalListItemsRev(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok((acc).reverse_owned());
                 }
             }
         }
@@ -3887,10 +3825,8 @@ pub fn evalArgsRev(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return Ok((acc).reverse_owned());
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExpr(
                         e.clone(),
                         env.clone(),
@@ -3908,8 +3844,9 @@ pub fn evalArgsRev(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok((acc).reverse_owned());
                 }
             }
         }
@@ -4300,26 +4237,27 @@ pub fn evalResolvedSingleExprSlot(
     crate::cancel_checkpoint();
     {
         let __list_subject = body;
-        if let Some((stmt, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            if (rest == aver_rt::AverList::empty()) {
-                crate::aver_generated::domain::eval::core::evalResolvedSingleStmtSlot(
-                    stmt, calleeEnv, slotMap, fns,
-                )
-            } else {
-                crate::aver_generated::domain::eval::core::evalStmtsSlot(
-                    body.clone(),
-                    calleeEnv,
-                    slotMap,
-                    fns,
-                )
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((stmt, rest)) => {
+                if (rest == aver_rt::AverList::empty()) {
+                    crate::aver_generated::domain::eval::core::evalResolvedSingleStmtSlot(
+                        stmt, calleeEnv, slotMap, fns,
+                    )
+                } else {
+                    crate::aver_generated::domain::eval::core::evalStmtsSlot(
+                        body.clone(),
+                        calleeEnv,
+                        slotMap,
+                        fns,
+                    )
+                }
             }
-        } else {
-            crate::aver_generated::domain::eval::core::evalStmtsSlot(
+            None => crate::aver_generated::domain::eval::core::evalStmtsSlot(
                 body.clone(),
                 calleeEnv,
                 slotMap,
                 fns,
-            )
+            ),
         }
     }
 }
@@ -4336,12 +4274,29 @@ pub fn evalResolvedSingleExprSlotTail(
     crate::cancel_checkpoint();
     {
         let __list_subject = body;
-        if let Some((stmt, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            if (rest == aver_rt::AverList::empty()) {
-                crate::aver_generated::domain::eval::core::evalTailStmtSlot(
-                    selfId, stmt, slotCount, calleeEnv, slotMap, fns,
-                )
-            } else {
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((stmt, rest)) => {
+                if (rest == aver_rt::AverList::empty()) {
+                    crate::aver_generated::domain::eval::core::evalTailStmtSlot(
+                        selfId, stmt, slotCount, calleeEnv, slotMap, fns,
+                    )
+                } else {
+                    match crate::aver_generated::domain::eval::core::evalStmtsSlot(
+                        body.clone(),
+                        calleeEnv,
+                        slotMap,
+                        fns,
+                    ) {
+                        Ok(v @ _) => Ok(
+                            crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(
+                                v,
+                            ),
+                        ),
+                        Err(e @ _) => Err(e),
+                    }
+                }
+            }
+            None => {
                 match crate::aver_generated::domain::eval::core::evalStmtsSlot(
                     body.clone(),
                     calleeEnv,
@@ -4353,18 +4308,6 @@ pub fn evalResolvedSingleExprSlotTail(
                     ),
                     Err(e @ _) => Err(e),
                 }
-            }
-        } else {
-            match crate::aver_generated::domain::eval::core::evalStmtsSlot(
-                body.clone(),
-                calleeEnv,
-                slotMap,
-                fns,
-            ) {
-                Ok(v @ _) => {
-                    Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v))
-                }
-                Err(e @ _) => Err(e),
             }
         }
     }
@@ -4441,16 +4384,17 @@ pub fn evalResolvedSingleExprNamed(
     crate::cancel_checkpoint();
     {
         let __list_subject = body;
-        if let Some((stmt, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-            if (rest == aver_rt::AverList::empty()) {
-                crate::aver_generated::domain::eval::core::evalResolvedSingleStmtNamed(
-                    stmt, calleeEnv, fns,
-                )
-            } else {
-                crate::aver_generated::domain::eval::core::evalStmts(body, calleeEnv, fns)
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((stmt, rest)) => {
+                if (rest == aver_rt::AverList::empty()) {
+                    crate::aver_generated::domain::eval::core::evalResolvedSingleStmtNamed(
+                        stmt, calleeEnv, fns,
+                    )
+                } else {
+                    crate::aver_generated::domain::eval::core::evalStmts(body, calleeEnv, fns)
+                }
             }
-        } else {
-            crate::aver_generated::domain::eval::core::evalStmts(body, calleeEnv, fns)
+            None => crate::aver_generated::domain::eval::core::evalStmts(body, calleeEnv, fns),
         }
     }
 }
@@ -4521,8 +4465,7 @@ pub fn fastForwardCall(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let args @ _ = {
-        let __arg6 @ _ =
-            aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+        let __arg6 @ _ = aver_rt::list_builder_new(0usize);
         crate::aver_generated::domain::eval::core::collectFastForwardArgs__collected(
             slotArgs, calleeEnv, __arg6,
         )
@@ -4724,10 +4667,8 @@ pub fn evalStmts(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return Ok(crate::aver_generated::domain::value::Val::ValUnit);
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((s, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalStmt(s, env, fns) {
                         Err(e @ _) => {
                             return Err(e);
@@ -4751,8 +4692,9 @@ pub fn evalStmts(
                             }
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(crate::aver_generated::domain::value::Val::ValUnit);
                 }
             }
         }
@@ -4778,40 +4720,36 @@ pub fn evalTopLevelStmts(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            if __list_subject.is_empty() {
-                return Ok((last, env));
-            } else {
-                if let (Some(s), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __subject = {
-                            let __arg10 @ _ =
-                                crate::aver_generated::domain::eval::store::withGlobals(
-                                    fns.clone(),
-                                    env.clone(),
-                                );
-                            crate::aver_generated::domain::eval::core::evalStmt(s, env, &__arg10)
-                        };
-                        match __subject {
-                            Err(e @ _) => {
-                                return Err(e);
-                            }
-                            Ok(pair @ _) => {
-                                let (v, newEnv) = pair;
-                                {
-                                    let __tco0 = rest;
-                                    let __tco1 = newEnv;
-                                    let __tco2 = v;
-                                    __hold0 = __tco0;
-                                    stmts = &__hold0;
-                                    env = __tco1;
-                                    last = __tco2;
-                                    continue;
-                                }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((s, rest)) => {
+                    let __subject = {
+                        let __arg10 @ _ = crate::aver_generated::domain::eval::store::withGlobals(
+                            fns.clone(),
+                            env.clone(),
+                        );
+                        crate::aver_generated::domain::eval::core::evalStmt(s, env, &__arg10)
+                    };
+                    match __subject {
+                        Err(e @ _) => {
+                            return Err(e);
+                        }
+                        Ok(pair @ _) => {
+                            let (v, newEnv) = pair;
+                            {
+                                let __tco0 = rest;
+                                let __tco1 = newEnv;
+                                let __tco2 = v;
+                                __hold0 = __tco0;
+                                stmts = &__hold0;
+                                env = __tco1;
+                                last = __tco2;
+                                continue;
                             }
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok((last, env));
                 }
             }
         }
@@ -5132,12 +5070,8 @@ pub fn evalConcatPartsSlot(
         crate::cancel_checkpoint();
         {
             let __list_subject = parts;
-            if __list_subject.is_empty() {
-                return Ok(crate::aver_generated::domain::value::Val::ValStr(
-                    crate::aver_generated::domain::value::Val__ValStr(acc),
-                ));
-            } else {
-                if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((p, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
                         p.clone(),
                         env.clone(),
@@ -5156,8 +5090,11 @@ pub fn evalConcatPartsSlot(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(crate::aver_generated::domain::value::Val::ValStr(
+                        crate::aver_generated::domain::value::Val__ValStr(acc),
+                    ));
                 }
             }
         }
@@ -5222,10 +5159,8 @@ pub fn evalListItemsSlotRev(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return Ok((acc).reverse_owned());
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
                         e.clone(),
                         env.clone(),
@@ -5244,8 +5179,9 @@ pub fn evalListItemsSlotRev(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok((acc).reverse_owned());
                 }
             }
         }
@@ -5279,19 +5215,14 @@ pub fn evalRecordFieldsSlot(
     crate::cancel_checkpoint();
     {
         let __list_subject = fieldExprs;
-        if __list_subject.is_empty() {
-            Ok(aver_rt::AverList::empty())
-        } else {
-            if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                {
-                    let (fname, expr) = pair.clone();
-                    crate::aver_generated::domain::eval::core::evalRecordFieldOneSlot(
-                        fname, expr, &rest, env, slotMap, fns,
-                    )
-                }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
+        match aver_rt::list_uncons(__list_subject) {
+            Some((pair, rest)) => {
+                let (fname, expr) = pair.clone();
+                crate::aver_generated::domain::eval::core::evalRecordFieldOneSlot(
+                    fname, expr, &rest, env, slotMap, fns,
+                )
             }
+            None => Ok(aver_rt::AverList::empty()),
         }
     }
 }
@@ -5448,14 +5379,11 @@ pub fn evalArgsSlot(
     crate::cancel_checkpoint();
     {
         let __list_subject = exprs;
-        if __list_subject.is_empty() {
-            Ok(aver_rt::AverList::empty())
-        } else {
-            if let Some((e0, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((e0, rest)) => {
                 aver_list_match!(rest, [] => crate::aver_generated::domain::eval::core::evalArgsSlot1(e0, env, slotMap, fns), [e1, rest2] => { aver_list_match!(rest2, [] => crate::aver_generated::domain::eval::core::evalArgsSlot2(e0, e1, env, slotMap, fns), [e2, rest3] => { { let __list_subject = rest3; if __list_subject.is_empty() { crate::aver_generated::domain::eval::core::evalArgsSlot3(e0, e1, e2, env, slotMap, fns) } else { { let __arg10 @ _ = <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty(); crate::aver_generated::domain::eval::core::evalArgsSlotRev(exprs, &env, slotMap, fns, __arg10) } } } }) })
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => Ok(aver_rt::AverList::empty()),
         }
     }
 }
@@ -5522,10 +5450,8 @@ pub fn evalArgsSlotRev(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return Ok((acc).reverse_owned());
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
                         e.clone(),
                         env.clone(),
@@ -5544,8 +5470,9 @@ pub fn evalArgsSlotRev(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok((acc).reverse_owned());
                 }
             }
         }
@@ -5566,10 +5493,8 @@ pub fn evalArgsMapToSlotEnv(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return Ok(acc);
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExpr(
                         e.clone(),
                         env.clone(),
@@ -5593,8 +5518,9 @@ pub fn evalArgsMapToSlotEnv(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(acc);
                 }
             }
         }
@@ -5616,10 +5542,8 @@ pub fn evalArgsSlotToSlotEnv(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            if __list_subject.is_empty() {
-                return Ok(acc);
-            } else {
-                if let (Some(e), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
                         e.clone(),
                         env.clone(),
@@ -5644,8 +5568,9 @@ pub fn evalArgsSlotToSlotEnv(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(acc);
                 }
             }
         }
@@ -5708,8 +5633,7 @@ pub fn evalIndependentProductSlot(
     )?;
     if unwrap {
         {
-            let __arg6 @ _ =
-                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            let __arg6 @ _ = aver_rt::list_builder_new(0usize);
             crate::aver_generated::domain::eval::core::unwrapProductResults__collected(
                 &items, __arg6,
             )
@@ -5731,14 +5655,11 @@ pub fn evalIndependentItemsSlot(
     crate::cancel_checkpoint();
     {
         let __list_subject = exprs;
-        if __list_subject.is_empty() {
-            Ok(aver_rt::AverList::empty())
-        } else {
-            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((a, rest)) => {
                 aver_list_match!(rest, [] => match crate::aver_generated::domain::eval::core::evalExprSlot(a.clone(), env, slotMap, fns) { Ok(va @ _) => { Ok(aver_rt::AverList::prepend_owned(va, aver_rt::AverList::empty())) }, Err(e @ _) => { Err(e) } }, [b, rest2] => { { let __list_subject = rest2; if __list_subject.is_empty() { { let (va, vb) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let __r0 = crate::aver_generated::domain::eval::core::evalExprSlot(a.clone(), env.clone(), slotMap, fns); crate::aver_replay::set_effect_branch(1); let __r1 = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns); crate::aver_replay::exit_effect_group(); match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|__s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let __h0 = { let env = env.clone(); let slotMap = slotMap; let fns = fns; let a = a; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExprSlot(a.clone(), env.clone(), slotMap, fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let __h1 = { let env = env; let slotMap = slotMap; let fns = fns; let b = b; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __b0 = __h0.join().unwrap(); let __b1 = __h1.join().unwrap(); match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok(aver_rt::AverList::from_vec(vec![va, vb])) } } else { { let (leftExprs, rightExprs) = { let __arg16 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty(); { let __arg17 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty(); crate::aver_generated::domain::eval::core::splitIndependentExprs(exprs, __arg16, __arg17, true) } }; { let (leftVals, rightVals) = if crate::aver_replay::is_effect_tracking_active() { crate::aver_replay::enter_effect_group(); crate::aver_replay::set_effect_branch(0); let __r0 = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&leftExprs, env.clone(), slotMap, fns); crate::aver_replay::set_effect_branch(1); let __r1 = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&rightExprs, env, slotMap, fns); crate::aver_replay::exit_effect_group(); match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }? } else { { let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); std::thread::scope(|__s| { let __parallel_scope0 = __parallel_scope.clone(); let __cancel_flag0 = __cancel_flag.clone(); let __h0 = { let env = env.clone(); let slotMap = slotMap; let fns = fns; let leftExprs = leftExprs; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope0.clone(), move || { crate::run_cancelable_branch(__cancel_flag0.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&leftExprs, env.clone(), slotMap, fns); if let Err(_) = &__result { __cancel_flag0.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __parallel_scope1 = __parallel_scope.clone(); let __cancel_flag1 = __cancel_flag.clone(); let __h1 = { let env = env; let slotMap = slotMap; let fns = fns; let rightExprs = rightExprs; aver_rt::spawn_scoped(__s, move || crate::aver_replay::with_parallel_scope_context(__parallel_scope1.clone(), move || { crate::run_cancelable_branch(__cancel_flag1.clone(), move || { let __result = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(&rightExprs, env, slotMap, fns); if let Err(_) = &__result { __cancel_flag1.store(true, std::sync::atomic::Ordering::Relaxed); } __result }) })) }; let __b0 = __h0.join().unwrap(); let __b1 = __h1.join().unwrap(); match (__b0, __b1) { (crate::ParallelBranch::Completed(__r0), crate::ParallelBranch::Completed(__r1)) => match (__r0, __r1) { (Ok(__v0), Ok(__v1)) => Ok((__v0, __v1)), (__r0, __r1) => { if let Err(__err) = __r0 { Err(__err) } else if let Err(__err) = __r1 { Err(__err) } else { unreachable!("independent product unwrap requires Result branches") } } }, (__b0, __b1) => { if let crate::ParallelBranch::Completed(Err(__err)) = __b0 { Err(__err) } else if let crate::ParallelBranch::Completed(Err(__err)) = __b1 { Err(__err) } else { panic!("independent product branch cancelled by sibling branch") } } } })? }}; Ok({ let __arg18 @ _ = <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty(); crate::aver_generated::domain::eval::core::interleaveIndependentVals(&leftVals, &rightVals, true, __arg18) }) } } } } })
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => Ok(aver_rt::AverList::empty()),
         }
     }
 }
@@ -5755,54 +5676,51 @@ pub fn unwrapProductResults__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            if __list_subject.is_empty() {
-                return Ok(crate::aver_generated::domain::value::Val::ValTuple(
-                    crate::aver_generated::domain::value::Val__ValTuple(
-                        aver_rt::list_builder_finalize(acc),
-                    ),
-                ));
-            } else {
-                if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __t = v;
-                        match __t.view() {
-                            crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
-                                let x = &__x_fields.0;
-                                {
-                                    let __tco0 = rest;
-                                    let __tco1 = aver_rt::list_builder_push(acc, x.clone());
-                                    __hold0 = __tco0;
-                                    items = &__hold0;
-                                    acc = __tco1;
-                                    continue;
-                                }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((v, rest)) => {
+                    let __t = v;
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
+                            let x = &__x_fields.0;
+                            {
+                                let __tco0 = rest;
+                                let __tco1 = aver_rt::list_builder_push(acc, x.clone());
+                                __hold0 = __tco0;
+                                items = &__hold0;
+                                acc = __tco1;
+                                continue;
                             }
-                            crate::aver_generated::domain::value::Val__view::ValErr(__e_fields) => {
-                                let e = &__e_fields.0;
-                                {
-                                    let __t = e;
-                                    match __t.view() {
-                                        crate::aver_generated::domain::value::Val__view::ValStr(
-                                            __msg_fields,
-                                        ) => {
-                                            let msg = __msg_fields.0.clone();
-                                            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(msg));
-                                        }
-                                        _ => {
-                                            return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(::aver_rt::str_lit!("propagated error")));
-                                        }
+                        }
+                        crate::aver_generated::domain::value::Val__view::ValErr(__e_fields) => {
+                            let e = &__e_fields.0;
+                            {
+                                let __t = e;
+                                match __t.view() {
+                                    crate::aver_generated::domain::value::Val__view::ValStr(
+                                        __msg_fields,
+                                    ) => {
+                                        let msg = __msg_fields.0.clone();
+                                        return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(msg));
+                                    }
+                                    _ => {
+                                        return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(::aver_rt::str_lit!("propagated error")));
                                     }
                                 }
                             }
-                            _ => {
-                                return Err(::aver_rt::str_lit!(
-                                    "?! operator requires all elements to be Result values"
-                                ));
-                            }
+                        }
+                        _ => {
+                            return Err(::aver_rt::str_lit!(
+                                "?! operator requires all elements to be Result values"
+                            ));
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(crate::aver_generated::domain::value::Val::ValTuple(
+                        crate::aver_generated::domain::value::Val__ValTuple(
+                            aver_rt::list_builder_finalize(acc),
+                        ),
+                    ));
                 }
             }
         }
@@ -5822,10 +5740,8 @@ pub fn collectFastForwardArgs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = slotArgs;
-            if __list_subject.is_empty() {
-                return Ok(aver_rt::list_builder_finalize(acc));
-            } else {
-                if let Some((slot, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((slot, rest)) => {
                     match crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot) {
                         Ok(v @ _) => {
                             let __tco0 = rest;
@@ -5839,8 +5755,9 @@ pub fn collectFastForwardArgs__collected(
                             return Err(e);
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(aver_rt::list_builder_finalize(acc));
                 }
             }
         }
