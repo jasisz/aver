@@ -597,6 +597,7 @@ pub(super) fn emit_module_with(
     // allocation so the registry can reserve indices in declaration
     // order.
     let mut builtin_registry = BuiltinRegistry::new();
+    builtin_registry.slices_compared_in_place = !certify;
     let mut effect_registry = EffectRegistry::new();
     let mut eq_helpers_registry = EqHelperRegistry::new();
     let mut hash_helpers_registry = HashHelperRegistry::new();
@@ -7499,7 +7500,8 @@ fn discover_builtins_in_expr(
                         )
                     )
                 };
-                if matches!(op, Op::Eq | Op::Neq)
+                if builtins.slices_compared_in_place
+                    && matches!(op, Op::Eq | Op::Neq)
                     && (indexed_slice(&l.node) || indexed_slice(&r.node))
                 {
                     builtins.register(BuiltinName::StringIndexSliceEq);

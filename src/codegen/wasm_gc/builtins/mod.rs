@@ -737,6 +737,10 @@ impl BuiltinName {
 pub(super) struct BuiltinRegistry {
     /// Insertion order — wasm fn indices and type indices follow it.
     order: Vec<BuiltinName>,
+    /// Whether an indexed slice compared with a string gets
+    /// `__str_index_slice_eq`. Off under `--certify`, where a new helper
+    /// would move the indices the certified functions call.
+    pub(super) slices_compared_in_place: bool,
     wasm_fn_idx: HashMap<BuiltinName, u32>,
     wasm_type_idx: HashMap<BuiltinName, u32>,
 }

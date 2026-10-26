@@ -339,7 +339,9 @@ verify edges
 
 /// `String.split` on a one-byte separator (searched for from the end on
 /// wasm-gc) gives the parts the search from the start gives, empty ones
-/// included; a longer separator keeps the search from the start.
+/// included; a longer separator keeps the search from the start; the empty
+/// separator gives an empty part, every character whole, and an empty part
+/// (wasm-gc used to give bytes, with no empty parts).
 #[test]
 fn split_on_one_byte_keeps_every_part() {
     assert_all_pass_on_both(
@@ -358,8 +360,11 @@ verify parts
     parts("a—b—", "—") => ["a", "b", ""]
     parts("aaa", "aa") => ["", "a"]
     parts("abcabc", "bc") => ["a", "a", ""]
+    parts("ab", "") => ["", "a", "b", ""]
+    parts("", "") => ["", ""]
+    parts("ż😀", "") => ["", "ż", "😀", ""]
 "#,
-        9,
+        12,
     );
 }
 

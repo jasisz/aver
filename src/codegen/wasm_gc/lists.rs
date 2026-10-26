@@ -1462,40 +1462,55 @@ fn emit_string_split(
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(5));
 
-    // Empty sep: per-byte split.
+    // Empty sep: an empty part, every character, an empty part (as the VM
+    // splits on ""). Locals: 5 = the scan, 6 = the character's length.
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
+    push_part(&mut f, &[Instruction::I32Const(0)]);
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32GeU);
-    f.instruction(&Instruction::BrIf(1));
-    // part = array.new_default 1
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::ArrayNewDefault(s_idx));
-    f.instruction(&Instruction::LocalSet(7));
-    // part[0] = s[search_pos]
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::ArrayGetU(s_idx));
-    f.instruction(&Instruction::ArraySet(s_idx));
-    // acc = cons(part, acc)
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::StructNew(list_idx));
-    f.instruction(&Instruction::LocalSet(8));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(5));
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End); // loop
-    f.instruction(&Instruction::End); // block
-    // reverse(acc); return
+    for i in [
+        Instruction::LocalGet(5),
+        Instruction::LocalGet(2),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // 1 + the lead byte's steps past 0xC0, 0xE0 and 0xF0.
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(5),
+        Instruction::ArrayGetU(s_idx),
+        Instruction::LocalTee(9),
+        Instruction::I32Const(0xC0),
+        Instruction::I32GeU,
+        Instruction::LocalGet(9),
+        Instruction::I32Const(0xE0),
+        Instruction::I32GeU,
+        Instruction::I32Add,
+        Instruction::LocalGet(9),
+        Instruction::I32Const(0xF0),
+        Instruction::I32GeU,
+        Instruction::I32Add,
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(6),
+    ] {
+        f.instruction(&i);
+    }
+    push_part(&mut f, &[Instruction::LocalGet(5)]);
+    for i in [
+        Instruction::LocalGet(5),
+        Instruction::LocalGet(6),
+        Instruction::I32Add,
+        Instruction::LocalSet(5),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::I32Const(0),
+        Instruction::LocalSet(6),
+    ] {
+        f.instruction(&i);
+    }
+    push_part(&mut f, &[Instruction::I32Const(0)]);
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::Call(reverse_fn_idx));
     f.instruction(&Instruction::Return);
