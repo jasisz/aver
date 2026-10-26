@@ -1379,7 +1379,10 @@ fn emit_vec_from_list(canonical: &str, registry: &TypeRegistry) -> Result<Functi
 
 /// `string_split : (String, String) -> List<String>`. Builds the list
 /// LIFO (each chunk prepended), then calls the supplied
-/// `List<String>.reverse` to flip into source order.
+/// `List<String>.reverse` to flip into source order. A one-byte separator
+/// is searched for from the end instead, byte by byte, so the parts come
+/// out in source order: it cannot overlap itself, so they are the parts
+/// the search from the start finds.
 fn emit_string_split(
     registry: &TypeRegistry,
     reverse_fn_idx: u32,
@@ -1415,6 +1418,35 @@ fn emit_string_split(
         (1, ValType::I32), // 9: i
         (1, ValType::I32), // 10: found
     ]);
+    // Prepend `s[start, start + part_len)` to `acc`.
+    let push_part = |f: &mut Function, start: &[Instruction<'static>]| {
+        let copy = Instruction::ArrayCopy {
+            array_type_index_dst: s_idx,
+            array_type_index_src: s_idx,
+        };
+        let head = [
+            Instruction::LocalGet(6),
+            Instruction::ArrayNewDefault(s_idx),
+            Instruction::LocalSet(7),
+            Instruction::LocalGet(6),
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(7),
+            Instruction::I32Const(0),
+            Instruction::LocalGet(0),
+        ];
+        let tail = [
+            Instruction::LocalGet(6),
+            copy,
+            Instruction::End,
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(8),
+            Instruction::StructNew(list_idx),
+            Instruction::LocalSet(8),
+        ];
+        for i in head.iter().chain(start).chain(tail.iter()) {
+            f.instruction(i);
+        }
+    };
 
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::ArrayLen);
@@ -1468,6 +1500,70 @@ fn emit_string_split(
     f.instruction(&Instruction::Call(reverse_fn_idx));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End); // if (sep empty)
+
+    // One-byte sep. Locals: 9 = the byte, 5 = the scan, 4 = the end of
+    // the part being scanned.
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    for i in [
+        Instruction::LocalGet(1),
+        Instruction::I32Const(0),
+        Instruction::ArrayGetU(s_idx),
+        Instruction::LocalSet(9),
+        Instruction::LocalGet(2),
+        Instruction::LocalTee(4),
+        Instruction::LocalSet(5),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(5),
+        Instruction::I32Eqz,
+        Instruction::BrIf(1),
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(5),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalTee(5),
+        Instruction::ArrayGetU(s_idx),
+        Instruction::LocalGet(9),
+        Instruction::I32Eq,
+        Instruction::If(BlockType::Empty),
+        // The part after the byte: [scan + 1, end).
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(5),
+        Instruction::I32Sub,
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(6),
+    ] {
+        f.instruction(&i);
+    }
+    push_part(
+        &mut f,
+        &[
+            Instruction::LocalGet(5),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+        ],
+    );
+    for i in [
+        Instruction::LocalGet(5),
+        Instruction::LocalSet(4),
+        Instruction::End,
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // The first part: [0, end).
+        Instruction::LocalGet(4),
+        Instruction::LocalSet(6),
+    ] {
+        f.instruction(&i);
+    }
+    push_part(&mut f, &[Instruction::I32Const(0)]);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
 
     // Non-empty sep.
     f.instruction(&Instruction::Block(BlockType::Empty));
@@ -1525,28 +1621,7 @@ fn emit_string_split(
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::LocalSet(6));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::ArrayNewDefault(s_idx));
-    f.instruction(&Instruction::LocalSet(7));
-    // copy if non-zero
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::ArrayCopy {
-        array_type_index_dst: s_idx,
-        array_type_index_src: s_idx,
-    });
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::StructNew(list_idx));
-    f.instruction(&Instruction::LocalSet(8));
+    push_part(&mut f, &[Instruction::LocalGet(4)]);
     // search_pos += sep_len; part_start = search_pos. Then loop again.
     // Stack at this `Br`: if-block (0), outer-loop (1), outer-block (2).
     // We want to continue iterating, i.e. jump to the outer-loop
@@ -1574,27 +1649,7 @@ fn emit_string_split(
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::LocalSet(6));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::ArrayNewDefault(s_idx));
-    f.instruction(&Instruction::LocalSet(7));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::ArrayCopy {
-        array_type_index_dst: s_idx,
-        array_type_index_src: s_idx,
-    });
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::StructNew(list_idx));
-    f.instruction(&Instruction::LocalSet(8));
+    push_part(&mut f, &[Instruction::LocalGet(4)]);
 
     // reverse(acc); return.
     f.instruction(&Instruction::LocalGet(8));
