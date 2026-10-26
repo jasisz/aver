@@ -214,6 +214,151 @@ fn main() -> Unit
     );
 }
 
+/// A map takes a bucket from the low bits of a key's hash, and a Small
+/// `Int` used to hash as `s ^ (s >>> 32)`: the keys 0, 1, 2, … filled one
+/// run of neighbouring buckets, `-1 - k` shared `k`'s hash, and multiples
+/// of a power of two shared a bucket. `__aint_hash` mixes the word now.
+/// Iteration is sorted by key, so nothing a program prints may change: this
+/// runs keys close together, below zero, spaced by 4096, at both ends of a
+/// machine word and past it, as record fields, and behind a bounded carrier,
+/// through `set`, `get`, `has`, `remove`, `keys`, `values`, `entries` and `==`.
+#[test]
+fn int_keys_read_the_same_however_they_are_hashed() {
+    assert_vm_and_wasm_gc(
+        "map-int-keys",
+        r#"
+module Main
+    intent = "Int keys that sit close together, below zero, at the ends of a machine word and past it, in records and behind a bounded carrier."
+    exposes opaque [Slot]
+    effects [Console.print]
+
+record Cell
+    x: Int
+    y: Int
+
+fn fill(m: Map<Int, Int>, from: Int, to: Int, step: Int) -> Map<Int, Int>
+    ? "Maps from, from + step, ... below to, each to twice itself."
+    match from >= to
+        true -> m
+        false -> fill(Map.set(m, from, from * 2), from + step, to, step)
+
+fn drop(m: Map<Int, Int>, from: Int, to: Int, step: Int) -> Map<Int, Int>
+    ? "Removes from, from + step, ... below to."
+    match from >= to
+        true -> m
+        false -> drop(Map.remove(m, from), from + step, to, step)
+
+fn found(m: Map<Int, Int>, from: Int, to: Int, acc: Int) -> Int
+    ? "Sums the values of from..to-1, counting -1 for each absent key."
+    match from >= to
+        true -> acc
+        false -> found(m, from + 1, to, acc + Option.withDefault(Map.get(m, from), 0 - 1))
+
+fn at(m: Map<Int, Int>, k: Int) -> Int
+    ? "The value at k, -1 when absent."
+    Option.withDefault(Map.get(m, k), 0 - 1)
+
+fn total(ks: List<Int>, acc: Int) -> Int
+    ? "The sum of a list."
+    match ks
+        [] -> acc
+        [k, ..rest] -> total(rest, acc + k)
+
+fn pairs(es: List<Tuple<Int, Int>>, acc: Int) -> Int
+    ? "Folds the entries in order: acc * 7 + key * 3 + value."
+    match es
+        [] -> acc
+        [e, ..rest] -> match e
+            (k, v) -> pairs(rest, acc * 7 + k * 3 + v)
+
+fn grid(m: Map<Cell, Int>, x: Int, y: Int, n: Int) -> Map<Cell, Int>
+    ? "Maps every cell of an n by n grid to x * n + y."
+    match x >= n
+        true -> m
+        false -> match y >= n
+            true -> grid(m, x + 1, 0, n)
+            false -> grid(Map.set(m, Cell(x = x, y = y), x * n + y), x, y + 1, n)
+
+fn cells(m: Map<Cell, Int>, x: Int, n: Int, acc: Int) -> Int
+    ? "Sums the diagonal cells and one cell off the grid per row."
+    match x >= n
+        true -> acc
+        false -> cells(m, x + 1, n, acc + Option.withDefault(Map.get(m, Cell(x = x, y = x)), 0) + Option.withDefault(Map.get(m, Cell(x = x, y = n)), 1000))
+
+record Slot
+    value: Int
+
+record Place
+    slot: Slot
+    row: Int
+
+fn slotOf(n: Int) -> Result<Slot, String>
+    ? "A slot between 0 and 5000."
+    match Bool.and(n >= 0, n <= 5000)
+        true -> Result.Ok(Slot(value = n))
+        false -> Result.Err("out of range")
+
+fn slot(n: Int) -> Slot
+    ? "The slot n, or slot 0."
+    match slotOf(n)
+        Result.Ok(s) -> s
+        Result.Err(_) -> Slot(value = 0)
+
+fn fillSlots(m: Map<Slot, Int>, i: Int, n: Int) -> Map<Slot, Int>
+    ? "Maps slots i..n-1 to their square."
+    match i >= n
+        true -> m
+        false -> fillSlots(Map.set(m, slot(i), i * i), i + 1, n)
+
+fn places(m: Map<Place, Int>, i: Int, n: Int) -> Map<Place, Int>
+    ? "Maps the places (i, i mod 7) for i below n to i."
+    match i >= n
+        true -> m
+        false -> places(Map.set(m, Place(slot = slot(i), row = Int.mod(i, 7)), i), i + 1, n)
+
+fn dropSlots(m: Map<Slot, Int>, i: Int, n: Int) -> Map<Slot, Int>
+    ? "Removes every second slot from i below n."
+    match i >= n
+        true -> m
+        false -> dropSlots(Map.remove(m, slot(i)), i + 2, n)
+
+fn main() -> Unit
+    ! [Console.print]
+    dense = fill({}, 0, 3000, 1)
+    thinned = drop(dense, 0, 3000, 3)
+    Console.print("{Map.len(dense)} {found(dense, 2990, 3010, 0)} {Map.len(thinned)} {found(thinned, 0, 9, 0)} {Map.has(thinned, 2999)} {Map.has(thinned, 2997)}")
+    Console.print("{total(Map.keys(thinned), 0)} {total(Map.values(thinned), 0)} {pairs(Map.entries(drop(dense, 0, 2990, 1)), 0)}")
+    signed = fill({}, 0 - 1500, 1500, 1)
+    Console.print("{Map.len(signed)} {at(signed, 0 - 1)} {at(signed, 0)} {found(signed, 0 - 1502, 0 - 1497, 0)} {total(Map.keys(drop(signed, 0 - 1500, 1490, 1)), 0)}")
+    strided = fill({}, 0, 4096 * 1024, 4096)
+    Console.print("{Map.len(strided)} {Map.has(strided, 4096 * 1023)} {Map.has(strided, 4096 * 1023 + 1)} {Map.len(drop(strided, 0, 4096 * 1024, 8192))}")
+    top = 9223372036854775807
+    bottom = 0 - 9223372036854775807 - 1
+    ends = Map.set(Map.set(Map.set(Map.set(Map.set({}, top, 1), bottom, 2), top + 1, 3), bottom - 1, 4), top * top, 5)
+    Console.print("{Map.len(ends)} {at(ends, 9223372036854775807)} {at(ends, 0 - 9223372036854775808)} {at(ends, 9223372036854775808)} {at(ends, 0 - 9223372036854775809)} {at(ends, top * top)} {at(ends, top - 1)} {List.len(Map.keys(Map.remove(ends, top + 1)))} {total(Map.keys(ends), 0) == top + bottom + top + 1 + bottom - 1 + top * top}")
+    a = fill({}, 0, 500, 1)
+    b = drop(fill(fill({}, 250, 600, 1), 0, 250, 1), 500, 600, 1)
+    Console.print("{a == b} {a == Map.set(b, 7, 0)} {Map.remove(a, 499) == Map.remove(b, 499)} {Map.set(a, top + 1, 0) == Map.set(b, top + 1, 0)} {Map.set(a, top + 1, 0) == Map.set(b, top + 2, 0)}")
+    g = grid({}, 0, 0, 60)
+    Console.print("{Map.len(g)} {cells(g, 0, 60, 0)} {Option.withDefault(Map.get(g, Cell(x = 59, y = 0)), 0 - 1)} {Map.len(Map.remove(g, Cell(x = 3, y = 4)))}")
+    m = fillSlots({}, 0, 4000)
+    d = dropSlots(m, 0, 4000)
+    p = places({}, 0, 3000)
+    Console.print("{Map.len(m)} {Option.withDefault(Map.get(m, slot(3999)), 0 - 1)} {Map.len(d)} {Map.has(d, slot(10))} {Map.has(d, slot(11))} {Option.withDefault(Map.get(d, slot(4001)), 0 - 1)}")
+    Console.print("{Map.len(p)} {Option.withDefault(Map.get(p, Place(slot = slot(2999), row = 3)), 0 - 1)} {Option.withDefault(Map.get(p, Place(slot = slot(2999), row = 4)), 0 - 1)} {Map.len(Map.remove(p, Place(slot = slot(5), row = 5)))}")
+"#,
+        "3000 59880 2000 51 true false\n\
+         3000000 6000000 703873392265\n\
+         3000 -2 0 -8996 14945\n\
+         1024 true false 512\n\
+         5 1 2 3 4 5 -1 4 true\n\
+         true false true true false\n\
+         3600 167970 3540 3599\n\
+         4000 15992001 2000 false true -1\n\
+         3000 2999 -1 2999",
+    );
+}
+
 /// The printed WAT of one `aver compile --target wasm-gc` of `source`.
 fn wat_of(source: &str) -> String {
     let mut items = aver::source::parse_source(source).expect("parse");
