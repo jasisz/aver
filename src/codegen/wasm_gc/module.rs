@@ -3300,74 +3300,22 @@ pub(super) fn emit_module_with(
         }
     }
 
-    // Which fns may compute `Int` trees on `i64` (`body/from_mir/int_tree.rs`).
-    // Not a fn the certificate plan printer admits when emitted without them:
-    // the wall lowers its plan the one ordinary way, so its bytes must stay
-    // that way. Nor a fn of the Int carrier-binop signature: the wall's
-    // host-role scan reads those as the runtime's arithmetic helpers.
-    let trees_for: Vec<bool> = {
-        let cert_layout = super::cert_layout::CertLayout {
-            registry: &registry,
-            fn_map: &fn_map,
-            symbol_table: &symbol_table,
-            fn_idx: resolved_fn_defs
-                .iter()
-                .enumerate()
-                .map(|(i, rfd)| (rfd.fn_id, import_count + 1 + i as u32))
-                .collect(),
-            builtins: &mir_program.builtins,
-        };
-        let mut scratch_types = crate::codegen::cert::TypeTableBuilder::new(&cert_layout);
-        let mut out = Vec::with_capacity(fn_defs.len());
-        for (i, rfd) in resolved_fn_defs.iter().enumerate() {
-            let Some(mir_fn) = mir_fn_for[i] else {
-                out.push(false);
-                continue;
-            };
-            let is_int = |t: &crate::types::Type| matches!(t, crate::types::Type::Int);
-            let carrier_binop = registry.bignum
-                && rfd.params.len() == 2
-                && rfd.params.iter().all(|(_, t)| is_int(t))
-                && is_int(&rfd.return_type)
-                && !mir_fn.repr.bare_return
-                && !mir_fn.repr.bare_params.iter().any(|b| *b);
-            if carrier_binop || !registry.bignum {
-                out.push(false);
-                continue;
-            }
-            super::body::set_int_trees_allowed(false);
-            let mut probe = Function::new([]);
-            let extra = emit_fn_body_via_mir(
-                &mut probe,
-                rfd,
-                mir_fn,
-                &mir_program,
-                &fn_map,
-                import_count + 1 + i as u32,
-                &registry,
-                &symbol_table,
-                &effect_idx_lookup,
-                &caller_fn_collector,
-                wasip2_lowering.as_ref(),
-            );
-            super::body::set_int_trees_allowed(true);
-            let admitted = match extra? {
-                Some(extra) => crate::codegen::cert::print_fn(
-                    mir_fn,
-                    rfd,
-                    &extra,
-                    &cert_layout,
-                    &mut scratch_types,
-                )
-                .is_ok(),
-                None => false,
-            };
-            out.push(!admitted);
-        }
-        out
-    };
-
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
+    // Whether each fn computes its `Int` trees on `i64` first (see
+    // `int_trees_allowed`), decided in the pre-pass below.
+    let mut trees_for: Vec<bool> = vec![false; fn_defs.len()];
+    let trees_layout = super::cert_layout::CertLayout {
+        registry: &registry,
+        fn_map: &fn_map,
+        symbol_table: &symbol_table,
+        fn_idx: resolved_fn_defs
+            .iter()
+            .enumerate()
+            .map(|(i, rfd)| (rfd.fn_id, import_count + 1 + i as u32))
+            .collect(),
+        builtins: &mir_program.builtins,
+    };
+    let mut trees_types = crate::codegen::cert::TypeTableBuilder::new(&trees_layout);
     // Why each fn the body emitter gave up on was left behind, in words.
     let mut stub_reasons: Vec<Option<String>> = vec![None; fn_defs.len()];
 
@@ -3395,8 +3343,9 @@ pub(super) fn emit_module_with(
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         let mut probe = Function::new([]);
-        super::body::set_int_trees_allowed(trees_for[i]);
-        let used_mir = match mir_fn_for[i] {
+        // Without `Int` trees: the plan printer reads this body's locals.
+        super::body::set_int_trees_allowed(false);
+        let emitted = match mir_fn_for[i] {
             Some(mir_fn) => emit_fn_body_via_mir(
                 &mut probe,
                 &resolved_fn_defs[i],
@@ -3409,11 +3358,21 @@ pub(super) fn emit_module_with(
                 &effect_idx_lookup,
                 &caller_fn_collector,
                 wasip2_lowering.as_ref(),
-            )?
-            .is_some(),
-            None => false,
+            )?,
+            None => None,
         };
         super::body::set_int_trees_allowed(true);
+        let used_mir = emitted.is_some();
+        trees_for[i] = match (mir_fn_for[i], &emitted) {
+            (Some(mir_fn), Some(extra)) => int_trees_allowed(
+                mir_fn,
+                &resolved_fn_defs[i],
+                extra,
+                &trees_layout,
+                &mut trees_types,
+            ),
+            _ => false,
+        };
         mir_dispatch[i] = used_mir;
         if !used_mir {
             stub_reasons[i] = Some(super::body::take_unsupported_reason().unwrap_or_else(|| {
@@ -6444,6 +6403,36 @@ pub(super) fn emit_module_with(
         registry.aint_eq_fn_idx.filter(|_| registry.bignum),
     );
     Ok((bytes, mir_emitted, cert_plans))
+}
+
+/// Whether `mir_fn` may compute its `Int` trees on `i64` first
+/// (`body/from_mir/int_tree.rs`). `extra` are the locals of its body emitted
+/// without them. Two kinds of fn keep the ordinary lowering, so a
+/// certificate reads the same bytes it reads today:
+///
+/// - a fn the certificate plan printer admits: the certificate checker
+///   lowers the printed plan the one ordinary way and compares the result
+///   with the emitted code, the rule `ir::cert_shape` keeps for the
+///   fabricating passes;
+/// - a fn taking two `Int`s and returning an `Int`: the certificate checker
+///   finds the runtime's `Int` add, sub and mul helpers as the functions of
+///   that type whose first machine arithmetic is an add, a sub or a mul, so
+///   a user fn of that type computing on `i64` would look like a second
+///   helper, and no module holding one could be certified.
+fn int_trees_allowed(
+    mir_fn: &crate::ir::mir::MirFn,
+    rfd: &crate::ir::hir::ResolvedFnDef,
+    extra: &[ValType],
+    layout: &super::cert_layout::CertLayout<'_>,
+    types: &mut crate::codegen::cert::TypeTableBuilder,
+) -> bool {
+    let is_int = |t: &crate::types::Type| matches!(t, crate::types::Type::Int);
+    let int_binop_type = rfd.params.len() == 2
+        && rfd.params.iter().all(|(_, t)| is_int(t))
+        && is_int(&rfd.return_type);
+    layout.registry.bignum
+        && !int_binop_type
+        && crate::codegen::cert::print_fn(mir_fn, rfd, extra, layout, types).is_err()
 }
 
 fn emit_user_types(
