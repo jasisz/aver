@@ -75,7 +75,9 @@ pub(super) fn try_emit(expr: Node<'_>, ctx: &MirEmitCtx<'_>) -> Option<String> {
                 BinOp::Gt => ">",
                 BinOp::Lte => "<=",
                 BinOp::Gte => ">=",
-                _ if is_int(expr) && weight(expr, ctx) >= 2 => return emit(expr, &[expr], None, ctx),
+                _ if is_int(expr) && weight(expr, ctx) >= 2 => {
+                    return emit(expr, &[expr], None, ctx);
+                }
                 _ => return None,
             };
             let roots: [Node<'_>; 2] = [&b.node.lhs, &b.node.rhs];
@@ -131,7 +133,12 @@ fn emit(
         .collect::<Option<Vec<_>>>()?;
     HOISTED.with(|h| {
         let mut h = h.borrow_mut();
-        h.extend(ahead.exact.iter().map(|(k, code)| (*k, (code.clone(), false))))
+        h.extend(
+            ahead
+                .exact
+                .iter()
+                .map(|(k, code)| (*k, (code.clone(), false))),
+        )
     });
     EXACT.with(|d| d.set(d.get() + 1));
     let exact = emit_mir_expr(whole, ctx);

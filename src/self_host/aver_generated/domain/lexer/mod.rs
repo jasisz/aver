@@ -1634,9 +1634,16 @@ pub fn processAfterNewlineToken(
             let n = n.clone();
             if (n < aver_rt::AverInt::from_i64(0)) {
                 crate::aver_generated::domain::lexer::emitIndentChange(
-                    aver_rt::AverInt::from_i64(0)
-                        .sub(&n)
-                        .sub(&aver_rt::AverInt::from_i64(1)),
+                    ({
+                        let __word: Option<i64> =
+                            (|| Some(((0i64).checked_sub((n).to_i64()?)?).checked_sub((1i64))?))();
+                        match __word {
+                            Some(__word) => aver_rt::AverInt::from_i64(__word),
+                            None => aver_rt::AverInt::from_i64(0)
+                                .sub(&n)
+                                .sub(&aver_rt::AverInt::from_i64(1)),
+                        }
+                    }),
                     rest,
                     stack,
                 )
@@ -2577,9 +2584,17 @@ pub fn tokenizeNewline__indexed(
             crate::aver_generated::domain::token::Token::TkNewline,
             aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkInt(
-                    aver_rt::AverInt::from_i64(0)
-                        .sub(&indent)
-                        .sub(&aver_rt::AverInt::from_i64(1)),
+                    ({
+                        let __word: Option<i64> = (|| {
+                            Some(((0i64).checked_sub((indent).to_i64()?)?).checked_sub((1i64))?)
+                        })();
+                        match __word {
+                            Some(__word) => aver_rt::AverInt::from_i64(__word),
+                            None => aver_rt::AverInt::from_i64(0)
+                                .sub(&indent)
+                                .sub(&aver_rt::AverInt::from_i64(1)),
+                        }
+                    }),
                 ),
                 crate::aver_generated::domain::lexer::tokenize__indexed(src, newPos, __str_index),
             ),

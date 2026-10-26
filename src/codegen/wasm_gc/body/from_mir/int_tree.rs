@@ -92,7 +92,9 @@ pub(crate) fn pooled_literal(n: i64) -> Option<u32> {
 fn op_of<'e>(e: Node<'e>, ctx: &EmitCtx<'_>) -> Option<(Op, Node<'e>, Option<Node<'e>>)> {
     let found = int_tree::op_of(e, ctx.mir_builtins.unwrap_or_default())?;
     let raw = match &e.node {
-        MirExpr::BinOp(b) => mir_int_binop_is_raw(&b.node, ctx) || mir_renders_raw_i64(&e.node, ctx),
+        MirExpr::BinOp(b) => {
+            mir_int_binop_is_raw(&b.node, ctx) || mir_renders_raw_i64(&e.node, ctx)
+        }
         MirExpr::Neg(x) => mir_renders_raw_i64(&x.node, ctx),
         _ => false,
     };

@@ -3751,7 +3751,14 @@ pub fn userCtorTagOffsetLoop(
 /// Update the user constructor rolling hash and keep it in a bounded range.
 pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    let next @ _ = acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code);
+    let next @ _ = ({
+        let __word: Option<i64> =
+            (|| Some((((acc).to_i64()?).checked_mul((131i64))?).checked_add((code).to_i64()?)?))();
+        match __word {
+            Some(__word) => aver_rt::AverInt::from_i64(__word),
+            None => acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code),
+        }
+    });
     (next)
         .rem_euclid(&(aver_rt::AverInt::from_i64(1000003)))
         .unwrap()
