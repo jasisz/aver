@@ -1,0 +1,24 @@
+module M
+    intent = "Two Ints to an Int computed on machine words beside the runtime's own Int helpers."
+    effects [Console]
+
+fn poly(a: Int, b: Int, c: Int) -> Int
+    ? "A fn the certificate plan printer admits: it calls the add, sub and mul helpers."
+    a * b + c * 3 - 1
+
+fn mixAdd(a: Int, b: Int) -> Int
+    ? "Declined by the plan printer (Bits); on i64 it opens with i64.add."
+    Bits.and(a + b, 255)
+
+fn mixSub(a: Int, b: Int) -> Int
+    ? "Declined by the plan printer (Bits); on i64 it opens with i64.sub."
+    Bits.and(a - b, 255)
+
+fn mixMul(a: Int, b: Int) -> Int
+    ? "Declined by the plan printer (Bits); on i64 it opens with i64.mul."
+    Bits.and(a * b, 255)
+
+fn main() -> Unit
+    ? "Prints all four."
+    ! [Console.print]
+    Console.print("{poly(2, 3, 4)} {mixAdd(5, 6)} {mixSub(5, 6)} {mixMul(50, 6)}")

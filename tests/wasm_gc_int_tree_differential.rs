@@ -5,6 +5,9 @@
 //! `i64::MIN`, Euclidean `Int.div` / `Int.mod` by literals of both signs,
 //! results on the edge of the machine word, carriers and record fields in
 //! one tree, and leaves with effects, which run once each and in order.
+//! A fn the certificate plan printer admits keeps its bytes, and a fn taking
+//! two `Int`s to an `Int` computes on `i64` like any other without hiding
+//! the runtime's `Int` helpers from the certificate.
 
 #![cfg(feature = "wasm")]
 
@@ -73,4 +76,45 @@ fn fns_the_certificate_reads_keep_their_bytes() {
     let file = fixture("kept.av");
     assert_eq!(run(&file, false), run(&file, true));
     assert_eq!(module(&file, true), module(&file, false));
+}
+
+/// A fn taking two `Int`s to an `Int` computes on `i64`, and its body may open
+/// with the machine operator the runtime's add, sub or mul helper opens with.
+/// The certificate still finds the three helpers (each calls the bignum
+/// routine that returns two values; a user fn calls nothing that does), so
+/// the fn that calls them stays certified.
+#[test]
+fn two_int_fns_on_i64_leave_the_int_helpers_found() {
+    let file = fixture("helper_roles.av");
+    assert_eq!(run(&file, false), run(&file, true));
+    // Not vacuous: `mixAdd`, `mixSub` and `mixMul` compute on `i64`.
+    assert_ne!(module(&file, true), module(&file, false));
+    let dir = std::env::temp_dir().join(format!("aver-int-tree-roles-{}", std::process::id()));
+    let out = Command::new(aver_cmd::aver_bin())
+        .current_dir(aver_cmd::repo_root())
+        .arg("compile")
+        .arg(&file)
+        .args(["--target", "wasm-gc", "--certify", "-o"])
+        .arg(&dir)
+        .output()
+        .expect("aver compile --certify executes");
+    assert!(out.status.success(), "{}", aver_cmd::format_output(&out));
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(dir.join("cert").join("cert-manifest.json")).expect("manifest written"),
+    )
+    .expect("manifest is JSON");
+    let _ = std::fs::remove_dir_all(&dir);
+    for role in ["add", "sub", "mul"] {
+        assert!(
+            manifest["hostRoleTable"][role].is_u64(),
+            "the `{role}` helper must be found: {manifest:#}"
+        );
+    }
+    let certified: Vec<&str> = manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    assert!(certified.contains(&"poly"), "{manifest:#}");
 }

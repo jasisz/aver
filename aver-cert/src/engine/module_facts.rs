@@ -79,7 +79,6 @@ struct CodeFact {
     calls: Vec<u32>,
     host_ops: Vec<HostOp>,
     first_arith: Option<FirstI64Arith>,
-    kernel_arith_scan: Option<Option<FirstI64Arith>>,
 }
 
 /// The runtime helper indices the subject declares (`CertDecode.AddSub.Roles`
@@ -323,112 +322,6 @@ fn host_op(op: &wasmparser::Operator<'_>) -> HostOp {
         O::Return => HostOp::Return,
         O::End => HostOp::End,
         _ => HostOp::Other,
-    }
-}
-
-/// Byte-for-byte mirror of the certificate decoder's first-arith body scan
-/// (`CertDecode.AddSub`): `None` when the decoder's scan would fail.
-fn kernel_first_arith_scan(bytes: &[u8]) -> Option<Option<FirstI64Arith>> {
-    fn skip_uleb(bytes: &[u8], cursor: &mut usize) -> Option<u64> {
-        let mut value: u64 = 0;
-        let mut shift: u32 = 0;
-        for _ in 0..5 {
-            let byte = *bytes.get(*cursor)?;
-            *cursor += 1;
-            value |= u64::from(byte & 0x7f) << shift;
-            if byte < 128 {
-                if shift != 0 && byte == 0 {
-                    return None;
-                }
-                return Some(value);
-            }
-            shift += 7;
-        }
-        None
-    }
-    fn skip_sleb(bytes: &[u8], cursor: &mut usize) -> Option<()> {
-        for _ in 0..10 {
-            let byte = *bytes.get(*cursor)?;
-            *cursor += 1;
-            if byte < 128 {
-                return Some(());
-            }
-        }
-        None
-    }
-    fn skip_block_type(bytes: &[u8], cursor: &mut usize) -> Option<()> {
-        let byte = *bytes.get(*cursor)?;
-        if byte == 0x40 || matches!(byte, 0x7b..=0x7f) {
-            *cursor += 1;
-            Some(())
-        } else if byte == 0x63 || byte == 0x64 {
-            *cursor += 1;
-            skip_sleb(bytes, cursor)
-        } else {
-            skip_sleb(bytes, cursor)
-        }
-    }
-    let mut cursor = 0usize;
-    loop {
-        if cursor == bytes.len() {
-            return Some(None);
-        }
-        let op = bytes[cursor];
-        cursor += 1;
-        match op {
-            0x7c => return Some(Some(FirstI64Arith::Add)),
-            0x7d => return Some(Some(FirstI64Arith::Sub)),
-            0x7e => return Some(Some(FirstI64Arith::Mul)),
-            0x45..=0xc4 => {}
-            0x0b | 0x05 | 0x0f | 0x00 | 0x01 | 0x1a | 0x1b | 0xd1 => {}
-            0x20 | 0x21 | 0x22 | 0x23 | 0x24 | 0x0c | 0x0d | 0x10 | 0x12 => {
-                skip_uleb(bytes, &mut cursor)?;
-            }
-            0x0e => {
-                let count = skip_uleb(bytes, &mut cursor)?;
-                for _ in 0..count.checked_add(1)? {
-                    skip_uleb(bytes, &mut cursor)?;
-                }
-            }
-            0x11 => {
-                skip_uleb(bytes, &mut cursor)?;
-                skip_uleb(bytes, &mut cursor)?;
-            }
-            0x02..=0x04 => skip_block_type(bytes, &mut cursor)?,
-            0x41 | 0x42 => skip_sleb(bytes, &mut cursor)?,
-            0x43 => {
-                if bytes.len() - cursor < 4 {
-                    return None;
-                }
-                cursor += 4;
-            }
-            0x44 => {
-                if bytes.len() - cursor < 8 {
-                    return None;
-                }
-                cursor += 8;
-            }
-            0xd0 => skip_sleb(bytes, &mut cursor)?,
-            0xd2 => {
-                skip_uleb(bytes, &mut cursor)?;
-            }
-            0xfb => {
-                let sub = skip_uleb(bytes, &mut cursor)?;
-                match sub {
-                    0x00 | 0x01 | 0x06 | 0x07 | 0x0b | 0x0c | 0x0d | 0x0e => {
-                        skip_uleb(bytes, &mut cursor)?;
-                    }
-                    0x02 | 0x05 | 0x08 | 0x09 => {
-                        skip_uleb(bytes, &mut cursor)?;
-                        skip_uleb(bytes, &mut cursor)?;
-                    }
-                    0x0f => {}
-                    0x14..=0x17 => skip_sleb(bytes, &mut cursor)?,
-                    _ => return None,
-                }
-            }
-            _ => return None,
-        }
     }
 }
 
@@ -722,10 +615,6 @@ impl ModuleFacts {
                     let mut opr = body
                         .get_operators_reader()
                         .map_err(|e| format!("ops: {e}"))?;
-                    let scan_start = opr.original_position();
-                    let kernel_arith_scan = wasm_bytes
-                        .get(scan_start..end)
-                        .and_then(kernel_first_arith_scan);
                     let mut calls = Vec::new();
                     let mut host_ops = Vec::new();
                     let mut first_arith = None;
@@ -753,7 +642,6 @@ impl ModuleFacts {
                         calls,
                         host_ops,
                         first_arith,
-                        kernel_arith_scan,
                     });
                 }
                 Payload::DataSection(reader) => {
@@ -814,29 +702,29 @@ impl ModuleFacts {
             if has_non_function_import {
                 return Err("module exports the Int box helper `__rt_aint_from_i64` and also declares a non-function import; the certificate decoder declines such modules".into());
             }
-            for (def, code) in self.code.iter().enumerate() {
-                let func_idx = self.nimports + def as u32;
-                if !is_carrier_binop(self, func_idx) {
-                    continue;
-                }
-                match code.kernel_arith_scan {
-                    Some(first) if first == code.first_arith => {}
-                    _ => {
-                        return Err(format!(
-                            "function index {func_idx} has the Int carrier-binop signature and a body the certificate decoder's role scan cannot classify; the module-wide host-role table is undecodable"
-                        ));
-                    }
-                }
-            }
         }
-        let unique = |arith: FirstI64Arith| -> Option<u32> {
+        // The runtime's add, sub and mul helpers are the carrier-binop
+        // functions that open with that operator and call the bignum
+        // `decompose` sub-routine, the one function of one parameter and two
+        // results. A user function of the same signature can open with the
+        // same operator (a range-refined body on raw `i64`, or `Int`
+        // expressions computed on `i64` first, `int_tree.rs`), but it calls
+        // no function with two results. The wall pins the choice by template.
+        let helper = |arith: FirstI64Arith| -> Option<u32> {
+            let decomposes = |code: &CodeFact| {
+                code.calls.iter().any(|&callee| {
+                    matches!(self.fn_sig(callee), Some(CompT::Func(p, r)) if p.len() == 1 && r.len() == 2)
+                })
+            };
             let hits: Vec<u32> = self
                 .code
                 .iter()
                 .enumerate()
                 .map(|(def, code)| (self.nimports + def as u32, code))
                 .filter(|(idx, code)| {
-                    code.first_arith == Some(arith) && is_carrier_binop(self, *idx)
+                    code.first_arith == Some(arith)
+                        && is_carrier_binop(self, *idx)
+                        && decomposes(code)
                 })
                 .map(|(idx, _)| idx)
                 .collect();
@@ -845,12 +733,12 @@ impl ModuleFacts {
                 _ => None,
             }
         };
-        let add_idx = unique(FirstI64Arith::Add);
+        let add_idx = helper(FirstI64Arith::Add);
         let mut roles = HostRoles {
             box_idx,
             add_idx,
-            mul_idx: unique(FirstI64Arith::Mul),
-            sub_idx: unique(FirstI64Arith::Sub),
+            mul_idx: helper(FirstI64Arith::Mul),
+            sub_idx: helper(FirstI64Arith::Sub),
             to_index_idx: self.export_idx("__aint_to_index"),
             cmp_idx: self.export_idx("__aint_cmp"),
             eq_idx: self.export_idx("__aint_eq"),
@@ -874,36 +762,6 @@ impl ModuleFacts {
                         _ => {}
                     }
                 }
-            }
-        }
-        // A range-refined user function whose raw `i64` body happens to open
-        // with the same operator shares the carrier-binop signature, and then
-        // the scan above finds no unique helper. The helper is the candidate
-        // that calls the bignum sub-routines (the template pins the choice).
-        if let Some(decompose) = roles.decompose_idx {
-            let calling = |arith: FirstI64Arith| -> Option<u32> {
-                let hits: Vec<u32> = self
-                    .code
-                    .iter()
-                    .enumerate()
-                    .map(|(def, code)| (self.nimports + def as u32, code))
-                    .filter(|(idx, code)| {
-                        code.first_arith == Some(arith)
-                            && is_carrier_binop(self, *idx)
-                            && code.calls.contains(&decompose)
-                    })
-                    .map(|(idx, _)| idx)
-                    .collect();
-                match hits.as_slice() {
-                    [only] => Some(*only),
-                    _ => None,
-                }
-            };
-            if roles.sub_idx.is_none() {
-                roles.sub_idx = calling(FirstI64Arith::Sub);
-            }
-            if roles.mul_idx.is_none() {
-                roles.mul_idx = calling(FirstI64Arith::Mul);
             }
         }
         // `__aint_divmod` is not exported: declare it only at the one function
