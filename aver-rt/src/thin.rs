@@ -81,6 +81,12 @@ pub unsafe trait ThinSum: Sized + 'static {
     /// is left.
     unsafe fn free(node: NonNull<Header>, tag: u32, pending: Pending<'_>);
 
+    /// Whether some constructor has no fields, so that a value may be one
+    /// without a node. When none has, every value is a node, and the check
+    /// for a constructor without fields before each clone, drop and view
+    /// folds away.
+    const HAS_EMPTY: bool = true;
+
     /// The value's pointer, for the code of a deferred call.
     fn into_thin(self) -> Thin<Self>;
 
@@ -135,7 +141,7 @@ impl<S: ThinSum> Thin<S> {
     /// Whether this is a constructor without fields, which has no node.
     #[inline]
     fn is_empty_ctor(&self) -> bool {
-        self.ptr.as_ptr().addr() <= MAX_TAGS
+        S::HAS_EMPTY && self.ptr.as_ptr().addr() <= MAX_TAGS
     }
 
     /// A new node of constructor `tag` holding `fields`, with a count of 1.
@@ -153,8 +159,11 @@ impl<S: ThinSum> Thin<S> {
         });
         let ptr = NonNull::from(Box::leak(node)).cast::<Header>();
         // An allocation never sits in the first page; were one to, a node
-        // would read as a constructor without fields.
-        assert!(ptr.as_ptr().addr() > MAX_TAGS);
+        // would read as a constructor without fields. A sum without such a
+        // constructor never reads a node as one, so it has nothing to check.
+        if S::HAS_EMPTY {
+            assert!(ptr.as_ptr().addr() > MAX_TAGS);
+        }
         Self::from_ptr(ptr)
     }
 
@@ -907,6 +916,8 @@ impl<S: ThinSum> crate::NodeId for Thin<S> {
 /// is (see [`Pending`]).
 #[macro_export]
 macro_rules! thin_sum {
+    (@no_fields $fields:ty) => { false };
+    (@no_fields) => { true };
     (
         $(#[$view_meta:meta])*
         $vis:vis $name:ident / $view:ident / $pair:ident {
@@ -942,6 +953,8 @@ macro_rules! thin_sum {
 
         unsafe impl $crate::thin::ThinSum for $name {
             type Fields = ( $( $( $fields, )? )+ );
+
+            const HAS_EMPTY: bool = false $( || $crate::thin_sum!(@no_fields $( $fields )?) )+;
 
             unsafe fn free(
                 node: ::std::ptr::NonNull<$crate::thin::Header>,
@@ -1253,6 +1266,55 @@ mod tests {
     }
 
     fn assert_send_sync<X: Send + Sync>() {}
+
+    /// A sum whose every constructor has fields.
+    #[derive(Debug, PartialEq)]
+    pub struct F__A(Counted);
+    #[derive(Debug)]
+    pub struct F__B(F, u8);
+
+    impl super::HandOver for F__A {}
+
+    impl super::HandOver for F__B {
+        fn hand_over(self, pending: super::Pending<'_>) {
+            self.0.hand_over(pending);
+        }
+    }
+
+    crate::thin_sum! {
+        #[derive(Debug)]
+        pub F / F__View / F__Pairs {
+            0 A(F__A),
+            1 B(F__B),
+        }
+    }
+
+    impl std::fmt::Debug for F {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            std::fmt::Debug::fmt(&self.view(), f)
+        }
+    }
+
+    #[test]
+    fn a_sum_knows_whether_a_value_can_be_without_a_node() {
+        use super::ThinSum;
+        const { assert!(<T as ThinSum>::HAS_EMPTY) };
+        const { assert!(<L as ThinSum>::HAS_EMPTY) };
+        const { assert!(!<F as ThinSum>::HAS_EMPTY) };
+
+        let drops = Arc::new(AtomicUsize::new(0));
+        let a = F::A(F__A(Counted(drops.clone(), 7)));
+        let b = F::B(F__B(a.clone(), 2));
+        assert_eq!(a.tag(), 0);
+        assert_eq!(b.tag(), 1);
+        assert!(F::ptr_eq(&a, &a.clone()));
+        assert!(!F::ptr_eq(&a, &b));
+        assert!(matches!(b.view(), F__View::B(p) if p.1 == 2 && p.0.tag() == 0));
+        drop(a);
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        drop(b);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn a_value_is_one_word_and_a_node_holds_only_its_fields() {
