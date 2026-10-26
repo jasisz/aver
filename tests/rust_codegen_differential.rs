@@ -4938,21 +4938,23 @@ fn dying_lists_and_read_strings_match_vm() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
-/// A separator or search text that is a literal of one character, also a
-/// multi-byte one, is a `char` pattern (served by `memchr`); a longer or empty
-/// literal stays a `&str` pattern. Separators at the edges and in a row give
-/// the same parts as on the VM.
+/// A separator that is a literal of one byte is looked for a word at a time
+/// (`aver_rt::string_split_byte`); a search text or a separator that is a
+/// literal of one multi-byte character is a `char` pattern (served by
+/// `memchr`); a longer or empty literal stays a `&str` pattern. Separators at
+/// the edges, in a row and at every offset of a long text give the same parts
+/// as on the VM.
 #[test]
 fn one_character_literal_patterns_match_vm() {
     let relative = "tests/fixtures/split_on_one_char_app.av";
     let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
     let emitted = emitted_entry_module("split_on_one_char", &src);
     for expected in [
-        ".split('\\n')",
-        ".split(',')",
+        "aver_rt::string_split_byte(&text, 10u8)",
+        "aver_rt::string_split_byte(&text, 44u8)",
         ".split('é')",
         ".split('🙂')",
-        ".split('\\'')",
+        "aver_rt::string_split_byte(&text, 39u8)",
         ".split(\"ab\")",
         ".split(\"\")",
         ".contains(':')",

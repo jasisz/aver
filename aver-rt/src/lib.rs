@@ -296,6 +296,54 @@ pub fn string_chars(text: &str) -> AverList<AverStr> {
     AverList::from_vec(text.chars().map(char_str).collect())
 }
 
+/// `String.split` on a separator of one byte, an ASCII character: the parts
+/// `str::split` gives, the last included, with the separator looked for a
+/// word at a time; the text itself when it does not occur.
+pub fn string_split_byte(text: &AverStr, separator: u8) -> AverList<AverStr> {
+    debug_assert!(separator.is_ascii(), "a separator of one byte is ASCII");
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while let Some(at) = find_byte(text.as_bytes(), start, separator) {
+        parts.push(AverStr::from(&text[start..at]));
+        start = at + 1;
+    }
+    parts.push(string_part(text, &text[start..]));
+    AverList::from_vec(parts)
+}
+
+/// The position of the first `byte` in `bytes` at or after `from`, looked
+/// for sixteen bytes at a time.
+#[inline]
+fn find_byte(bytes: &[u8], from: usize, byte: u8) -> Option<usize> {
+    const ONES: u64 = u64::from_le_bytes([0x01; 8]);
+    const HIGHS: u64 = u64::from_le_bytes([0x80; 8]);
+    let pattern = ONES * u64::from(byte);
+    // A byte equal to `byte` is zero after the `^`. The lowest byte with its
+    // high bit set in the result is the first zero: a borrow can only mark
+    // the bytes above it.
+    let zeros = |word: [u8; 8]| {
+        let word = u64::from_le_bytes(word) ^ pattern;
+        word.wrapping_sub(ONES) & !word & HIGHS
+    };
+    let mut at = from;
+    while let Some(chunk) = bytes.get(at..).and_then(|rest| rest.first_chunk::<16>()) {
+        let (lo, hi) = chunk.split_at(8);
+        let lo = zeros(lo.try_into().expect("eight bytes"));
+        let hi = zeros(hi.try_into().expect("eight bytes"));
+        if lo | hi != 0 {
+            return Some(match lo {
+                0 => at + 8 + (hi.trailing_zeros() / 8) as usize,
+                _ => at + (lo.trailing_zeros() / 8) as usize,
+            });
+        }
+        at += 16;
+    }
+    bytes[at..]
+        .iter()
+        .position(|&b| b == byte)
+        .map(|offset| at + offset)
+}
+
 /// `part`, a piece of `whole`, as a string: `whole` itself when it is all
 /// of it, so a `trim` or `slice` that keeps everything copies nothing.
 #[inline]
@@ -2125,7 +2173,50 @@ pub fn string_join(parts: &AverList<AverStr>, sep: &str) -> AverStr {
 mod tests {
     use super::{
         AverList, AverListInner, AverMap, AverStr, Buffer, aver_display, env_set, string_slice,
+        string_split_byte,
     };
+
+    /// A split on one byte gives the parts `str::split` gives, the last
+    /// included: an empty text, separators at either end and side by side,
+    /// lines across words and at every offset in one, multibyte text, and
+    /// a text with none, which is handed back itself.
+    #[test]
+    fn a_split_on_one_byte_gives_the_parts_of_str_split() {
+        let long: String = (0..300)
+            .map(|i| ["ab", "\n", "ą€", "x\n\n", "0123456789"][i % 5])
+            .collect();
+        let mut texts = vec![
+            String::new(),
+            "\n".to_string(),
+            "\n\n".to_string(),
+            "a\n".to_string(),
+            "\na".to_string(),
+            "no separator in a text longer than a word".to_string(),
+            long,
+        ];
+        for at in 0..20 {
+            texts.push("y".repeat(at) + "\n" + &"z".repeat(19 - at));
+        }
+        for text in &texts {
+            for sep in *b"\n,z" {
+                let whole = AverStr::from(text.as_str());
+                let parts: Vec<String> = string_split_byte(&whole, sep)
+                    .iter()
+                    .map(|part| part.to_string())
+                    .collect();
+                let expected: Vec<&str> = text.split(char::from(sep)).collect();
+                assert_eq!(parts, expected, "{text:?} on {sep}");
+            }
+        }
+        let whole = AverStr::from("no separator here");
+        let parts = string_split_byte(&whole, b'\n');
+        assert!(
+            parts
+                .iter()
+                .next()
+                .is_some_and(|part| part.as_ptr() == whole.as_ptr())
+        );
+    }
 
     /// `list` with `item` joined at its end: a chain of these is a deep
     /// left-leaning concat rope.

@@ -7849,6 +7849,20 @@ fn mir_str_arg_or_deref(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option
     Some(format!("&*{}", code))
 }
 
+/// The byte of a string literal one byte long (an ASCII character).
+fn mir_one_byte_literal(expr: &Spanned<MirExpr>) -> Option<u8> {
+    match &expr.node {
+        MirExpr::Literal(lit) => match &lit.node {
+            crate::ast::Literal::Str(s) => match s.as_bytes() {
+                [byte] => Some(*byte),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// A search pattern for `str::contains` / `starts_with` / `ends_with` /
 /// `split`: a literal of exactly one character becomes a `char` pattern,
 /// which std serves with `memchr` instead of the substring searcher. Same
@@ -8361,11 +8375,15 @@ fn emit_mir_builtin_call(
         "String.toLower" => format!("aver_rt::string_case(&{}, false)", arg!(0)),
         "String.split" => {
             let s = arg!(0);
-            let delim = mir_str_pattern_arg(&args[1], ctx)?;
-            format!(
-                "aver_rt::AverList::from_vec({}.split({}).map(aver_rt::AverStr::from).collect::<Vec<_>>())",
-                s, delim
-            )
+            // A separator of one byte is looked for a word at a time.
+            match mir_one_byte_literal(&args[1]) {
+                Some(byte) => format!("aver_rt::string_split_byte(&{s}, {byte}u8)"),
+                None => format!(
+                    "aver_rt::AverList::from_vec({}.split({}).map(aver_rt::AverStr::from).collect::<Vec<_>>())",
+                    s,
+                    mir_str_pattern_arg(&args[1], ctx)?
+                ),
+            }
         }
         "String.join" => {
             let parts = arg!(0);
