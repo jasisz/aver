@@ -22,7 +22,7 @@
 //!    must agree with each other (the template theorem's content, sampled
 //!    concretely) and with the running artifact.
 
-use aver::codegen::wasm_gc::compile_to_wasm_gc;
+use aver::codegen::wasm_gc::compile_to_wasm_gc_with_handler_and_cert_plans;
 use aver::ir::{PipelineConfig, TypecheckMode, pipeline};
 use aver::source::parse_source;
 
@@ -99,8 +99,11 @@ fn compile_bytes(source: &str) -> Vec<u8> {
     {
         panic!("typecheck failed: {:?}", tc.errors);
     }
-    compile_to_wasm_gc(&items, result.analysis.as_ref())
+    // The module a `--certify` build emits: the certificate's assumptions are
+    // about its bytes.
+    compile_to_wasm_gc_with_handler_and_cert_plans(&items, result.analysis.as_ref(), None)
         .unwrap_or_else(|e| panic!("wasm-gc compile failed: {e:?}"))
+        .bytes
 }
 
 struct Harness {

@@ -37,6 +37,10 @@ aver-cert explain out/app.wasm out/cert
 aver-cert inspect out/app.wasm out/cert
 ```
 
+The certificate is for those exact bytes. A plain `aver compile` of the same
+source writes a different, faster module, and `verify` rejects the certificate
+beside it: certify and ship the `--certify` build.
+
 `verify` exits zero only when at least one export is certified and the full
 Lean check succeeds. `check` is a faster developer/CI preflight: it performs
 the same Rust gates, `lake build`, and fresh checker-witness elaboration, but

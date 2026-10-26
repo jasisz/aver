@@ -1,13 +1,16 @@
-//! Which functions the fabricating passes leave in their source form.
+//! Which functions a `--certify` build leaves in their source form.
 //!
-//! A certificate is for the bytes that ship, so `--certify` must not change
-//! the compile: the same passes run in both modes. What keeps a function
-//! certifiable is one mode-independent rule instead: a fabricating pass
-//! (buffer build, chars fusion, byte sink) does not rewrite the body of a
-//! function the certificate plan printer (`codegen::cert::plan_from_mir`)
-//! could print in its unfused form. The pass may still synthesize variants
-//! (`<fn>__cursor`, `<fn>__buffered`, `<fn>__collected`, `<fn>__code`); it
-//! only leaves the kept function's own body alone.
+//! A certificate is for the exact bytes it was made with: `aver-cert verify`
+//! compares them byte for byte, so it rejects a certificate laid beside any
+//! other build. A `--certify` build compiles the bytes to certify: a
+//! fabricating pass (buffer build, chars fusion, byte sink, string index) does
+//! not rewrite the body of a function the certificate plan printer
+//! (`codegen::cert::plan_from_mir`) could print in its unfused form, and the
+//! wasm-gc emitter computes no `Int` tree on machine words in a function the
+//! printer prints. The pass may still synthesize variants (`<fn>__cursor`,
+//! `<fn>__buffered`, `<fn>__collected`, `<fn>__code`); it only leaves the kept
+//! function's own body alone. A plain build keeps nothing, so its bytes are
+//! faster and differ: the build to certify and ship is the `--certify` one.
 //!
 //! The printer runs on MIR at emission, after the passes, so its verdict is
 //! not available here. [`printer_may_admit`] is a cheap syntactic superset of

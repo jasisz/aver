@@ -28,7 +28,6 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
             run_string_index: true,
             run_list_build: false,
             run_byte_sink: true,
-            keep_printable_unfused: true,
             ..Default::default()
         },
     );
@@ -77,7 +76,6 @@ pub fn compile_project_to_wasm(
             run_string_index: true,
             run_list_build: false,
             run_byte_sink: true,
-            keep_printable_unfused: true,
             ..Default::default()
         },
     );
@@ -152,7 +150,6 @@ pub fn compile_project_to_wasm_with_entry(
             run_string_index: true,
             run_list_build: false,
             run_byte_sink: true,
-            keep_printable_unfused: true,
             ..Default::default()
         },
     );

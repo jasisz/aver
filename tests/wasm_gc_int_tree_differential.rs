@@ -5,9 +5,11 @@
 //! `i64::MIN`, Euclidean `Int.div` / `Int.mod` by literals of both signs,
 //! results on the edge of the machine word, carriers and record fields in
 //! one tree, and leaves with effects, which run once each and in order.
-//! A fn the certificate plan printer admits keeps its bytes, and a fn taking
-//! two `Int`s to an `Int` computes on `i64` like any other without hiding
-//! the runtime's `Int` helpers from the certificate.
+//! A plain build computes on `i64` in a fn the certificate plan printer admits
+//! too (only `--certify` keeps its ordinary lowering, see
+//! `tests/cert_one_build_spec.rs`), and a fn taking two `Int`s to an `Int`
+//! computes on `i64` without hiding the runtime's `Int` helpers from the
+//! certificate.
 
 #![cfg(feature = "wasm")]
 
@@ -72,10 +74,10 @@ fn int_trees_print_what_the_vm_prints() {
 }
 
 #[test]
-fn fns_the_certificate_reads_keep_their_bytes() {
+fn fns_the_certificate_reads_compute_on_i64_in_a_plain_build() {
     let file = fixture("kept.av");
     assert_eq!(run(&file, false), run(&file, true));
-    assert_eq!(module(&file, true), module(&file, false));
+    assert_ne!(module(&file, true), module(&file, false));
 }
 
 /// A fn taking two `Int`s to an `Int` computes on `i64`, and its body may open

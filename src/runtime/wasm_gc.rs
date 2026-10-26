@@ -193,6 +193,7 @@ pub fn run_in_process(
                 &config.type_aliases,
                 &custom.plan,
                 config.packed_sequences_enabled,
+                false,
             )
         }
         None => aver::codegen::wasm_gc::compile_to_wasm_gc_flattened_with_options(

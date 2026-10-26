@@ -1,5 +1,5 @@
 module M
-    intent = "Int arithmetic the certificate reads keeps its ordinary lowering on wasm-gc."
+    intent = "Int arithmetic the certificate reads keeps its ordinary lowering in a --certify build."
     effects [Console]
 
 fn poly(a: Int, b: Int, c: Int) -> Int

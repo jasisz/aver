@@ -1,9 +1,15 @@
-//! `--certify` adds the certificate package and changes no byte.
+//! What `--certify` changes in the compile.
 //!
-//! A certificate is for the module that ships. This suite compiles every
-//! certificate corpus program twice, plain and with `--certify`, and requires
-//! the two `<name>.wasm` files to be identical. It needs no Lean: `--certify`
-//! writes the package without building it.
+//! A certificate is for the exact bytes it was made with: `aver-cert verify`
+//! compares them byte for byte, so it rejects a certificate laid beside any
+//! other build. `--certify` therefore compiles the bytes it certifies: the
+//! functions the certificate plan printer could print keep their ordinary
+//! form (`ir::cert_shape`), while a plain build gives them the faster shapes.
+//! This suite checks that a `--certify` build is reproducible on the
+//! certificate corpus, that the predicate choosing what it keeps never costs a
+//! certificate, and that a plain build of certifiable functions takes the
+//! faster shapes and still answers their examples as the VM does. It needs no
+//! Lean: `--certify` writes the package without building it.
 #![cfg(feature = "wasm")]
 
 #[path = "support/aver_cmd.rs"]
@@ -55,29 +61,32 @@ fn corpus(repo_root: &Path) -> Vec<Entry> {
     out
 }
 
-/// Compile `entry` for wasm-gc, with or without `--certify`, and return the
-/// emitted module bytes.
-fn compile(repo_root: &Path, entry: &Entry, certify: bool) -> Result<Vec<u8>, String> {
-    let out_dir = temp_dir(if certify {
-        "one-build-cert"
-    } else {
-        "one-build-plain"
-    });
+/// Compile `entry` for wasm-gc with `flags`, with or without `Int` trees, and
+/// return the emitted module bytes and the names its certificate certifies
+/// (none without `--certify`).
+fn compile(
+    repo_root: &Path,
+    entry: &Entry,
+    flags: &[&str],
+    int_trees: bool,
+) -> Result<(Vec<u8>, Vec<String>), String> {
+    let out_dir = temp_dir("one-build");
     let mut cmd = aver_command();
     cmd.current_dir(repo_root).arg("compile").arg(&entry.file);
     if let Some(root) = entry.module_root {
         cmd.arg("--module-root").arg(root);
     }
     cmd.arg("--target").arg("wasm-gc").arg("-o").arg(&out_dir);
-    if certify {
-        cmd.arg("--certify");
+    cmd.args(flags);
+    if !int_trees {
+        cmd.env("AVER_NO_INT_TREE", "1");
     }
     let output = cmd.output().map_err(|e| format!("spawn aver: {e}"))?;
     if !output.status.success() {
         return Err(format!(
-            "compile{} {} failed:\n{}{}",
-            if certify { " --certify" } else { "" },
+            "compile {} {}:\n{}{}",
             entry.file,
+            flags.join(" "),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ));
@@ -86,43 +95,125 @@ fn compile(repo_root: &Path, entry: &Entry, certify: bool) -> Result<Vec<u8>, St
         .file_stem()
         .and_then(|s| s.to_str())
         .expect("entry has a UTF-8 stem");
-    std::fs::read(out_dir.join(format!("{stem}.wasm")))
-        .map_err(|e| format!("{}: read {stem}.wasm: {e}", entry.file))
+    let bytes = std::fs::read(out_dir.join(format!("{stem}.wasm")))
+        .map_err(|e| format!("{}: read {stem}.wasm: {e}", entry.file))?;
+    let certified = match std::fs::read(out_dir.join("cert").join("cert-manifest.json")) {
+        Ok(json) => serde_json::from_slice::<serde_json::Value>(&json)
+            .map_err(|e| format!("{}: manifest: {e}", entry.file))?["certified"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| Some(f["name"].as_str()?.to_string()))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    Ok((bytes, certified))
 }
 
-#[test]
-fn certify_compiles_byte_identical_modules_on_the_corpus() {
+/// Run `work` over the corpus on a few threads; every error it returns is a
+/// failure.
+fn over_corpus(work: impl Fn(&Path, &Entry) -> Result<(), String> + Sync) {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let work = Mutex::new(corpus(&repo_root));
+    let queue = Mutex::new(corpus(&repo_root));
     let failures = Mutex::new(Vec::<String>::new());
     let workers = std::thread::available_parallelism().map_or(2, |n| n.get().min(4));
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
                 loop {
-                    // Take the entry and release the lock before compiling.
-                    let next = work.lock().unwrap().pop();
+                    // Take the entry and release the lock before working.
+                    let next = queue.lock().unwrap().pop();
                     let Some(entry) = next else { break };
-                    let verdict = match (
-                        compile(&repo_root, &entry, false),
-                        compile(&repo_root, &entry, true),
-                    ) {
-                        (Ok(plain), Ok(certified)) if plain == certified => continue,
-                        (Ok(plain), Ok(certified)) => format!(
-                            "{}: --certify changed the module ({} bytes plain, {} certified)",
-                            entry.file,
-                            plain.len(),
-                            certified.len()
-                        ),
-                        (Err(e), _) | (_, Err(e)) => e,
-                    };
-                    failures.lock().unwrap().push(verdict);
+                    if let Err(e) = work(&repo_root, &entry) {
+                        failures.lock().unwrap().push(e);
+                    }
                 }
             });
         }
     });
     let failures = failures.into_inner().unwrap();
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// A `--certify` build compiles the same module every time, however much of
+/// the package it bridges: anyone who builds the source with `--certify` gets
+/// the bytes its certificate binds.
+#[test]
+fn certify_compiles_the_same_module_every_time_on_the_corpus() {
+    over_corpus(|repo_root, entry| {
+        let (once, _) = compile(repo_root, entry, &["--certify"], true)?;
+        let (again, _) = compile(repo_root, entry, &["--certify", "--examples"], true)?;
+        if once == again {
+            Ok(())
+        } else {
+            Err(format!(
+                "{}: two --certify builds differ ({} and {} bytes)",
+                entry.file,
+                once.len(),
+                again.len()
+            ))
+        }
+    });
+}
+
+/// The functions a `--certify` build keeps in their ordinary form get the
+/// faster shapes in a plain build, which still answers their examples as the
+/// VM does.
+#[test]
+fn a_plain_build_runs_the_corpus_examples_on_wasm_gc() {
+    over_corpus(|repo_root, entry| {
+        // The certkit fixtures carry examples of the functions the printer
+        // prints; the larger programs take a minute here and run elsewhere.
+        if !entry.file.starts_with("tools/certkit/") {
+            return Ok(());
+        }
+        let out = aver_command()
+            .current_dir(repo_root)
+            .args(["verify", &entry.file, "--wasm-gc"])
+            .output()
+            .map_err(|e| format!("spawn aver: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "verify --wasm-gc {}:\n{}{}",
+                entry.file,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ))
+        }
+    });
+}
+
+/// A plain build computes an `Int` tree on machine words and matches a single
+/// character on its codepoint in a function the printer prints; a `--certify`
+/// build does neither there, and certifies the function.
+#[test]
+fn a_plain_build_takes_the_shapes_a_certified_build_leaves_out() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let tree = Entry {
+        file: "tests/fixtures/wasm_gc_int_tree/kept.av".into(),
+        module_root: None,
+    };
+    let (plain, _) = compile(&repo_root, &tree, &[], true).unwrap();
+    let (no_trees, _) = compile(&repo_root, &tree, &[], false).unwrap();
+    let (certified, names) = compile(&repo_root, &tree, &["--certify"], true).unwrap();
+    assert_ne!(plain, certified, "the plain build computes `poly` on i64");
+    assert_eq!(no_trees, certified, "the --certify build has no Int tree");
+    assert!(names.iter().any(|n| n == "poly"), "{names:?}");
+
+    // Without trees, so that only the string passes can tell the builds apart.
+    let classifier = Entry {
+        file: "tools/certkit/fixtures/stringeq.av".into(),
+        module_root: None,
+    };
+    let (plain, _) = compile(&repo_root, &classifier, &[], false).unwrap();
+    let (certified, names) = compile(&repo_root, &classifier, &["--certify"], false).unwrap();
+    assert_ne!(
+        plain, certified,
+        "the plain build matches `quoteOrSelf` on codepoints"
+    );
+    assert!(names.iter().any(|n| n == "quoteOrSelf"), "{names:?}");
 }
 
 /// Every function the plan printer prints in its unfused form, by the name
@@ -198,7 +289,7 @@ fn printer_verdicts(repo_root: &Path, entry: &Entry) -> Result<Vec<(String, bool
     );
     aver::ir::pipeline::resolve_and_reannotate(&mut items);
     let output = wasm_gc::compile_to_wasm_gc_flattened_with_custom_capabilities(
-        &items, None, None, &aliases, &plan, true,
+        &items, None, None, &aliases, &plan, true, true,
     )
     .map_err(|e| format!("compile: {e}"))?;
     Ok(output
