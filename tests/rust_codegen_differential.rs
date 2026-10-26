@@ -521,6 +521,95 @@ fn deferred_calls_that_know_a_value_match_vm() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// `[rust] intern` changes how fast a program is, never what it prints: the
+/// fixtures of terms with shared subterms (two threads at once, chains a
+/// million deep, a call deferred into an interned sum, a sum holding a
+/// `Float` left out), of a recursive sum held in records and `Option`s, of
+/// deferred calls and of deferred calls that know a value, each with its
+/// recursive sums interned, print what the VM prints.
+#[test]
+fn interned_sums_match_vm() {
+    let cases: [(&str, Option<&str>, &str, &[&str]); 4] = [
+        (
+            "tests/fixtures/equal_terms_app.av",
+            None,
+            "[\"Term\", \"Tree\"]",
+            &["", "1000000"],
+        ),
+        (
+            "tests/fixtures/recursive_sum_app.av",
+            None,
+            "[\"Expr\", \"Tree\"]",
+            &[""],
+        ),
+        (
+            "tests/fixtures/lazy_call/main.av",
+            Some("tests/fixtures/lazy_call"),
+            "[\"Terms.Term\"]",
+            &[""],
+        ),
+        (
+            "tests/fixtures/lazy_knowing/main.av",
+            Some("tests/fixtures/lazy_knowing"),
+            "[\"Inst.Expr\", \"Inst.Form\", \"Words.Term\"]",
+            &[""],
+        ),
+    ];
+    let ws = temp_dir("interned_sums");
+    let result = (|| -> Result<(), String> {
+        for (i, (relative, root, intern, args)) in cases.iter().enumerate() {
+            let file = repo_root().join(relative);
+            let vm_root = root.map(|root| repo_root().join(root));
+            // A copy of the program, beside an `aver.toml` naming its sums.
+            let copy = ws.join(format!("root{i}"));
+            fs::create_dir_all(&copy).expect("create module root");
+            let sources = match vm_root.as_deref() {
+                Some(dir) => fs::read_dir(dir)
+                    .expect("read fixture dir")
+                    .map(|entry| entry.expect("fixture entry").path())
+                    .collect(),
+                None => vec![file.clone()],
+            };
+            for source in sources {
+                fs::copy(&source, copy.join(source.file_name().unwrap())).expect("copy fixture");
+            }
+            fs::write(copy.join("aver.toml"), format!("[rust]\nintern = {intern}\n"))
+                .expect("write aver.toml");
+            let name = format!("interned_{i}");
+            let project = ws.join(format!("{name}_project"));
+            let entry = copy.join(file.file_name().unwrap());
+            compile_rust(&entry, &project, &name, Some(&copy), &[])?;
+            let emitted = fs::read_dir(project.join("src/aver_generated"))
+                .expect("read emitted modules")
+                .filter_map(|entry| fs::read_to_string(entry.ok()?.path().join("mod.rs")).ok())
+                .collect::<String>();
+            if !emitted.contains("__interned") {
+                return Err(format!("{relative}: no sum is interned"));
+            }
+            let bin = cargo_build(&project, &name)?;
+            // The fixtures print the same at every depth their argument asks.
+            let vm = run_vm(&file, vm_root.as_deref())?;
+            for arg in args.iter() {
+                let mut rust = Command::new(&bin);
+                if !arg.is_empty() {
+                    rust.arg(arg);
+                }
+                let out = rust.output().expect("run the compiled binary");
+                let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !out.status.success() || printed != vm {
+                    return Err(format!(
+                        "{relative} {arg}: interned Rust differs from the VM\n--- VM ---\n{vm}\n--- Rust ---\n{}",
+                        format_output(&out)
+                    ));
+                }
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A law `--trust-laws` lets through unproved is checked every time a call
 /// that knows a value from it is made: a false one stops the program with
 /// the law's name, though the value it gave was read before.

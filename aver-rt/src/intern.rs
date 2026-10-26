@@ -108,6 +108,13 @@ pub(crate) fn retain(count: &AtomicU32, max: u32) -> bool {
     }
 }
 
+/// Where a probe for `hash` starts: past its lowest bit, which is 1 in every
+/// hash of a canonical node.
+#[inline]
+fn slot(hash: u64) -> usize {
+    (hash >> 1) as usize
+}
+
 /// One canonical node: its hash, and where it is (or [`EMPTY`], [`GONE`]).
 #[derive(Clone, Copy)]
 struct Entry {
@@ -145,7 +152,7 @@ impl Slots {
             return None;
         }
         let mask = self.mask();
-        let mut at = hash as usize & mask;
+        let mut at = slot(hash) & mask;
         loop {
             let entry = self.entries[at];
             if entry.node == EMPTY {
@@ -163,7 +170,7 @@ impl Slots {
             self.resize();
         }
         let mask = self.mask();
-        let mut at = hash as usize & mask;
+        let mut at = slot(hash) & mask;
         loop {
             let held = self.entries[at].node;
             if held == EMPTY {
@@ -181,7 +188,7 @@ impl Slots {
 
     fn remove(&mut self, hash: u64, node: *mut u8) {
         let mask = self.mask();
-        let mut at = hash as usize & mask;
+        let mut at = slot(hash) & mask;
         loop {
             let entry = self.entries[at];
             assert_ne!(entry.node, EMPTY, "a canonical node is in the table");
@@ -220,7 +227,7 @@ impl Slots {
             .into_iter()
             .filter(|entry| entry.node != EMPTY && entry.node != GONE)
         {
-            let mut at = entry.hash as usize & mask;
+            let mut at = slot(entry.hash) & mask;
             while self.entries[at].node != EMPTY {
                 at = (at + 1) & mask;
             }

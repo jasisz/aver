@@ -92,6 +92,12 @@ fn synthesize_rust_module_cascade(
     files
 }
 
+/// Why `[rust] intern` in `aver.toml` cannot intern the types `names`
+/// names in the program `ctx` holds, if it cannot (see `intern::resolve`).
+pub fn check_intern(ctx: &CodegenContext, names: &[String]) -> Result<(), String> {
+    intern::resolve(ctx, names).map(drop)
+}
+
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     let required = provider::required_operations(ctx);
@@ -3194,6 +3200,65 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
                 assert_eq!(generated_file(&mimalloc, path), content, "{path}");
             }
         }
+    }
+
+    #[cfg(feature = "runtime")]
+    fn transpile_interning(source: &str, intern: &[&str]) -> Result<ProjectOutput, String> {
+        let mut ctx = ctx_from_source(source, "demo");
+        super::transpile_with_provider_manifest_for_project(
+            &mut ctx,
+            None,
+            &std::collections::BTreeSet::new(),
+            None,
+            crate::config::RustOptions {
+                intern: intern.iter().map(|name| name.to_string()).collect(),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[cfg(feature = "runtime")]
+    const INTERNABLE: &str = "module Demo\n\ntype Term\n    Var(Int)\n    Hole\n    App(Term, Term)\n    Named(String, List<Term>)\n\ntype Other\n    Leaf\n    Node(Other)\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"{Term.App(Term.Var(1), Term.Hole) == Term.App(Term.Var(1), Term.Hole)} {Other.Node(Other.Leaf) == Other.Leaf}\")\n";
+
+    /// `[rust] intern` changes the emitted code of the sums it names and of
+    /// nothing else; an empty list emits what no list does.
+    #[cfg(feature = "runtime")]
+    #[test]
+    fn rust_intern_option_interns_only_the_sums_it_names() {
+        let plain = transpile_interning(INTERNABLE, &[]).expect("transpile");
+        let interned = transpile_interning(INTERNABLE, &["Term"]).expect("transpile");
+        let entry = generated_rust_entry_file(&interned);
+        assert!(entry.contains("} interned Term__interned"), "{entry}");
+        assert!(entry.contains("impl aver_rt::intern::InternFields for Term__App {"));
+        assert!(entry.contains("aver_rt::intern::Canon::same(&self.0, &other.0) && aver_rt::intern::Canon::same(&self.1, &other.1)"));
+        // A field of another type is compared by value.
+        assert!(entry.contains("fn same(&self, other: &Self) -> bool {\n        self.0 == other.0 && self.1 == other.1\n    }"));
+        assert!(entry.contains("match Term::canon_eq(self, other) {"));
+        assert!(!entry.contains("interned Other__"));
+        assert!(!entry.contains("Other::canon_eq"));
+        let entry = generated_rust_entry_file(&plain);
+        assert!(!entry.contains("intern"), "{entry}");
+        let without = transpile(&mut ctx_from_source(INTERNABLE, "demo"));
+        assert_eq!(generated_rust_entry_file(&without), entry);
+    }
+
+    /// A name `[rust] intern` cannot intern is refused with what it is.
+    #[cfg(feature = "runtime")]
+    #[test]
+    fn rust_intern_option_refuses_what_cannot_be_interned() {
+        let source = "module Demo\n\ntype Term\n    Var(Int)\n    App(Term, Term)\n\ntype Flat\n    One\n    Two(Int)\n\nrecord Point\n    x: Int\n\ntype Weights\n    Weight(Float)\n    Both(Weights, Weights)\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"{Term.Var(1) == Term.Var(1)} {Flat.One == Flat.One} {Point(x = 1) == Point(x = 1)} {Weights.Weight(1.0) == Weights.Weight(1.0)}\")\n";
+        let refused = |name: &str| match transpile_interning(source, &["Term", name]) {
+            Ok(_) => panic!("`{name}` was interned"),
+            Err(why) => why,
+        };
+        let unknown = refused("Terms");
+        assert!(unknown.contains("`Terms` is not a type of this program"), "{unknown}");
+        let near = refused("Lib.Term");
+        assert!(near.contains("did you mean `Term`?"), "{near}");
+        assert!(refused("Flat").contains("`Flat` is a sum no value of which holds another one of it"));
+        assert!(refused("Point").contains("`Point` is a record"));
+        assert!(refused("Weights").contains("`Weights` holds a Float"));
+        assert!(transpile_interning(source, &["Term"]).is_ok());
     }
 
     #[test]

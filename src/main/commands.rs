@@ -2650,6 +2650,13 @@ pub(super) fn cmd_check(
                     }
                     failed_modules.push(file.clone());
                 }
+                // `[rust] intern` names types of the program it can intern.
+                if failed_modules.len() == failed
+                    && let Err(why) = check_rust_intern(file, module_root_override, config.as_ref())
+                {
+                    eprintln!("{}", why.red());
+                    failed_modules.push(file.clone());
+                }
             }
             Err(e) => {
                 eprintln!("{}", e.red());
@@ -2705,6 +2712,38 @@ pub(super) fn cmd_check(
     if !failed_modules.is_empty() {
         process::exit(1);
     }
+}
+
+/// Why `[rust] intern` in `aver.toml` cannot intern what it names in the
+/// program `file` is the entry of, if it cannot: a name that is no type of
+/// the program, a type that has no node of its own on the heap, or one whose
+/// `==` is not an identity. Only the Rust backend reads the list.
+fn check_rust_intern(
+    file: &str,
+    module_root_override: Option<&str>,
+    config: Option<&aver::config::ProjectConfig>,
+) -> Result<(), String> {
+    let Some(names) = config
+        .map(|config| &config.rust.intern)
+        .filter(|names| !names.is_empty())
+    else {
+        return Ok(());
+    };
+    let (ctx, _) = build_codegen_context(
+        file,
+        None,
+        module_root_override,
+        false,
+        &super::cli::CompilePolicyMode::Embed,
+        None,
+        false,
+        true,  // apply_traversal_lowering, as `aver compile` does
+        false, // run_refinement_lower
+        false, // run_contract_lower
+        false, // run_law_lower
+        false, // proof_command
+    );
+    rust_codegen::check_intern(&ctx, names)
 }
 
 /// Report `[[verify.costly]]` entries that found nothing to raise.
