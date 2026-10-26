@@ -6,7 +6,8 @@
 //! place as a wrapper and synthesizes a worker carrying one hidden
 //! `String.Index` parameter. Calls inside the component forward that index;
 //! indexed reads translate codepoint positions to UTF-8 byte boundaries in
-//! constant time.
+//! constant time, and `String.len` of the indexed String reads the length
+//! the index already holds.
 //!
 //! The pass is deliberately below the proof line. `String.Index` and the
 //! `__str_index_*` calls do not exist in Aver source and must never appear in
@@ -34,7 +35,8 @@ pub struct StringIndexPassReport {
     pub indexed_fns: Vec<String>,
     /// Synthesized worker names.
     pub synthesized: Vec<String>,
-    /// `String.charAt` and `String.slice` sites moved onto the index.
+    /// `String.charAt`, `String.slice` and `String.len` sites moved onto
+    /// the index.
     pub indexed_accesses: usize,
     /// Indexed `charAt` matches whose `Option<String>` and one-character
     /// String were replaced by one direct codepoint read.
@@ -579,23 +581,26 @@ impl WorkerTransformer<'_> {
         let line = expr.line;
         let out = match &expr.node {
             Expr::FnCall(callee, args) => {
+                let indexed = [
+                    ("charAt", "__str_index_char_at"),
+                    ("slice", "__str_index_slice"),
+                    ("len", "__str_index_len"),
+                ]
+                .into_iter()
+                .find(|(method, _)| is_dotted(&callee.node, "String", method));
                 if source_live
-                    && (is_dotted(&callee.node, "String", "charAt")
-                        || is_dotted(&callee.node, "String", "slice"))
+                    && let Some((_, intrinsic)) = indexed
                     && args
                         .first()
                         .is_some_and(|arg| is_ident(&arg.node, self.source_name))
                 {
-                    let intrinsic = if args.len() == 2 {
-                        "__str_index_char_at"
-                    } else {
-                        "__str_index_slice"
-                    };
                     let mut lowered = vec![
                         args[0].clone(),
                         typed_ident(INDEX_PARAM, line, crate::types::Type::named(INDEX_TYPE)),
                     ];
-                    lowered.extend(args[1..].iter().cloned());
+                    // A position may itself read the String
+                    // (`String.slice(s, i, String.len(s))`).
+                    lowered.extend(args[1..].iter().map(|arg| self.transform(arg, true)));
                     self.accesses += 1;
                     let out = call(intrinsic, lowered, line);
                     inherit_type(&out, expr);
@@ -1544,6 +1549,56 @@ fn step(c: String) -> Int
         assert!(
             walk_worker.contains("__str_index_char_at") && walk_worker.contains("walk__indexed"),
             "recursive worker uses and forwards the index: {walk_worker}"
+        );
+    }
+
+    /// `String.len` of the indexed String reads the index wherever the
+    /// index is in scope — the loop's test, a slice's end, a function of the
+    /// component before the loop starts — and the length of another String,
+    /// or of the String a call hands on in place of the indexed one, does
+    /// not.
+    #[test]
+    fn string_len_of_the_indexed_string_reads_the_index() {
+        let mut items = prepared(
+            r#"module IndexedLen
+    intent = "Read the length the index already holds."
+    effects []
+
+fn walk(text: String, other: String, pos: Int) -> String
+    match pos < String.len(text)
+        false -> String.slice(text, String.len(other), String.len(text))
+        true -> match String.charAt(text, pos)
+            Option.None -> ""
+            Option.Some(_) -> walk(text, other, pos + 1)
+
+fn shrink(text: String, pos: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> String.len(text)
+        Option.Some(" ") -> shrink(text, pos + 1)
+        Option.Some(_) -> shrink(String.slice(text, 1, String.len(text)), pos)
+
+fn start(text: String) -> String
+    walk(text, "ab", String.len(text) - 2)
+"#,
+        );
+        let report = run_string_index_pass(&mut items);
+        assert_eq!(report.components, 2, "{report:?}");
+        let worker = rendered_fn(&items, "walk__indexed");
+        assert_eq!(worker.matches("__str_index_len").count(), 2, "{worker}");
+        assert_eq!(
+            worker.matches("\"len\"").count(),
+            1,
+            "only the other String's length stays a String.len: {worker}"
+        );
+        let start = rendered_fn(&items, "start__indexed");
+        assert!(start.contains("__str_index_len"), "{start}");
+        // A String the recursive call hands on in place of the indexed one
+        // goes through the wrapper, which indexes it afresh.
+        let shrink = rendered_fn(&items, "shrink__indexed");
+        assert_eq!(shrink.matches("__str_index_len").count(), 2, "{shrink}");
+        assert!(
+            shrink.contains("target: \"shrink__indexed\"") && shrink.contains("target: \"shrink\""),
+            "{shrink}"
         );
     }
 

@@ -49,7 +49,8 @@ fn fabricated_subject_type(subject: &Spanned<MirExpr>) -> Option<&'static str> {
         | BuiltinIntrinsic::StrCursorCode
         | BuiltinIntrinsic::StrFoldLower
         | BuiltinIntrinsic::StrFoldUpper
-        | BuiltinIntrinsic::StrIndexCodeAt => Some("Int"),
+        | BuiltinIntrinsic::StrIndexCodeAt
+        | BuiltinIntrinsic::StrIndexLen => Some("Int"),
         _ => None,
     }
 }

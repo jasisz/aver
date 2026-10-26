@@ -173,7 +173,7 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::Tokenize__indexed(mut src @ _, mut pos @ _) => {
                 crate::cancel_checkpoint();
-                if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+                if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                     __MutualTco1::TokenizeAtPos__indexed(src, pos)
                 } else {
                     return aver_rt::AverList::prepend_owned(
@@ -275,7 +275,7 @@ fn __mutual_tco_trampoline_2(
         __state = match __state {
             __MutualTco2::TokenizeString__indexed(mut src @ _, mut pos @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+                if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                     __MutualTco2::TokenizeStringAt__indexed(src, pos, acc)
                 } else {
                     return aver_rt::AverList::from_vec(vec![
@@ -620,7 +620,7 @@ fn __mutual_tco_trampoline_3(
         __state = match __state {
             __MutualTco3::TokenizeInterpExpr__indexed(mut src @ _, mut pos @ _) => {
                 crate::cancel_checkpoint();
-                if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+                if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                     __MutualTco3::TokenizeInterpExprAt__indexed(src, pos)
                 } else {
                     return aver_rt::AverList::from_vec(vec![
@@ -885,7 +885,7 @@ fn __mutual_tco_trampoline_4(
         __state = match __state {
             __MutualTco4::CountIndent__indexed(mut src @ _, mut pos @ _, mut spaces @ _) => {
                 crate::cancel_checkpoint();
-                if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+                if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                     __MutualTco4::CountIndentChar__indexed(src, pos, spaces)
                 } else {
                     return (spaces, pos);
@@ -2063,7 +2063,7 @@ pub fn tokenizeInterpString__indexed(
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+        if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
             match aver_rt::string_index_char_at_i64(
                 &src,
                 &__str_index,
@@ -2306,7 +2306,7 @@ pub fn skipLineComment__indexed(
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
-        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+        if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
             match aver_rt::string_index_char_at_i64(
                 &src,
                 &__str_index,

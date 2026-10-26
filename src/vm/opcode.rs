@@ -649,6 +649,9 @@ pub const RESULT_PROVEN: u8 = 0xAE;
 /// corresponding `String.charAt` result is `Option.None`.
 pub const STR_INDEX_CODE_AT: u8 = 0xAF;
 
+/// Pop index, pop s → push `String.len(s)`, which the index holds.
+pub const STR_INDEX_LEN: u8 = 0xB5;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -768,6 +771,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         STR_INDEX_CHAR_AT => "STR_INDEX_CHAR_AT",
         STR_INDEX_CODE_AT => "STR_INDEX_CODE_AT",
         STR_INDEX_SLICE => "STR_INDEX_SLICE",
+        STR_INDEX_LEN => "STR_INDEX_LEN",
         VECTOR_NEW_LITERAL => "VECTOR_NEW_LITERAL",
         BRANCH_PATH_CHILD_LITERAL => "BRANCH_PATH_CHILD_LITERAL",
         BRANCH_PATH_PARSE_LITERAL => "BRANCH_PATH_PARSE_LITERAL",
@@ -855,6 +859,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | STR_INDEX_CHAR_AT
         | STR_INDEX_CODE_AT
         | STR_INDEX_SLICE
+        | STR_INDEX_LEN
         | VECTOR_NEW_LITERAL
         | BRANCH_PATH_CHILD_LITERAL
         | BRANCH_PATH_PARSE_LITERAL

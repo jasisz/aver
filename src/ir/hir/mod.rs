@@ -626,6 +626,10 @@ pub enum BuiltinIntrinsic {
     /// `__str_index_slice(<s>, <index>, <from>, <to>)` — the public
     /// `String.slice` answer using the same codepoint index.
     StrIndexSlice,
+    /// `__str_index_len(<s>, <index>)` — the public `String.len` answer,
+    /// which the index already holds, so a loop that tests its position
+    /// against the length does not count the characters on every step.
+    StrIndexLen,
     /// `__str_index_position(<i>)` — `Int -> i64`, a string position as the
     /// raw `i64` the indexed reads take, saturated outside `i64` (which
     /// keeps every answer of the reads). Only the Rust representation
@@ -701,6 +705,7 @@ impl BuiltinIntrinsic {
             Self::StrIndexCharAt => "__str_index_char_at",
             Self::StrIndexCodeAt => "__str_index_code_at",
             Self::StrIndexSlice => "__str_index_slice",
+            Self::StrIndexLen => "__str_index_len",
             Self::StrIndexPosition => "__str_index_position",
             Self::LstNew => "__lst_new",
             Self::LstPush => "__lst_push",
@@ -743,6 +748,7 @@ impl BuiltinIntrinsic {
             "__str_index_char_at" => Some(Self::StrIndexCharAt),
             "__str_index_code_at" => Some(Self::StrIndexCodeAt),
             "__str_index_slice" => Some(Self::StrIndexSlice),
+            "__str_index_len" => Some(Self::StrIndexLen),
             "__str_index_position" => Some(Self::StrIndexPosition),
             "__lst_new" => Some(Self::LstNew),
             "__lst_push" => Some(Self::LstPush),

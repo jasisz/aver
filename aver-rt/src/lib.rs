@@ -63,8 +63,8 @@ pub use strcursor::{
 };
 pub use string_index::{
     StringIndex, string_index_build, string_index_char_at, string_index_char_at_i64,
-    string_index_code_at, string_index_code_at_i64, string_index_slice, string_index_slice_i64,
-    string_index_slice_str, string_position, string_position_within,
+    string_index_code_at, string_index_code_at_i64, string_index_len, string_index_slice,
+    string_index_slice_i64, string_index_slice_str, string_position, string_position_within,
 };
 
 #[cfg(feature = "terminal")]

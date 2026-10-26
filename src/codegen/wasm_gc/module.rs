@@ -8090,6 +8090,7 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::StrIndexCharAt
             | BuiltinIntrinsic::StrIndexCodeAt
             | BuiltinIntrinsic::StrIndexSlice
+            | BuiltinIntrinsic::StrIndexLen
             | BuiltinIntrinsic::StrCursorEnd
             | BuiltinIntrinsic::StrCursorHead
             | BuiltinIntrinsic::StrCursorNext

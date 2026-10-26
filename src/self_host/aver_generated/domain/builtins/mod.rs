@@ -3954,11 +3954,10 @@ pub fn splitDotted__indexed(
     mut __str_index @ _: aver_rt::StringIndex,
 ) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
-    let __arg2 @ _ = aver_rt::AverInt::from_i64(name.chars().count() as i64);
     crate::aver_generated::domain::builtins::splitDottedLoop__indexed(
-        name,
+        name.clone(),
         aver_rt::AverInt::from_i64(0),
-        __arg2,
+        aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)),
         __str_index,
     )
 }

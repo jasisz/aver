@@ -1485,6 +1485,7 @@ fn reads_string_in_place(expr: &MirExpr, slot: LocalId, builtins: &[String]) -> 
                 | BuiltinIntrinsic::StrIndexCharAt
                 | BuiltinIntrinsic::StrIndexCodeAt
                 | BuiltinIntrinsic::StrIndexSlice
+                | BuiltinIntrinsic::StrIndexLen
         ),
         _ => false,
     };
@@ -9013,6 +9014,14 @@ fn emit_mir_intrinsic_call(
             } else {
                 format!("aver_rt::AverInt::from_i64({call})")
             })
+        }
+        // The index counted the characters when it was built; the String
+        // itself is not read.
+        BuiltinIntrinsic::StrIndexLen => {
+            let index = emit_mir_expr(&args[1], ctx)?;
+            Some(format!(
+                "aver_rt::AverInt::from_i64(aver_rt::string_index_len(&{index}))"
+            ))
         }
         BuiltinIntrinsic::StrIndexSlice => {
             let s = emit_mir_expr(&args[0], ctx)?;

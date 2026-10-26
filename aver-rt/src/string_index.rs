@@ -113,6 +113,13 @@ pub fn string_index_build(text: &AverStr) -> StringIndex {
     StringIndex::new(text)
 }
 
+/// Indexed equivalent of `String.len`: the index counted the characters
+/// when it was built.
+#[inline]
+pub fn string_index_len(index: &StringIndex) -> i64 {
+    index.char_len() as i64
+}
+
 /// A string position as the raw `i64` the indexed reads take. A position
 /// outside `i64` reads like one past the end (or before the start), so
 /// saturating it keeps every answer of `charAt` / `slice`.
