@@ -78,6 +78,8 @@ use super::ownership::{
 use super::pattern::{emit_pattern, emit_pattern_with_guard};
 use super::syntax::{aver_name_to_rust, generated_ident};
 
+mod int_tree;
+
 /// Walker-side emit context. Holds the slice of the
 /// `CodegenContext` the MIR-to-Rust walker reads — kept explicit
 /// so future `CodegenContext` refactors don't ripple through the
@@ -2332,6 +2334,9 @@ fn label_for(expr: &MirExpr) -> &'static str {
 /// clone / borrow / `Arc::new` decisions are correct for the fn whose
 /// body this renders. This is the sole Rust runtime codegen walker.
 pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
+    if let Some(code) = int_tree::hoisted(expr).or_else(|| int_tree::try_emit(expr, emit_ctx)) {
+        return Some(code);
+    }
     match &expr.node {
         MirExpr::Literal(lit) => {
             // The MIR const-fold pass collapses `Neg(Literal(273.15))`
