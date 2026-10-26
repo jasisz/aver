@@ -483,8 +483,19 @@ pub(crate) fn bind(
 /// the local `packed` (`None`: the value is the `i64`): set the held `slot`.
 pub(crate) fn set_held(func: &mut Function, slot: u32, packed: Option<u32>, ctx: &EmitCtx<'_>) {
     func.instruction(&I::LocalSet(slot));
-    if let (Some(from), Some((packed, big))) = (packed, held(slot)) {
-        read_packed(func, I::LocalGet(from), slot, packed, big, aint(ctx));
+    let Some((held_packed, big)) = held(slot) else {
+        return;
+    };
+    // The box and the Big flag belong to the value bound before, if any: a
+    // packed read of a slot bound again in the same frame must not return
+    // the old box. Today a slot is bound once per frame (no rebinding, a loop
+    // is a tail call), but nothing else guards that.
+    func.instruction(&I::RefNull(HeapType::Concrete(aint(ctx))));
+    func.instruction(&I::LocalSet(held_packed));
+    func.instruction(&I::I32Const(0));
+    func.instruction(&I::LocalSet(big));
+    if let Some(from) = packed {
+        read_packed(func, I::LocalGet(from), slot, held_packed, big, aint(ctx));
     }
 }
 

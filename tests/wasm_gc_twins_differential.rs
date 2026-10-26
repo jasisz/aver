@@ -67,6 +67,10 @@ fn module(file: &Path, twins: bool) -> Vec<u8> {
     bytes
 }
 
+// A held slot bound a second time in one frame must not keep the box of the
+// value before (`twin::set_held` clears it). No program can show that yet: a
+// name cannot be bound again, every binder has its own slot, and a loop is a
+// tail call into a new frame, so the shapes here bind each held slot once.
 #[test]
 fn twins_print_what_the_vm_prints() {
     let file = fixture("shapes.av");
