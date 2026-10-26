@@ -149,6 +149,7 @@ impl std::error::Error for WasmGcError {}
 pub struct WasmGcCompileOutput {
     pub bytes: Vec<u8>,
     pub mir_count: usize,
+    /// Printed only for a `--certify` build; empty otherwise.
     pub cert_plans: crate::codegen::cert::ModulePlans,
 }
 
@@ -193,6 +194,7 @@ pub fn compile_to_wasm_gc(
         None,
         None,
         true,
+        false,
     )
     .map(|(bytes, _, _)| bytes)
 }
@@ -235,6 +237,7 @@ pub fn compile_to_wasm_gc_flattened_with_options(
         None,
         None,
         packed_sequences_enabled,
+        false,
     )
     .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,
@@ -251,6 +254,7 @@ pub fn compile_to_wasm_gc_flattened_with_capabilities(
     handler: Option<&str>,
     type_aliases: &HashMap<String, String>,
     capabilities: &crate::codegen::wasip2::CapabilityWitPlan,
+    certify: bool,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
     module::emit_module_with(
         items,
@@ -260,6 +264,7 @@ pub fn compile_to_wasm_gc_flattened_with_capabilities(
         Some(capabilities),
         None,
         true,
+        certify,
     )
     .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,
@@ -268,8 +273,9 @@ pub fn compile_to_wasm_gc_flattened_with_capabilities(
     })
 }
 
-/// Same bytes as [`compile_to_wasm_gc`], plus the expression
-/// fragment plans that were actually used to emit certified plan-first islands.
+/// The module a `--certify` build of `items` emits, with the certificate
+/// plan of every user function: the functions the plan printer admits keep
+/// their ordinary lowering, so these bytes differ from [`compile_to_wasm_gc`]'s.
 pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
@@ -282,6 +288,7 @@ pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
         &HashMap::new(),
         None,
         None,
+        true,
         true,
     )
     .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
@@ -315,6 +322,7 @@ pub fn compile_to_wasm_gc_for_wasip2(
         None,
         None,
         true,
+        false,
     )
     .map(|(bytes, _, _)| bytes)
 }
@@ -328,6 +336,7 @@ pub fn compile_to_wasm_gc_flattened_with_custom_capabilities(
     type_aliases: &HashMap<String, String>,
     capabilities: &CapabilityWasmGcPlan,
     packed_sequences_enabled: bool,
+    certify: bool,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
     module::emit_module_with(
         items,
@@ -337,6 +346,7 @@ pub fn compile_to_wasm_gc_flattened_with_custom_capabilities(
         None,
         Some(capabilities),
         packed_sequences_enabled,
+        certify,
     )
     .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,

@@ -26,7 +26,7 @@ aver compile app.av --target wasm-gc --certify -o out/
 aver compile app.av --target wasip2 --certify -o out/
 ```
 
-The certificate binds the bytes that `--certify` writes, and they are the bytes a plain `aver compile` of the same source writes: `--certify` only adds the `cert/` package. To keep that true, the string optimizations (buffer building, chars fusion, the byte sink) leave alone every function the certificate could describe in its source form, in every wasm-gc and wasip2 build.
+Certify and ship the build that `--certify` writes. The certificate binds those exact bytes, and `aver-cert verify` rejects it beside any other module. A plain `aver compile` of the same source writes other, faster bytes: there the string optimizations (buffer building, chars fusion, the byte sink, the string index) and `Int` arithmetic on machine words reach every function, while a `--certify` build leaves every function the certificate could describe in its source form, so that the certificate can describe it. Every other function is compiled the same way in both builds, and a `--certify` build of the same source with the same compiler always writes the same bytes.
 
 On `wasm-gc`, `--certify --optimize` keeps the proof boundary in separate files. The certificate binds the emitter's exact `<name>.wasm`, and Binaryen writes `<name>.optimized.wasm` outside the proof. A Wasmtime pack may compile that derivative ahead of time to `<name>.cwasm`; neither derivative is certified. `wasip2` rejects `--optimize`, because Binaryen does not yet accept this component and wasm-gc combination. Reusing an output directory replaces its `cert/` package, so use one output directory per artifact.
 

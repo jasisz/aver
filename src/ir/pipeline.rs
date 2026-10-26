@@ -248,9 +248,8 @@ pub struct PipelineConfig<'a> {
     pub run_byte_sink: bool,
     /// Leave every function the certificate plan printer could print in its
     /// unfused form out of the fabricating passes above (see
-    /// [`crate::ir::cert_shape`]). Set by every wasm-gc/wasip2 caller, with or
-    /// without `--certify`, so a certified build is byte-identical to the
-    /// plain one. VM and Rust leave it off.
+    /// [`crate::ir::cert_shape`]). Set by a wasm-gc/wasip2 `--certify` build
+    /// only; every other build fuses wherever it can.
     pub keep_printable_unfused: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
@@ -1406,7 +1405,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     let proof_snapshot: Option<Vec<TopLevel>> = proof_stages.then(|| items.clone());
 
     // Read before the first fabricating pass, so every pass sees the verdict
-    // on the source form (`cert_shape`). Empty unless a wasm-gc caller asks.
+    // on the source form (`cert_shape`). Empty unless `--certify` asks.
     let kept: std::collections::HashSet<String> = if cfg.keep_printable_unfused
         && (cfg.run_buffer_build || cfg.run_chars_fusion || cfg.run_byte_sink)
     {

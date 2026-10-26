@@ -102,6 +102,10 @@ No trampoline. No dispatch loop. Engine handles frame reuse.
 
 A map key of such a type is hashed the same way (`body/hash_helpers.rs`). The hash of a node is already made from the hashes of its fields, so the hash of a shared node can be remembered: `__hash_<T>` hashes in steps against a budget of 1024 nodes kept in a global (the budget of a hash it is part of is kept and given back), and a hash that runs out starts again with steps that remember the hash of every node they hash, in a table of the same kind with the same keys, guarantee and limit as `==`. A step mixes the hash of its node (the fold alone multiplies a subterm held twice by an even number, and 32 levels of `Pair(t, t)` lose every bit of `t`), and hashes a `String` field by its bytes rather than by its length. The map compares and hashes such a key through `__eq_<T>` and `__hash_<T>`, its own key helpers forwarding to them. Only a type a map key reaches is hashed in steps, so a program with no such key emits the same bytes as before.
 
+## Certified builds
+
+`--certify` changes what the emitter writes, so that the certificate can describe the bytes it binds. In a plain build a pure `Int` expression is computed on `i64` first and boxed once (`body/from_mir/int_tree.rs`), and the string passes move loops onto builders, cursors, indexes and byte sinks. In a `--certify` build a function the certificate plan printer can print keeps its ordinary lowering, with no `Int` tree and no rewritten body (`src/ir/cert_shape.rs`), because the checker lowers the printed plan the ordinary way and compares it with the code. Every other function is compiled the same way in both builds. Certify and ship the `--certify` build; a plain build has other, faster bytes.
+
 ## Baseline assumption: modern wasm runtime
 
 This backend assumes the host runtime supports:

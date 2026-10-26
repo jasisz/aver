@@ -132,6 +132,7 @@ fn emit_trap_stub_body(func: &mut Function) {
     func.instruction(&Instruction::End);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_module_with(
     items: &[TopLevel],
     handler_name: Option<&str>,
@@ -140,6 +141,7 @@ pub(super) fn emit_module_with(
     capability_wit_plan: Option<&crate::codegen::wasip2::CapabilityWitPlan>,
     capability_wasm_gc_plan: Option<&super::CapabilityWasmGcPlan>,
     packed_sequences_enabled: bool,
+    certify: bool,
 ) -> Result<(Vec<u8>, usize, crate::codegen::cert::ModulePlans), WasmGcError> {
     // A module-level binding read from a fn body has no global to read on
     // wasm-gc; its value is substituted where it is read (`top_level.rs`).
@@ -3375,6 +3377,7 @@ pub(super) fn emit_module_with(
         let used_mir = emitted.is_some();
         trees_for[i] = match (mir_fn_for[i], &emitted) {
             (Some(mir_fn), Some(extra)) => int_trees_allowed(
+                certify,
                 mir_fn,
                 &resolved_fn_defs[i],
                 extra,
@@ -6410,9 +6413,12 @@ pub(super) fn emit_module_with(
     if std::env::var_os("AVER_WASMGC_MIR_COUNT").is_some() {
         eprintln!("AVER_WASMGC_MIR_EMITTED={mir_emitted}");
     }
-    // The certificate plans: every emitted user fn's MIR printed 1:1 against
-    // the registry and function indices of THIS compile. Read-only: printing
-    // never changes a byte.
+    // The certificate plans, for a `--certify` build: every emitted user fn's
+    // MIR printed 1:1 against the registry and function indices of THIS
+    // compile. Read-only: printing never changes a byte.
+    if !certify {
+        return Ok((bytes, mir_emitted, Default::default()));
+    }
     let planned: Vec<_> = resolved_fn_defs
         .iter()
         .enumerate()
@@ -6439,11 +6445,13 @@ pub(super) fn emit_module_with(
 
 /// Whether `mir_fn` computes its `Int` trees on `i64` first
 /// (`body/from_mir/int_tree.rs`); `extra` are its locals emitted without
-/// them. A fn the certificate plan printer admits keeps the ordinary
-/// lowering, so a certificate reads the bytes it reads without trees: the
-/// checker lowers the printed plan the ordinary way and compares it with the
-/// code (the rule `ir::cert_shape` keeps for the fabricating passes).
+/// them. In a `--certify` build a fn the certificate plan printer admits keeps
+/// the ordinary lowering, so a certificate reads the bytes it reads without
+/// trees: the checker lowers the printed plan the ordinary way and compares it
+/// with the code (the rule `ir::cert_shape` keeps for the fabricating passes).
+/// A plain build asks the printer nothing.
 fn int_trees_allowed(
+    certify: bool,
     mir_fn: &crate::ir::mir::MirFn,
     rfd: &crate::ir::hir::ResolvedFnDef,
     extra: &[ValType],
@@ -6452,7 +6460,7 @@ fn int_trees_allowed(
 ) -> bool {
     layout.registry.bignum
         && std::env::var_os("AVER_NO_INT_TREE").is_none()
-        && crate::codegen::cert::print_fn(mir_fn, rfd, extra, layout, types).is_err()
+        && !(certify && crate::codegen::cert::print_fn(mir_fn, rfd, extra, layout, types).is_ok())
 }
 
 fn emit_user_types(

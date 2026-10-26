@@ -241,6 +241,7 @@ fn build_prelude() -> ScratchDir {
     dst
 }
 
+/// The module a `--certify` build writes: the bytes a certificate decodes.
 fn compile_wasm_at(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Vec<u8> {
     let c = aver_command()
         .current_dir(repo)
@@ -248,6 +249,7 @@ fn compile_wasm_at(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Vec<u
         .arg(av_path)
         .arg("--target")
         .arg("wasm-gc")
+        .arg("--certify")
         .arg("-o")
         .arg(out)
         .output()
