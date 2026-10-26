@@ -2880,9 +2880,11 @@ fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError>
 
 /// Build the hidden codepoint→UTF-8 byte-boundary table. The source String is
 /// valid UTF-8 by construction, so scalar starts are exactly bytes which are
-/// not continuation bytes. Two linear byte passes buy an exactly-sized i32
-/// array: one counts boundaries, the other writes them plus the final byte
-/// length sentinel.
+/// not continuation bytes. An ASCII string needs no table, position `i` being
+/// byte `i`: it gets the null table, found in one pass that stops at the first
+/// byte above 0x7F. Any other string takes two more linear byte passes for an
+/// exactly-sized i32 array: one counts boundaries, the other writes them plus
+/// the final byte length sentinel.
 fn emit_string_index_build(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let string_idx = registry
         .string_array_type_idx
@@ -2917,6 +2919,15 @@ fn emit_string_index_build(registry: &TypeRegistry) -> Result<Function, WasmGcEr
             (local $out (ref null $string_index))
 
             local.get $s array.len local.set $n
+            (block $wide
+              (loop $ascii
+                local.get $i local.get $n i32.ge_u
+                (if (then ref.null $string_index return))
+                local.get $s local.get $i array.get_u $string
+                i32.const 0x80 i32.and br_if $wide
+                local.get $i i32.const 1 i32.add local.set $i
+                br $ascii))
+            i32.const 0 local.set $i
             (block $count_done
               (loop $count_loop
                 local.get $i local.get $n i32.ge_u br_if $count_done
@@ -3003,7 +3014,11 @@ fn emit_string_index_char_at(registry: &TypeRegistry) -> Result<Function, WasmGc
             local.get $i i64.const 0 i64.lt_s
             (if (then
               i32.const 0 ref.null $string struct.new $option_string return))
-            local.get $index array.len i32.const 1 i32.sub local.set $char_count
+            local.get $index ref.is_null
+            (if (result i32)
+              (then local.get $s array.len)
+              (else local.get $index array.len i32.const 1 i32.sub))
+            local.set $char_count
             local.get $i
             local.get $char_count i64.extend_i32_u
             i64.ge_u
@@ -3011,9 +3026,15 @@ fn emit_string_index_char_at(registry: &TypeRegistry) -> Result<Function, WasmGc
               i32.const 0 ref.null $string struct.new $option_string return))
 
             local.get $i i32.wrap_i64 local.set $pos
-            local.get $index local.get $pos array.get $string_index local.set $from
-            local.get $index local.get $pos i32.const 1 i32.add
-            array.get $string_index local.set $to
+            local.get $index ref.is_null
+            (if
+              (then
+                local.get $pos local.set $from
+                local.get $pos i32.const 1 i32.add local.set $to)
+              (else
+                local.get $index local.get $pos array.get $string_index local.set $from
+                local.get $index local.get $pos i32.const 1 i32.add
+                array.get $string_index local.set $to))
             local.get $to local.get $from i32.sub local.set $len
             local.get $len array.new_default $string local.set $out
             local.get $out i32.const 0 local.get $s local.get $from local.get $len
@@ -3068,6 +3089,12 @@ fn emit_string_index_code_at(registry: &TypeRegistry) -> Result<Function, WasmGc
 
             local.get $i i64.const 0 i64.lt_s
             (if (then i64.const -1 return))
+            local.get $index ref.is_null
+            (if (then
+              local.get $i local.get $s array.len i64.extend_i32_u i64.ge_u
+              (if (then i64.const -1 return))
+              local.get $s local.get $i i32.wrap_i64 array.get_u $string
+              i64.extend_i32_u return))
             local.get $index array.len i32.const 1 i32.sub local.set $char_count
             local.get $i local.get $char_count i64.extend_i32_u i64.ge_u
             (if (then i64.const -1 return))
@@ -3151,7 +3178,11 @@ fn emit_string_index_slice(registry: &TypeRegistry) -> Result<Function, WasmGcEr
             (local $len i32)
             (local $out (ref null $string))
 
-            local.get $index array.len i32.const 1 i32.sub local.set $char_count
+            local.get $index ref.is_null
+            (if (result i32)
+              (then local.get $s array.len)
+              (else local.get $index array.len i32.const 1 i32.sub))
+            local.set $char_count
             local.get $char_count i64.extend_i32_u local.set $char_count64
 
             local.get $start_in i64.const 0 i64.lt_s
@@ -3175,10 +3206,16 @@ fn emit_string_index_slice(registry: &TypeRegistry) -> Result<Function, WasmGcEr
 
             local.get $start local.get $end i64.ge_u
             (if (then i32.const 0 array.new_default $string return))
-            local.get $index local.get $start i32.wrap_i64
-            array.get $string_index local.set $from
-            local.get $index local.get $end i32.wrap_i64
-            array.get $string_index local.set $to
+            local.get $index ref.is_null
+            (if
+              (then
+                local.get $start i32.wrap_i64 local.set $from
+                local.get $end i32.wrap_i64 local.set $to)
+              (else
+                local.get $index local.get $start i32.wrap_i64
+                array.get $string_index local.set $from
+                local.get $index local.get $end i32.wrap_i64
+                array.get $string_index local.set $to))
             local.get $to local.get $from i32.sub local.set $len
             local.get $len array.new_default $string local.set $out
             local.get $out i32.const 0 local.get $s local.get $from local.get $len
