@@ -3304,6 +3304,10 @@ pub(super) fn emit_module_with(
     // Whether each fn computes its `Int` trees on `i64` first (see
     // `int_trees_allowed`), decided in the pre-pass below.
     let mut trees_for: Vec<bool> = vec![false; fn_defs.len()];
+    // The locals of each fn emitted without `Int` trees: the plan printer
+    // reads a fn with trees as it would without them, so it declines that fn
+    // for the reason it has.
+    let mut plain_locals_for: Vec<Option<Vec<ValType>>> = vec![None; fn_defs.len()];
     // The emitter's view the certificate plan printer reads: this compile's
     // registry and function indices.
     let cert_layout = super::cert_layout::CertLayout {
@@ -3375,6 +3379,7 @@ pub(super) fn emit_module_with(
             ),
             _ => false,
         };
+        plain_locals_for[i] = emitted;
         mir_dispatch[i] = used_mir;
         if !used_mir {
             stub_reasons[i] = Some(super::body::take_unsupported_reason().unwrap_or_else(|| {
@@ -6384,7 +6389,11 @@ pub(super) fn emit_module_with(
                 import_count + 1 + i as u32,
                 mir_fn_for[i],
                 rfd,
-                extra_locals_for[i].as_deref(),
+                if trees_for[i] {
+                    plain_locals_for[i].as_deref()
+                } else {
+                    extra_locals_for[i].as_deref()
+                },
             )
         })
         .collect();
