@@ -16,23 +16,34 @@ use std::collections::HashMap;
 use wasm_encoder::BlockType;
 use wasm_encoder::Instruction as I;
 
+use super::twin;
 use super::*;
+use crate::codegen::wasm_gc::twins::TwinKind;
 use crate::codegen::wasm_gc::types::struct_ref;
 use crate::ir::hir::BuiltinIntrinsic;
 
 thread_local! {
     /// Exact paths being emitted: while non-zero no tree is computed on `i64`.
     static EXACT: Cell<u32> = const { Cell::new(0) };
-    /// Leaves evaluated ahead of a tree, by node address: their local, and
-    /// whether it holds a raw `i64` the exact path boxes.
-    static HOISTED: RefCell<HashMap<usize, (u32, bool)>> = RefCell::new(HashMap::new());
+    /// Leaves evaluated ahead of a tree, by node address, and where.
+    static HOISTED: RefCell<HashMap<usize, Held>> = RefCell::new(HashMap::new());
     /// Whether the fn being emitted computes trees on `i64` (`module.rs`
-    /// decides, `int_trees_allowed`).
+    /// decides: not in a fn `kept_by_printer`).
     static ALLOWED: Cell<bool> = const { Cell::new(true) };
     /// The boxed `Int` literals emitted while recording (`module.rs` records
     /// each fn's in its pre-pass), and the global holding each one shared.
     static LITERALS: RefCell<Option<std::collections::BTreeSet<i64>>> = const { RefCell::new(None) };
     static POOL: RefCell<HashMap<i64, u32>> = RefCell::new(HashMap::new());
+}
+
+/// Whether the fn being emitted computes on the machine word at all.
+pub(crate) fn allowed() -> bool {
+    ALLOWED.with(Cell::get)
+}
+
+/// Whether an exact path is being emitted.
+pub(crate) fn in_exact() -> bool {
+    EXACT.with(|d| d.get() > 0)
 }
 
 pub(crate) fn set_allowed(allowed: bool) {
@@ -45,6 +56,8 @@ pub(crate) struct IntTreeReset;
 
 impl Drop for IntTreeReset {
     fn drop(&mut self) {
+        twin::set_calls(false);
+        twin::set_self(None);
         set_allowed(true);
         set_literal_pool(HashMap::new());
         record_literals(false);
@@ -97,7 +110,17 @@ enum Op {
 }
 
 type Node<'e> = &'e Spanned<MirExpr>;
-type Hoisted = HashMap<usize, (u32, bool)>;
+
+/// Where a leaf evaluated ahead is held: an `$AverInt`, a raw `i64` (the
+/// exact path boxes it), or an `Int` twin's result `(n, r)`.
+#[derive(Clone, Copy)]
+enum Held {
+    Boxed(u32),
+    Raw(u32),
+    Twin(u32, u32),
+}
+
+type Hoisted = HashMap<usize, Held>;
 
 fn seq(func: &mut Function, xs: &[I<'_>]) {
     for x in xs {
@@ -176,6 +199,8 @@ enum Leaf {
     Lit(i64),
     Boxed(u32),
     Ahead(bool),
+    /// A param a twin took unpacked: its `i64` and Big flag.
+    Param(u32, u32),
 }
 
 fn leaf_of(e: Node<'_>, slots: &SlotTable, ctx: &EmitCtx<'_>) -> Leaf {
@@ -184,7 +209,10 @@ fn leaf_of(e: Node<'_>, slots: &SlotTable, ctx: &EmitCtx<'_>) -> Leaf {
     }
     match &e.node {
         MirExpr::Local(l) if !ctx.slot_is_bare(l.node.slot.0) => {
-            Leaf::Boxed(slots.local(l.node.slot.0))
+            match twin::held_param(l.node.slot.0) {
+                Some((_, big)) => Leaf::Param(slots.local(l.node.slot.0), big),
+                None => Leaf::Boxed(slots.local(l.node.slot.0)),
+            }
         }
         MirExpr::Box(inner) => Leaf::Ahead(mir_renders_raw_i64(&inner.node, ctx)),
         _ => Leaf::Ahead(mir_is_eligible_carrier_value_project(&e.node, ctx)),
@@ -200,16 +228,27 @@ fn weight(e: Node<'_>, ctx: &EmitCtx<'_>) -> Option<usize> {
     }
 }
 
-fn enabled(ctx: &EmitCtx<'_>, roots: &[Node<'_>]) -> bool {
+/// Whether the tree at `e` has a leaf that calls an `Int` twin.
+fn twin_leaf(e: Node<'_>, ctx: &EmitCtx<'_>) -> bool {
+    match op_of(e, ctx) {
+        Some((_, a, b)) => twin_leaf(a, ctx) || b.is_some_and(|b| twin_leaf(b, ctx)),
+        None => twin::callee(e, ctx).is_some_and(|(_, t)| t.kind == TwinKind::Int),
+    }
+}
+
+/// `unpacked`: the tree's value is compared or unboxed, not boxed.
+fn enabled(ctx: &EmitCtx<'_>, roots: &[Node<'_>], unpacked: bool) -> bool {
     // A comparison of two leaves is worth it too, unless a side is a literal
-    // (`emit_aint_cmp_const` already compares that without a call).
+    // (`emit_aint_cmp_const` already compares that without a call). A leaf
+    // that calls a twin is worth it wherever the value is not boxed.
+    let twin = || unpacked && roots.iter().any(|r| twin_leaf(r, ctx));
     let leaves = roots.len() == 2 && roots.iter().all(|r| int_literal(r).is_none());
     let weights = || roots.iter().map(|r| weight(r, ctx)).sum::<Option<usize>>();
     ctx.registry.bignum
         && ctx.registry.aint_struct_idx.is_some()
         && EXACT.with(|d| d.get() == 0)
         && ALLOWED.with(|a| a.get())
-        && weights().is_some_and(|w| w > 0 || leaves)
+        && weights().is_some_and(|w| w > 0 || leaves || twin())
 }
 
 /// On the exact path, a leaf evaluated ahead is read from its local.
@@ -219,12 +258,18 @@ pub(crate) fn emit_hoisted_leaf(
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<bool>, WasmGcError> {
     let key = expr as *const _ as usize;
-    let Some((local, raw)) = HOISTED.with(|h| h.borrow().get(&key).copied()) else {
+    let Some(held) = HOISTED.with(|h| h.borrow().get(&key).copied()) else {
         return Ok(None);
     };
-    func.instruction(&I::LocalGet(local));
-    if raw {
-        lift_i64_result_to_aint(func, ctx)?;
+    match held {
+        Held::Boxed(local) => {
+            func.instruction(&I::LocalGet(local));
+        }
+        Held::Raw(local) => {
+            func.instruction(&I::LocalGet(local));
+            lift_i64_result_to_aint(func, ctx)?;
+        }
+        Held::Twin(n, r) => twin::pack_held(func, n, r, ctx)?,
     }
     Ok(Some(true))
 }
@@ -238,12 +283,23 @@ pub(crate) fn try_emit_value(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<Option<bool>>, WasmGcError> {
-    if !enabled(ctx, &[expr]) {
+    // A tail of an `Int` twin returns the machine word unboxed.
+    let tail = unbox.is_none() && twin::tail_kind(expr) == Some(TwinKind::Int);
+    if tail && twin::callee(expr, ctx).is_some() {
+        // The call arm hands the callee twin's result on.
+        return Ok(None);
+    }
+    if !enabled(ctx, &[expr], unbox.is_some() || tail) {
         return Ok(None);
     }
     let whole = unbox.unwrap_or(expr);
     let exact = &mut |f: &mut Function| Ok(emit_mir_expr(f, whole, slots, ctx)?.map(drop));
-    let r = emit_tree(func, &[expr], None, unbox.is_none(), slots, ctx, exact)?;
+    let result = match (unbox, tail) {
+        (Some(_), _) => Out::Word,
+        (None, true) => Out::Returned,
+        (None, false) => Out::Boxed,
+    };
+    let r = emit_tree(func, &[expr], None, result, slots, ctx, exact)?;
     Ok(Some(r.map(|()| true)))
 }
 
@@ -264,11 +320,38 @@ pub(crate) fn try_emit_compare(
         _ => return Ok(None),
     };
     let roots: [Node<'_>; 2] = [&bop.lhs, &bop.rhs];
-    if !is_int(&bop.lhs) || mir_int_binop_is_raw(bop, ctx) || !enabled(ctx, &roots) {
+    if !is_int(&bop.lhs) || mir_int_binop_is_raw(bop, ctx) || !enabled(ctx, &roots, true) {
         return Ok(None);
     }
     let exact = &mut |f: &mut Function| emit_mir_numeric_binop(f, bop, slots, ctx);
-    emit_tree(func, &roots, Some(cmp), false, slots, ctx, exact).map(Some)
+    emit_tree(func, &roots, Some(cmp), Out::Word, slots, ctx, exact).map(Some)
+}
+
+/// What a tree's `i64` path leaves: the machine word (or the comparison of
+/// two), the word boxed, or nothing, having returned it from an `Int` twin.
+#[derive(Clone, Copy, PartialEq)]
+enum Out {
+    Word,
+    Boxed,
+    Returned,
+}
+
+/// Whether `e` is a tree worth computing on the machine word for a value
+/// wanted unpacked.
+pub(crate) fn makes_word(e: Node<'_>, ctx: &EmitCtx<'_>) -> bool {
+    enabled(ctx, &[e], true)
+}
+
+/// The tree at `e` as its machine word, `exact` leaving the word of the
+/// packed value instead.
+pub(crate) fn emit_word(
+    func: &mut Function,
+    expr: Node<'_>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    exact: &mut dyn FnMut(&mut Function) -> Result<Option<()>, WasmGcError>,
+) -> Result<Option<()>, WasmGcError> {
+    emit_tree(func, &[expr], None, Out::Word, slots, ctx, exact)
 }
 
 /// `block $done (block $slow <i64 path> br $done) <exact path>`.
@@ -276,7 +359,7 @@ fn emit_tree(
     func: &mut Function,
     roots: &[Node<'_>],
     cmp: Option<I<'static>>,
-    boxed: bool,
+    result: Out,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
     exact: &mut dyn FnMut(&mut Function) -> Result<Option<()>, WasmGcError>,
@@ -290,10 +373,10 @@ fn emit_tree(
     }
     let ty = if cmp.is_some() {
         ValType::I32
-    } else if boxed {
-        aint
-    } else {
+    } else if result == Out::Word {
         ValType::I64
+    } else {
+        aint
     };
     seq(
         func,
@@ -307,8 +390,10 @@ fn emit_tree(
     }
     if let Some(cmp) = cmp {
         func.instruction(&cmp);
-    } else if boxed {
+    } else if result == Out::Boxed {
         lift_i64_result_to_aint(func, ctx)?;
+    } else if result == Out::Returned {
+        twin::return_small(func, ctx);
     }
     seq(func, &[I::Br(1), I::End]);
     HOISTED.with(|h| h.borrow_mut().extend(ahead.iter().map(|(k, v)| (*k, *v))));
@@ -343,6 +428,16 @@ fn hoist(
     let Leaf::Ahead(raw) = leaf_of(e, slots, ctx) else {
         return Ok(Some(()));
     };
+    if let Some((call, twin)) = twin::callee(e, ctx)
+        && twin.kind == TwinKind::Int
+    {
+        if twin::emit_call(func, call, &twin, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        let (n, r) = twin::hold_int(func, slots, ctx);
+        out.insert(e as *const _ as usize, Held::Twin(n, r));
+        return Ok(Some(()));
+    }
     let produced = match &e.node {
         MirExpr::Box(inner) if raw => emit_mir_int_raw(func, inner, slots, ctx)?,
         _ if raw => emit_mir_carrier_value_raw(func, e, slots, ctx)?,
@@ -353,7 +448,12 @@ fn hoist(
     }
     let local = slots.fresh_local(if raw { ValType::I64 } else { aint });
     func.instruction(&I::LocalSet(local));
-    out.insert(e as *const _ as usize, (local, raw));
+    let held = if raw {
+        Held::Raw(local)
+    } else {
+        Held::Boxed(local)
+    };
+    out.insert(e as *const _ as usize, held);
     Ok(Some(()))
 }
 
@@ -395,21 +495,31 @@ fn emit_fast(
     let [t0, t1, t2] = temps;
     let (g0, g1, g2) = (I::LocalGet(t0), I::LocalGet(t1), I::LocalGet(t2));
     let Some((op, a, b)) = op_of(e, ctx) else {
-        let (boxed, raw) = match leaf_of(e, slots, ctx) {
+        let boxed = match leaf_of(e, slots, ctx) {
             Leaf::Lit(n) => {
                 func.instruction(&I::I64Const(n));
                 return Ok(Some(()));
             }
-            Leaf::Boxed(local) => (local, false),
+            Leaf::Param(n, big) => {
+                seq(func, &[I::LocalGet(big), I::BrIf(0), I::LocalGet(n)]);
+                return Ok(Some(()));
+            }
+            Leaf::Boxed(local) => local,
             Leaf::Ahead(_) => match ahead.get(&(e as *const _ as usize)) {
-                Some(&found) => found,
+                Some(Held::Boxed(local)) => *local,
+                Some(Held::Raw(local)) => {
+                    func.instruction(&I::LocalGet(*local));
+                    return Ok(Some(()));
+                }
+                // A twin's `Int` is its `i64` when the ref is null.
+                Some(Held::Twin(n, r)) => {
+                    seq(func, &[I::LocalGet(*r), I::RefIsNull, I::I32Eqz]);
+                    seq(func, &[I::BrIf(0), I::LocalGet(*n)]);
+                    return Ok(Some(()));
+                }
                 None => return unsupported("an Int tree leaf that was not evaluated ahead"),
             },
         };
-        if raw {
-            func.instruction(&I::LocalGet(boxed));
-            return Ok(Some(()));
-        }
         // The `$small` of a Small `$AverInt`; a Big one leaves the path.
         let field = |field_index| I::StructGet {
             struct_type_index: ctx.registry.aint_struct_idx.unwrap_or_default(),

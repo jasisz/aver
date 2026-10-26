@@ -64,6 +64,12 @@ pub(crate) fn emit_aint_arg_as_i64_sat(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<bool, WasmGcError> {
+    if ctx.registry.bignum {
+        let to_sat = aint_helper(ctx, "__aint_to_i64_sat")?;
+        if let Some(done) = super::twin::emit_word_lowered(func, arg, to_sat, slots, ctx)? {
+            return Ok(done.is_some());
+        }
+    }
     if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
         return Ok(false);
     }

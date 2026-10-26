@@ -403,8 +403,8 @@ fn main() -> Unit
     assert_eq!(
         (bytes.len(), digest.as_str()),
         (
-            10487,
-            "e5507121e8cc598a762d8b4d2f137e134c92c4a8e4e3301129d9d2b874da9774"
+            10641,
+            "03815dc776ea6611edde91ee9b58b981e2123e66344f02887cf9b0ba04506b38"
         ),
         "a module with no Vector value changed"
     );

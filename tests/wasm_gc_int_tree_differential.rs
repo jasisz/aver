@@ -39,8 +39,11 @@ fn run(file: &Path, wasm_gc: bool) -> String {
 /// The module `file` compiles to, with the trees on or off.
 fn module(file: &Path, trees: bool) -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!(
-        "aver-int-tree-{}-{}",
+        "aver-int-tree-{}-{}-{}",
         std::process::id(),
+        file.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("module"),
         u8::from(trees)
     ));
     let mut cmd = Command::new(aver_cmd::aver_bin());

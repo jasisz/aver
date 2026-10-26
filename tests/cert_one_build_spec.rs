@@ -79,7 +79,7 @@ fn compile(
     cmd.arg("--target").arg("wasm-gc").arg("-o").arg(&out_dir);
     cmd.args(flags);
     if !int_trees {
-        cmd.env("AVER_NO_INT_TREE", "1");
+        cmd.env("AVER_NO_INT_TREE", "1").env("AVER_NO_TWINS", "1");
     }
     let output = cmd.output().map_err(|e| format!("spawn aver: {e}"))?;
     if !output.status.success() {

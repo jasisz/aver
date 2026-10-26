@@ -213,6 +213,11 @@ fn emit_declared_field_value(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
+    if ctx.registry.is_eligible_carrier_field(type_name, decl_name)
+        && let Some(done) = emit_carrier_word(func, value, slots, ctx)?
+    {
+        return Ok(done);
+    }
     if emit_mir_record_field_value(func, value, decl_ty, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -228,6 +233,22 @@ fn emit_declared_field_value(
         emit_carrier_construct_bridge(func, ctx)?;
     }
     Ok(Some(()))
+}
+
+/// The `i64` of a carrier field whose `Int` value is on the machine word
+/// (`twin::emit_word_lowered`); `None` when it is not.
+fn emit_carrier_word(
+    func: &mut Function,
+    value: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<Option<()>>, WasmGcError> {
+    match ctx.fn_map.builtins.get("__aint_to_i64_checked").copied() {
+        Some(checked) if ctx.registry.bignum => {
+            super::twin::emit_word_lowered(func, value, checked, slots, ctx)
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Park a run of already-evaluated field values — `written` deep on the
@@ -294,6 +315,13 @@ pub(crate) fn emit_mir_record_create(
         let field = fields.first().ok_or(WasmGcError::Validation(format!(
             "newtype record `{type_name}` requires one field"
         )))?;
+        // An eligible carrier holds a native `i64`: a value on the machine
+        // word goes in as it is.
+        if ctx.registry.is_eligible_carrier(type_name)
+            && let Some(done) = emit_carrier_word(func, &field.value, slots, ctx)?
+        {
+            return Ok(done);
+        }
         let produced = emit_mir_expr(func, &field.value, slots, ctx)?;
         // ETAP-2 carrier-`i64`: an eligible carrier construct is still
         // identity, but the field value is a plain `Int` (`$AverInt`) and the

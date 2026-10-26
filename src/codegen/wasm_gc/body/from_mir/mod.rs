@@ -78,6 +78,7 @@ pub(super) use super::emit::{
 };
 pub(super) use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 pub(super) use super::{CallerFnCollector, EmitCtx, FnMap, SlotTable, Wasip2Lowering};
+pub(super) use crate::codegen::wasm_gc::twins::TwinKind;
 
 mod builtins;
 pub(super) use builtins::emit_map_arg_current;
@@ -89,6 +90,7 @@ pub(crate) mod int_tree;
 mod pattern_match;
 mod records;
 mod strings;
+pub(crate) mod twin;
 
 pub(super) use builtins::*;
 pub(super) use collections::*;
@@ -398,7 +400,14 @@ pub(crate) fn emit_fn_body_via_mir(
     // ETAP-2 SLICE 2a: pass the per-slot Int repr (mirror of the alias
     // facts). Default-empty on the un-rewritten wasm-gc MIR, so every slot
     // stays boxed.
-    let slots = SlotTable::build_for_fn(rfd, registry, fn_map, &mir_fn.repr)?;
+    let mut slots = SlotTable::build_for_fn(rfd, registry, fn_map, &mir_fn.repr)?;
+    // A twin takes its unpacked `Int` params as `i64`s.
+    for slot in twin::word_param_slots() {
+        if let Some(ty) = slots.by_slot.get_mut(slot as usize) {
+            *ty = ValType::I64;
+        }
+    }
+    let slots = slots;
     let return_type_str = rfd.return_type.display();
 
     let ctx = EmitCtx {
@@ -435,6 +444,10 @@ pub(crate) fn emit_fn_body_via_mir(
         int_result_raw: std::cell::Cell::new(false),
     };
 
+    // A twin first reads the params it takes unpacked.
+    if twin::self_kind().is_some() {
+        twin::emit_entry(&slots, &ctx);
+    }
     // Walk the body. `Ok(None)` mid-walk → caller falls back.
     // ETAP-2 SLICE 2b: a bare-return fn's body is a raw-i64 result tail.
     ctx.int_result_raw.set(mir_fn.repr.bare_return);
@@ -442,6 +455,12 @@ pub(crate) fn emit_fn_body_via_mir(
         return Ok(None);
     };
 
+    // A twin returns what its tails left packed unpacked.
+    if let Some(kind) = twin::self_kind()
+        && produces_value
+    {
+        twin::unpack_result(func, &kind, &slots, &ctx);
+    }
     // Tail handling — mirror of `emit_fn_body`'s `is_last` arm. The
     // body's value is the fn's return value, left on the stack.
     if return_type_str.trim() == "Unit" && produces_value {
@@ -504,6 +523,7 @@ pub(crate) fn emit_mir_expr(
     // would be a validation error). The literal arm + the block-type
     // selection are the only readers.
     let result_raw = ctx.int_result_raw.replace(false);
+    let _level = twin::enter();
     if let Some(produced) = int_tree::emit_hoisted_leaf(func, expr, ctx)? {
         return Ok(Some(produced));
     }
@@ -522,6 +542,9 @@ pub(crate) fn emit_mir_expr(
                 // `i64`.
                 if result_raw {
                     func.instruction(&Instruction::I64Const(*n));
+                } else if twin::tail_kind(expr) == Some(TwinKind::Int) {
+                    func.instruction(&Instruction::I64Const(*n));
+                    twin::return_small(func, ctx);
                 } else if ctx.registry.bignum
                     && let Some(global) = int_tree::pooled_literal(*n)
                 {
@@ -630,6 +653,16 @@ pub(crate) fn emit_mir_expr(
             // slot is value-producing. Preserve the strict Unit check for
             // ordinary stamped locals while accepting that closed shape.
             let produces_value = expr.ty().is_none() || aver_type_str_of(expr).trim() != "Unit";
+            // A param a twin took unpacked: returned as it is from an `Int`
+            // twin, boxed once where it is wanted packed.
+            if twin::held_param(local.node.slot.0).is_some() {
+                if twin::tail_kind(expr) == Some(TwinKind::Int) {
+                    twin::return_param(func, local.node.slot.0, slots, ctx);
+                } else {
+                    twin::emit_packed_param(func, local.node.slot.0, slots, ctx)?;
+                }
+                return Ok(Some(true));
+            }
             // Unit locals retain an index placeholder, but reading Unit must
             // leave no stack value, just like its literal and function result.
             if produces_value {
@@ -834,6 +867,8 @@ pub(crate) fn emit_mir_expr(
             let call = &spanned_call.node;
             match call.callee {
                 MirCallee::Fn(fn_id) => {
+                    let pass_on = twin::callee(expr, ctx)
+                        .filter(|(_, t)| twin::tail_kind(expr).as_ref() == Some(&t.kind));
                     // Mirror of `emit_expr`'s `ResolvedCallee::Fn` arm.
                     match ctx.fn_map.by_id.get(&fn_id) {
                         None => {
@@ -850,6 +885,29 @@ pub(crate) fn emit_mir_expr(
                                     "call to unknown fn `{name}` (FnId {fn_id:?})"
                                 )))
                             }
+                        }
+                        Some(_) if pass_on.is_some() => {
+                            // A twin's tail that calls a twin of its kind
+                            // hands that result on as it is.
+                            let (call, twin) = pass_on.expect("guarded");
+                            if twin::emit_call(func, call, &twin, slots, ctx)?.is_none() {
+                                return Ok(None);
+                            }
+                            func.instruction(&Instruction::Return);
+                            Ok(Some(true))
+                        }
+                        Some(_)
+                            if twin::of_fn(fn_id, ctx)
+                                .is_some_and(|t| twin::worth_it(&call.args, &t, ctx)) =>
+                        {
+                            // An arg the callee's twin takes unpacked has its
+                            // value unpacked: call the twin, pack its result.
+                            let twin = twin::of_fn(fn_id, ctx).expect("guarded");
+                            if twin::emit_call(func, call, &twin, slots, ctx)?.is_none() {
+                                return Ok(None);
+                            }
+                            twin::pack_result(func, &twin.kind, slots, ctx)?;
+                            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
                         }
                         Some(entry) => {
                             let wasm_idx = entry.wasm_idx;
@@ -1454,6 +1512,20 @@ pub(crate) fn emit_mir_expr(
             // `emit_fn_body_via_mir`'s trailing `End` is unreachable but
             // valid, exactly as the `ResolvedExpr` path.
             let tc = &spanned_tc.node;
+            // In a twin, the tail call goes to the target's twin, so a tail
+            // group runs on twins (`twins::plan` gives every target one).
+            if twin::self_kind().is_some() {
+                let target = twin::tail_target(tc.target, ctx).ok_or_else(|| {
+                    WasmGcError::Validation(format!(
+                        "a twin tail-calls `{}`, which has no twin of its kind",
+                        ctx.symbol_table.fn_entry(tc.target).key.canonical()
+                    ))
+                })?;
+                if twin::emit_tail_call(func, tc.target, &tc.args, &target, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                return Ok(Some(aver_type_str_of(expr).trim() != "Unit"));
+            }
             let wasm_idx = match ctx.fn_map.by_id.get(&tc.target) {
                 Some(entry) => entry.wasm_idx,
                 None => {
@@ -1494,6 +1566,9 @@ pub(crate) fn emit_mir_expr(
             // Mirror of `emit_expr`'s `Ctor` arm. A constructor always
             // produces a value (never `Unit`).
             let con = &spanned_ctor.node;
+            if matches!(twin::tail_kind(expr), Some(TwinKind::Fields { .. })) {
+                twin::return_struct_here();
+            }
             let covered = match con.ctor {
                 MirCtor::Builtin(BuiltinCtor::OptionSome) => {
                     if con.args.len() != 1 {
@@ -1545,6 +1620,7 @@ pub(crate) fn emit_mir_expr(
                     emit_mir_constructor_with_args(func, info, &con.args, slots, ctx)?
                 }
             };
+            twin::clear_return();
             match covered {
                 Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
                 None => Err(WasmGcError::Validation(format!(
@@ -1813,16 +1889,26 @@ pub(crate) fn emit_mir_expr(
         //                  silently) it is the ONLY runtime net, so it is
         //                  checked, never saturating.
         MirExpr::Box(inner) => {
-            // `inner` is a raw-i64 subtree; emit it in raw context, then box.
+            // `inner` is a raw-i64 subtree; emit it in raw context, then box,
+            // or, as a tail of an `Int` twin, return it as it is.
             if emit_mir_int_raw(func, inner, slots, ctx)?.is_none() {
                 return Ok(None);
             }
-            lift_i64_result_to_aint(func, ctx)?;
+            if twin::tail_kind(expr) == Some(TwinKind::Int) {
+                twin::return_small(func, ctx);
+            } else {
+                lift_i64_result_to_aint(func, ctx)?;
+            }
             Ok(Some(true))
         }
         MirExpr::Unbox(inner) => {
             if let Some(r) = int_tree::try_emit_value(func, inner, Some(expr), slots, ctx)? {
                 return Ok(r);
+            }
+            if let Some(checked) = ctx.fn_map.builtins.get("__aint_to_i64_checked").copied()
+                && let Some(done) = twin::emit_word_lowered(func, inner, checked, slots, ctx)?
+            {
+                return Ok(done.map(|()| true));
             }
             // `inner` is a boxed `$AverInt`; emit it boxed, then checked-narrow.
             if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
@@ -2242,8 +2328,16 @@ pub(crate) fn emit_mir_args_then_call_lowering_int(
         let raw_int_arg = ctx.registry.bignum
             && int_arg_positions.contains(&i)
             && mir_renders_raw_i64(&arg.node, ctx);
+        let to_sat = || ctx.fn_map.builtins.get("__aint_to_i64_sat").copied();
         if raw_int_arg {
             if emit_mir_int_raw(func, arg, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        } else if let Some(sat) =
+            to_sat().filter(|_| ctx.registry.bignum && int_arg_positions.contains(&i))
+            && let Some(done) = twin::emit_word_lowered(func, arg, sat, slots, ctx)?
+        {
+            if done.is_none() {
                 return Ok(None);
             }
         } else {

@@ -44,6 +44,9 @@ pub(super) use from_mir::int_tree::{
     IntTreeReset, record_literals as record_int_literals, set_allowed as set_int_trees_allowed,
     set_literal_pool as set_int_literal_pool,
 };
+pub(super) use from_mir::twin::{
+    entry_locals as twin_entry_locals, set_calls as set_twin_calls, set_self as set_twin_self,
+};
 pub use from_mir::{CoverageReport, coverage_report};
 pub(super) use from_mir::{PROOF_ONLY_BRANCH_PATH, emit_fn_body_via_mir, take_unsupported_reason};
 pub(super) use slots::SlotTable;
@@ -129,6 +132,8 @@ pub(super) struct FnMap {
     /// program reads `Run.lastTurn`. `None` otherwise, so every other module
     /// keeps its bytes. See `super::run_turn`.
     pub(super) run_turn_globals: Option<super::run_turn::RunTurnGlobals>,
+    /// The twins of the user fns that have one (`super::twins`).
+    pub(super) twins: std::collections::HashMap<crate::ir::FnId, super::twins::TwinEntry>,
 }
 
 impl FnMap {

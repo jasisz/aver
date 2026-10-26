@@ -1079,6 +1079,17 @@ pub(super) fn emit_module_with(
     // position-aligned with `resolved_fn_defs[i]`.
     let default_repr = crate::ir::mir::MirFnRepr::default();
     let mut fn_type_indices: Vec<u32> = Vec::with_capacity(fn_defs.len());
+    // The twins (`super::twins`): which fns hand their result back unpacked,
+    // and the params each one keeps.
+    let twin_plans = super::twins::plan(
+        &fn_defs,
+        &resolved_fn_defs,
+        &mir_program,
+        &registry,
+        certify,
+    )?;
+    let mut twin_params: Vec<Vec<ValType>> = vec![Vec::new(); fn_defs.len()];
+    let mut twin_results: Vec<Vec<ValType>> = vec![Vec::new(); fn_defs.len()];
     for (i, fd) in fn_defs.iter().enumerate() {
         let repr = mir_program
             .fn_by_id(resolved_fn_defs[i].fn_id)
@@ -1086,6 +1097,24 @@ pub(super) fn emit_module_with(
             .unwrap_or(&default_repr);
         let params = param_types_with_repr(&fd.params, Some(&registry), &repr.bare_params)?;
         let results = return_results_with_repr(&fd.return_type, Some(&registry), repr.bare_return)?;
+        if let Some(plan) = &twin_plans[i] {
+            // An unpacked `Int` param is an `i64`; a `Unit` one has no value.
+            let mut wasm = params.iter();
+            twin_params[i] = fd
+                .params
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, ty))| ty.trim() != "Unit")
+                .filter_map(|(k, _)| {
+                    let v = *wasm.next()?;
+                    Some(if plan.unpacked[k] { ValType::I64 } else { v })
+                })
+                .collect();
+            // Then the ref of each unpacked `Int`.
+            let aint = registry.aint_struct_idx.map(super::types::struct_ref);
+            twin_params[i].extend(plan.unpacked.iter().filter(|u| **u).filter_map(|_| aint));
+            twin_results[i] = plan.kind.results(&registry, &results);
+        }
         types.ty().function(params, results);
         fn_type_indices.push(next_type_idx);
         next_type_idx += 1;
@@ -2433,12 +2462,24 @@ pub(super) fn emit_module_with(
             });
             types.ty().function([ValType::I32], [string_ref_ty]);
             let name_type_idx = next_type_idx;
-            // Last type allocation in this fn — `next_type_idx`
-            // increment dropped to silence `unused_assignments`.
+            next_type_idx += 1;
             Some((count_type_idx, name_type_idx))
         } else {
             None
         };
+    // The twins' types come last, so no other index moves.
+    let mut twin_type_idx: Vec<Option<u32>> = vec![None; fn_defs.len()];
+    for (i, plan) in twin_plans.iter().enumerate() {
+        if plan.is_some() {
+            types.ty().function(
+                twin_params[i].iter().copied(),
+                twin_results[i].iter().copied(),
+            );
+            twin_type_idx[i] = Some(next_type_idx);
+            next_type_idx += 1;
+        }
+    }
+    let _ = next_type_idx;
 
     module.section(&types);
 
@@ -2604,6 +2645,21 @@ pub(super) fn emit_module_with(
         funcs.function(n_ty);
         (count_fn_idx, name_fn_idx)
     });
+    // The twins, after every other fn, so no other index moves.
+    let mut twins_by_id: HashMap<crate::ir::FnId, super::twins::TwinEntry> = HashMap::new();
+    for (i, plan) in twin_plans.iter().enumerate() {
+        if let (Some(plan), Some(ty)) = (plan, twin_type_idx[i]) {
+            twins_by_id.insert(
+                resolved_fn_defs[i].fn_id,
+                super::twins::TwinEntry {
+                    wasm_idx: import_count + funcs.len(),
+                    kind: plan.kind.clone(),
+                    unpacked: plan.unpacked.clone(),
+                },
+            );
+            funcs.function(ty);
+        }
+    }
     module.section(&funcs);
 
     // ── Table section (funcref table for first-class `Fn` values) ──
@@ -3240,6 +3296,7 @@ pub(super) fn emit_module_with(
         call_indirect_types,
         run_failure_global,
         run_turn_globals,
+        twins: twins_by_id,
         ..FnMap::default()
     };
 
@@ -3303,9 +3360,13 @@ pub(super) fn emit_module_with(
     }
 
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
-    // Whether each fn computes its `Int` trees on `i64` first (see
-    // `int_trees_allowed`), decided in the pre-pass below.
+    // Whether each fn computes its `Int` trees on `i64` first (not where
+    // `kept_by_printer`), decided in the pre-pass below.
     let mut trees_for: Vec<bool> = vec![false; fn_defs.len()];
+    // Whether a `--certify` build keeps each fn in its ordinary form (the
+    // certificate plan printer prints it): it computes no tree and calls no
+    // twin.
+    let mut kept_for: Vec<bool> = vec![false; fn_defs.len()];
     // The locals of each fn emitted without `Int` trees: the plan printer
     // reads a fn with trees as it would without them, so it declines that fn
     // for the reason it has.
@@ -3376,8 +3437,8 @@ pub(super) fn emit_module_with(
         super::body::set_int_trees_allowed(true);
         let literals = super::body::record_int_literals(false);
         let used_mir = emitted.is_some();
-        trees_for[i] = match (mir_fn_for[i], &emitted) {
-            (Some(mir_fn), Some(extra)) => int_trees_allowed(
+        kept_for[i] = match (mir_fn_for[i], &emitted) {
+            (Some(mir_fn), Some(extra)) => kept_by_printer(
                 certify,
                 mir_fn,
                 &resolved_fn_defs[i],
@@ -3387,6 +3448,10 @@ pub(super) fn emit_module_with(
             ),
             _ => false,
         };
+        trees_for[i] = emitted.is_some()
+            && registry.bignum
+            && std::env::var_os("AVER_NO_INT_TREE").is_none()
+            && !kept_for[i];
         plain_locals_for[i] = emitted;
         if trees_for[i] {
             pooled_literals.extend(literals);
@@ -3979,6 +4044,8 @@ pub(super) fn emit_module_with(
     // The declared locals of every MIR-emitted fn, for the certificate plan
     // printer (which transcribes them; the code entry pins them).
     let mut extra_locals_for: Vec<Option<Vec<ValType>>> = vec![None; fn_defs.len()];
+    // The twins' bodies, emitted after every other fn (`super::twins`).
+    let mut twin_codes: Vec<Function> = Vec::new();
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         // Dry run: discover extra locals by emitting into a throwaway
@@ -3992,59 +4059,90 @@ pub(super) fn emit_module_with(
         // signature. So the dry-run only needs locals for the MIR path;
         // the stub path contributes none.
         super::body::set_int_trees_allowed(trees_for[i]);
-        let extra_locals_dry = if mir_dispatch[i] {
-            let mut probe = Function::new([]);
-            emit_fn_body_via_mir(
-                &mut probe,
-                &resolved_fn_defs[i],
-                mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
-                &mir_program,
-                &fn_map,
-                self_wasm_idx,
-                &registry,
-                &symbol_table,
-                &effect_idx_lookup,
-                &caller_fn_collector,
-                wasip2_lowering.as_ref(),
-            )?
-            .ok_or_else(|| {
-                WasmGcError::Validation(format!(
-                    "MIR dispatch desync for fn `{}` (dry-run)",
-                    resolved_fn_defs[i].name
-                ))
-            })?
-        } else {
-            Vec::new()
+        super::body::set_twin_calls(!kept_for[i]);
+        let emit_body = |self_wasm_idx: u32| -> Result<(Function, Vec<ValType>), WasmGcError> {
+            let extra_locals_dry = if mir_dispatch[i] {
+                let mut probe = Function::new([]);
+                emit_fn_body_via_mir(
+                    &mut probe,
+                    &resolved_fn_defs[i],
+                    mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
+                    &mir_program,
+                    &fn_map,
+                    self_wasm_idx,
+                    &registry,
+                    &symbol_table,
+                    &effect_idx_lookup,
+                    &caller_fn_collector,
+                    wasip2_lowering.as_ref(),
+                )?
+                .ok_or_else(|| {
+                    WasmGcError::Validation(format!(
+                        "MIR dispatch desync for fn `{}` (dry-run)",
+                        resolved_fn_defs[i].name
+                    ))
+                })?
+            } else {
+                Vec::new()
+            };
+            let local_groups: Vec<(u32, ValType)> =
+                extra_locals_dry.iter().map(|v| (1, *v)).collect();
+            let mut func = Function::new(local_groups);
+            if mir_dispatch[i] {
+                emit_fn_body_via_mir(
+                    &mut func,
+                    &resolved_fn_defs[i],
+                    mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
+                    &mir_program,
+                    &fn_map,
+                    self_wasm_idx,
+                    &registry,
+                    &symbol_table,
+                    &effect_idx_lookup,
+                    &caller_fn_collector,
+                    wasip2_lowering.as_ref(),
+                )?
+                .ok_or_else(|| {
+                    WasmGcError::Validation(format!(
+                        "MIR dispatch desync for fn `{}` (emit)",
+                        resolved_fn_defs[i].name
+                    ))
+                })?;
+            } else {
+                emit_trap_stub_body(&mut func);
+            }
+            Ok((func, extra_locals_dry))
         };
-
-        let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
-        extra_locals_for[i] = mir_dispatch[i].then(|| extra_locals_dry.clone());
-        let mut func = Function::new(local_groups);
-        if mir_dispatch[i] {
-            emit_fn_body_via_mir(
-                &mut func,
-                &resolved_fn_defs[i],
-                mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
-                &mir_program,
-                &fn_map,
-                self_wasm_idx,
+        if let (Some(twin), Some(mir_fn)) =
+            (fn_map.twins.get(&resolved_fn_defs[i].fn_id), mir_fn_for[i])
+        {
+            // The fn packs what its twin returns; the twin has the body.
+            codes.function(&emit_twin_wrapper(
+                &fn_defs[i].params,
+                twin,
                 &registry,
-                &symbol_table,
-                &effect_idx_lookup,
-                &caller_fn_collector,
-                wasip2_lowering.as_ref(),
-            )?
-            .ok_or_else(|| {
-                WasmGcError::Validation(format!(
-                    "MIR dispatch desync for fn `{}` (emit)",
-                    resolved_fn_defs[i].name
-                ))
-            })?;
+                &fn_map,
+            )?);
+            super::body::set_twin_self(Some((twin.clone(), mir_fn)));
+            let emitted = emit_body(twin.wasm_idx)
+                .map(|(func, extra)| (func, extra, super::body::twin_entry_locals()));
+            super::body::set_twin_self(None);
+            let (func, extra, entry) = emitted?;
+            twin_codes.push(with_ref_params(
+                &func,
+                &extra,
+                &fn_defs[i].params,
+                &entry,
+                &registry,
+            )?);
+            extra_locals_for[i] = mir_dispatch[i].then_some(extra);
         } else {
-            emit_trap_stub_body(&mut func);
+            let (func, extra) = emit_body(self_wasm_idx)?;
+            extra_locals_for[i] = mir_dispatch[i].then_some(extra);
+            codes.function(&func);
         }
         super::body::set_int_trees_allowed(true);
-        codes.function(&func);
+        super::body::set_twin_calls(false);
     }
 
     // Builtin helper bodies — emitted after user fns so their own
@@ -6331,6 +6429,9 @@ pub(super) fn emit_module_with(
         name_fn.instruction(&Instruction::End);
         codes.function(&name_fn);
     }
+    for func in &twin_codes {
+        codes.function(func);
+    }
 
     module.section(&codes);
 
@@ -6454,14 +6555,14 @@ pub(super) fn emit_module_with(
     Ok((bytes, mir_emitted, cert_plans))
 }
 
-/// Whether `mir_fn` computes its `Int` trees on `i64` first
-/// (`body/from_mir/int_tree.rs`); `extra` are its locals emitted without
-/// them. In a `--certify` build a fn the certificate plan printer admits keeps
-/// the ordinary lowering, so a certificate reads the bytes it reads without
-/// trees: the checker lowers the printed plan the ordinary way and compares it
-/// with the code (the rule `ir::cert_shape` keeps for the fabricating passes).
-/// A plain build asks the printer nothing.
-fn int_trees_allowed(
+/// Whether a `--certify` build keeps `mir_fn` in its ordinary lowering, with
+/// no `Int` tree computed on `i64` (`body/from_mir/int_tree.rs`) and no twin
+/// called (`super::twins`); `extra` are its locals emitted so. A fn the
+/// certificate plan printer admits is kept, so a certificate reads the bytes
+/// it reads: the checker lowers the printed plan the ordinary way and compares
+/// it with the code (the rule `ir::cert_shape` keeps for the fabricating
+/// passes). A plain build asks the printer nothing.
+fn kept_by_printer(
     certify: bool,
     mir_fn: &crate::ir::mir::MirFn,
     rfd: &crate::ir::hir::ResolvedFnDef,
@@ -6469,9 +6570,141 @@ fn int_trees_allowed(
     layout: &super::cert_layout::CertLayout<'_>,
     types: &mut crate::codegen::cert::TypeTableBuilder,
 ) -> bool {
-    layout.registry.bignum
-        && std::env::var_os("AVER_NO_INT_TREE").is_none()
-        && !(certify && crate::codegen::cert::print_fn(mir_fn, rfd, extra, layout, types).is_ok())
+    certify && crate::codegen::cert::print_fn(mir_fn, rfd, extra, layout, types).is_ok()
+}
+
+/// The body of a fn that has a twin (`super::twins`): call the twin with the
+/// same params, each `Int` it takes unpacked as a meaningless `i64` and its
+/// packed value as the ref (the twin's entry reads it), and pack the result
+/// as the fn always returned it. Small: V8 sizes its inlining budget by the
+/// share of small fns in a module.
+fn emit_twin_wrapper(
+    params: &[(String, String)],
+    twin: &super::twins::TwinEntry,
+    registry: &TypeRegistry,
+    fn_map: &FnMap,
+) -> Result<Function, WasmGcError> {
+    let values: Vec<usize> = (0..params.len())
+        .filter(|k| params[*k].1.trim() != "Unit")
+        .collect();
+    let n = values.len() as u32;
+    let aint = super::types::struct_ref(registry.aint_struct_idx.unwrap_or_default());
+    let mut f = Function::new([(1, ValType::I64), (1, aint)]);
+    let unpacked = |k: usize| twin.unpacked.get(k).copied().unwrap_or(false);
+    for (p, k) in values.iter().enumerate() {
+        f.instruction(&if unpacked(*k) {
+            Instruction::I64Const(0)
+        } else {
+            Instruction::LocalGet(p as u32)
+        });
+    }
+    for (p, k) in values.iter().enumerate() {
+        if unpacked(*k) {
+            f.instruction(&Instruction::LocalGet(p as u32));
+        }
+    }
+    f.instruction(&Instruction::Call(twin.wasm_idx));
+    match &twin.kind {
+        super::twins::TwinKind::Int => {
+            let from_i64 = fn_map
+                .builtins
+                .get("__aint_from_i64")
+                .copied()
+                .ok_or_else(|| {
+                    WasmGcError::Validation("an Int twin needs __aint_from_i64".into())
+                })?;
+            f.instruction(&Instruction::LocalSet(n + 1));
+            f.instruction(&Instruction::LocalSet(n));
+            f.instruction(&Instruction::LocalGet(n + 1));
+            f.instruction(&Instruction::RefIsNull);
+            f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(aint)));
+            f.instruction(&Instruction::LocalGet(n));
+            f.instruction(&Instruction::Call(from_i64));
+            f.instruction(&Instruction::Else);
+            f.instruction(&Instruction::LocalGet(n + 1));
+            f.instruction(&Instruction::End);
+        }
+        super::twins::TwinKind::Fields { struct_idx, .. } => {
+            f.instruction(&Instruction::StructNew(*struct_idx));
+        }
+        super::twins::TwinKind::Plain => {}
+    }
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// A twin's body as emitted, with its params at the fn's own positions,
+/// made the twin's: one ref param per unpacked `Int` (`entry`: its
+/// position, packed-value and Big-flag locals) follows the fn's params, so
+/// every other local moves up past them, and the entry reads each ref: a
+/// non-null one is the packed value, a Small one read into its `i64`.
+fn with_ref_params(
+    body: &Function,
+    locals: &[ValType],
+    params: &[(String, String)],
+    entry: &[(usize, u32, u32)],
+    registry: &TypeRegistry,
+) -> Result<Function, WasmGcError> {
+    let wasm_param = |k: usize| {
+        params[..k]
+            .iter()
+            .filter(|(_, t)| t.trim() != "Unit")
+            .count() as u32
+    };
+    let first = wasm_param(params.len());
+    let refs = entry.len() as u32;
+    let moved = |i: u32| if i >= first { i + refs } else { i };
+    let aint = registry.aint_struct_idx.unwrap_or_default();
+    let get = |field_index| Instruction::StructGet {
+        struct_type_index: aint,
+        field_index,
+    };
+    let mut f = Function::new(locals.iter().map(|v| (1, *v)));
+    for (j, (k, packed, big)) in entry.iter().enumerate() {
+        let (packed, big) = (moved(*packed), moved(*big));
+        for i in [
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(first + j as u32),
+            Instruction::BrOnNull(0),
+            Instruction::LocalTee(packed),
+            get(1),
+            Instruction::RefIsNull,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(packed),
+            get(0),
+            Instruction::LocalSet(wasm_param(*k)),
+            Instruction::Else,
+            Instruction::I32Const(1),
+            Instruction::LocalSet(big),
+            Instruction::End,
+            Instruction::End,
+        ] {
+            f.instruction(&i);
+        }
+    }
+    let raw = body.clone().into_raw_body();
+    let invalid = |e: &dyn std::fmt::Display| WasmGcError::Validation(format!("twin body: {e}"));
+    let reader = wasmparser::FunctionBody::new(wasmparser::BinaryReader::new(&raw, 0));
+    let mut ops = reader.get_operators_reader().map_err(|e| invalid(&e))?;
+    let mut re = wasm_encoder::reencode::RoundtripReencoder;
+    while !ops.eof() {
+        let op = ops.read().map_err(|e| invalid(&e))?;
+        let i = match op {
+            wasmparser::Operator::LocalGet { local_index } => {
+                Instruction::LocalGet(moved(local_index))
+            }
+            wasmparser::Operator::LocalSet { local_index } => {
+                Instruction::LocalSet(moved(local_index))
+            }
+            wasmparser::Operator::LocalTee { local_index } => {
+                Instruction::LocalTee(moved(local_index))
+            }
+            op => wasm_encoder::reencode::Reencode::instruction(&mut re, op)
+                .map_err(|e| invalid(&e))?,
+        };
+        f.instruction(&i);
+    }
+    Ok(f)
 }
 
 fn emit_user_types(
