@@ -1567,14 +1567,11 @@ pub fn processIndentation(
     crate::cancel_checkpoint();
     {
         let __list_subject = tokens;
-        if __list_subject.is_empty() {
-            crate::aver_generated::domain::lexer::emitFinalDedents(stack)
-        } else {
-            if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((t, rest)) => {
                 crate::aver_generated::domain::lexer::processIndentToken(t, &rest, stack)
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => crate::aver_generated::domain::lexer::emitFinalDedents(stack),
         }
     }
 }
@@ -1613,17 +1610,14 @@ pub fn processAfterNewline(
     crate::cancel_checkpoint();
     {
         let __list_subject = tokens;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::prepend_owned(
+        match aver_rt::list_uncons(__list_subject) {
+            Some((t, rest)) => {
+                crate::aver_generated::domain::lexer::processAfterNewlineToken(t, &rest, stack)
+            }
+            None => aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkNewline,
                 crate::aver_generated::domain::lexer::emitFinalDedents(stack),
-            )
-        } else {
-            if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                crate::aver_generated::domain::lexer::processAfterNewlineToken(t, &rest, stack)
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+            ),
         }
     }
 }
@@ -1724,14 +1718,8 @@ pub fn emitDedentsAcc(
         let reversed @ _ = acc.reverse();
         {
             let __list_subject = stack;
-            if __list_subject.is_empty() {
-                return aver_rt::AverList::concat(&reversed, &{
-                    let __arg7 @ _ =
-                        aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]);
-                    crate::aver_generated::domain::lexer::processIndentation(rest, &__arg7)
-                });
-            } else {
-                if let Some((top, below)) = aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((top, below)) => {
                     if (top > targetIndent) {
                         {
                             let __tco2 = below;
@@ -1755,8 +1743,13 @@ pub fn emitDedentsAcc(
                             ),
                         );
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return aver_rt::AverList::concat(&reversed, &{
+                        let __arg7 @ _ =
+                            aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]);
+                        crate::aver_generated::domain::lexer::processIndentation(rest, &__arg7)
+                    });
                 }
             }
         }
@@ -1786,10 +1779,8 @@ pub fn emitFinalDedentsAcc(
         let reversed @ _ = acc.reverse();
         {
             let __list_subject = stack;
-            if __list_subject.is_empty() {
-                return reversed;
-            } else {
-                if let Some((top, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((top, rest)) => {
                     if (top > aver_rt::AverInt::from_i64(0)) {
                         {
                             let __tco0 = rest;
@@ -1805,8 +1796,9 @@ pub fn emitFinalDedentsAcc(
                     } else {
                         return reversed;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return reversed;
                 }
             }
         }
@@ -1819,14 +1811,9 @@ pub fn stackTop(stack @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
         let __list_subject = stack;
-        if __list_subject.is_empty() {
-            aver_rt::AverInt::from_i64(0)
-        } else {
-            if let Some((top, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                top
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((top, rest)) => top,
+            None => aver_rt::AverInt::from_i64(0),
         }
     }
 }

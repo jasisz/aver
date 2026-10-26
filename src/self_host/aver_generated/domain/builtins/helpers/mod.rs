@@ -8,8 +8,8 @@ pub fn oneArg(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((a, rest)) => {
                 let __list_subject = rest;
                 if __list_subject.is_empty() {
                     Ok(a.clone())
@@ -17,8 +17,7 @@ pub fn oneArg(
                     Err(::aver_rt::str_lit!("expected 1 argument"))
                 }
             }
-        } else {
-            Err(::aver_rt::str_lit!("expected 1 argument"))
+            None => Err(::aver_rt::str_lit!("expected 1 argument")),
         }
     }
 }
@@ -36,11 +35,11 @@ pub fn twoArgs(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((a, rest)) => {
                 let __list_subject = rest;
-                if let (Some(b), Some(rest2)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((b, rest2)) => {
                         let __list_subject = rest2;
                         if __list_subject.is_empty() {
                             Ok((a.clone(), b.clone()))
@@ -48,12 +47,10 @@ pub fn twoArgs(
                             Err(::aver_rt::str_lit!("expected 2 arguments"))
                         }
                     }
-                } else {
-                    Err(::aver_rt::str_lit!("expected 2 arguments"))
+                    None => Err(::aver_rt::str_lit!("expected 2 arguments")),
                 }
             }
-        } else {
-            Err(::aver_rt::str_lit!("expected 2 arguments"))
+            None => Err(::aver_rt::str_lit!("expected 2 arguments")),
         }
     }
 }
@@ -141,45 +138,38 @@ pub fn expectBytesFields(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            if __list_subject.is_empty() {
-                return Err(::aver_rt::str_lit!("expected Bytes argument"));
-            } else {
-                if let (Some(field), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let (name, value) = field.clone();
-                        if (&*name == "values") {
-                            {
-                                let __t = value;
-                                match __t.view() {
-                                    crate::aver_generated::domain::value::Val__view::ValList(
-                                        __items_fields,
-                                    ) => {
-                                        let items = &__items_fields.0;
-                                        return {
-                                            let __arg6 @ _ = aver_rt::int_list_builder_new(
-                                                (aver_rt::AverInt::from_i64(0))
-                                                    .to_usize()
-                                                    .unwrap_or(0),
-                                            );
-                                            crate::aver_generated::domain::builtins::helpers::expectByteItems__collected(items, __arg6)
-                                        };
-                                    }
-                                    _ => {
-                                        return Err(::aver_rt::str_lit!("expected Bytes argument"));
-                                    }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((field, rest)) => {
+                    let (name, value) = field.clone();
+                    if (&*name == "values") {
+                        {
+                            let __t = value;
+                            match __t.view() {
+                                crate::aver_generated::domain::value::Val__view::ValList(
+                                    __items_fields,
+                                ) => {
+                                    let items = &__items_fields.0;
+                                    return {
+                                        let __arg6 @ _ = aver_rt::int_list_builder_new(0usize);
+                                        crate::aver_generated::domain::builtins::helpers::expectByteItems__collected(items, __arg6)
+                                    };
+                                }
+                                _ => {
+                                    return Err(::aver_rt::str_lit!("expected Bytes argument"));
                                 }
                             }
-                        } else {
-                            {
-                                let __tco0 = rest;
-                                __hold0 = __tco0;
-                                fields = &__hold0;
-                                continue;
-                            }
+                        }
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            fields = &__hold0;
+                            continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Err(::aver_rt::str_lit!("expected Bytes argument"));
                 }
             }
         }
@@ -224,33 +214,28 @@ pub fn expectByteItems__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            if __list_subject.is_empty() {
-                return Ok(aver_rt::int_list_builder_finalize(acc));
-            } else {
-                if let (Some(item), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __t = item;
-                        match __t.view() {
-                            crate::aver_generated::domain::value::Val__view::ValInt(
-                                __value_fields,
-                            ) => {
-                                let value = __value_fields.0.clone();
-                                {
-                                    let __tco0 = rest;
-                                    let __tco1 = aver_rt::int_list_builder_push(acc, value);
-                                    __hold0 = __tco0;
-                                    items = &__hold0;
-                                    acc = __tco1;
-                                    continue;
-                                }
-                            }
-                            _ => {
-                                return Err(::aver_rt::str_lit!("expected Bytes argument"));
+            match aver_rt::list_uncons(__list_subject) {
+                Some((item, rest)) => {
+                    let __t = item;
+                    match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValInt(__value_fields) => {
+                            let value = __value_fields.0.clone();
+                            {
+                                let __tco0 = rest;
+                                let __tco1 = aver_rt::int_list_builder_push(acc, value);
+                                __hold0 = __tco0;
+                                items = &__hold0;
+                                acc = __tco1;
+                                continue;
                             }
                         }
+                        _ => {
+                            return Err(::aver_rt::str_lit!("expected Bytes argument"));
+                        }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(aver_rt::int_list_builder_finalize(acc));
                 }
             }
         }

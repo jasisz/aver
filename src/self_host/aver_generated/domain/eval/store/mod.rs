@@ -145,9 +145,7 @@ pub fn lookupFnById(
         Some(fd @ _) => Ok(fd),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(39usize);
                 __b.push_str(&::aver_rt::str_lit!("undefined function id: "));
                 __b
             };
@@ -198,36 +196,28 @@ pub fn zipArgs(
         crate::cancel_checkpoint();
         {
             let __list_subject = params;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let Some((p, ps)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __list_subject = args;
-                        if __list_subject.is_empty() {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((p, ps)) => {
+                    let __list_subject = args;
+                    match aver_rt::list_uncons(__list_subject) {
+                        Some((a, as_)) => {
+                            let __tco0 = ps;
+                            let __tco1 = as_;
+                            let __tco2 = acc.insert_owned(p, a.clone());
+                            __hold0 = __tco0;
+                            params = &__hold0;
+                            __hold1 = __tco1;
+                            args = &__hold1;
+                            acc = __tco2;
+                            continue;
+                        }
+                        None => {
                             return acc;
-                        } else {
-                            if let (Some(a), Some(as_)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
-                                    let __tco0 = ps;
-                                    let __tco1 = as_;
-                                    let __tco2 = acc.insert_owned(p, a.clone());
-                                    __hold0 = __tco0;
-                                    params = &__hold0;
-                                    __hold1 = __tco1;
-                                    args = &__hold1;
-                                    acc = __tco2;
-                                    continue;
-                                }
-                            } else {
-                                panic!("Aver Rust codegen: non-exhaustive list match")
-                            }
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return acc;
                 }
             }
         }
@@ -247,23 +237,20 @@ pub fn mergeBindings(
         crate::cancel_checkpoint();
         {
             let __list_subject = bindings;
-            if __list_subject.is_empty() {
-                return env;
-            } else {
-                if let (Some(pair), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((pair, rest)) => {
+                    let (k, v) = pair.clone();
                     {
-                        let (k, v) = pair.clone();
-                        {
-                            let __tco0 = rest;
-                            let __tco1 = env.insert_owned(k, v);
-                            __hold0 = __tco0;
-                            bindings = &__hold0;
-                            env = __tco1;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco1 = env.insert_owned(k, v);
+                        __hold0 = __tco0;
+                        bindings = &__hold0;
+                        env = __tco1;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return env;
                 }
             }
         }
@@ -303,22 +290,19 @@ pub fn fnsToIdMap(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
-                        let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-                        __hold0 = __tco0;
-                        fns = &__hold0;
-                        acc = __tco1;
-                        idx = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((f, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
+                    let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                    __hold0 = __tco0;
+                    fns = &__hold0;
+                    acc = __tco1;
+                    idx = __tco2;
+                    continue;
+                }
+                None => {
+                    return acc;
                 }
             }
         }

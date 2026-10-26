@@ -247,24 +247,17 @@ pub fn matchPatCons(
                 let items = &__items_fields.0;
                 {
                     let __list_subject = items;
-                    if __list_subject.is_empty() {
-                        Err(::aver_rt::str_lit!("no match"))
-                    } else {
-                        if let (Some(head), Some(tail)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            Ok(aver_rt::AverList::from_vec(vec![
-                                (h, head.clone()),
-                                (
-                                    t,
-                                    crate::aver_generated::domain::value::Val::ValList(
-                                        crate::aver_generated::domain::value::Val__ValList(tail),
-                                    ),
+                    match aver_rt::list_uncons(__list_subject) {
+                        Some((head, tail)) => Ok(aver_rt::AverList::from_vec(vec![
+                            (h, head.clone()),
+                            (
+                                t,
+                                crate::aver_generated::domain::value::Val::ValList(
+                                    crate::aver_generated::domain::value::Val__ValList(tail),
                                 ),
-                            ]))
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
+                            ),
+                        ])),
+                        None => Err(::aver_rt::str_lit!("no match")),
                     }
                 }
             }
@@ -665,37 +658,28 @@ pub fn zipBindingsAcc(
         let reversed @ _ = acc.reverse();
         {
             let __list_subject = names;
-            if __list_subject.is_empty() {
-                return reversed;
-            } else {
-                if let Some((n, ns)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __list_subject = vals;
-                        if __list_subject.is_empty() {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((n, ns)) => {
+                    let __list_subject = vals;
+                    match aver_rt::list_uncons(__list_subject) {
+                        Some((v, vs)) => {
+                            let __tco0 = ns;
+                            let __tco1 = vs;
+                            let __tco2 = aver_rt::AverList::prepend_owned((n, v.clone()), acc);
+                            __hold0 = __tco0;
+                            names = &__hold0;
+                            __hold1 = __tco1;
+                            vals = &__hold1;
+                            acc = __tco2;
+                            continue;
+                        }
+                        None => {
                             return reversed;
-                        } else {
-                            if let (Some(v), Some(vs)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
-                                    let __tco0 = ns;
-                                    let __tco1 = vs;
-                                    let __tco2 =
-                                        aver_rt::AverList::prepend_owned((n, v.clone()), acc);
-                                    __hold0 = __tco0;
-                                    names = &__hold0;
-                                    __hold1 = __tco1;
-                                    vals = &__hold1;
-                                    acc = __tco2;
-                                    continue;
-                                }
-                            } else {
-                                panic!("Aver Rust codegen: non-exhaustive list match")
-                            }
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return reversed;
                 }
             }
         }

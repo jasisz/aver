@@ -24,9 +24,7 @@ pub fn call(
                     } else {
                         Err(aver_rt::AverStr::from({
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0),
-                                );
+                                let mut __b = aver_rt::Buffer::with_capacity(40usize);
                                 __b.push_str(&::aver_rt::str_lit!("unknown endian builtin: "));
                                 __b
                             };
@@ -73,9 +71,7 @@ pub fn bytesVal(
                         crate::aver_generated::domain::value::Val__ValList({
                             let __arg1 @ _ = crate::aver_generated::bytes::octets(bytes);
                             {
-                                let __arg2 @ _ = aver_rt::list_builder_new(
-                                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                                );
+                                let __arg2 @ _ = aver_rt::list_builder_new(0usize);
                                 crate::aver_generated::domain::builtins::endian::byteVals__collected(
                                     &__arg1, __arg2,
                                 )
@@ -213,25 +209,22 @@ pub fn byteVals__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = octets;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let Some((octet, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::value::Val::ValInt(
-                                crate::aver_generated::domain::value::Val__ValInt(octet),
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        octets = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((octet, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::value::Val::ValInt(
+                            crate::aver_generated::domain::value::Val__ValInt(octet),
+                        ),
+                    );
+                    __hold0 = __tco0;
+                    octets = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }

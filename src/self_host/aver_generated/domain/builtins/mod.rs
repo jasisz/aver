@@ -153,7 +153,7 @@ pub fn callBuiltinByIdValues(
                                                                 {
                                                                     crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Option.withDefault"), args)
                                                                 } else {
-                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(16) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Ok"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(17) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Err"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(18) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.withDefault"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(19) { crate::aver_generated::domain::builtins::primitives::callInt(::aver_rt::str_lit!("String.fromInt"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(20) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.take"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(21) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Unknown builtin ID: ")); __b }; __b.push_display(&(aver_rt::display_str(&(id)))); __b })) } } } } } }
+                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(16) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Ok"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(17) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Err"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(18) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.withDefault"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(19) { crate::aver_generated::domain::builtins::primitives::callInt(::aver_rt::str_lit!("String.fromInt"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(20) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.take"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(21) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(36usize); __b.push_str(&::aver_rt::str_lit!("Unknown builtin ID: ")); __b }; __b.push_display(&(aver_rt::display_str(&(id)))); __b })) } } } } } }
                                                                 }
                                                             }
                                                         }
@@ -394,8 +394,7 @@ pub fn builtinArgsGet(
     };
     Ok(crate::aver_generated::domain::value::Val::ValList(
         crate::aver_generated::domain::value::Val__ValList({
-            let __arg2 @ _ =
-                aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+            let __arg2 @ _ = aver_rt::list_builder_new(0usize);
             crate::aver_generated::domain::builtins::stringsToVals__collected(&rawArgs, __arg2)
         }),
     ))
@@ -595,9 +594,7 @@ pub fn builtinMapKeys(
                         let __arg3 @ _ =
                             crate::aver_generated::domain::value::mapEntries(m.clone());
                         {
-                            let __arg4 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg4 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::builtins::entriesKeys__collected(
                                 &__arg3, __arg4,
                             )
@@ -626,9 +623,7 @@ pub fn builtinMapValues(
                         let __arg3 @ _ =
                             crate::aver_generated::domain::value::mapEntries(m.clone());
                         {
-                            let __arg4 @ _ = aver_rt::list_builder_new(
-                                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                            );
+                            let __arg4 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::builtins::entriesValues__collected(
                                 &__arg3, __arg4,
                             )
@@ -1709,9 +1704,7 @@ pub fn builtinDiskListDir(
             crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList({
-                        let __arg5 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg5 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::builtins::stringsToVals__collected(
                             &entries, __arg5,
                         )
@@ -1887,30 +1880,27 @@ pub fn builtinMapSet(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(mapV), Some(r1)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((mapV, r1)) => {
                 let __list_subject = r1;
-                if let (Some(keyV), Some(r2)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((keyV, r2)) => {
                         let __list_subject = r2;
-                        if let (Some(valV), Some(r3)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            crate::aver_generated::domain::builtins::builtinMapSetInner(
-                                mapV,
-                                keyV.clone(),
-                                valV.clone(),
-                            )
-                        } else {
-                            Err(::aver_rt::str_lit!("Map.set takes 3 arguments"))
+                        match aver_rt::list_uncons(&__list_subject) {
+                            Some((valV, r3)) => {
+                                crate::aver_generated::domain::builtins::builtinMapSetInner(
+                                    mapV,
+                                    keyV.clone(),
+                                    valV.clone(),
+                                )
+                            }
+                            None => Err(::aver_rt::str_lit!("Map.set takes 3 arguments")),
                         }
                     }
-                } else {
-                    Err(::aver_rt::str_lit!("Map.set takes 3 arguments"))
+                    None => Err(::aver_rt::str_lit!("Map.set takes 3 arguments")),
                 }
             }
-        } else {
-            Err(::aver_rt::str_lit!("Map.set takes 3 arguments"))
+            None => Err(::aver_rt::str_lit!("Map.set takes 3 arguments")),
         }
     }
 }
@@ -2153,37 +2143,24 @@ pub fn builtinHttpBody(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(urlV), Some(r1)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((urlV, r1)) => {
                 let __list_subject = r1;
-                if let (Some(bodyV), Some(r2)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((bodyV, r2)) => {
                         let __list_subject = r2;
-                        if let (Some(ctV), Some(r3)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
+                        match aver_rt::list_uncons(&__list_subject) {
+                            Some((ctV, r3)) => {
                                 let __list_subject = r3;
-                                if let (Some(hdrsV), Some(r4)) =
-                                    (__list_subject.first(), __list_subject.tail())
-                                {
-                                    crate::aver_generated::domain::builtins::builtinHttpBodyInner(
-                                        urlV, bodyV, ctV, hdrsV, method,
-                                    )
-                                } else {
-                                    Err(::aver_rt::str_lit!("Http method takes 4 arguments"))
-                                }
+                                match aver_rt::list_uncons(&__list_subject) { Some((hdrsV, r4)) => { crate::aver_generated::domain::builtins::builtinHttpBodyInner(urlV, bodyV, ctV, hdrsV, method) }, None => { Err(::aver_rt::str_lit!("Http method takes 4 arguments")) } }
                             }
-                        } else {
-                            Err(::aver_rt::str_lit!("Http method takes 4 arguments"))
+                            None => Err(::aver_rt::str_lit!("Http method takes 4 arguments")),
                         }
                     }
-                } else {
-                    Err(::aver_rt::str_lit!("Http method takes 4 arguments"))
+                    None => Err(::aver_rt::str_lit!("Http method takes 4 arguments")),
                 }
             }
-        } else {
-            Err(::aver_rt::str_lit!("Http method takes 4 arguments"))
+            None => Err(::aver_rt::str_lit!("Http method takes 4 arguments")),
         }
     }
 }
@@ -2431,48 +2408,43 @@ pub fn headersToValMap(
         crate::cancel_checkpoint();
         {
             let __list_subject = names;
-            if __list_subject.is_empty() {
-                return acc;
-            } else {
-                if let Some((name, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match headers.get(&name).cloned() {
-                        Some(values @ _) => {
-                            let __tco1 = rest;
-                            let __tco2 = acc.insert_owned(name.clone(), crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(name)), crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)); crate::aver_generated::domain::builtins::stringsToValStrs__collected(&values, __arg6) }))]))));
-                            __hold1 = __tco1;
-                            names = &__hold1;
-                            acc = __tco2;
-                            continue;
-                        }
-                        None => {
-                            let __tco1 = rest;
-                            let __tco2 = acc.insert_owned(
-                                name.clone(),
-                                crate::aver_generated::domain::value::Val::ValTuple(
-                                    crate::aver_generated::domain::value::Val__ValTuple(
-                                        aver_rt::AverList::from_vec(vec![
-                                            crate::aver_generated::domain::value::Val::ValStr(
-                                                crate::aver_generated::domain::value::Val__ValStr(
-                                                    name,
-                                                ),
-                                            ),
-                                            crate::aver_generated::domain::value::Val::ValList(
-                                                crate::aver_generated::domain::value::Val__ValList(
-                                                    aver_rt::AverList::empty(),
-                                                ),
-                                            ),
-                                        ]),
-                                    ),
-                                ),
-                            );
-                            __hold1 = __tco1;
-                            names = &__hold1;
-                            acc = __tco2;
-                            continue;
-                        }
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((name, rest)) => match headers.get(&name).cloned() {
+                    Some(values @ _) => {
+                        let __tco1 = rest;
+                        let __tco2 = acc.insert_owned(name.clone(), crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(name)), crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new(0usize); crate::aver_generated::domain::builtins::stringsToValStrs__collected(&values, __arg6) }))]))));
+                        __hold1 = __tco1;
+                        names = &__hold1;
+                        acc = __tco2;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                    None => {
+                        let __tco1 = rest;
+                        let __tco2 = acc.insert_owned(
+                            name.clone(),
+                            crate::aver_generated::domain::value::Val::ValTuple(
+                                crate::aver_generated::domain::value::Val__ValTuple(
+                                    aver_rt::AverList::from_vec(vec![
+                                        crate::aver_generated::domain::value::Val::ValStr(
+                                            crate::aver_generated::domain::value::Val__ValStr(name),
+                                        ),
+                                        crate::aver_generated::domain::value::Val::ValList(
+                                            crate::aver_generated::domain::value::Val__ValList(
+                                                aver_rt::AverList::empty(),
+                                            ),
+                                        ),
+                                    ]),
+                                ),
+                            ),
+                        );
+                        __hold1 = __tco1;
+                        names = &__hold1;
+                        acc = __tco2;
+                        continue;
+                    }
+                },
+                None => {
+                    return acc;
                 }
             }
         }
@@ -2504,28 +2476,25 @@ pub fn builtinTcpSend(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(hostV), Some(r1)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((hostV, r1)) => {
                 let __list_subject = r1;
-                if let (Some(portV), Some(r2)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((portV, r2)) => {
                         let __list_subject = r2;
-                        if let (Some(msgV), Some(r3)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            crate::aver_generated::domain::builtins::builtinTcpSendInner(
-                                hostV, portV, msgV,
-                            )
-                        } else {
-                            Err(::aver_rt::str_lit!("Tcp.send takes 3 arguments"))
+                        match aver_rt::list_uncons(&__list_subject) {
+                            Some((msgV, r3)) => {
+                                crate::aver_generated::domain::builtins::builtinTcpSendInner(
+                                    hostV, portV, msgV,
+                                )
+                            }
+                            None => Err(::aver_rt::str_lit!("Tcp.send takes 3 arguments")),
                         }
                     }
-                } else {
-                    Err(::aver_rt::str_lit!("Tcp.send takes 3 arguments"))
+                    None => Err(::aver_rt::str_lit!("Tcp.send takes 3 arguments")),
                 }
             }
-        } else {
-            Err(::aver_rt::str_lit!("Tcp.send takes 3 arguments"))
+            None => Err(::aver_rt::str_lit!("Tcp.send takes 3 arguments")),
         }
     }
 }
@@ -3149,31 +3118,27 @@ pub fn tcpSocketEntriesToMap(
         crate::cancel_checkpoint();
         {
             let __list_subject = entries;
-            if __list_subject.is_empty() {
-                return Ok(acc);
-            } else {
-                if let (Some(entry), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = acc.insert_owned(
-                            {
-                                let __arg4 @ _ =
-                                    crate::aver_generated::domain::value::entryKey(entry);
-                                crate::aver_generated::domain::builtins::helpers::expectInt(&__arg4)
-                            }?,
-                            {
-                                let __arg5 @ _ =
-                                    crate::aver_generated::domain::value::entryValue(entry);
-                                crate::aver_generated::domain::builtins::valToTcpSocket(&__arg5)
-                            }?,
-                        );
-                        __hold0 = __tco0;
-                        entries = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((entry, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = acc.insert_owned(
+                        {
+                            let __arg4 @ _ = crate::aver_generated::domain::value::entryKey(entry);
+                            crate::aver_generated::domain::builtins::helpers::expectInt(&__arg4)
+                        }?,
+                        {
+                            let __arg5 @ _ =
+                                crate::aver_generated::domain::value::entryValue(entry);
+                            crate::aver_generated::domain::builtins::valToTcpSocket(&__arg5)
+                        }?,
+                    );
+                    __hold0 = __tco0;
+                    entries = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return Ok(acc);
                 }
             }
         }
@@ -3278,9 +3243,7 @@ pub fn builtinTcpPollInner(
             crate::aver_generated::domain::value::Val__ValOk(
                 crate::aver_generated::domain::value::Val::ValList(
                     crate::aver_generated::domain::value::Val__ValList({
-                        let __arg8 @ _ = aver_rt::list_builder_new(
-                            (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                        );
+                        let __arg8 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::builtins::tcpReadyKeysToVals__collected(
                             &keys, __arg8,
                         )
@@ -3937,11 +3900,7 @@ pub fn builtinTerminalNoArg__indexed(
                                 } else {
                                     Err(aver_rt::AverStr::from({
                                         let mut __b = {
-                                            let mut __b = aver_rt::Buffer::with_capacity(
-                                                (aver_rt::AverInt::from_i64(42))
-                                                    .to_usize()
-                                                    .unwrap_or(0),
-                                            );
+                                            let mut __b = aver_rt::Buffer::with_capacity(42usize);
                                             __b.push_str(&::aver_rt::str_lit!(
                                                 "unknown terminal command: "
                                             ));
@@ -3978,9 +3937,7 @@ pub fn tryVariantConstructor__indexed(
         )),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(36)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(36usize);
                 __b.push_str(&::aver_rt::str_lit!("undefined function: "));
                 __b
             };
@@ -4071,25 +4028,22 @@ pub fn stringsToVals__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = strs;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let Some((s, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::value::Val::ValStr(
-                                crate::aver_generated::domain::value::Val__ValStr(s),
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        strs = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((s, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::value::Val::ValStr(
+                            crate::aver_generated::domain::value::Val__ValStr(s),
+                        ),
+                    );
+                    __hold0 = __tco0;
+                    strs = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -4108,23 +4062,20 @@ pub fn entriesKeys__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = entries;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(entry), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::value::entryKey(entry),
-                        );
-                        __hold0 = __tco0;
-                        entries = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((entry, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::value::entryKey(entry),
+                    );
+                    __hold0 = __tco0;
+                    entries = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -4143,23 +4094,20 @@ pub fn entriesValues__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = entries;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let (Some(entry), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::value::entryValue(entry),
-                        );
-                        __hold0 = __tco0;
-                        entries = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((entry, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::value::entryValue(entry),
+                    );
+                    __hold0 = __tco0;
+                    entries = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -4178,25 +4126,22 @@ pub fn stringsToValStrs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = values;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let Some((v, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::value::Val::ValStr(
-                                crate::aver_generated::domain::value::Val__ValStr(v),
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        values = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((v, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::value::Val::ValStr(
+                            crate::aver_generated::domain::value::Val__ValStr(v),
+                        ),
+                    );
+                    __hold0 = __tco0;
+                    values = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }
@@ -4215,25 +4160,22 @@ pub fn tcpReadyKeysToVals__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = keys;
-            if __list_subject.is_empty() {
-                return aver_rt::list_builder_finalize(acc);
-            } else {
-                if let Some((key, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::list_builder_push(
-                            acc,
-                            crate::aver_generated::domain::value::Val::ValInt(
-                                crate::aver_generated::domain::value::Val__ValInt(key),
-                            ),
-                        );
-                        __hold0 = __tco0;
-                        keys = &__hold0;
-                        acc = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((key, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::list_builder_push(
+                        acc,
+                        crate::aver_generated::domain::value::Val::ValInt(
+                            crate::aver_generated::domain::value::Val__ValInt(key),
+                        ),
+                    );
+                    __hold0 = __tco0;
+                    keys = &__hold0;
+                    acc = __tco1;
+                    continue;
+                }
+                None => {
+                    return aver_rt::list_builder_finalize(acc);
                 }
             }
         }

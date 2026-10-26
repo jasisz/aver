@@ -14,26 +14,23 @@ pub fn annotateFastFns(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            if __list_subject.is_empty() {
-                return (acc).reverse_owned();
-            } else {
-                if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco2 = aver_rt::AverList::prepend_owned(
-                            crate::aver_generated::domain::resolver::fast::annotateFastFn(
-                                f.clone(),
-                                fnMap,
-                            ),
-                            acc,
-                        );
-                        __hold0 = __tco0;
-                        fns = &__hold0;
-                        acc = __tco2;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((f, rest)) => {
+                    let __tco0 = rest;
+                    let __tco2 = aver_rt::AverList::prepend_owned(
+                        crate::aver_generated::domain::resolver::fast::annotateFastFn(
+                            f.clone(),
+                            fnMap,
+                        ),
+                        acc,
+                    );
+                    __hold0 = __tco0;
+                    fns = &__hold0;
+                    acc = __tco2;
+                    continue;
+                }
+                None => {
+                    return (acc).reverse_owned();
                 }
             }
         }
@@ -73,25 +70,24 @@ pub fn classifyTailLoop(
         crate::cancel_checkpoint();
         {
             let __list_subject = body;
-            if __list_subject.is_empty() {
-                return false;
-            } else {
-                if let (Some(stmt), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __list_subject = rest.clone();
-                        if __list_subject.is_empty() {
-                            return crate::aver_generated::domain::resolver::fast::stmtNeedsTailLoop(selfId, stmt);
-                        } else {
-                            {
-                                let __tco1 = rest;
-                                __hold1 = __tco1;
-                                body = &__hold1;
-                                continue;
-                            }
+            match aver_rt::list_uncons(__list_subject) {
+                Some((stmt, rest)) => {
+                    let __list_subject = rest.clone();
+                    if __list_subject.is_empty() {
+                        return crate::aver_generated::domain::resolver::fast::stmtNeedsTailLoop(
+                            selfId, stmt,
+                        );
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            __hold1 = __tco1;
+                            body = &__hold1;
+                            continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return false;
                 }
             }
         }
@@ -173,10 +169,8 @@ pub fn armsNeedTailLoop(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            if __list_subject.is_empty() {
-                return false;
-            } else {
-                if let (Some(arm), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((arm, rest)) => {
                     if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(
                         selfId.clone(),
                         &arm.body,
@@ -190,8 +184,9 @@ pub fn armsNeedTailLoop(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return false;
                 }
             }
         }
@@ -205,14 +200,15 @@ pub fn classifyFastPath(
     crate::cancel_checkpoint();
     {
         let __list_subject = body;
-        if let (Some(stmt), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            if (rest == aver_rt::AverList::empty()) {
-                crate::aver_generated::domain::resolver::fast::classifyFastStmt(stmt)
-            } else {
-                crate::aver_generated::domain::ast::FnFastPath::FastNone
+        match aver_rt::list_uncons(__list_subject) {
+            Some((stmt, rest)) => {
+                if (rest == aver_rt::AverList::empty()) {
+                    crate::aver_generated::domain::resolver::fast::classifyFastStmt(stmt)
+                } else {
+                    crate::aver_generated::domain::ast::FnFastPath::FastNone
+                }
             }
-        } else {
-            crate::aver_generated::domain::ast::FnFastPath::FastNone
+            None => crate::aver_generated::domain::ast::FnFastPath::FastNone,
         }
     }
 }
@@ -555,21 +551,19 @@ pub fn classifyFastMapGet(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(mapExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((mapExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(keyExpr), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::fast::classifyFastMapGetArgs(
-                        mapExpr, keyExpr,
-                    )
-                } else {
-                    None
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((keyExpr, ignored)) => {
+                        crate::aver_generated::domain::resolver::fast::classifyFastMapGetArgs(
+                            mapExpr, keyExpr,
+                        )
+                    }
+                    None => None,
                 }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -612,30 +606,18 @@ pub fn classifyFastMapSet(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(mapExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((mapExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(keyExpr), Some(rest2)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((keyExpr, rest2)) => {
                         let __list_subject = rest2;
-                        if let (Some(valueExpr), Some(ignored)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            crate::aver_generated::domain::resolver::fast::classifyFastMapSetArgs(
-                                mapExpr, keyExpr, valueExpr,
-                            )
-                        } else {
-                            None
-                        }
+                        match aver_rt::list_uncons(&__list_subject) { Some((valueExpr, ignored)) => { crate::aver_generated::domain::resolver::fast::classifyFastMapSetArgs(mapExpr, keyExpr, valueExpr) }, None => { None } }
                     }
-                } else {
-                    None
+                    None => None,
                 }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -688,21 +670,19 @@ pub fn classifyFastMapHas(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(mapExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((mapExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(keyExpr), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::fast::classifyFastMapHasArgs(
-                        mapExpr, keyExpr,
-                    )
-                } else {
-                    None
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((keyExpr, ignored)) => {
+                        crate::aver_generated::domain::resolver::fast::classifyFastMapHasArgs(
+                            mapExpr, keyExpr,
+                        )
+                    }
+                    None => None,
                 }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -745,21 +725,19 @@ pub fn classifyFastMapRemove(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(mapExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((mapExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(keyExpr), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::fast::classifyFastMapRemoveArgs(
-                        mapExpr, keyExpr,
-                    )
-                } else {
-                    None
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((keyExpr, ignored)) => {
+                        crate::aver_generated::domain::resolver::fast::classifyFastMapRemoveArgs(
+                            mapExpr, keyExpr,
+                        )
+                    }
+                    None => None,
                 }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -802,8 +780,8 @@ pub fn classifyFastVectorLen(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(vecExpr), Some(ignored)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((vecExpr, ignored)) => {
                 let __t = vecExpr;
                 match __t.view() {
                     crate::aver_generated::domain::ast::Expr__view::ExprSlot(__slot_fields) => {
@@ -815,8 +793,7 @@ pub fn classifyFastVectorLen(
                     _ => None,
                 }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -828,21 +805,19 @@ pub fn classifyFastVectorNew(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(sizeExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((sizeExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(fillExpr), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::fast::classifyFastVectorNewArgs(
-                        sizeExpr, fillExpr,
-                    )
-                } else {
-                    None
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((fillExpr, ignored)) => {
+                        crate::aver_generated::domain::resolver::fast::classifyFastVectorNewArgs(
+                            sizeExpr, fillExpr,
+                        )
+                    }
+                    None => None,
                 }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -883,22 +858,12 @@ pub fn classifyFastOptionWithDefault(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(optionExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((optionExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(defaultExpr), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::fast::classifyFastOptionWithDefaultArgs(
-                        optionExpr,
-                        defaultExpr,
-                    )
-                } else {
-                    None
-                }
+                match aver_rt::list_uncons(&__list_subject) { Some((defaultExpr, ignored)) => { crate::aver_generated::domain::resolver::fast::classifyFastOptionWithDefaultArgs(optionExpr, defaultExpr) }, None => { None } }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -937,23 +902,21 @@ pub fn classifyFastVectorGet(
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
-        if let (Some(vecExpr), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((vecExpr, rest)) => {
                 let __list_subject = rest;
-                if let (Some(idxExpr), Some(ignored)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    crate::aver_generated::domain::resolver::fast::classifyFastVectorGetArgs(
-                        vecExpr,
-                        idxExpr,
-                        defaultExpr,
-                    )
-                } else {
-                    None
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((idxExpr, ignored)) => {
+                        crate::aver_generated::domain::resolver::fast::classifyFastVectorGetArgs(
+                            vecExpr,
+                            idxExpr,
+                            defaultExpr,
+                        )
+                    }
+                    None => None,
                 }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -1045,23 +1008,23 @@ pub fn classifyFastListArms(
     crate::cancel_checkpoint();
     {
         let __list_subject = arms;
-        if let (Some(arm1), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((arm1, rest)) => {
                 let __list_subject = rest;
-                if let (Some(arm2), Some(tail)) = (__list_subject.first(), __list_subject.tail()) {
-                    if (tail == aver_rt::AverList::empty()) {
-                        crate::aver_generated::domain::resolver::fast::classifyFastListArmPair(
-                            slot, arm1, arm2,
-                        )
-                    } else {
-                        crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((arm2, tail)) => {
+                        if (tail == aver_rt::AverList::empty()) {
+                            crate::aver_generated::domain::resolver::fast::classifyFastListArmPair(
+                                slot, arm1, arm2,
+                            )
+                        } else {
+                            crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr
+                        }
                     }
-                } else {
-                    crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr
+                    None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
                 }
             }
-        } else {
-            crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr
+            None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
         }
     }
 }
@@ -1222,9 +1185,7 @@ pub fn classifyFastForwardCall(
     crate::cancel_checkpoint();
     {
         let __subject = {
-            let __arg3 @ _ = aver_rt::int_list_builder_new(
-                (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-            );
+            let __arg3 @ _ = aver_rt::int_list_builder_new(0usize);
             crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots__collected(
                 args, __arg3,
             )
@@ -1274,23 +1235,23 @@ pub fn classifyBoolArms(
     crate::cancel_checkpoint();
     {
         let __list_subject = arms;
-        if let (Some(arm1), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((arm1, rest)) => {
                 let __list_subject = rest;
-                if let (Some(arm2), Some(tail)) = (__list_subject.first(), __list_subject.tail()) {
-                    if (tail == aver_rt::AverList::empty()) {
-                        crate::aver_generated::domain::resolver::fast::classifyBoolArmPair(
-                            arm1, arm2,
-                        )
-                    } else {
-                        None
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((arm2, tail)) => {
+                        if (tail == aver_rt::AverList::empty()) {
+                            crate::aver_generated::domain::resolver::fast::classifyBoolArmPair(
+                                arm1, arm2,
+                            )
+                        } else {
+                            None
+                        }
                     }
-                } else {
-                    None
+                    None => None,
                 }
             }
-        } else {
-            None
+            None => None,
         }
     }
 }
@@ -1529,33 +1490,28 @@ pub fn classifyFastForwardSlots__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = args;
-            if __list_subject.is_empty() {
-                return Some(aver_rt::int_list_builder_finalize(acc));
-            } else {
-                if let (Some(arg), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __t = arg;
-                        match __t.view() {
-                            crate::aver_generated::domain::ast::Expr__view::ExprSlot(
-                                __slot_fields,
-                            ) => {
-                                let slot = __slot_fields.0.clone();
-                                {
-                                    let __tco0 = rest;
-                                    let __tco1 = aver_rt::int_list_builder_push(acc, slot);
-                                    __hold0 = __tco0;
-                                    args = &__hold0;
-                                    acc = __tco1;
-                                    continue;
-                                }
-                            }
-                            _ => {
-                                return None;
+            match aver_rt::list_uncons(__list_subject) {
+                Some((arg, rest)) => {
+                    let __t = arg;
+                    match __t.view() {
+                        crate::aver_generated::domain::ast::Expr__view::ExprSlot(__slot_fields) => {
+                            let slot = __slot_fields.0.clone();
+                            {
+                                let __tco0 = rest;
+                                let __tco1 = aver_rt::int_list_builder_push(acc, slot);
+                                __hold0 = __tco0;
+                                args = &__hold0;
+                                acc = __tco1;
+                                continue;
                             }
                         }
+                        _ => {
+                            return None;
+                        }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Some(aver_rt::int_list_builder_finalize(acc));
                 }
             }
         }

@@ -273,28 +273,25 @@ pub fn fastListSlotBranchItems(
     crate::cancel_checkpoint();
     {
         let __list_subject = items;
-        if __list_subject.is_empty() {
-            crate::aver_generated::domain::eval::fast::runFastLeafSlot(emptyLeaf, &calleeEnv)
-        } else {
-            if let (Some(head), Some(tail)) = (__list_subject.first(), __list_subject.tail()) {
-                {
-                    let __arg10 @ _ = {
-                        let __arg8 @ _ = crate::aver_generated::domain::eval::slots::setSlot(
-                            calleeEnv, headSlot, head,
+        match aver_rt::list_uncons(__list_subject) {
+            Some((head, tail)) => {
+                let __arg10 @ _ = {
+                    let __arg8 @ _ = crate::aver_generated::domain::eval::slots::setSlot(
+                        calleeEnv, headSlot, head,
+                    );
+                    {
+                        let __arg9 @ _ = crate::aver_generated::domain::value::Val::ValList(
+                            crate::aver_generated::domain::value::Val__ValList(tail),
                         );
-                        {
-                            let __arg9 @ _ = crate::aver_generated::domain::value::Val::ValList(
-                                crate::aver_generated::domain::value::Val__ValList(tail),
-                            );
-                            crate::aver_generated::domain::eval::slots::setSlot(
-                                __arg8, tailSlot, &__arg9,
-                            )
-                        }
-                    };
-                    crate::aver_generated::domain::eval::fast::runFastLeafSlot(consLeaf, &__arg10)
-                }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
+                        crate::aver_generated::domain::eval::slots::setSlot(
+                            __arg8, tailSlot, &__arg9,
+                        )
+                    }
+                };
+                crate::aver_generated::domain::eval::fast::runFastLeafSlot(consLeaf, &__arg10)
+            }
+            None => {
+                crate::aver_generated::domain::eval::fast::runFastLeafSlot(emptyLeaf, &calleeEnv)
             }
         }
     }

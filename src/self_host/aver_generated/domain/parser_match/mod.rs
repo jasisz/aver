@@ -518,10 +518,8 @@ pub fn tokenAtWalk(
         crate::cancel_checkpoint();
         {
             let __list_subject = tokens;
-            if __list_subject.is_empty() {
-                return crate::aver_generated::domain::token::Token::TkEof;
-            } else {
-                if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((t, rest)) => {
                     if (idx == target) {
                         return t.clone();
                     } else {
@@ -534,8 +532,9 @@ pub fn tokenAtWalk(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return crate::aver_generated::domain::token::Token::TkEof;
                 }
             }
         }
@@ -573,10 +572,8 @@ pub fn continuationAtWalk(
         crate::cancel_checkpoint();
         {
             let __list_subject = tokens;
-            if __list_subject.is_empty() {
-                return crate::aver_generated::domain::token::Token::TkEof;
-            } else {
-                if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((t, rest)) => {
                     if (idx == target) {
                         match t {
                             crate::aver_generated::domain::token::Token::TkDedent => {
@@ -599,8 +596,9 @@ pub fn continuationAtWalk(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return crate::aver_generated::domain::token::Token::TkEof;
                 }
             }
         }
@@ -633,9 +631,7 @@ pub fn expect(
             let mut __b = {
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(47)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(47usize);
                         __b.push_str(&::aver_rt::str_lit!("Expected "));
                         __b
                     };
@@ -753,9 +749,7 @@ pub fn parsePattern(
         }
         _ => Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(38usize);
                 __b.push_str(&::aver_rt::str_lit!("Expected pattern, got "));
                 __b
             };

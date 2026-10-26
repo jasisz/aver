@@ -111,10 +111,8 @@ pub fn allInRange(xs @ _: &aver_rt::AverIntList) -> bool {
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            if __list_subject.is_empty() {
-                return true;
-            } else {
-                if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((head, tail)) => {
                     if ((head >= aver_rt::AverInt::from_i64(0))
                         && (head <= aver_rt::AverInt::from_i64(255)))
                     {
@@ -127,8 +125,9 @@ pub fn allInRange(xs @ _: &aver_rt::AverIntList) -> bool {
                     } else {
                         return false;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return true;
                 }
             }
         }
@@ -144,10 +143,8 @@ pub fn firstOutOfRange(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            if __list_subject.is_empty() {
-                return aver_rt::AverInt::from_i64(-1);
-            } else {
-                if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((head, tail)) => {
                     if ((head >= aver_rt::AverInt::from_i64(0))
                         && (head <= aver_rt::AverInt::from_i64(255)))
                     {
@@ -160,8 +157,9 @@ pub fn firstOutOfRange(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
                     } else {
                         return head;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return aver_rt::AverInt::from_i64(-1);
                 }
             }
         }
@@ -174,10 +172,8 @@ pub fn firstOutOfRangeIndex(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
         let __list_subject = xs;
-        if __list_subject.is_empty() {
-            aver_rt::AverInt::from_i64(0)
-        } else {
-            if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((head, tail)) => {
                 if ((head >= aver_rt::AverInt::from_i64(0))
                     && (head <= aver_rt::AverInt::from_i64(255)))
                 {
@@ -186,9 +182,8 @@ pub fn firstOutOfRangeIndex(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
                 } else {
                     aver_rt::AverInt::from_i64(0)
                 }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => aver_rt::AverInt::from_i64(0),
         }
     }
 }
@@ -213,9 +208,7 @@ pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
                 let mut __b = {
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(66)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(66usize);
                             __b.push_str(&::aver_rt::str_lit!("byte "));
                             __b
                         };
@@ -301,7 +294,7 @@ pub fn parseHexChars(
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(chars, [] => { return Ok((acc).reverse_owned()); }, [highChar, afterHigh] => { aver_list_match!(afterHigh, [] => { return Err(::aver_rt::str_lit!("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(highChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_display(&(highChar)); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(lowChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(63)).to_usize().unwrap_or(0)); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_display(&(lowChar)); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(low @ _) => { {
+        aver_list_match!(chars, [] => { return Ok((acc).reverse_owned()); }, [highChar, afterHigh] => { aver_list_match!(afterHigh, [] => { return Err(::aver_rt::str_lit!("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(highChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(63usize); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_display(&(highChar)); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(lowChar.clone()) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(63usize); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_display(&(lowChar)); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(low @ _) => { {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverIntList::prepend_owned(high.mul(&aver_rt::AverInt::from_i64(16)).add(&low), acc);
             chars = __tco0;
@@ -402,8 +395,7 @@ pub fn hexDigitValue(digit @ _: AverStr) -> Option<aver_rt::AverInt> {
 #[inline(always)]
 pub fn fromHex(text @ _: AverStr) -> Result<Bytes, AverStr> {
     crate::cancel_checkpoint();
-    let __arg1 @ _ =
-        aver_rt::byte_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0));
+    let __arg1 @ _ = aver_rt::byte_builder_new(0usize);
     crate::aver_generated::bytes::parseHexChars__cursor__collected(text, 0i64, __arg1)
 }
 
@@ -544,9 +536,7 @@ pub fn toHex(bytes @ _: &Bytes) -> AverStr {
     aver_rt::AverStr::from({
         let __arg1 @ _ = crate::aver_generated::bytes::octets(bytes);
         {
-            let __arg2 @ _ = aver_rt::Buffer::with_capacity(
-                (aver_rt::AverInt::from_i64(8192)).to_usize().unwrap_or(0),
-            );
+            let __arg2 @ _ = aver_rt::Buffer::with_capacity(8192usize);
             crate::aver_generated::bytes::hexParts__buffered(
                 &__arg1,
                 __arg2,
@@ -569,30 +559,27 @@ pub fn hexParts__buffered(
         crate::cancel_checkpoint();
         {
             let __list_subject = values;
-            if __list_subject.is_empty() {
-                return __buf;
-            } else {
-                if let Some((head, tail)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    {
-                        let __tco0 = tail;
-                        let __tco1 = {
-                            let mut __b = {
-                                let mut __b = __buf;
-                                if !__b.is_empty() {
-                                    __b.push_str(&__sep);
-                                }
-                                __b
-                            };
-                            __b.push_str(&crate::aver_generated::bytes::byteToHex(head));
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((head, tail)) => {
+                    let __tco0 = tail;
+                    let __tco1 = {
+                        let mut __b = {
+                            let mut __b = __buf;
+                            if !__b.is_empty() {
+                                __b.push_str(&__sep);
+                            }
                             __b
                         };
-                        __hold0 = __tco0;
-                        values = &__hold0;
-                        __buf = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                        __b.push_str(&crate::aver_generated::bytes::byteToHex(head));
+                        __b
+                    };
+                    __hold0 = __tco0;
+                    values = &__hold0;
+                    __buf = __tco1;
+                    continue;
+                }
+                None => {
+                    return __buf;
                 }
             }
         }
@@ -631,11 +618,8 @@ pub fn parseHexChars__cursor(
                                         return Err(aver_rt::AverStr::from({
                                             let mut __b = {
                                                 let mut __b = {
-                                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                                        (aver_rt::AverInt::from_i64(63))
-                                                            .to_usize()
-                                                            .unwrap_or(0),
-                                                    );
+                                                    let mut __b =
+                                                        aver_rt::Buffer::with_capacity(63usize);
                                                     __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                     __b
                                                 };
@@ -663,11 +647,7 @@ pub fn parseHexChars__cursor(
                                                         let mut __b = {
                                                             let mut __b =
                                                                 aver_rt::Buffer::with_capacity(
-                                                                    (aver_rt::AverInt::from_i64(
-                                                                        63,
-                                                                    ))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
+                                                                    63usize,
                                                                 );
                                                             __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                             __b
@@ -830,11 +810,8 @@ pub fn parseHexChars__cursor__collected(
                                         return Err(aver_rt::AverStr::from({
                                             let mut __b = {
                                                 let mut __b = {
-                                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                                        (aver_rt::AverInt::from_i64(63))
-                                                            .to_usize()
-                                                            .unwrap_or(0),
-                                                    );
+                                                    let mut __b =
+                                                        aver_rt::Buffer::with_capacity(63usize);
                                                     __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                     __b
                                                 };
@@ -862,11 +839,7 @@ pub fn parseHexChars__cursor__collected(
                                                         let mut __b = {
                                                             let mut __b =
                                                                 aver_rt::Buffer::with_capacity(
-                                                                    (aver_rt::AverInt::from_i64(
-                                                                        63,
-                                                                    ))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
+                                                                    63usize,
                                                                 );
                                                             __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '"));
                                                             __b
