@@ -163,6 +163,8 @@ pub(super) enum BuiltinName {
     StringIndexCharAt,
     StringIndexCodeAt,
     StringIndexSlice,
+    /// `__str_index_slice(…) == t` compared in place (emitter fusion).
+    StringIndexSliceEq,
     StringFirstCodePoint,
     StringFromCodePoint,
     StringChars,
@@ -376,6 +378,7 @@ impl BuiltinName {
             Self::StringIndexCharAt => "__str_index_char_at",
             Self::StringIndexCodeAt => "__str_index_code_at",
             Self::StringIndexSlice => "__str_index_slice",
+            Self::StringIndexSliceEq => "__str_index_slice_eq",
             Self::StringFirstCodePoint => "String.firstCodePoint",
             Self::StringFromCodePoint => "String.fromCodePoint",
             Self::StringChars => "String.chars",
@@ -481,6 +484,13 @@ impl BuiltinName {
                 ValType::I64,
                 ValType::I64,
             ]),
+            Self::StringIndexSliceEq => Ok(vec![
+                string_ref_ty(registry)?,
+                string_index_ref_ty(registry)?,
+                ValType::I64,
+                ValType::I64,
+                string_ref_ty(registry)?,
+            ]),
             Self::StringFirstCodePoint => Ok(vec![string_ref_ty(registry)?]),
             Self::StringFromCodePoint => Ok(vec![ValType::I64]),
             Self::StringChars => Ok(vec![string_ref_ty(registry)?]),
@@ -581,6 +591,7 @@ impl BuiltinName {
             Self::StringIndexCharAt => Ok(vec![option_ref_ty(registry, "Option<String>")?]),
             Self::StringIndexCodeAt => Ok(vec![ValType::I64]),
             Self::StringIndexSlice => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringIndexSliceEq => Ok(vec![ValType::I32]),
             Self::StringChars => Ok(vec![list_ref_ty(registry, "List<String>")?]),
             Self::StrCursorEnd => Ok(vec![ValType::I32]),
             Self::StrCursorHead => Ok(vec![string_ref_ty(registry)?]),
@@ -673,6 +684,7 @@ impl BuiltinName {
             Self::StringIndexCharAt => emit_string_index_char_at(registry),
             Self::StringIndexCodeAt => emit_string_index_code_at(registry),
             Self::StringIndexSlice => emit_string_index_slice(registry),
+            Self::StringIndexSliceEq => emit_string_index_slice_eq(registry),
             Self::StringFirstCodePoint => emit_string_first_code_point(registry),
             Self::StringFromCodePoint => emit_string_from_code_point(registry),
             Self::StringChars => emit_string_chars(registry),
@@ -725,6 +737,10 @@ impl BuiltinName {
 pub(super) struct BuiltinRegistry {
     /// Insertion order — wasm fn indices and type indices follow it.
     order: Vec<BuiltinName>,
+    /// Whether an indexed slice compared with a string gets
+    /// `__str_index_slice_eq`. Off under `--certify`, where a new helper
+    /// would move the indices the certified functions call.
+    pub(super) slices_compared_in_place: bool,
     wasm_fn_idx: HashMap<BuiltinName, u32>,
     wasm_type_idx: HashMap<BuiltinName, u32>,
 }
@@ -2880,9 +2896,11 @@ fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError>
 
 /// Build the hidden codepoint→UTF-8 byte-boundary table. The source String is
 /// valid UTF-8 by construction, so scalar starts are exactly bytes which are
-/// not continuation bytes. Two linear byte passes buy an exactly-sized i32
-/// array: one counts boundaries, the other writes them plus the final byte
-/// length sentinel.
+/// not continuation bytes. An ASCII string needs no table, position `i` being
+/// byte `i`: it gets the null table, found in one pass that stops at the first
+/// byte above 0x7F. Any other string takes two more linear byte passes for an
+/// exactly-sized i32 array: one counts boundaries, the other writes them plus
+/// the final byte length sentinel.
 fn emit_string_index_build(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let string_idx = registry
         .string_array_type_idx
@@ -2917,6 +2935,15 @@ fn emit_string_index_build(registry: &TypeRegistry) -> Result<Function, WasmGcEr
             (local $out (ref null $string_index))
 
             local.get $s array.len local.set $n
+            (block $wide
+              (loop $ascii
+                local.get $i local.get $n i32.ge_u
+                (if (then ref.null $string_index return))
+                local.get $s local.get $i array.get_u $string
+                i32.const 0x80 i32.and br_if $wide
+                local.get $i i32.const 1 i32.add local.set $i
+                br $ascii))
+            i32.const 0 local.set $i
             (block $count_done
               (loop $count_loop
                 local.get $i local.get $n i32.ge_u br_if $count_done
@@ -3003,7 +3030,11 @@ fn emit_string_index_char_at(registry: &TypeRegistry) -> Result<Function, WasmGc
             local.get $i i64.const 0 i64.lt_s
             (if (then
               i32.const 0 ref.null $string struct.new $option_string return))
-            local.get $index array.len i32.const 1 i32.sub local.set $char_count
+            local.get $index ref.is_null
+            (if (result i32)
+              (then local.get $s array.len)
+              (else local.get $index array.len i32.const 1 i32.sub))
+            local.set $char_count
             local.get $i
             local.get $char_count i64.extend_i32_u
             i64.ge_u
@@ -3011,9 +3042,15 @@ fn emit_string_index_char_at(registry: &TypeRegistry) -> Result<Function, WasmGc
               i32.const 0 ref.null $string struct.new $option_string return))
 
             local.get $i i32.wrap_i64 local.set $pos
-            local.get $index local.get $pos array.get $string_index local.set $from
-            local.get $index local.get $pos i32.const 1 i32.add
-            array.get $string_index local.set $to
+            local.get $index ref.is_null
+            (if
+              (then
+                local.get $pos local.set $from
+                local.get $pos i32.const 1 i32.add local.set $to)
+              (else
+                local.get $index local.get $pos array.get $string_index local.set $from
+                local.get $index local.get $pos i32.const 1 i32.add
+                array.get $string_index local.set $to))
             local.get $to local.get $from i32.sub local.set $len
             local.get $len array.new_default $string local.set $out
             local.get $out i32.const 0 local.get $s local.get $from local.get $len
@@ -3068,6 +3105,12 @@ fn emit_string_index_code_at(registry: &TypeRegistry) -> Result<Function, WasmGc
 
             local.get $i i64.const 0 i64.lt_s
             (if (then i64.const -1 return))
+            local.get $index ref.is_null
+            (if (then
+              local.get $i local.get $s array.len i64.extend_i32_u i64.ge_u
+              (if (then i64.const -1 return))
+              local.get $s local.get $i i32.wrap_i64 array.get_u $string
+              i64.extend_i32_u return))
             local.get $index array.len i32.const 1 i32.sub local.set $char_count
             local.get $i local.get $char_count i64.extend_i32_u i64.ge_u
             (if (then i64.const -1 return))
@@ -3112,6 +3155,49 @@ fn emit_string_index_code_at(registry: &TypeRegistry) -> Result<Function, WasmGc
 /// O(1) codepoint-boundary translation for `String.slice`; the copy of the
 /// selected UTF-8 bytes remains necessarily linear in the returned substring.
 fn emit_string_index_slice(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    emit_string_index_slice_or_eq(registry, false)
+}
+
+/// `__str_index_slice_eq(s, index, from, to, t)`: whether
+/// `__str_index_slice(s, index, from, to) == t`, comparing the bytes in
+/// place instead of copying the slice out.
+fn emit_string_index_slice_eq(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    emit_string_index_slice_or_eq(registry, true)
+}
+
+fn emit_string_index_slice_or_eq(
+    registry: &TypeRegistry,
+    compare: bool,
+) -> Result<Function, WasmGcError> {
+    let (operand, result, empty, tail) = if compare {
+        (
+            "(param $t (ref null $string)) (result i32) (local $k i32)",
+            "",
+            "local.get $t array.len i32.eqz",
+            r#"local.get $to local.get $from i32.sub local.tee $len
+            local.get $t array.len i32.ne (if (then i32.const 0 return))
+            (block $done
+              (loop $bytes
+                local.get $k local.get $len i32.ge_u br_if $done
+                local.get $s local.get $from local.get $k i32.add array.get_u $string
+                local.get $t local.get $k array.get_u $string
+                i32.ne (if (then i32.const 0 return))
+                local.get $k i32.const 1 i32.add local.set $k
+                br $bytes))
+            i32.const 1"#,
+        )
+    } else {
+        (
+            "(result (ref null $string))",
+            "(local $out (ref null $string))",
+            "i32.const 0 array.new_default $string",
+            r#"local.get $to local.get $from i32.sub local.set $len
+            local.get $len array.new_default $string local.set $out
+            local.get $out i32.const 0 local.get $s local.get $from local.get $len
+            array.copy $string $string
+            local.get $out"#,
+        )
+    };
     let string_idx = registry
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
@@ -3141,7 +3227,7 @@ fn emit_string_index_slice(registry: &TypeRegistry) -> Result<Function, WasmGcEr
                 (param $index (ref null $string_index))
                 (param $start_in i64)
                 (param $end_in i64)
-                (result (ref null $string))
+                {operand}
             (local $char_count i32)
             (local $char_count64 i64)
             (local $start i64)
@@ -3149,9 +3235,13 @@ fn emit_string_index_slice(registry: &TypeRegistry) -> Result<Function, WasmGcEr
             (local $from i32)
             (local $to i32)
             (local $len i32)
-            (local $out (ref null $string))
+            {result}
 
-            local.get $index array.len i32.const 1 i32.sub local.set $char_count
+            local.get $index ref.is_null
+            (if (result i32)
+              (then local.get $s array.len)
+              (else local.get $index array.len i32.const 1 i32.sub))
+            local.set $char_count
             local.get $char_count i64.extend_i32_u local.set $char_count64
 
             local.get $start_in i64.const 0 i64.lt_s
@@ -3174,16 +3264,18 @@ fn emit_string_index_slice(registry: &TypeRegistry) -> Result<Function, WasmGcEr
             local.set $end
 
             local.get $start local.get $end i64.ge_u
-            (if (then i32.const 0 array.new_default $string return))
-            local.get $index local.get $start i32.wrap_i64
-            array.get $string_index local.set $from
-            local.get $index local.get $end i32.wrap_i64
-            array.get $string_index local.set $to
-            local.get $to local.get $from i32.sub local.set $len
-            local.get $len array.new_default $string local.set $out
-            local.get $out i32.const 0 local.get $s local.get $from local.get $len
-            array.copy $string $string
-            local.get $out)
+            (if (then {empty} return))
+            local.get $index ref.is_null
+            (if
+              (then
+                local.get $start i32.wrap_i64 local.set $from
+                local.get $end i32.wrap_i64 local.set $to)
+              (else
+                local.get $index local.get $start i32.wrap_i64
+                array.get $string_index local.set $from
+                local.get $index local.get $end i32.wrap_i64
+                array.get $string_index local.set $to))
+            {tail})
         )
     "#
     );

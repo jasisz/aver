@@ -1438,7 +1438,8 @@ struct CodeCaller<'a> {
 }
 
 /// How one peel's head is read: handed to a classifier, decoded in place
-/// by `__str_code1*`, or needed as the string itself.
+/// by `__str_code1*` or `String.firstCodePoint`, or needed as the string
+/// itself.
 #[derive(Default)]
 struct HeadReads {
     calls: usize,
@@ -1566,7 +1567,8 @@ impl CodeCaller<'_> {
             hot.calls += 1;
             return Ok(());
         }
-        if let Some(fold) = decoded_head(&expr.node, h) {
+        let point = head_code_point(&expr.node, h);
+        if let Some(fold) = decoded_head(&expr.node, h).or(point.map(|_| CodeFold::Bare)) {
             if shadows.iter().any(|n| n == code_name) {
                 return Err(CharsFusionDecline::CodeBindShadowed);
             }
@@ -1575,7 +1577,10 @@ impl CodeCaller<'_> {
                 line,
                 crate::types::Type::Int,
             );
-            *expr = fold.apply(code, line);
+            *expr = match point {
+                Some(false) => some_of(code, line),
+                _ => fold.apply(code, line),
+            };
             hot.decodes += 1;
             return Ok(());
         }
@@ -1628,6 +1633,48 @@ fn decoded_head(expr: &Expr, h: &str) -> Option<CodeFold> {
     let fold = CodeFold::of(intrinsic)?;
     matches!(args.as_slice(), [arg] if matches!(&arg.node, Expr::Ident(x) if x == h))
         .then_some(fold)
+}
+
+/// `String.firstCodePoint(h)` of the head (`Some(false)`), or that under
+/// `Option.withDefault` with a literal default (`Some(true)`). The head of
+/// a peel is one character, so the first is `Option.Some` of its code and
+/// the second the code itself.
+fn head_code_point(expr: &Expr, h: &str) -> Option<bool> {
+    let first = |e: &Expr| {
+        matches!(e, Expr::FnCall(callee, args)
+            if is_dotted(&callee.node, STRING_NAMESPACE, "firstCodePoint")
+                && matches!(args.as_slice(), [a] if matches!(&a.node, Expr::Ident(x) if x == h)))
+    };
+    if first(expr) {
+        return Some(false);
+    }
+    let Expr::FnCall(callee, args) = expr else {
+        return None;
+    };
+    let [opt, default] = args.as_slice() else {
+        return None;
+    };
+    (is_dotted(&callee.node, "Option", "withDefault")
+        && matches!(default.node, Expr::Literal(_))
+        && first(&opt.node))
+    .then_some(true)
+}
+
+/// `Option.Some(code)`, as the parser writes it.
+fn some_of(code: Spanned<Expr>, line: crate::ast::SourceLine) -> Spanned<Expr> {
+    let option = sp(Expr::Ident("Option".to_string()), line);
+    let callee = sp(
+        Expr::Attr(crate::ast::Shared::new(option), "Some".to_string()),
+        line,
+    );
+    sp_typed(
+        Expr::FnCall(
+            crate::ast::Shared::new(callee),
+            crate::ast::shared::vec(vec![code]),
+        ),
+        line,
+        crate::types::Type::Option(Box::new(crate::types::Type::Int)),
+    )
 }
 
 /// Does any identifier read or tail-call target under `expr` carry
@@ -1933,6 +1980,51 @@ fn count(text: String) -> Int
                 .contains("EmptyList"),
             rendered_fn(&untouched, "digitCount").contains("EmptyList"),
             "the original loop keeps its list match"
+        );
+    }
+
+    #[test]
+    fn the_first_code_point_of_the_head_is_its_code() {
+        let source = r#"module Hash
+    intent =
+        "Hashes a string over its code points."
+    exposes [ofText, firsts]
+    effects []
+
+fn ofChars(cs: List<String>, acc: Int) -> Int
+    match cs
+        [] -> acc
+        [c, ..rest] -> ofChars(rest, acc * 31 + Option.withDefault(String.firstCodePoint(c), 0))
+
+fn ofText(s: String) -> Int
+    ofChars(String.chars(s), 17)
+
+fn codes(cs: List<String>, acc: List<Option<Int>>) -> List<Option<Int>>
+    match cs
+        [] -> acc
+        [c, ..rest] -> codes(rest, List.prepend(String.firstCodePoint(c), acc))
+
+fn firsts(s: String) -> List<Option<Int>>
+    codes(String.chars(s), [])
+"#;
+        let (items, report) = fused(source);
+        assert!(report.declined.is_empty(), "{:?}", report.declined);
+        assert_eq!(report.codepoint_calls, 2, "{report:?}");
+        let hash = rendered_fn(&items, "ofChars__cursor");
+        assert!(
+            hash.contains("__str_cursor_code")
+                && !hash.contains("__str_cursor_head")
+                && !hash.contains("firstCodePoint")
+                && !hash.contains("withDefault"),
+            "the head's code is read in place, with no string and no Option:\n{hash}"
+        );
+        let codes = rendered_fn(&items, "codes__cursor");
+        assert!(
+            codes.contains("__str_cursor_code")
+                && codes.contains("\"Some\"")
+                && !codes.contains("__str_cursor_head")
+                && !codes.contains("firstCodePoint"),
+            "the head's first code point is `Option.Some` of its code:\n{codes}"
         );
     }
 
