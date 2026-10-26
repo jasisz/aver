@@ -7,10 +7,17 @@
             (local.set $m (struct.get $aint $magf (local.get $a)))
             (if (result i32) (ref.is_null (local.get $m))
               (then
-                ;; Small — fold the i64 `$small` to i32: (s ^ (s >>> 32)),
-                ;; then wrap. Distributes both halves of the 64-bit value.
+                ;; Small — mix the i64 `$small` (see `INT_KEY_MIX` in
+                ;; maps.rs) so the low bits a map masks for a bucket
+                ;; depend on every bit of the value.
                 (local.set $s (struct.get $aint $small (local.get $a)))
-                (i32.wrap_i64 (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 32)))))
+                (local.set $s (i64.mul
+                  (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 30)))
+                  (i64.const {mix1:#x})))
+                (local.set $s (i64.mul
+                  (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 27)))
+                  (i64.const {mix2:#x})))
+                (i32.wrap_i64 (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 31)))))
               (else
                 ;; Big — DJB2-style fold over the 32-bit limb magnitude,
                 ;; then mix the sign in. The canonical invariant guarantees
