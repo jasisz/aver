@@ -6,7 +6,9 @@
 //! args with effects (run once each, in order), twin calls nested in the args
 //! of twin calls, self and mutual tail calls (a long one must not grow the
 //! stack), a function value, a record result stored in a field, a `Unit`
-//! param beside an `Int` one, and an `Int` param read as a string position.
+//! param beside an `Int` one, an `Int` param read as a string position, and
+//! `?` and `?!` through twins: an `Err` returned early, a Big `Ok` payload,
+//! a `?` in a long mutual tail loop.
 
 #![cfg(feature = "wasm")]
 
@@ -69,6 +71,7 @@ fn twins_print_what_the_vm_prints() {
     let vm = run(&file, false);
     assert!(vm.contains("arg 1\narg 2\narg 3\norder 123\n"), "{vm}");
     assert!(vm.contains("countdown 500000500000 "), "{vm}");
+    assert!(vm.contains(" ok 20000300000\n"), "{vm}");
     assert_eq!(vm, run(&file, true));
     // Not vacuous: the module has twins.
     assert_ne!(module(&file, true), module(&file, false));

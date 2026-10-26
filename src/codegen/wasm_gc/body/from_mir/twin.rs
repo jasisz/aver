@@ -144,6 +144,15 @@ pub(crate) fn struct_new(func: &mut Function, idx: u32) {
     }
 }
 
+/// `return` with struct `idx`'s fields on the stack, from the middle of a
+/// body (`?`, `?!`): the struct, or, as a twin's own result, the fields.
+pub(crate) fn return_struct(func: &mut Function, idx: u32) {
+    if !matches!(self_kind(), Some(TwinKind::Fields { struct_idx, .. }) if struct_idx == idx) {
+        func.instruction(&I::StructNew(idx));
+    }
+    func.instruction(&I::Return);
+}
+
 /// The twin of the fn `e` calls, when the fn being emitted may call it.
 pub(crate) fn callee<'e>(
     e: &'e Spanned<MirExpr>,

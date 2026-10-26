@@ -153,8 +153,7 @@ fn emit_mir_ip_unwrap(
             struct_type_index: elem_res_idx,
             field_index: 2,
         });
-        func.instruction(&Instruction::StructNew(enclosing_idx));
-        func.instruction(&Instruction::Return);
+        super::twin::return_struct(func, enclosing_idx);
         func.instruction(&Instruction::End);
     }
 
@@ -232,6 +231,30 @@ pub(crate) fn emit_mir_try(
             "ErrorProp: enclosing Result canonical `{enclosing_canonical}` malformed"
         )))?;
 
+    // A twin's `Result` comes as its fields: the `Ok` payload, the `Err`
+    // payload for the early return, and the tag (1 for `Ok`) to pick.
+    if let Some((call, twin)) = super::twin::callee(inner, ctx)
+        && let TwinKind::Fields { struct_idx, fields } = &twin.kind
+        && *struct_idx == res_idx
+    {
+        let (ok, err) = (slots.fresh_local(fields[1]), slots.fresh_local(fields[2]));
+        if super::twin::emit_call(func, call, &twin, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        func.instruction(&Instruction::LocalSet(err));
+        func.instruction(&Instruction::LocalSet(ok));
+        func.instruction(&Instruction::If(block_ty));
+        if !unit_ok {
+            func.instruction(&Instruction::LocalGet(ok));
+        }
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I32Const(0));
+        emit_default_value(func, enclosing_t_aver, ctx.registry)?;
+        func.instruction(&Instruction::LocalGet(err));
+        super::twin::return_struct(func, enclosing_idx);
+        func.instruction(&Instruction::End);
+        return Ok(Some(!unit_ok));
+    }
     if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -269,8 +292,7 @@ pub(crate) fn emit_mir_try(
         struct_type_index: res_idx,
         field_index: 2,
     });
-    func.instruction(&Instruction::StructNew(enclosing_idx));
-    func.instruction(&Instruction::Return);
+    super::twin::return_struct(func, enclosing_idx);
     func.instruction(&Instruction::End);
     Ok(Some(!unit_ok))
 }
