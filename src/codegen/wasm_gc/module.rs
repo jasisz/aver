@@ -3417,6 +3417,9 @@ pub(super) fn emit_module_with(
             next_global_idx += 1;
         }
     }
+    // The shared empty map of each `Map<K, V>`, after every other global.
+    let map_empty_globals =
+        map_helpers.emit_empty_globals(&mut globals, &mut next_global_idx, &registry)?;
     if next_global_idx > 0 {
         module.section(&globals);
     }
@@ -4129,6 +4132,7 @@ pub(super) fn emit_module_with(
         &compound_eq_hash_lookup,
         &carrier_eq_hash_lookup,
         &walked_key_lookup,
+        &map_empty_globals,
     )?;
 
     // List / Vector.fromList / String.split-join helper bodies.
@@ -6253,7 +6257,13 @@ pub(super) fn emit_module_with(
         codes.function(&emit_format_iso8601(fmt.string_type_idx));
     }
 
-    factory_exports.emit_bodies(&mut codes, &registry)?;
+    factory_exports.emit_bodies(
+        &mut codes,
+        &registry,
+        map_helpers
+            .kv_helpers("Map<String,List<String>>")
+            .map(|helpers| helpers.empty),
+    )?;
     capability_abi.emit_bodies(&mut codes);
     work_abi.emit_bodies(&mut codes, &registry, fn_map.jobs.as_ref(), &work_imports)?;
 
@@ -9799,6 +9809,7 @@ impl FactoryExports {
         &self,
         codes: &mut CodeSection,
         registry: &TypeRegistry,
+        headers_empty: Option<u32>,
     ) -> Result<(), WasmGcError> {
         if self.opt_string_some.is_some() {
             codes.function(&emit_factory_option_string_some(registry)?);
@@ -10017,7 +10028,7 @@ impl FactoryExports {
             )?);
         }
         if self.map_string_list_string_empty.is_some() {
-            codes.function(&emit_factory_map_string_list_string_empty(registry)?);
+            codes.function(&emit_factory_map_string_list_string_empty(headers_empty)?);
         }
         if self.result_list_string_string_ok.is_some() {
             codes.function(&emit_factory_result_ok(
@@ -10990,29 +11001,15 @@ fn emit_factory_http_response_make(
     Ok(f)
 }
 
-/// Empty `Map<String, List<String>>`. The map struct layout is `(size:
-/// i32, cap: i32, keys_ref, values_ref)` per `MapSlots` — produce an
-/// all-zero / null-ref map.
-fn emit_factory_map_string_list_string_empty(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let slots = registry
-        .map_slots("Map<String,List<String>>")
-        .expect("checked at allocation");
+/// Empty `Map<String, List<String>>`, the headers of a response the host
+/// makes: the map's own `empty` helper, so the program reads and extends
+/// it like any map it made itself.
+fn emit_factory_map_string_list_string_empty(map_empty: Option<u32>) -> Result<Function, WasmGcError> {
+    let empty = map_empty.ok_or_else(|| {
+        WasmGcError::Validation("the empty headers map needs the Map.empty helper".into())
+    })?;
     let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        slots.keys_array,
-    )));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        slots.values_array,
-    )));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        slots.hashes_array,
-    )));
-    super::maps::emit_no_diff(&mut f, slots);
-    f.instruction(&Instruction::StructNew(slots.map));
+    f.instruction(&Instruction::Call(empty));
     f.instruction(&Instruction::End);
     Ok(f)
 }

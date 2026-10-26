@@ -26,6 +26,13 @@
 //! its arrays, and a helper makes the version it was handed current
 //! (`reroot`) before it reads them. See `maps/versions.rs`.
 //!
+//! `Map.empty` and `{}` allocate nothing. Each `Map<K, V>` has one empty
+//! map, made when the module is instantiated and kept in an immutable
+//! global: one bucket, no entries (see [`EMPTY_CAP`]). It reads like any
+//! other map, and nothing ever writes into it: an insert into it always
+//! grows first, into arrays of its own, and a remove finds nothing to
+//! remove. Its diff therefore stays null and it is always current.
+//!
 //! Empty slot marker = `keys[i] == null` (only valid for `K` that
 //! cannot legitimately be null, which Aver guarantees for ref types
 //! since the type system rejects null at the source level).
@@ -81,27 +88,34 @@ mod versions;
 use versions::{VersionedWrite, emit_versioned_write};
 pub(super) use versions::{emit_no_diff, emit_reroot_local};
 
-/// Initial bucket count — power of two so masking with `cap-1`
-/// instead of `i32.rem_u` works, and every doubling keeps it one.
+/// Bucket count of the first arrays a map gets — power of two so masking
+/// with `cap-1` instead of `i32.rem_u` works, and every doubling keeps it
+/// one.
 ///
-/// Sized for the map that is created and never filled, because that
-/// is the common one: a literal `{}`, and on `--target wasip2` a
-/// fresh header map per `Http.get` call and per inbound request.
-/// Sixteen buckets cost two 16-element arrays; the old fixed 16384
-/// cost two 16384-element ones, roughly 128 KB of zeroes per empty
-/// map. Doubling makes the total cost of reaching `n`
-/// entries linear in `n`, so starting small costs a few extra
-/// rehashes early and nothing after that.
+/// The first insert into the shared empty map makes them. Sixteen
+/// buckets hold twelve entries before the first doubling. Doubling
+/// makes the total cost of reaching `n` entries linear in `n`, so
+/// starting small costs a few extra rehashes early and nothing after
+/// that.
 ///
-/// Shared with the three places that inline the same empty-map
-/// allocation instead of calling the `empty` helper: `wasip2_http`,
-/// `wasip2_http_handler` and `body::builtins_wasip2`. They used to
-/// carry their own copy of the number with a comment saying it had
-/// to match this one.
+/// Shared with the three places that inline a fresh header map instead
+/// of calling the `empty` helper: `wasip2_http`, `wasip2_http_handler`
+/// and `body::builtins_wasip2`. They used to carry their own copy of the
+/// number with a comment saying it had to match this one.
 pub(super) const INITIAL_CAP: i32 = 16;
 
+/// Bucket count of the shared empty map: one bucket, which stays null.
+///
+/// One rather than none, so every helper reads it as it reads any other
+/// map: the probe masks to bucket 0 and finds it empty, and a walk over
+/// the buckets visits one. The load test in the insert prologue rounds a
+/// quarter of the capacity up, so a table of one holds no entry and the
+/// first insert grows it to [`INITIAL_CAP`] before it probes.
+const EMPTY_CAP: i32 = 1;
+
 /// Load factor the insert helpers grow at, expressed as the shift in
-/// `threshold = cap - (cap >> LOAD_SHIFT)`. Two gives three quarters.
+/// `threshold = cap - ((cap + 2^LOAD_SHIFT - 1) >> LOAD_SHIFT)`, the
+/// capacity less a quarter of it rounded up. Two gives three quarters.
 ///
 /// Linear probing is what makes three quarters the right number
 /// rather than the seven eighths a bucketed table would take. The
@@ -711,6 +725,35 @@ impl MapHelperRegistry {
         named
     }
 
+    /// Declare the shared empty map of every registered `Map<K, V>` and
+    /// return each one's global index, which its `empty` helper reads.
+    pub(super) fn emit_empty_globals(
+        &self,
+        globals: &mut wasm_encoder::GlobalSection,
+        next_global_idx: &mut u32,
+        registry: &TypeRegistry,
+    ) -> Result<HashMap<String, u32>, WasmGcError> {
+        let mut out = HashMap::new();
+        for canonical in &self.kv_order {
+            let slots = slots_for(canonical, registry)?;
+            let val_type = ValType::Ref(RefType {
+                nullable: false,
+                heap_type: HeapType::Concrete(slots.map),
+            });
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type,
+                    mutable: false,
+                    shared: false,
+                },
+                &empty_map_init(slots),
+            );
+            out.insert(canonical.clone(), *next_global_idx);
+            *next_global_idx += 1;
+        }
+        Ok(out)
+    }
+
     /// Emit fn-type entries (in slot order) for every registered
     /// helper. Caller's `TypeSection` must be at `next_type_idx`'s
     /// starting position from the assign_slots call.
@@ -898,6 +941,7 @@ impl MapHelperRegistry {
         list_eq_hash: &HashMap<String, (u32, u32)>,
         carrier_eq_hash: &HashMap<String, (u32, u32)>,
         walked: &HashMap<String, (u32, u32)>,
+        empty_globals: &HashMap<String, u32>,
     ) -> Result<(), WasmGcError> {
         let string_key_helpers = self.key.get("String").copied();
         // Snapshot every K's helpers — record hash/eq dispatch
@@ -993,7 +1037,10 @@ impl MapHelperRegistry {
             })?;
             let helpers = self.kv[canonical];
             let reroot = helpers.reroot;
-            codes.function(&emit_map_empty(canonical, registry)?);
+            let empty_global = *empty_globals.get(canonical).ok_or_else(|| {
+                WasmGcError::Validation(format!("empty map global missing for `{canonical}`"))
+            })?;
+            codes.function(&emit_map_empty(empty_global));
             codes.function(&emit_map_set(canonical, registry, key_h, reroot)?);
             codes.function(&versions::emit_map_reroot(
                 canonical,
@@ -1032,7 +1079,12 @@ impl MapHelperRegistry {
                 helpers.order_slots,
                 reroot,
             )?);
-            codes.function(&emit_map_from_list(canonical, registry, helpers.set)?);
+            codes.function(&emit_map_from_list(
+                canonical,
+                registry,
+                helpers.empty,
+                helpers.set,
+            )?);
             // Structural eq + commutative hash for `Map<K, V>`. V's
             // hash + eq fn idxs come from `all_key_helpers` (same
             // table that drives K dispatch — V is just another
@@ -1540,24 +1592,25 @@ fn slots_for(canonical: &str, registry: &TypeRegistry) -> Result<MapSlots, WasmG
         )))
 }
 
-/// `empty() -> Map<K, V>`. Allocates fresh keys/values/hashes arrays at
-/// `INITIAL_CAP` and a struct wrapping them.
-fn emit_map_empty(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let slots = slots_for(canonical, registry)?;
+/// `empty() -> Map<K, V>`: the shared empty map in `global`.
+fn emit_map_empty(global: u32) -> Function {
     let mut f = Function::new([]);
-    // size = 0; cap = INITIAL_CAP; keys/values/hashes = array.new_default
-    f.instruction(&Instruction::I32Const(0)); // size
-    f.instruction(&Instruction::I32Const(INITIAL_CAP)); // cap
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::ArrayNewDefault(slots.hashes_array));
-    emit_no_diff(&mut f, slots);
-    f.instruction(&Instruction::StructNew(slots.map));
+    f.instruction(&Instruction::GlobalGet(global));
     f.instruction(&Instruction::End);
-    Ok(f)
+    f
+}
+
+/// The value of the shared empty map's global: no entries, [`EMPTY_CAP`]
+/// null buckets, no diff.
+fn empty_map_init(slots: MapSlots) -> wasm_encoder::ConstExpr {
+    let mut init = vec![Instruction::I32Const(0), Instruction::I32Const(EMPTY_CAP)];
+    for array in [slots.keys_array, slots.values_array, slots.hashes_array] {
+        init.push(Instruction::I32Const(EMPTY_CAP));
+        init.push(Instruction::ArrayNewDefault(array));
+    }
+    init.push(Instruction::RefNull(HeapType::Concrete(slots.diff)));
+    init.push(Instruction::StructNew(slots.map));
+    wasm_encoder::ConstExpr::extended(init)
 }
 
 /// `set(map, k, v) -> map'`. Linear-probing open-addressing insert.
@@ -1833,14 +1886,17 @@ fn emit_insert_prologue(f: &mut Function, slots: MapSlots) {
     });
     f.instruction(&Instruction::LocalSet(14));
 
-    // Grow when map.size + 1 > cap - (cap >> LOAD_SHIFT).
+    // Grow when map.size + 1 > cap - ceil(cap / 2^LOAD_SHIFT).
     //
     // `size + 1` is the occupancy an insert of a new key would leave.
     // Testing it before the probe overestimates for a key already
     // present — that insert grows a table it did not have to. The cost
     // is one early doubling of a map that is being overwritten at
     // three-quarters full, and the gain is that the check reads two
-    // struct fields and needs no answer from the probe.
+    // struct fields and needs no answer from the probe. Rounding the
+    // quarter up changes nothing for a real table, whose capacity is a
+    // multiple of four, and leaves the shared empty map's one bucket
+    // no room, so an insert into it grows before it can write there.
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -1850,6 +1906,8 @@ fn emit_insert_prologue(f: &mut Function, slots: MapSlots) {
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const((1 << LOAD_SHIFT) - 1));
+    f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Const(LOAD_SHIFT));
     f.instruction(&Instruction::I32ShrU);
     f.instruction(&Instruction::I32Sub);
@@ -1857,11 +1915,18 @@ fn emit_insert_prologue(f: &mut Function, slots: MapSlots) {
     f.instruction(&Instruction::If(BlockType::Empty));
 
     // ── grow ──────────────────────────────────────────────────────
-    // cap = cap * 2; mask = cap - 1
+    // cap = max(cap * 2, INITIAL_CAP); mask = cap - 1. The floor is
+    // for the shared empty map, whose first insert lands here.
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::LocalTee(3));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
@@ -2481,6 +2546,25 @@ fn emit_map_len(canonical: &str, registry: &TypeRegistry) -> Result<Function, Wa
     Ok(f)
 }
 
+/// Return what `answer` pushes when the map in `map_local` has no entries.
+fn emit_return_if_empty(
+    f: &mut Function,
+    slots: MapSlots,
+    map_local: u32,
+    answer: impl FnOnce(&mut Function),
+) {
+    f.instruction(&Instruction::LocalGet(map_local));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    answer(f);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+}
+
 /// Push a default value of the given wasm type onto the stack — used
 /// by `Map.get`'s None branch where the Option's `value` field needs
 /// some payload (read by no well-typed Aver code, since pattern match
@@ -3070,6 +3154,10 @@ fn emit_map_walk_keys_to_list(
         (1, ValType::I32),
         (1, list_ref),
     ]);
+    // No entries: the empty list, with no order array to sort.
+    emit_return_if_empty(&mut f, slots, 0, |f| {
+        f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
+    });
     // keys = map.keys
     emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
@@ -3157,6 +3245,10 @@ fn emit_map_walk_values_to_list(
         (1, ValType::I32),
         (1, list_ref),
     ]);
+    // No entries: the empty list, with no order array to sort.
+    emit_return_if_empty(&mut f, slots, 0, |f| {
+        f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
+    });
     emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
@@ -3283,6 +3375,11 @@ fn emit_map_eq(
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
+    // Two empty maps are equal. Answered here because two shared empty
+    // maps share their arrays, which the walk below would copy.
+    emit_return_if_empty(&mut f, slots, 2, |f| {
+        f.instruction(&Instruction::I32Const(1));
+    });
     // cap = a.cap; keys_a = a.keys; values_a = a.values; i = 0
     emit_reroot_local(&mut f, slots.map, reroot_fn, 2);
     f.instruction(&Instruction::LocalGet(2));
@@ -3970,6 +4067,10 @@ fn emit_map_entries(
         (1, ValType::I32),
         (1, lt_ref),
     ]);
+    // No entries: the empty list, with no order array to sort.
+    emit_return_if_empty(&mut f, slots, 0, |f| {
+        f.instruction(&Instruction::RefNull(HeapType::Concrete(lt_idx)));
+    });
     emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
@@ -4032,13 +4133,12 @@ fn emit_map_entries(
 
 /// `from_list(l) -> Map<K, V>`. Walks `l` from head to tail,
 /// struct.get's the (K, V) from each tuple, calls the per-(K, V)
-/// `set` helper to insert. Allocates a fresh empty map (via the
-/// per-(K, V) `empty` shape inlined: cap = INITIAL_CAP, fresh keys
-/// and values arrays) and returns it. `set` writes in place, so the
-/// walk is linear in the list.
+/// `set` helper to insert, starting from the shared empty map. `set`
+/// writes in place, so the walk is linear in the list.
 fn emit_map_from_list(
     canonical: &str,
     registry: &TypeRegistry,
+    empty_fn: u32,
     set_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
@@ -4075,17 +4175,8 @@ fn emit_map_from_list(
             }),
         ),
     ]);
-    // map = inline empty allocation (matches emit_map_empty)
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::ArrayNewDefault(slots.hashes_array));
-    emit_no_diff(&mut f, slots);
-    f.instruction(&Instruction::StructNew(slots.map));
+    // map = the shared empty map
+    f.instruction(&Instruction::Call(empty_fn));
     f.instruction(&Instruction::LocalSet(2));
     // cur = l
     f.instruction(&Instruction::LocalGet(0));
