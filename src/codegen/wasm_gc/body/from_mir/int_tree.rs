@@ -208,12 +208,10 @@ fn leaf_of(e: Node<'_>, slots: &SlotTable, ctx: &EmitCtx<'_>) -> Leaf {
         return Leaf::Lit(n);
     }
     match &e.node {
-        MirExpr::Local(l) if !ctx.slot_is_bare(l.node.slot.0) => {
-            match twin::held_param(l.node.slot.0) {
-                Some((_, big)) => Leaf::Param(slots.local(l.node.slot.0), big),
-                None => Leaf::Boxed(slots.local(l.node.slot.0)),
-            }
-        }
+        MirExpr::Local(l) if !ctx.slot_is_bare(l.node.slot.0) => match twin::held(l.node.slot.0) {
+            Some((_, big)) => Leaf::Param(slots.local(l.node.slot.0), big),
+            None => Leaf::Boxed(slots.local(l.node.slot.0)),
+        },
         MirExpr::Box(inner) => Leaf::Ahead(mir_renders_raw_i64(&inner.node, ctx)),
         _ => Leaf::Ahead(mir_is_eligible_carrier_value_project(&e.node, ctx)),
     }
@@ -239,10 +237,14 @@ fn twin_leaf(e: Node<'_>, ctx: &EmitCtx<'_>) -> bool {
 /// `unpacked`: the tree's value is compared or unboxed, not boxed.
 fn enabled(ctx: &EmitCtx<'_>, roots: &[Node<'_>], unpacked: bool) -> bool {
     // A comparison of two leaves is worth it too, unless a side is a literal
-    // (`emit_aint_cmp_const` already compares that without a call). A leaf
-    // that calls a twin is worth it wherever the value is not boxed.
+    // (`emit_aint_cmp_const` already compares that without a call) and the
+    // other no slot a twin holds. A leaf that calls a twin is worth it
+    // wherever the value is not boxed.
     let twin = || unpacked && roots.iter().any(|r| twin_leaf(r, ctx));
-    let leaves = roots.len() == 2 && roots.iter().all(|r| int_literal(r).is_none());
+    let held =
+        |r: &Node<'_>| matches!(&r.node, MirExpr::Local(l) if twin::held(l.node.slot.0).is_some());
+    let leaves = roots.len() == 2
+        && (roots.iter().all(|r| int_literal(r).is_none()) || roots.iter().any(held));
     let weights = || roots.iter().map(|r| weight(r, ctx)).sum::<Option<usize>>();
     ctx.registry.bignum
         && ctx.registry.aint_struct_idx.is_some()
