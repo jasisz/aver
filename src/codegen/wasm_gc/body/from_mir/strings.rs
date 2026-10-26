@@ -162,6 +162,43 @@ pub(crate) fn emit_mir_interpolated_str(
     Ok(Some(true))
 }
 
+/// `__str_index_slice(s, index, from, to) == t`, either way round: the
+/// slice's bytes compared with `t` where they lie, no slice built. `None`,
+/// with nothing emitted, for any other comparison, and for a slice on the
+/// right of an operand that is not a local or a literal (the operands are
+/// read in their own order).
+fn emit_indexed_slice_eq(
+    func: &mut Function,
+    l: &Spanned<MirExpr>,
+    r: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let slice_args = |e: &Spanned<MirExpr>| match &e.node {
+        MirExpr::Call(c)
+            if matches!(
+                c.node.callee,
+                MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::StrIndexSlice)
+            ) && c.node.args.len() == 4 =>
+        {
+            Some(c.node.args.to_vec())
+        }
+        _ => None,
+    };
+    let Some(&helper) = ctx.fn_map.builtins.get("__str_index_slice_eq") else {
+        return Ok(None);
+    };
+    let (mut args, other) = match (slice_args(l), slice_args(r)) {
+        (Some(args), _) => (args, r),
+        (None, Some(args)) if matches!(l.node, MirExpr::Local(_) | MirExpr::Literal(_)) => {
+            (args, l)
+        }
+        _ => return Ok(None),
+    };
+    args.push(other.clone());
+    emit_mir_args_then_call_lowering_int(func, &args, slots, ctx, helper, &[2, 3])
+}
+
 /// The `String`-operand branches of `emit_expr`'s `BinOp` arm —
 /// byte-for-byte. `+` is `__wasmgc_concat_n` over a 2-element
 /// `Vector<String>` (mirror of `emit_string_concat2`); `==` / `!=` is
@@ -209,6 +246,11 @@ pub(crate) fn emit_mir_string_binop(
                 array_size: 2,
             });
             func.instruction(&Instruction::Call(concat_idx));
+        }
+        BinOp::Eq | BinOp::Neq if emit_indexed_slice_eq(func, l, r, slots, ctx)?.is_some() => {
+            if matches!(bop.op, BinOp::Neq) {
+                func.instruction(&Instruction::I32Eqz);
+            }
         }
         BinOp::Eq | BinOp::Neq => {
             let eq_idx = ctx

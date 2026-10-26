@@ -1983,6 +1983,51 @@ fn count(text: String) -> Int
     }
 
     #[test]
+    fn the_first_code_point_of_the_head_is_its_code() {
+        let source = r#"module Hash
+    intent =
+        "Hashes a string over its code points."
+    exposes [ofText, firsts]
+    effects []
+
+fn ofChars(cs: List<String>, acc: Int) -> Int
+    match cs
+        [] -> acc
+        [c, ..rest] -> ofChars(rest, acc * 31 + Option.withDefault(String.firstCodePoint(c), 0))
+
+fn ofText(s: String) -> Int
+    ofChars(String.chars(s), 17)
+
+fn codes(cs: List<String>, acc: List<Option<Int>>) -> List<Option<Int>>
+    match cs
+        [] -> acc
+        [c, ..rest] -> codes(rest, List.prepend(String.firstCodePoint(c), acc))
+
+fn firsts(s: String) -> List<Option<Int>>
+    codes(String.chars(s), [])
+"#;
+        let (items, report) = fused(source);
+        assert!(report.declined.is_empty(), "{:?}", report.declined);
+        assert_eq!(report.codepoint_calls, 2, "{report:?}");
+        let hash = rendered_fn(&items, "ofChars__cursor");
+        assert!(
+            hash.contains("__str_cursor_code")
+                && !hash.contains("__str_cursor_head")
+                && !hash.contains("firstCodePoint")
+                && !hash.contains("withDefault"),
+            "the head's code is read in place, with no string and no Option:\n{hash}"
+        );
+        let codes = rendered_fn(&items, "codes__cursor");
+        assert!(
+            codes.contains("__str_cursor_code")
+                && codes.contains("\"Some\"")
+                && !codes.contains("__str_cursor_head")
+                && !codes.contains("firstCodePoint"),
+            "the head's first code point is `Option.Some` of its code:\n{codes}"
+        );
+    }
+
+    #[test]
     fn single_character_arms_become_codepoints() {
         let (items, report) = fused(DIGITS);
         // Once in the original loop, once in the synthesized variant.

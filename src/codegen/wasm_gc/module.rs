@@ -7486,6 +7486,16 @@ fn discover_builtins_in_expr(
                 && t.display().trim() == "String"
             {
                 use crate::ast::BinOp as Op;
+                // An indexed slice compared with a string is compared in
+                // place (`emit_mir_string_binop`).
+                let indexed_slice = |e: &ResolvedExpr| {
+                    matches!(e, ResolvedExpr::Call(ResolvedCallee::Intrinsic(
+                        crate::ir::hir::BuiltinIntrinsic::StrIndexSlice), _))
+                };
+                if matches!(op, Op::Eq | Op::Neq) && (indexed_slice(&l.node) || indexed_slice(&r.node))
+                {
+                    builtins.register(BuiltinName::StringIndexSliceEq);
+                }
                 match op {
                     Op::Add => builtins.register(BuiltinName::StringConcatN),
                     Op::Eq | Op::Neq => builtins.register(BuiltinName::StringEq),
