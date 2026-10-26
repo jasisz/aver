@@ -154,6 +154,66 @@ fn main() -> Unit
     );
 }
 
+/// `{}` is one map per `Map<K, V>`, shared by every use and never written:
+/// an insert into it grows into arrays of its own. Every read of it answers
+/// empty, and maps made from it, even two from one use, stay apart.
+#[test]
+fn the_shared_empty_map_reads_as_empty_and_stays_empty() {
+    assert_vm_and_wasm_gc(
+        "map-versions-empty",
+        r#"
+module Main
+    intent = "The empty map reads as empty, and maps made from it stay apart."
+    effects [Console.print]
+
+record Box
+    m: Map<String, Int>
+    n: Int
+
+fn none() -> Map<String, Int>
+    ? "The empty map."
+    {}
+
+fn emptied() -> Map<String, Int>
+    ? "A map that had an entry and lost it."
+    Map.remove(Map.set({}, "q", 5), "q")
+
+fn fill(m: Map<String, Int>, i: Int, n: Int) -> Map<String, Int>
+    ? "Adds keys k0..k(n-1)."
+    match i >= n
+        true -> m
+        false -> fill(Map.set(m, "k{i}", i), i + 1, n)
+
+fn lookup(m: Map<String, Int>, k: String) -> String
+    ? "What a match on the lookup sees."
+    match Map.get(m, k)
+        Option.Some(v) -> "some {v}"
+        Option.None -> "none"
+
+fn main() -> Unit
+    ! [Console.print]
+    e = none()
+    Console.print("{Map.len(e)} {Map.has(e, "a")} {Option.withDefault(Map.get(e, "a"), 7)} {lookup(e, "a")} {List.len(Map.keys(e))} {List.len(Map.values(e))} {List.len(Map.entries(e))} {Map.len(Map.remove(e, "a"))}")
+    a = Map.set(e, "x", 1)
+    b = Map.set(e, "y", 2)
+    c = Map.set(Map.set(e, "x", 3), "z", 4)
+    Console.print("{Map.len(e)} {Map.has(e, "x")} {lookup(a, "x")} {Map.has(a, "y")} {lookup(b, "y")} {Map.has(b, "x")} {Map.len(c)} {lookup(c, "x")} {lookup(a, "x")}")
+    Console.print("{e == none()} {e == emptied()} {emptied() == e} {a == b} {Map.set(e, "x", 1) == a} {Map.remove(a, "x") == e} {Map.remove(a, "x") == none()}")
+    big = fill(e, 0, 100)
+    other = fill(none(), 50, 120)
+    Console.print("{Map.len(big)} {Map.len(other)} {lookup(big, "k99")} {lookup(other, "k49")} {lookup(other, "k119")} {Map.len(e)} {big == fill({}, 0, 100)}")
+    box = Box(m = {}, n = 1)
+    moved = Box(m = Map.set(box.m, "x", 1), n = 2)
+    Console.print("{box == Box(m = none(), n = 1)} {Box(m = emptied(), n = 1) == box} {Box(m = a, n = 1) == box} {Map.len(box.m)} {lookup(moved.m, "x")} {Map.len(Map.fromList([]))} {Map.fromList([("x", 1)]) == a}")
+"#,
+        "0 false 7 none 0 0 0 0\n\
+         0 false some 1 false some 2 false 2 some 3 some 1\n\
+         true true true false true true true\n\
+         100 70 some 99 none some 119 0 true\n\
+         true true false 0 some 1 0 true",
+    );
+}
+
 /// The printed WAT of one `aver compile --target wasm-gc` of `source`.
 fn wat_of(source: &str) -> String {
     let mut items = aver::source::parse_source(source).expect("parse");
