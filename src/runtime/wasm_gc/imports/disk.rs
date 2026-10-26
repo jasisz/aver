@@ -12,7 +12,22 @@ use super::factories::{
     host_result_ok_list_string, host_result_ok_string, host_result_ok_unit,
 };
 use super::lm::lm_string_to_host;
-use super::replay_glue::{json_err, json_ok, json_record, record_effect_if_recording, try_replay};
+use super::replay_glue::{
+    json_err, json_ok, json_record, record_effect_if_recording, replay_is_active, try_replay,
+};
+
+/// The recorded outcome of a successful byte read. Only a run that records
+/// pays for it: a chunk of 16 MiB is 16 Mi JSON numbers.
+fn bytes_outcome(
+    caller: &wasmtime::Caller<'_, RunWasmGcHost>,
+    bytes: &[u8],
+) -> aver::replay::JsonValue {
+    if replay_is_active(caller) {
+        json_ok(bytes_json(bytes))
+    } else {
+        aver::replay::JsonValue::Null
+    }
+}
 
 fn bytes_json(bytes: &[u8]) -> aver::replay::JsonValue {
     json_record(
@@ -63,11 +78,9 @@ pub(super) fn dispatch(
             }
             let (result_ref, outcome) = match aver_rt::read_bytes(&path) {
                 Ok(bytes) => {
+                    let outcome = bytes_outcome(caller, &bytes);
                     let ints = bytes.iter().copied().map(i64::from).collect::<Vec<_>>();
-                    (
-                        host_result_ok_bytes(caller, &ints)?,
-                        json_ok(bytes_json(&bytes)),
-                    )
+                    (host_result_ok_bytes(caller, &ints)?, outcome)
                 }
                 Err(error) => (host_result_err_bytes(caller, &error)?, json_err(&error)),
             };
@@ -114,11 +127,9 @@ pub(super) fn dispatch(
             };
             let (result_ref, outcome) = match read {
                 Ok(bytes) => {
+                    let outcome = bytes_outcome(caller, &bytes);
                     let ints = bytes.iter().copied().map(i64::from).collect::<Vec<_>>();
-                    (
-                        host_result_ok_bytes(caller, &ints)?,
-                        json_ok(bytes_json(&bytes)),
-                    )
+                    (host_result_ok_bytes(caller, &ints)?, outcome)
                 }
                 Err(error) => (host_result_err_bytes(caller, &error)?, json_err(&error)),
             };

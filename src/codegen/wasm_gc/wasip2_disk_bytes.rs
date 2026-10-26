@@ -14,6 +14,8 @@ pub(super) struct DiskReadBytesIndices {
     pub string_type_idx: u32,
     pub result_string_string_type_idx: u32,
     pub list_int_type_idx: u32,
+    /// The proof-packed `Bytes` array and `Result<Bytes, String>` struct types.
+    pub packed_bytes: Option<(u32, u32)>,
 }
 
 pub(super) struct DiskWriteBytesIndices {
@@ -200,17 +202,27 @@ pub(super) fn emit_disk_read_bytes(
         heap_type: HeapType::Concrete(indices.list_int_type_idx),
     });
     // Param 0 = path. Locals: 1 = Result<String,String>, 2 = raw array,
-    // 3 = reverse-built List<Int>, 4 = descending byte index.
+    // 3 = reverse-built List<Int>, 4 = descending byte index, 5 = length,
+    // 6 = packed Bytes.
     let mut f = Function::new(vec![
         (1, result_string_ref),
         (1, string_ref),
         (1, list_ref),
-        (1, ValType::I32),
+        (2, ValType::I32),
+        (
+            1,
+            super::wasip2_disk_read_at::bytes_out_ref(
+                indices.packed_bytes,
+                indices.string_type_idx,
+            ),
+        ),
     ]);
     let l_result = 1;
     let l_raw = 2;
     let l_list = 3;
     let l_index = 4;
+    let l_len = 5;
+    let l_out = 6;
 
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::Call(read_text_fn));
@@ -238,39 +250,24 @@ pub(super) fn emit_disk_read_bytes(
         struct_type_index: indices.result_string_string_type_idx,
         field_index: 1,
     });
-    f.instruction(&Instruction::LocalSet(l_raw));
-    f.instruction(&Instruction::RefNull(HeapType::Concrete(
-        indices.list_int_type_idx,
-    )));
-    f.instruction(&Instruction::LocalSet(l_list));
-    f.instruction(&Instruction::LocalGet(l_raw));
+    f.instruction(&Instruction::LocalTee(l_raw));
     f.instruction(&Instruction::ArrayLen);
-    f.instruction(&Instruction::LocalSet(l_index));
-
-    // Cons from the end so the private linked list preserves file order.
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(l_index));
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::BrIf(1));
-    f.instruction(&Instruction::LocalGet(l_index));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::LocalSet(l_index));
-    f.instruction(&Instruction::LocalGet(l_raw));
-    f.instruction(&Instruction::LocalGet(l_index));
-    f.instruction(&Instruction::ArrayGetU(indices.string_type_idx));
-    f.instruction(&Instruction::I64ExtendI32U);
-    f.instruction(&Instruction::Call(aint_from_i64_fn));
-    f.instruction(&Instruction::LocalGet(l_list));
-    f.instruction(&Instruction::StructNew(indices.list_int_type_idx));
-    f.instruction(&Instruction::LocalSet(l_list));
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::End);
-
-    f.instruction(&Instruction::LocalGet(l_list));
-    f.instruction(&Instruction::Call(result_ok_fn));
+    f.instruction(&Instruction::LocalSet(l_len));
+    super::wasip2_disk_read_at::emit_ok_bytes(
+        &mut f,
+        &super::wasip2_disk_read_at::BytesOk {
+            string_type: indices.string_type_idx,
+            list_type: indices.list_int_type_idx,
+            aint_from_i64: aint_from_i64_fn,
+            result_ok: result_ok_fn,
+            packed: indices.packed_bytes,
+        },
+        l_raw,
+        l_len,
+        l_out,
+        l_list,
+        l_index,
+    );
     f.instruction(&Instruction::End);
     f
 }

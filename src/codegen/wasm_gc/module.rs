@@ -1780,6 +1780,7 @@ pub(super) fn emit_module_with(
             string_type_idx: string_idx,
             result_string_string_type_idx: result_string_idx,
             list_int_type_idx: list_int_idx,
+            packed_bytes: packed_bytes_for_reads(&registry, result_bytes_idx),
         })
     } else {
         None
@@ -1845,6 +1846,7 @@ pub(super) fn emit_module_with(
             string_type_idx: string_idx,
             aint_struct_type_idx: aint_idx,
             list_int_type_idx: list_int_idx,
+            packed_bytes: packed_bytes_for_reads(&registry, result_idx),
         })
     } else {
         None
@@ -4313,10 +4315,15 @@ pub(super) fn emit_module_with(
                 super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
             )
             .expect("disk_read_text emit requires drop-input-stream fn idx");
+        let bump_global = wasip2_globals
+            .as_ref()
+            .map(|g| g.bump_alloc_ptr)
+            .expect("disk_read_text emit requires bump_alloc_ptr global");
         codes.function(&emit_disk_read_text(
             rt.string_type_idx,
             rt.result_string_string_type_idx,
             preopen_global,
+            bump_global,
             cabi,
             str_to_lm,
             get_directories,
@@ -4513,9 +4520,14 @@ pub(super) fn emit_module_with(
         let aint_from_i64 = registry
             .aint_from_i64_fn_idx
             .expect("disk_read_bytes_at requires __aint_from_i64");
+        let bump_global = wasip2_globals
+            .as_ref()
+            .map(|g| g.bump_alloc_ptr)
+            .expect("disk_read_bytes_at requires bump_alloc_ptr global");
         codes.function(&emit_disk_read_bytes_at(
             read_at,
             preopen_global,
+            bump_global,
             cabi,
             str_to_lm,
             get_directories,
@@ -9416,6 +9428,16 @@ fn allocate_factory_exports(
     }
 
     Ok(fx)
+}
+
+/// The packed `Bytes` array a disk read builds its `Result<Bytes, String>`
+/// from directly, with that result struct; `None` when `Bytes` stays the
+/// boxed list, which the read hands to the Ok factory instead.
+fn packed_bytes_for_reads(registry: &TypeRegistry, result_idx: u32) -> Option<(u32, u32)> {
+    registry
+        .packed_sequence("Bytes")
+        .filter(|packed| packed.layout.element == crate::codegen::proof_lower::PackedIntElement::U8)
+        .map(|packed| (packed.type_idx, result_idx))
 }
 
 fn ref_null(type_idx: u32) -> ValType {
