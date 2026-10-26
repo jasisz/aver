@@ -10,7 +10,9 @@
 //! `?` and `?!` through twins: an `Err` returned early, a Big `Ok` payload,
 //! a `?` in a long mutual tail loop; and `Int` locals a twin holds as words,
 //! Big or not, compared with a literal, stored packed, bound by a match, and
-//! a string's code points in a fused loop.
+//! a string's code points in a fused loop; and held words, Big or not,
+//! matched against literals and used as a vector index (negative, past
+//! `2^31`, Big).
 
 #![cfg(feature = "wasm")]
 

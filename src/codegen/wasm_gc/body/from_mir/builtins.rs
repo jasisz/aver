@@ -95,6 +95,34 @@ fn emit_index_i32(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<bool, WasmGcError> {
+    // An index with its machine word: its `i32` in `[0, 2^31)`, else the
+    // same `-1`, without the box.
+    if ctx.registry.bignum
+        && let Some(done) = super::twin::emit_word_lowered(
+            func,
+            index,
+            aint_helper(ctx, "__aint_to_i64_sat")?,
+            slots,
+            ctx,
+        )?
+    {
+        if done.is_none() {
+            return Ok(false);
+        }
+        let n = slots.fresh_local(ValType::I64);
+        for i in [
+            Instruction::LocalTee(n),
+            Instruction::I32WrapI64,
+            Instruction::I32Const(-1),
+            Instruction::LocalGet(n),
+            Instruction::I64Const(0x8000_0000),
+            Instruction::I64LtU,
+            Instruction::Select,
+        ] {
+            func.instruction(&i);
+        }
+        return Ok(true);
+    }
     if emit_mir_expr(func, index, slots, ctx)?.is_none() {
         return Ok(false);
     }

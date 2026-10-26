@@ -174,9 +174,9 @@ fn produces_unpacked(e: &MirExpr, kind: &TwinKind) -> bool {
 }
 
 /// Whether `body` reads the param in `slot` where its machine word serves:
-/// in `Int` arithmetic or a comparison, as an arg of a call, or as a tail.
-/// A param read only packed (stored, matched, stringified) is taken packed,
-/// so the twin does not box what its caller had boxed already.
+/// in `Int` arithmetic or a comparison, as an arg of a call, a match's
+/// subject, or a tail. A param read only packed (stored, stringified) is
+/// taken packed, so the twin does not box what its caller had boxed already.
 pub(crate) fn read_as_word(
     body: &crate::ast::Spanned<MirExpr>,
     slot: crate::ir::mir::LocalId,
@@ -188,6 +188,7 @@ pub(crate) fn read_as_word(
             MirExpr::Neg(x) | MirExpr::Unbox(x) => is(x),
             MirExpr::Call(c) => c.node.args.iter().any(is),
             MirExpr::TailCall(c) => c.node.args.iter().any(is),
+            MirExpr::Match(m) => is(&m.node.subject),
             _ => false,
         };
         let mut found = direct;

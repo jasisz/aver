@@ -1502,10 +1502,22 @@ pub(crate) fn emit_mir_int_cascade(
     // NOT lifted to `$aint`. The boxed (`$aint` ref) subject keeps the
     // `__aint_from_i64` + `__aint_eq` path. The subject is a value position,
     // so emit it with the colour cleared.
+    // A slot a twin holds is compared on its `i64`; a Big value equals no
+    // literal.
+    let held = match &subject.node {
+        MirExpr::Local(l) if stash.is_none() => {
+            super::twin::held(l.node.slot.0).map(|(_, big)| (slots.local(l.node.slot.0), big))
+        }
+        _ => None,
+    };
     let subject_raw = match stash {
         Some(IntSubjectStash { local, raw }) => {
             func.instruction(&Instruction::LocalGet(local));
             raw
+        }
+        None if let Some((word, _)) = held => {
+            func.instruction(&Instruction::LocalGet(word));
+            true
         }
         None => {
             let raw = super::mir_renders_raw_i64(&subject.node, ctx);
@@ -1546,6 +1558,11 @@ pub(crate) fn emit_mir_int_cascade(
     } else {
         func.instruction(&Instruction::I64Const(*pat_lit));
         func.instruction(&Instruction::I64Eq);
+        if let Some((_, big)) = held {
+            func.instruction(&Instruction::LocalGet(big));
+            func.instruction(&Instruction::I32Eqz);
+            func.instruction(&Instruction::I32And);
+        }
     }
     func.instruction(&Instruction::If(block_ty));
     // The matched arm body is a result tail — colour it raw when the match
