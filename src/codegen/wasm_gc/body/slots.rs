@@ -190,6 +190,11 @@ pub(in crate::codegen::wasm_gc) struct SlotTable {
     /// One local per job kind this fn starts a job of. See
     /// `job_task_scratch`.
     job_task_scratch: RefCell<HashMap<i32, u32>>,
+    /// The three `i64` locals and one `$AverInt` local an `Int` tree's
+    /// machine-word path computes each operation in (`from_mir/int_tree.rs`).
+    /// Live only inside one operation, so one set serves every tree of the
+    /// fn. Lazily allocated like the ones above.
+    int_tree_temps: RefCell<Option<[u32; 4]>>,
     /// Lazily allocated locals, appended after `by_slot` in
     /// `extra_locals`. Index `i` here is wasm local `by_slot.len() + i`.
     lazy_locals: RefCell<Vec<ValType>>,
@@ -494,6 +499,7 @@ impl SlotTable {
             run_reason_scratch: RefCell::new(None),
             run_turn_scratch: RefCell::new(None),
             job_task_scratch: RefCell::new(HashMap::new()),
+            int_tree_temps: RefCell::new(None),
             lazy_locals: RefCell::new(Vec::new()),
         })
     }
@@ -616,6 +622,28 @@ impl SlotTable {
     /// arms' tests read it instead of computing it again. One per match
     /// site; the dry run and the real emit reserve them in the same order.
     pub(in crate::codegen::wasm_gc) fn match_subject_local(&self, ty: ValType) -> u32 {
+        self.push_lazy_local(ty)
+    }
+
+    /// Reserve (once per fn) the locals an `Int` tree's machine-word path
+    /// computes in: three `i64`, then one of `aint` (`$AverInt`).
+    pub(in crate::codegen::wasm_gc) fn int_tree_temps(&self, aint: ValType) -> [u32; 4] {
+        if let Some(found) = *self.int_tree_temps.borrow() {
+            return found;
+        }
+        let temps = [
+            self.push_lazy_local(ValType::I64),
+            self.push_lazy_local(ValType::I64),
+            self.push_lazy_local(ValType::I64),
+            self.push_lazy_local(aint),
+        ];
+        *self.int_tree_temps.borrow_mut() = Some(temps);
+        temps
+    }
+
+    /// A fresh local of `ty`, one per call site; the dry run and the real
+    /// emit reserve them in the same order.
+    pub(in crate::codegen::wasm_gc) fn fresh_local(&self, ty: ValType) -> u32 {
         self.push_lazy_local(ty)
     }
 

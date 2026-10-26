@@ -2849,6 +2849,9 @@ pub(crate) fn emit_mir_numeric_binop(
         func.instruction(&inst);
         return Ok(Some(()));
     }
+    if let Some(r) = super::int_tree::try_emit_compare(func, bop, slots, ctx)? {
+        return Ok(r);
+    }
     let l_ty = wasm_type_of(l, ctx.registry)?;
     let r_ty = wasm_type_of(r, ctx.registry)?;
     let operand = if l_ty == Some(ValType::F64) || r_ty == Some(ValType::F64) {
