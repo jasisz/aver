@@ -3300,6 +3300,73 @@ pub(super) fn emit_module_with(
         }
     }
 
+    // Which fns may compute `Int` trees on `i64` (`body/from_mir/int_tree.rs`).
+    // Not a fn the certificate plan printer admits when emitted without them:
+    // the wall lowers its plan the one ordinary way, so its bytes must stay
+    // that way. Nor a fn of the Int carrier-binop signature: the wall's
+    // host-role scan reads those as the runtime's arithmetic helpers.
+    let trees_for: Vec<bool> = {
+        let cert_layout = super::cert_layout::CertLayout {
+            registry: &registry,
+            fn_map: &fn_map,
+            symbol_table: &symbol_table,
+            fn_idx: resolved_fn_defs
+                .iter()
+                .enumerate()
+                .map(|(i, rfd)| (rfd.fn_id, import_count + 1 + i as u32))
+                .collect(),
+            builtins: &mir_program.builtins,
+        };
+        let mut scratch_types = crate::codegen::cert::TypeTableBuilder::new(&cert_layout);
+        let mut out = Vec::with_capacity(fn_defs.len());
+        for (i, rfd) in resolved_fn_defs.iter().enumerate() {
+            let Some(mir_fn) = mir_fn_for[i] else {
+                out.push(false);
+                continue;
+            };
+            let is_int = |t: &crate::types::Type| matches!(t, crate::types::Type::Int);
+            let carrier_binop = registry.bignum
+                && rfd.params.len() == 2
+                && rfd.params.iter().all(|(_, t)| is_int(t))
+                && is_int(&rfd.return_type)
+                && !mir_fn.repr.bare_return
+                && !mir_fn.repr.bare_params.iter().any(|b| *b);
+            if carrier_binop || !registry.bignum {
+                out.push(false);
+                continue;
+            }
+            super::body::set_int_trees_allowed(false);
+            let mut probe = Function::new([]);
+            let extra = emit_fn_body_via_mir(
+                &mut probe,
+                rfd,
+                mir_fn,
+                &mir_program,
+                &fn_map,
+                import_count + 1 + i as u32,
+                &registry,
+                &symbol_table,
+                &effect_idx_lookup,
+                &caller_fn_collector,
+                wasip2_lowering.as_ref(),
+            );
+            super::body::set_int_trees_allowed(true);
+            let admitted = match extra? {
+                Some(extra) => crate::codegen::cert::print_fn(
+                    mir_fn,
+                    rfd,
+                    &extra,
+                    &cert_layout,
+                    &mut scratch_types,
+                )
+                .is_ok(),
+                None => false,
+            };
+            out.push(!admitted);
+        }
+        out
+    };
+
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
     // Why each fn the body emitter gave up on was left behind, in words.
     let mut stub_reasons: Vec<Option<String>> = vec![None; fn_defs.len()];
@@ -3328,6 +3395,7 @@ pub(super) fn emit_module_with(
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         let mut probe = Function::new([]);
+        super::body::set_int_trees_allowed(trees_for[i]);
         let used_mir = match mir_fn_for[i] {
             Some(mir_fn) => emit_fn_body_via_mir(
                 &mut probe,
@@ -3345,6 +3413,7 @@ pub(super) fn emit_module_with(
             .is_some(),
             None => false,
         };
+        super::body::set_int_trees_allowed(true);
         mir_dispatch[i] = used_mir;
         if !used_mir {
             stub_reasons[i] = Some(super::body::take_unsupported_reason().unwrap_or_else(|| {
@@ -3917,6 +3986,7 @@ pub(super) fn emit_module_with(
         // `unreachable` is polymorphic so it validates for any
         // signature. So the dry-run only needs locals for the MIR path;
         // the stub path contributes none.
+        super::body::set_int_trees_allowed(trees_for[i]);
         let extra_locals_dry = if mir_dispatch[i] {
             let mut probe = Function::new([]);
             emit_fn_body_via_mir(
@@ -3968,6 +4038,7 @@ pub(super) fn emit_module_with(
         } else {
             emit_trap_stub_body(&mut func);
         }
+        super::body::set_int_trees_allowed(true);
         codes.function(&func);
     }
 

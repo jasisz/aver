@@ -36,6 +36,13 @@ thread_local! {
     /// Leaves evaluated ahead of a tree, by node address: the local holding
     /// the value, and whether that local is a raw `i64` the exact path boxes.
     static HOISTED: RefCell<HashMap<usize, (u32, bool)>> = RefCell::new(HashMap::new());
+    /// Whether the fn being emitted may compute trees on `i64` at all.
+    static ALLOWED: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Allow or forbid trees for the fn about to be emitted.
+pub(crate) fn set_allowed(allowed: bool) {
+    ALLOWED.with(|a| a.set(allowed));
 }
 
 /// The operations a tree is made of. Every one is pure and total on ℤ.
@@ -245,6 +252,7 @@ fn enabled(ctx: &EmitCtx<'_>) -> bool {
     ctx.registry.bignum
         && ctx.registry.aint_struct_idx.is_some()
         && EXACT.with(|d| d.get() == 0)
+        && ALLOWED.with(|a| a.get())
         && std::env::var_os("AVER_NO_INT_TREE").is_none()
 }
 

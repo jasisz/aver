@@ -85,7 +85,7 @@ mod collections;
 mod constructors;
 mod control;
 mod coverage;
-mod int_tree;
+pub(crate) mod int_tree;
 mod pattern_match;
 mod records;
 mod strings;
