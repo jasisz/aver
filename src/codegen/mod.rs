@@ -519,6 +519,9 @@ pub struct CodegenContext {
     /// transpile only (see `codegen::rust::carrier`); empty for every other
     /// backend, and then every carrier keeps its `AverInt` field.
     pub rust_i64_carriers: crate::ir::mir::bare_i64::CarrierIds,
+    /// The smart constructor of each carrier in `rust_i64_carriers`, by
+    /// function identity, to the carrier and its one field. Filled with it.
+    pub rust_i64_carrier_ctors: HashMap<crate::ir::FnId, (crate::ir::TypeId, String)>,
     /// Proof-export decision IR populated by `proof_lower::lower`
     /// during `build_context`. The Lean backend reads from
     /// here to decide refinement-record lift, recursion contracts,
@@ -1140,6 +1143,7 @@ pub fn build_context(
         synthesized_buffered_fns,
         packed_sequence_layouts: HashMap::new(),
         rust_i64_carriers: HashMap::new(),
+        rust_i64_carrier_ctors: HashMap::new(),
         bare_i64,
         rust_owned_record_params: Default::default(),
         rust_lent_options: Default::default(),
@@ -1657,6 +1661,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         synthesized_buffered_fns: Vec::new(),
         packed_sequence_layouts: std::collections::HashMap::new(),
         rust_i64_carriers: std::collections::HashMap::new(),
+        rust_i64_carrier_ctors: std::collections::HashMap::new(),
         proof_ir: crate::ir::ProofIR::default(),
         symbol_table: crate::ir::SymbolTable::default(),
         current_module_scope: std::cell::RefCell::new(None),

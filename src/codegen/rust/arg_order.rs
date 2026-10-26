@@ -53,26 +53,47 @@ pub(super) fn bind_computed_arguments(ctx: &mut CodegenContext) {
             &mut mir_fn.body,
             Spanned::bare(MirExpr::Literal(Spanned::bare(crate::ast::Literal::Unit))),
         );
-        rewrite(&mut body, mir_fn, &boxed_return, builtins, self_bounces);
+        let calls = Calls {
+            boxed_return: &boxed_return,
+            builtins,
+            self_bounces,
+            carrier_ctors: &ctx.rust_i64_carrier_ctors,
+        };
+        rewrite(&mut body, mir_fn, &calls);
         mir_fn.body = body;
     }
     ctx.mir_program = Some(program);
 }
 
-/// Rewrite every call in `expr`, innermost first.
-fn rewrite(
-    expr: &mut Spanned<MirExpr>,
-    mir_fn: &mut MirFn,
-    boxed_return: &HashSet<FnId>,
-    builtins: &[String],
+/// What the rewrite needs to know about the calls of a function.
+struct Calls<'a> {
+    /// Functions whose Rust return type is a boxed `AverInt`, not `i64`.
+    boxed_return: &'a HashSet<FnId>,
+    builtins: &'a [String],
+    /// The function is a member of a mutual trampoline.
     self_bounces: bool,
-) {
+    /// Smart constructors of carriers held as a raw `i64`: called on a
+    /// boxed machine word, the emitter binds the word itself and checks it
+    /// raw (`emit_carrier_ctor_on_word`).
+    carrier_ctors: &'a std::collections::HashMap<FnId, (crate::ir::TypeId, String)>,
+}
+
+/// Rewrite every call in `expr`, innermost first.
+fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, calls: &Calls<'_>) {
     crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
-        rewrite(child, mir_fn, boxed_return, builtins, self_bounces)
+        rewrite(child, mir_fn, calls)
     });
+    let (boxed_return, builtins, self_bounces) =
+        (calls.boxed_return, calls.builtins, calls.self_bounces);
     let mut write = false;
     let args = match &expr.node {
         MirExpr::Call(call) => match call.node.callee {
+            MirCallee::Fn(id)
+                if calls.carrier_ctors.contains_key(&id)
+                    && matches!(call.node.args.as_slice(), [arg] if matches!(arg.node, MirExpr::Box(_))) =>
+            {
+                return;
+            }
             MirCallee::Fn(_) => &call.node.args,
             MirCallee::Builtin(id)
                 if matches!(

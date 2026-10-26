@@ -2628,6 +2628,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                             &name, *fn_id, &call.args, knows, codegen, emit_ctx,
                         );
                     }
+                    if let Some(code) =
+                        emit_carrier_ctor_on_word(&name, *fn_id, &call.args, emit_ctx)
+                    {
+                        return Some(code);
+                    }
                     emit_named_call_to(&name, Some(*fn_id), &call.args, emit_ctx)
                 }
                 // Resolve the interned dotted name and dispatch. Every host
@@ -7586,20 +7591,62 @@ fn emit_named_call_to(
         };
         arg_strs.push(s);
     }
-    if let Some((prefix, suffix)) = resolve_module_call(name, ctx.module_prefixes) {
-        Some(format!(
-            "{}::{}({})",
+    Some(format!(
+        "{}({})",
+        named_call_head(name, ctx),
+        arg_strs.join(", ")
+    ))
+}
+
+/// The path a call of the function `name` is made by.
+fn named_call_head(name: &str, ctx: &MirEmitCtx<'_>) -> String {
+    match resolve_module_call(name, ctx.module_prefixes) {
+        Some((prefix, suffix)) => format!(
+            "{}::{}",
             module_prefix_to_rust_path(prefix),
-            aver_name_to_rust(suffix),
-            arg_strs.join(", ")
-        ))
-    } else {
-        Some(format!(
-            "{}({})",
-            aver_name_to_rust(name),
-            arg_strs.join(", ")
-        ))
+            aver_name_to_rust(suffix)
+        ),
+        None => aver_name_to_rust(name),
     }
+}
+
+/// A call of the smart constructor of a carrier held as a raw `i64` on a
+/// machine word: the word is checked against the carrier's bound, which is
+/// what the constructor checks, and becomes its field. Only a word outside
+/// the bound is boxed, for the constructor to build its `Err`.
+fn emit_carrier_ctor_on_word(
+    name: &str,
+    fn_id: crate::ir::FnId,
+    args: &[Spanned<MirExpr>],
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    use crate::ir::interval::Bound;
+    let codegen = ctx.codegen?;
+    let (type_id, field) = codegen.rust_i64_carrier_ctors.get(&fn_id)?;
+    let interval = codegen.rust_i64_carriers.get(type_id)?;
+    let ([arg], Bound::Finite(lo), Bound::Finite(hi)) = (args, interval.lo, interval.hi) else {
+        return None;
+    };
+    let MirExpr::Box(word) = &arg.node else {
+        return None;
+    };
+    let record = &ctx.symbol_table.type_entry(*type_id).key.name;
+    if record_is_boxed(Some(*type_id), record, ctx) {
+        return None;
+    }
+    let bound = |k: i128| match i64::try_from(k) {
+        Ok(i64::MIN) => Some("i64::MIN".to_string()),
+        Ok(k) => Some(format!("{k}i64")),
+        Err(_) => None,
+    };
+    let (lo, hi) = (bound(lo)?, bound(hi)?);
+    let word = emit_mir_expr(word, ctx)?;
+    Some(format!(
+        "{{ let __word: i64 = {word}; if ({lo}..={hi}).contains(&__word) {{ Ok({} {{ {}: __word }}) }} else {{ {}(aver_rt::AverInt::from_i64(__word)) }} }}",
+        mir_record_rust_type(Some(*type_id), record, ctx),
+        aver_name_to_rust(field),
+        named_call_head(name, ctx),
+    ))
 }
 
 /// `lazy name(args)` (see `aver_rt::thin::Lazy`): the arguments computed

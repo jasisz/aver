@@ -672,7 +672,8 @@ fn has_update_site(
 
 /// The module lowered the way every backend lowers it, so the check reads
 /// the same field moves they make.
-fn lowered(items: &[TopLevel], symbols: &crate::ir::SymbolTable) -> MirProgram {
+/// The module lowered to MIR the way it compiles, for a check that reads it.
+pub(crate) fn lowered(items: &[TopLevel], symbols: &crate::ir::SymbolTable) -> MirProgram {
     let mut items = items.to_vec();
     crate::resolver::resolve_program(&mut items);
     crate::ir::last_use::annotate_program_last_use(&mut items);

@@ -266,6 +266,16 @@ pub fn analyze_prechecked_items(
     )
 }
 
+/// A record of one `Int` field, the shape of a refinement carrier.
+#[cfg(feature = "runtime")]
+fn declares_int_record(item: &TopLevel) -> bool {
+    matches!(
+        item,
+        TopLevel::TypeDef(crate::ast::TypeDef::Product { fields, .. })
+            if matches!(fields.as_slice(), [(_, ty)] if crate::types::parse_type_str(ty) == crate::types::Type::Int)
+    )
+}
+
 fn analyze_prechecked_items_impl(
     source: &str,
     options: &AnalyzeOptions,
@@ -503,6 +513,29 @@ fn analyze_prechecked_items_impl(
             )
         };
         for w in collect_shared_update_warnings(transformed, &source, &symbols) {
+            diagnostics.push(from_check_finding_with_index(
+                Severity::Warning,
+                &w,
+                &source_index,
+                &options.file_label,
+            ));
+        }
+    }
+
+    // `warning[perf-int-carrier]`: what keeps a refinement over `Int` that
+    // this module declares from being held as a machine word in Rust. Only
+    // a module declaring a record of one `Int` field is asked.
+    #[cfg(feature = "runtime")]
+    if options.include_perf_warnings
+        && tc_result.errors.is_empty()
+        && transformed.iter().any(declares_int_record)
+    {
+        let symbols = crate::types::checker::program_symbols(
+            transformed,
+            options.loaded_modules.as_deref(),
+            options.module_base_dir.as_deref(),
+        );
+        for w in crate::codegen::rust::carrier_check_findings(transformed, &symbols) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,

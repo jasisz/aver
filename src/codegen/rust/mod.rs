@@ -10,6 +10,7 @@ mod expr;
 mod from_mir;
 mod knowing;
 mod lent_option;
+pub use carrier::check_findings as carrier_check_findings;
 pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers};
 mod ownership;
 mod pattern;
@@ -197,7 +198,7 @@ fn transpile_project(
         // The refinement carriers this backend holds as a struct over a raw
         // `i64` (see `carrier`). An empty table keeps every carrier's
         // `AverInt` field and the facts the context was built with.
-        let (carriers, notes) = carrier::i64_carriers(ctx, &prog);
+        let (carriers, ctors, notes) = carrier::i64_carriers(ctx, &prog);
         carrier_notes = notes;
         let (prog, facts) = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust_with_facts(
             prog, &boxed, &carriers,
@@ -208,6 +209,7 @@ fn transpile_project(
             ctx.bare_i64 = facts;
         }
         ctx.rust_i64_carriers = carriers;
+        ctx.rust_i64_carrier_ctors = ctors;
         ctx.mir_program = Some(prog);
         boxing_notes = perf_notes::boxing(ctx);
         arg_order::bind_computed_arguments(ctx);

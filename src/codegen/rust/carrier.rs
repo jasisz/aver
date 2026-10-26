@@ -15,7 +15,7 @@
 //! back to `AverInt` only where it meets a general `Int`. A type of this
 //! shape that does not get the representation says why in one note.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Expr, TopLevel, TypeDef};
 use crate::codegen::CodegenContext;
@@ -25,6 +25,7 @@ use crate::ir::mir::{MirExpr, MirProgram};
 use crate::ir::{FnId, FnKey, TypeId, TypeKey};
 
 /// One type of the program shaped as a carrier.
+#[derive(Clone)]
 struct Candidate {
     id: TypeId,
     /// `Module.Type`, or the bare name in the entry module.
@@ -32,10 +33,13 @@ struct Candidate {
     interval: Interval,
     /// Its smart constructor, the one function that builds it unchecked.
     ctor: Option<FnId>,
+    /// Its one field.
+    field: String,
 }
 
 /// The carriers of `program` the Rust backend holds as a raw `i64`, keyed by
-/// type identity, and a note for each type shaped as one that is not.
+/// type identity, their smart constructors, and a note for each type shaped
+/// as one that is not.
 ///
 /// A type is a candidate when it is one `Int` field, listed under
 /// `exposes opaque`, with a smart constructor whose check bounds it within
@@ -53,47 +57,174 @@ struct Candidate {
 pub(super) fn i64_carriers(
     ctx: &CodegenContext,
     program: &MirProgram,
-) -> (CarrierIds, Vec<String>) {
+) -> (CarrierIds, HashMap<FnId, (TypeId, String)>, Vec<String>) {
     if std::env::var_os("AVER_NO_BARE_I64").is_some() {
-        return (CarrierIds::new(), Vec::new());
+        return (CarrierIds::new(), HashMap::new(), Vec::new());
     }
     let mut notes = Vec::new();
     let mut candidates = candidates(ctx, &mut notes);
     let mut unchecked: Vec<(TypeId, String)> = Vec::new();
-    for (fn_id, mir_fn) in program.iter() {
-        visit_builds(&mir_fn.body.node, &mut |type_id, name, value, line| {
-            let candidate = match type_id {
-                Some(id) => candidates.iter().find(|c| c.id == id),
-                // A build with no identity is checked against every
-                // candidate of its name.
-                None => candidates
-                    .iter()
-                    .find(|c| last_segment(&c.label) == last_segment(name)),
-            };
-            let Some(candidate) = candidate else {
-                return;
-            };
-            if candidate.ctor == Some(*fn_id)
-                || literal_of(value).is_some_and(|k| candidate.interval.contains_point(k))
-                || unchecked.iter().any(|(id, _)| *id == candidate.id)
-            {
-                return;
-            }
-            let at = ctx.symbol_table.fn_entry(*fn_id).key.canonical();
-            unchecked.push((
-                candidate.id,
-                format!(
-                    "`{}` keeps an `Int` field: `{at}` builds it at line {line} from a value other than a literal within {}",
-                    candidate.label,
-                    show(candidate.interval)
-                ),
-            ));
-        });
+    for (index, fn_id, line) in unchecked_builds(program, &candidates) {
+        let candidate = &candidates[index];
+        if !unchecked.iter().any(|(id, _)| *id == candidate.id) {
+            let at = ctx.symbol_table.fn_entry(fn_id).key.canonical();
+            unchecked.push((candidate.id, built_unchecked(candidate, &at, Some(line))));
+        }
     }
     candidates.retain(|c| !unchecked.iter().any(|(id, _)| *id == c.id));
     notes.extend(unchecked.into_iter().map(|(_, note)| note));
     let carriers = candidates.iter().map(|c| (c.id, c.interval)).collect();
-    (carriers, notes)
+    let ctors = candidates
+        .iter()
+        .filter_map(|c| Some((c.ctor?, (c.id, c.field.clone()))))
+        .collect();
+    (carriers, ctors, notes)
+}
+
+/// `aver check`: what keeps a carrier the module declares an `Int` field,
+/// with the line that does it. `items` is the module checked as the entry
+/// of its program and `symbols` the program's symbol table. A carrier is a
+/// type the checker's literal discharge recognizes as a refinement over
+/// `Int` with a bound within `i64` (the boundary types of capabilities and
+/// the keys of wait sets, which the backend also rules out, are left to
+/// `aver compile`).
+pub fn check_findings(
+    items: &[TopLevel],
+    symbols: &crate::ir::SymbolTable,
+) -> Vec<crate::checker::CheckFinding> {
+    use crate::analysis::literal_refinement::LiteralCarrier;
+    let finding = |line: usize, fn_name: Option<&str>, note: String, repair: &str| {
+        crate::checker::CheckFinding {
+            line,
+            module: None,
+            file: None,
+            fn_name: fn_name.map(str::to_string),
+            message: format!("{note} — {repair}, and the Rust backend holds it as a machine word"),
+            extra_spans: vec![],
+        }
+    };
+    let mut findings = Vec::new();
+    for item in items {
+        let TopLevel::TypeDef(TypeDef::Product {
+            name,
+            fields,
+            opaque: false,
+            line,
+            ..
+        }) = item
+        else {
+            continue;
+        };
+        let [(field, field_type)] = fields.as_slice() else {
+            continue;
+        };
+        if crate::types::parse_type_str(field_type) == crate::types::Type::Int
+            && let Some(ctor) = smart_constructor_shaped(entry_fns(items), name, field)
+        {
+            findings.push(finding(
+                *line,
+                None,
+                format!(
+                    "`{name}` keeps an `Int` field: it has the smart constructor `{ctor}` but is not listed under `exposes opaque`"
+                ),
+                "list it under `exposes opaque`",
+            ));
+        }
+    }
+    let gates: Vec<(Candidate, &str)> = symbols
+        .literal_refinements()
+        .iter()
+        .filter(|c| c.carrier == LiteralCarrier::Int && c.scope.is_none() && c.interval.fits_i64())
+        .map(|c| {
+            let candidate = Candidate {
+                id: c.type_id,
+                label: c.type_name.clone(),
+                interval: c.interval,
+                ctor: Some(c.fn_id),
+                field: c.carrier_field.clone(),
+            };
+            (candidate, c.constructor_fn.as_str())
+        })
+        .collect();
+    if gates.is_empty() {
+        return findings;
+    }
+    let repair = |ctor: &str| format!("build it with `{ctor}` or from a literal within the bound");
+    let bindings = crate::codegen::collect_module_bindings(items);
+    for (candidate, ctor) in &gates {
+        if let Some(binding) = built_in_binding(&bindings, &candidate.label, candidate.interval) {
+            let note = format!(
+                "`{}` keeps an `Int` field: {}",
+                candidate.label,
+                built_in(&binding.name, candidate.interval)
+            );
+            findings.push(finding(binding.value.line, None, note, &repair(ctor)));
+        }
+    }
+    let candidates: Vec<Candidate> = gates.iter().map(|(c, _)| c.clone()).collect();
+    let program = crate::checker::lowered_for_check(items, symbols);
+    for (index, fn_id, line) in unchecked_builds(&program, &candidates) {
+        let at = symbols.fn_entry(fn_id).key.canonical();
+        let (candidate, ctor) = &gates[index];
+        findings.push(finding(
+            line,
+            Some(&at),
+            built_unchecked(candidate, &at, None),
+            &repair(ctor),
+        ));
+    }
+    findings
+}
+
+/// Every build in `program` of one of `candidates` that its bound does not
+/// cover: outside its smart constructor, from anything but a literal within
+/// the bound. The candidate's index, the function and the line, in program
+/// order.
+fn unchecked_builds(program: &MirProgram, candidates: &[Candidate]) -> Vec<(usize, FnId, usize)> {
+    let mut out = Vec::new();
+    for (fn_id, mir_fn) in program.iter() {
+        visit_builds(&mir_fn.body.node, &mut |type_id, name, value, line| {
+            let found = match type_id {
+                Some(id) => candidates.iter().position(|c| c.id == id),
+                // A build with no identity is checked against every
+                // candidate of its name.
+                None => candidates
+                    .iter()
+                    .position(|c| last_segment(&c.label) == last_segment(name)),
+            };
+            let Some(index) = found else {
+                return;
+            };
+            let candidate = &candidates[index];
+            if candidate.ctor != Some(*fn_id)
+                && !literal_of(value).is_some_and(|k| candidate.interval.contains_point(k))
+            {
+                out.push((index, *fn_id, line));
+            }
+        });
+    }
+    out
+}
+
+/// Why a carrier that the module binding `binding` builds keeps its field.
+fn built_in(binding: &str, interval: Interval) -> String {
+    format!(
+        "module binding `{binding}` builds it from a value other than a literal within {}",
+        show(interval)
+    )
+}
+
+/// The note on a carrier that `at` builds from an unchecked value, at
+/// `line` when the note does not stand at it.
+fn built_unchecked(candidate: &Candidate, at: &str, line: Option<usize>) -> String {
+    let line = line
+        .map(|line| format!(" at line {line}"))
+        .unwrap_or_default();
+    format!(
+        "`{}` keeps an `Int` field: `{at}` builds it{line} from a value other than a literal within {}",
+        candidate.label,
+        show(candidate.interval)
+    )
 }
 
 /// An `Int` literal, negated or not.
@@ -147,7 +278,7 @@ fn candidates(ctx: &CodegenContext, notes: &mut Vec<String>) -> Vec<Candidate> {
         // A refinement is a type its module lists under `exposes opaque`;
         // one with a smart constructor that is not listed gets a note.
         if !opaque {
-            if let Some(ctor) = smart_constructor_shaped(ctx, scope, name, field) {
+            if let Some(ctor) = smart_constructor_shaped(scope_fns(ctx, scope), name, field) {
                 keep(format!(
                     "it has the smart constructor `{ctor}` but is not listed under `exposes opaque`"
                 ));
@@ -198,11 +329,13 @@ fn candidates(ctx: &CodegenContext, notes: &mut Vec<String>) -> Vec<Candidate> {
             keep("it keys a wait set".to_string());
             continue;
         }
-        if let Some(binding) = built_in_binding(ctx, name, interval) {
-            keep(format!(
-                "module binding `{binding}` builds it from a value other than a literal within {}",
-                show(interval)
-            ));
+        // The bindings of the entry and of every dependency.
+        let entry = crate::codegen::collect_module_bindings(&ctx.items);
+        let bindings = entry
+            .iter()
+            .chain(ctx.modules.iter().flat_map(|m| m.bindings.iter()));
+        if let Some(binding) = built_in_binding(bindings, name, interval) {
+            keep(built_in(&binding.name, interval));
             continue;
         }
         out.push(Candidate {
@@ -210,6 +343,7 @@ fn candidates(ctx: &CodegenContext, notes: &mut Vec<String>) -> Vec<Candidate> {
             label,
             interval,
             ctor: ctx.symbol_table.fn_id_of(&ctor_key),
+            field: field.clone(),
         });
     }
     out
@@ -230,28 +364,34 @@ pub(super) fn declared_i64_carrier(ctx: &CodegenContext, scope: Option<&str>, na
     is_i64_carrier(ctx, ctx.symbol_table.type_id_of(&key))
 }
 
-/// A function of `scope` shaped as the smart constructor of the record
-/// `name` with the one field `field` (see `refinement_info_for_in_scope`,
-/// which takes only a type listed under `exposes opaque`).
-fn smart_constructor_shaped<'a>(
-    ctx: &'a CodegenContext,
-    scope: Option<&str>,
-    name: &str,
-    field: &str,
-) -> Option<&'a str> {
-    let entry_fns = ctx.items.iter().filter_map(|item| match item {
-        TopLevel::FnDef(fd) => Some(fd),
-        _ => None,
-    });
-    let fns: Vec<&crate::ast::FnDef> = match scope {
+/// The functions of `scope` (`None`: the entry).
+fn scope_fns<'a>(ctx: &'a CodegenContext, scope: Option<&str>) -> Vec<&'a crate::ast::FnDef> {
+    match scope {
         Some(prefix) => ctx
             .modules
             .iter()
             .filter(|m| m.prefix == prefix)
             .flat_map(|m| m.fn_defs.iter())
             .collect(),
-        None => entry_fns.collect(),
-    };
+        None => entry_fns(&ctx.items).collect(),
+    }
+}
+
+fn entry_fns(items: &[TopLevel]) -> impl Iterator<Item = &crate::ast::FnDef> {
+    items.iter().filter_map(|item| match item {
+        TopLevel::FnDef(fd) => Some(fd),
+        _ => None,
+    })
+}
+
+/// One of `fns` shaped as the smart constructor of the record `name` with
+/// the one field `field` (see `refinement_info_for_in_scope`, which takes
+/// only a type listed under `exposes opaque`).
+fn smart_constructor_shaped<'a>(
+    fns: impl IntoIterator<Item = &'a crate::ast::FnDef>,
+    name: &str,
+    field: &str,
+) -> Option<&'a str> {
     fns.into_iter().find_map(|fd| {
         let [(param, _)] = fd.params.as_slice() else {
             return None;
@@ -307,15 +447,15 @@ fn visit_builds<'e>(
     crate::ir::mir::expr::walk_children(e, &mut |child| visit_builds(child, visit));
 }
 
-/// The first module binding (`zero = Word(value = n)` outside any function)
-/// of the entry or of a dependency that builds a record named `name` from
-/// anything but a literal within `interval`. Bindings are checked by name,
-/// which can only rule a carrier out.
-fn built_in_binding(ctx: &CodegenContext, name: &str, interval: Interval) -> Option<String> {
-    let entry = crate::codegen::collect_module_bindings(&ctx.items);
-    let bindings = entry
-        .iter()
-        .chain(ctx.modules.iter().flat_map(|m| m.bindings.iter()));
+/// The first of `bindings` (`zero = Word(value = n)` outside any function)
+/// that builds a record named `name` from anything but a literal within
+/// `interval`. Bindings are checked by name, which can only rule a carrier
+/// out.
+fn built_in_binding<'b>(
+    bindings: impl IntoIterator<Item = &'b crate::codegen::ModuleBinding>,
+    name: &str,
+    interval: Interval,
+) -> Option<&'b crate::codegen::ModuleBinding> {
     for binding in bindings {
         let mut built = false;
         crate::codegen::proof_lower::carrier_walk_expr_with_byte_payloads(
@@ -337,7 +477,7 @@ fn built_in_binding(ctx: &CodegenContext, name: &str, interval: Interval) -> Opt
             },
         );
         if built {
-            return Some(binding.name.clone());
+            return Some(binding);
         }
     }
     None
@@ -350,7 +490,7 @@ mod tests {
     /// The carriers of `src` by name, and the notes.
     fn carriers_and_notes(src: &str) -> (Vec<String>, Vec<String>) {
         let ctx = super::super::tests::ctx_from_source(src, "carrier");
-        let (ids, notes) = i64_carriers(&ctx, ctx.mir_program.as_ref().expect("MIR"));
+        let (ids, _, notes) = i64_carriers(&ctx, ctx.mir_program.as_ref().expect("MIR"));
         let mut names: Vec<String> = ids
             .into_keys()
             .map(|id| ctx.symbol_table.type_entry(id).key.name.clone())
@@ -454,6 +594,62 @@ mod tests {
         assert!(
             entry.contains("aver_rt::AverInt::from_i64(w.value)"),
             "{entry}"
+        );
+    }
+
+    /// The smart constructor called on a machine word checks the word and
+    /// boxes it only for the `Err` it then builds.
+    #[test]
+    fn the_smart_constructor_checks_a_machine_word_as_it_is() {
+        let src = format!(
+            "{WORD}\nfn doubled(w: Word) -> Result<Word, String>\n    fromInt(w.value * 2)\n\nfn fromAny(n: Int) -> Result<Word, String>\n    fromInt(n)\n"
+        );
+        let mut ctx = super::super::tests::ctx_from_source(&src, "carrier");
+        let out = super::super::transpile(&mut ctx);
+        let entry = super::super::tests::generated_file(&out, "src/aver_generated/entry/mod.rs");
+        assert!(
+            entry.contains("let __word: i64 = (w.value * 2i64); if (0i64..=4611686018427387903i64).contains(&__word) { Ok(Word { value: __word }) } else { fromInt(aver_rt::AverInt::from_i64(__word)) }"),
+            "{entry}"
+        );
+        // An `Int` that is not a machine word goes through the constructor.
+        assert!(entry.contains("fromInt(n)"), "{entry}");
+    }
+
+    /// The `perf-int-carrier` warnings `aver check` gives on `src`, as
+    /// `line: summary`.
+    fn check_warnings(src: &str) -> Vec<String> {
+        use crate::diagnostics::analyze::{AnalyzeOptions, analyze_source};
+        analyze_source(src, &AnalyzeOptions::new("carrier.av"))
+            .diagnostics
+            .iter()
+            .filter(|d| d.slug == "perf-int-carrier")
+            .map(|d| format!("{}: {}", d.span.line, d.summary))
+            .collect()
+    }
+
+    #[test]
+    fn check_names_each_build_that_keeps_the_int_field() {
+        let src = format!(
+            "{WORD}\nfn low(w: Word) -> Word\n    Word(value = Bits.and(w.value, 255))\n\nfn zero() -> Word\n    Word(value = 0)\n\nverify zero\n    zero() => Word(value = 0 + 0)\n\nseven = Word(value = 3 + 4)\n"
+        );
+        assert_eq!(
+            check_warnings(&src),
+            [
+                "22: `Word` keeps an `Int` field: module binding `seven` builds it from a value other than a literal within [0, 4611686018427387903]",
+                "14: `Word` keeps an `Int` field: `low` builds it from a value other than a literal within [0, 4611686018427387903]",
+            ]
+        );
+        assert!(check_warnings(WORD).is_empty());
+    }
+
+    #[test]
+    fn check_names_a_smart_constructor_on_a_type_not_exposed_opaque() {
+        let src = WORD.replace("    exposes opaque [Word]\n", "");
+        assert_eq!(
+            check_warnings(&src),
+            [
+                "4: `Word` keeps an `Int` field: it has the smart constructor `fromInt` but is not listed under `exposes opaque`"
+            ]
         );
     }
 
