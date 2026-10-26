@@ -1,0 +1,16 @@
+module M
+    intent = "Int arithmetic the certificate reads keeps its ordinary lowering on wasm-gc."
+    effects [Console]
+
+fn poly(a: Int, b: Int, c: Int) -> Int
+    ? "A fn the certificate plan printer admits."
+    a * b + c * 3 - 1
+
+fn add(a: Int, b: Int) -> Int
+    ? "Two Ints to an Int: the shape the certificate finds the Int helpers by."
+    Bits.and(a + b * 7, 255) + 1
+
+fn main() -> Unit
+    ? "Prints both."
+    ! [Console.print]
+    Console.print("{poly(2, 3, 4)} {add(5, 6)}")
