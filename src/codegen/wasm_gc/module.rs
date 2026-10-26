@@ -11004,7 +11004,9 @@ fn emit_factory_http_response_make(
 /// Empty `Map<String, List<String>>`, the headers of a response the host
 /// makes: the map's own `empty` helper, so the program reads and extends
 /// it like any map it made itself.
-fn emit_factory_map_string_list_string_empty(map_empty: Option<u32>) -> Result<Function, WasmGcError> {
+fn emit_factory_map_string_list_string_empty(
+    map_empty: Option<u32>,
+) -> Result<Function, WasmGcError> {
     let empty = map_empty.ok_or_else(|| {
         WasmGcError::Validation("the empty headers map needs the Map.empty helper".into())
     })?;
