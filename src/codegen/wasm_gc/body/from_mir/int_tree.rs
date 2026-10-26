@@ -87,6 +87,23 @@ pub(crate) fn pooled_literal(n: i64) -> Option<u32> {
         .flatten()
 }
 
+/// Where a leaf evaluated ahead is held: an `$AverInt`, a raw `i64` (the
+/// exact path boxes it), or an `Int` twin's result `(n, r)`.
+#[derive(Clone, Copy)]
+enum Held {
+    Boxed(u32),
+    Raw(u32),
+    Twin(u32, u32),
+}
+
+type Hoisted = HashMap<usize, Held>;
+
+fn seq(func: &mut Function, xs: &[I<'_>]) {
+    for x in xs {
+        func.instruction(x);
+    }
+}
+
 /// The operation `e` is, with its operands, when it is one on boxed `Int`s
 /// (not one the `bare_i64` rewrite already renders raw).
 fn op_of<'e>(e: Node<'e>, ctx: &EmitCtx<'_>) -> Option<(Op, Node<'e>, Option<Node<'e>>)> {
