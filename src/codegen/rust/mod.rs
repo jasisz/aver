@@ -8,6 +8,7 @@ pub(crate) mod composition;
 pub mod emit_ctx;
 mod expr;
 mod from_mir;
+mod intern;
 mod knowing;
 mod lent_option;
 pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers};
@@ -135,6 +136,7 @@ pub fn transpile_with_provider_manifest_for_project(
             ));
         }
     }
+    ctx.rust_interned_sums = intern::resolve(ctx, &rust.intern)?;
     let required = provider::required_operations(ctx);
     let composition =
         composition::plan_for_project(&ctx.capabilities, &required, manifest, known_capabilities)?;
@@ -287,7 +289,7 @@ fn transpile_project(
                 has_runtime_policy,
                 ctx.emit_replay_runtime,
                 &provider_composition,
-                rust,
+                rust.clone(),
             ),
         ),
         (

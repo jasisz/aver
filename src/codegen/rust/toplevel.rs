@@ -90,6 +90,8 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             through_collection(td, ctx),
             ctx.rust_lazy_sums
                 .contains(&crate::codegen::common::backend_type_def_key(ctx, td)),
+            ctx.rust_interned_sums
+                .contains(&crate::codegen::common::backend_type_def_key(ctx, td)),
         ),
         TypeDef::Product { name, fields, .. } => emit_product_type(
             name,
@@ -541,6 +543,7 @@ fn emit_sum_type(
     thin: bool,
     through: bool,
     lazy: bool,
+    interned: bool,
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
@@ -666,6 +669,9 @@ fn emit_sum_type(
                 let test = fields_equal(&order, Some(walking_in(i)), this, that);
                 payloads.push_str(&walk_eq_impl(&payload, &test));
             }
+            if interned {
+                payloads.push_str(&super::intern::intern_fields_impl(&payload, v, ctx, scope));
+            }
             if thin {
                 let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
                 payloads.push_str(&hand_over_impl(
@@ -686,10 +692,15 @@ fn emit_sum_type(
         // would.
         // A sum some `lazy f(…)` returns has one more, hidden constructor,
         // tagged after the declared ones, that holds the call.
-        let deferred = match lazy {
+        let mut deferred = match lazy {
             true => format!(" lazy {}", variants.len()),
             false => String::new(),
         };
+        // An interned sum builds its nodes through the table of its
+        // canonical ones (see `super::intern`).
+        if interned {
+            write!(deferred, " interned {name}__interned").unwrap();
+        }
         writeln!(
             out,
             "::aver_rt::thin_sum! {{\n    #[derive(Debug)]\n    {visibility}{name} / {view} / {pair} {{\n{body}    }}{deferred}\n}}"
@@ -702,8 +713,11 @@ fn emit_sum_type(
         .unwrap();
         // A large value is hashed from the hashes of the nodes it holds (see
         // `aver_rt::shared_hash`), so a node held in many places is hashed
-        // once, not once per path to it.
-        if capabilities.hash {
+        // once, not once per path to it. A node of an interned sum keeps
+        // its hash.
+        if interned {
+            out.push_str(&super::intern::hash_impls(name));
+        } else if capabilities.hash {
             write!(
                 out,
                 "\nimpl std::hash::Hash for {name} {{\n    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {{\n        aver_rt::shared_hash::hash(self, state)\n    }}\n}}\n"
@@ -855,11 +869,13 @@ fn emit_sum_type(
                     format!("match (self, other) {{\n{arms}            _ => false,\n        }}")
                 }
             };
-            match one_first {
-                true => out.push_str(&walk_eq_by_node(name, &test)),
-                false => out.push_str(&walk_eq_impl(name, &test)),
+            match (interned, one_first) {
+                (true, by_node) => out.push_str(&super::intern::walk_eq_impl(name, &test, by_node)),
+                (false, true) => out.push_str(&walk_eq_by_node(name, &test)),
+                (false, false) => out.push_str(&walk_eq_impl(name, &test)),
             }
             match thin {
+                true if interned => out.push_str(&super::intern::partial_eq_impl(name)),
                 true => write!(
                     out,
                     "\nimpl PartialEq for {name} {{\n    #[inline]\n    fn eq(&self, other: &Self) -> bool {{\n        aver_rt::walk_eq(self, other)\n    }}\n}}\n"
@@ -2647,6 +2663,7 @@ mod tests {
             rust_owned_record_params: Default::default(),
             rust_lent_options: Default::default(),
             rust_lazy_sums: Default::default(),
+            rust_interned_sums: Default::default(),
             knowing_trusted: Default::default(),
             rust_knowing: Default::default(),
             discovered_lemmas: Vec::new(),

@@ -752,7 +752,7 @@ fn orderable_type(
     }
 }
 
-fn named_type_def<'a>(
+pub(super) fn named_type_def<'a>(
     id: Option<crate::ir::TypeId>,
     name: &str,
     ctx: &'a CodegenContext,
@@ -794,7 +794,7 @@ fn is_provider_resource(
         .any(|canonical| canonical == name)
 }
 
-fn fields_of(td: &TypeDef) -> impl Iterator<Item = &String> {
+pub(super) fn fields_of(td: &TypeDef) -> impl Iterator<Item = &String> {
     let fields: Vec<&String> = match td {
         TypeDef::Sum { variants, .. } => variants
             .iter()

@@ -673,6 +673,11 @@ pub struct CodegenContext {
     /// deferred call (`aver_rt::thin::Lazy`). Computed by the Rust transpile
     /// from the MIR it emits; empty everywhere else.
     pub rust_lazy_sums: HashSet<String>,
+    /// The recursive sums `[rust] intern` in `aver.toml` names, by backend
+    /// type key: their constructors build through the table of their
+    /// canonical nodes (`aver_rt::intern`). Set by the Rust transpile;
+    /// empty everywhere else.
+    pub rust_interned_sums: HashSet<String>,
     /// The laws a `knowing` stands on that `--trust-laws` let through
     /// unproved, by name (`Module.fn.law`): the Rust backend checks each at
     /// every deferred call that knows a value from it.
@@ -1144,6 +1149,7 @@ pub fn build_context(
         rust_owned_record_params: Default::default(),
         rust_lent_options: Default::default(),
         rust_lazy_sums: Default::default(),
+        rust_interned_sums: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),
         #[cfg(feature = "runtime")]
@@ -1675,6 +1681,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         rust_owned_record_params: Default::default(),
         rust_lent_options: Default::default(),
         rust_lazy_sums: Default::default(),
+        rust_interned_sums: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),
         discovered_lemmas: Vec::new(),

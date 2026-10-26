@@ -331,10 +331,15 @@ pub enum RustPanic {
 }
 
 /// The `[rust]` table of `aver.toml`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RustOptions {
     pub allocator: RustAllocator,
     pub panic: RustPanic,
+    /// `[rust] intern`: the recursive sums whose constructors give back the
+    /// node that already holds the same fields, by name with the module
+    /// that declares them (`"Core.Exprs.Expr"`). A choice of speed only: the
+    /// program computes the same with or without it.
+    pub intern: Vec<String>,
 }
 
 /// Project-level configuration loaded from `aver.toml`.
@@ -2783,11 +2788,24 @@ helpers = 30
             both.rust,
             RustOptions {
                 allocator: RustAllocator::Mimalloc,
-                panic: RustPanic::Abort
+                panic: RustPanic::Abort,
+                intern: Vec::new(),
             }
         );
         let unknown = ProjectConfig::parse("[rust]\npanic = \"exit\"\n").unwrap_err();
         assert!(unknown.contains("[rust].panic must be \"unwind\" or \"abort\", got \"exit\""));
+    }
+
+    #[test]
+    fn rust_intern_is_a_list_of_type_names() {
+        assert!(ProjectConfig::parse("").unwrap().rust.intern.is_empty());
+        let chosen =
+            ProjectConfig::parse("[rust]\nintern = [\"Core.Exprs.Expr\", \"Level\"]\n").unwrap();
+        assert_eq!(chosen.rust.intern, ["Core.Exprs.Expr", "Level"]);
+        for wrong in ["intern = \"Expr\"", "intern = [1]"] {
+            let refused = ProjectConfig::parse(&format!("[rust]\n{wrong}\n")).unwrap_err();
+            assert!(refused.contains("[rust].intern must be a list of type names"), "{refused}");
+        }
     }
 
     #[test]
@@ -2833,7 +2851,8 @@ fn parse_work_max_jobs(table: &toml::Table) -> Result<Option<usize>, String> {
 }
 
 /// `[rust] allocator`: `"system"` (the default) or `"mimalloc"`;
-/// `[rust] panic`: `"unwind"` (the default) or `"abort"`.
+/// `[rust] panic`: `"unwind"` (the default) or `"abort"`;
+/// `[rust] intern`: a list of type names, empty by default.
 fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
     let Some(value) = table.get("rust") else {
         return Ok(RustOptions::default());
@@ -2843,7 +2862,7 @@ fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
         .ok_or_else(|| "aver.toml: [rust] must be a table".to_string())?;
     if let Some(key) = rust
         .keys()
-        .find(|key| !["allocator", "panic"].contains(&key.as_str()))
+        .find(|key| !["allocator", "panic", "intern"].contains(&key.as_str()))
     {
         return Err(format!("aver.toml: [rust] has no key '{key}'"));
     }
@@ -2871,6 +2890,19 @@ fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
         panic: match choice("panic", ["unwind", "abort"])? {
             true => RustPanic::Abort,
             false => RustPanic::Unwind,
+        },
+        intern: match rust.get("intern") {
+            None => Vec::new(),
+            Some(toml::Value::Array(names)) => names
+                .iter()
+                .map(|name| match name {
+                    toml::Value::String(name) => Ok(name.clone()),
+                    _ => Err("aver.toml: [rust].intern must be a list of type names, as in [\"Core.Exprs.Expr\"]".to_string()),
+                })
+                .collect::<Result<_, _>>()?,
+            Some(_) => {
+                return Err("aver.toml: [rust].intern must be a list of type names, as in [\"Core.Exprs.Expr\"]".to_string());
+            }
         },
     })
 }
