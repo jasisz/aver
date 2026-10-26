@@ -74,6 +74,8 @@ impl StringIndex {
         }
         // The end of the text, in the last block.
         within.push((text.len() - (starts[chars / BLOCK] >> 1)) as u8);
+        // What `boundary` reads without checking.
+        debug_assert!(starts.len() == chars / BLOCK + 1 && within.len() == chars + 1);
         Self {
             chars,
             blocks: Some(Arc::new(Blocks { starts, within })),
@@ -86,15 +88,21 @@ impl StringIndex {
     }
 
     /// UTF-8 byte boundary for a clamped codepoint position.
-    fn boundary(&self, index: usize) -> usize {
+    ///
+    /// # Safety
+    /// `index` is at most [`StringIndex::char_len`]: the tables hold one
+    /// start per block and one distance per boundary (see `new`), and are
+    /// read without checks.
+    unsafe fn boundary(&self, index: usize) -> usize {
+        debug_assert!(index <= self.chars, "boundary {index} of {}", self.chars);
         let Some(blocks) = &self.blocks else {
             return index;
         };
-        let start = blocks.starts[index / BLOCK];
+        let start = unsafe { *blocks.starts.get_unchecked(index / BLOCK) };
         (start >> 1)
             + match start & 1 {
                 1 => index % BLOCK,
-                _ => usize::from(blocks.within[index]),
+                _ => usize::from(unsafe { *blocks.within.get_unchecked(index) }),
             }
     }
 }
@@ -142,20 +150,22 @@ pub fn string_index_char_at_i64(
     position: i64,
 ) -> Option<AverStr> {
     let position = usize::try_from(position).ok()?;
+    if index.blocks.is_none() {
+        // An ASCII text has a byte per scalar, so the read's own bounds
+        // check is the check against the length.
+        let byte = *text.as_bytes().get(position)?;
+        return Some(AverStr::from_static(&ASCII_CHARS[usize::from(byte)]));
+    }
     if position >= index.char_len() {
         return None;
     }
-    if index.blocks.is_none() {
-        return Some(AverStr::from_static(
-            &ASCII_CHARS[usize::from(text.as_bytes()[position])],
-        ));
-    }
-    let from = index.boundary(position);
+    // SAFETY: `position` is below `char_len`.
+    let from = unsafe { index.boundary(position) };
     let lead = text.as_bytes()[from];
     if lead.is_ascii() {
         return Some(AverStr::from_static(&ASCII_CHARS[usize::from(lead)]));
     }
-    let to = index.boundary(position + 1);
+    let to = unsafe { index.boundary(position + 1) };
     Some(AverStr::from(&text[from..to]))
 }
 
@@ -171,13 +181,18 @@ pub fn string_index_code_at_i64(text: &AverStr, index: &StringIndex, position: i
     let Ok(position) = usize::try_from(position) else {
         return -1;
     };
+    if index.blocks.is_none() {
+        // As in `string_index_char_at_i64`.
+        return text
+            .as_bytes()
+            .get(position)
+            .map_or(-1, |&byte| i64::from(byte));
+    }
     if position >= index.char_len() {
         return -1;
     }
-    if index.blocks.is_none() {
-        return i64::from(text.as_bytes()[position]);
-    }
-    let byte = index.boundary(position);
+    // SAFETY: `position` is below `char_len`.
+    let byte = unsafe { index.boundary(position) };
     let lead = text.as_bytes()[byte];
     if lead.is_ascii() {
         return i64::from(lead);
@@ -244,7 +259,9 @@ pub fn string_index_slice_str<'a>(
     if from >= to {
         return "";
     }
-    &text[index.boundary(from)..index.boundary(to)]
+    // SAFETY: both are clamped to `len`.
+    let (from, to) = unsafe { (index.boundary(from), index.boundary(to)) };
+    &text[from..to]
 }
 
 fn clamp_position(position: i64, len: usize) -> usize {
@@ -323,7 +340,8 @@ mod tests {
                 .collect();
             assert_eq!(index.char_len() + 1, expected.len(), "{text:?}");
             for (position, byte) in expected.iter().enumerate() {
-                assert_eq!(index.boundary(position), *byte, "{text:?} at {position}");
+                let at = unsafe { index.boundary(position) };
+                assert_eq!(at, *byte, "{text:?} at {position}");
             }
             let text = AverStr::from(text);
             for position in -3..=(expected.len() as i64 + 3) {
@@ -354,6 +372,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `boundary` reads its tables unchecked; a debug build checks the
+    /// position it is given.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "boundary 3 of 2")]
+    fn a_debug_build_catches_a_boundary_past_the_end() {
+        let index = StringIndex::new("é→");
+        let _ = unsafe { index.boundary(3) };
     }
 
     #[test]

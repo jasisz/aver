@@ -967,7 +967,14 @@ macro_rules! thin_sum {
                     $( _ if tag >> $crate::thin::WORDS_SHIFT != 0 => unsafe {
                         $crate::thin::Thin::<$name>::free_deferred(node, tag, $lazy, pending)
                     }, )?
-                    _ => unreachable!("no constructor has tag {tag}"),
+                    // The caller's contract: `Thin::new` made the node for
+                    // constructor `tag`, and safe code reaches it only
+                    // through the constructors above, so no other tag is
+                    // ever read here (as in `view`).
+                    _ => {
+                        debug_assert!(false, "no constructor has tag {tag}");
+                        unsafe { ::std::hint::unreachable_unchecked() }
+                    }
                 }
             }
 
@@ -1157,9 +1164,12 @@ macro_rules! thin_sum {
     (@free $name:ident $node:ident $pending:ident $fields:ty) => {
         unsafe { $crate::thin::Thin::<$name>::free_node::<$fields>($node, $pending) }
     };
-    (@free $name:ident $node:ident $pending:ident) => {
-        unreachable!("a constructor without fields has no node")
-    };
+    // A constructor without fields has no node: its value is the address
+    // `tag + 1`, which `drop` and `Pending::take` tell apart and never free.
+    (@free $name:ident $node:ident $pending:ident) => {{
+        debug_assert!(false, "a constructor without fields has no node");
+        unsafe { ::std::hint::unreachable_unchecked() }
+    }};
     (@ctor $vis:vis $name:ident $tag:literal $ctor:ident $fields:ty) => {
         #[inline]
         $vis fn $ctor(fields: $fields) -> Self {
@@ -1349,6 +1359,32 @@ mod tests {
         assert!(matches!(b.view(), T__View::Nil));
         const NIL: T = T::Nil;
         assert!(matches!(NIL.view(), T__View::Nil));
+    }
+
+    /// `free` takes the tag `Thin::new` wrote and checks it only in a debug
+    /// build: these break its contract, which a release build trusts. The
+    /// check panics before `free` reads the node, which the value still
+    /// owns and frees as the panic unwinds.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "no constructor has tag 9")]
+    fn a_debug_build_catches_a_free_of_a_tag_no_constructor_has() {
+        use super::ThinSum;
+        let drops = Arc::new(AtomicUsize::new(0));
+        let value = leaf(&drops, 1);
+        let mut put_aside = Vec::new();
+        unsafe { T::free(value.0.ptr, 9, super::Pending::new(&mut put_aside)) };
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a constructor without fields has no node")]
+    fn a_debug_build_catches_a_free_of_a_constructor_without_fields() {
+        use super::ThinSum;
+        let drops = Arc::new(AtomicUsize::new(0));
+        let value = leaf(&drops, 1);
+        let mut put_aside = Vec::new();
+        unsafe { T::free(value.0.ptr, 1, super::Pending::new(&mut put_aside)) };
     }
 
     #[test]
