@@ -4928,7 +4928,7 @@ fn dying_lists_and_read_strings_match_vm() {
         "digitAt__indexed(&s, ",
         "fn sameAt(s @ _: &AverStr, i @ _: aver_rt::AverInt, t @ _: &AverStr)",
         "sameAt(&s, ",
-        ".split('\\n').map(aver_rt::AverStr::from)",
+        "aver_rt::string_split_byte(&::aver_rt::str_lit!(\"12\\n345\\n6x7\\n\\n89\"), 10u8)",
     ] {
         assert!(
             emitted.contains(expected),
