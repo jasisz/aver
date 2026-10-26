@@ -1120,7 +1120,8 @@ pub fn field_carrier_eligible_intervals(
 }
 
 /// ETAP-2 multi-field carrier-`i64`: the RECORD-level fail-closed demotion
-/// scan — the multi-field generalization of [`carrier_eligibility_demotions`].
+/// scan — the multi-field generalization of
+/// [`carrier_ungated_construction_demotions`].
 /// A multi-field bounded record is demoted (every field kept boxed) when:
 ///   - **Scan 1 (ungated construction).** A `RecordCreate` / `RecordUpdate` of
 ///     the record in a fn OTHER than its recognized multi-arg smart constructor
@@ -1540,113 +1541,6 @@ pub fn carrier_ungated_construction_demotions(
             });
         }
     }
-    demoted
-}
-
-/// ETAP-2 carrier-`i64` SLICE 2b FOLLOW-UP: the fail-closed eligibility
-/// tightening. The bare carrier interval ([`carrier_interval_table`]) proves
-/// only that the smart-constructor's invariant `fits_i64`; it does NOT prove
-/// that every value of the carrier type actually went through that gate, nor
-/// that the carrier's codegen is exercised only in positions the i64 erasure
-/// supports. This scan removes a carrier from the eligible set when either
-/// assumption is violated, so the carrier stays boxed (`$AverInt`) — the
-/// safe, pre-slice representation that the VM and the boxed wasm-gc path
-/// agree on.
-///
-/// Two whole-program scans, both fail-closed (a trip can only ever SHRINK the
-/// eligible set, never widen it):
-///
-/// 1. **Ungated construction (closes the bare-constructor bypass).** A bare
-///    record constructor `IntRange(value = n)` callable in the defining
-///    module bypasses the smart-ctor's `0 <= n <= 100` gate. With `n`
-///    overflowing `i64` the VM keeps full precision but the wasm-gc construct
-///    bridge `__aint_to_i64_checked` TRAPS. A carrier `RecordCreate`d outside
-///    its own recognized smart-constructor function is therefore ineligible —
-///    UNLESS the construct's carrier-field argument is a constant literal that
-///    provably lies inside the carrier's proven interval. Such a literal
-///    construct (`IntRange(value = 0)` against a `[0, 100]` bound) cannot
-///    smuggle an out-of-bound / i64-overflowing value past the gate, so it is
-///    SAFE and does not demote — that pattern is exactly the in-bounds Err
-///    fallback the slice's own carriers use (`unwrap`'s `IntRange(value = 0)`).
-///    A non-literal argument, or a literal OUTSIDE the interval, is ungated
-///    and DOES demote (this is the `mk(n) = IntRange(value = n)` bypass).
-///
-/// 2. **Map-key usage (closes the i64-erased Map-KEY codegen gap).** A
-///    carrier used as a `Map` KEY type — directly (`Map<IntRange, V>`) or
-///    transitively as a field of a record/type used as a key
-///    (`Map<Coord, V>` with `Coord { x: IntRange }`) — fails wasm validation,
-///    because the Map-key codegen was not updated for the i64-erased carrier.
-///    Such a carrier is ineligible (the boxed key path it used before still
-///    compiles). Map VALUES are unaffected and stay eligible.
-///
-///    The COMPLETE source of truth for which carriers are Map keys is
-///    `resolved_map_keys` — the resolved `Map<K, V>` key types harvested from
-///    the typed MIR (`ir::mir::discover_instantiations`). Because those types
-///    come from inference, a carrier used as a key reaches this scan whether
-///    its `Map` type was written as a fn-signature annotation, a LOCAL-BINDING
-///    annotation (`m: Map<IntRange, Int> = …`), or NO annotation at all
-///    (`m = Map.set({}, c, 5)`). A textual annotation scan cannot see the
-///    last two; the resolved key type can. The annotation scan is retained as
-///    a cheap fail-closed backstop only.
-///
-/// Returns the set of carrier type names (bare names, the same keys
-/// [`carrier_interval_table`] uses) to REMOVE from the eligible set. The
-/// caller subtracts this from the proven-bound set.
-///
-/// `resolved_map_keys`: every `Map<K, _>` key type the program instantiates,
-/// per the typed-MIR instantiation registry. This is the inference-complete
-/// Map-key signal that drives Scan 2.
-pub fn carrier_eligibility_demotions(
-    inputs: &ProofLowerInputs,
-    candidates: &HashSet<String>,
-    intervals: &HashMap<String, (crate::ir::interval::Interval, bool)>,
-    resolved_map_keys: &[crate::ast::Type],
-    type_aliases: &HashMap<String, String>,
-) -> HashSet<String> {
-    let mut demoted =
-        carrier_ungated_construction_demotions(inputs, candidates, intervals, type_aliases);
-    if candidates.is_empty() {
-        return demoted;
-    }
-
-    // ---- Scan 2: Map-key usage (direct + transitive) -----------------------
-    // Build, per record type, the set of carrier names reachable through its
-    // (transitive) fields, so a carrier nested inside a record used as a key
-    // is demoted too.
-    let record_fields = collect_record_fields(inputs);
-
-    // PRIMARY (complete) source of truth: the RESOLVED Map-key types harvested
-    // from the typed MIR (`discover_instantiations`). Every `Map<K, V>` the
-    // program actually instantiates is here — including ones whose key type is
-    // only known after INFERENCE (a local-binding `m: Map<…>` annotation that
-    // the textual scan never walks, or a fully inferred `m = Map.set({}, c,
-    // 5)` with no annotation at all). A textual annotation scan is
-    // fundamentally incomplete for these; the resolved key type is not. Demote
-    // every carrier reachable from each resolved key (directly, or
-    // transitively through a record / Option / List / Tuple field — the same
-    // `carriers_reachable_from` closure the annotation path uses).
-    for key in resolved_map_keys {
-        carriers_reachable_from(
-            key,
-            candidates,
-            &record_fields,
-            type_aliases,
-            &mut HashSet::new(),
-            &mut demoted,
-        );
-    }
-
-    // BACKSTOP (cheap): the original textual scan over fn-param / fn-return /
-    // record-field annotations. Redundant with the resolved-IR path above for
-    // any Map the MIR sees, but kept so a Map type that appears ONLY in an
-    // annotation position the MIR instantiation walk doesn't reach (e.g. a
-    // signature whose body never constructs/uses the Map) still trips. It can
-    // only ever ADD to `demoted` (fail-closed).
-    for ty_str in all_type_annotations(inputs) {
-        let ty = crate::types::parse_type_str(&ty_str);
-        collect_map_key_carriers(&ty, candidates, &record_fields, type_aliases, &mut demoted);
-    }
-
     demoted
 }
 

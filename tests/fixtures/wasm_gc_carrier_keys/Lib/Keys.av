@@ -1,0 +1,35 @@
+module Keys
+    intent = "A key held as a machine word: an Int below 2^62 behind its smart constructor."
+    exposes [keyOf, key, valueOf]
+    exposes opaque [Key]
+    effects []
+
+record Key
+    value: Int
+
+fn keyOf(n: Int) -> Result<Key, String>
+    ? "A key below 2^62."
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Key(value = n))
+        false -> Result.Err("key out of range")
+
+verify keyOf
+    keyOf(-1) => Result.Err("key out of range")
+    keyOf(4611686018427387904) => Result.Err("key out of range")
+
+fn key(n: Int) -> Key
+    ? "The key of n, or key 0 when n is out of range."
+    match keyOf(n)
+        Result.Ok(k) -> k
+        Result.Err(_) -> Key(value = 0)
+
+verify key
+    key(5) => Key(value = 5)
+    key(-5) => Key(value = 0)
+
+fn valueOf(k: Key) -> Int
+    ? "The key's Int."
+    k.value
+
+verify valueOf
+    valueOf(key(4)) => 4

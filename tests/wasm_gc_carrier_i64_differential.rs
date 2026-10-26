@@ -1557,18 +1557,19 @@ fn compile_wasm_bytes_optimized(prefix: &str, source: &str, no_carrier: bool) ->
 // ---------------------------------------------------------------------------
 // Eligibility-tightening (fail-closed) regressions.
 //
-// Two soundness/completeness holes in the carrier-`i64` feature, closed by
-// removing a carrier from the eligible set (⇒ it stays boxed) whenever a
-// whole-program scan trips:
+// A soundness hole in the carrier-`i64` feature, closed by removing a
+// carrier from the eligible set (⇒ it stays boxed) whenever a whole-program
+// scan trips:
 //
 //   * HOLE #1 — a BARE record constructor outside the smart-ctor with a
 //     non-literal (or out-of-bound) argument bypasses the gate; an
 //     i64-overflowing value then TRAPS on the wasm-gc construct bridge while
 //     the VM keeps full precision. The bare ctor demotes the carrier.
 //
-//   * HOLE #2 — a carrier used as a `Map` KEY (direct or transitive) fails
-//     wasm validation because the Map-key codegen was not updated for the
-//     i64-erased carrier. Map-key usage demotes the carrier.
+// A carrier used as a `Map` KEY used to be demoted too, because the keys
+// array marks an unused bucket with null and an `i64` has none. The keys
+// array now boxes a carrier key's `i64` as it boxes an `Int` key, so such a
+// carrier stays `i64` (tests below and `tests/wasm_gc_carrier_keys_differential.rs`).
 //
 // Each test pairs the FIX (default build: VM == wasm-gc, no trap / clean
 // compile) with a REVERT (`AVER_CARRIER_I64_SKIP_DEMOTION=1` restores the
@@ -1689,13 +1690,14 @@ fn main() -> Unit
     );
 }
 
-/// HOLE #2 regression — a carrier used as a `Map` KEY. The Map-key scan
-/// demotes `IntRange` to boxed, so the program compiles to wasm-gc via the
-/// boxed key path and matches the VM. The revert (scan disabled) keeps
-/// `IntRange` as i64 in the key position and wasm VALIDATION fails.
+/// A carrier used as a `Map` KEY stays `i64`, whether the map's type is
+/// written in a signature, in a local binding's annotation or nowhere at all
+/// (`m = Map.set({}, c, 5)`): the registry boxes the key of every map it
+/// registered, and each of those spellings registers the map. VM == wasm-gc,
+/// and the build erases as many carriers as one with the demotion scan off.
 #[test]
-fn carrier_as_map_key_demotes_to_boxed() {
-    let src = r#"module M
+fn carrier_as_map_key_stays_i64() {
+    let header = r#"module M
     intent = "carrier as Map KEY"
     exposes opaque [IntRange]
     effects [Console]
@@ -1707,7 +1709,8 @@ fn fromInt(n: Int) -> Result<IntRange, String>
     match Bool.and(n >= 0, n <= 100)
         true  -> Result.Ok(IntRange(value = n))
         false -> Result.Err("oob")
-
+"#;
+    let signature = r#"
 fn unwrap(r: Result<IntRange, String>) -> IntRange
     match r
         Result.Ok(c)  -> c
@@ -1728,120 +1731,45 @@ fn main() -> Unit
     ! [Console.print]
     Console.print("{lookup(mkMap(), ir(5))} {lookup(mkMap(), ir(7))} {lookup(mkMap(), ir(9))}")
 "#;
-    // FIX: demoted to boxed key ⇒ compiles clean AND VM == wasm-gc.
-    let out = assert_vm_wasm_identical("mapkey", src);
-    assert_eq!(out, "five seven MISS");
-
-    // REVERT: scan disabled ⇒ i64-erased Map KEY ⇒ wasm validation fails.
-    let (ok, msg) = run_wasm_skip_demotion("mapkey-revert", src);
-    assert!(
-        !ok,
-        "revert: with the Map-key scan disabled an i64-erased carrier KEY must \
-         fail wasm validation (the hole returns), but the run succeeded:\n{msg}"
-    );
-    assert!(
-        msg.contains("validation failed") || msg.contains("type mismatch"),
-        "revert: expected a wasm validation / type-mismatch error from the \
-         i64-erased Map key, got:\n{msg}"
-    );
-}
-
-/// HOLE #2 (completeness) — a carrier used as a `Map` KEY through a LOCAL
-/// BINDING annotation (`m: Map<IntRange, Int> = …`). The original Map-key scan
-/// only walked fn-param / fn-return / record-field annotation strings, so a
-/// binding-level `Map<…>` annotation was MISSED and the carrier wrongly stayed
-/// i64 → wasm validation failure on a VM-valid program. The resolved-IR scan
-/// (typed-MIR `Map<K, V>` instantiations) sees this Map and demotes the key.
-#[test]
-fn carrier_as_map_key_via_local_binding_demotes_to_boxed() {
-    let src = r#"module M
-    intent = "carrier as Map KEY via local binding annotation"
-    exposes opaque [IntRange]
-    effects [Console]
-
-record IntRange
-    value: Int
-
-fn fromInt(n: Int) -> Result<IntRange, String>
-    match Bool.and(n >= 0, n <= 100)
-        true  -> Result.Ok(IntRange(value = n))
-        false -> Result.Err("oob")
-
+    let use_and_main = |binding: &str| {
+        format!(
+            r#"
 fn use(c: IntRange) -> Int
-    m: Map<IntRange, Int> = Map.set({}, c, 5)
+    {binding}
     Option.withDefault(Map.get(m, c), 0)
 
 fn main() -> Unit
     ! [Console.print]
     match fromInt(7 + 0)
-        Result.Ok(c)  -> Console.print("{use(c)}")
+        Result.Ok(c)  -> Console.print("{{use(c)}}")
         Result.Err(_) -> Console.print("err")
-"#;
-    // FIX: the binding-annotated Map key demotes ⇒ boxed key path ⇒ compiles
-    // clean AND VM == wasm-gc.
-    let out = assert_vm_wasm_identical("mapkey-localbind", src);
-    assert_eq!(out, "5");
-
-    // REVERT: scan disabled ⇒ i64-erased Map KEY ⇒ wasm validation fails.
-    let (ok, msg) = run_wasm_skip_demotion("mapkey-localbind-revert", src);
-    assert!(
-        !ok,
-        "revert: with demotion disabled the i64-erased carrier KEY (local-binding \
-         annotation) must fail wasm validation, but the run succeeded:\n{msg}"
-    );
-    assert!(
-        msg.contains("validation failed") || msg.contains("type mismatch"),
-        "revert: expected a wasm validation / type-mismatch error from the \
-         i64-erased Map key, got:\n{msg}"
-    );
-}
-
-/// HOLE #2 (completeness) — a carrier used as a `Map` KEY reached ONLY through
-/// INFERENCE: `m = Map.set({}, c, 5)` with NO annotation anywhere. A textual
-/// annotation scan fundamentally cannot see this key type; the resolved typed
-/// MIR carries it. The resolved-IR scan demotes the key.
-#[test]
-fn carrier_as_map_key_fully_inferred_demotes_to_boxed() {
-    let src = r#"module M
-    intent = "carrier as Map KEY, fully inferred (no annotation)"
-    exposes opaque [IntRange]
-    effects [Console]
-
-record IntRange
-    value: Int
-
-fn fromInt(n: Int) -> Result<IntRange, String>
-    match Bool.and(n >= 0, n <= 100)
-        true  -> Result.Ok(IntRange(value = n))
-        false -> Result.Err("oob")
-
-fn use(c: IntRange) -> Int
-    m = Map.set({}, c, 5)
-    Option.withDefault(Map.get(m, c), 0)
-
-fn main() -> Unit
-    ! [Console.print]
-    match fromInt(7 + 0)
-        Result.Ok(c)  -> Console.print("{use(c)}")
-        Result.Err(_) -> Console.print("err")
-"#;
-    // FIX: the inferred Map key demotes ⇒ boxed key path ⇒ compiles clean AND
-    // VM == wasm-gc.
-    let out = assert_vm_wasm_identical("mapkey-inferred", src);
-    assert_eq!(out, "5");
-
-    // REVERT: scan disabled ⇒ i64-erased inferred Map KEY ⇒ wasm validation fails.
-    let (ok, msg) = run_wasm_skip_demotion("mapkey-inferred-revert", src);
-    assert!(
-        !ok,
-        "revert: with demotion disabled the i64-erased carrier KEY (fully inferred) \
-         must fail wasm validation, but the run succeeded:\n{msg}"
-    );
-    assert!(
-        msg.contains("validation failed") || msg.contains("type mismatch"),
-        "revert: expected a wasm validation / type-mismatch error from the \
-         i64-erased Map key, got:\n{msg}"
-    );
+"#
+        )
+    };
+    let cases = [
+        ("mapkey", signature.to_string(), "five seven MISS"),
+        (
+            "mapkey-localbind",
+            use_and_main("m: Map<IntRange, Int> = Map.set({}, c, 5)"),
+            "5",
+        ),
+        (
+            "mapkey-inferred",
+            use_and_main("m = Map.set({}, c, 5)"),
+            "5",
+        ),
+    ];
+    for (prefix, body, expected) in cases {
+        let src = format!("{header}{body}");
+        assert_eq!(assert_vm_wasm_identical(prefix, &src), expected, "{prefix}");
+        let default = carrier_i64_token_count(&format!("{prefix}-def"), &src, false);
+        let with_skip = carrier_i64_token_count(&format!("{prefix}-skip"), &src, true);
+        assert_eq!(
+            default, with_skip,
+            "{prefix}: a carrier used as a Map KEY must stay i64 — default={default}, \
+             skip-demotion={with_skip}"
+        );
+    }
 }
 
 /// No-over-boxing CONTROL for the inferred-key fix — the SAME inference shape

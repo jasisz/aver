@@ -1145,12 +1145,27 @@ fn emit_hash_for(
     if k_aver == "String" {
         return emit_hash_string(registry);
     }
-    // An eligible carrier is a native `i64` here, as a sum or record key's
-    // field: raw `i32.wrap_i64`, matching its `i64.eq` and the inline
-    // carrier hash, not the underlying `Int`'s ref helper.
+    // An eligible carrier is a native `i64` here, as a key or as a sum key's
+    // field: the low half of the splitmix64 finalizer, as `__aint_hash`
+    // mixes a small `Int` (`builtins/wat/hash.wat`), so the bucket a map
+    // masks out of it depends on every bit of the value.
     if registry.is_eligible_carrier(k_aver) {
         let mut f = Function::new([]);
+        for (shift, mul) in [(30, 0xbf58_476d_1ce4_e5b9_u64), (27, 0x94d0_49bb_1331_11eb)] {
+            f.instruction(&Instruction::LocalGet(0));
+            f.instruction(&Instruction::LocalGet(0));
+            f.instruction(&Instruction::I64Const(shift));
+            f.instruction(&Instruction::I64ShrU);
+            f.instruction(&Instruction::I64Xor);
+            f.instruction(&Instruction::I64Const(mul as i64));
+            f.instruction(&Instruction::I64Mul);
+            f.instruction(&Instruction::LocalSet(0));
+        }
         f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::I64Const(31));
+        f.instruction(&Instruction::I64ShrU);
+        f.instruction(&Instruction::I64Xor);
         f.instruction(&Instruction::I32WrapI64);
         f.instruction(&Instruction::End);
         return Ok(f);
@@ -1380,9 +1395,10 @@ fn emit_eq_primitive(k_aver: &str, registry: &TypeRegistry) -> Result<Function, 
     Ok(f)
 }
 
-/// Wasm value type used as the `keys` array element. Primitive K and List K
-/// store boxed refs so the open-addressing `keys[i] == null` marker cannot
-/// collide with either an unboxable scalar or List's valid null `[]` value.
+/// Wasm value type used as the `keys` array element. Primitive K, a carrier K
+/// held as `i64` and List K store boxed refs so the open-addressing
+/// `keys[i] == null` marker cannot collide with either an unboxable scalar or
+/// List's valid null `[]` value.
 fn key_storage_val_type(k_aver: &str, registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         Ok(ValType::Ref(RefType {

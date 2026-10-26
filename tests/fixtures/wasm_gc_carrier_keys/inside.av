@@ -1,0 +1,97 @@
+module Inside
+    intent =
+        "A carrier inside a map key of every shape a key can take: a record"
+        "field, a nested record, a sum's payload, an Option, a Result, a tuple"
+        "and a list element. Get, remove, keys in order and ==."
+    exposes opaque [Key]
+    effects [Console.print]
+
+record Key
+    value: Int
+
+record Pair
+    k: Key
+    n: Int
+
+record Outer
+    p: Pair
+    tag: String
+
+type Slot
+    Empty
+    Held(Key)
+    Two(Key, Int)
+
+fn keyOf(n: Int) -> Result<Key, String>
+    ? "A key below 2^62."
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Key(value = n))
+        false -> Result.Err("key out of range")
+
+verify keyOf
+    keyOf(-1) => Result.Err("key out of range")
+
+fn key(n: Int) -> Key
+    ? "The key of n, or key 0."
+    match keyOf(n)
+        Result.Ok(k) -> k
+        Result.Err(_) -> Key(value = 0)
+
+verify key
+    key(5) => Key(value = 5)
+
+fn v(k: Key) -> Int
+    ? "The key's Int."
+    k.value
+
+verify v
+    v(key(1)) => 1
+
+fn showPairs(ps: List<Pair>, acc: String) -> String
+    ? "The pairs as key/n."
+    match ps
+        [] -> acc
+        [p, ..rest] -> showPairs(rest, "{acc} {v(p.k)}/{p.n}")
+
+fn showSlots(ss: List<Slot>, acc: String) -> String
+    ? "The slots, one letter each."
+    match ss
+        [] -> acc
+        [s, ..rest] -> match s
+            Slot.Empty -> showSlots(rest, "{acc} e")
+            Slot.Held(k) -> showSlots(rest, "{acc} h{v(k)}")
+            Slot.Two(k, n) -> showSlots(rest, "{acc} t{v(k)}.{n}")
+
+fn get(m: Map<Pair, String>, p: Pair) -> String
+    ? "The value at p, or -."
+    Option.withDefault(Map.get(m, p), "-")
+
+fn rk(n: Int) -> Result<Key, String>
+    ? "keyOf on a non-literal."
+    keyOf(n)
+
+verify rk
+    rk(-1) => Result.Err("key out of range")
+
+fn main() -> Unit
+    ? "Prints what each lookup gives."
+    ! [Console.print]
+    top = 4611686018427387903
+    mp = Map.fromList([(Pair(k = key(top), n = 1), "a"), (Pair(k = key(3), n = 2), "b"), (Pair(k = key(3), n = 1), "c")])
+    Console.print("pair {get(mp, Pair(k = key(3), n = 1))} {get(mp, Pair(k = key(top), n = 1))} {get(mp, Pair(k = key(4), n = 1))} {Map.len(Map.remove(mp, Pair(k = key(3), n = 2)))}{showPairs(Map.keys(mp), "")}")
+    mo = Map.set(Map.set({}, Outer(p = Pair(k = key(9), n = 0), tag = "x"), 1), Outer(p = Pair(k = key(9), n = 0), tag = "y"), 2)
+    Console.print("outer {Map.len(mo)} {Option.withDefault(Map.get(mo, Outer(p = Pair(k = key(9), n = 0), tag = "y")), 0)}")
+    ms = Map.fromList([(Slot.Held(key(5)), 1), (Slot.Two(key(5), 1), 2), (Slot.Empty, 3), (Slot.Held(key(2)), 4)])
+    Console.print("sum {Option.withDefault(Map.get(ms, Slot.Held(key(5))), 0)} {Option.withDefault(Map.get(ms, Slot.Two(key(5), 1)), 0)} {Option.withDefault(Map.get(ms, Slot.Held(key(6))), 0)}{showSlots(Map.keys(ms), "")}")
+    mopt = Map.set(Map.set({}, Option.Some(key(4)), "s"), Option.None, "n")
+    Console.print("opt {Option.withDefault(Map.get(mopt, Option.Some(key(4))), "-")} {Option.withDefault(Map.get(mopt, Option.None), "-")} {Option.withDefault(Map.get(mopt, Option.Some(key(5))), "-")}")
+    mt = Map.set(Map.set({}, (key(1), 2), "t12"), (key(2), 1), "t21")
+    Console.print("tuple {Option.withDefault(Map.get(mt, (key(1), 2)), "-")} {Option.withDefault(Map.get(mt, (key(2), 2)), "-")} {Map.len(mt)}")
+    none: List<Key> = []
+    ml = Map.set(Map.set({}, [key(1), key(top)], "l1"), none, "l0")
+    Console.print("list {Option.withDefault(Map.get(ml, [key(1), key(top)]), "-")} {Option.withDefault(Map.get(ml, none), "-")} {Option.withDefault(Map.get(ml, [key(1)]), "-")}")
+    r8 = rk(8)
+    rbad = rk(-1)
+    mr = Map.set(Map.set({}, r8, "ok8"), rbad, "err")
+    Console.print("result {Option.withDefault(Map.get(mr, r8), "-")} {Option.withDefault(Map.get(mr, rbad), "-")} {Option.withDefault(Map.get(mr, rk(9)), "-")}")
+    Console.print("eq {mp == Map.fromList([(Pair(k = key(3), n = 1), "c"), (Pair(k = key(3), n = 2), "b"), (Pair(k = key(top), n = 1), "a")])} {ms == ms} {ml == Map.set({}, none, "l0")}")
