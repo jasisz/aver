@@ -5433,14 +5433,14 @@ fn a_loop_borrows_the_params_it_only_reads() {
         "the branches `leaves` only reads must be borrowed:\n{emitted}"
     );
     assert!(
-        emitted.contains("(Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail())"),
+        emitted.contains("match aver_rt::list_uncons(__list_subject) { Some((t, rest)) =>"),
         "the head `allLeaves` only reads must be borrowed:\n{emitted}"
     );
     // A head one branch hands on is borrowed too, and cloned only there:
     // `findBefore` compares a field of every head and copies the one it
     // finds, once.
     assert!(
-        emitted.contains("(Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) { if (p.name == n) { return placedBefore(p.clone(), upTo); }"),
+        emitted.contains("match aver_rt::list_uncons(__list_subject) { Some((p, rest)) => { if (p.name == n) { return placedBefore(p.clone(), upTo); }"),
         "the head `findBefore` hands on in one branch must be borrowed:\n{emitted}"
     );
     // A borrowed head, or a field of one, pushed into a list being built is
