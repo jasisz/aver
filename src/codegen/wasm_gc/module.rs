@@ -2998,9 +2998,8 @@ pub(super) fn emit_module_with(
     // The same for a hash of a recursive map key.
     let hash_walk_globals =
         hash_helpers_registry.emit_walk_globals(&mut globals, &mut next_global_idx);
-    if next_global_idx > 0 {
-        module.section(&globals);
-    }
+    // The global section is written after the body pre-pass below, which
+    // finds the `Int` literals the shared boxes are made for.
 
     // Phase 1.2b1.5 — `Wasip2Lowering` collects every fn / global /
     // helper idx the call-site lowering for `Console.print` /
@@ -3308,6 +3307,8 @@ pub(super) fn emit_module_with(
     // reads a fn with trees as it would without them, so it declines that fn
     // for the reason it has.
     let mut plain_locals_for: Vec<Option<Vec<ValType>>> = vec![None; fn_defs.len()];
+    // The boxed `Int` literals of those fns, each made once, into a global.
+    let mut pooled_literals = std::collections::BTreeSet::new();
     // The emitter's view the certificate plan printer reads: this compile's
     // registry and function indices.
     let cert_layout = super::cert_layout::CertLayout {
@@ -3351,6 +3352,7 @@ pub(super) fn emit_module_with(
         let mut probe = Function::new([]);
         // Without `Int` trees: the plan printer reads this body's locals.
         super::body::set_int_trees_allowed(false);
+        super::body::record_int_literals(true);
         let emitted = match mir_fn_for[i] {
             Some(mir_fn) => emit_fn_body_via_mir(
                 &mut probe,
@@ -3368,6 +3370,7 @@ pub(super) fn emit_module_with(
             None => None,
         };
         super::body::set_int_trees_allowed(true);
+        let literals = super::body::record_int_literals(false);
         let used_mir = emitted.is_some();
         trees_for[i] = match (mir_fn_for[i], &emitted) {
             (Some(mir_fn), Some(extra)) => int_trees_allowed(
@@ -3380,6 +3383,9 @@ pub(super) fn emit_module_with(
             _ => false,
         };
         plain_locals_for[i] = emitted;
+        if trees_for[i] {
+            pooled_literals.extend(literals);
+        }
         mir_dispatch[i] = used_mir;
         if !used_mir {
             stub_reasons[i] = Some(super::body::take_unsupported_reason().unwrap_or_else(|| {
@@ -3387,6 +3393,35 @@ pub(super) fn emit_module_with(
             }));
         }
     }
+    let literal_pool: HashMap<i64, u32> = match registry.aint_struct_idx {
+        Some(aint) => pooled_literals
+            .into_iter()
+            .map(|n| {
+                let value = [
+                    Instruction::I64Const(n),
+                    Instruction::RefNull(HeapType::Concrete(
+                        registry.aint_mag_array_idx.unwrap_or(0),
+                    )),
+                    Instruction::I32Const(0),
+                    Instruction::StructNew(aint),
+                ];
+                let ty = wasm_encoder::GlobalType {
+                    val_type: super::types::struct_ref(aint),
+                    mutable: false,
+                    shared: false,
+                };
+                globals.global(ty, &wasm_encoder::ConstExpr::extended(value));
+                next_global_idx += 1;
+                (n, next_global_idx - 1)
+            })
+            .collect(),
+        None => HashMap::new(),
+    };
+    if next_global_idx > 0 {
+        module.section(&globals);
+    }
+    super::body::set_int_literal_pool(literal_pool);
+
     // `fn_map` records a helper the moment the emitter resolves its index to
     // put a `call` in front of it. A fn that later bails to a trap stub can
     // therefore leave the flag set for a call the module never ships; that
@@ -6397,6 +6432,7 @@ pub(super) fn emit_module_with(
             )
         })
         .collect();
+    super::body::set_int_literal_pool(HashMap::new());
     let cert_plans = crate::codegen::cert::print_module(
         &planned,
         &cert_layout,
