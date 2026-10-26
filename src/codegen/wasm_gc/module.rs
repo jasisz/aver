@@ -6655,32 +6655,10 @@ fn with_ref_params(
     let refs = entry.len() as u32;
     let moved = |i: u32| if i >= first { i + refs } else { i };
     let aint = registry.aint_struct_idx.unwrap_or_default();
-    let get = |field_index| Instruction::StructGet {
-        struct_type_index: aint,
-        field_index,
-    };
     let mut f = Function::new(locals.iter().map(|v| (1, *v)));
     for (j, (k, packed, big)) in entry.iter().enumerate() {
-        let (packed, big) = (moved(*packed), moved(*big));
-        for i in [
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(first + j as u32),
-            Instruction::BrOnNull(0),
-            Instruction::LocalTee(packed),
-            get(1),
-            Instruction::RefIsNull,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(packed),
-            get(0),
-            Instruction::LocalSet(wasm_param(*k)),
-            Instruction::Else,
-            Instruction::I32Const(1),
-            Instruction::LocalSet(big),
-            Instruction::End,
-            Instruction::End,
-        ] {
-            f.instruction(&i);
-        }
+        let (from, word) = (Instruction::LocalGet(first + j as u32), wasm_param(*k));
+        super::body::twin_read_packed(&mut f, from, word, moved(*packed), moved(*big), aint);
     }
     let raw = body.clone().into_raw_body();
     let invalid = |e: &dyn std::fmt::Display| WasmGcError::Validation(format!("twin body: {e}"));

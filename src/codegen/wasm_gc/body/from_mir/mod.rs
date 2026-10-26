@@ -401,8 +401,12 @@ pub(crate) fn emit_fn_body_via_mir(
     // facts). Default-empty on the un-rewritten wasm-gc MIR, so every slot
     // stays boxed.
     let mut slots = SlotTable::build_for_fn(rfd, registry, fn_map, &mir_fn.repr)?;
-    // A twin takes its unpacked `Int` params as `i64`s.
-    for slot in twin::word_param_slots() {
+    // A twin holds its unpacked `Int` params, and some `Int` locals, as
+    // `i64`s.
+    let boxed =
+        crate::codegen::wasm_gc::types::struct_ref(registry.aint_struct_idx.unwrap_or_default());
+    let is_int = |slot: u32| slots.by_slot.get(slot as usize) == Some(&boxed);
+    for slot in twin::word_slots(&mir_fn.body, &is_int, fn_map) {
         if let Some(ty) = slots.by_slot.get_mut(slot as usize) {
             *ty = ValType::I64;
         }
@@ -653,9 +657,9 @@ pub(crate) fn emit_mir_expr(
             // slot is value-producing. Preserve the strict Unit check for
             // ordinary stamped locals while accepting that closed shape.
             let produces_value = expr.ty().is_none() || aver_type_str_of(expr).trim() != "Unit";
-            // A param a twin took unpacked: returned as it is from an `Int`
-            // twin, boxed once where it is wanted packed.
-            if twin::held_param(local.node.slot.0).is_some() {
+            // A slot a twin holds: returned as it is from an `Int` twin,
+            // boxed once where it is wanted packed.
+            if twin::held(local.node.slot.0).is_some() {
                 if twin::tail_kind(expr) == Some(TwinKind::Int) {
                     twin::return_param(func, local.node.slot.0, slots, ctx);
                 } else {
@@ -847,7 +851,12 @@ pub(crate) fn emit_mir_expr(
             // push an `$AverInt` ref into an `i64` slot (validation error).
             // The rewrite already left the value raw-rendering for a bare
             // binding (`rewrite_let_value`).
-            let value_produces = if ctx.slot_is_bare(slot) {
+            let value_produces = if twin::held(slot).is_some() {
+                match twin::bind(func, slot, &l.value, slots, ctx)? {
+                    Some(p) => p,
+                    None => return Ok(None),
+                }
+            } else if ctx.slot_is_bare(slot) {
                 match emit_mir_int_raw(func, &l.value, slots, ctx)? {
                     Some(p) => p,
                     None => return Ok(None),

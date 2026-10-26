@@ -9,7 +9,8 @@
 //! otherwise the packed value itself. The twin's entry (`module.rs`, which
 //! adds the ref params) reads a Small packed value into its `i64` and keeps
 //! the box, so the body boxes the param at most once, where it wants the
-//! value packed.
+//! value packed. An `Int` local bound to a value with its machine word, and
+//! read where the word serves, is held the same way.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -18,8 +19,9 @@ use wasm_encoder::Instruction as I;
 use wasm_encoder::{BlockType, HeapType};
 
 use super::*;
-use crate::codegen::wasm_gc::twins::{TwinEntry, TwinKind, tails};
+use crate::codegen::wasm_gc::twins::{TwinEntry, TwinKind, has_word, read_as_word, tails};
 use crate::codegen::wasm_gc::types::struct_ref;
+use crate::ir::mir::LocalId;
 
 /// The twin being emitted.
 struct Current {
@@ -28,9 +30,11 @@ struct Current {
     tails: HashSet<usize>,
     /// The slots of the params it takes unpacked, by position.
     params: Vec<(usize, u32)>,
+    /// The slots it holds as an `i64`: those, then some `Int` locals'.
+    words: Vec<u32>,
     /// For each such slot: the local of its packed value (the one the
-    /// caller passed, or the box made on its first packed read) and its Big
-    /// flag.
+    /// caller passed or the value came as, or the box made on its first
+    /// packed read) and its Big flag.
     held: HashMap<u32, (u32, u32)>,
 }
 
@@ -49,13 +53,52 @@ pub(crate) fn set_calls(on: bool) {
     CALLS.with(|c| c.set(on));
 }
 
-/// The slots of the params the twin being emitted takes as an `i64`.
-pub(crate) fn word_param_slots() -> Vec<u32> {
+/// The slots the twin being emitted holds as an `i64`: the params it takes
+/// unpacked, and each `Int` local (`is_int`) bound, by a `let` or as an
+/// `Int` match's subject, to a value with its machine word, that `body`
+/// reads where the word serves.
+pub(crate) fn word_slots(
+    body: &Spanned<MirExpr>,
+    is_int: &dyn Fn(u32) -> bool,
+    fn_map: &FnMap,
+) -> Vec<u32> {
+    fn bound<'e>(e: &'e MirExpr, out: &mut Vec<(u32, &'e MirExpr)>) {
+        match e {
+            MirExpr::Let(l) if !l.node.binding_name.is_empty() => {
+                out.push((l.node.binding.0, &l.node.value.node));
+            }
+            MirExpr::Match(m) => out.extend(m.node.arms.iter().filter_map(|a| match a.pattern {
+                MirPattern::Bind(slot, _) => Some((slot.0, &m.node.subject.node)),
+                _ => None,
+            })),
+            _ => {}
+        }
+        crate::ir::mir::expr::walk_children(e, &mut |c| bound(c, out));
+    }
+    let int_twin = |id| {
+        fn_map
+            .twins
+            .get(&id)
+            .is_some_and(|t| t.kind == TwinKind::Int)
+    };
     SELF.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|c| c.params.iter().map(|(_, slot)| *slot).collect())
-            .unwrap_or_default()
+        let mut s = s.borrow_mut();
+        let Some(c) = s.as_mut() else {
+            return Vec::new();
+        };
+        let mut values = Vec::new();
+        bound(&body.node, &mut values);
+        let local = |(slot, value): &&(u32, &MirExpr)| {
+            is_int(*slot) && has_word(value, &int_twin) && read_as_word(body, LocalId(*slot))
+        };
+        let locals = values.iter().filter(local).map(|(slot, _)| *slot);
+        c.words = c
+            .params
+            .iter()
+            .map(|(_, slot)| *slot)
+            .chain(locals)
+            .collect();
+        c.words.clone()
     })
 }
 
@@ -76,6 +119,7 @@ pub(crate) fn set_self(twin: Option<(TwinEntry, &MirFn)>) {
                 entry,
                 tails: ts.iter().map(|t| *t as *const _ as usize).collect(),
                 params,
+                words: Vec::new(),
                 held: HashMap::new(),
             }
         })
@@ -101,9 +145,9 @@ pub(crate) fn tail_kind(e: &Spanned<MirExpr>) -> Option<TwinKind> {
     })
 }
 
-/// The packed-value and Big-flag locals of an unpacked param slot of the
-/// twin being emitted (the slot itself holds the `i64`).
-pub(crate) fn held_param(slot: u32) -> Option<(u32, u32)> {
+/// The packed-value and Big-flag locals of a slot the twin being emitted
+/// holds (the slot itself holds the `i64`).
+pub(crate) fn held(slot: u32) -> Option<(u32, u32)> {
     SELF.with(|s| s.borrow().as_ref().and_then(|c| c.held.get(&slot).copied()))
 }
 
@@ -190,15 +234,16 @@ fn aint(ctx: &EmitCtx<'_>) -> u32 {
 }
 
 /// Whether `arg` has its `Int` on the machine word without boxing it: a
-/// literal, a raw value, an `Int` tree, an `Int` twin's result or a param a
-/// twin took unpacked.
+/// literal, a raw value, an `Int` tree, an `Int` twin's result or a slot a
+/// twin holds.
 pub(crate) fn unpackable(arg: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) -> bool {
     match &arg.node {
         MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
         MirExpr::Box(_) => true,
-        MirExpr::Local(l) => held_param(l.node.slot.0).is_some(),
+        MirExpr::Local(l) => held(l.node.slot.0).is_some(),
         _ => {
             callee(arg, ctx).is_some_and(|(_, t)| t.kind == TwinKind::Int)
+                || mir_renders_raw_i64(&arg.node, ctx)
                 || int_tree::makes_word(arg, ctx)
         }
     }
@@ -221,8 +266,8 @@ fn emit_word_arg(
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<Option<u32>>, WasmGcError> {
     match &arg.node {
-        MirExpr::Local(l) if held_param(l.node.slot.0).is_some() => {
-            let (packed, _) = held_param(l.node.slot.0).expect("guarded");
+        MirExpr::Local(l) if held(l.node.slot.0).is_some() => {
+            let (packed, _) = held(l.node.slot.0).expect("guarded");
             func.instruction(&I::LocalGet(slots.local(l.node.slot.0)));
             return Ok(Some(Some(packed)));
         }
@@ -235,6 +280,9 @@ fn emit_word_arg(
         }
         MirExpr::Box(inner) => {
             return Ok(emit_mir_int_raw(func, inner, slots, ctx)?.map(|_| None));
+        }
+        _ if mir_renders_raw_i64(&arg.node, ctx) => {
+            return Ok(emit_mir_int_raw(func, arg, slots, ctx)?.map(|_| None));
         }
         _ => {}
     }
@@ -398,21 +446,92 @@ pub(crate) fn pack_result(
     Ok(())
 }
 
-/// The locals of the params the twin being emitted takes unpacked: its
-/// entry (`module.rs`) fills them from the ref params.
+/// The locals of the slots the twin being emitted holds: its entry
+/// (`module.rs`) fills a param's from its ref param, [`bind`] a local's.
 pub(crate) fn emit_entry(slots: &SlotTable, ctx: &EmitCtx<'_>) {
     SELF.with(|s| {
         if let Some(c) = s.borrow_mut().as_mut() {
             c.held = c
-                .params
+                .words
                 .iter()
-                .map(|(_, slot)| {
+                .map(|&slot| {
                     let packed = slots.fresh_local(struct_ref(aint(ctx)));
-                    (*slot, (packed, slots.fresh_local(ValType::I32)))
+                    (slot, (packed, slots.fresh_local(ValType::I32)))
                 })
                 .collect();
         }
     });
+}
+
+/// Bind the local in `slot`, which the twin being emitted holds, to `value`,
+/// leaving nothing to store (`Some(false)`).
+pub(crate) fn bind(
+    func: &mut Function,
+    slot: u32,
+    value: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<bool>, WasmGcError> {
+    let Some(packed) = emit_word_arg(func, value, slots, ctx)? else {
+        return Ok(None);
+    };
+    set_held(func, slot, packed, ctx);
+    Ok(Some(false))
+}
+
+/// With the `i64` of a value on the stack and its packed value, or null, in
+/// the local `packed` (`None`: the value is the `i64`): set the held `slot`.
+pub(crate) fn set_held(func: &mut Function, slot: u32, packed: Option<u32>, ctx: &EmitCtx<'_>) {
+    func.instruction(&I::LocalSet(slot));
+    let Some((held_packed, big)) = held(slot) else {
+        return;
+    };
+    // The box and the Big flag belong to the value bound before, if any: a
+    // packed read of a slot bound again in the same frame must not return
+    // the old box. Today a slot is bound once per frame (no rebinding, a loop
+    // is a tail call), but nothing else guards that.
+    func.instruction(&I::RefNull(HeapType::Concrete(aint(ctx))));
+    func.instruction(&I::LocalSet(held_packed));
+    func.instruction(&I::I32Const(0));
+    func.instruction(&I::LocalSet(big));
+    if let Some(from) = packed {
+        read_packed(func, I::LocalGet(from), slot, held_packed, big, aint(ctx));
+    }
+}
+
+/// With `from` an `Int` packed or null: a Small one's `i64` into `word`, the
+/// packed value into `packed`, and `big` set for a Big one.
+pub(crate) fn read_packed(
+    func: &mut Function,
+    from: I<'_>,
+    word: u32,
+    packed: u32,
+    big: u32,
+    aint: u32,
+) {
+    let get = |field_index| I::StructGet {
+        struct_type_index: aint,
+        field_index,
+    };
+    for i in [
+        I::Block(BlockType::Empty),
+        from,
+        I::BrOnNull(0),
+        I::LocalTee(packed),
+        get(1),
+        I::RefIsNull,
+        I::If(BlockType::Empty),
+        I::LocalGet(packed),
+        get(0),
+        I::LocalSet(word),
+        I::Else,
+        I::I32Const(1),
+        I::LocalSet(big),
+        I::End,
+        I::End,
+    ] {
+        func.instruction(&i);
+    }
 }
 
 /// Per unpacked param, in order: its position, and the locals of its
@@ -431,15 +550,15 @@ pub(crate) fn entry_locals() -> Vec<(usize, u32, u32)> {
     })
 }
 
-/// An unpacked param read where its value is wanted packed: its box, made
-/// on the first such read (a Big one arrived packed).
+/// A held slot read where its value is wanted packed: its box, made on the
+/// first such read (a Big value came packed).
 pub(crate) fn emit_packed_param(
     func: &mut Function,
     slot: u32,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let (r, _) = held_param(slot).expect("an unpacked param");
+    let (r, _) = held(slot).expect("a held slot");
     func.instruction(&I::LocalGet(r));
     func.instruction(&I::RefIsNull);
     func.instruction(&I::If(BlockType::Empty));
@@ -451,10 +570,9 @@ pub(crate) fn emit_packed_param(
     Ok(())
 }
 
-/// An unpacked param as the result of an `Int` twin: the ref only for a Big
-/// value.
+/// A held slot as the result of an `Int` twin: the ref only for a Big value.
 pub(crate) fn return_param(func: &mut Function, slot: u32, slots: &SlotTable, ctx: &EmitCtx<'_>) {
-    let (r, big) = held_param(slot).expect("an unpacked param");
+    let (r, big) = held(slot).expect("a held slot");
     func.instruction(&I::LocalGet(slots.local(slot)));
     func.instruction(&I::LocalGet(r));
     func.instruction(&I::RefNull(HeapType::Concrete(aint(ctx))));

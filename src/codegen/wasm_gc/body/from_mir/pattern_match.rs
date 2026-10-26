@@ -115,7 +115,10 @@ pub(crate) fn emit_mir_match(
         && m.arms.len() == 1
         && let MirPattern::Bind(slot, _) = &m.arms[0].pattern
     {
-        let emitted = if subject_type.trim() == "Int" && ctx.slot_is_bare(slot.0) {
+        let held = twin::held(slot.0).is_some();
+        let emitted = if held {
+            twin::bind(func, slot.0, &m.subject, slots, ctx)?
+        } else if subject_type.trim() == "Int" && ctx.slot_is_bare(slot.0) {
             emit_mir_int_raw(func, &m.subject, slots, ctx)?
         } else {
             emit_mir_expr(func, &m.subject, slots, ctx)?
@@ -125,7 +128,7 @@ pub(crate) fn emit_mir_match(
         }
         if slot.0 == u32::from(u16::MAX) {
             func.instruction(&Instruction::Drop);
-        } else {
+        } else if !held {
             func.instruction(&Instruction::LocalSet(slot.0));
         }
         ctx.int_result_raw.set(result_raw);
@@ -1444,7 +1447,18 @@ pub(crate) fn emit_mir_int_cascade(
         // catch-all also captures the subject. String-index fusion uses this
         // exact shape to bind the raw codepoint after its -1 sentinel arm.
         if let Some(slot) = fallback_slot {
+            let held = twin::held(slot.0).is_some();
             let emitted = match stash {
+                // A slot a twin holds takes the stashed `i64`, or the value.
+                Some(IntSubjectStash { local, raw }) if held => {
+                    if raw {
+                        func.instruction(&Instruction::LocalGet(local));
+                    } else {
+                        func.instruction(&Instruction::I64Const(0));
+                        twin::set_held(func, slot.0, Some(local), ctx);
+                    }
+                    Some(raw)
+                }
                 // The stashed subject, converted to the binder's colour: a
                 // raw value lifts into a boxed slot, a boxed one cannot be
                 // narrowed into a bare slot here.
@@ -1461,18 +1475,19 @@ pub(crate) fn emit_mir_int_cascade(
                     }
                     Some(true)
                 }
+                None if held => twin::bind(func, slot.0, subject, slots, ctx)?,
                 None if ctx.slot_is_bare(slot.0) => emit_mir_int_raw(func, subject, slots, ctx)?,
                 None => {
                     ctx.int_result_raw.set(false);
                     emit_mir_expr(func, subject, slots, ctx)?
                 }
             };
-            if emitted.is_none() {
+            let Some(store) = emitted else {
                 return Ok(None);
-            }
+            };
             if slot.0 == u32::from(u16::MAX) {
                 func.instruction(&Instruction::Drop);
-            } else {
+            } else if store {
                 func.instruction(&Instruction::LocalSet(slot.0));
             }
         }

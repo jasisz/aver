@@ -180,6 +180,38 @@ fn unit(u: Unit, n: Int) -> Int
     ? "A Unit param before an Int one."
     n + 2
 
+fn hold(a: Int, b: Int) -> Int
+    ? "A twin's result held in a local: compared with a literal, passed on, returned."
+    d = grow(a, b)
+    match d < 1000
+        true -> d
+        false -> mix(d, 3) + d
+
+fn clamp(i: Int, n: Int) -> Int
+    ? "A param compared with a literal."
+    match i < 0
+        true -> 0
+        false -> mix(i, n)
+
+fn keep(a: Int, b: Int) -> Span
+    ? "A held local stored packed and read as a word."
+    d = grow(a, b)
+    match d > 10
+        true -> Span(value = d, end = mix(d, 1))
+        false -> Span(value = 0, end = d)
+
+fn bound(a: Int, b: Int) -> Int
+    ? "An Int match binding a twin's result after a literal arm."
+    match grow(a, b)
+        1 -> 0
+        v -> mix(v, v) + v
+
+fn ofChars(cs: List<String>, acc: Int) -> Int
+    ? "Folds code points into a hash: the code point is held as a word."
+    match cs
+        [] -> acc
+        [c, ..rest] -> ofChars(rest, mix(acc, Option.withDefault(String.firstCodePoint(c), 0)))
+
 fn main() -> Unit
     ? "Prints every shape."
     ! [Console.print]
@@ -208,3 +240,8 @@ fn main() -> Unit
     Console.print("idx {idx("abc", 0)} {idx("abc", big)} {idx("abc", min)} {idx("abc", -1)}")
     u = Console.print("unit")
     Console.print("unit {unit(u, 5)} {unit(u, big)}")
+    Console.print("hold {hold(3, 4)} {hold(40, 40)} {hold(big, 2)} {hold(min, 1)} {clamp(-1, 3)} {clamp(5, 3)} {clamp(big, 3)} {clamp(min, 3)}")
+    k = keep(4, 5)
+    Console.print("keep {k.value} {k.end} {keep(1, 1).end} {keep(big, big).value}")
+    Console.print("bound {bound(0, 3)} {bound(3, 4)} {bound(big, 3)}")
+    Console.print("chars {ofChars(String.chars("héllo"), 17)} {ofChars(String.chars(""), 17)} {ofChars(String.chars("ab"), big)}")

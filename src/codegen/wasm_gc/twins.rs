@@ -24,7 +24,9 @@
 //! a fn no caller would call so gets none. A twin's tail calls go to the
 //! twins of their targets, so a tail group keeps running without the stack
 //! growing. A `?`, `?!` or early `return` in a twin returns its result
-//! unpacked too, and a `?` on a twin's `Result` takes it apart unpacked.
+//! unpacked too, and a `?` on a twin's `Result` takes it apart unpacked. A
+//! twin holds an `Int` local bound to a value with its machine word as it
+//! holds such a param, boxing it only where the body wants it packed.
 //!
 //! A `--certify` build keeps the bytes of every function the certificate plan
 //! printer may print: such a function gets no twin
@@ -175,7 +177,10 @@ fn produces_unpacked(e: &MirExpr, kind: &TwinKind) -> bool {
 /// in `Int` arithmetic or a comparison, as an arg of a call, or as a tail.
 /// A param read only packed (stored, matched, stringified) is taken packed,
 /// so the twin does not box what its caller had boxed already.
-fn read_as_word(body: &crate::ast::Spanned<MirExpr>, slot: crate::ir::mir::LocalId) -> bool {
+pub(crate) fn read_as_word(
+    body: &crate::ast::Spanned<MirExpr>,
+    slot: crate::ir::mir::LocalId,
+) -> bool {
     fn walk(e: &MirExpr, slot: crate::ir::mir::LocalId) -> bool {
         let is = |x: &crate::ast::Spanned<MirExpr>| matches!(&x.node, MirExpr::Local(l) if l.node.slot == slot);
         let direct = match e {
@@ -196,6 +201,20 @@ fn read_as_word(body: &crate::ast::Spanned<MirExpr>, slot: crate::ir::mir::Local
     ts.iter()
         .any(|t| matches!(&t.node, MirExpr::Local(l) if l.node.slot == slot))
         || walk(&body.node, slot)
+}
+
+/// Whether `e`, an `Int`, comes with its machine word: a literal, arithmetic,
+/// a builtin's result, or the result of a fn with an `Int` twin (`int_twin`).
+pub(crate) fn has_word(e: &MirExpr, int_twin: &dyn Fn(FnId) -> bool) -> bool {
+    match e {
+        MirExpr::Literal(l) => matches!(l.node, crate::ast::Literal::Int(_)),
+        MirExpr::Box(_) | MirExpr::BinOp(_) | MirExpr::Neg(_) => true,
+        MirExpr::Call(c) => match c.node.callee {
+            MirCallee::Fn(id) => int_twin(id),
+            _ => true,
+        },
+        _ => false,
+    }
 }
 
 /// How an expression's value is used: as a machine word (arithmetic, a
@@ -224,17 +243,15 @@ impl Caller<'_> {
         Some((j, self.plans[j].as_ref()?))
     }
 
+    /// Whether the kept twin of `id` takes its param `k` as a machine word.
+    fn takes_word(&self, id: FnId, k: usize) -> bool {
+        self.plan(id)
+            .is_some_and(|(j, p)| self.kept.contains(&j) && p.unpacked.get(k) == Some(&true))
+    }
+
     /// Whether `arg` reaches a call as a machine word.
     fn word(&self, arg: &MirExpr) -> bool {
         match arg {
-            MirExpr::Literal(l) => matches!(l.node, crate::ast::Literal::Int(_)),
-            MirExpr::Box(_) | MirExpr::BinOp(_) | MirExpr::Neg(_) => true,
-            MirExpr::Call(c) => match c.node.callee {
-                MirCallee::Fn(id) => self
-                    .plan(id)
-                    .is_some_and(|(j, p)| self.kept.contains(&j) && p.kind == TwinKind::Int),
-                _ => true,
-            },
             MirExpr::Local(l) => {
                 self.kept.contains(&self.at)
                     && self.params.iter().enumerate().any(|(k, p)| {
@@ -242,7 +259,10 @@ impl Caller<'_> {
                             && self.plans[self.at].as_ref().is_some_and(|p| p.unpacked[k])
                     })
             }
-            _ => false,
+            e => has_word(e, &|id| {
+                self.plan(id)
+                    .is_some_and(|(j, p)| self.kept.contains(&j) && p.kind == TwinKind::Int)
+            }),
         }
     }
 
@@ -269,12 +289,12 @@ impl Caller<'_> {
                         out.push(j);
                     }
                 }
-                let inner = match c.node.callee {
-                    MirCallee::Fn(_) => Use::Other,
-                    _ => Use::Word,
-                };
-                for a in &c.node.args {
-                    self.visit(&a.node, inner, out);
+                for (k, a) in c.node.args.iter().enumerate() {
+                    let word = match c.node.callee {
+                        MirCallee::Fn(id) => self.takes_word(id, k),
+                        _ => true,
+                    };
+                    self.visit(&a.node, if word { Use::Word } else { Use::Other }, out);
                 }
             }
             MirExpr::TailCall(tc) => {
@@ -284,8 +304,9 @@ impl Caller<'_> {
                 {
                     out.push(j);
                 }
-                for a in &tc.node.args {
-                    self.visit(&a.node, Use::Other, out);
+                for (k, a) in tc.node.args.iter().enumerate() {
+                    let word = own.is_some() && self.takes_word(tc.node.target, k);
+                    self.visit(&a.node, if word { Use::Word } else { Use::Other }, out);
                 }
             }
             MirExpr::BinOp(b) => {

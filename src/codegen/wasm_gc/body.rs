@@ -45,7 +45,8 @@ pub(super) use from_mir::int_tree::{
     set_literal_pool as set_int_literal_pool,
 };
 pub(super) use from_mir::twin::{
-    entry_locals as twin_entry_locals, set_calls as set_twin_calls, set_self as set_twin_self,
+    entry_locals as twin_entry_locals, read_packed as twin_read_packed,
+    set_calls as set_twin_calls, set_self as set_twin_self,
 };
 pub use from_mir::{CoverageReport, coverage_report};
 pub(super) use from_mir::{PROOF_ONLY_BRANCH_PATH, emit_fn_body_via_mir, take_unsupported_reason};
