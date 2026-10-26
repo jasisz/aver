@@ -239,6 +239,30 @@ fn bound_empty_literal_settled_later_matches_expected() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Runs `fixture` on wasip2 with `depth` as its argument, killed after a
+/// minute.
+fn run_shared_within_a_minute(dir: &Path, fixture: &Path, depth: &str) -> String {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(dir)
+        .args(["run", "--wasip2"])
+        .arg(fixture)
+        .args(["--", depth])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("aver run --wasip2 to launch");
+    let started = std::time::Instant::now();
+    while child.try_wait().expect("run is waitable").is_none() {
+        if started.elapsed() > std::time::Duration::from_secs(60) {
+            let _ = child.kill();
+            panic!("depth {depth} did not end within a minute");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().expect("run output");
+    assert_ok(&out, "shared fixture");
+    stdout(&out).trim().to_string()
+}
+
 /// `==` on recursive values sharing subterms, built apart, compares each
 /// shared pair once, and a map keyed by them hashes each shared node once:
 /// at 64 levels it answers as at 12, within a minute. `cross_backend_stress`
@@ -251,32 +275,30 @@ fn shared_recursive_sum_equality_ends() {
         "shared.av",
         include_str!("fixtures/shared_recursive_sum_app.av"),
     );
-    let run = |depth: &str| {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_aver"))
-            .current_dir(&dir)
-            .args(["run", "--wasip2"])
-            .arg(&fixture)
-            .args(["--", depth])
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .expect("aver run --wasip2 to launch");
-        let started = std::time::Instant::now();
-        while child.try_wait().expect("run is waitable").is_none() {
-            if started.elapsed() > std::time::Duration::from_secs(60) {
-                let _ = child.kill();
-                panic!("depth {depth} did not end within a minute");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        let out = child.wait_with_output().expect("run output");
-        assert_ok(&out, "shared.av");
-        stdout(&out).trim().to_string()
-    };
-    let shallow = run("12");
+    let shallow = run_shared_within_a_minute(&dir, &fixture, "12");
     let tail = "map 2 3 false\nkeys 2 true\nkey record true false mutual true false\n\
                 dag true false\nrecord true\nmutual true false";
     assert!(shallow.ends_with(tail), "{shallow}");
-    assert_eq!(run("64"), shallow);
+    assert_eq!(run_shared_within_a_minute(&dir, &fixture, "64"), shallow);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Values in which each node of a level is held by two of the level above,
+/// so that a shared pair comes back after many others, compare and key maps
+/// as at 12 levels at 64, within a minute. `cross_backend_stress` runs the
+/// same file on the VM and wasm-gc.
+#[test]
+fn shared_recursive_dag_costs_the_graph() {
+    let dir = tempdir("shared-dag");
+    let fixture = write_fixture(
+        &dir,
+        "dag.av",
+        include_str!("fixtures/shared_recursive_dag.av"),
+    );
+    let expected = "tower true false\ntower keys 2 1 false\nbare true false\nbare keys 2 1 false";
+    for depth in ["12", "64"] {
+        assert_eq!(run_shared_within_a_minute(&dir, &fixture, depth), expected);
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

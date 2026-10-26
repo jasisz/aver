@@ -36,6 +36,7 @@ pub(super) mod eq_helpers;
 mod from_mir;
 pub(super) mod hash_helpers;
 mod infer;
+pub(super) mod node_table;
 mod slots;
 
 pub(super) use emit::{emit_caller_fn_idx, emit_default_value, emit_string_literal_bytes};

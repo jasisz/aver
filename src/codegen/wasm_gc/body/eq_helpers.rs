@@ -38,11 +38,10 @@
 //! compared in steps. `__eq_<T>` compares the two roots and hands each field
 //! of such a type to a step that takes a budget of [`WALK_BUDGET`] steps and
 //! returns what is left. A comparison that runs out starts again with steps
-//! that remember the last [`WALK_MEMORY`] pairs of nodes found equal, in
-//! globals, and do not compare those again; wasm-gc has no addresses to key
-//! a larger table on. A field holding such a type in a collection begins a
-//! comparison of its own. Programs without such a type emit the same bytes
-//! as before.
+//! that remember every pair of nodes they find equal in a table
+//! (`node_table`) and do not compare those again. A field holding such a type
+//! in a collection begins a comparison of its own. Programs without such a
+//! type emit the same bytes as before.
 
 use std::collections::{HashMap, HashSet};
 
@@ -51,6 +50,7 @@ use wasm_encoder::{Function, Instruction};
 use super::super::WasmGcError;
 use super::super::lists::{emit_record_eq_inline, emit_sum_eq_inline};
 use super::super::types::TypeRegistry;
+use super::node_table::{Entry, TableGlobals, TableSlots};
 
 /// What kind of type a registered eq helper covers. Records and
 /// sums are nominal (registry name = type name). The generic-
@@ -83,21 +83,13 @@ pub(crate) struct EqHelperRegistry {
     /// first `(wasm_fn_idx, wasm_type_idx)` of its two steps: against the
     /// budget, then with memory.
     walks: Vec<(String, (u32, u32))>,
-    /// Slots of the remembered-pairs lookup, insert and clear, which follow
-    /// the walks when there are any.
-    memory: Option<(u32, u32)>,
+    /// The table of the remembered pairs, which follows the walks when there
+    /// are any.
+    table: Option<TableSlots>,
 }
 
 /// Steps a comparison takes before it starts again with memory.
 const WALK_BUDGET: i32 = 1024;
-/// Pairs of nodes found equal that a comparison with memory remembers.
-const WALK_MEMORY: u32 = 2;
-
-/// The remembered pairs: globals from `pairs` on, left and right in turn,
-/// most recent first.
-pub(crate) struct WalkGlobals {
-    pairs: u32,
-}
 
 fn eq_ref_type() -> wasm_encoder::ValType {
     wasm_encoder::ValType::Ref(wasm_encoder::RefType {
@@ -112,8 +104,8 @@ fn eq_ref_type() -> wasm_encoder::ValType {
 /// What the helpers of a comparison in steps call.
 struct Walks {
     walked: HashSet<String>,
-    /// The first of the lookup, insert and clear of the remembered pairs.
-    memory: u32,
+    /// The table of the remembered pairs.
+    table: TableSlots,
     /// The helper each type is compared by within a step against the
     /// budget, and within a step with memory.
     step_map: HashMap<String, u32>,
@@ -157,68 +149,6 @@ fn step_prologue(f: &mut Function, reflexive: bool) {
     f.instruction(&Instruction::I32Eqz);
     answer_if(f, Instruction::I32Const(-1));
     same_object(f, reflexive, Instruction::LocalGet(2));
-}
-
-/// A step with memory answers at once for a remembered pair.
-fn memory_prologue(f: &mut Function, walks: &Walks, reflexive: bool) {
-    same_object(f, reflexive, Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::Call(walks.memory));
-    answer_if(f, Instruction::I32Const(1));
-}
-
-/// A step with memory remembers a pair it found equal; leaves the answer.
-fn memory_epilogue(f: &mut Function, walks: &Walks, answer: u32) {
-    f.instruction(&Instruction::LocalTee(answer));
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::Call(walks.memory + 1));
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(answer));
-}
-
-/// The three helpers over the remembered pairs: lookup `(a, b) -> i32`,
-/// insert `(a, b)` as the most recent, and clear.
-fn emit_walk_memory(globals: &WalkGlobals) -> [Function; 3] {
-    let left = |i: u32| globals.pairs + 2 * i;
-    let mut lookup = Function::new(Vec::new());
-    for i in 0..WALK_MEMORY {
-        lookup.instruction(&Instruction::LocalGet(0));
-        lookup.instruction(&Instruction::GlobalGet(left(i)));
-        lookup.instruction(&Instruction::RefEq);
-        lookup.instruction(&Instruction::LocalGet(1));
-        lookup.instruction(&Instruction::GlobalGet(left(i) + 1));
-        lookup.instruction(&Instruction::RefEq);
-        lookup.instruction(&Instruction::I32And);
-        lookup.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-        lookup.instruction(&Instruction::I32Const(1));
-        lookup.instruction(&Instruction::Return);
-        lookup.instruction(&Instruction::End);
-    }
-    lookup.instruction(&Instruction::I32Const(0));
-    lookup.instruction(&Instruction::End);
-    let mut insert = Function::new(Vec::new());
-    for g in (2..2 * WALK_MEMORY).rev() {
-        insert.instruction(&Instruction::GlobalGet(globals.pairs + g - 2));
-        insert.instruction(&Instruction::GlobalSet(globals.pairs + g));
-    }
-    for side in 0..2 {
-        insert.instruction(&Instruction::LocalGet(side));
-        insert.instruction(&Instruction::GlobalSet(globals.pairs + side));
-    }
-    insert.instruction(&Instruction::End);
-    let mut clear = Function::new(Vec::new());
-    for g in 0..2 * WALK_MEMORY {
-        clear.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Abstract {
-            shared: false,
-            ty: wasm_encoder::AbstractHeapType::Eq,
-        }));
-        clear.instruction(&Instruction::GlobalSet(globals.pairs + g));
-    }
-    clear.instruction(&Instruction::End);
-    [lookup, insert, clear]
 }
 
 /// The registered helpers a field of type `field_ty` compares through:
@@ -597,9 +527,7 @@ impl EqHelperRegistry {
             slot();
         }
         if !self.walks.is_empty() {
-            self.memory = Some(slot());
-            slot();
-            slot();
+            self.table = Some(TableSlots::assign(Entry::Pair, next_fn_idx, next_type_idx));
         }
     }
 
@@ -641,34 +569,19 @@ impl EqHelperRegistry {
     pub(crate) fn function_types(&self) -> Vec<u32> {
         let mut out: Vec<u32> = self.order.iter().map(|n| self.slots[n].1).collect();
         out.extend(self.walks.iter().flat_map(|(_, (_, t))| [*t, t + 1]));
-        if let Some((_, t)) = self.memory {
-            out.extend([t, t + 1, t + 2]);
+        if let Some(table) = &self.table {
+            out.extend(table.function_types());
         }
         out
     }
 
-    /// Declares the remembered pairs when a helper walks.
+    /// Declares the table of the remembered pairs when a helper walks.
     pub(crate) fn emit_walk_globals(
         &self,
         globals: &mut wasm_encoder::GlobalSection,
         next_global_idx: &mut u32,
-    ) -> Option<WalkGlobals> {
-        self.memory?;
-        let pairs = *next_global_idx;
-        let null = wasm_encoder::ConstExpr::ref_null(wasm_encoder::HeapType::Abstract {
-            shared: false,
-            ty: wasm_encoder::AbstractHeapType::Eq,
-        });
-        for _ in 0..2 * WALK_MEMORY {
-            let ty = wasm_encoder::GlobalType {
-                val_type: eq_ref_type(),
-                mutable: true,
-                shared: false,
-            };
-            globals.global(ty, &null);
-            *next_global_idx += 1;
-        }
-        Some(WalkGlobals { pairs })
+    ) -> Option<TableGlobals> {
+        Some(self.table?.emit_globals(globals, next_global_idx))
     }
 
     pub(crate) fn lookup_fn_idx(&self, type_name: &str) -> Option<u32> {
@@ -692,12 +605,8 @@ impl EqHelperRegistry {
             types.ty().function([eq_ref, eq_ref, i32], [i32]);
             types.ty().function([eq_ref, eq_ref], [i32]);
         }
-        if self.memory.is_some() {
-            types
-                .ty()
-                .function([eq_ref, eq_ref], [wasm_encoder::ValType::I32]);
-            types.ty().function([eq_ref, eq_ref], []);
-            types.ty().function([], []);
+        if let Some(table) = &self.table {
+            table.emit_types(types);
         }
     }
 
@@ -711,7 +620,7 @@ impl EqHelperRegistry {
         registry: &TypeRegistry,
         string_eq_fn_idx: Option<u32>,
         compound_lookup: &HashMap<String, u32>,
-        walk_globals: Option<&WalkGlobals>,
+        walk_globals: Option<&TableGlobals>,
     ) -> Result<(), WasmGcError> {
         // Snapshot type_name → fn_idx so the inline emitters can
         // dispatch nested record/sum fields by `Call(idx)` instead
@@ -731,8 +640,8 @@ impl EqHelperRegistry {
         for (canonical, fn_idx) in compound_lookup {
             helper_idx_map.insert(canonical.clone(), *fn_idx);
         }
-        let walk_parts = match (self.memory, walk_globals) {
-            (Some((memory, _)), Some(globals)) => {
+        let walk_parts = match (self.table, walk_globals) {
+            (Some(table), Some(globals)) => {
                 let mut step_map = helper_idx_map.clone();
                 let mut memory_map = helper_idx_map.clone();
                 for (name, (step, _)) in &self.walks {
@@ -743,7 +652,7 @@ impl EqHelperRegistry {
                 Some((
                     Walks {
                         walked,
-                        memory,
+                        table,
                         step_map,
                         memory_map,
                     },
@@ -789,7 +698,7 @@ impl EqHelperRegistry {
                     )?;
                 }
             }
-            for f in emit_walk_memory(globals) {
+            for f in walks.table.emit_bodies(globals)? {
                 codes.function(&f);
             }
         }
@@ -806,7 +715,7 @@ impl EqHelperRegistry {
         helper_idx_map: &HashMap<String, u32>,
         body: Body,
     ) -> Result<(), WasmGcError> {
-        use super::super::lists::{BudgetFold, EqFold};
+        use super::super::lists::{BudgetFold, EqFold, RememberFold};
         let (map, params) = match body {
             Body::Plain => (helper_idx_map, 2),
             Body::Start(w) => (&w.step_map, 2),
@@ -816,8 +725,8 @@ impl EqHelperRegistry {
         let self_fn_idx = map.get(name).copied();
         let reflexive =
             !matches!(body, Body::Plain | Body::Start(_)) && self.reflexive(name, registry);
-        // The start keeps its budget, and a step with memory its answer, in
-        // one more local after the body's own.
+        // The start keeps its budget, and a step with memory the key of its
+        // node, in one more local after the body's own.
         let extra: Vec<_> = match body {
             Body::Start(_) | Body::Memory(_) => vec![(1, wasm_encoder::ValType::I32)],
             _ => Vec::new(),
@@ -829,14 +738,23 @@ impl EqHelperRegistry {
         };
         let extra_local = params + typed;
         let fold_budget;
+        let fold_memory;
         let fold = match body {
             Body::Plain => EqFold::And,
-            Body::Memory(_) => EqFold::FirstDifference,
+            Body::Memory(w) => {
+                fold_memory = RememberFold {
+                    lookup: w.table.lookup(),
+                    insert: w.table.insert(),
+                    key: extra_local,
+                    walked: &w.walked,
+                };
+                EqFold::Remember(&fold_memory)
+            }
             Body::Start(w) => {
                 fold_budget = BudgetFold {
                     budget: extra_local,
                     walked: &w.walked,
-                    restart: Some((w.memory_map[name], w.memory + 2)),
+                    restart: Some((w.memory_map[name], w.table.enter(), w.table.leave())),
                 };
                 EqFold::Budget(&fold_budget)
             }
@@ -856,12 +774,8 @@ impl EqHelperRegistry {
                 f.instruction(&Instruction::LocalSet(extra_local));
             }
             Body::Step(_) => step_prologue(f, reflexive),
-            Body::Memory(w) => memory_prologue(f, w, reflexive),
-        };
-        let epilogue = |f: &mut Function| {
-            if let Body::Memory(w) = body {
-                memory_epilogue(f, w, extra_local);
-            }
+            // A step with memory answers 1 for one object against itself.
+            Body::Memory(_) => same_object(f, reflexive, Instruction::I32Const(1)),
         };
         match kind {
             EqKind::Sum => {
@@ -881,7 +795,6 @@ impl EqHelperRegistry {
                     self_fn_idx,
                     fold,
                 )?;
-                epilogue(&mut f);
                 f.instruction(&Instruction::End);
                 codes.function(&f);
             }
@@ -921,7 +834,6 @@ impl EqHelperRegistry {
                     self_fn_idx,
                     fold,
                 )?;
-                epilogue(&mut f);
                 f.instruction(&Instruction::End);
                 codes.function(&f);
             }

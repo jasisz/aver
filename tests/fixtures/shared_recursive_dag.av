@@ -1,0 +1,94 @@
+module SharedRecursiveDag
+    intent =
+        "Fixture: values of recursive types in which each node of a level is"
+        "held by two of the level above, so a shared subterm comes back long"
+        "after it was first met; built twice apart, compared, and used as map"
+        "keys, as deep as the first argument says."
+    effects [Console.print, Args.get]
+
+type Tree
+    Leaf(Int)
+    Node(Int, Tree, Tree)
+
+type Bare
+    End(Int)
+    Fork(Bare, Bare)
+
+fn pick(trees: Vector<Tree>, i: Int) -> Tree
+    ? "Tree i of a level of twelve, counted round."
+    Option.withDefault(Vector.get(trees, Int.mod(i, 12)), Tree.Leaf(0))
+
+fn level(below: Vector<Tree>, n: Int, i: Int) -> List<Tree>
+    ? "Trees i to 11 of level n, each over two trees of the level below."
+    match i >= 12
+        true -> []
+        false -> List.prepend(Tree.Node(n, pick(below, i + 1), pick(below, i + 2)), level(below, n, i + 1))
+
+fn leaves(i: Int, last: Int) -> List<Tree>
+    ? "Leaves i to 11, the last one holding last."
+    match i >= 12
+        true -> []
+        false -> List.prepend(leaf(i, last), leaves(i + 1, last))
+
+fn leaf(i: Int, last: Int) -> Tree
+    ? "Leaf i, holding last when it is the last one."
+    match i == 11
+        true -> Tree.Leaf(last)
+        false -> Tree.Leaf(i)
+
+fn tower(n: Int, last: Int) -> Vector<Tree>
+    ? "The twelve trees of level n over leaves(0, last)."
+    match n <= 0
+        true -> Vector.fromList(leaves(0, last))
+        false -> Vector.fromList(level(tower(n - 1, last), n, 0))
+
+verify tower
+    pick(tower(1, 11), 0) => Tree.Node(1, Tree.Leaf(1), Tree.Leaf(2))
+
+fn bare(t: Tree) -> Bare
+    ? "The tree with the numbers of its nodes left out, one fork per node."
+    match t
+        Tree.Leaf(n) -> Bare.End(n)
+        Tree.Node(_, a, b) -> Bare.Fork(bare(a), bare(b))
+
+fn bareLevel(below: Vector<Bare>, i: Int) -> List<Bare>
+    ? "Forks i to 11 of a level, each over two forks of the level below."
+    match i >= 12
+        true -> []
+        false -> List.prepend(Bare.Fork(pickBare(below, i + 1), pickBare(below, i + 2)), bareLevel(below, i + 1))
+
+fn pickBare(forks: Vector<Bare>, i: Int) -> Bare
+    ? "Fork i of a level of twelve, counted round."
+    Option.withDefault(Vector.get(forks, Int.mod(i, 12)), Bare.End(0))
+
+fn bareTower(n: Int, last: Int) -> Vector<Bare>
+    ? "tower(n, last) without the numbers of its nodes, built level by level."
+    match n <= 0
+        true -> Vector.fromList([Bare.End(0), Bare.End(1), Bare.End(2), Bare.End(3), Bare.End(4), Bare.End(5), Bare.End(6), Bare.End(7), Bare.End(8), Bare.End(9), Bare.End(10), Bare.End(last)])
+        false -> Vector.fromList(bareLevel(bareTower(n - 1, last), 0))
+
+verify bareTower
+    pickBare(bareTower(2, 11), 3) => bare(pick(tower(2, 11), 3))
+
+fn depth() -> Int
+    ? "The first argument as a number, 12 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 12)
+        Option.None -> 12
+
+fn main() -> Unit
+    ! [Console.print, Args.get]
+    n = depth()
+    a = pick(tower(n, 11), 0)
+    b = pick(tower(n, 11), 0)
+    c = pick(tower(n, 12), 0)
+    Console.print("tower {a == b} {a == c}")
+    trees = Map.fromList([(a, 1), (pick(tower(n, 11), 1), 2)])
+    Console.print("tower keys {Map.len(trees)} {Option.withDefault(Map.get(trees, b), 0)} {Map.has(trees, c)}")
+    x = pickBare(bareTower(n, 11), 0)
+    y = pickBare(bareTower(n, 11), 0)
+    z = pickBare(bareTower(n, 12), 0)
+    Console.print("bare {x == y} {x == z}")
+    forks = Map.fromList([(x, 1), (pickBare(bareTower(n, 11), 1), 2)])
+    Console.print("bare keys {Map.len(forks)} {Option.withDefault(Map.get(forks, y), 0)} {Map.has(forks, z)}")

@@ -1701,6 +1701,28 @@ fn shared_recursive_sum_equality_ends_on_wasm_gc() {
     assert_eq!(run_within(source, &["--wasm-gc"], &["64"], minute), shallow);
 }
 
+/// What the fixture of values whose shared subterms come back long after
+/// they were first met prints, at any depth from 12 on.
+const SHARED_DAG_OUT: &str =
+    "tower true false\ntower keys 2 1 false\nbare true false\nbare keys 2 1 false";
+
+/// `==` and map keys of values in which each node of a level is held by two
+/// of the level above, so that a shared pair comes back after many others:
+/// wasm-gc remembers every pair, not the last few, and answers as the VM at
+/// 12 levels and at 64, where the unfolded tree would not end.
+#[test]
+fn shared_recursive_dag_costs_the_graph_on_wasm_gc() {
+    let source = include_str!("fixtures/shared_recursive_dag.av");
+    let minute = std::time::Duration::from_secs(60);
+    assert_eq!(run_within(source, &[], &["12"], minute), SHARED_DAG_OUT);
+    for depth in ["12", "64"] {
+        assert_eq!(
+            run_within(source, &["--wasm-gc"], &[depth], minute),
+            SHARED_DAG_OUT
+        );
+    }
+}
+
 #[test]
 fn cross_nan_equality_vm() {
     assert_eq_with_label(
