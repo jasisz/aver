@@ -92,17 +92,18 @@ pub(super) use versions::{emit_no_diff, emit_reroot_local};
 /// with `cap-1` instead of `i32.rem_u` works, and every doubling keeps it
 /// one.
 ///
-/// The first insert into the shared empty map makes them. Sixteen
-/// buckets hold twelve entries before the first doubling. Doubling
-/// makes the total cost of reaching `n` entries linear in `n`, so
-/// starting small costs a few extra rehashes early and nothing after
-/// that.
+/// The first insert into the shared empty map makes them. Four buckets
+/// hold three entries before the first doubling, and most maps never
+/// get further: sixteen made each of them allocate four times the
+/// slots it used. Doubling makes the total cost of reaching `n` entries
+/// linear in `n`, so starting small costs a larger map two rehashes of
+/// three and six entries and nothing after that.
 ///
 /// Shared with the three places that inline a fresh header map instead
 /// of calling the `empty` helper: `wasip2_http`, `wasip2_http_handler`
 /// and `body::builtins_wasip2`. They used to carry their own copy of the
 /// number with a comment saying it had to match this one.
-pub(super) const INITIAL_CAP: i32 = 16;
+pub(super) const INITIAL_CAP: i32 = 4;
 
 /// Bucket count of the shared empty map: one bucket, which stays null.
 ///
