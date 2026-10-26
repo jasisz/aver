@@ -6439,16 +6439,10 @@ pub(super) fn emit_module_with(
 
 /// Whether `mir_fn` computes its `Int` trees on `i64` first
 /// (`body/from_mir/int_tree.rs`); `extra` are its locals emitted without
-/// them. Two kinds of fn keep the ordinary lowering, so a certificate reads
-/// the bytes it reads without trees:
-/// - one the certificate plan printer admits: the checker lowers the printed
-///   plan the ordinary way and compares it with the code (the rule
-///   `ir::cert_shape` keeps for the fabricating passes);
-/// - one taking two `Int`s to an `Int`: the checker finds the runtime's `Int`
-///   add, sub and mul helpers as the fns of that type whose first machine
-///   arithmetic is an add, a sub or a mul, so such a user fn computing on
-///   `i64` would pass for a second helper and no module holding it could be
-///   certified.
+/// them. A fn the certificate plan printer admits keeps the ordinary
+/// lowering, so a certificate reads the bytes it reads without trees: the
+/// checker lowers the printed plan the ordinary way and compares it with the
+/// code (the rule `ir::cert_shape` keeps for the fabricating passes).
 fn int_trees_allowed(
     mir_fn: &crate::ir::mir::MirFn,
     rfd: &crate::ir::hir::ResolvedFnDef,
@@ -6456,13 +6450,8 @@ fn int_trees_allowed(
     layout: &super::cert_layout::CertLayout<'_>,
     types: &mut crate::codegen::cert::TypeTableBuilder,
 ) -> bool {
-    let is_int = |t: &crate::types::Type| matches!(t, crate::types::Type::Int);
-    let int_binop_type = rfd.params.len() == 2
-        && rfd.params.iter().all(|(_, t)| is_int(t))
-        && is_int(&rfd.return_type);
     layout.registry.bignum
         && std::env::var_os("AVER_NO_INT_TREE").is_none()
-        && !int_binop_type
         && crate::codegen::cert::print_fn(mir_fn, rfd, extra, layout, types).is_err()
 }
 
