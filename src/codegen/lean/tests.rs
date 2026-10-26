@@ -136,6 +136,7 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
             // table since the FnKey → FnId migration).
             run_build_symbols: true,
             dep_modules: &[],
+            indexed_wrappers: &Default::default(),
             plans_root: None,
             proof_command: false,
             alloc_policy: None,

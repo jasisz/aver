@@ -89,19 +89,32 @@ pub fn run_string_index_pass(items: &mut Vec<TopLevel>) -> StringIndexPassReport
 /// the wrapper build another. Read off the lowered dependency items, so a
 /// door whose dependencies grew no workers simply finds none.
 pub fn foreign_indexed_wrappers(modules: &[crate::codegen::ModuleInfo]) -> BTreeMap<String, usize> {
-    let mut out = BTreeMap::new();
-    for module in modules {
-        for fd in &module.fn_defs {
-            let Some(index) = wrapper_string_param(fd) else {
-                continue;
-            };
+    modules
+        .iter()
+        .flat_map(|module| indexed_wrappers_in(&module.prefix, &module.fn_defs))
+        .collect()
+}
+
+/// [`foreign_indexed_wrappers`] of one lowered module, named `prefix`.
+pub fn indexed_wrappers_in<'a>(
+    prefix: &str,
+    fn_defs: impl IntoIterator<Item = &'a FnDef> + Clone,
+) -> BTreeMap<String, usize> {
+    let names: HashSet<&str> = fn_defs
+        .clone()
+        .into_iter()
+        .map(|fd| fd.name.as_str())
+        .collect();
+    fn_defs
+        .into_iter()
+        .filter_map(|fd| {
+            let index = wrapper_string_param(fd)?;
             let worker = format!("{}{WORKER_SUFFIX}", fd.name);
-            if module.fn_defs.iter().any(|w| w.name == worker) {
-                out.insert(format!("{}.{}", module.prefix, fd.name), index);
-            }
-        }
-    }
-    out
+            names
+                .contains(worker.as_str())
+                .then(|| (format!("{prefix}.{}", fd.name), index))
+        })
+        .collect()
 }
 
 /// The wrapper an indexed worker stands behind, when `name` is one. The

@@ -175,6 +175,7 @@ fn adopt_deforestation_if_symbols_agree(
     dep_name: &str,
     pristine: Vec<TopLevel>,
     entry_symbols: &SymbolTable,
+    indexed_wrappers: &std::collections::BTreeMap<String, usize>,
 ) -> Vec<TopLevel> {
     // Detection is read-only, so ask it first: most dep modules hold
     // neither shape, and this keeps the common case from copying a
@@ -224,7 +225,11 @@ fn adopt_deforestation_if_symbols_agree(
     }
 
     let mut candidate = lowered.clone();
-    let report = crate::ir::pipeline::string_index(&mut candidate);
+    let report = crate::ir::run_string_index_pass_keeping(
+        &mut candidate,
+        &Default::default(),
+        indexed_wrappers,
+    );
     if !report.synthesized.is_empty() && every_variant_known(&report.synthesized) {
         lowered = candidate;
     }
@@ -554,6 +559,11 @@ struct ProgramCompiler {
     /// dependency's bindings are not the entry's, so they never enter
     /// `global_names` under a bare name.
     dep_global_view: Option<HashMap<String, u16>>,
+    /// The indexed wrappers of the dependencies integrated so far, so a
+    /// later one's workers pass them the index they hold (see
+    /// [`crate::ir::foreign_indexed_wrappers`]); dependencies come leaves
+    /// first.
+    indexed_wrappers: std::collections::BTreeMap<String, usize>,
 }
 
 impl ProgramCompiler {
@@ -567,6 +577,7 @@ impl ProgramCompiler {
             required_capability_operations: std::collections::BTreeSet::new(),
             process_verify_drivers: std::collections::HashSet::new(),
             dep_global_view: None,
+            indexed_wrappers: std::collections::BTreeMap::new(),
         };
         // bootstrap into a fresh `VmSymbolTable` populates well-known
         // builtins / wrappers / namespaces; nothing it inserts can
@@ -697,7 +708,19 @@ impl ProgramCompiler {
         // saw (TCO rewrites tail calls; the slot resolver allocates
         // local slots both passes rely on).
         crate::ir::pipeline::tco(&mut mod_items);
-        mod_items = adopt_deforestation_if_symbols_agree(dep_name, mod_items, entry_symbols);
+        mod_items = adopt_deforestation_if_symbols_agree(
+            dep_name,
+            mod_items,
+            entry_symbols,
+            &self.indexed_wrappers,
+        );
+        self.indexed_wrappers.extend(crate::ir::indexed_wrappers_in(
+            dep_name,
+            mod_items.iter().filter_map(|item| match item {
+                TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            }),
+        ));
         crate::ir::pipeline::resolve_and_reannotate(&mut mod_items);
 
         // Dependency types use qualified canonical keys. Their bare display

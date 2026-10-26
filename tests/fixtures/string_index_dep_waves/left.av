@@ -1,0 +1,21 @@
+module Left
+    intent = "Collects quoted tokens, letting Scan find each closing quote."
+    depends [Scan]
+    exposes [tokens]
+
+fn tokens(s: String, i: Int, acc: List<String>) -> List<String>
+    ? "The quoted tokens of s from position i on."
+    match String.charAt(s, i)
+        Option.None -> List.reverse(acc)
+        Option.Some("\"") -> token(s, i + 1, Scan.skipTo(i + 1, s), acc)
+        Option.Some(_) -> tokens(s, i + 1, acc)
+
+verify tokens
+    tokens("x\"ab\"y", 0, []) => ["ab"]
+
+fn token(s: String, start: Int, end: Int, acc: List<String>) -> List<String>
+    ? "Keeps one token and walks on past its closing quote."
+    tokens(s, end + 1, List.prepend(String.slice(s, start, end), acc))
+
+verify token
+    token("\"ab\"", 1, 3, []) => ["ab"]

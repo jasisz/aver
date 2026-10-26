@@ -1,0 +1,31 @@
+module Right
+    intent = "Sums positions Scan finds: in the String walked, in a slice of it, and in a String that shrinks every step."
+    depends [Scan]
+    exposes [quoteEnds, tailEnds, shrinking]
+
+fn quoteEnds(s: String, i: Int, acc: Int) -> Int
+    ? "Sums, over every position, where the next quote is."
+    match String.charAt(s, i)
+        Option.None -> acc
+        Option.Some(_) -> quoteEnds(s, i + 1, acc + Scan.skipTo(i, s))
+
+verify quoteEnds
+    quoteEnds("a\"", 0, 0) => 2
+
+fn tailEnds(s: String, i: Int, acc: Int) -> Int
+    ? "Sums, over every position, where the next quote is in the rest of s, which is a String of its own."
+    match String.charAt(s, i)
+        Option.None -> acc
+        Option.Some(_) -> tailEnds(s, i + 1, acc + Scan.skipTo(0, String.slice(s, i, String.len(s))))
+
+verify tailEnds
+    tailEnds("a\"", 0, 0) => 1
+
+fn shrinking(s: String, acc: Int) -> Int
+    ? "Sums where the first quote is while dropping the first character every step."
+    match String.charAt(s, 0)
+        Option.None -> acc
+        Option.Some(_) -> shrinking(String.slice(s, 1, String.len(s)), acc + Scan.skipTo(0, s))
+
+verify shrinking
+    shrinking("a\"", 0) => 1

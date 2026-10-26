@@ -325,6 +325,11 @@ pub struct PipelineConfig<'a> {
     /// the pipeline. Empty slice when the source is single-file or
     /// when no dep needs proof-side analysis.
     pub dep_modules: &'a [crate::codegen::ModuleInfo],
+    /// Indexed wrappers of other modules beyond those `dep_modules` carries,
+    /// by dotted name (see [`crate::ir::foreign_indexed_wrappers`]). A
+    /// dependency is prepared without its own dependencies' modules, so its
+    /// preparation hands it their wrappers this way.
+    pub indexed_wrappers: &'a std::collections::BTreeMap<String, usize>,
     /// The project's module root, where a law's `by Module.plan` finds its
     /// plans module. `None` leaves every law with a `by` line open.
     pub plans_root: Option<&'a str>,
@@ -344,6 +349,9 @@ pub struct PipelineConfig<'a> {
     /// Hook fired after every stage that ran.
     pub on_after_pass: Option<AfterPassHook<'a>>,
 }
+
+static NO_INDEXED_WRAPPERS: std::collections::BTreeMap<String, usize> =
+    std::collections::BTreeMap::new();
 
 impl<'a> Default for PipelineConfig<'a> {
     fn default() -> Self {
@@ -372,6 +380,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_law_lower: false,
             run_build_symbols: false,
             dep_modules: &[],
+            indexed_wrappers: &NO_INDEXED_WRAPPERS,
             plans_root: None,
             proof_command: false,
             alloc_policy: None,
@@ -1442,7 +1451,12 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         // A kept classifier still grows the `__code` variant chars fusion
         // would have given it; without chars fusion there is none to match.
         // Workers the dependencies grew can take this module's index.
-        let foreign = crate::ir::foreign_indexed_wrappers(cfg.dep_modules);
+        let mut foreign = crate::ir::foreign_indexed_wrappers(cfg.dep_modules);
+        foreign.extend(
+            cfg.indexed_wrappers
+                .iter()
+                .map(|(wrapper, param)| (wrapper.clone(), *param)),
+        );
         let none = std::collections::HashSet::new();
         let kept_here = if cfg.run_chars_fusion { &kept } else { &none };
         let report = crate::ir::run_string_index_pass_keeping(items, kept_here, &foreign);

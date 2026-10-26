@@ -1,0 +1,10 @@
+module Main
+    intent = "Two modules that walk a String by position, each handing it to a helper of a third module they share."
+    depends [Left, Right]
+
+fn main() -> Unit
+    ? "Prints what both walkers find, on text with multibyte characters and on plain ASCII."
+    ! [Console.print]
+    Console.print(String.join(Left.tokens("é\"ab\"x\"😀ą\"\"\"\"tail", 0, []), "|"))
+    Console.print(String.join(Left.tokens("a\"bc\"d", 0, []), "|"))
+    Console.print("{Right.quoteEnds("ż\"ó\"ł", 0, 0)} {Right.tailEnds("ż\"ó\"ł", 0, 0)} {Right.shrinking("\"ab\"ł", 0)}")

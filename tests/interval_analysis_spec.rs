@@ -47,6 +47,7 @@ fn analyze_src(src: &str) -> IntervalAnalysisResult {
             run_law_lower: false,
             run_build_symbols: true,
             dep_modules: &[],
+            indexed_wrappers: &Default::default(),
             plans_root: None,
             proof_command: false,
             alloc_policy: None,
