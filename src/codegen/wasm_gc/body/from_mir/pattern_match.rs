@@ -3,6 +3,7 @@
 //! `emit_match` and its per-shape helpers in `super::super::emit`.
 
 use super::*;
+use crate::codegen::wasm_gc::twins::TwinKind;
 use crate::ir::mir::LocalId;
 
 /// ETAP-2 SLICE 2b: the raw-result colour an arm body must carry, derived
@@ -198,6 +199,18 @@ pub(crate) fn emit_mir_match(
     // `emit_match` checks Result before Option; mirror that order. An
     // Option match whose subject is `Map.get(m, k)` takes `emit_match`'s
     // fused (no-Option-alloc) path — defer that optimization, fall back.
+    if let Some((call, twin)) = super::twin::callee(&m.subject, ctx)
+        && matches!(twin.kind, TwinKind::Fields { .. })
+        && m.arms
+            .iter()
+            .any(|a| arm_is_mir_result_ctor(a) || arm_is_mir_option_ctor(a))
+        && !m
+            .arms
+            .iter()
+            .any(|a| matches!(a.pattern, MirPattern::Bind(..)))
+    {
+        return Ok(emit_twin_match(func, m, block_ty, call, &twin, slots, ctx)?.map(|()| produces));
+    }
     if m.arms.iter().any(arm_is_mir_result_ctor) {
         return Ok(emit_mir_result_match(func, m, block_ty, slots, ctx)?.map(|()| produces));
     }
@@ -1069,6 +1082,68 @@ fn emit_mir_tuple_constructor_arm_cascade(
         }
         _ => return Ok(None),
     }
+    Ok(Some(()))
+}
+
+/// A match on the `Option` or `Result` a twin hands back as its fields
+/// (`wasm_gc::twins`): the payloads go to the arms' bindings, the tag picks
+/// the arm, and no struct is made. As `emit_mir_map_get_match_fused`, the
+/// payloads are popped before the branch, so the stack balances across it.
+fn emit_twin_match(
+    func: &mut Function,
+    m: &MirMatch,
+    block_ty: wasm_encoder::BlockType,
+    call: &crate::ir::mir::MirCall,
+    twin: &crate::codegen::wasm_gc::twins::TwinEntry,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let result = m.arms.iter().any(arm_is_mir_result_ctor);
+    let (yes, no) = if result {
+        (BuiltinCtor::ResultOk, BuiltinCtor::ResultErr)
+    } else {
+        (BuiltinCtor::OptionSome, BuiltinCtor::OptionNone)
+    };
+    // Each constructor's arm, a wildcard standing in for a missing one.
+    let arm = |c: BuiltinCtor| {
+        m.arms.iter().find(|a| match &a.pattern {
+            MirPattern::Ctor {
+                ctor: MirCtor::Builtin(x),
+                ..
+            } => *x == c,
+            p => matches!(p, MirPattern::Wildcard),
+        })
+    };
+    let (Some(first), Some(second)) = (arm(yes), arm(no)) else {
+        return unsupported("a match on a twin's result without both its arms");
+    };
+    if super::twin::emit_call(func, call, twin, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    // Stack: tag, the `Ok`/`Some` payload, the `Err` payload. The tag of
+    // `Ok` and `Some` is 1, so it picks the arm as it is.
+    for arm in if result {
+        vec![second, first]
+    } else {
+        vec![first]
+    } {
+        func.instruction(&match ctor_arm_binding_slot(arm) {
+            Some(slot) => Instruction::LocalSet(slot),
+            None => Instruction::Drop,
+        });
+    }
+    const _: () = assert!(RESULT_OK_TAG == 1 && OPTION_SOME_TAG == 1);
+    func.instruction(&Instruction::If(block_ty));
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
+    if emit_mir_expr(func, &first.body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::Else);
+    ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
+    if emit_mir_expr(func, &second.body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::End);
     Ok(Some(()))
 }
 

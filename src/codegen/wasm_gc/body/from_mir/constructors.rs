@@ -105,7 +105,7 @@ pub(crate) fn emit_mir_option_constructor(
             emit_default_value(func, inner_ty, ctx.registry)?;
         }
     }
-    func.instruction(&Instruction::StructNew(opt_idx));
+    super::twin::struct_new(func, opt_idx);
     Ok(Some(()))
 }
 
@@ -214,7 +214,7 @@ pub(crate) fn emit_mir_result_constructor(
             return Ok(None);
         }
     }
-    func.instruction(&Instruction::StructNew(res_idx));
+    super::twin::struct_new(func, res_idx);
     Ok(Some(()))
 }
 

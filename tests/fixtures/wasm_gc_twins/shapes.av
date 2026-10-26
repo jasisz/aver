@@ -1,0 +1,173 @@
+module M
+    intent = "Twins on wasm-gc: results and Int params unpacked across calls agree with the VM."
+    exposes opaque [Word]
+    effects [Console]
+
+record Word
+    value: Int
+
+record Span
+    value: Int
+    end: Int
+
+record Holder
+    span: Span
+    tag: Int
+
+type Term
+    Leaf(Int)
+    Node(Word, Term, Term)
+
+fn wordOf(n: Int) -> Result<Word, String>
+    ? "A word below 2^40."
+    match Bool.and(n >= 0, n < 1099511627776)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+fn mix(a: Int, b: Int) -> Int
+    ? "A hash step: computed on the machine word, Big when an input is."
+    Int.mod(a * 1000003 + b, 2147483647)
+
+fn grow(a: Int, b: Int) -> Int
+    ? "A product that leaves the machine word for large inputs."
+    a * b + 1
+
+fn same(a: Int) -> Int
+    ? "Hands its param back."
+    a
+
+fn small() -> Int
+    ? "A literal result."
+    7
+
+fn trace(n: Int) -> Int
+    ? "Prints its argument and returns it, to see each argument run once, in order."
+    ! [Console.print]
+    Console.print("arg {n}")
+    n
+
+fn three(a: Int, b: Int, c: Int) -> Int
+    ? "Three Int params, any of which may be Big."
+    a * 100 + b * 10 + c
+
+fn sum(xs: List<Int>, acc: Int) -> Int
+    ? "A self tail call with an Int accumulator."
+    match xs
+        [] -> acc
+        [x, ..rest] -> sum(rest, mix(acc, x) + acc)
+
+fn evens(xs: List<Int>, acc: Int) -> Int
+    ? "A mutual tail group: even positions."
+    match xs
+        [] -> acc
+        [x, ..rest] -> odds(rest, acc * 3 + x)
+
+fn odds(xs: List<Int>, acc: Int) -> Int
+    ? "A mutual tail group: odd positions."
+    match xs
+        [] -> acc
+        [x, ..rest] -> evens(rest, acc - x)
+
+fn countdown(n: Int, acc: Int) -> Int
+    ? "A long self tail call: the stack must not grow."
+    match n == 0
+        true -> acc
+        false -> countdown(n - 1, acc + n)
+
+fn find(xs: List<Int>, n: Int) -> Option<Int>
+    ? "An Option result taken apart by the caller."
+    match xs
+        [] -> Option.None
+        [x, ..rest] -> match x == n
+            true -> Option.Some(x * 2)
+            false -> find(rest, n)
+
+fn span(a: Int, b: Int) -> Span
+    ? "A record result."
+    Span(value = a * 2, end = b + 1)
+
+fn packed(t: Term) -> Option<Word>
+    ? "An Option of a carrier."
+    match t
+        Term.Node(w, _, _) -> Option.Some(w)
+        _ -> Option.None
+
+fn hashOf(t: Term) -> Int
+    ? "Reads the packed word or computes a leaf's."
+    match packed(t)
+        Option.Some(w) -> Int.div(w.value, 1024)
+        Option.None -> leafHash(t)
+
+fn leafHash(t: Term) -> Int
+    ? "A leaf's hash."
+    match t
+        Term.Leaf(i) -> mix(1, i)
+        _ -> 0
+
+fn node(a: Term, b: Term) -> Term
+    ? "A node over two parts."
+    match wordOf(Int.mod(mix(hashOf(a), hashOf(b)), 1048576) * 1024 + 3)
+        Result.Ok(w) -> Term.Node(w, a, b)
+        Result.Err(_) -> a
+
+fn build(d: Int, i: Int) -> Term
+    ? "A small tree."
+    match d == 0
+        true -> Term.Leaf(i)
+        false -> node(build(d - 1, i * 2), build(d - 1, i * 2 + 1))
+
+fn walk(t: Term, depth: Int) -> Int
+    ? "Hashes over a tree, Int results taken apart at once."
+    match t
+        Term.Node(_, a, b) -> mix(walk(a, depth + 1), walk(b, depth + 1)) + depth
+        _ -> hashOf(t) + depth
+
+fn apply(f: Fn(Int, Int) -> Int, a: Int, b: Int) -> Int
+    ? "Calls a function value."
+    f(a, b)
+
+fn checked(n: Int) -> Result<Int, String>
+    ? "A Result of an Int."
+    match n < 0
+        true -> Result.Err("negative {n}")
+        false -> Result.Ok(n + 1)
+
+fn twice(n: Int) -> Result<Int, String>
+    ? "Takes a Result apart with ?."
+    a = checked(n)?
+    checked(a)
+
+fn idx(s: String, i: Int) -> String
+    ? "An Int param read as a string position."
+    Option.withDefault(String.charAt(s, i + 1), "-")
+
+fn unit(u: Unit, n: Int) -> Int
+    ? "A Unit param before an Int one."
+    n + 2
+
+fn main() -> Unit
+    ? "Prints every shape."
+    ! [Console.print]
+    big = 9223372036854775807 * 4
+    min = -9223372036854775807 - 1
+    Console.print("mix {mix(3, 4)} {mix(big, 5)} {mix(5, big)} {mix(min, min)}")
+    Console.print("grow {grow(3, 4)} {grow(4294967296, 4294967296)} {grow(big, 2)} {grow(min, 1)} {grow(min, -1)}")
+    Console.print("same {same(5)} {same(big)} {same(min)} {same(grow(4294967296, 4294967296))}")
+    Console.print("lit {small() + 1} {mix(small(), small())}")
+    Console.print("three {three(1, 2, 3)} {three(big, 2, 3)} {three(1, big, 3)} {three(1, 2, big)} {three(big, big, big)}")
+    Console.print("nested {three(mix(big, 1), grow(big, big), three(big, 1, min))}")
+    Console.print("order {three(trace(1), trace(2), trace(3))}")
+    Console.print("sum {sum([1, 2, 3, 4], 0)} {sum([1, 2, 3], big)} {sum([big, 1], 1)}")
+    Console.print("group {evens([1, 2, 3, 4, 5], 0)} {evens([1, 2], big)} {odds([big, big], min)}")
+    Console.print("countdown {countdown(1000000, 0)} {countdown(3, big)}")
+    Console.print("find {Option.withDefault(find([1, 2, 3], 2), -1)} {Option.withDefault(find([1, 2, 3], 9), -1)} {Option.withDefault(find([big], big), -1)}")
+    s = span(3, big)
+    h = Holder(span = span(4, 5), tag = 1)
+    Console.print("span {s.value} {s.end} {h.span.value} {h.span.end} {span(big, 1).value}")
+    t = build(6, 1)
+    Console.print("walk {walk(t, 0)} {walk(t, big)} {hashOf(t)} {hashOf(Term.Leaf(big))}")
+    Console.print("fn {apply(mix, 3, 4)} {apply(grow, big, 2)}")
+    Console.print("result {Result.withDefault(twice(3), 0)} {Result.withDefault(twice(-5), 0)} {Result.withDefault(twice(big), 0)}")
+    Console.print("idx {idx("abc", 0)} {idx("abc", big)} {idx("abc", min)} {idx("abc", -1)}")
+    u = Console.print("unit")
+    Console.print("unit {unit(u, 5)} {unit(u, big)}")
