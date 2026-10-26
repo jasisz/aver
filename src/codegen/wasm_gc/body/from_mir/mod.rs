@@ -808,6 +808,12 @@ pub(crate) fn emit_mir_expr(
             let Some(produces) = emit_mir_expr(func, inner, slots, ctx)? else {
                 return Ok(None);
             };
+            // A twin returns its result unpacked.
+            if let Some(kind) = twin::self_kind()
+                && produces
+            {
+                twin::unpack_result(func, &kind, slots, ctx);
+            }
             func.instruction(&Instruction::Return);
             Ok(Some(produces))
         }
@@ -1566,7 +1572,10 @@ pub(crate) fn emit_mir_expr(
             // Mirror of `emit_expr`'s `Ctor` arm. A constructor always
             // produces a value (never `Unit`).
             let con = &spanned_ctor.node;
-            if matches!(twin::tail_kind(expr), Some(TwinKind::Fields { .. })) {
+            // A twin's own result returns instead of being built; a nested
+            // constructor leaves the mark alone.
+            let returned = matches!(twin::tail_kind(expr), Some(TwinKind::Fields { .. }));
+            if returned {
                 twin::return_struct_here();
             }
             let covered = match con.ctor {
@@ -1620,7 +1629,9 @@ pub(crate) fn emit_mir_expr(
                     emit_mir_constructor_with_args(func, info, &con.args, slots, ctx)?
                 }
             };
-            twin::clear_return();
+            if returned {
+                twin::clear_return();
+            }
             match covered {
                 Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
                 None => Err(WasmGcError::Validation(format!(

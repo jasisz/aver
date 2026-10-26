@@ -23,8 +23,8 @@
 //! apart at once, or has an `Int` argument on a machine word, calls the twin;
 //! a fn no caller would call so gets none. A twin's tail calls go to the
 //! twins of their targets, so a tail group keeps running without the stack
-//! growing. A fn with `?`, `?!` or an early `return` gets no twin: those
-//! return the packed value.
+//! growing. A `?`, `?!` or early `return` in a twin returns its result
+//! unpacked too, and a `?` on a twin's `Result` takes it apart unpacked.
 //!
 //! A `--certify` build keeps the bytes of every function the certificate plan
 //! printer may print: such a function gets no twin
@@ -142,19 +142,6 @@ pub(crate) fn tails<'a>(
         }
         _ => out.push(e),
     }
-}
-
-/// Whether `e` contains a node that returns from the function on its own
-/// (`?`, `?!`, an early `return`): those return the packed value.
-fn returns_early(e: &MirExpr) -> bool {
-    let mut found = matches!(
-        e,
-        MirExpr::Try(_) | MirExpr::Return(_) | MirExpr::IndependentProduct(_)
-    );
-    if !found {
-        crate::ir::mir::expr::walk_children(e, &mut |c| found |= returns_early(c));
-    }
-    found
 }
 
 fn tail_targets(e: &MirExpr, out: &mut Vec<FnId>) {
@@ -307,6 +294,7 @@ impl Caller<'_> {
                 }
             }
             MirExpr::Neg(x) | MirExpr::Unbox(x) => self.visit(&x.node, Use::Word, out),
+            MirExpr::Try(x) => self.visit(&x.node, Use::Subject, out),
             MirExpr::Let(l) => {
                 self.visit(&l.node.value.node, Use::Other, out);
                 self.visit(&l.node.body.node, used, out);
@@ -355,7 +343,6 @@ pub(super) fn plan(
         if fd.name == "main"
             || mf.repr.bare_return
             || (certify && crate::ir::cert_shape::printer_may_admit(fd))
-            || returns_early(&mf.body.node)
         {
             continue;
         }

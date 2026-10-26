@@ -137,6 +137,41 @@ fn twice(n: Int) -> Result<Int, String>
     a = checked(n)?
     checked(a)
 
+fn deeper(n: Int) -> Result<Int, String>
+    ? "A ? chain through twins; the Ok payload is Big for a Big input."
+    a = checked(n)?
+    b = checked(a * 3)?
+    Result.Ok(a + b)
+
+fn walkOk(xs: List<Int>, acc: Int) -> Result<Int, String>
+    ? "A ? in a self tail-recursive loop."
+    match xs
+        [] -> Result.Ok(acc)
+        [x, ..rest] -> walkStep(x, rest, acc)
+
+fn walkStep(x: Int, rest: List<Int>, acc: Int) -> Result<Int, String>
+    ? "One step of walkOk: a ?, then the tail call back."
+    y = checked(x)?
+    walkOk(rest, acc + y)
+
+fn pair(a: Int, b: Int) -> Result<Int, String>
+    ? "A ?! over two twin results."
+    data = (checked(a), deeper(b))?!
+    match data
+        (x, y) -> Result.Ok(x * y)
+
+fn upto(n: Int, acc: List<Int>) -> List<Int>
+    ? "1..n."
+    match n == 0
+        true -> acc
+        false -> upto(n - 1, List.prepend(n, acc))
+
+fn shown(r: Result<Int, String>) -> String
+    ? "A Result as text."
+    match r
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(e) -> "err {e}"
+
 fn idx(s: String, i: Int) -> String
     ? "An Int param read as a string position."
     Option.withDefault(String.charAt(s, i + 1), "-")
@@ -168,6 +203,8 @@ fn main() -> Unit
     Console.print("walk {walk(t, 0)} {walk(t, big)} {hashOf(t)} {hashOf(Term.Leaf(big))}")
     Console.print("fn {apply(mix, 3, 4)} {apply(grow, big, 2)}")
     Console.print("result {Result.withDefault(twice(3), 0)} {Result.withDefault(twice(-5), 0)} {Result.withDefault(twice(big), 0)}")
+    Console.print("try {shown(deeper(3))} {shown(deeper(-1))} {shown(deeper(big))} {shown(walkOk([1, 2, 3], 0))} {shown(walkOk([1, -2, 3], 0))} {shown(walkOk([big, 1], big))} {shown(walkOk(upto(200000, []), 0))}")
+    Console.print("both {shown(pair(2, 3))} {shown(pair(-1, 3))} {shown(pair(2, -3))} {shown(pair(big, big))}")
     Console.print("idx {idx("abc", 0)} {idx("abc", big)} {idx("abc", min)} {idx("abc", -1)}")
     u = Console.print("unit")
     Console.print("unit {unit(u, 5)} {unit(u, big)}")
