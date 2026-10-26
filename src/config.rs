@@ -2804,7 +2804,10 @@ helpers = 30
         assert_eq!(chosen.rust.intern, ["Core.Exprs.Expr", "Level"]);
         for wrong in ["intern = \"Expr\"", "intern = [1]"] {
             let refused = ProjectConfig::parse(&format!("[rust]\n{wrong}\n")).unwrap_err();
-            assert!(refused.contains("[rust].intern must be a list of type names"), "{refused}");
+            assert!(
+                refused.contains("[rust].intern must be a list of type names"),
+                "{refused}"
+            );
         }
     }
 

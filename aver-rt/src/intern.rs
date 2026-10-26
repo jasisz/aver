@@ -75,7 +75,8 @@ impl<T: Canon> Canon for Option<T> {
 
     #[inline]
     fn canon_hash(&self) -> u64 {
-        self.as_ref().map_or(0, |value| value.canon_hash().rotate_left(1))
+        self.as_ref()
+            .map_or(0, |value| value.canon_hash().rotate_left(1))
     }
 
     #[inline]

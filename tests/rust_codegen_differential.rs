@@ -573,8 +573,11 @@ fn interned_sums_match_vm() {
             for source in sources {
                 fs::copy(&source, copy.join(source.file_name().unwrap())).expect("copy fixture");
             }
-            fs::write(copy.join("aver.toml"), format!("[rust]\nintern = {intern}\n"))
-                .expect("write aver.toml");
+            fs::write(
+                copy.join("aver.toml"),
+                format!("[rust]\nintern = {intern}\n"),
+            )
+            .expect("write aver.toml");
             let name = format!("interned_{i}");
             let project = ws.join(format!("{name}_project"));
             let entry = copy.join(file.file_name().unwrap());

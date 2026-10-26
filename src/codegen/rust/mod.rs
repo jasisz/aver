@@ -3252,10 +3252,15 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
             Err(why) => why,
         };
         let unknown = refused("Terms");
-        assert!(unknown.contains("`Terms` is not a type of this program"), "{unknown}");
+        assert!(
+            unknown.contains("`Terms` is not a type of this program"),
+            "{unknown}"
+        );
         let near = refused("Lib.Term");
         assert!(near.contains("did you mean `Term`?"), "{near}");
-        assert!(refused("Flat").contains("`Flat` is a sum no value of which holds another one of it"));
+        assert!(
+            refused("Flat").contains("`Flat` is a sum no value of which holds another one of it")
+        );
         assert!(refused("Point").contains("`Point` is a record"));
         assert!(refused("Weights").contains("`Weights` holds a Float"));
         assert!(transpile_interning(source, &["Term"]).is_ok());

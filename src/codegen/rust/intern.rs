@@ -23,7 +23,11 @@ use crate::types::{Type, parse_type_str};
 fn declarations(ctx: &CodegenContext) -> impl Iterator<Item = (String, &TypeDef)> {
     ctx.type_defs
         .iter()
-        .chain(ctx.modules.iter().flat_map(|module| module.type_defs.iter()))
+        .chain(
+            ctx.modules
+                .iter()
+                .flat_map(|module| module.type_defs.iter()),
+        )
         .map(|td| (backend_type_def_key(ctx, td), td))
 }
 
@@ -70,10 +74,7 @@ pub(crate) fn resolve(ctx: &CodegenContext, names: &[String]) -> Result<HashSet<
     }
     match refused.is_empty() {
         true => Ok(chosen),
-        false => Err(format!(
-            "aver.toml: [rust].intern: {}",
-            refused.join("; ")
-        )),
+        false => Err(format!("aver.toml: [rust].intern: {}", refused.join("; "))),
     }
 }
 
@@ -96,7 +97,9 @@ fn field_kind(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -> Field {
     };
     if let Type::Named { id, name } = direct
         && let Some(td) = named_type_def(*id, name, ctx, scope)
-        && ctx.rust_interned_sums.contains(&backend_type_def_key(ctx, td))
+        && ctx
+            .rust_interned_sums
+            .contains(&backend_type_def_key(ctx, td))
     {
         return Field::Canon;
     }
@@ -126,8 +129,9 @@ fn holds_deferred(
             }
             let decl = type_key_for_decl(ctx, td);
             seen.insert(key)
-                && fields_of(td)
-                    .any(|field| holds_deferred(&parse_type_str(field), ctx, decl.scope_str(), seen))
+                && fields_of(td).any(|field| {
+                    holds_deferred(&parse_type_str(field), ctx, decl.scope_str(), seen)
+                })
         }),
         _ => false,
     }

@@ -364,12 +364,18 @@ impl<S: ThinSum> Thin<S> {
     /// The node was made by `Thin::intern::<P>` with `table`, and its count
     /// is 0.
     #[inline]
-    pub unsafe fn free_interned<P: HandOver>(node: NonNull<Header>, pending: Pending<'_>, table: &Table) {
+    pub unsafe fn free_interned<P: HandOver>(
+        node: NonNull<Header>,
+        pending: Pending<'_>,
+        table: &Table,
+    ) {
         let hash = unsafe { Self::hash_word(node) };
         if hash != NOT_CANONICAL {
             table.remove(hash, node.as_ptr().cast());
         }
-        let whole = unsafe { node.cast::<u64>().sub(1) }.cast::<CanonNode<P>>().as_ptr();
+        let whole = unsafe { node.cast::<u64>().sub(1) }
+            .cast::<CanonNode<P>>()
+            .as_ptr();
         unsafe { std::ptr::read(&raw const (*whole).node.fields) }.hand_over(pending);
         drop(unsafe { Box::from_raw(whole.cast::<ManuallyDrop<CanonNode<P>>>()) });
     }

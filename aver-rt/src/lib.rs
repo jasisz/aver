@@ -8,8 +8,8 @@ mod display;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod int;
-pub mod intern;
 pub mod int_list;
+pub mod intern;
 pub mod listbuilder;
 #[cfg(all(not(target_family = "wasm"), any(feature = "mimalloc", test)))]
 mod mimalloc;
