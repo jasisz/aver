@@ -624,7 +624,8 @@ pub(super) fn emit_aint_eq(registry: &TypeRegistry) -> Result<Function, WasmGcEr
 
 /// `__aint_hash(a) -> i32`. Equal `$AverInt` values MUST hash equal —
 /// the Eq/Hash agreement Map/Set keys and record/sum fields rely on. A
-/// Small folds its i64 `$small` to i32 (`s ^ (s >>> 32)`, then wrap); a
+/// Small mixes its i64 `$small` with the splitmix64 finalizer and keeps the
+/// low half, so the bucket a map masks out of it depends on every bit; a
 /// Big DJB2-folds its 32-bit limb magnitude and mixes the sign. The
 /// canonical invariant guarantees a Small and a Big are never equal, so
 /// the two schemes need not agree across the boundary — only equal

@@ -7,10 +7,21 @@
             (local.set $m (struct.get $aint $magf (local.get $a)))
             (if (result i32) (ref.is_null (local.get $m))
               (then
-                ;; Small — fold the i64 `$small` to i32: (s ^ (s >>> 32)),
-                ;; then wrap. Distributes both halves of the 64-bit value.
+                ;; Small — the splitmix64 finalizer over the i64 `$small`,
+                ;; low half. A map takes a bucket from the hash's low bits,
+                ;; so they must depend on every bit of the value: the keys
+                ;; 0, 1, 2, … must not fill one run of neighbouring buckets
+                ;; (a miss inside the run and every remove's backward-shift
+                ;; scan walk to its end), and `-1 - k` must not share `k`'s
+                ;; hash, as both did under the old `s ^ (s >>> 32)` fold.
                 (local.set $s (struct.get $aint $small (local.get $a)))
-                (i32.wrap_i64 (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 32)))))
+                (local.set $s (i64.mul
+                  (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 30)))
+                  (i64.const 0xbf58476d1ce4e5b9)))
+                (local.set $s (i64.mul
+                  (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 27)))
+                  (i64.const 0x94d049bb133111eb)))
+                (i32.wrap_i64 (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 31)))))
               (else
                 ;; Big — DJB2-style fold over the 32-bit limb magnitude,
                 ;; then mix the sign in. The canonical invariant guarantees
