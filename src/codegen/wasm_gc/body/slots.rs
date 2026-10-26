@@ -6,7 +6,7 @@
 //! (`expr_needs_scratch` etc.) survive because they classify pattern
 //! shape, not type.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::ValType;
@@ -190,6 +190,9 @@ pub(in crate::codegen::wasm_gc) struct SlotTable {
     /// One local per job kind this fn starts a job of. See
     /// `job_task_scratch`.
     job_task_scratch: RefCell<HashMap<i32, u32>>,
+    /// The three `i64` locals every `Int` tree of the fn computes each
+    /// operation in (`from_mir/int_tree.rs`). Lazily allocated.
+    int_tree_temps: Cell<Option<[u32; 3]>>,
     /// Lazily allocated locals, appended after `by_slot` in
     /// `extra_locals`. Index `i` here is wasm local `by_slot.len() + i`.
     lazy_locals: RefCell<Vec<ValType>>,
@@ -494,6 +497,7 @@ impl SlotTable {
             run_reason_scratch: RefCell::new(None),
             run_turn_scratch: RefCell::new(None),
             job_task_scratch: RefCell::new(HashMap::new()),
+            int_tree_temps: Cell::new(None),
             lazy_locals: RefCell::new(Vec::new()),
         })
     }
@@ -616,6 +620,19 @@ impl SlotTable {
     /// arms' tests read it instead of computing it again. One per match
     /// site; the dry run and the real emit reserve them in the same order.
     pub(in crate::codegen::wasm_gc) fn match_subject_local(&self, ty: ValType) -> u32 {
+        self.push_lazy_local(ty)
+    }
+
+    pub(in crate::codegen::wasm_gc) fn int_tree_temps(&self) -> [u32; 3] {
+        let temps = self.int_tree_temps.get();
+        let temps = temps.unwrap_or_else(|| [(); 3].map(|()| self.push_lazy_local(ValType::I64)));
+        self.int_tree_temps.set(Some(temps));
+        temps
+    }
+
+    /// A fresh local of `ty` per call; the dry run and the real emit reserve
+    /// them in the same order.
+    pub(in crate::codegen::wasm_gc) fn fresh_local(&self, ty: ValType) -> u32 {
         self.push_lazy_local(ty)
     }
 

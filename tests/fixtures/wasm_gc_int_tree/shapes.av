@@ -1,0 +1,71 @@
+module M
+    intent = "Int trees on wasm-gc: the i64 path and the exact path agree with the VM."
+    exposes opaque [Small]
+    effects [Console]
+
+record Small
+    value: Int
+
+record Pair
+    x: Int
+    y: Int
+
+fn small(n: Int) -> Small
+    ? "A carrier below 2^40."
+    match Bool.and(n >= 0, n < 1099511627776)
+        true -> Small(value = n)
+        false -> Small(value = 0)
+
+fn trace(n: Int) -> Int
+    ? "Prints its argument and returns it, to see each leaf run once, in order."
+    ! [Console.print]
+    Console.print("leaf {n}")
+    n
+
+fn arith(a: Int, b: Int, c: Int) -> String
+    ? "Overflow in the middle of a tree, undone later; a big leaf; a sum on the edge."
+    "{(a * b - a * b) + c * 3 - 1} {a * a * a - a * a * a + b} {(a + b) * 2 - b - b}"
+
+fn divmod(a: Int) -> String
+    ? "Euclidean division and remainder by literals of both signs."
+    "{Int.div(a, 3)} {Int.mod(a, 3)} {Int.div(a, -3)} {Int.mod(a, -3)} {Int.div(a, 4)} {Int.mod(a, 4)} {Int.div(a, -4)} {Int.mod(a, -4)} {Int.div(a, 1)} {Int.mod(a, 1)} {Int.div(a, -1)} {Int.mod(a, -1)} {Int.div(a, 2147483648) + Int.mod(a, 2147483647)}"
+
+fn edges(a: Int) -> String
+    ? "Negation, absolute value and sums at the edges of the machine word."
+    "{-a + 0} {Int.abs(a) + 0} {a * -1} {a - 1} {a + a} {a + 1 - 1} {Int.min(a - 1, a) + 0} {Int.max(a, a + 1) - 1}"
+
+fn bits(a: Int) -> String
+    ? "Bits on negative and large values, with literal counts."
+    "{Bits.and(a, 255) + 1} {Bits.or(a, 6) - 1} {Bits.xor(a, -1) + 0} {Bits.not(a) + 0} {Bits.shiftLeft(a, 62) + 0} {Bits.shiftLeft(a, 70) + 0} {Bits.shiftRight(a, 1) + 0} {Bits.shiftRight(a, 100) + 0} {Bits.low(a, 8) + 0} {Bits.low(a, 63) + 0} {Bits.low(a, 64) + 0} {Bits.low(a, 0) + 1}"
+
+fn compare(a: Int, b: Int) -> String
+    ? "Comparisons whose sides overflow."
+    "{a * b > a} {a * b == b * a} {a + b < a} {a - b >= 0} {Int.max(a, b) * 2 != a}"
+
+fn mixed(s: Small, p: Pair, a: Int) -> Int
+    ? "A carrier's machine word, a record field and a boxed value in one tree."
+    s.value * 1000003 + p.x * a - Int.min(p.y, s.value) + Int.mod(s.value * 64 + p.y, 2147483647)
+
+fn show(a: Int, b: Int) -> Unit
+    ? "Every shape for one pair of values."
+    ! [Console.print]
+    Console.print("{a} {b}: {arith(a, b, a)} | {divmod(a)} | {edges(a)} | {bits(a)} | {compare(a, b)} | {mixed(small(b), Pair(x = a, y = b), b)}")
+
+fn main() -> Unit
+    ? "Runs the shapes over small, edge and big values."
+    ! [Console.print]
+    big = Bits.shiftLeft(1, 70)
+    min = -9223372036854775807 - 1
+    max = 9223372036854775807
+    show(7, 5)
+    show(-7, 3)
+    show(0, -1)
+    show(min, -1)
+    show(max, 2)
+    show(min + 1, max)
+    show(big, 3)
+    show(-big, big)
+    show(4611686018427387904, 2)
+    show(-4611686018427387905, 2)
+    show(3037000499, 3037000500)
+    Console.print("{trace(1) + trace(2) * trace(3)} {trace(max) * trace(2) - trace(max) * trace(2)} {Int.max(trace(4), trace(5)) + 1}")

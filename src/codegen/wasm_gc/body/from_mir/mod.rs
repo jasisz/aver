@@ -85,6 +85,7 @@ mod collections;
 mod constructors;
 mod control;
 mod coverage;
+pub(crate) mod int_tree;
 mod pattern_match;
 mod records;
 mod strings;
@@ -503,6 +504,12 @@ pub(crate) fn emit_mir_expr(
     // would be a validation error). The literal arm + the block-type
     // selection are the only readers.
     let result_raw = ctx.int_result_raw.replace(false);
+    if let Some(produced) = int_tree::emit_hoisted_leaf(func, expr, ctx)? {
+        return Ok(Some(produced));
+    }
+    if !result_raw && let Some(r) = int_tree::try_emit_value(func, expr, None, slots, ctx)? {
+        return Ok(r);
+    }
     match &expr.node {
         MirExpr::Literal(lit) => match &lit.node {
             Literal::Int(n) => {
@@ -1810,6 +1817,9 @@ pub(crate) fn emit_mir_expr(
             Ok(Some(true))
         }
         MirExpr::Unbox(inner) => {
+            if let Some(r) = int_tree::try_emit_value(func, inner, Some(expr), slots, ctx)? {
+                return Ok(r);
+            }
             // `inner` is a boxed `$AverInt`; emit it boxed, then checked-narrow.
             if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
                 return Ok(None);

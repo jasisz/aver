@@ -274,8 +274,12 @@ struct Produced {
 /// bytes, the manifest and `Plans.lean` the producer emitted for it.
 fn compile_certified(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Produced {
     let dir = out.join(format!("{name}-certified"));
+    // The decoder reads the certificate profile's fragment, which is the
+    // ordinary lowering. A fixture's uncertified fn (`certkit_zoo.faccum`)
+    // would otherwise compute its `Int` arithmetic on `i64` first, outside it.
     let c = aver_command()
         .current_dir(repo)
+        .env("AVER_NO_INT_TREE", "1")
         .arg("compile")
         .arg(av_path)
         .arg("--target")

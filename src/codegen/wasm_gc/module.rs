@@ -3301,6 +3301,27 @@ pub(super) fn emit_module_with(
     }
 
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
+    // Whether each fn computes its `Int` trees on `i64` first (see
+    // `int_trees_allowed`), decided in the pre-pass below.
+    let mut trees_for: Vec<bool> = vec![false; fn_defs.len()];
+    // The locals of each fn emitted without `Int` trees: the plan printer
+    // reads a fn with trees as it would without them, so it declines that fn
+    // for the reason it has.
+    let mut plain_locals_for: Vec<Option<Vec<ValType>>> = vec![None; fn_defs.len()];
+    // The emitter's view the certificate plan printer reads: this compile's
+    // registry and function indices.
+    let cert_layout = super::cert_layout::CertLayout {
+        registry: &registry,
+        fn_map: &fn_map,
+        symbol_table: &symbol_table,
+        fn_idx: resolved_fn_defs
+            .iter()
+            .enumerate()
+            .map(|(i, rfd)| (rfd.fn_id, import_count + 1 + i as u32))
+            .collect(),
+        builtins: &mir_program.builtins,
+    };
+    let mut trees_types = crate::codegen::cert::TypeTableBuilder::new(&cert_layout);
     // Why each fn the body emitter gave up on was left behind, in words.
     let mut stub_reasons: Vec<Option<String>> = vec![None; fn_defs.len()];
 
@@ -3328,7 +3349,9 @@ pub(super) fn emit_module_with(
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         let mut probe = Function::new([]);
-        let used_mir = match mir_fn_for[i] {
+        // Without `Int` trees: the plan printer reads this body's locals.
+        super::body::set_int_trees_allowed(false);
+        let emitted = match mir_fn_for[i] {
             Some(mir_fn) => emit_fn_body_via_mir(
                 &mut probe,
                 &resolved_fn_defs[i],
@@ -3341,10 +3364,22 @@ pub(super) fn emit_module_with(
                 &effect_idx_lookup,
                 &caller_fn_collector,
                 wasip2_lowering.as_ref(),
-            )?
-            .is_some(),
-            None => false,
+            )?,
+            None => None,
         };
+        super::body::set_int_trees_allowed(true);
+        let used_mir = emitted.is_some();
+        trees_for[i] = match (mir_fn_for[i], &emitted) {
+            (Some(mir_fn), Some(extra)) => int_trees_allowed(
+                mir_fn,
+                &resolved_fn_defs[i],
+                extra,
+                &cert_layout,
+                &mut trees_types,
+            ),
+            _ => false,
+        };
+        plain_locals_for[i] = emitted;
         mir_dispatch[i] = used_mir;
         if !used_mir {
             stub_reasons[i] = Some(super::body::take_unsupported_reason().unwrap_or_else(|| {
@@ -3917,6 +3952,7 @@ pub(super) fn emit_module_with(
         // `unreachable` is polymorphic so it validates for any
         // signature. So the dry-run only needs locals for the MIR path;
         // the stub path contributes none.
+        super::body::set_int_trees_allowed(trees_for[i]);
         let extra_locals_dry = if mir_dispatch[i] {
             let mut probe = Function::new([]);
             emit_fn_body_via_mir(
@@ -3968,6 +4004,7 @@ pub(super) fn emit_module_with(
         } else {
             emit_trap_stub_body(&mut func);
         }
+        super::body::set_int_trees_allowed(true);
         codes.function(&func);
     }
 
@@ -6344,17 +6381,6 @@ pub(super) fn emit_module_with(
     // The certificate plans: every emitted user fn's MIR printed 1:1 against
     // the registry and function indices of THIS compile. Read-only: printing
     // never changes a byte.
-    let cert_layout = super::cert_layout::CertLayout {
-        registry: &registry,
-        fn_map: &fn_map,
-        symbol_table: &symbol_table,
-        fn_idx: resolved_fn_defs
-            .iter()
-            .enumerate()
-            .map(|(i, rfd)| (rfd.fn_id, import_count + 1 + i as u32))
-            .collect(),
-        builtins: &mir_program.builtins,
-    };
     let planned: Vec<_> = resolved_fn_defs
         .iter()
         .enumerate()
@@ -6363,7 +6389,11 @@ pub(super) fn emit_module_with(
                 import_count + 1 + i as u32,
                 mir_fn_for[i],
                 rfd,
-                extra_locals_for[i].as_deref(),
+                if trees_for[i] {
+                    plain_locals_for[i].as_deref()
+                } else {
+                    extra_locals_for[i].as_deref()
+                },
             )
         })
         .collect();
@@ -6373,6 +6403,34 @@ pub(super) fn emit_module_with(
         registry.aint_eq_fn_idx.filter(|_| registry.bignum),
     );
     Ok((bytes, mir_emitted, cert_plans))
+}
+
+/// Whether `mir_fn` computes its `Int` trees on `i64` first
+/// (`body/from_mir/int_tree.rs`); `extra` are its locals emitted without
+/// them. Two kinds of fn keep the ordinary lowering, so a certificate reads
+/// the bytes it reads without trees:
+/// - one the certificate plan printer admits: the checker lowers the printed
+///   plan the ordinary way and compares it with the code (the rule
+///   `ir::cert_shape` keeps for the fabricating passes);
+/// - one taking two `Int`s to an `Int`: the checker finds the runtime's `Int`
+///   add, sub and mul helpers as the fns of that type whose first machine
+///   arithmetic is an add, a sub or a mul, so such a user fn computing on
+///   `i64` would pass for a second helper and no module holding it could be
+///   certified.
+fn int_trees_allowed(
+    mir_fn: &crate::ir::mir::MirFn,
+    rfd: &crate::ir::hir::ResolvedFnDef,
+    extra: &[ValType],
+    layout: &super::cert_layout::CertLayout<'_>,
+    types: &mut crate::codegen::cert::TypeTableBuilder,
+) -> bool {
+    let is_int = |t: &crate::types::Type| matches!(t, crate::types::Type::Int);
+    let int_binop_type = rfd.params.len() == 2
+        && rfd.params.iter().all(|(_, t)| is_int(t))
+        && is_int(&rfd.return_type);
+    layout.registry.bignum
+        && !int_binop_type
+        && crate::codegen::cert::print_fn(mir_fn, rfd, extra, layout, types).is_err()
 }
 
 fn emit_user_types(
