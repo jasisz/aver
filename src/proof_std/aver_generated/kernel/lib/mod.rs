@@ -381,8 +381,8 @@ pub fn trans(
     {
         {
             let __list_subject = proofs;
-            if let Some((p, __pat0)) = aver_rt::list_uncons_cloned(__list_subject) {
-                {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((p, __pat0)) => {
                     let __list_subject = __pat0;
                     if __list_subject.is_empty() {
                         Ok(p)
@@ -397,15 +397,14 @@ pub fn trans(
                         )
                     }
                 }
-            } else {
-                Ok(
+                None => Ok(
                     crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(
                         crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(
                             terms.clone(),
                             proofs.clone(),
                         ),
                     ),
-                )
+                ),
             }
         }
     } else {
@@ -415,9 +414,7 @@ pub fn trans(
                     let mut __b = {
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(84)).to_usize().unwrap_or(0),
-                                );
+                                let mut __b = aver_rt::Buffer::with_capacity(84usize);
                                 __b.push_str(&::aver_rt::str_lit!("a chain of "));
                                 __b
                             };
@@ -613,8 +610,8 @@ pub fn evalNode(
                 let __pat0 = ____pat0_fields.0.clone();
                 {
                     let __list_subject = __pat0;
-                    if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                        Ok({
+                    match aver_rt::list_uncons(&__list_subject) {
+                        Some((x, rest)) => Ok({
                             let __arg22 @ _ = crate::proof_std::aver_generated::kernel::lib::Rw { to: { let __arg19 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(rest.clone())); crate::proof_std::aver_generated::kernel::lib::cons(x.clone(), __arg19) }, proof: crate::proof_std::aver_generated::kernel::proof::Proof::PCell(crate::proof_std::aver_generated::kernel::proof::Proof__PCell(t.clone())) };
                             {
                                 let __arg23 @ _ = {
@@ -633,9 +630,8 @@ pub fn evalNode(
                                     t, __arg22, __arg23,
                                 )
                             }
-                        })
-                    } else {
-                        Ok(crate::proof_std::aver_generated::kernel::lib::refl(t))
+                        }),
+                        None => Ok(crate::proof_std::aver_generated::kernel::lib::refl(t)),
                     }
                 }
             }
@@ -817,10 +813,8 @@ pub fn fieldOf(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = fs;
-            if __list_subject.is_empty() {
-                return None;
-            } else {
-                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((x, rest)) => {
                     if (x.name == f) {
                         return Some(x.value.clone());
                     } else {
@@ -831,8 +825,9 @@ pub fn fieldOf(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return None;
                 }
             }
         }
@@ -955,10 +950,8 @@ pub fn lookupKnown(mut x @ _: AverStr, ks @ _: &aver_rt::AverList<Known>) -> Opt
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = ks;
-            if __list_subject.is_empty() {
-                return None;
-            } else {
-                if let (Some(k), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((k, rest)) => {
                     if (k.name == x) {
                         return Some(k.clone());
                     } else {
@@ -969,8 +962,9 @@ pub fn lookupKnown(mut x @ _: AverStr, ks @ _: &aver_rt::AverList<Known>) -> Opt
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return None;
                 }
             }
         }
@@ -1009,27 +1003,22 @@ pub fn evalArgs(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = todo;
-        if __list_subject.is_empty() {
-            Ok({
+        match aver_rt::list_uncons(__list_subject) {
+            Some((x, rest)) => {
+                let __arg9 @ _ = crate::proof_std::aver_generated::kernel::lib::evalWithin(
+                    s,
+                    x.clone(),
+                    depth.clone(),
+                )?;
+                crate::proof_std::aver_generated::kernel::lib::evalArg(
+                    s, kind, name, done, x, &rest, __arg9, depth,
+                )
+            }
+            None => Ok({
                 let __arg8 @ _ =
                     crate::proof_std::aver_generated::kernel::lib::rebuild(&kind, name, done);
                 crate::proof_std::aver_generated::kernel::lib::refl(__arg8)
-            })
-        } else {
-            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                {
-                    let __arg9 @ _ = crate::proof_std::aver_generated::kernel::lib::evalWithin(
-                        s,
-                        x.clone(),
-                        depth.clone(),
-                    )?;
-                    crate::proof_std::aver_generated::kernel::lib::evalArg(
-                        s, kind, name, done, x, &rest, __arg9, depth,
-                    )
-                }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+            }),
         }
     }
 }
@@ -1432,17 +1421,16 @@ pub fn boolEquation(
             if &*__dispatch_subject == "Bool.and" {
                 {
                     let __list_subject = __pat1;
-                    if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail())
-                    {
-                        {
+                    match aver_rt::list_uncons(&__list_subject) {
+                        Some((a, __pat2)) => {
                             let __t = a;
                             match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TBool(____pat3_fields) => {
             let __pat3 = ____pat3_fields.0.clone();
-            if __pat3 { { let __list_subject = __pat2; if let (Some(b), Some(__pat4)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat4; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: b.clone(), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.and.true_l"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } } else { None } } } else { { let __list_subject = __pat2; if let (Some(b), Some(__pat5)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat5; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(false)), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.and.false_l"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } } else { None } } }
+            if __pat3 { { let __list_subject = __pat2; match aver_rt::list_uncons(&__list_subject) { Some((b, __pat4)) => { { let __list_subject = __pat4; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: b.clone(), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.and.true_l"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } }, None => { None } } } } else { { let __list_subject = __pat2; match aver_rt::list_uncons(&__list_subject) { Some((b, __pat5)) => { { let __list_subject = __pat5; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(false)), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.and.false_l"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } }, None => { None } } } }
         },
         _ => {
-            { let __list_subject = __pat2; if let (Some(__pat6), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __t = __pat6; match __t.view() {
+            { let __list_subject = __pat2; match aver_rt::list_uncons(&__list_subject) { Some((__pat6, __pat7)) => { { let __t = __pat6; match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TBool(____pat8_fields) => {
             let __pat8 = ____pat8_fields.0.clone();
             if __pat8 { { let __list_subject = __pat7; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: a.clone(), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.and.true_r"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } } else { { let __list_subject = __pat7; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(false)), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.and.false_r"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } }
@@ -1450,30 +1438,27 @@ pub fn boolEquation(
         _ => {
             None
         }
-    } } } else { None } }
+    } } }, None => { None } } }
         }
     }
                         }
-                    } else {
-                        None
+                        None => None,
                     }
                 }
             } else {
                 if &*__dispatch_subject == "Bool.or" {
                     {
                         let __list_subject = __pat1;
-                        if let (Some(a), Some(__pat9)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
+                        match aver_rt::list_uncons(&__list_subject) {
+                            Some((a, __pat9)) => {
                                 let __t = a;
                                 match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TBool(____pat10_fields) => {
             let __pat10 = ____pat10_fields.0.clone();
-            if __pat10 { { let __list_subject = __pat9; if let (Some(b), Some(__pat11)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat11; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(true)), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.or.true_l"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } } else { None } } } else { { let __list_subject = __pat9; if let (Some(b), Some(__pat12)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat12; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: b.clone(), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.or.false_l"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } } else { None } } }
+            if __pat10 { { let __list_subject = __pat9; match aver_rt::list_uncons(&__list_subject) { Some((b, __pat11)) => { { let __list_subject = __pat11; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(true)), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.or.true_l"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } }, None => { None } } } } else { { let __list_subject = __pat9; match aver_rt::list_uncons(&__list_subject) { Some((b, __pat12)) => { { let __list_subject = __pat12; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: b.clone(), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.or.false_l"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } }, None => { None } } } }
         },
         _ => {
-            { let __list_subject = __pat9; if let (Some(__pat13), Some(__pat14)) = (__list_subject.first(), __list_subject.tail()) { { let __t = __pat13; match __t.view() {
+            { let __list_subject = __pat9; match aver_rt::list_uncons(&__list_subject) { Some((__pat13, __pat14)) => { { let __t = __pat13; match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TBool(____pat15_fields) => {
             let __pat15 = ____pat15_fields.0.clone();
             if __pat15 { { let __list_subject = __pat14; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(true)), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.or.true_r"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } } else { { let __list_subject = __pat14; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: a.clone(), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("bool.or.false_r"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } }
@@ -1481,12 +1466,11 @@ pub fn boolEquation(
         _ => {
             None
         }
-    } } } else { None } }
+    } } }, None => { None } } }
         }
     }
                             }
-                        } else {
-                            None
+                            None => None,
                         }
                     }
                 } else {
@@ -1510,10 +1494,8 @@ pub fn listEquation(
             if &*__dispatch_subject == "List.len" {
                 {
                     let __list_subject = __pat1;
-                    if let (Some(__pat2), Some(__pat3)) =
-                        (__list_subject.first(), __list_subject.tail())
-                    {
-                        {
+                    match aver_rt::list_uncons(&__list_subject) {
+                        Some((__pat2, __pat3)) => {
                             let __t = __pat2;
                             match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TList(____pat4_fields) => {
@@ -1525,7 +1507,7 @@ pub fn listEquation(
             let __pat6 = &____pat5_fields.1;
             match &*__pat5 {
         "List.prepend" => {
-            { let __list_subject = __pat6; if let (Some(x), Some(__pat7)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat7; if let (Some(a), Some(__pat8)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat8; if __list_subject.is_empty() { { let __list_subject = __pat3; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TOp(crate::proof_std::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("+"), crate::proof_std::aver_generated::kernel::term::Term::TBi(crate::proof_std::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.len"), aver_rt::AverList::prepend_owned(a.clone(), aver_rt::AverList::empty()))), crate::proof_std::aver_generated::kernel::term::Term::TInt(crate::proof_std::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1))))), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.len.cons"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("x"), x.clone()), crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone())]), aver_rt::AverList::empty())) }) } else { None } } } else { None } } } else { None } } } else { None } }
+            { let __list_subject = __pat6; match aver_rt::list_uncons(__list_subject) { Some((x, __pat7)) => { { let __list_subject = __pat7; match aver_rt::list_uncons(&__list_subject) { Some((a, __pat8)) => { { let __list_subject = __pat8; if __list_subject.is_empty() { { let __list_subject = __pat3; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TOp(crate::proof_std::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("+"), crate::proof_std::aver_generated::kernel::term::Term::TBi(crate::proof_std::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.len"), aver_rt::AverList::prepend_owned(a.clone(), aver_rt::AverList::empty()))), crate::proof_std::aver_generated::kernel::term::Term::TInt(crate::proof_std::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(1))))), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.len.cons"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("x"), x.clone()), crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone())]), aver_rt::AverList::empty())) }) } else { None } } } else { None } } }, None => { None } } } }, None => { None } } }
         },
         _ => {
             None
@@ -1537,30 +1519,27 @@ pub fn listEquation(
         }
     }
                         }
-                    } else {
-                        None
+                        None => None,
                     }
                 }
             } else {
                 if &*__dispatch_subject == "List.take" {
                     {
                         let __list_subject = __pat1;
-                        if let (Some(__pat9), Some(__pat10)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
+                        match aver_rt::list_uncons(&__list_subject) {
+                            Some((__pat9, __pat10)) => {
                                 let __t = __pat9;
                                 match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TList(____pat11_fields) => {
             let __pat11 = &____pat11_fields.0;
-            { let __list_subject = __pat11; if __list_subject.is_empty() { { let __list_subject = __pat10; if let (Some(n), Some(__pat12)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat12; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(aver_rt::AverList::empty())), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.take.nil"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("n"), n.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } } else { None } } } else { None } }
+            { let __list_subject = __pat11; if __list_subject.is_empty() { { let __list_subject = __pat10; match aver_rt::list_uncons(&__list_subject) { Some((n, __pat12)) => { { let __list_subject = __pat12; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(aver_rt::AverList::empty())), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.take.nil"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("n"), n.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } }, None => { None } } } } else { None } }
         },
         crate::proof_std::aver_generated::kernel::term::Term__view::TBi(____pat13_fields) => {
             let __pat13 = ____pat13_fields.0.clone();
             let __pat14 = &____pat13_fields.1;
             match &*__pat13 {
         "List.prepend" => {
-            { let __list_subject = __pat14; if let (Some(x), Some(__pat15)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat15; if let (Some(a), Some(__pat16)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat16; if __list_subject.is_empty() { { let __list_subject = __pat10; if let (Some(__pat17), Some(__pat18)) = (__list_subject.first(), __list_subject.tail()) { { let __t = __pat17; match __t.view() {
+            { let __list_subject = __pat14; match aver_rt::list_uncons(__list_subject) { Some((x, __pat15)) => { { let __list_subject = __pat15; match aver_rt::list_uncons(&__list_subject) { Some((a, __pat16)) => { { let __list_subject = __pat16; if __list_subject.is_empty() { { let __list_subject = __pat10; match aver_rt::list_uncons(&__list_subject) { Some((__pat17, __pat18)) => { { let __t = __pat17; match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TInt(__n_fields) => {
             let n = __n_fields.0.clone();
             { let __list_subject = __pat18; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::takeCell(x.clone(), a.clone(), n)) } else { None } }
@@ -1568,7 +1547,7 @@ pub fn listEquation(
         _ => {
             None
         }
-    } } } else { None } } } else { None } } } else { None } } } else { None } }
+    } } }, None => { None } } } } else { None } } }, None => { None } } } }, None => { None } } }
         },
         _ => {
             None
@@ -1580,30 +1559,27 @@ pub fn listEquation(
         }
     }
                             }
-                        } else {
-                            None
+                            None => None,
                         }
                     }
                 } else {
                     if &*__dispatch_subject == "List.concat" {
                         {
                             let __list_subject = __pat1;
-                            if let (Some(__pat19), Some(__pat20)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((__pat19, __pat20)) => {
                                     let __t = __pat19;
                                     match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TList(____pat21_fields) => {
             let __pat21 = &____pat21_fields.0;
-            { let __list_subject = __pat21; if __list_subject.is_empty() { { let __list_subject = __pat20; if let (Some(b), Some(__pat22)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat22; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: b.clone(), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.concat.nil"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } } else { None } } } else { None } }
+            { let __list_subject = __pat21; if __list_subject.is_empty() { { let __list_subject = __pat20; match aver_rt::list_uncons(&__list_subject) { Some((b, __pat22)) => { { let __list_subject = __pat22; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: b.clone(), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.concat.nil"), aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone()), aver_rt::AverList::empty()), aver_rt::AverList::empty())) }) } else { None } } }, None => { None } } } } else { None } }
         },
         crate::proof_std::aver_generated::kernel::term::Term__view::TBi(____pat23_fields) => {
             let __pat23 = ____pat23_fields.0.clone();
             let __pat24 = &____pat23_fields.1;
             match &*__pat23 {
         "List.prepend" => {
-            { let __list_subject = __pat24; if let (Some(x), Some(__pat25)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat25; if let (Some(a), Some(__pat26)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat26; if __list_subject.is_empty() { { let __list_subject = __pat20; if let (Some(b), Some(__pat27)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat27; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: { let __arg49 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TBi(crate::proof_std::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.concat"), aver_rt::AverList::from_vec(vec![a.clone(), b.clone()]))); crate::proof_std::aver_generated::kernel::lib::cons(x.clone(), __arg49) }, proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.concat.cons"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("x"), x.clone()), crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone()), crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone())]), aver_rt::AverList::empty())) }) } else { None } } } else { None } } } else { None } } } else { None } } } else { None } }
+            { let __list_subject = __pat24; match aver_rt::list_uncons(__list_subject) { Some((x, __pat25)) => { { let __list_subject = __pat25; match aver_rt::list_uncons(&__list_subject) { Some((a, __pat26)) => { { let __list_subject = __pat26; if __list_subject.is_empty() { { let __list_subject = __pat20; match aver_rt::list_uncons(&__list_subject) { Some((b, __pat27)) => { { let __list_subject = __pat27; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: { let __arg49 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TBi(crate::proof_std::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.concat"), aver_rt::AverList::from_vec(vec![a.clone(), b.clone()]))); crate::proof_std::aver_generated::kernel::lib::cons(x.clone(), __arg49) }, proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.concat.cons"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("x"), x.clone()), crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone()), crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("b"), b.clone())]), aver_rt::AverList::empty())) }) } else { None } } }, None => { None } } } } else { None } } }, None => { None } } } }, None => { None } } }
         },
         _ => {
             None
@@ -1615,18 +1591,15 @@ pub fn listEquation(
         }
     }
                                 }
-                            } else {
-                                None
+                                None => None,
                             }
                         }
                     } else {
                         if &*__dispatch_subject == "List.reverse" {
                             {
                                 let __list_subject = __pat1;
-                                if let (Some(__pat28), Some(__pat29)) =
-                                    (__list_subject.first(), __list_subject.tail())
-                                {
-                                    {
+                                match aver_rt::list_uncons(&__list_subject) {
+                                    Some((__pat28, __pat29)) => {
                                         let __t = __pat28;
                                         match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TList(____pat30_fields) => {
@@ -1638,7 +1611,7 @@ pub fn listEquation(
             let __pat32 = &____pat31_fields.1;
             match &*__pat31 {
         "List.prepend" => {
-            { let __list_subject = __pat32; if let (Some(x), Some(__pat33)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat33; if let (Some(a), Some(__pat34)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat34; if __list_subject.is_empty() { { let __list_subject = __pat29; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TBi(crate::proof_std::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.concat"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::Term::TBi(crate::proof_std::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.reverse"), aver_rt::AverList::prepend_owned(a.clone(), aver_rt::AverList::empty()))), { let __arg50 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(aver_rt::AverList::empty())); crate::proof_std::aver_generated::kernel::lib::cons(x.clone(), __arg50) }]))), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.reverse.cons"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("x"), x.clone()), crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone())]), aver_rt::AverList::empty())) }) } else { None } } } else { None } } } else { None } } } else { None } }
+            { let __list_subject = __pat32; match aver_rt::list_uncons(__list_subject) { Some((x, __pat33)) => { { let __list_subject = __pat33; match aver_rt::list_uncons(&__list_subject) { Some((a, __pat34)) => { { let __list_subject = __pat34; if __list_subject.is_empty() { { let __list_subject = __pat29; if __list_subject.is_empty() { Some(crate::proof_std::aver_generated::kernel::lib::Rw { to: crate::proof_std::aver_generated::kernel::term::Term::TBi(crate::proof_std::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.concat"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::Term::TBi(crate::proof_std::aver_generated::kernel::term::Term__TBi(::aver_rt::str_lit!("List.reverse"), aver_rt::AverList::prepend_owned(a.clone(), aver_rt::AverList::empty()))), { let __arg50 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(aver_rt::AverList::empty())); crate::proof_std::aver_generated::kernel::lib::cons(x.clone(), __arg50) }]))), proof: crate::proof_std::aver_generated::kernel::proof::Proof::PRule(crate::proof_std::aver_generated::kernel::proof::Proof__PRule(::aver_rt::str_lit!("list.reverse.cons"), aver_rt::AverList::from_vec(vec![crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("x"), x.clone()), crate::proof_std::aver_generated::kernel::term::bind(::aver_rt::str_lit!("a"), a.clone())]), aver_rt::AverList::empty())) }) } else { None } } } else { None } } }, None => { None } } } }, None => { None } } }
         },
         _ => {
             None
@@ -1650,8 +1623,7 @@ pub fn listEquation(
         }
     }
                                     }
-                                } else {
-                                    None
+                                    None => None,
                                 }
                             }
                         } else {
@@ -1700,10 +1672,8 @@ pub fn findDef(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = ds;
-            if __list_subject.is_empty() {
-                return None;
-            } else {
-                if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((d, rest)) => {
                     if (d.name == f) {
                         return Some(d.clone());
                     } else {
@@ -1714,8 +1684,9 @@ pub fn findDef(
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return None;
                 }
             }
         }
@@ -1772,9 +1743,7 @@ pub fn letBindings(
             let mut __b = {
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(49)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(49usize);
                         __b.push_display(&(d.name));
                         __b
                     };
@@ -1803,33 +1772,30 @@ pub fn bindLets(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = lets;
-            if __list_subject.is_empty() {
-                return Ok(outer);
-            } else {
-                if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 = rest;
-                        let __tco1 = aver_rt::AverList::prepend_owned(
-                            {
-                                let __arg4 @ _ =
-                                    crate::proof_std::aver_generated::kernel::subst::subst(
-                                        b.value.clone(),
-                                        &outer,
-                                    )?;
-                                crate::proof_std::aver_generated::kernel::term::bind(
-                                    b.name.clone(),
-                                    __arg4,
-                                )
-                            },
-                            outer,
-                        );
-                        __hold0 = __tco0;
-                        lets = &__hold0;
-                        outer = __tco1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((b, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = aver_rt::AverList::prepend_owned(
+                        {
+                            let __arg4 @ _ =
+                                crate::proof_std::aver_generated::kernel::subst::subst(
+                                    b.value.clone(),
+                                    &outer,
+                                )?;
+                            crate::proof_std::aver_generated::kernel::term::bind(
+                                b.name.clone(),
+                                __arg4,
+                            )
+                        },
+                        outer,
+                    );
+                    __hold0 = __tco0;
+                    lets = &__hold0;
+                    outer = __tco1;
+                    continue;
+                }
+                None => {
+                    return Ok(outer);
                 }
             }
         }
@@ -2025,15 +1991,12 @@ pub fn callsAny(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = xs;
-        if __list_subject.is_empty() {
-            false
-        } else {
-            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((x, rest)) => {
                 (crate::proof_std::aver_generated::kernel::lib::callsName(x, f.clone())
                     || crate::proof_std::aver_generated::kernel::lib::callsAny(&rest, f))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => false,
         }
     }
 }
@@ -2047,15 +2010,12 @@ pub fn callsFields(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = fs;
-        if __list_subject.is_empty() {
-            false
-        } else {
-            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((x, rest)) => {
                 (crate::proof_std::aver_generated::kernel::lib::callsName(&x.value, f.clone())
                     || crate::proof_std::aver_generated::kernel::lib::callsFields(&rest, f))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => false,
         }
     }
 }
@@ -2069,15 +2029,12 @@ pub fn callsArms(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = arms;
-        if __list_subject.is_empty() {
-            false
-        } else {
-            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+        match aver_rt::list_uncons(__list_subject) {
+            Some((a, rest)) => {
                 (crate::proof_std::aver_generated::kernel::lib::callsName(&a.body, f.clone())
                     || crate::proof_std::aver_generated::kernel::lib::callsArms(&rest, f))
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => false,
         }
     }
 }
@@ -2171,13 +2128,11 @@ pub fn shapeOf(v @ _: &crate::proof_std::aver_generated::kernel::term::Term) -> 
                 match &*__pat1 {
                     "List.prepend" => {
                         let __list_subject = __pat2;
-                        if let Some((h, __pat3)) = aver_rt::list_uncons_cloned(__list_subject) {
-                            {
+                        match aver_rt::list_uncons_cloned(__list_subject) {
+                            Some((h, __pat3)) => {
                                 let __list_subject = __pat3;
-                                if let Some((t, __pat4)) =
-                                    aver_rt::list_uncons_cloned(&__list_subject)
-                                {
-                                    {
+                                match aver_rt::list_uncons_cloned(&__list_subject) {
+                                    Some((t, __pat4)) => {
                                         let __list_subject = __pat4;
                                         if __list_subject.is_empty() {
                                             ::aver_rt::str_lit!("cons")
@@ -2185,19 +2140,23 @@ pub fn shapeOf(v @ _: &crate::proof_std::aver_generated::kernel::term::Term) -> 
                                             if crate::proof_std::aver_generated::kernel::lib::isLiteral(v) { ::aver_rt::str_lit!("lit") } else { ::aver_rt::str_lit!("other") }
                                         }
                                     }
-                                } else {
-                                    if crate::proof_std::aver_generated::kernel::lib::isLiteral(v) {
-                                        ::aver_rt::str_lit!("lit")
-                                    } else {
-                                        ::aver_rt::str_lit!("other")
+                                    None => {
+                                        if crate::proof_std::aver_generated::kernel::lib::isLiteral(
+                                            v,
+                                        ) {
+                                            ::aver_rt::str_lit!("lit")
+                                        } else {
+                                            ::aver_rt::str_lit!("other")
+                                        }
                                     }
                                 }
                             }
-                        } else {
-                            if crate::proof_std::aver_generated::kernel::lib::isLiteral(v) {
-                                ::aver_rt::str_lit!("lit")
-                            } else {
-                                ::aver_rt::str_lit!("other")
+                            None => {
+                                if crate::proof_std::aver_generated::kernel::lib::isLiteral(v) {
+                                    ::aver_rt::str_lit!("lit")
+                                } else {
+                                    ::aver_rt::str_lit!("other")
+                                }
                             }
                         }
                     }
@@ -2273,13 +2232,11 @@ pub fn patternBinds(
         match __pat0 {
             crate::proof_std::aver_generated::kernel::term::Pat::PCons(h, t) => {
                 let __list_subject = ys;
-                if let (Some(x), Some(__pat1)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((x, __pat1)) => {
                         let __list_subject = __pat1;
-                        if let (Some(y), Some(__pat2)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
+                        match aver_rt::list_uncons(&__list_subject) {
+                            Some((y, __pat2)) => {
                                 let __list_subject = __pat2;
                                 if __list_subject.is_empty() {
                                     aver_rt::AverList::from_vec(vec![
@@ -2296,18 +2253,16 @@ pub fn patternBinds(
                                     aver_rt::AverList::empty()
                                 }
                             }
-                        } else {
-                            aver_rt::AverList::empty()
+                            None => aver_rt::AverList::empty(),
                         }
                     }
-                } else {
-                    aver_rt::AverList::empty()
+                    None => aver_rt::AverList::empty(),
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Pat::PVar(n) => {
                 let __list_subject = ys;
-                if let (Some(x), Some(__pat3)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((x, __pat3)) => {
                         let __list_subject = __pat3;
                         if __list_subject.is_empty() {
                             aver_rt::AverList::prepend_owned(
@@ -2318,8 +2273,7 @@ pub fn patternBinds(
                             aver_rt::AverList::empty()
                         }
                     }
-                } else {
-                    aver_rt::AverList::empty()
+                    None => aver_rt::AverList::empty(),
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
@@ -2394,9 +2348,7 @@ pub fn freshFrom(
         crate::proof_std::cancel_checkpoint();
         let name @ _ = aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(32)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(32usize);
                 __b.push_display(&(base));
                 __b
             };
@@ -2455,21 +2407,16 @@ pub fn hypNames(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = hs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(h), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::concat(
-                    &aver_rt::AverList::prepend_owned(h.name.clone(), {
-                        let __arg3 @ _ =
-                            aver_rt::AverList::from_vec(vec![h.eqn.lhs.clone(), h.eqn.rhs.clone()]);
-                        crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&__arg3)
-                    }),
-                    &crate::proof_std::aver_generated::kernel::lib::hypNames(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(__list_subject) {
+            Some((h, rest)) => aver_rt::AverList::concat(
+                &aver_rt::AverList::prepend_owned(h.name.clone(), {
+                    let __arg3 @ _ =
+                        aver_rt::AverList::from_vec(vec![h.eqn.lhs.clone(), h.eqn.rhs.clone()]);
+                    crate::proof_std::aver_generated::kernel::subst::freeVarsAll(&__arg3)
+                }),
+                &crate::proof_std::aver_generated::kernel::lib::hypNames(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -2497,17 +2444,12 @@ pub fn constNames(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = cs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    c.name.clone(),
-                    crate::proof_std::aver_generated::kernel::lib::constNames(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(__list_subject) {
+            Some((c, rest)) => aver_rt::AverList::prepend_owned(
+                c.name.clone(),
+                crate::proof_std::aver_generated::kernel::lib::constNames(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }

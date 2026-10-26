@@ -9,9 +9,7 @@ pub fn run(plan @ _: AverStr, text @ _: AverStr) -> AverStr {
     match crate::proof_std::aver_generated::kernel::lib::readGoal(text) {
         Err(why @ _) => aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(21usize);
                 __b.push_str(&::aver_rt::str_lit!("goal\n"));
                 __b
             };
@@ -35,9 +33,7 @@ pub fn byName(
         "cases" => crate::proof_std::aver_generated::kernel::std::cases(g),
         _ => Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(39usize);
                 __b.push_str(&::aver_rt::str_lit!("Kernel.Std has no plan "));
                 __b
             };

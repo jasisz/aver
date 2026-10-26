@@ -56,21 +56,17 @@ pub fn withGivens(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = gs;
-            if __list_subject.is_empty() {
-                return g0;
-            } else {
-                if let (Some(g), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                    {
-                        let __tco0 =
-                            crate::proof_std::aver_generated::kernel::wire::withGiven(&g0, g);
-                        let __tco1 = rest;
-                        g0 = __tco0;
-                        __hold1 = __tco1;
-                        gs = &__hold1;
-                        continue;
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+            match aver_rt::list_uncons(__list_subject) {
+                Some((g, rest)) => {
+                    let __tco0 = crate::proof_std::aver_generated::kernel::wire::withGiven(&g0, g);
+                    let __tco1 = rest;
+                    g0 = __tco0;
+                    __hold1 = __tco1;
+                    gs = &__hold1;
+                    continue;
+                }
+                None => {
+                    return g0;
                 }
             }
         }
@@ -191,9 +187,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(23usize);
                             __b.push_str(&::aver_rt::str_lit!("(list "));
                             __b
                         };
@@ -211,9 +205,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(25)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(25usize);
                             __b.push_str(&::aver_rt::str_lit!("(option "));
                             __b
                         };
@@ -231,9 +223,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(25)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(25usize);
                             __b.push_str(&::aver_rt::str_lit!("(vector "));
                             __b
                         };
@@ -254,9 +244,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(42)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(42usize);
                                     __b.push_str(&::aver_rt::str_lit!("(result "));
                                     __b
                                 };
@@ -285,9 +273,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(39usize);
                                     __b.push_str(&::aver_rt::str_lit!("(map "));
                                     __b
                                 };
@@ -323,9 +309,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(24usize);
                             __b.push_str(&::aver_rt::str_lit!("(named "));
                             __b
                         };
@@ -348,9 +332,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(25)).to_usize().unwrap_or(0),
-                                );
+                                let mut __b = aver_rt::Buffer::with_capacity(25usize);
                                 __b.push_str(&::aver_rt::str_lit!("(var "));
                                 __b
                             };
@@ -364,9 +346,7 @@ pub fn tyText(t @ _: &crate::proof_std::aver_generated::kernel::term::Ty) -> Ave
                     aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
-                                );
+                                let mut __b = aver_rt::Buffer::with_capacity(22usize);
                                 __b.push_str(&::aver_rt::str_lit!("(var "));
                                 __b
                             };
@@ -393,17 +373,12 @@ pub fn tyTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = ts;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(t), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    crate::proof_std::aver_generated::kernel::wire::tyText(t),
-                    crate::proof_std::aver_generated::kernel::wire::tyTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(__list_subject) {
+            Some((t, rest)) => aver_rt::AverList::prepend_owned(
+                crate::proof_std::aver_generated::kernel::wire::tyText(t),
+                crate::proof_std::aver_generated::kernel::wire::tyTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -417,9 +392,7 @@ pub fn answer(
     match r {
         Ok(p @ _) => aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(22usize);
                 __b.push_str(&::aver_rt::str_lit!("proof\n"));
                 __b
             };
@@ -430,9 +403,7 @@ pub fn answer(
             let why = why.clone();
             aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
-                    );
+                    let mut __b = aver_rt::Buffer::with_capacity(24usize);
                     __b.push_str(&::aver_rt::str_lit!("refused\n"));
                     __b
                 };
@@ -450,9 +421,7 @@ pub fn quote(s @ _: AverStr) -> AverStr {
     aver_rt::AverStr::from({
         let mut __b = {
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(18usize);
                 __b.push_str(&::aver_rt::str_lit!("\""));
                 __b
             };
@@ -523,9 +492,7 @@ pub fn headed(head @ _: AverStr, xs @ _: &aver_rt::AverList<AverStr>) -> AverStr
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(18usize);
                         __b.push_str(&::aver_rt::str_lit!("("));
                         __b
                     };
@@ -541,9 +508,7 @@ pub fn headed(head @ _: AverStr, xs @ _: &aver_rt::AverList<AverStr>) -> AverStr
                     let mut __b = {
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(35)).to_usize().unwrap_or(0),
-                                );
+                                let mut __b = aver_rt::Buffer::with_capacity(35usize);
                                 __b.push_str(&::aver_rt::str_lit!("("));
                                 __b
                             };
@@ -574,9 +539,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(20usize);
                             __b.push_str(&::aver_rt::str_lit!("(i "));
                             __b
                         };
@@ -592,9 +555,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(20usize);
                             __b.push_str(&::aver_rt::str_lit!("(b "));
                             __b
                         };
@@ -610,9 +571,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(20usize);
                             __b.push_str(&::aver_rt::str_lit!("(s "));
                             __b
                         };
@@ -633,9 +592,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(20usize);
                             __b.push_str(&::aver_rt::str_lit!("(v "));
                             __b
                         };
@@ -657,9 +614,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(39)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(39usize);
                                     __b.push_str(&::aver_rt::str_lit!("(get "));
                                     __b
                                 };
@@ -684,9 +639,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 {
                     let __arg27 @ _ = aver_rt::AverStr::from({
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(21usize);
                             __b.push_str(&::aver_rt::str_lit!("call "));
                             __b
                         };
@@ -706,9 +659,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 {
                     let __arg29 @ _ = aver_rt::AverStr::from({
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(19)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(19usize);
                             __b.push_str(&::aver_rt::str_lit!("bi "));
                             __b
                         };
@@ -728,9 +679,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 {
                     let __arg31 @ _ = aver_rt::AverStr::from({
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(21usize);
                             __b.push_str(&::aver_rt::str_lit!("ctor "));
                             __b
                         };
@@ -755,11 +704,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                                 let mut __b = {
                                     let mut __b = {
                                         let mut __b = {
-                                            let mut __b = aver_rt::Buffer::with_capacity(
-                                                (aver_rt::AverInt::from_i64(55))
-                                                    .to_usize()
-                                                    .unwrap_or(0),
-                                            );
+                                            let mut __b = aver_rt::Buffer::with_capacity(55usize);
                                             __b.push_str(&::aver_rt::str_lit!("(op "));
                                             __b
                                         };
@@ -791,9 +736,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(22usize);
                             __b.push_str(&::aver_rt::str_lit!("(neg "));
                             __b
                         };
@@ -812,9 +755,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 {
                     let __arg33 @ _ = aver_rt::AverStr::from({
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(22usize);
                             __b.push_str(&::aver_rt::str_lit!("match "));
                             __b
                         };
@@ -866,9 +807,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 {
                     let __arg38 @ _ = aver_rt::AverStr::from({
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(20)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(20usize);
                             __b.push_str(&::aver_rt::str_lit!("rec "));
                             __b
                         };
@@ -891,9 +830,7 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(37usize);
                                     __b.push_str(&::aver_rt::str_lit!("upd "));
                                     __b
                                 };
@@ -927,17 +864,12 @@ pub fn termTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = xs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    crate::proof_std::aver_generated::kernel::wire::termText(x),
-                    crate::proof_std::aver_generated::kernel::wire::termTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(__list_subject) {
+            Some((x, rest)) => aver_rt::AverList::prepend_owned(
+                crate::proof_std::aver_generated::kernel::wire::termText(x),
+                crate::proof_std::aver_generated::kernel::wire::termTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -950,45 +882,34 @@ pub fn fieldTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = fs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(f), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    aver_rt::AverStr::from({
+        match aver_rt::list_uncons(__list_subject) {
+            Some((f, rest)) => aver_rt::AverList::prepend_owned(
+                aver_rt::AverStr::from({
+                    let mut __b = {
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(35))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("("));
-                                        __b
-                                    };
-                                    __b.push_display(&(f.name));
+                                    let mut __b = aver_rt::Buffer::with_capacity(35usize);
+                                    __b.push_str(&::aver_rt::str_lit!("("));
                                     __b
                                 };
-                                __b.push_str(&::aver_rt::str_lit!(" "));
+                                __b.push_display(&(f.name));
                                 __b
                             };
-                            __b.push_display(
-                                &(crate::proof_std::aver_generated::kernel::wire::termText(
-                                    &f.value,
-                                )),
-                            );
+                            __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&::aver_rt::str_lit!(")"));
+                        __b.push_display(
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(&f.value)),
+                        );
                         __b
-                    }),
-                    crate::proof_std::aver_generated::kernel::wire::fieldTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(")"));
+                    __b
+                }),
+                crate::proof_std::aver_generated::kernel::wire::fieldTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -1001,49 +922,38 @@ pub fn armTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = arms;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(a), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    aver_rt::AverStr::from({
+        match aver_rt::list_uncons(__list_subject) {
+            Some((a, rest)) => aver_rt::AverList::prepend_owned(
+                aver_rt::AverStr::from({
+                    let mut __b = {
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(39))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("(arm "));
-                                        __b
-                                    };
-                                    __b.push_display(
-                                        &(crate::proof_std::aver_generated::kernel::wire::patText(
-                                            &a.pattern,
-                                        )),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(39usize);
+                                    __b.push_str(&::aver_rt::str_lit!("(arm "));
                                     __b
                                 };
-                                __b.push_str(&::aver_rt::str_lit!(" "));
+                                __b.push_display(
+                                    &(crate::proof_std::aver_generated::kernel::wire::patText(
+                                        &a.pattern,
+                                    )),
+                                );
                                 __b
                             };
-                            __b.push_display(
-                                &(crate::proof_std::aver_generated::kernel::wire::termText(
-                                    &a.body,
-                                )),
-                            );
+                            __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&::aver_rt::str_lit!(")"));
+                        __b.push_display(
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(&a.body)),
+                        );
                         __b
-                    }),
-                    crate::proof_std::aver_generated::kernel::wire::armTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(")"));
+                    __b
+                }),
+                crate::proof_std::aver_generated::kernel::wire::armTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -1060,9 +970,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(21usize);
                         __b.push_str(&::aver_rt::str_lit!("(pv "));
                         __b
                     };
@@ -1076,9 +984,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
         crate::proof_std::aver_generated::kernel::term::Pat::PLit(t) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                    );
+                    let mut __b = aver_rt::Buffer::with_capacity(21usize);
                     __b.push_str(&::aver_rt::str_lit!("(pl "));
                     __b
                 };
@@ -1099,9 +1005,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
                     let mut __b = {
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
-                                );
+                                let mut __b = aver_rt::Buffer::with_capacity(41usize);
                                 __b.push_str(&::aver_rt::str_lit!("(pcons "));
                                 __b
                             };
@@ -1122,9 +1026,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(21)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(21usize);
                         __b.push_str(&::aver_rt::str_lit!("(pt "));
                         __b
                     };
@@ -1146,9 +1048,7 @@ pub fn patText(p @ _: &crate::proof_std::aver_generated::kernel::term::Pat) -> A
             {
                 let __arg9 @ _ = aver_rt::AverStr::from({
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(19)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(19usize);
                         __b.push_str(&::aver_rt::str_lit!("pc "));
                         __b
                     };
@@ -1169,17 +1069,12 @@ pub fn patTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = ps;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    crate::proof_std::aver_generated::kernel::wire::patText(p),
-                    crate::proof_std::aver_generated::kernel::wire::patTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(__list_subject) {
+            Some((p, rest)) => aver_rt::AverList::prepend_owned(
+                crate::proof_std::aver_generated::kernel::wire::patText(p),
+                crate::proof_std::aver_generated::kernel::wire::patTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -1193,9 +1088,7 @@ pub fn bindingsText(
     aver_rt::AverStr::from({
         let mut __b = {
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(18usize);
                 __b.push_str(&::aver_rt::str_lit!("("));
                 __b
             };
@@ -1221,45 +1114,34 @@ pub fn bindingTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = bs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(b), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    aver_rt::AverStr::from({
+        match aver_rt::list_uncons(__list_subject) {
+            Some((b, rest)) => aver_rt::AverList::prepend_owned(
+                aver_rt::AverStr::from({
+                    let mut __b = {
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(35))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("("));
-                                        __b
-                                    };
-                                    __b.push_display(&(b.name));
+                                    let mut __b = aver_rt::Buffer::with_capacity(35usize);
+                                    __b.push_str(&::aver_rt::str_lit!("("));
                                     __b
                                 };
-                                __b.push_str(&::aver_rt::str_lit!(" "));
+                                __b.push_display(&(b.name));
                                 __b
                             };
-                            __b.push_display(
-                                &(crate::proof_std::aver_generated::kernel::wire::termText(
-                                    &b.value,
-                                )),
-                            );
+                            __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&::aver_rt::str_lit!(")"));
+                        __b.push_display(
+                            &(crate::proof_std::aver_generated::kernel::wire::termText(&b.value)),
+                        );
                         __b
-                    }),
-                    crate::proof_std::aver_generated::kernel::wire::bindingTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(")"));
+                    __b
+                }),
+                crate::proof_std::aver_generated::kernel::wire::bindingTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -1275,9 +1157,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(23usize);
                             __b.push_str(&::aver_rt::str_lit!("(refl "));
                             __b
                         };
@@ -1295,9 +1175,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(23usize);
                             __b.push_str(&::aver_rt::str_lit!("(symm "));
                             __b
                         };
@@ -1317,9 +1195,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                     let __arg87 @ _ = aver_rt::AverStr::from({
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
-                                );
+                                let mut __b = aver_rt::Buffer::with_capacity(24usize);
                                 __b.push_str(&::aver_rt::str_lit!("trans ("));
                                 __b
                             };
@@ -1352,9 +1228,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(41)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(41usize);
                                     __b.push_str(&::aver_rt::str_lit!("(congr "));
                                     __b
                                 };
@@ -1392,11 +1266,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                 let mut __b = {
                                                     let mut __b = {
                                                         let mut __b =
-                                                            aver_rt::Buffer::with_capacity(
-                                                                (aver_rt::AverInt::from_i64(78))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
-                                                            );
+                                                            aver_rt::Buffer::with_capacity(78usize);
                                                         __b.push_str(&::aver_rt::str_lit!(
                                                             "unfold "
                                                         ));
@@ -1446,9 +1316,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(24)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(24usize);
                             __b.push_str(&::aver_rt::str_lit!("(const "));
                             __b
                         };
@@ -1473,11 +1341,8 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                         let mut __b = {
                                             let mut __b = {
                                                 let mut __b = {
-                                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                                        (aver_rt::AverInt::from_i64(75))
-                                                            .to_usize()
-                                                            .unwrap_or(0),
-                                                    );
+                                                    let mut __b =
+                                                        aver_rt::Buffer::with_capacity(75usize);
                                                     __b.push_str(&::aver_rt::str_lit!("(arm "));
                                                     __b
                                                 };
@@ -1515,9 +1380,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(23usize);
                             __b.push_str(&::aver_rt::str_lit!("(proj "));
                             __b
                         };
@@ -1535,9 +1398,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(23usize);
                             __b.push_str(&::aver_rt::str_lit!("(cell "));
                             __b
                         };
@@ -1555,9 +1416,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 aver_rt::AverStr::from({
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(22)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(22usize);
                             __b.push_str(&::aver_rt::str_lit!("(hyp "));
                             __b
                         };
@@ -1577,9 +1436,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(38usize);
                                     __b.push_str(&::aver_rt::str_lit!("rule "));
                                     __b
                                 };
@@ -1610,9 +1467,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(37usize);
                                     __b.push_str(&::aver_rt::str_lit!("law "));
                                     __b
                                 };
@@ -1642,9 +1497,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(43)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(43usize);
                                     __b.push_str(&::aver_rt::str_lit!("(compute "));
                                     __b
                                 };
@@ -1679,11 +1532,8 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                         let mut __b = {
                                             let mut __b = {
                                                 let mut __b = {
-                                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                                        (aver_rt::AverInt::from_i64(75))
-                                                            .to_usize()
-                                                            .unwrap_or(0),
-                                                    );
+                                                    let mut __b =
+                                                        aver_rt::Buffer::with_capacity(75usize);
                                                     __b.push_str(&::aver_rt::str_lit!("(cases "));
                                                     __b
                                                 };
@@ -1729,11 +1579,8 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                     let mut __b = {
                                         let mut __b = {
                                             let mut __b = {
-                                                let mut __b = aver_rt::Buffer::with_capacity(
-                                                    (aver_rt::AverInt::from_i64(58))
-                                                        .to_usize()
-                                                        .unwrap_or(0),
-                                                );
+                                                let mut __b =
+                                                    aver_rt::Buffer::with_capacity(58usize);
                                                 __b.push_str(&::aver_rt::str_lit!("split "));
                                                 __b
                                             };
@@ -1784,11 +1631,8 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                         let mut __b = {
                                             let mut __b = {
                                                 let mut __b = {
-                                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                                        (aver_rt::AverInt::from_i64(74))
-                                                            .to_usize()
-                                                            .unwrap_or(0),
-                                                    );
+                                                    let mut __b =
+                                                        aver_rt::Buffer::with_capacity(74usize);
                                                     __b.push_str(&::aver_rt::str_lit!("(have "));
                                                     __b
                                                 };
@@ -1833,11 +1677,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                 let mut __b = {
                                     let mut __b = {
                                         let mut __b = {
-                                            let mut __b = aver_rt::Buffer::with_capacity(
-                                                (aver_rt::AverInt::from_i64(55))
-                                                    .to_usize()
-                                                    .unwrap_or(0),
-                                            );
+                                            let mut __b = aver_rt::Buffer::with_capacity(55usize);
                                             __b.push_str(&::aver_rt::str_lit!("enum "));
                                             __b
                                         };
@@ -1878,11 +1718,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                 let mut __b = {
                                     let mut __b = {
                                         let mut __b = {
-                                            let mut __b = aver_rt::Buffer::with_capacity(
-                                                (aver_rt::AverInt::from_i64(59))
-                                                    .to_usize()
-                                                    .unwrap_or(0),
-                                            );
+                                            let mut __b = aver_rt::Buffer::with_capacity(59usize);
                                             __b.push_str(&::aver_rt::str_lit!("(absurd "));
                                             __b
                                         };
@@ -1927,11 +1763,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                 let mut __b = {
                                                     let mut __b = {
                                                         let mut __b =
-                                                            aver_rt::Buffer::with_capacity(
-                                                                (aver_rt::AverInt::from_i64(92))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
-                                                            );
+                                                            aver_rt::Buffer::with_capacity(92usize);
                                                         __b.push_str(&::aver_rt::str_lit!(
                                                             "induct "
                                                         ));
@@ -2010,7 +1842,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                                         let mut __b = {
                                                                                             let mut
                                                                                             __b = {
-                                                                                                let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(187)).to_usize().unwrap_or(0));
+                                                                                                let mut __b = aver_rt::Buffer::with_capacity(187usize);
                                                                                                 __b.push_str(&::aver_rt::str_lit!("(listinduct "));
                                                                                                 __b
                                                                                             };
@@ -2103,7 +1935,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                 let mut __b = {
                                                                     let mut __b = {
                                                                         let mut __b = {
-                                                                            let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(132)).to_usize().unwrap_or(0));
+                                                                            let mut __b = aver_rt::Buffer::with_capacity(132usize);
                                                                             __b.push_str(&::aver_rt::str_lit!("(listcases "));
                                                                             __b
                                                                         };
@@ -2184,7 +2016,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                                             let mut __b = {
                                                                                 let mut __b = {
                                                                                     let mut __b = {
-                                                                                        let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(167)).to_usize().unwrap_or(0));
+                                                                                        let mut __b = aver_rt::Buffer::with_capacity(167usize);
                                                                                         __b.push_str(&::aver_rt::str_lit!("(leninduct "));
                                                                                         __b
                                                                                     };
@@ -2256,9 +2088,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(
-                                        (aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0),
-                                    );
+                                    let mut __b = aver_rt::Buffer::with_capacity(40usize);
                                     __b.push_str(&::aver_rt::str_lit!("(ring "));
                                     __b
                                 };
@@ -2298,11 +2128,7 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                                                         let mut __b = {
                                                             let mut __b =
                                                                 aver_rt::Buffer::with_capacity(
-                                                                    (aver_rt::AverInt::from_i64(
-                                                                        96,
-                                                                    ))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
+                                                                    96usize,
                                                                 );
                                                             __b.push_str(&::aver_rt::str_lit!(
                                                                 "(linear "
@@ -2354,51 +2180,44 @@ pub fn cutTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = cs;
-        if __list_subject.is_empty() {
-            ::aver_rt::str_lit!("")
-        } else {
-            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverStr::from({
+        match aver_rt::list_uncons(__list_subject) {
+            Some((c, rest)) => aver_rt::AverStr::from({
+                let mut __b = {
                     let mut __b = {
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(58))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!(" (cut "));
-                                        __b
-                                    };
-                                    __b.push_display(&(c.divisor));
+                                    let mut __b = aver_rt::Buffer::with_capacity(58usize);
+                                    __b.push_str(&::aver_rt::str_lit!(" (cut "));
                                     __b
                                 };
-                                __b.push_str(&::aver_rt::str_lit!(" ("));
+                                __b.push_display(&(c.divisor));
                                 __b
                             };
-                            __b.push_display(
-                                &({
-                                    let __arg3 @ _ =
-                                        crate::proof_std::aver_generated::kernel::wire::intTexts(
-                                            &c.weights,
-                                        );
-                                    crate::proof_std::aver_generated::kernel::wire::spaced(&__arg3)
-                                }),
-                            );
+                            __b.push_str(&::aver_rt::str_lit!(" ("));
                             __b
                         };
-                        __b.push_str(&::aver_rt::str_lit!("))"));
+                        __b.push_display(
+                            &({
+                                let __arg3 @ _ =
+                                    crate::proof_std::aver_generated::kernel::wire::intTexts(
+                                        &c.weights,
+                                    );
+                                crate::proof_std::aver_generated::kernel::wire::spaced(&__arg3)
+                            }),
+                        );
                         __b
                     };
-                    __b.push_display(
-                        &(crate::proof_std::aver_generated::kernel::wire::cutTexts(&rest)),
-                    );
+                    __b.push_str(&::aver_rt::str_lit!("))"));
                     __b
-                })
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
+                };
+                __b.push_display(
+                    &(crate::proof_std::aver_generated::kernel::wire::cutTexts(&rest)),
+                );
+                __b
+            }),
+            None => {
+                ::aver_rt::str_lit!("")
             }
         }
     }
@@ -2412,17 +2231,12 @@ pub fn proofTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = ps;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    crate::proof_std::aver_generated::kernel::wire::proofText(p),
-                    crate::proof_std::aver_generated::kernel::wire::proofTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(__list_subject) {
+            Some((p, rest)) => aver_rt::AverList::prepend_owned(
+                crate::proof_std::aver_generated::kernel::wire::proofText(p),
+                crate::proof_std::aver_generated::kernel::wire::proofTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -2433,23 +2247,16 @@ pub fn intTexts(ws @ _: &aver_rt::AverIntList) -> aver_rt::AverList<AverStr> {
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = ws;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let Some((w, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                aver_rt::AverList::prepend_owned(
-                    aver_rt::AverStr::from({
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(16)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_display(&(w));
-                        __b
-                    }),
-                    crate::proof_std::aver_generated::kernel::wire::intTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((w, rest)) => aver_rt::AverList::prepend_owned(
+                aver_rt::AverStr::from({
+                    let mut __b = aver_rt::Buffer::with_capacity(16usize);
+                    __b.push_display(&(w));
+                    __b
+                }),
+                crate::proof_std::aver_generated::kernel::wire::intTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -2462,57 +2269,46 @@ pub fn splitCaseTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = cs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    aver_rt::AverStr::from({
+        match aver_rt::list_uncons(__list_subject) {
+            Some((c, rest)) => aver_rt::AverList::prepend_owned(
+                aver_rt::AverStr::from({
+                    let mut __b = {
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
                                     let mut __b = {
                                         let mut __b = {
-                                            let mut __b = {
-                                                let mut __b = aver_rt::Buffer::with_capacity(
-                                                    (aver_rt::AverInt::from_i64(59))
-                                                        .to_usize()
-                                                        .unwrap_or(0),
-                                                );
-                                                __b.push_str(&::aver_rt::str_lit!("(case "));
-                                                __b
-                                            };
-                                            __b.push_display(&(c.ctor));
+                                            let mut __b = aver_rt::Buffer::with_capacity(59usize);
+                                            __b.push_str(&::aver_rt::str_lit!("(case "));
                                             __b
                                         };
-                                        __b.push_str(&::aver_rt::str_lit!(" ("));
+                                        __b.push_display(&(c.ctor));
                                         __b
                                     };
-                                    __b.push_display(
-                                        &(crate::proof_std::aver_generated::kernel::wire::spaced(
-                                            &c.binders,
-                                        )),
-                                    );
+                                    __b.push_str(&::aver_rt::str_lit!(" ("));
                                     __b
                                 };
-                                __b.push_str(&::aver_rt::str_lit!(") "));
+                                __b.push_display(
+                                    &(crate::proof_std::aver_generated::kernel::wire::spaced(
+                                        &c.binders,
+                                    )),
+                                );
                                 __b
                             };
-                            __b.push_display(
-                                &(crate::proof_std::aver_generated::kernel::wire::proofText(
-                                    &c.proof,
-                                )),
-                            );
+                            __b.push_str(&::aver_rt::str_lit!(") "));
                             __b
                         };
-                        __b.push_str(&::aver_rt::str_lit!(")"));
+                        __b.push_display(
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&c.proof)),
+                        );
                         __b
-                    }),
-                    crate::proof_std::aver_generated::kernel::wire::splitCaseTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(")"));
+                    __b
+                }),
+                crate::proof_std::aver_generated::kernel::wire::splitCaseTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -2528,9 +2324,7 @@ pub fn carryText(ns @ _: &aver_rt::AverList<AverStr>) -> AverStr {
             aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(25)).to_usize().unwrap_or(0),
-                        );
+                        let mut __b = aver_rt::Buffer::with_capacity(25usize);
                         __b.push_str(&::aver_rt::str_lit!(" (carry "));
                         __b
                     };
@@ -2552,12 +2346,10 @@ pub fn inductCaseTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = cs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(c), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    aver_rt::AverStr::from({
+        match aver_rt::list_uncons(__list_subject) {
+            Some((c, rest)) => aver_rt::AverList::prepend_owned(
+                aver_rt::AverStr::from({
+                    let mut __b = {
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
@@ -2565,51 +2357,40 @@ pub fn inductCaseTexts(
                                         let mut __b = {
                                             let mut __b = {
                                                 let mut __b = {
-                                                    let mut __b = {
-                                                        let mut __b =
-                                                            aver_rt::Buffer::with_capacity(
-                                                                (aver_rt::AverInt::from_i64(80))
-                                                                    .to_usize()
-                                                                    .unwrap_or(0),
-                                                            );
-                                                        __b.push_str(&::aver_rt::str_lit!(
-                                                            "(case ("
-                                                        ));
-                                                        __b
-                                                    };
-                                                    __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&c.binders)));
+                                                    let mut __b =
+                                                        aver_rt::Buffer::with_capacity(80usize);
+                                                    __b.push_str(&::aver_rt::str_lit!("(case ("));
                                                     __b
                                                 };
-                                                __b.push_str(&::aver_rt::str_lit!(") ("));
+                                                __b.push_display(&(crate::proof_std::aver_generated::kernel::wire::spaced(&c.binders)));
                                                 __b
                                             };
-                                            __b.push_display(&({ let __arg3 @ _ = crate::proof_std::aver_generated::kernel::wire::ihTexts(&c.ihs, &c.carry); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg3) }));
+                                            __b.push_str(&::aver_rt::str_lit!(") ("));
                                             __b
                                         };
-                                        __b.push_str(&::aver_rt::str_lit!(") ("));
+                                        __b.push_display(&({ let __arg3 @ _ = crate::proof_std::aver_generated::kernel::wire::ihTexts(&c.ihs, &c.carry); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg3) }));
                                         __b
                                     };
-                                    __b.push_display(&({ let __arg4 @ _ = crate::proof_std::aver_generated::kernel::wire::moreTexts(&c.more); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg4) }));
+                                    __b.push_str(&::aver_rt::str_lit!(") ("));
                                     __b
                                 };
-                                __b.push_str(&::aver_rt::str_lit!(") "));
+                                __b.push_display(&({ let __arg4 @ _ = crate::proof_std::aver_generated::kernel::wire::moreTexts(&c.more); crate::proof_std::aver_generated::kernel::wire::spaced(&__arg4) }));
                                 __b
                             };
-                            __b.push_display(
-                                &(crate::proof_std::aver_generated::kernel::wire::proofText(
-                                    &c.proof,
-                                )),
-                            );
+                            __b.push_str(&::aver_rt::str_lit!(") "));
                             __b
                         };
-                        __b.push_str(&::aver_rt::str_lit!(")"));
+                        __b.push_display(
+                            &(crate::proof_std::aver_generated::kernel::wire::proofText(&c.proof)),
+                        );
                         __b
-                    }),
-                    crate::proof_std::aver_generated::kernel::wire::inductCaseTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(")"));
+                    __b
+                }),
+                crate::proof_std::aver_generated::kernel::wire::inductCaseTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -2625,39 +2406,25 @@ pub fn ihTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = ihs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let Some((h, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                {
-                    let __list_subject = carry;
-                    if __list_subject.is_empty() {
-                        aver_rt::AverList::prepend_owned(h, {
-                            let __arg6 @ _ = <aver_rt::AverList<
-                                aver_rt::AverList<
-                                    crate::proof_std::aver_generated::kernel::proof::Proof,
-                                >,
-                            >>::empty();
-                            crate::proof_std::aver_generated::kernel::wire::ihTexts(&rest, &__arg6)
-                        })
-                    } else {
-                        if let (Some(ps), Some(more)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            aver_rt::AverList::prepend_owned(
-                                crate::proof_std::aver_generated::kernel::wire::ihText(h, ps),
-                                crate::proof_std::aver_generated::kernel::wire::ihTexts(
-                                    &rest, &more,
-                                ),
-                            )
-                        } else {
-                            panic!("Aver Rust codegen: non-exhaustive list match")
-                        }
-                    }
+        match aver_rt::list_uncons_cloned(__list_subject) {
+            Some((h, rest)) => {
+                let __list_subject = carry;
+                match aver_rt::list_uncons(__list_subject) {
+                    Some((ps, more)) => aver_rt::AverList::prepend_owned(
+                        crate::proof_std::aver_generated::kernel::wire::ihText(h, ps),
+                        crate::proof_std::aver_generated::kernel::wire::ihTexts(&rest, &more),
+                    ),
+                    None => aver_rt::AverList::prepend_owned(h, {
+                        let __arg6 @ _ = <aver_rt::AverList<
+                            aver_rt::AverList<
+                                crate::proof_std::aver_generated::kernel::proof::Proof,
+                            >,
+                        >>::empty();
+                        crate::proof_std::aver_generated::kernel::wire::ihTexts(&rest, &__arg6)
+                    }),
                 }
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
             }
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -2678,9 +2445,7 @@ pub fn ihText(
                     let mut __b = {
                         let mut __b = {
                             let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(35)).to_usize().unwrap_or(0),
-                                );
+                                let mut __b = aver_rt::Buffer::with_capacity(35usize);
                                 __b.push_str(&::aver_rt::str_lit!("("));
                                 __b
                             };
@@ -2714,43 +2479,34 @@ pub fn moreTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = ms;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(m), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    aver_rt::AverStr::from({
+        match aver_rt::list_uncons(__list_subject) {
+            Some((m, rest)) => aver_rt::AverList::prepend_owned(
+                aver_rt::AverStr::from({
+                    let mut __b = {
                         let mut __b = {
                             let mut __b = {
                                 let mut __b = {
-                                    let mut __b = {
-                                        let mut __b = aver_rt::Buffer::with_capacity(
-                                            (aver_rt::AverInt::from_i64(35))
-                                                .to_usize()
-                                                .unwrap_or(0),
-                                        );
-                                        __b.push_str(&::aver_rt::str_lit!("("));
-                                        __b
-                                    };
-                                    __b.push_display(&(m.call));
+                                    let mut __b = aver_rt::Buffer::with_capacity(35usize);
+                                    __b.push_str(&::aver_rt::str_lit!("("));
                                     __b
                                 };
-                                __b.push_str(&::aver_rt::str_lit!(" "));
+                                __b.push_display(&(m.call));
                                 __b
                             };
-                            __b.push_display(
-                                &(crate::proof_std::aver_generated::kernel::wire::ihAtBody(&m.ih)),
-                            );
+                            __b.push_str(&::aver_rt::str_lit!(" "));
                             __b
                         };
-                        __b.push_str(&::aver_rt::str_lit!(")"));
+                        __b.push_display(
+                            &(crate::proof_std::aver_generated::kernel::wire::ihAtBody(&m.ih)),
+                        );
                         __b
-                    }),
-                    crate::proof_std::aver_generated::kernel::wire::moreTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(")"));
+                    __b
+                }),
+                crate::proof_std::aver_generated::kernel::wire::moreTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -2763,33 +2519,26 @@ pub fn ihAtTexts(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = ihs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(ih), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    aver_rt::AverStr::from({
+        match aver_rt::list_uncons(__list_subject) {
+            Some((ih, rest)) => aver_rt::AverList::prepend_owned(
+                aver_rt::AverStr::from({
+                    let mut __b = {
                         let mut __b = {
-                            let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(
-                                    (aver_rt::AverInt::from_i64(18)).to_usize().unwrap_or(0),
-                                );
-                                __b.push_str(&::aver_rt::str_lit!("("));
-                                __b
-                            };
-                            __b.push_display(
-                                &(crate::proof_std::aver_generated::kernel::wire::ihAtBody(ih)),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(18usize);
+                            __b.push_str(&::aver_rt::str_lit!("("));
                             __b
                         };
-                        __b.push_str(&::aver_rt::str_lit!(")"));
+                        __b.push_display(
+                            &(crate::proof_std::aver_generated::kernel::wire::ihAtBody(ih)),
+                        );
                         __b
-                    }),
-                    crate::proof_std::aver_generated::kernel::wire::ihAtTexts(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(")"));
+                    __b
+                }),
+                crate::proof_std::aver_generated::kernel::wire::ihAtTexts(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -2804,9 +2553,7 @@ pub fn ihAtBody(ih @ _: &crate::proof_std::aver_generated::kernel::proof::IhAt) 
                 let mut __b = {
                     let mut __b = {
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(54)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(54usize);
                             __b.push_display(&(ih.name));
                             __b
                         };

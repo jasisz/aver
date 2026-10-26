@@ -269,7 +269,7 @@ pub fn typeOf(c @ _: &AverStr) -> AverStr {
     crate::proof_kernel::cancel_checkpoint();
     aver_rt::string_join(
         &({
-            let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)));
+            let __n = 1usize;
             ((aver_rt::string_split_byte(&c, 46u8)).reverse_owned()).drop_first(__n)
         })
         .reverse_owned(),
@@ -285,17 +285,12 @@ pub fn evalAll(
     crate::proof_kernel::cancel_checkpoint();
     {
         let __list_subject = xs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    crate::proof_kernel::aver_generated::kernel::eval::evalClosed(x),
-                    crate::proof_kernel::aver_generated::kernel::eval::evalAll(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(__list_subject) {
+            Some((x, rest)) => aver_rt::AverList::prepend_owned(
+                crate::proof_kernel::aver_generated::kernel::eval::evalClosed(x),
+                crate::proof_kernel::aver_generated::kernel::eval::evalAll(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -496,14 +491,11 @@ pub fn evalBuiltin(
             if &*__dispatch_subject == "Bool.and" {
                 {
                     let __list_subject = __pat1;
-                    if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail())
-                    {
-                        {
+                    match aver_rt::list_uncons(&__list_subject) {
+                        Some((a, __pat2)) => {
                             let __list_subject = __pat2;
-                            if let (Some(b), Some(__pat3)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((b, __pat3)) => {
                                     let __list_subject = __pat3;
                                     if __list_subject.is_empty() {
                                         {
@@ -517,62 +509,38 @@ pub fn evalBuiltin(
                                         crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                     }
                                 }
-                            } else {
-                                crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
-                                    name, args,
-                                )
+                                None => {
+                                    crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                                        name, args,
+                                    )
+                                }
                             }
                         }
-                    } else {
-                        crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
+                        None => crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                            name, args,
+                        ),
                     }
                 }
             } else {
                 if &*__dispatch_subject == "Bool.or" {
                     {
                         let __list_subject = __pat1;
-                        if let (Some(a), Some(__pat4)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
+                        match aver_rt::list_uncons(&__list_subject) {
+                            Some((a, __pat4)) => {
                                 let __list_subject = __pat4;
-                                if let (Some(b), Some(__pat5)) =
-                                    (__list_subject.first(), __list_subject.tail())
-                                {
-                                    {
-                                        let __list_subject = __pat5;
-                                        if __list_subject.is_empty() {
-                                            {
-                                                let __arg28 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a);
-                                                {
-                                                    let __arg29 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(b);
-                                                    crate::proof_kernel::aver_generated::kernel::eval::both(&__arg28, &__arg29, false)
-                                                }
-                                            }
-                                        } else {
-                                            crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
-                                        }
-                                    }
-                                } else {
-                                    crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
-                                        name, args,
-                                    )
-                                }
+                                match aver_rt::list_uncons(&__list_subject) { Some((b, __pat5)) => { { let __list_subject = __pat5; if __list_subject.is_empty() { { let __arg28 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a); { let __arg29 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(b); crate::proof_kernel::aver_generated::kernel::eval::both(&__arg28, &__arg29, false) } } } else { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } } }, None => { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } }
                             }
-                        } else {
-                            crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                            None => crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
                                 name, args,
-                            )
+                            ),
                         }
                     }
                 } else {
                     if &*__dispatch_subject == "Bool.not" {
                         {
                             let __list_subject = __pat1;
-                            if let (Some(a), Some(__pat6)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((a, __pat6)) => {
                                     let __list_subject = __pat6;
                                     if __list_subject.is_empty() {
                                         {
@@ -583,115 +551,30 @@ pub fn evalBuiltin(
                                         crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                     }
                                 }
-                            } else {
-                                crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
-                                    name, args,
-                                )
+                                None => {
+                                    crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                                        name, args,
+                                    )
+                                }
                             }
                         }
                     } else {
                         if &*__dispatch_subject == "__int_div_euclid" {
                             {
                                 let __list_subject = __pat1;
-                                if let (Some(a), Some(__pat7)) =
-                                    (__list_subject.first(), __list_subject.tail())
-                                {
-                                    {
-                                        let __list_subject = __pat7;
-                                        if let (Some(k), Some(__pat8)) =
-                                            (__list_subject.first(), __list_subject.tail())
-                                        {
-                                            {
-                                                let __list_subject = __pat8;
-                                                if __list_subject.is_empty() {
-                                                    {
-                                                        let __arg31 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a);
-                                                        {
-                                                            let __arg32 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(k);
-                                                            crate::proof_kernel::aver_generated::kernel::eval::division(&__arg31, &__arg32, true)
-                                                        }
-                                                    }
-                                                } else {
-                                                    crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
-                                                }
-                                            }
-                                        } else {
-                                            crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
-                                        }
-                                    }
-                                } else {
-                                    crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
-                                        name, args,
-                                    )
-                                }
+                                match aver_rt::list_uncons(&__list_subject) { Some((a, __pat7)) => { { let __list_subject = __pat7; match aver_rt::list_uncons(&__list_subject) { Some((k, __pat8)) => { { let __list_subject = __pat8; if __list_subject.is_empty() { { let __arg31 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a); { let __arg32 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(k); crate::proof_kernel::aver_generated::kernel::eval::division(&__arg31, &__arg32, true) } } } else { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } } }, None => { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } } } }, None => { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } }
                             }
                         } else {
                             if &*__dispatch_subject == "__int_mod_euclid" {
                                 {
                                     let __list_subject = __pat1;
-                                    if let (Some(a), Some(__pat9)) =
-                                        (__list_subject.first(), __list_subject.tail())
-                                    {
-                                        {
-                                            let __list_subject = __pat9;
-                                            if let (Some(k), Some(__pat10)) =
-                                                (__list_subject.first(), __list_subject.tail())
-                                            {
-                                                {
-                                                    let __list_subject = __pat10;
-                                                    if __list_subject.is_empty() {
-                                                        {
-                                                            let __arg33 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a);
-                                                            {
-                                                                let __arg34 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(k);
-                                                                crate::proof_kernel::aver_generated::kernel::eval::division(&__arg33, &__arg34, false)
-                                                            }
-                                                        }
-                                                    } else {
-                                                        crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
-                                                    }
-                                                }
-                                            } else {
-                                                crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
-                                            }
-                                        }
-                                    } else {
-                                        crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
-                                    }
+                                    match aver_rt::list_uncons(&__list_subject) { Some((a, __pat9)) => { { let __list_subject = __pat9; match aver_rt::list_uncons(&__list_subject) { Some((k, __pat10)) => { { let __list_subject = __pat10; if __list_subject.is_empty() { { let __arg33 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a); { let __arg34 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(k); crate::proof_kernel::aver_generated::kernel::eval::division(&__arg33, &__arg34, false) } } } else { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } } }, None => { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } } } }, None => { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } }
                                 }
                             } else {
                                 if &*__dispatch_subject == "__bits_shl" {
                                     {
                                         let __list_subject = __pat1;
-                                        if let (Some(a), Some(__pat11)) =
-                                            (__list_subject.first(), __list_subject.tail())
-                                        {
-                                            {
-                                                let __list_subject = __pat11;
-                                                if let (Some(n), Some(__pat12)) =
-                                                    (__list_subject.first(), __list_subject.tail())
-                                                {
-                                                    {
-                                                        let __list_subject = __pat12;
-                                                        if __list_subject.is_empty() {
-                                                            {
-                                                                let __arg35 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a);
-                                                                {
-                                                                    let __arg36 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(n);
-                                                                    crate::proof_kernel::aver_generated::kernel::eval::shifted(&__arg35, &__arg36)
-                                                                }
-                                                            }
-                                                        } else {
-                                                            crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
-                                                        }
-                                                    }
-                                                } else {
-                                                    crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
-                                                }
-                                            }
-                                        } else {
-                                            crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
-                                        }
+                                        match aver_rt::list_uncons(&__list_subject) { Some((a, __pat11)) => { { let __list_subject = __pat11; match aver_rt::list_uncons(&__list_subject) { Some((n, __pat12)) => { { let __list_subject = __pat12; if __list_subject.is_empty() { { let __arg35 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a); { let __arg36 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(n); crate::proof_kernel::aver_generated::kernel::eval::shifted(&__arg35, &__arg36) } } } else { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } } }, None => { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } } } }, None => { crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args) } }
                                     }
                                 } else {
                                     crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
@@ -849,14 +732,11 @@ pub fn listBuiltin(
             if &*__dispatch_subject == "List.prepend" {
                 {
                     let __list_subject = __pat1;
-                    if let (Some(a), Some(__pat2)) = (__list_subject.first(), __list_subject.tail())
-                    {
-                        {
+                    match aver_rt::list_uncons(&__list_subject) {
+                        Some((a, __pat2)) => {
                             let __list_subject = __pat2;
-                            if let (Some(l), Some(__pat3)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((l, __pat3)) => {
                                     let __list_subject = __pat3;
                                     if __list_subject.is_empty() {
                                         {
@@ -870,27 +750,21 @@ pub fn listBuiltin(
                                         None
                                     }
                                 }
-                            } else {
-                                None
+                                None => None,
                             }
                         }
-                    } else {
-                        None
+                        None => None,
                     }
                 }
             } else {
                 if &*__dispatch_subject == "List.concat" {
                     {
                         let __list_subject = __pat1;
-                        if let (Some(a), Some(__pat4)) =
-                            (__list_subject.first(), __list_subject.tail())
-                        {
-                            {
+                        match aver_rt::list_uncons(&__list_subject) {
+                            Some((a, __pat4)) => {
                                 let __list_subject = __pat4;
-                                if let (Some(b), Some(__pat5)) =
-                                    (__list_subject.first(), __list_subject.tail())
-                                {
-                                    {
+                                match aver_rt::list_uncons(&__list_subject) {
+                                    Some((b, __pat5)) => {
                                         let __list_subject = __pat5;
                                         if __list_subject.is_empty() {
                                             {
@@ -904,22 +778,18 @@ pub fn listBuiltin(
                                             None
                                         }
                                     }
-                                } else {
-                                    None
+                                    None => None,
                                 }
                             }
-                        } else {
-                            None
+                            None => None,
                         }
                     }
                 } else {
                     if &*__dispatch_subject == "List.len" {
                         {
                             let __list_subject = __pat1;
-                            if let (Some(l), Some(__pat6)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                {
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((l, __pat6)) => {
                                     let __list_subject = __pat6;
                                     if __list_subject.is_empty() {
                                         {
@@ -930,18 +800,15 @@ pub fn listBuiltin(
                                         None
                                     }
                                 }
-                            } else {
-                                None
+                                None => None,
                             }
                         }
                     } else {
                         if &*__dispatch_subject == "List.reverse" {
                             {
                                 let __list_subject = __pat1;
-                                if let (Some(l), Some(__pat7)) =
-                                    (__list_subject.first(), __list_subject.tail())
-                                {
-                                    {
+                                match aver_rt::list_uncons(&__list_subject) {
+                                    Some((l, __pat7)) => {
                                         let __list_subject = __pat7;
                                         if __list_subject.is_empty() {
                                             {
@@ -952,23 +819,18 @@ pub fn listBuiltin(
                                             None
                                         }
                                     }
-                                } else {
-                                    None
+                                    None => None,
                                 }
                             }
                         } else {
                             if &*__dispatch_subject == "List.take" {
                                 {
                                     let __list_subject = __pat1;
-                                    if let (Some(l), Some(__pat8)) =
-                                        (__list_subject.first(), __list_subject.tail())
-                                    {
-                                        {
+                                    match aver_rt::list_uncons(&__list_subject) {
+                                        Some((l, __pat8)) => {
                                             let __list_subject = __pat8;
-                                            if let (Some(n), Some(__pat9)) =
-                                                (__list_subject.first(), __list_subject.tail())
-                                            {
-                                                {
+                                            match aver_rt::list_uncons(&__list_subject) {
+                                                Some((n, __pat9)) => {
                                                     let __list_subject = __pat9;
                                                     if __list_subject.is_empty() {
                                                         {
@@ -982,27 +844,21 @@ pub fn listBuiltin(
                                                         None
                                                     }
                                                 }
-                                            } else {
-                                                None
+                                                None => None,
                                             }
                                         }
-                                    } else {
-                                        None
+                                        None => None,
                                     }
                                 }
                             } else {
                                 if &*__dispatch_subject == "List.drop" {
                                     {
                                         let __list_subject = __pat1;
-                                        if let (Some(l), Some(__pat10)) =
-                                            (__list_subject.first(), __list_subject.tail())
-                                        {
-                                            {
+                                        match aver_rt::list_uncons(&__list_subject) {
+                                            Some((l, __pat10)) => {
                                                 let __list_subject = __pat10;
-                                                if let (Some(n), Some(__pat11)) =
-                                                    (__list_subject.first(), __list_subject.tail())
-                                                {
-                                                    {
+                                                match aver_rt::list_uncons(&__list_subject) {
+                                                    Some((n, __pat11)) => {
                                                         let __list_subject = __pat11;
                                                         if __list_subject.is_empty() {
                                                             {
@@ -1016,12 +872,10 @@ pub fn listBuiltin(
                                                             None
                                                         }
                                                     }
-                                                } else {
-                                                    None
+                                                    None => None,
                                                 }
                                             }
-                                        } else {
-                                            None
+                                            None => None,
                                         }
                                     }
                                 } else {

@@ -240,8 +240,317 @@ pub fn scan(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = cs;
-            if __list_subject.is_empty() {
-                match mode {
+            match aver_rt::list_uncons_cloned(__list_subject) {
+                Some((c, rest)) => match mode {
+                    crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready => {
+                        let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                        if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
+                            {
+                                let __tco0 = rest;
+                                __hold0 = __tco0;
+                                cs = &__hold0;
+                                continue;
+                            }
+                        } else {
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
+                                {
+                                    let __tco0 = rest;
+                                    __hold0 = __tco0;
+                                    cs = &__hold0;
+                                    continue;
+                                }
+                            } else {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
+                                    {
+                                        let __tco0 = rest;
+                                        __hold0 = __tco0;
+                                        cs = &__hold0;
+                                        continue;
+                                    }
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(13) {
+                                        {
+                                            let __tco0 = rest;
+                                            __hold0 = __tco0;
+                                            cs = &__hold0;
+                                            continue;
+                                        }
+                                    } else {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(59) {
+                                            {
+                                                let __tco0 = rest;
+                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Comment;
+                                                __hold0 = __tco0;
+                                                cs = &__hold0;
+                                                __hold1 = __tco1;
+                                                mode = &__hold1;
+                                                continue;
+                                            }
+                                        } else {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(40)
+                                            {
+                                                {
+                                                    let __tco0 = rest;
+                                                    let __tco2 = aver_rt::AverList::empty();
+                                                    let __tco3 = aver_rt::AverList::prepend_owned(
+                                                        current, parents,
+                                                    );
+                                                    __hold0 = __tco0;
+                                                    cs = &__hold0;
+                                                    current = __tco2;
+                                                    parents = __tco3;
+                                                    continue;
+                                                }
+                                            } else {
+                                                if __dispatch_subject
+                                                    == aver_rt::AverInt::from_i64(41)
+                                                {
+                                                    aver_list_match!(parents, [] => { return Err(::aver_rt::str_lit!("unexpected )")); }, [parent, above] => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node((current).reverse_owned()), parent);
+            let __tco3 = above;
+            __hold0 = __tco0;
+            cs = &__hold0;
+            current = __tco2;
+            parents = __tco3;
+            continue;
+        } })
+                                                } else {
+                                                    if __dispatch_subject
+                                                        == aver_rt::AverInt::from_i64(34)
+                                                    {
+                                                        {
+                                                            let __tco0 = rest;
+                                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(::aver_rt::str_lit!(""));
+                                                            __hold0 = __tco0;
+                                                            cs = &__hold0;
+                                                            __hold1 = __tco1;
+                                                            mode = &__hold1;
+                                                            continue;
+                                                        }
+                                                    } else {
+                                                        {
+                                                            let __tco0 = rest;
+                                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(c);
+                                                            __hold0 = __tco0;
+                                                            cs = &__hold0;
+                                                            __hold1 = __tco1;
+                                                            mode = &__hold1;
+                                                            continue;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
+                        let acc = acc.clone();
+                        {
+                            let __dispatch_subject =
+                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                    let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
+                                    __hold0 = __tco0;
+                                    cs = &__hold0;
+                                    __hold1 = __tco1;
+                                    mode = &__hold1;
+                                    current = __tco2;
+                                    continue;
+                                }
+                            } else {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                        let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
+                                        __hold0 = __tco0;
+                                        cs = &__hold0;
+                                        __hold1 = __tco1;
+                                        mode = &__hold1;
+                                        current = __tco2;
+                                        continue;
+                                    }
+                                } else {
+                                    if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
+                                        {
+                                            let __tco0 = rest;
+                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
+                                            __hold0 = __tco0;
+                                            cs = &__hold0;
+                                            __hold1 = __tco1;
+                                            mode = &__hold1;
+                                            current = __tco2;
+                                            continue;
+                                        }
+                                    } else {
+                                        if __dispatch_subject == aver_rt::AverInt::from_i64(13) {
+                                            {
+                                                let __tco0 = rest;
+                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
+                                                __hold0 = __tco0;
+                                                cs = &__hold0;
+                                                __hold1 = __tco1;
+                                                mode = &__hold1;
+                                                current = __tco2;
+                                                continue;
+                                            }
+                                        } else {
+                                            if __dispatch_subject == aver_rt::AverInt::from_i64(40)
+                                            {
+                                                {
+                                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                    let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
+                                                    __hold1 = __tco1;
+                                                    mode = &__hold1;
+                                                    current = __tco2;
+                                                    continue;
+                                                }
+                                            } else {
+                                                if __dispatch_subject
+                                                    == aver_rt::AverInt::from_i64(41)
+                                                {
+                                                    {
+                                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                        let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
+                                                        __hold1 = __tco1;
+                                                        mode = &__hold1;
+                                                        current = __tco2;
+                                                        continue;
+                                                    }
+                                                } else {
+                                                    if __dispatch_subject
+                                                        == aver_rt::AverInt::from_i64(34)
+                                                    {
+                                                        {
+                                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                                            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
+                                                            __hold1 = __tco1;
+                                                            mode = &__hold1;
+                                                            current = __tco2;
+                                                            continue;
+                                                        }
+                                                    } else {
+                                                        {
+                                                            let __tco0 = rest;
+                                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom((acc + &c));
+                                                            __hold0 = __tco0;
+                                                            cs = &__hold0;
+                                                            __hold1 = __tco1;
+                                                            mode = &__hold1;
+                                                            continue;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(acc) => {
+                        let acc = acc.clone();
+                        {
+                            let __dispatch_subject =
+                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                            if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                    let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc), current);
+                                    __hold0 = __tco0;
+                                    cs = &__hold0;
+                                    __hold1 = __tco1;
+                                    mode = &__hold1;
+                                    current = __tco2;
+                                    continue;
+                                }
+                            } else {
+                                if __dispatch_subject == aver_rt::AverInt::from_i64(92) {
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(acc);
+                                        __hold0 = __tco0;
+                                        cs = &__hold0;
+                                        __hold1 = __tco1;
+                                        mode = &__hold1;
+                                        continue;
+                                    }
+                                } else {
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
+                                        __hold0 = __tco0;
+                                        cs = &__hold0;
+                                        __hold1 = __tco1;
+                                        mode = &__hold1;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(acc) => {
+                        let acc = acc.clone();
+                        {
+                            let __int_match_subject =
+                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                            if __int_match_subject == aver_rt::AverInt::from_i64(110) {
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &::aver_rt::str_lit!("\n")));
+                                    __hold0 = __tco0;
+                                    cs = &__hold0;
+                                    __hold1 = __tco1;
+                                    mode = &__hold1;
+                                    continue;
+                                }
+                            } else {
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
+                                    __hold0 = __tco0;
+                                    cs = &__hold0;
+                                    __hold1 = __tco1;
+                                    mode = &__hold1;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Comment => {
+                        let __int_match_subject =
+                            aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
+                        if __int_match_subject == aver_rt::AverInt::from_i64(10) {
+                            {
+                                let __tco0 = rest;
+                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
+                                __hold0 = __tco0;
+                                cs = &__hold0;
+                                __hold1 = __tco1;
+                                mode = &__hold1;
+                                continue;
+                            }
+                        } else {
+                            {
+                                let __tco0 = rest;
+                                __hold0 = __tco0;
+                                cs = &__hold0;
+                                continue;
+                            }
+                        }
+                    }
+                },
+                None => match mode {
                     crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(acc) => {
                         let acc = acc.clone();
                         return Err(::aver_rt::str_lit!("unterminated text"));
@@ -267,329 +576,7 @@ pub fn scan(
                             &current, parents,
                         );
                     }
-                }
-            } else {
-                if let Some((c, rest)) = aver_rt::list_uncons_cloned(__list_subject) {
-                    match mode {
-                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready => {
-                            let __dispatch_subject =
-                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
-                                {
-                                    let __tco0 = rest;
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
-                                    continue;
-                                }
-                            } else {
-                                if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
-                                    {
-                                        let __tco0 = rest;
-                                        __hold0 = __tco0;
-                                        cs = &__hold0;
-                                        continue;
-                                    }
-                                } else {
-                                    if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
-                                        {
-                                            let __tco0 = rest;
-                                            __hold0 = __tco0;
-                                            cs = &__hold0;
-                                            continue;
-                                        }
-                                    } else {
-                                        if __dispatch_subject == aver_rt::AverInt::from_i64(13) {
-                                            {
-                                                let __tco0 = rest;
-                                                __hold0 = __tco0;
-                                                cs = &__hold0;
-                                                continue;
-                                            }
-                                        } else {
-                                            if __dispatch_subject == aver_rt::AverInt::from_i64(59)
-                                            {
-                                                {
-                                                    let __tco0 = rest;
-                                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Comment;
-                                                    __hold0 = __tco0;
-                                                    cs = &__hold0;
-                                                    __hold1 = __tco1;
-                                                    mode = &__hold1;
-                                                    continue;
-                                                }
-                                            } else {
-                                                if __dispatch_subject
-                                                    == aver_rt::AverInt::from_i64(40)
-                                                {
-                                                    {
-                                                        let __tco0 = rest;
-                                                        let __tco2 = aver_rt::AverList::empty();
-                                                        let __tco3 =
-                                                            aver_rt::AverList::prepend_owned(
-                                                                current, parents,
-                                                            );
-                                                        __hold0 = __tco0;
-                                                        cs = &__hold0;
-                                                        current = __tco2;
-                                                        parents = __tco3;
-                                                        continue;
-                                                    }
-                                                } else {
-                                                    if __dispatch_subject
-                                                        == aver_rt::AverInt::from_i64(41)
-                                                    {
-                                                        aver_list_match!(parents, [] => { return Err(::aver_rt::str_lit!("unexpected )")); }, [parent, above] => { {
-            let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node((current).reverse_owned()), parent);
-            let __tco3 = above;
-            __hold0 = __tco0;
-            cs = &__hold0;
-            current = __tco2;
-            parents = __tco3;
-            continue;
-        } })
-                                                    } else {
-                                                        if __dispatch_subject
-                                                            == aver_rt::AverInt::from_i64(34)
-                                                        {
-                                                            {
-                                                                let __tco0 = rest;
-                                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(::aver_rt::str_lit!(""));
-                                                                __hold0 = __tco0;
-                                                                cs = &__hold0;
-                                                                __hold1 = __tco1;
-                                                                mode = &__hold1;
-                                                                continue;
-                                                            }
-                                                        } else {
-                                                            {
-                                                                let __tco0 = rest;
-                                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(c);
-                                                                __hold0 = __tco0;
-                                                                cs = &__hold0;
-                                                                __hold1 = __tco1;
-                                                                mode = &__hold1;
-                                                                continue;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
-                            let acc = acc.clone();
-                            {
-                                let __dispatch_subject =
-                                    aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-                                if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
-                                    {
-                                        let __tco0 = rest;
-                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                        let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                        __hold0 = __tco0;
-                                        cs = &__hold0;
-                                        __hold1 = __tco1;
-                                        mode = &__hold1;
-                                        current = __tco2;
-                                        continue;
-                                    }
-                                } else {
-                                    if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
-                                        {
-                                            let __tco0 = rest;
-                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                            __hold0 = __tco0;
-                                            cs = &__hold0;
-                                            __hold1 = __tco1;
-                                            mode = &__hold1;
-                                            current = __tco2;
-                                            continue;
-                                        }
-                                    } else {
-                                        if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
-                                            {
-                                                let __tco0 = rest;
-                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                                __hold0 = __tco0;
-                                                cs = &__hold0;
-                                                __hold1 = __tco1;
-                                                mode = &__hold1;
-                                                current = __tco2;
-                                                continue;
-                                            }
-                                        } else {
-                                            if __dispatch_subject == aver_rt::AverInt::from_i64(13)
-                                            {
-                                                {
-                                                    let __tco0 = rest;
-                                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                    let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                                    __hold0 = __tco0;
-                                                    cs = &__hold0;
-                                                    __hold1 = __tco1;
-                                                    mode = &__hold1;
-                                                    current = __tco2;
-                                                    continue;
-                                                }
-                                            } else {
-                                                if __dispatch_subject
-                                                    == aver_rt::AverInt::from_i64(40)
-                                                {
-                                                    {
-                                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                        let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                                        __hold1 = __tco1;
-                                                        mode = &__hold1;
-                                                        current = __tco2;
-                                                        continue;
-                                                    }
-                                                } else {
-                                                    if __dispatch_subject
-                                                        == aver_rt::AverInt::from_i64(41)
-                                                    {
-                                                        {
-                                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                            let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                                            __hold1 = __tco1;
-                                                            mode = &__hold1;
-                                                            current = __tco2;
-                                                            continue;
-                                                        }
-                                                    } else {
-                                                        if __dispatch_subject
-                                                            == aver_rt::AverInt::from_i64(34)
-                                                        {
-                                                            {
-                                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                                                let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                                                __hold1 = __tco1;
-                                                                mode = &__hold1;
-                                                                current = __tco2;
-                                                                continue;
-                                                            }
-                                                        } else {
-                                                            {
-                                                                let __tco0 = rest;
-                                                                let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom((acc + &c));
-                                                                __hold0 = __tco0;
-                                                                cs = &__hold0;
-                                                                __hold1 = __tco1;
-                                                                mode = &__hold1;
-                                                                continue;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(acc) => {
-                            let acc = acc.clone();
-                            {
-                                let __dispatch_subject =
-                                    aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-                                if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
-                                    {
-                                        let __tco0 = rest;
-                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                        let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc), current);
-                                        __hold0 = __tco0;
-                                        cs = &__hold0;
-                                        __hold1 = __tco1;
-                                        mode = &__hold1;
-                                        current = __tco2;
-                                        continue;
-                                    }
-                                } else {
-                                    if __dispatch_subject == aver_rt::AverInt::from_i64(92) {
-                                        {
-                                            let __tco0 = rest;
-                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(acc);
-                                            __hold0 = __tco0;
-                                            cs = &__hold0;
-                                            __hold1 = __tco1;
-                                            mode = &__hold1;
-                                            continue;
-                                        }
-                                    } else {
-                                        {
-                                            let __tco0 = rest;
-                                            let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
-                                            __hold0 = __tco0;
-                                            cs = &__hold0;
-                                            __hold1 = __tco1;
-                                            mode = &__hold1;
-                                            continue;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(
-                            acc,
-                        ) => {
-                            let acc = acc.clone();
-                            {
-                                let __int_match_subject =
-                                    aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-                                if __int_match_subject == aver_rt::AverInt::from_i64(110) {
-                                    {
-                                        let __tco0 = rest;
-                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &::aver_rt::str_lit!("\n")));
-                                        __hold0 = __tco0;
-                                        cs = &__hold0;
-                                        __hold1 = __tco1;
-                                        mode = &__hold1;
-                                        continue;
-                                    }
-                                } else {
-                                    {
-                                        let __tco0 = rest;
-                                        let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
-                                        __hold0 = __tco0;
-                                        cs = &__hold0;
-                                        __hold1 = __tco1;
-                                        mode = &__hold1;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                        crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Comment => {
-                            let __int_match_subject =
-                                aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-                            if __int_match_subject == aver_rt::AverInt::from_i64(10) {
-                                {
-                                    let __tco0 = rest;
-                                    let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
-                                    __hold1 = __tco1;
-                                    mode = &__hold1;
-                                    continue;
-                                }
-                            } else {
-                                {
-                                    let __tco0 = rest;
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
-                }
+                },
             }
         }
     }
@@ -602,7 +589,7 @@ pub fn finish(
     mut parents @ _: aver_rt::AverList<aver_rt::AverList<Sexp>>,
 ) -> Result<Sexp, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(parents, [] => { { let __list_subject = current; if __list_subject.is_empty() { Err(::aver_rt::str_lit!("unexpected end of data")) } else { if let (Some(s), Some(__pat0)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat0; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::sexp::expand(s.clone()) } else { Err(::aver_rt::str_lit!("text after the S-expression")) } } } else { panic!("Aver Rust codegen: non-exhaustive list match") } } } }, [parent, above] => Err(::aver_rt::str_lit!("unexpected end of data")))
+    aver_list_match!(parents, [] => { { let __list_subject = current; match aver_rt::list_uncons(__list_subject) { Some((s, __pat0)) => { { let __list_subject = __pat0; if __list_subject.is_empty() { crate::proof_kernel::aver_generated::kernel::sexp::expand(s.clone()) } else { Err(::aver_rt::str_lit!("text after the S-expression")) } } }, None => { Err(::aver_rt::str_lit!("unexpected end of data")) } } } }, [parent, above] => Err(::aver_rt::str_lit!("unexpected end of data")))
 }
 
 /// (shared ((#NAME S)…) BODY) is BODY with every #NAME written out as its S; each S may use only the names before it. Anything else is itself.
@@ -613,37 +600,28 @@ pub fn expand(mut s @ _: Sexp) -> Result<Sexp, AverStr> {
             let __pat0 = __pat0.clone();
             {
                 let __list_subject = __pat0;
-                if let (Some(__pat1), Some(__pat2)) =
-                    (__list_subject.first(), __list_subject.tail())
-                {
-                    match __pat1 {
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((__pat1, __pat2)) => match __pat1 {
                         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
                             let __pat3 = __pat3.clone();
                             match &*__pat3 {
                                 "shared" => {
                                     let __list_subject = __pat2;
-                                    if let (Some(__pat4), Some(__pat5)) =
-                                        (__list_subject.first(), __list_subject.tail())
-                                    {
-                                        match __pat4 {
+                                    match aver_rt::list_uncons(&__list_subject) { Some((__pat4, __pat5)) => { match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(parts) => {
-            { let __list_subject = __pat5; if let (Some(body), Some(__pat6)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat6; if __list_subject.is_empty() { { let (b, n) = { let __arg14 @ _ = { let __arg13 @ _ = { let __arg12 @ _ = <aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>>::new(); crate::proof_kernel::aver_generated::kernel::sexp::define(parts, __arg12) }?; crate::proof_kernel::aver_generated::kernel::sexp::within(body.clone(), &__arg13) }?; crate::proof_kernel::aver_generated::kernel::sexp::bounded(&__arg14) }?; Ok(b) } } else { Ok(s) } } } else { Ok(s) } }
+            { let __list_subject = __pat5; match aver_rt::list_uncons(&__list_subject) { Some((body, __pat6)) => { { let __list_subject = __pat6; if __list_subject.is_empty() { { let (b, n) = { let __arg14 @ _ = { let __arg13 @ _ = { let __arg12 @ _ = <aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>>::new(); crate::proof_kernel::aver_generated::kernel::sexp::define(parts, __arg12) }?; crate::proof_kernel::aver_generated::kernel::sexp::within(body.clone(), &__arg13) }?; crate::proof_kernel::aver_generated::kernel::sexp::bounded(&__arg14) }?; Ok(b) } } else { Ok(s) } } }, None => { Ok(s) } } }
         },
         _ => {
             Ok(s)
         }
-    }
-                                    } else {
-                                        Ok(s)
-                                    }
+    } }, None => { Ok(s) } }
                                 }
                                 _ => Ok(s),
                             }
                         }
                         _ => Ok(s),
-                    }
-                } else {
-                    Ok(s)
+                    },
+                    None => Ok(s),
                 }
             }
         }
@@ -663,43 +641,35 @@ pub fn define(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = parts;
-            if __list_subject.is_empty() {
-                return Ok(table);
-            } else {
-                if let (Some(__pat0), Some(rest)) = (__list_subject.first(), __list_subject.tail())
-                {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((__pat0, rest)) => {
                     match __pat0 {
                         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat1) => {
                             let __list_subject = __pat1;
-                            if let (Some(__pat2), Some(__pat3)) =
-                                (__list_subject.first(), __list_subject.tail())
-                            {
-                                match __pat2 {
+                            match aver_rt::list_uncons(__list_subject) { Some((__pat2, __pat3)) => { match __pat2 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
             let n = n.clone();
-            { let __list_subject = __pat3; if let (Some(s), Some(__pat4)) = (__list_subject.first(), __list_subject.tail()) { { let __list_subject = __pat4; if __list_subject.is_empty() { {
+            { let __list_subject = __pat3; match aver_rt::list_uncons(&__list_subject) { Some((s, __pat4)) => { { let __list_subject = __pat4; if __list_subject.is_empty() { {
             let __tco0 = rest;
             let __tco1 = { let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::sexp::fresh(n, &table)?; { let __arg12 @ _ = { let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::sexp::within(s.clone(), &table)?; crate::proof_kernel::aver_generated::kernel::sexp::bounded(&__arg10) }?; table.insert_owned(__arg11, __arg12) } };
             __hold0 = __tco0;
             parts = &__hold0;
             table = __tco1;
             continue;
-        } } else { return Err(::aver_rt::str_lit!("malformed shared part")); } } } else { return Err(::aver_rt::str_lit!("malformed shared part")); } }
+        } } else { return Err(::aver_rt::str_lit!("malformed shared part")); } } }, None => { return Err(::aver_rt::str_lit!("malformed shared part")); } } }
         },
         _ => {
             return Err(::aver_rt::str_lit!("malformed shared part"));
         }
-    }
-                            } else {
-                                return Err(::aver_rt::str_lit!("malformed shared part"));
-                            }
+    } }, None => { return Err(::aver_rt::str_lit!("malformed shared part")); } }
                         }
                         _ => {
                             return Err(::aver_rt::str_lit!("malformed shared part"));
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok(table);
                 }
             }
         }
@@ -717,9 +687,7 @@ pub fn fresh(
         if table.contains_key(&n) {
             Err(aver_rt::AverStr::from({
                 let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(
-                        (aver_rt::AverInt::from_i64(33)).to_usize().unwrap_or(0),
-                    );
+                    let mut __b = aver_rt::Buffer::with_capacity(33usize);
                     __b.push_display(&(n));
                     __b
                 };
@@ -732,9 +700,7 @@ pub fn fresh(
     } else {
         Err(aver_rt::AverStr::from({
             let mut __b = {
-                let mut __b = aver_rt::Buffer::with_capacity(
-                    (aver_rt::AverInt::from_i64(45)).to_usize().unwrap_or(0),
-                );
+                let mut __b = aver_rt::Buffer::with_capacity(45usize);
                 __b.push_str(&::aver_rt::str_lit!("a shared name starts with #: "));
                 __b
             };
@@ -772,9 +738,7 @@ pub fn within(
                 table.get(&a).cloned().ok_or_else(|| {
                     aver_rt::AverStr::from({
                         let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(
-                                (aver_rt::AverInt::from_i64(46)).to_usize().unwrap_or(0),
-                            );
+                            let mut __b = aver_rt::Buffer::with_capacity(46usize);
                             __b.push_display(&(a));
                             __b
                         };
@@ -816,33 +780,30 @@ pub fn withinAll(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = xs;
-            if __list_subject.is_empty() {
-                return Ok((
-                    crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(
-                        (acc).reverse_owned(),
-                    ),
-                    size,
-                ));
-            } else {
-                if let (Some(x), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((x, rest)) => {
+                    let (y, n) = crate::proof_kernel::aver_generated::kernel::sexp::within(
+                        x.clone(),
+                        table,
+                    )?;
                     {
-                        let (y, n) = crate::proof_kernel::aver_generated::kernel::sexp::within(
-                            x.clone(),
-                            table,
-                        )?;
-                        {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend_owned(y, acc);
-                            let __tco3 = size.add(&n);
-                            __hold0 = __tco0;
-                            xs = &__hold0;
-                            acc = __tco2;
-                            size = __tco3;
-                            continue;
-                        }
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::AverList::prepend_owned(y, acc);
+                        let __tco3 = size.add(&n);
+                        __hold0 = __tco0;
+                        xs = &__hold0;
+                        acc = __tco2;
+                        size = __tco3;
+                        continue;
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return Ok((
+                        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(
+                            (acc).reverse_owned(),
+                        ),
+                        size,
+                    ));
                 }
             }
         }

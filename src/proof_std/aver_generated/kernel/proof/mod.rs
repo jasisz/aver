@@ -2719,14 +2719,9 @@ pub fn premiseOf(law @ _: &Law) -> Option<crate::proof_std::aver_generated::kern
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = law.premise.clone();
-        if let (Some(p), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-            Some(p.clone())
-        } else {
-            if __list_subject.is_empty() {
-                None
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(&__list_subject) {
+            Some((p, rest)) => Some(p.clone()),
+            None => None,
         }
     }
 }
@@ -2739,17 +2734,12 @@ pub fn givenNames(
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = gs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(g), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    g.name.clone(),
-                    crate::proof_std::aver_generated::kernel::proof::givenNames(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(__list_subject) {
+            Some((g, rest)) => aver_rt::AverList::prepend_owned(
+                g.name.clone(),
+                crate::proof_std::aver_generated::kernel::proof::givenNames(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
@@ -2763,10 +2753,8 @@ pub fn findDef(mut name @ _: AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = ds;
-            if __list_subject.is_empty() {
-                return None;
-            } else {
-                if let (Some(d), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
+            match aver_rt::list_uncons(__list_subject) {
+                Some((d, rest)) => {
                     if (d.name == name) {
                         return Some(d.clone());
                     } else {
@@ -2777,8 +2765,9 @@ pub fn findDef(mut name @ _: AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option
                             continue;
                         }
                     }
-                } else {
-                    panic!("Aver Rust codegen: non-exhaustive list match")
+                }
+                None => {
+                    return None;
                 }
             }
         }
@@ -2791,17 +2780,12 @@ pub fn variantNames(vs @ _: &aver_rt::AverList<Variant>) -> aver_rt::AverList<Av
     crate::proof_std::cancel_checkpoint();
     {
         let __list_subject = vs;
-        if __list_subject.is_empty() {
-            aver_rt::AverList::empty()
-        } else {
-            if let (Some(v), Some(rest)) = (__list_subject.first(), __list_subject.tail()) {
-                aver_rt::AverList::prepend_owned(
-                    v.name.clone(),
-                    crate::proof_std::aver_generated::kernel::proof::variantNames(&rest),
-                )
-            } else {
-                panic!("Aver Rust codegen: non-exhaustive list match")
-            }
+        match aver_rt::list_uncons(__list_subject) {
+            Some((v, rest)) => aver_rt::AverList::prepend_owned(
+                v.name.clone(),
+                crate::proof_std::aver_generated::kernel::proof::variantNames(&rest),
+            ),
+            None => aver_rt::AverList::empty(),
         }
     }
 }
