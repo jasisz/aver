@@ -1521,6 +1521,20 @@ fn foldedZeros(chars: List<String>, n: Int) -> Int
             "k" -> foldedZeros(rest, n + 10)
             _ -> foldedZeros(rest, n)
 
+fn hash(chars: List<String>, acc: Int) -> Int
+    ? "Each character's first code point, read as the cursor's code."
+    match chars
+        [] -> acc
+        [c, ..rest] -> hash(rest, acc * 31 + Option.withDefault(String.firstCodePoint(c), 0))
+
+fn firsts(chars: List<String>, acc: Int) -> Int
+    ? "The same, kept in its Option."
+    match chars
+        [] -> acc
+        [c, ..rest] -> match String.firstCodePoint(c)
+            Option.Some(p) -> firsts(rest, acc + p)
+            Option.None -> firsts(rest, acc - 1)
+
 fn main() -> Unit
     ? "Print every shape so a backend that drifts shows a diff, not a pass."
     ! [Console.print]
@@ -1530,6 +1544,7 @@ fn main() -> Unit
     mixed = "a0\u{212A}0\u{e9}\u{1F980}k\u{130}"
     Console.print("{zeros(String.chars(mixed), 0)}/{foldedZeros(String.chars(mixed), 0)}/{zeros(String.chars(""), 0)}")
     Console.print("{ordered(codes(String.chars(mixed), []), 0)}")
+    Console.print("{hash(String.chars(mixed), 7)}/{firsts(String.chars(mixed), 0)}/{hash(String.chars(""), 7)}")
 "#
     .replace("\\u{e9}", "\u{e9}")
     .replace("\\u{1F980}", "\u{1F980}")
@@ -1543,7 +1558,7 @@ fn main() -> Unit
     // error message still prints the character the loop was on —
     // multibyte characters included — so a cursor that re-read the
     // wrong offset shows up as a changed message.
-    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1\nok:34|ok:0|bad 'x' after 0|bad 'é' after 0|bad '🦀' after 9|ok:20\n102/22/0\n1101210100002100";
+    let expected = "0:0: 3:1:ab-c? 2:0:éx 3:1:🦀a-b?\n09/1015/20/-1/-1/-1\nok:34|ok:0|bad 'x' after 0|bad 'é' after 0|bad '🦀' after 9|ok:20\n102/22/0\n1101210100002100\n8924798134552/138735/7";
     let vm = run_vm_inline("chars_fusion", &src).expect("vm run");
     let rust =
         build_run_rust_inline("chars_fusion", &src).expect("rust compile + cargo build + run");

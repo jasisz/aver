@@ -7489,10 +7489,18 @@ fn discover_builtins_in_expr(
                 // An indexed slice compared with a string is compared in
                 // place (`emit_mir_string_binop`).
                 let indexed_slice = |e: &ResolvedExpr| {
-                    matches!(e, ResolvedExpr::Call(ResolvedCallee::Intrinsic(
-                        crate::ir::hir::BuiltinIntrinsic::StrIndexSlice), _))
+                    matches!(
+                        e,
+                        ResolvedExpr::Call(
+                            ResolvedCallee::Intrinsic(
+                                crate::ir::hir::BuiltinIntrinsic::StrIndexSlice
+                            ),
+                            _
+                        )
+                    )
                 };
-                if matches!(op, Op::Eq | Op::Neq) && (indexed_slice(&l.node) || indexed_slice(&r.node))
+                if matches!(op, Op::Eq | Op::Neq)
+                    && (indexed_slice(&l.node) || indexed_slice(&r.node))
                 {
                     builtins.register(BuiltinName::StringIndexSliceEq);
                 }
