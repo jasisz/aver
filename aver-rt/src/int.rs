@@ -715,6 +715,21 @@ impl AverInt {
     // Callers at index/sentinel sites map `None` to the language's `None`;
     // callers at capacity/host sites map `None` to a clean error.
 
+    /// The word of an inline value, `2n + 1`, or `None` for a heap integer.
+    /// Generated code computes a whole expression on these words, as each
+    /// operation's fast path here does on its own.
+    #[inline(always)]
+    pub fn inline_word(&self) -> Option<i64> {
+        self.0.is_inline().then(|| self.0.word())
+    }
+
+    /// The inline value whose word is `word`; the lowest bit is set here, so
+    /// every `word` gives one.
+    #[inline(always)]
+    pub fn from_inline_word(word: i64) -> AverInt {
+        AverInt(Repr::from_word(word))
+    }
+
     /// `self` as `i64` if it fits, else `None`.
     #[inline]
     pub fn to_i64(&self) -> Option<i64> {

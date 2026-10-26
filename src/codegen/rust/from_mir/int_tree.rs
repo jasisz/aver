@@ -1,14 +1,16 @@
-//! Pure `Int` expression trees computed on a machine word first.
+//! Pure `Int` expression trees computed on the machine word first.
 //!
-//! Each `AverInt` operation tests both operands for a heap integer and
-//! builds its result, although the values almost always fit an `i64`. A
-//! tree of the pure, total operations of [`crate::ir::mir::int_tree`] is
-//! emitted twice: on `i64` with `checked_*`, and, for a leaf past `i64` or an
-//! overflow, as it is emitted without the tree. The `i64` result becomes an
-//! `AverInt` once, or stays a machine value when compared or narrowed. A leaf
-//! other than a literal or a read of a local (or of a field of one) is
-//! evaluated once, in source order, before both paths, which read it from a
-//! binding. wasm-gc does the same in `wasm_gc/body/from_mir/int_tree.rs`.
+//! An inline `AverInt` is the word `2n + 1`, and each operation's fast path
+//! works on the words: it tests its operands for a heap integer, computes,
+//! and its result is tested again by the next operation and when dropped.
+//! A tree of the pure, total operations of [`crate::ir::mir::int_tree`] is
+//! emitted twice: on the words, testing each leaf once, with the operations
+//! of those fast paths, and, for a heap integer or a result past the inline
+//! range, as it is emitted without the tree. The word becomes an `AverInt`
+//! once, or is compared or narrowed as it is. A leaf other than a literal or
+//! a read of a local (or of a field of one) is evaluated once, in source
+//! order, before both paths, which read it from a binding. wasm-gc does the
+//! same on `i64` in `wasm_gc/body/from_mir/int_tree.rs`.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -60,8 +62,8 @@ fn off() -> bool {
     *OFF.get_or_init(|| std::env::var_os("AVER_NO_INT_TREE").is_some())
 }
 
-/// `expr` computed on the machine word first: a tree of two operations or
-/// more, or a comparison or narrowing of one.
+/// `expr` computed on the words first: a tree of two operations or more,
+/// or a comparison or narrowing of one.
 pub(super) fn try_emit(expr: Node<'_>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     if EXACT.with(Cell::get) > 0 || off() {
         return None;
@@ -118,13 +120,17 @@ fn emit(
     for r in roots {
         hoist(r, ctx, &mut ahead)?;
     }
-    // A leaf evaluated ahead must not move a local the `i64` path reads.
-    if ahead.reads.iter().any(|slot| {
-        ahead
-            .nodes
-            .iter()
-            .any(|n| mir_last_use_moves_slot(n, *slot, ctx))
-    }) {
+    // A tree of values evaluated ahead only (`Int.max(f(a), f(b)) + 1`) saves
+    // no test of a word the operations would repeat, and a leaf evaluated
+    // ahead must not move a local the `i64` path reads.
+    if ahead.reads.is_empty()
+        || ahead.reads.iter().any(|slot| {
+            ahead
+                .nodes
+                .iter()
+                .any(|n| mir_last_use_moves_slot(n, *slot, ctx))
+        })
+    {
         return None;
     }
     let fast = roots
@@ -154,8 +160,12 @@ fn emit(
     });
     let exact = exact.filter(|_| all_read)?;
     let (ty, value, word) = match cmp {
-        None => ("i64", fast[0].clone(), "aver_rt::AverInt::from_i64(__word)"),
-        Some("") => ("i64", fast[0].clone(), "__word"),
+        None => (
+            "i64",
+            fast[0].clone(),
+            "aver_rt::AverInt::from_inline_word(__word)",
+        ),
+        Some("") => ("i64", fast[0].clone(), "(__word >> 1)"),
         Some(op) => ("bool", format!("{} {op} {}", fast[0], fast[1]), "__word"),
     };
     let lets = ahead.lets;
@@ -185,17 +195,17 @@ fn hoist<'e>(e: Node<'e>, ctx: &MirEmitCtx<'_>, ahead: &mut Ahead<'e>) -> Option
     let (binding, fast, exact) = match boxed {
         Some(inner) => (
             format!("let {name}: i64 = {};", emit_mir_expr(inner, ctx)?),
-            name.clone(),
+            tagged(&name),
             format!("aver_rt::AverInt::from_i64({name})"),
         ),
         None if mir_expr_is_bare_i64(e, ctx) => (
             format!("let {name}: i64 = {};", emit_mir_expr(e, ctx)?),
-            name.clone(),
+            tagged(&name),
             name.clone(),
         ),
         None => (
             format!("let {name} = &({});", emit_mir_expr(e, ctx)?),
-            format!("{name}.to_i64()?"),
+            format!("{name}.inline_word()?"),
             format!("(*{name})"),
         ),
     };
@@ -207,20 +217,29 @@ fn hoist<'e>(e: Node<'e>, ctx: &MirEmitCtx<'_>, ahead: &mut Ahead<'e>) -> Option
     Some(())
 }
 
-/// The `i64` of `e`, leaving the closure (`?`) on a leaf past `i64` or an
-/// overflow.
+/// The word `2n + 1` of a raw `i64` `n`, leaving the closure past the
+/// inline range.
+fn tagged(raw: &str) -> String {
+    format!("(({raw}).checked_mul(2)? | 1)")
+}
+
+/// The word of `e` as `AverInt` holds an inline value, `2n + 1`, leaving
+/// the closure (`?`) on a heap integer or a result past the inline range.
+/// Each operation is the one `AverInt`'s fast path does on the words; the
+/// tree only skips the tests of the words in between.
 fn fast(e: Node<'_>, ahead: &Ahead<'_>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     let Some((op, a, b)) = op_of(e, ctx) else {
         if let Some(n) = int_literal(&e.node) {
-            return Some(format!("({n}i64)"));
+            let inline = -(1i64 << 62)..(1i64 << 62);
+            return inline.contains(&n).then(|| format!("({}i64)", 2 * n + 1));
         }
         if let Some(read) = ahead.fast.get(&key(e)) {
             return Some(read.clone());
         }
         return match &e.node {
-            MirExpr::Box(inner) => emit_mir_expr(inner, ctx),
-            _ if mir_expr_is_bare_i64(e, ctx) => emit_mir_expr(e, ctx),
-            _ => Some(format!("({}).to_i64()?", emit_mir_expr(e, ctx)?)),
+            MirExpr::Box(inner) => Some(tagged(&emit_mir_expr(inner, ctx)?)),
+            _ if mir_expr_is_bare_i64(e, ctx) => Some(tagged(&emit_mir_expr(e, ctx)?)),
+            _ => Some(format!("({}).inline_word()?", emit_mir_expr(e, ctx)?)),
         };
     };
     let x = fast(a, ahead, ctx)?;
@@ -228,29 +247,40 @@ fn fast(e: Node<'_>, ahead: &Ahead<'_>, ctx: &MirEmitCtx<'_>) -> Option<String> 
         Some(b) => fast(b, ahead, ctx)?,
         None => String::new(),
     };
+    // The value of a word, and the word of a value that is inline.
+    let value = |x: &str| format!("(({x}) >> 1)");
+    let word = |v: String| format!("(({v} << 1) | 1)");
     Some(match op {
-        IntOp::Add => format!("({x}).checked_add({y})?"),
-        IntOp::Sub => format!("({x}).checked_sub({y})?"),
-        IntOp::Mul => format!("({x}).checked_mul({y})?"),
-        IntOp::Neg => format!("({x}).checked_neg()?"),
-        IntOp::Abs => format!("({x}).checked_abs()?"),
-        // An `i64` IS its infinite two's-complement sequence: exact.
+        // `2a+1 + 2b` is `2(a+b)+1`; an overflow of the word is a result
+        // past the inline range.
+        IntOp::Add => format!("({x}).checked_add(({y}) ^ 1)?"),
+        IntOp::Sub => format!("({x}).checked_sub(({y}) ^ 1)?"),
+        IntOp::Mul => format!("({}.checked_mul(({y}) ^ 1)? | 1)", value(&x)),
+        IntOp::Neg | IntOp::Div(-1) => format!("(2i64).checked_sub({x})?"),
+        IntOp::Abs => format!(
+            "({{ let __w = {x}; if __w < 0 {{ (2i64).checked_sub(__w)? }} else {{ __w }} }})"
+        ),
+        // The words order, `and` and `or` as the values do.
         IntOp::And => format!("(({x}) & ({y}))"),
         IntOp::Or => format!("(({x}) | ({y}))"),
-        IntOp::Xor => format!("(({x}) ^ ({y}))"),
-        IntOp::Not => format!("(!({x}))"),
+        IntOp::Xor => format!("((({x}) ^ ({y})) | 1)"),
+        IntOp::Not => format!("((!({x})) | 1)"),
         IntOp::Min => format!("({x}).min({y})"),
         IntOp::Max => format!("({x}).max({y})"),
-        // By a positive divisor neither overflows; `i64::MIN` by `-1` does.
-        IntOp::Div(k) if k > 0 => format!("({x}).div_euclid({k}i64)"),
-        IntOp::Div(k) => format!("({x}).checked_div_euclid({k}i64)?"),
-        IntOp::Mod(k) if k > 0 => format!("({x}).rem_euclid({k}i64)"),
-        IntOp::Mod(k) => format!("({x}).checked_rem_euclid({k}i64)?"),
-        IntOp::Shl(n) if n <= 62 => format!("({x}).checked_mul({}i64)?", 1i64 << n),
-        IntOp::Shr(n) => format!("(({x}) >> {})", n.min(63)),
-        // `i64::MAX >> (63 - w)` is the low `w` bits.
-        IntOp::Low(w) if w <= 63 => format!("(({x}) & {}i64)", i64::MAX >> (63 - w)),
-        // Past the word: kept exact, the whole tree with it.
-        IntOp::Shl(_) | IntOp::Low(_) => return None,
+        IntOp::Div(1) => x,
+        // An inline value divided by `|k| > 1`, or its remainder by a
+        // divisor within the inline range, is inline.
+        IntOp::Div(k) => word(format!("{}.div_euclid({k}i64)", value(&x))),
+        IntOp::Mod(k) if k.unsigned_abs() <= 1 << 62 => {
+            word(format!("{}.rem_euclid({k}i64)", value(&x)))
+        }
+        IntOp::Shl(n) if n <= 62 => format!("((({x}) ^ 1).checked_mul({}i64)? | 1)", 1i64 << n),
+        IntOp::Shr(n) => format!("((({x}) >> {}) | 1)", n.min(63)),
+        // The low `w + 1` bits of the word are the word of the low `w` bits.
+        IntOp::Low(w) if w <= 62 => {
+            format!("(({x}) & {}i64)", ((1i128 << (w + 1)) - 1) as i64)
+        }
+        // Past the inline range: kept exact, the whole tree with it.
+        IntOp::Mod(_) | IntOp::Shl(_) | IntOp::Low(_) => return None,
     })
 }
