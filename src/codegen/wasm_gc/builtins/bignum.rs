@@ -624,8 +624,8 @@ pub(super) fn emit_aint_eq(registry: &TypeRegistry) -> Result<Function, WasmGcEr
 
 /// `__aint_hash(a) -> i32`. Equal `$AverInt` values MUST hash equal —
 /// the Eq/Hash agreement Map/Set keys and record/sum fields rely on. A
-/// Small mixes its i64 `$small` the way every `Int` map key is mixed
-/// (`INT_KEY_MIX` in `maps.rs`); a
+/// Small mixes its i64 `$small` with the splitmix64 finalizer and keeps the
+/// low half, so the bucket a map masks out of it depends on every bit; a
 /// Big DJB2-folds its 32-bit limb magnitude and mixes the sign. The
 /// canonical invariant guarantees a Small and a Big are never equal, so
 /// the two schemes need not agree across the boundary — only equal
@@ -637,17 +637,9 @@ pub(super) fn emit_aint_eq(registry: &TypeRegistry) -> Result<Function, WasmGcEr
 /// Big keys a real distribution — relevant for `Map<Int, V>` / `Set<Int>`
 /// holding many distinct Big keys.
 pub(super) fn emit_aint_hash(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    wat_helper::compile_wat_helper(&hash_wat(registry)?)
-}
-
-fn hash_wat(registry: &TypeRegistry) -> Result<String, WasmGcError> {
-    let [mix1, mix2] = super::super::maps::INT_KEY_MIX;
-    Ok(format!(
-        include_str!("wat/hash.wat"),
-        decls = aint_type_decls(registry)?,
-        mix1 = mix1,
-        mix2 = mix2,
-    ))
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/hash.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
 }
 
 /// `__aint_bitwise(a, b, op) -> $AverInt` — pointwise `and` (op 0), `or`
@@ -1209,7 +1201,10 @@ mod validation_guard {
             // slice 4 (eq+hash gap) — `__aint_hash` has a limb-fold loop +
             // a Small/Big branch returning i32 on both arms; validate the
             // full module so a stack-type slip fails at `cargo test`.
-            ("__aint_hash", hash_wat(&registry).unwrap()),
+            (
+                "__aint_hash",
+                render_simple(&registry, include_str!("wat/hash.wat")),
+            ),
             (
                 "__aint_to_f64",
                 render_simple(&registry, include_str!("wat/to_f64.wat")),

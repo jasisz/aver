@@ -7,16 +7,20 @@
             (local.set $m (struct.get $aint $magf (local.get $a)))
             (if (result i32) (ref.is_null (local.get $m))
               (then
-                ;; Small — mix the i64 `$small` (see `INT_KEY_MIX` in
-                ;; maps.rs) so the low bits a map masks for a bucket
-                ;; depend on every bit of the value.
+                ;; Small — the splitmix64 finalizer over the i64 `$small`,
+                ;; low half. A map takes a bucket from the hash's low bits,
+                ;; so they must depend on every bit of the value: the keys
+                ;; 0, 1, 2, … must not fill one run of neighbouring buckets
+                ;; (a miss inside the run and every remove's backward-shift
+                ;; scan walk to its end), and `-1 - k` must not share `k`'s
+                ;; hash, as both did under the old `s ^ (s >>> 32)` fold.
                 (local.set $s (struct.get $aint $small (local.get $a)))
                 (local.set $s (i64.mul
                   (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 30)))
-                  (i64.const {mix1:#x})))
+                  (i64.const 0xbf58476d1ce4e5b9)))
                 (local.set $s (i64.mul
                   (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 27)))
-                  (i64.const {mix2:#x})))
+                  (i64.const 0x94d049bb133111eb)))
                 (i32.wrap_i64 (i64.xor (local.get $s) (i64.shr_u (local.get $s) (i64.const 31)))))
               (else
                 ;; Big — DJB2-style fold over the 32-bit limb magnitude,

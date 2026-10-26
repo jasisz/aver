@@ -129,40 +129,6 @@ const EMPTY_CAP: i32 = 1;
 /// table large enough to be worth the worry.
 const LOAD_SHIFT: i32 = 2;
 
-/// Multipliers of the mix every `Int` map key goes through, the
-/// `splitmix64` finalizer: `x ^= x >> 30; x *= M1; x ^= x >> 27;
-/// x *= M2; x ^= x >> 31`, low half. A bucket is the hash's low bits, so
-/// an `Int` hashed as its own low word put the keys 0, 1, 2, … in one
-/// run of neighbouring buckets: a lookup that missed inside it and every
-/// `remove`'s backward-shift scan walked to its end, `-1 - k` and `k`
-/// shared a hash, and multiples of a power of two shared a bucket. Mixed,
-/// every bit of the key reaches the low bits. A Small `$AverInt` mixes
-/// its word in `__aint_hash` (`builtins/wat/hash.wat`), a native `i64`
-/// key here in [`emit_int_key_mix`], so the two agree.
-pub(super) const INT_KEY_MIX: [u64; 2] = [0xbf58_476d_1ce4_e5b9, 0x94d0_49bb_1331_11eb];
-
-/// The [`INT_KEY_MIX`] hash of the `i64` in `local`, which it overwrites;
-/// leaves an `i32`.
-fn emit_int_key_mix(f: &mut Function, local: u32) {
-    for (shift, mul) in [
-        (30, Some(INT_KEY_MIX[0])),
-        (27, Some(INT_KEY_MIX[1])),
-        (31, None),
-    ] {
-        f.instruction(&Instruction::LocalGet(local));
-        f.instruction(&Instruction::LocalGet(local));
-        f.instruction(&Instruction::I64Const(shift));
-        f.instruction(&Instruction::I64ShrU);
-        f.instruction(&Instruction::I64Xor);
-        if let Some(mul) = mul {
-            f.instruction(&Instruction::I64Const(mul as i64));
-            f.instruction(&Instruction::I64Mul);
-            f.instruction(&Instruction::LocalSet(local));
-        }
-    }
-    f.instruction(&Instruction::I32WrapI64);
-}
-
 /// Every name `capacity_helper_names` builds starts with this. The
 /// `--optimize` path reads it back out of the finished module (see
 /// `carries_capacity_helper_names` in the parent module) to tell
@@ -1179,12 +1145,13 @@ fn emit_hash_for(
     if k_aver == "String" {
         return emit_hash_string(registry);
     }
-    // An eligible carrier is a native `i64` here, as a map key or as a sum
-    // or record key's field: mixed like an `Int` key, matching its
-    // `i64.eq`, not through the underlying `Int`'s ref helper.
+    // An eligible carrier is a native `i64` here, as a sum or record key's
+    // field: raw `i32.wrap_i64`, matching its `i64.eq` and the inline
+    // carrier hash, not the underlying `Int`'s ref helper.
     if registry.is_eligible_carrier(k_aver) {
         let mut f = Function::new([]);
-        emit_int_key_mix(&mut f, 0);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::I32WrapI64);
         f.instruction(&Instruction::End);
         return Ok(f);
     }
@@ -1354,17 +1321,13 @@ fn emit_eq_for(
 /// value the user passed in.
 fn emit_hash_primitive(k_aver: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let mut f = Function::new([]);
-    if k_aver == "Int" && !registry.bignum {
-        // No `$AverInt` in the module: the key is a native `i64`, mixed
-        // here as `__aint_hash` mixes a Small one.
-        emit_int_key_mix(&mut f, 0);
-        f.instruction(&Instruction::End);
-        return Ok(f);
-    }
     f.instruction(&Instruction::LocalGet(0));
     match k_aver {
         "Int" => {
-            // The key is an `$aint` ref → `__aint_hash` (an
+            // Flag-off: `i32.wrap_i64` — keeps low 32 bits. Cheap,
+            // distributes poorly for tightly-clustered Int domains; bench
+            // scenarios don't stress this. Flag-on (bignum): the key is an
+            // `$aint` ref, so route through `__aint_hash` (an
             // `i32.wrap_i64` on a ref is invalid wasm, and all Big keys
             // would otherwise collapse into one bucket).
             super::lists::emit_aint_field_hash(&mut f, registry)?;
