@@ -175,7 +175,7 @@ pub(super) struct ServerHandlerHelperFns {
 /// rather than restated so the two cannot drift. The request-headers
 /// map allocates it once per inbound request and grows from there as
 /// the headers arrive, so the small-headers case — the common one —
-/// pays for sixteen buckets and no more.
+/// pays for four buckets and no more.
 use super::maps::INITIAL_CAP;
 
 /// Canonical HTTP method discriminants per `wasi:http/types.method`

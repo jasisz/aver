@@ -427,3 +427,110 @@ fn main() -> Unit
         "Map.set allocates arrays outside its grow:\n{body}"
     );
 }
+
+/// A map gets four buckets on its first insert, sixteen when a fourth
+/// entry arrives, and doubles from there at twelve and twenty-four
+/// entries. At each size on either side of those steps this makes two inserts and an overwrite from one version, which
+/// grow out of it when they cross a step and write into its arrays when
+/// they do not, removes from one of them, and reads them all afterwards
+/// through `get`, `keys`, `values` and `entries`. The same entries built
+/// top down, and kept by removing every larger key from a map of thirty,
+/// sit in tables of other sizes and other layouts: they must be equal,
+/// and as keys of one map they must hash alike and make one entry.
+#[test]
+fn small_maps_read_the_same_across_every_early_doubling() {
+    assert_vm_and_wasm_gc(
+        "map-versions-small",
+        r#"
+module Main
+    intent = "Maps of one to twenty-five entries on either side of each early doubling, read every way after writes from one version."
+    effects [Console.print]
+
+fn fill(m: Map<Int, Int>, from: Int, to: Int) -> Map<Int, Int>
+    ? "Maps each key in from..to-1 to ten times itself."
+    match from >= to
+        true -> m
+        false -> fill(Map.set(m, from, from * 10), from + 1, to)
+
+fn fillDown(m: Map<Int, Int>, from: Int, to: Int) -> Map<Int, Int>
+    ? "The same entries as fill, inserted from the top down."
+    match to <= from
+        true -> m
+        false -> fillDown(Map.set(m, to - 1, (to - 1) * 10), from, to - 1)
+
+fn dropRange(m: Map<Int, Int>, from: Int, to: Int) -> Map<Int, Int>
+    ? "Removes keys from..to-1."
+    match from >= to
+        true -> m
+        false -> dropRange(Map.remove(m, from), from + 1, to)
+
+fn total(m: Map<Int, Int>, keys: List<Int>, acc: Int) -> Int
+    ? "Sums key * 1000 + value over the listed keys, and counts an absent one as -1."
+    match keys
+        [] -> acc
+        [k, ..rest] -> match Map.get(m, k)
+            Option.Some(v) -> total(m, rest, acc + k * 1000 + v)
+            Option.None -> total(m, rest, acc - 1)
+
+fn firstKeys(keys: List<Int>, acc: String) -> String
+    ? "The keys, comma-separated."
+    match keys
+        [] -> acc
+        [k, ..rest] -> firstKeys(rest, "{acc},{k}")
+
+fn summary(m: Map<Int, Int>) -> String
+    ? "Size, a checksum of the entries, and the first keys in order."
+    "{Map.len(m)}:{total(m, Map.keys(m), 0)}:{firstKeys(List.take(Map.keys(m), 4), "")}"
+
+fn entrySum(entries: List<Tuple<Int, Int>>, acc: Int) -> Int
+    ? "Sums key + value over the entries."
+    match entries
+        [] -> acc
+        [e, ..rest] -> match e
+            (k, v) -> entrySum(rest, acc + k + v)
+
+fn valueSum(values: List<Int>, acc: Int) -> Int
+    ? "Sums the values."
+    match values
+        [] -> acc
+        [v, ..rest] -> valueSum(rest, acc + v)
+
+fn step(n: Int) -> String
+    ? "A map of n entries, two inserts, an overwrite and a remove made from its versions, and the same entries built two other ways."
+    m = fill({}, 0, n)
+    a = Map.set(m, n, 1)
+    b = Map.set(m, n + 1, 2)
+    c = Map.set(m, 0, 5)
+    r = Map.remove(a, 0)
+    down = fillDown({}, 0, n)
+    shrunk = dropRange(fill({}, 0, 30), n, 30)
+    index = Map.set(Map.set(Map.set({}, m, 1), down, 2), shrunk, 3)
+    "{summary(m)} {summary(a)} {summary(b)} {summary(c)} {summary(r)} {entrySum(Map.entries(r), 0)} {valueSum(Map.values(c), 0)} {m == down} {m == shrunk} {a == b} {Map.len(index)} {Option.withDefault(Map.get(index, m), 0)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(step(1))
+    Console.print(step(2))
+    Console.print(step(3))
+    Console.print(step(4))
+    Console.print(step(5))
+    Console.print(step(6))
+    Console.print(step(7))
+    Console.print(step(12))
+    Console.print(step(13))
+    Console.print(step(24))
+    Console.print(step(25))
+"#,
+        "1:0:,0 2:1001:,0,1 2:2002:,0,2 1:5:,0 1:1001:,1 2 5 true true false 1 3\n\
+         2:1010:,0,1 3:3011:,0,1,2 3:4012:,0,1,3 2:1015:,0,1 2:3011:,1,2 14 15 true true false 1 3\n\
+         3:3030:,0,1,2 4:6031:,0,1,2,3 4:7032:,0,1,2,4 3:3035:,0,1,2 3:6031:,1,2,3 37 35 true true false 1 3\n\
+         4:6060:,0,1,2,3 5:10061:,0,1,2,3 5:11062:,0,1,2,3 4:6065:,0,1,2,3 4:10061:,1,2,3,4 71 65 true true false 1 3\n\
+         5:10100:,0,1,2,3 6:15101:,0,1,2,3 6:16102:,0,1,2,3 5:10105:,0,1,2,3 5:15101:,1,2,3,4 116 105 true true false 1 3\n\
+         6:15150:,0,1,2,3 7:21151:,0,1,2,3 7:22152:,0,1,2,3 6:15155:,0,1,2,3 6:21151:,1,2,3,4 172 155 true true false 1 3\n\
+         7:21210:,0,1,2,3 8:28211:,0,1,2,3 8:29212:,0,1,2,3 7:21215:,0,1,2,3 7:28211:,1,2,3,4 239 215 true true false 1 3\n\
+         12:66660:,0,1,2,3 13:78661:,0,1,2,3 13:79662:,0,1,2,3 12:66665:,0,1,2,3 12:78661:,1,2,3,4 739 665 true true false 1 3\n\
+         13:78780:,0,1,2,3 14:91781:,0,1,2,3 14:92782:,0,1,2,3 13:78785:,0,1,2,3 13:91781:,1,2,3,4 872 785 true true false 1 3\n\
+         24:278760:,0,1,2,3 25:302761:,0,1,2,3 25:303762:,0,1,2,3 24:278765:,0,1,2,3 24:302761:,1,2,3,4 3061 2765 true true false 1 3\n\
+         25:303000:,0,1,2,3 26:328001:,0,1,2,3 26:329002:,0,1,2,3 25:303005:,0,1,2,3 25:328001:,1,2,3,4 3326 3005 true true false 1 3",
+    );
+}
