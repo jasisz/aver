@@ -1076,11 +1076,7 @@ pub fn typeName(c @ _: &AverStr) -> AverStr {
     aver_rt::string_join(
         &({
             let __n = aver_rt::clamp_list_count(&(aver_rt::AverInt::from_i64(1)));
-            ((aver_rt::AverList::from_vec(
-                c.split('.').map(aver_rt::AverStr::from).collect::<Vec<_>>(),
-            ))
-            .reverse_owned())
-            .drop_first(__n)
+            ((aver_rt::string_split_byte(&c, 46u8)).reverse_owned()).drop_first(__n)
         })
         .reverse_owned(),
         &::aver_rt::str_lit!("."),
