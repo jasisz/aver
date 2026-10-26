@@ -522,6 +522,10 @@ pub(crate) fn emit_mir_expr(
                 // `i64`.
                 if result_raw {
                     func.instruction(&Instruction::I64Const(*n));
+                } else if ctx.registry.bignum
+                    && let Some(global) = int_tree::pooled_literal(*n)
+                {
+                    func.instruction(&Instruction::GlobalGet(global));
                 } else if ctx.registry.bignum {
                     func.instruction(&Instruction::I64Const(*n));
                     let from_i64 = ctx.fn_map.builtins.get("__aint_from_i64").copied().ok_or(

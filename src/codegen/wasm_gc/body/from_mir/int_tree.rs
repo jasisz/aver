@@ -29,10 +29,49 @@ thread_local! {
     /// Whether the fn being emitted computes trees on `i64` (`module.rs`
     /// decides, `int_trees_allowed`).
     static ALLOWED: Cell<bool> = const { Cell::new(true) };
+    /// The boxed `Int` literals emitted while recording (`module.rs` records
+    /// each fn's in its pre-pass), and the global holding each one shared.
+    static LITERALS: RefCell<Option<std::collections::BTreeSet<i64>>> = const { RefCell::new(None) };
+    static POOL: RefCell<HashMap<i64, u32>> = RefCell::new(HashMap::new());
 }
 
 pub(crate) fn set_allowed(allowed: bool) {
     ALLOWED.with(|a| a.set(allowed));
+}
+
+/// Back to no fn in particular when a module's emission ends, however it
+/// ends: trees allowed, no literal pool, nothing recorded.
+pub(crate) struct IntTreeReset;
+
+impl Drop for IntTreeReset {
+    fn drop(&mut self) {
+        set_allowed(true);
+        set_literal_pool(HashMap::new());
+        record_literals(false);
+    }
+}
+
+/// Start recording the boxed `Int` literals emitted, or stop and return them.
+pub(crate) fn record_literals(on: bool) -> std::collections::BTreeSet<i64> {
+    LITERALS
+        .with(|l| l.replace(on.then(Default::default)))
+        .unwrap_or_default()
+}
+
+/// The globals holding the shared boxed literals, empty to stop sharing.
+pub(crate) fn set_literal_pool(pool: HashMap<i64, u32>) {
+    POOL.with(|p| *p.borrow_mut() = pool);
+}
+
+/// The global holding the boxed literal `n`, in a fn allowed to share it.
+/// No `$AverInt` is ever written to after it is made, so one box serves
+/// every use of the literal.
+pub(crate) fn pooled_literal(n: i64) -> Option<u32> {
+    LITERALS.with(|l| l.borrow_mut().as_mut().map(|set| set.insert(n)));
+    ALLOWED
+        .with(|a| a.get())
+        .then(|| POOL.with(|p| p.borrow().get(&n).copied()))
+        .flatten()
 }
 
 /// The tree operations, all pure and total on ℤ. `Div`/`Mod` divide by a
@@ -162,13 +201,15 @@ fn weight(e: Node<'_>, ctx: &EmitCtx<'_>) -> Option<usize> {
 }
 
 fn enabled(ctx: &EmitCtx<'_>, roots: &[Node<'_>]) -> bool {
+    // A comparison of two leaves is worth it too, unless a side is a literal
+    // (`emit_aint_cmp_const` already compares that without a call).
+    let leaves = roots.len() == 2 && roots.iter().all(|r| int_literal(r).is_none());
     let weights = || roots.iter().map(|r| weight(r, ctx)).sum::<Option<usize>>();
     ctx.registry.bignum
         && ctx.registry.aint_struct_idx.is_some()
         && EXACT.with(|d| d.get() == 0)
         && ALLOWED.with(|a| a.get())
-        && std::env::var_os("AVER_NO_INT_TREE").is_none()
-        && weights().is_some_and(|w| w > 0)
+        && weights().is_some_and(|w| w > 0 || leaves)
 }
 
 /// On the exact path, a leaf evaluated ahead is read from its local.
