@@ -1,5 +1,5 @@
 module M
-    intent = "Int trees on wasm-gc: the i64 path and the exact path agree with the VM."
+    intent = "Int trees on wasm-gc and in the Rust backend: the i64 path and the exact path agree with the VM."
     exposes opaque [Small]
     effects [Console]
 
@@ -46,10 +46,18 @@ fn mixed(s: Small, p: Pair, a: Int) -> Int
     ? "A carrier's machine word, a record field and a boxed value in one tree."
     s.value * 1000003 + p.x * a - Int.min(p.y, s.value) + Int.mod(s.value * 64 + p.y, 2147483647)
 
+fn keep(n: Int) -> Int
+    ? "Gives its argument back."
+    n
+
+fn moved(a: Int) -> Int
+    ? "A value read in place before a call that takes it at its last read."
+    a * 3 + 1 + keep(a)
+
 fn show(a: Int, b: Int) -> Unit
     ? "Every shape for one pair of values."
     ! [Console.print]
-    Console.print("{a} {b}: {arith(a, b, a)} | {divmod(a)} | {edges(a)} | {bits(a)} | {compare(a, b)} | {mixed(small(b), Pair(x = a, y = b), b)}")
+    Console.print("{a} {b}: {arith(a, b, a)} | {divmod(a)} | {edges(a)} | {bits(a)} | {compare(a, b)} | {mixed(small(b), Pair(x = a, y = b), b)} | {moved(a)}")
 
 fn main() -> Unit
     ? "Runs the shapes over small, edge and big values."

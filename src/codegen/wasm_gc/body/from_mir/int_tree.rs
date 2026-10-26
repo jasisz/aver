@@ -20,7 +20,7 @@ use super::twin;
 use super::*;
 use crate::codegen::wasm_gc::twins::TwinKind;
 use crate::codegen::wasm_gc::types::struct_ref;
-use crate::ir::hir::BuiltinIntrinsic;
+use crate::ir::mir::int_tree::{self, IntOp as Op, Node, is_int};
 
 thread_local! {
     /// Exact paths being emitted: while non-zero no tree is computed on `i64`.
@@ -87,30 +87,6 @@ pub(crate) fn pooled_literal(n: i64) -> Option<u32> {
         .flatten()
 }
 
-/// The tree operations, all pure and total on ℤ. `Div`/`Mod` divide by a
-/// nonzero literal; `Shl`/`Shr`/`Low` take a literal count.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Op {
-    Add,
-    Sub,
-    Mul,
-    Neg,
-    Abs,
-    And,
-    Or,
-    Xor,
-    Not,
-    Min,
-    Max,
-    Div(i64),
-    Mod(i64),
-    Shl(i64),
-    Shr(i64),
-    Low(i64),
-}
-
-type Node<'e> = &'e Spanned<MirExpr>;
-
 /// Where a leaf evaluated ahead is held: an `$AverInt`, a raw `i64` (the
 /// exact path boxes it), or an `Int` twin's result `(n, r)`.
 #[derive(Clone, Copy)]
@@ -128,68 +104,22 @@ fn seq(func: &mut Function, xs: &[I<'_>]) {
     }
 }
 
-fn int_literal(e: Node<'_>) -> Option<i64> {
-    let MirExpr::Literal(l) = &e.node else {
-        return None;
-    };
-    if let Literal::Int(n) = l.node {
-        Some(n)
-    } else {
-        None
-    }
-}
-
-fn is_int(e: Node<'_>) -> bool {
-    matches!(e.ty(), Some(Type::Int))
-}
-
 /// The operation `e` is, with its operands, when it is one on boxed `Int`s
 /// (not one the `bare_i64` rewrite already renders raw).
 fn op_of<'e>(e: Node<'e>, ctx: &EmitCtx<'_>) -> Option<(Op, Node<'e>, Option<Node<'e>>)> {
-    match &e.node {
+    let found = int_tree::op_of(e, ctx.mir_builtins.unwrap_or_default())?;
+    let raw = match &e.node {
         MirExpr::BinOp(b) => {
-            let op = match b.node.op {
-                BinOp::Add => Op::Add,
-                BinOp::Sub => Op::Sub,
-                BinOp::Mul => Op::Mul,
-                _ => return None,
-            };
-            let raw = mir_int_binop_is_raw(&b.node, ctx) || mir_renders_raw_i64(&e.node, ctx);
-            (is_int(&b.node.lhs) && !raw).then_some((op, &b.node.lhs, Some(&b.node.rhs)))
+            mir_int_binop_is_raw(&b.node, ctx) || mir_renders_raw_i64(&e.node, ctx)
         }
-        MirExpr::Neg(x) if is_int(x) && !mir_renders_raw_i64(&x.node, ctx) => {
-            Some((Op::Neg, &**x, None))
-        }
-        MirExpr::Call(c) if is_int(e) && c.node.args.iter().all(is_int) => {
-            let args = &c.node.args;
-            let op = match (&c.node.callee, args.len()) {
-                (MirCallee::Builtin(id), n) => {
-                    match (ctx.mir_builtins?.get(id.0 as usize)?.as_str(), n) {
-                        ("Int.min", 2) => Op::Min,
-                        ("Int.max", 2) => Op::Max,
-                        ("Int.abs", 1) => Op::Abs,
-                        ("Bits.and", 2) => Op::And,
-                        ("Bits.or", 2) => Op::Or,
-                        ("Bits.xor", 2) => Op::Xor,
-                        ("Bits.not", 1) => Op::Not,
-                        _ => return None,
-                    }
-                }
-                (MirCallee::Intrinsic(intr), 2) => match (intr, int_literal(&args[1])?) {
-                    (BuiltinIntrinsic::IntDivEuclid, k) if k != 0 => Op::Div(k),
-                    (BuiltinIntrinsic::IntModEuclid, k) if k != 0 => Op::Mod(k),
-                    (BuiltinIntrinsic::BitsShiftLeft, k) if k >= 0 => Op::Shl(k),
-                    (BuiltinIntrinsic::BitsShiftRight, k) if k >= 0 => Op::Shr(k),
-                    (BuiltinIntrinsic::BitsLow, k) if k >= 0 => Op::Low(k),
-                    _ => return None,
-                },
-                _ => return None,
-            };
-            let binary = matches!(op, Op::Min | Op::Max | Op::And | Op::Or | Op::Xor);
-            Some((op, &args[0], binary.then(|| &args[1])))
-        }
-        _ => None,
-    }
+        MirExpr::Neg(x) => mir_renders_raw_i64(&x.node, ctx),
+        _ => false,
+    };
+    (!raw).then_some(found)
+}
+
+fn int_literal(e: Node<'_>) -> Option<i64> {
+    int_tree::int_literal(&e.node)
 }
 
 /// How the `i64` path reads a leaf: a literal, a local holding an

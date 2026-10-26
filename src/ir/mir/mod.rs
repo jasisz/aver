@@ -77,6 +77,7 @@ pub mod dump;
 pub mod expr;
 pub mod field_moves;
 pub mod instantiations;
+pub mod int_tree;
 pub mod lower;
 pub mod optimize;
 pub mod program;

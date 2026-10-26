@@ -346,11 +346,25 @@ pub fn readNumberLoop__indexed(
                     if crate::aver_generated::domain::lexer::chars::isDigit__code(__str_ix_c1) {
                         {
                             let __tco1 = (pos + 1i64);
-                            let __tco2 = acc.mul(&aver_rt::AverInt::from_i64(10)).add(
-                                &crate::aver_generated::domain::lexer::chars::digitVal__code(
-                                    __str_ix_c1,
-                                ),
-                            );
+                            let __tco2 = ({
+                                let __leaf0 =
+                                    &(crate::aver_generated::domain::lexer::chars::digitVal__code(
+                                        __str_ix_c1,
+                                    ));
+                                let __word: Option<i64> = (|| {
+                                    Some(
+                                        ((((acc).inline_word()?) >> 1).checked_mul((21i64) ^ 1)?
+                                            | 1)
+                                        .checked_add((__leaf0.inline_word()?) ^ 1)?,
+                                    )
+                                })();
+                                match __word {
+                                    Some(__word) => aver_rt::AverInt::from_inline_word(__word),
+                                    None => {
+                                        acc.mul(&aver_rt::AverInt::from_i64(10)).add(&(*__leaf0))
+                                    }
+                                }
+                            });
                             pos = __tco1;
                             acc = __tco2;
                             continue;
