@@ -142,13 +142,14 @@ pub fn string_index_char_at_i64(
     position: i64,
 ) -> Option<AverStr> {
     let position = usize::try_from(position).ok()?;
+    if index.blocks.is_none() {
+        // An ASCII text has a byte per scalar, so the read's own bounds
+        // check is the check against the length.
+        let byte = *text.as_bytes().get(position)?;
+        return Some(AverStr::from_static(&ASCII_CHARS[usize::from(byte)]));
+    }
     if position >= index.char_len() {
         return None;
-    }
-    if index.blocks.is_none() {
-        return Some(AverStr::from_static(
-            &ASCII_CHARS[usize::from(text.as_bytes()[position])],
-        ));
     }
     let from = index.boundary(position);
     let lead = text.as_bytes()[from];
@@ -171,11 +172,12 @@ pub fn string_index_code_at_i64(text: &AverStr, index: &StringIndex, position: i
     let Ok(position) = usize::try_from(position) else {
         return -1;
     };
+    if index.blocks.is_none() {
+        // As in `string_index_char_at_i64`.
+        return text.as_bytes().get(position).map_or(-1, |&byte| i64::from(byte));
+    }
     if position >= index.char_len() {
         return -1;
-    }
-    if index.blocks.is_none() {
-        return i64::from(text.as_bytes()[position]);
     }
     let byte = index.boundary(position);
     let lead = text.as_bytes()[byte];
