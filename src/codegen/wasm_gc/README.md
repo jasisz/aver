@@ -80,7 +80,7 @@ Aver is statically typed; the type checker has already proven what each value is
 | `String`             | `(ref string)` (stringref proposal); fallback `(ref $StringStruct)`    |
 | `List<T>`            | `(ref null $List_T)` where `$List_T = (struct (field T) (field (ref null $List_T)))` |
 | `Tuple<T1,T2,…>`     | `(ref null $Tuple_T1_T2_…)`                                            |
-| `Map<K,V>`           | `(ref null $Map_K_V)` — flat hashtable struct                          |
+| `Map<K,V>`           | `(ref null $Map_K_V)` — flat hashtable struct; `{}` is one shared global per instantiation that allocates nothing (see `maps.rs`) |
 | `Vector<T>`          | `(ref null $Vector_T)`: a version over `(array (mut T))` (see `vectors.rs`) |
 | `Record name`        | `(ref null $Record_name)` — named struct                               |
 | `Constructor name`   | `(ref null $Constr_name)` — named struct subtype of the variant root  |
