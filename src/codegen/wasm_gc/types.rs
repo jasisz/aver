@@ -1977,8 +1977,29 @@ impl TypeRegistry {
     /// wasm-gc codegen entry after it derives the carrier interval table.
     /// Keyed by post-flatten `TypeDef` name (`"IntRange"`, or the canonical
     /// `"Left.IntRange"` for a collision-renamed dep type).
+    ///
+    /// A map keyed by such a carrier holds the key's `i64`, which has no null
+    /// to mark an unused bucket, so its keys array boxes it as it boxes an
+    /// `Int` key (and the key is no longer kept a struct for the marker's
+    /// sake): the box is made when a new key goes in, and the key helpers
+    /// hash and compare the `i64` itself.
     pub(super) fn set_eligible_carriers(&mut self, names: std::collections::HashSet<String>) {
         self.eligible_carriers = names;
+        for canonical in self.map_order.clone() {
+            let Some((k, _)) = parse_map_kv(&canonical) else {
+                continue;
+            };
+            let k = apply_type_name_aliases(&normalize_compound(k), &self.type_name_aliases);
+            if self.is_eligible_carrier(&k) && !self.primitive_key_box.contains_key(&k) {
+                let aliases = &self.type_name_aliases;
+                self.non_newtypable_keys
+                    .retain(|name| apply_type_name_aliases(name, aliases) != k);
+                self.primitive_key_box
+                    .insert(k.clone(), self.user_type_count);
+                self.primitive_key_box_order.push(k);
+                self.user_type_count += 1;
+            }
+        }
     }
 
     pub(super) fn is_capability_resource(&self, name: &str) -> bool {

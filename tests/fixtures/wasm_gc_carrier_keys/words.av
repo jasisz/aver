@@ -1,0 +1,65 @@
+module Words
+    intent =
+        "Maps keyed by a carrier from another module, on wasm-gc as on the VM:"
+        "keys at the bounds and outside them, set on new and present keys, get,"
+        "has, remove, keys, values, entries, fromList, == and growth."
+    depends [Lib.Keys]
+    effects [Console.print]
+
+fn showKeys(ks: List<Lib.Keys.Key>, acc: String) -> String
+    ? "The keys' Ints, comma separated."
+    match ks
+        [] -> acc
+        [k, ..rest] -> showKeys(rest, "{acc},{Lib.Keys.valueOf(k)}")
+
+fn showEntries(es: List<Tuple<Lib.Keys.Key, String>>, acc: String) -> String
+    ? "The entries as key=value."
+    match es
+        [] -> acc
+        [e, ..rest] -> match e
+            (k, v) -> showEntries(rest, "{acc} {Lib.Keys.valueOf(k)}={v}")
+
+fn fill(m: Map<Lib.Keys.Key, Int>, i: Int, n: Int) -> Map<Lib.Keys.Key, Int>
+    ? "Keys 0, 3, 6, ... below 3n: enough to grow the table several times."
+    match i == n
+        true -> m
+        false -> fill(Map.set(m, Lib.Keys.key(i * 3), i), i + 1, n)
+
+fn hits(m: Map<Lib.Keys.Key, Int>, i: Int, n: Int, acc: Int) -> Int
+    ? "Sums the values found at 0, 1, 2, ... below 3n; a miss counts 1000000."
+    match i == 3 * n
+        true -> acc
+        false -> hits(m, i + 1, n, acc + Option.withDefault(Map.get(m, Lib.Keys.key(i)), 1000000))
+
+fn drop(m: Map<Lib.Keys.Key, Int>, i: Int, n: Int) -> Map<Lib.Keys.Key, Int>
+    ? "Removes every even key below 3n, present or not."
+    match i >= 3 * n
+        true -> m
+        false -> drop(Map.remove(m, Lib.Keys.key(i)), i + 2, n)
+
+fn flag(b: Bool) -> String
+    ? "yes or no."
+    match b
+        true -> "yes"
+        false -> "no"
+
+fn main() -> Unit
+    ? "Prints what each map operation gives."
+    ! [Console.print]
+    top = 4611686018427387903
+    m = Map.fromList([(Lib.Keys.key(7), "seven"), (Lib.Keys.key(top), "top"), (Lib.Keys.key(0), "zero")])
+    m2 = Map.set(Map.set(m, Lib.Keys.key(top + 1), "over"), Lib.Keys.key(7), "SEVEN")
+    Console.print("len {Map.len(m)} {Map.len(m2)}")
+    Console.print("get {Option.withDefault(Map.get(m2, Lib.Keys.key(7)), "-")} {Option.withDefault(Map.get(m, Lib.Keys.key(7)), "-")} {Option.withDefault(Map.get(m2, Lib.Keys.key(0)), "-")} {Option.withDefault(Map.get(m2, Lib.Keys.key(8)), "-")}")
+    Console.print("has {flag(Map.has(m2, Lib.Keys.key(top)))} {flag(Map.has(m2, Lib.Keys.key(-1)))} {flag(Map.has(m2, Lib.Keys.key(top - 1)))}")
+    Console.print("keys{showKeys(Map.keys(m2), "")}")
+    Console.print("entries{showEntries(Map.entries(m2), "")}")
+    r = Map.remove(m2, Lib.Keys.key(7))
+    Console.print("remove {Map.len(r)} {flag(Map.has(r, Lib.Keys.key(7)))} {Map.len(Map.remove(r, Lib.Keys.key(9)))} {Map.len(m2)}")
+    same = Map.fromList([(Lib.Keys.key(0), "zero"), (Lib.Keys.key(top), "top"), (Lib.Keys.key(7), "seven")])
+    Console.print("eq {flag(m == same)} {flag(m == m2)} {flag(r == Map.remove(same, Lib.Keys.key(7)))}")
+    big = fill({}, 0, 5000)
+    Console.print("grown {Map.len(big)} {hits(big, 0, 5000, 0)}")
+    small = drop(big, 0, 5000)
+    Console.print("dropped {Map.len(small)} {hits(small, 0, 5000, 0)}")
+    Console.print("values {List.len(Map.values(small))} {Option.withDefault(Map.get(Map.set(small, Lib.Keys.key(6), 42), Lib.Keys.key(6)), 0)}")

@@ -311,8 +311,8 @@ pub(super) fn emit_module_with(
     // walk never reaches, or a fully INFERRED `m = Map.set({}, c, 5)`). The
     // box/unbox boundary rewrite (`rewrite_for_wasm_gc`) is layered on top of
     // THIS same `optimized` value below — building it here avoids a second
-    // lower+optimize pass while making the inferred Map-key types available to
-    // the carrier-eligibility scan.
+    // lower+optimize pass while making the inferred Map types available to
+    // the multi-field carrier scan.
     let optimized_mir: crate::ir::mir::MirProgram = {
         let mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_fn_defs
             .iter()
@@ -341,11 +341,14 @@ pub(super) fn emit_module_with(
                 .collect();
             // Fail-closed tightening (unless explicitly disabled for a
             // revert-test): subtract carriers that are constructed ungated
-            // (bare ctor bypass) or used as a `Map` KEY (direct/transitive).
-            // Either trip keeps that carrier BOXED, matching the VM and the
-            // pre-slice boxed wasm-gc path. `AVER_CARRIER_I64_SKIP_DEMOTION=1`
-            // restores the un-tightened set so the regression revert-tests
-            // can show the hole returning (trap / validation error).
+            // (bare ctor bypass), which keeps that carrier BOXED, matching
+            // the VM and the pre-slice boxed wasm-gc path. A carrier used in
+            // a `Map` key stays eligible: a map keyed by it boxes its `i64`
+            // in the keys array (`TypeRegistry::set_eligible_carriers`), and
+            // the key helpers of a record, sum, `Option`, `Result`, tuple or
+            // list key take a carrier part as an `i64`.
+            // `AVER_CARRIER_I64_SKIP_DEMOTION=1` restores the un-tightened set
+            // so the regression revert-tests can show the hole returning.
             if std::env::var("AVER_CARRIER_I64_SKIP_DEMOTION").is_ok() {
                 proven
             } else {
@@ -360,29 +363,14 @@ pub(super) fn emit_module_with(
                     plans_root: None,
                     proof_command: false,
                 };
-                // RESOLVED-IR Map-key types: the typed-MIR instantiation
-                // registry carries every `Map<K, V>` the program uses, keyed
-                // off inference, so a carrier used as a Map KEY via a local
-                // binding OR pure inference (no annotation anywhere) is still
-                // demoted. This is the complete source of truth; the textual
-                // annotation scan inside `carrier_eligibility_demotions` stays
-                // as a cheap backstop.
-                let resolved_map_keys: Vec<crate::ast::Type> =
-                    crate::ir::mir::discover_instantiations(&optimized_mir)
-                        .maps
-                        .into_iter()
-                        .map(|(k, _v)| k)
-                        .collect();
-                // The scans canonicalize construct-site and resolved-type
-                // spellings through the SAME flatten-derived alias map the
-                // registry lookups consult: every spelling that can RESOLVE
-                // a carrier layout must be VISIBLE to the demotion scan
-                // under the same key.
-                let demoted = crate::codegen::proof_lower::carrier_eligibility_demotions(
+                // The scan canonicalizes construct-site spellings through
+                // the SAME flatten-derived alias map the registry lookups
+                // consult: every spelling that can RESOLVE a carrier layout
+                // must be VISIBLE to the demotion scan under the same key.
+                let demoted = crate::codegen::proof_lower::carrier_ungated_construction_demotions(
                     &inputs,
                     &proven,
                     &carrier_intervals,
-                    &resolved_map_keys,
                     type_aliases,
                 );
                 proven.difference(&demoted).cloned().collect()
@@ -391,7 +379,7 @@ pub(super) fn emit_module_with(
     // ETAP-2 carrier-`i64`: the per-slot raw-i64 carrier ARITHMETIC path (the
     // `bare_i64` analysis + rewrite) must key off the SAME carrier set the
     // registry's STORAGE erasure uses — `eligible_carriers`, i.e. the proven
-    // bound MINUS the fail-closed demotions (Map-key / bare-ctor) AND empty
+    // bound MINUS the fail-closed demotions (bare-ctor) AND empty
     // under `AVER_NO_CARRIER_I64=1`. Otherwise the analysis would flag a
     // `.value` read raw (skip the project bridge) for a carrier the registry
     // kept as `$AverInt` storage — reading an i64 from an `$AverInt` slot,
