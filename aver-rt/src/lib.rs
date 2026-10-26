@@ -2087,19 +2087,14 @@ pub fn list_uncons_owned<L: AverListMatch>(list: L) -> Option<(L::Item, L)> {
 }
 
 /// Pattern-match on an AverList: empty and cons (head, tail) arms. The macro
-/// owns the list it matches, so the cons arm takes it apart.
+/// owns the list it matches, so the cons arm takes it apart. The step that
+/// takes it apart also says whether it is empty, so it is the only look.
 #[macro_export]
 macro_rules! aver_list_match {
     ($list:expr, [] => $empty:expr, [$head:ident, $tail:ident] => $cons:expr) => {{
-        let __aver_list = $list;
-        if __aver_list.is_empty() {
-            $empty
-        } else if let ::core::option::Option::Some(($head, $tail)) =
-            $crate::list_uncons_owned(__aver_list)
-        {
-            $cons
-        } else {
-            panic!("Aver: non-exhaustive list match")
+        match $crate::list_uncons_owned($list) {
+            ::core::option::Option::Some(($head, $tail)) => $cons,
+            ::core::option::Option::None => $empty,
         }
     }};
 }
@@ -2145,15 +2140,9 @@ impl<T> ListSlot<T> {
 #[macro_export]
 macro_rules! aver_list_match_reuse {
     ($list:expr, [] => $empty:expr, [$head:ident, $tail:ident, $slot:ident] => $cons:expr) => {{
-        let __aver_list = $list;
-        if __aver_list.is_empty() {
-            $empty
-        } else if let ::core::option::Option::Some(($head, $tail, $slot)) =
-            $crate::AverList::uncons_reuse(__aver_list)
-        {
-            $cons
-        } else {
-            panic!("Aver: non-exhaustive list match")
+        match $crate::AverList::uncons_reuse($list) {
+            ::core::option::Option::Some(($head, $tail, $slot)) => $cons,
+            ::core::option::Option::None => $empty,
         }
     }};
 }

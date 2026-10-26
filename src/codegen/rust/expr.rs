@@ -569,8 +569,67 @@ where
         false => format!("&{subject_name}"),
     };
     let arms_code =
-        emit_list_match_arms(&subject_name, &subject_ref, heads, arms, ctx, &body_for_arm);
+        emit_one_look_list_match(&subject_name, &subject_ref, heads, arms, ctx, &body_for_arm)
+            .unwrap_or_else(|| {
+                emit_list_match_arms(&subject_name, &subject_ref, heads, arms, ctx, &body_for_arm)
+            });
     format!("{{ let {} = {}; {} }}", subject_name, subject, arms_code)
+}
+
+/// `[]` and `[h, ..t]` in either order, or `[h, ..t]` and then `_`, as one
+/// look at the list: the step that binds the cons arm also answers whether
+/// the list is empty, so no `is_empty` comes before it and no panic for a
+/// list that is neither after it.
+fn emit_one_look_list_match<F>(
+    subject_name: &str,
+    subject_ref: &str,
+    heads: &HashSet<String>,
+    arms: &[ResolvedMatchArm],
+    ctx: &CodegenContext,
+    body_for_arm: &F,
+) -> Option<String>
+where
+    F: Fn(&ResolvedMatchArm) -> String,
+{
+    let [first, second] = arms else {
+        return None;
+    };
+    let (cons, other) = match (&first.pattern, &second.pattern) {
+        (ResolvedPattern::Cons(..), ResolvedPattern::EmptyList | ResolvedPattern::Wildcard) => {
+            (first, second)
+        }
+        (ResolvedPattern::EmptyList, ResolvedPattern::Cons(..)) => (second, first),
+        _ => return None,
+    };
+    let ResolvedPattern::Cons(head, tail) = &cons.pattern else {
+        return None;
+    };
+    // `[_, .._]` asks only `is_empty` (see `emit_list_match_arms`).
+    if head == "_" && tail == "_" {
+        return None;
+    }
+    let name = |n: &str| match n {
+        "_" => "_".to_string(),
+        n => aver_name_to_rust(n),
+    };
+    let (head_pat, tail_pat) = (name(head), name(tail));
+    // A borrowed head is read in place, as `first` reads it.
+    let (step, bound) = match (heads.contains(head), tail == "_") {
+        (true, true) => (format!("{subject_name}.first()"), head_pat),
+        (true, false) => (
+            format!("aver_rt::list_uncons({subject_ref})"),
+            format!("({head_pat}, {tail_pat})"),
+        ),
+        (false, _) => (
+            format!("aver_rt::list_uncons_cloned({subject_ref})"),
+            format!("({head_pat}, {tail_pat})"),
+        ),
+    };
+    let cons_body = emit_list_arm_body(cons, ctx, body_for_arm(cons));
+    let other_body = emit_list_arm_body(other, ctx, body_for_arm(other));
+    Some(format!(
+        "match {step} {{ Some({bound}) => {{ {cons_body} }}, None => {{ {other_body} }} }}"
+    ))
 }
 
 /// Emit the aver_list_match! macro for the common []/[h,..t] two-arm pattern.
