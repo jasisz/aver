@@ -47,6 +47,9 @@ thread_local! {
     /// twin's result.
     static DEPTH: Cell<u32> = const { Cell::new(0) };
     static RETURN_AT: Cell<Option<u32>> = const { Cell::new(None) };
+    /// The depth whose `Int` result is wanted as its machine word
+    /// (`emit_word_result`), and whether it was left so.
+    static WORD_AT: Cell<(Option<u32>, bool)> = const { Cell::new((None, false)) };
 }
 
 pub(crate) fn set_calls(on: bool) {
@@ -163,6 +166,29 @@ impl Drop for Level {
     fn drop(&mut self) {
         DEPTH.with(|d| d.set(d.get() - 1));
     }
+}
+
+/// Run `emit` for one expression, asking a builtin that computes its `Int`
+/// result as a machine word (a length, a count, a code) to leave the word
+/// instead of boxing it; true when it did.
+pub(crate) fn emit_word_result<R>(emit: impl FnOnce() -> R) -> (R, bool) {
+    let at = DEPTH.with(Cell::get) + 1;
+    let saved = WORD_AT.with(|w| w.replace((Some(at), false)));
+    let out = emit();
+    (out, WORD_AT.with(|w| w.replace(saved)).1)
+}
+
+/// Whether the `Int` result being lifted is the one `emit_word_result`
+/// wants as its word: then it stays unboxed.
+pub(crate) fn word_result_wanted() -> bool {
+    let depth = DEPTH.with(Cell::get);
+    WORD_AT.with(|w| {
+        let here = w.get().0 == Some(depth);
+        if here {
+            w.set((None, true));
+        }
+        here
+    })
 }
 
 /// The struct the node being emitted builds is the twin's result.

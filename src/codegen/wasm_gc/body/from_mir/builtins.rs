@@ -46,7 +46,7 @@ pub(crate) fn lift_i64_result_to_aint(
     func: &mut Function,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    if ctx.registry.bignum {
+    if ctx.registry.bignum && !super::twin::word_result_wanted() {
         let from_i64 = aint_helper(ctx, "__aint_from_i64")?;
         func.instruction(&Instruction::Call(from_i64));
     }
