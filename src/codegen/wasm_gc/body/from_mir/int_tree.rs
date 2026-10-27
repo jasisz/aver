@@ -370,10 +370,14 @@ fn hoist(
         out.insert(e as *const _ as usize, Held::Twin(n, r));
         return Ok(Some(()));
     }
-    let produced = match &e.node {
-        MirExpr::Box(inner) if raw => emit_mir_int_raw(func, inner, slots, ctx)?,
-        _ if raw => emit_mir_carrier_value_raw(func, e, slots, ctx)?,
-        _ => emit_mir_expr(func, e, slots, ctx)?,
+    let (produced, raw) = match &e.node {
+        MirExpr::Box(inner) if raw => (emit_mir_int_raw(func, inner, slots, ctx)?, true),
+        _ if raw => (emit_mir_carrier_value_raw(func, e, slots, ctx)?, true),
+        // A length or count a builtin computes as a word is held as it.
+        _ => {
+            let (produced, word) = twin::emit_word_result(|| emit_mir_expr(func, e, slots, ctx));
+            (produced?, word)
+        }
     };
     if produced.is_none() {
         return Ok(None);

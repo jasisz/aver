@@ -46,6 +46,13 @@ fn mixed(s: Small, p: Pair, a: Int) -> Int
     ? "A carrier's machine word, a record field and a boxed value in one tree."
     s.value * 1000003 + p.x * a - Int.min(p.y, s.value) + Int.mod(s.value * 64 + p.y, 2147483647)
 
+fn lengths(a: Int) -> String
+    ? "Lengths and counts a builtin computes as a machine word, as leaves of a tree, also where the tree overflows."
+    s = "zażółć"
+    v = Vector.fromList([4, 5])
+    m = Map.set(Map.set({}, 1, 2), 3, 4)
+    "{String.byteLength(s) + a} {String.len(s) * a - 1} {List.len([1, 2, 3]) + a} {Vector.len(v) * 3 + a} {Map.len(m) - a} {a + String.byteLength(s) > a} {Int.max(String.len(s), a) + 1}"
+
 fn keep(n: Int) -> Int
     ? "Gives its argument back."
     n
@@ -57,7 +64,7 @@ fn moved(a: Int) -> Int
 fn show(a: Int, b: Int) -> Unit
     ? "Every shape for one pair of values."
     ! [Console.print]
-    Console.print("{a} {b}: {arith(a, b, a)} | {divmod(a)} | {edges(a)} | {bits(a)} | {compare(a, b)} | {mixed(small(b), Pair(x = a, y = b), b)} | {moved(a)}")
+    Console.print("{a} {b}: {arith(a, b, a)} | {divmod(a)} | {edges(a)} | {bits(a)} | {compare(a, b)} | {mixed(small(b), Pair(x = a, y = b), b)} | {moved(a)} | {lengths(a)}")
 
 fn main() -> Unit
     ? "Runs the shapes over small, edge and big values."
