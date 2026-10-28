@@ -57,8 +57,7 @@ pub fn analyze(program: &MirProgram) -> ParamFieldUses {
         let mut next = uses.clone();
         for (id, f) in program.iter() {
             for (i, param) in f.params.iter().enumerate() {
-                let mut observed = ParamFields::Fields(BTreeSet::new());
-                observe(&f.body.node, param.local, &uses, &mut observed);
+                let observed = for_local(&f.body.node, param.local, &uses);
                 next.get_mut(id).expect("every MIR function has a summary")[i].include(&observed);
             }
         }
@@ -67,6 +66,15 @@ pub fn analyze(program: &MirProgram) -> ParamFieldUses {
         }
         uses = next;
     }
+}
+
+/// Observe any immutable local, including a `Let` binding, with the same
+/// callee summaries used for parameters. This describes uses, not a target
+/// layout or a claim that the local's contents are uniquely owned.
+pub fn for_local(expr: &MirExpr, local: LocalId, uses: &ParamFieldUses) -> ParamFields {
+    let mut observed = ParamFields::Fields(BTreeSet::new());
+    observe(expr, local, uses, &mut observed);
+    observed
 }
 
 fn observe(expr: &MirExpr, param: LocalId, uses: &ParamFieldUses, out: &mut ParamFields) {
