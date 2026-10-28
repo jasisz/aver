@@ -139,16 +139,16 @@ fn same_object(f: &mut Function, reflexive: bool, equal: Instruction) {
     }
 }
 
-/// A step against the budget in param 2 takes one from it, and answers -1
-/// once it is spent.
+/// An identical reflexive node needs no traversal. Every other step takes
+/// one from the budget in param 2 and answers -1 once it is spent.
 fn step_prologue(f: &mut Function, reflexive: bool) {
+    same_object(f, reflexive, Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::LocalTee(2));
     f.instruction(&Instruction::I32Eqz);
     answer_if(f, Instruction::I32Const(-1));
-    same_object(f, reflexive, Instruction::LocalGet(2));
 }
 
 /// The registered helpers a field of type `field_ty` compares through:

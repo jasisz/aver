@@ -1743,6 +1743,7 @@ fn cross_nan_equality_wasm_gc() {
 /// The equality start sees aliased roots of a recursive sum and a recursive
 /// record. A Float nested in a list or under another record prevents the
 /// identity shortcut, even when both arguments are exactly the same object.
+/// Distinct roots with shared fields still compare the fields that differ.
 #[test]
 fn cross_recursive_root_identity_wasm_gc() {
     let source = include_str!("fixtures/recursive_root_identity.av");
