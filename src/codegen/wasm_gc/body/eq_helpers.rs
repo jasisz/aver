@@ -723,8 +723,7 @@ impl EqHelperRegistry {
             Body::Memory(w) => (&w.memory_map, 2),
         };
         let self_fn_idx = map.get(name).copied();
-        let reflexive =
-            !matches!(body, Body::Plain | Body::Start(_)) && self.reflexive(name, registry);
+        let reflexive = !matches!(body, Body::Plain) && self.reflexive(name, registry);
         // The start keeps its budget, and a step with memory the key of its
         // node, in one more local after the body's own.
         let extra: Vec<_> = match body {
@@ -770,6 +769,10 @@ impl EqHelperRegistry {
         let prologue = |f: &mut Function| match body {
             Body::Plain => {}
             Body::Start(_) => {
+                // Shared roots need no walk or budget. Use the same type
+                // guard as recursive steps: a value holding NaN need not
+                // equal itself, even when both refs are one object.
+                same_object(f, reflexive, Instruction::I32Const(1));
                 f.instruction(&Instruction::I32Const(WALK_BUDGET));
                 f.instruction(&Instruction::LocalSet(extra_local));
             }
