@@ -68,6 +68,9 @@ jobs:
       # Lean is installed on these runners, so a Lean-backed test that finds
       # no `lake` or `lean` fails instead of skipping (tests/support/lean_required.rs).
       AVER_CERT_REQUIRE_LEAN: '1'
+      # Each nextest worker starts Lake builds of its own. Bound their task
+      # pools rather than multiplying the runner's core count per test.
+      LEAN_NUM_THREADS: '2'
     steps:
       - uses: actions/checkout@v5
 

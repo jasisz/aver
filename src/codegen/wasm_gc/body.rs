@@ -44,6 +44,7 @@ pub(super) use from_mir::int_tree::{
     IntTreeReset, record_literals as record_int_literals, set_allowed as set_int_trees_allowed,
     set_literal_pool as set_int_literal_pool,
 };
+pub(super) use from_mir::record_entry_locals as twin_record_entry_locals;
 pub(super) use from_mir::twin::{
     entry_locals as twin_entry_locals, read_packed as twin_read_packed,
     set_calls as set_twin_calls, set_self as set_twin_self,

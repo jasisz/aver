@@ -1,0 +1,5 @@
+name       = "record_pipeline"
+entry      = "record_pipeline.av"
+iterations = 30
+warmup     = 3
+args       = []

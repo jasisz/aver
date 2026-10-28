@@ -88,7 +88,9 @@ mod control;
 mod coverage;
 pub(crate) mod int_tree;
 mod pattern_match;
+mod record_views;
 mod records;
+pub(crate) use record_views::entry_locals as record_entry_locals;
 mod strings;
 pub(crate) mod twin;
 
@@ -528,6 +530,9 @@ pub(crate) fn emit_mir_expr(
     // selection are the only readers.
     let result_raw = ctx.int_result_raw.replace(false);
     let _level = twin::enter();
+    if record_views::packed_local(func, &expr.node) {
+        return Ok(Some(true));
+    }
     if let Some(produced) = int_tree::emit_hoisted_leaf(func, expr, ctx)? {
         return Ok(Some(produced));
     }
@@ -1678,15 +1683,31 @@ pub(crate) fn emit_mir_expr(
         }
         MirExpr::RecordCreate(spanned_rec) => {
             let rec = &spanned_rec.node;
-            match emit_mir_record_create(func, &rec.type_name, &rec.fields, slots, ctx)? {
+            let returned = matches!(twin::tail_kind(expr), Some(TwinKind::Fields { .. }));
+            if returned {
+                twin::return_struct_here();
+            }
+            let emitted = emit_mir_record_create(func, &rec.type_name, &rec.fields, slots, ctx)?;
+            if returned {
+                twin::clear_return();
+            }
+            match emitted {
                 Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
                 None => Ok(None),
             }
         }
         MirExpr::RecordUpdate(spanned_upd) => {
             let upd = &spanned_upd.node;
-            match emit_mir_record_update(func, &upd.type_name, &upd.base, &upd.updates, slots, ctx)?
-            {
+            let returned = matches!(twin::tail_kind(expr), Some(TwinKind::Fields { .. }));
+            if returned {
+                twin::return_struct_here();
+            }
+            let emitted =
+                emit_mir_record_update(func, &upd.type_name, &upd.base, &upd.updates, slots, ctx)?;
+            if returned {
+                twin::clear_return();
+            }
+            match emitted {
                 Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
                 None => Ok(None),
             }
@@ -1697,6 +1718,9 @@ pub(crate) fn emit_mir_expr(
             // handle) record types fall back so the `ResolvedExpr`
             // emitter produces `emit_attr_get`'s diagnostic.
             let proj = &spanned_proj.node;
+            if let Some(result) = record_views::project(func, proj, slots, ctx)? {
+                return Ok(result);
+            }
             let record_name = aver_type_str_of(&proj.base);
             if ctx.registry.packed_sequence(&record_name).is_some() {
                 let produced = emit_mir_expr(func, &proj.base, slots, ctx)?;

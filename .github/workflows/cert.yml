@@ -248,6 +248,9 @@ jobs:
     env: &cert-env
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
+      # Direct Lake builds in the test harness do not use the verifier's
+      # worker budget. Bound those pools too.
+      LEAN_NUM_THREADS: '2'
       RUSTFLAGS: -C debuginfo=0
       # Lean is installed on these runners, so a certificate test that finds
       # no `lake` fails instead of skipping.
@@ -369,10 +372,16 @@ jobs:
         env:
           AVER_CERT_PHASE_TIMEOUT_SECS: ${{ matrix.phase_timeout_secs || 900 }}
           AVER_TEST_WALL_SEED: /tmp/aver-test-wall-seed
-        run: >-
-          cargo nextest run -p aver-lang --features ${{ matrix.features || 'wasm' }} --test ${{ matrix.suite }}
-          -E '${{ matrix.filter }}'
-          --partition slice:${{ matrix.partition }}
+        run: |
+          test_threads=()
+          # These probes each stage and build the wall with Lake. Running
+          # them serially avoids nesting nextest workers and Lake task pools.
+          if [ '${{ matrix.suite }}' = cert_whole_module_guard_iso ]; then
+            test_threads=(--test-threads 1)
+          fi
+          cargo nextest run -p aver-lang --features ${{ matrix.features || 'wasm' }} --test ${{ matrix.suite }} \
+            -E '${{ matrix.filter }}' \
+            --partition slice:${{ matrix.partition }} "${test_threads[@]}"
 
       - name: Run wasip2 certificate tests
         # The verify/certify shards use only wasm, so their wasip2-only

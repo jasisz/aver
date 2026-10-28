@@ -1095,12 +1095,22 @@ pub(super) fn emit_module_with(
                 .filter(|(_, (_, ty))| ty.trim() != "Unit")
                 .filter_map(|(k, _)| {
                     let v = *wasm.next()?;
-                    Some(if plan.unpacked[k] { ValType::I64 } else { v })
+                    if plan.records[k].is_some() {
+                        None
+                    } else {
+                        Some(if plan.unpacked[k] { ValType::I64 } else { v })
+                    }
                 })
                 .collect();
             // Then the ref of each unpacked `Int`.
             let aint = registry.aint_struct_idx.map(super::types::struct_ref);
             twin_params[i].extend(plan.unpacked.iter().filter(|u| **u).filter_map(|_| aint));
+            twin_params[i].extend(
+                plan.records
+                    .iter()
+                    .flatten()
+                    .flat_map(|r| r.fields.iter().map(|(_, _, v)| *v)),
+            );
             twin_results[i] = plan.kind.results(&registry, &results);
         }
         types.ty().function(params, results);
@@ -2643,6 +2653,7 @@ pub(super) fn emit_module_with(
                     wasm_idx: import_count + funcs.len(),
                     kind: plan.kind.clone(),
                     unpacked: plan.unpacked.clone(),
+                    records: plan.records.clone(),
                 },
             );
             funcs.function(ty);
@@ -4112,15 +4123,23 @@ pub(super) fn emit_module_with(
                 &fn_map,
             )?);
             super::body::set_twin_self(Some((twin.clone(), mir_fn)));
-            let emitted = emit_body(twin.wasm_idx)
-                .map(|(func, extra)| (func, extra, super::body::twin_entry_locals()));
+            let emitted = emit_body(twin.wasm_idx).map(|(func, extra)| {
+                (
+                    func,
+                    extra,
+                    super::body::twin_entry_locals(),
+                    super::body::twin_record_entry_locals(),
+                )
+            });
             super::body::set_twin_self(None);
-            let (func, extra, entry) = emitted?;
-            twin_codes.push(with_ref_params(
+            let (func, extra, entry, record_entry) = emitted?;
+            twin_codes.push(with_twin_params(
                 &func,
                 &extra,
                 &fn_defs[i].params,
                 &entry,
+                &record_entry,
+                &twin.records,
                 &registry,
             )?);
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
@@ -6580,15 +6599,28 @@ fn emit_twin_wrapper(
     let mut f = Function::new([(1, ValType::I64), (1, aint)]);
     let unpacked = |k: usize| twin.unpacked.get(k).copied().unwrap_or(false);
     for (p, k) in values.iter().enumerate() {
-        f.instruction(&if unpacked(*k) {
-            Instruction::I64Const(0)
-        } else {
-            Instruction::LocalGet(p as u32)
-        });
+        if twin.records.get(*k).is_none_or(Option::is_none) {
+            f.instruction(&if unpacked(*k) {
+                Instruction::I64Const(0)
+            } else {
+                Instruction::LocalGet(p as u32)
+            });
+        }
     }
     for (p, k) in values.iter().enumerate() {
         if unpacked(*k) {
             f.instruction(&Instruction::LocalGet(p as u32));
+        }
+    }
+    for (p, k) in values.iter().enumerate() {
+        if let Some(record) = twin.records.get(*k).and_then(Option::as_ref) {
+            for j in 0..record.fields.len() {
+                f.instruction(&Instruction::LocalGet(p as u32));
+                f.instruction(&Instruction::StructGet {
+                    struct_type_index: record.struct_idx,
+                    field_index: j as u32,
+                });
+            }
         }
     }
     f.instruction(&Instruction::Call(twin.wasm_idx));
@@ -6621,32 +6653,61 @@ fn emit_twin_wrapper(
     Ok(f)
 }
 
-/// A twin's body as emitted, with its params at the fn's own positions,
-/// made the twin's: one ref param per unpacked `Int` (`entry`: its
-/// position, packed-value and Big-flag locals) follows the fn's params, so
-/// every other local moves up past them, and the entry reads each ref: a
-/// non-null one is the packed value, a Small one read into its `i64`.
-fn with_ref_params(
+/// Remap a body emitted with the source function's parameter slots into its
+/// twin's convention. Record refs disappear; unpacked Int refs and record
+/// fields follow the remaining params. The prologue reads these into the
+/// body's field/word locals, and every local instruction is remapped once.
+fn with_twin_params(
     body: &Function,
     locals: &[ValType],
     params: &[(String, String)],
     entry: &[(usize, u32, u32)],
+    record_entry: &[u32],
+    records: &[Option<super::twins::RecordFields>],
     registry: &TypeRegistry,
 ) -> Result<Function, WasmGcError> {
-    let wasm_param = |k: usize| {
+    let source_param = |k: usize| {
         params[..k]
             .iter()
             .filter(|(_, t)| t.trim() != "Unit")
             .count() as u32
     };
-    let first = wasm_param(params.len());
+    let first = source_param(params.len());
+    let mut kept = Vec::new();
+    for (k, (_, ty)) in params.iter().enumerate() {
+        if ty.trim() != "Unit" && records.get(k).is_none_or(Option::is_none) {
+            kept.push(source_param(k));
+        }
+    }
+    let param_count = kept.len() as u32;
     let refs = entry.len() as u32;
-    let moved = |i: u32| if i >= first { i + refs } else { i };
+    let extra = refs + record_entry.len() as u32;
+    let moved = |i: u32| -> Result<u32, WasmGcError> {
+        if i >= first {
+            Ok(param_count + extra + i - first)
+        } else {
+            kept.iter()
+                .position(|p| *p == i)
+                .map(|p| p as u32)
+                .ok_or_else(|| {
+                    WasmGcError::Validation(
+                        "unpacked record read through its removed parameter slot".into(),
+                    )
+                })
+        }
+    };
     let aint = registry.aint_struct_idx.unwrap_or_default();
     let mut f = Function::new(locals.iter().map(|v| (1, *v)));
     for (j, (k, packed, big)) in entry.iter().enumerate() {
-        let (from, word) = (Instruction::LocalGet(first + j as u32), wasm_param(*k));
-        super::body::twin_read_packed(&mut f, from, word, moved(*packed), moved(*big), aint);
+        let (from, word) = (
+            Instruction::LocalGet(param_count + j as u32),
+            moved(source_param(*k))?,
+        );
+        super::body::twin_read_packed(&mut f, from, word, moved(*packed)?, moved(*big)?, aint);
+    }
+    for (j, local) in record_entry.iter().enumerate() {
+        f.instruction(&Instruction::LocalGet(param_count + refs + j as u32));
+        f.instruction(&Instruction::LocalSet(moved(*local)?));
     }
     let raw = body.clone().into_raw_body();
     let invalid = |e: &dyn std::fmt::Display| WasmGcError::Validation(format!("twin body: {e}"));
@@ -6657,13 +6718,13 @@ fn with_ref_params(
         let op = ops.read().map_err(|e| invalid(&e))?;
         let i = match op {
             wasmparser::Operator::LocalGet { local_index } => {
-                Instruction::LocalGet(moved(local_index))
+                Instruction::LocalGet(moved(local_index)?)
             }
             wasmparser::Operator::LocalSet { local_index } => {
-                Instruction::LocalSet(moved(local_index))
+                Instruction::LocalSet(moved(local_index)?)
             }
             wasmparser::Operator::LocalTee { local_index } => {
-                Instruction::LocalTee(moved(local_index))
+                Instruction::LocalTee(moved(local_index)?)
             }
             op => wasm_encoder::reencode::Reencode::instruction(&mut re, op)
                 .map_err(|e| invalid(&e))?,

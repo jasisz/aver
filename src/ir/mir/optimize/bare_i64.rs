@@ -3285,7 +3285,7 @@ fn analyze_fn(
     // 5. Return: bare iff the summary says so AND the body's tail value is
     //    itself bare-eligible.
     facts.bare_return =
-        summary.return_bare(f.fn_id) && tail_value_is_bare(&f.body.node, &facts, &escaping);
+        summary.return_bare(f.fn_id) && tail_value_is_bare(&f.body, &facts, &escaping);
 
     facts
 }
@@ -3583,40 +3583,39 @@ fn mark_operand_escapes_deep(e: &MirExpr, out: &mut HashSet<LocalId>) {
 /// the base-case value(s) reached after the `Let` chain / branches. We
 /// require every reachable tail leaf to be a bare-eligible Local or a bare
 /// literal; anything else demotes the return.
-fn tail_value_is_bare(e: &MirExpr, facts: &FnBareFacts, escaping: &HashSet<LocalId>) -> bool {
-    match e {
-        MirExpr::Local(l) => facts.is_bare(l.node.slot) && !escaping.contains(&l.node.slot),
-        MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
-        MirExpr::Let(let_node) => tail_value_is_bare(&let_node.node.body.node, facts, escaping),
-        MirExpr::Match(m) => m
-            .node
-            .arms
-            .iter()
-            .all(|arm| tail_value_is_bare(&arm.body.node, facts, escaping)),
-        MirExpr::IfThenElse(ite) => {
-            tail_value_is_bare(&ite.node.then_branch.node, facts, escaping)
-                && tail_value_is_bare(&ite.node.else_branch.node, facts, escaping)
+fn tail_value_is_bare(
+    e: &Spanned<MirExpr>,
+    facts: &FnBareFacts,
+    escaping: &HashSet<LocalId>,
+) -> bool {
+    let mut values = Vec::new();
+    crate::ir::mir::result_values::collect(e, &mut values);
+    values.into_iter().all(|value| {
+        let e = &value.node;
+        match e {
+            MirExpr::Local(l) => facts.is_bare(l.node.slot) && !escaping.contains(&l.node.slot),
+            MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
+            // A self-tail-call's value is the recurrence, not a base value; it
+            // does not constrain the return repr.
+            MirExpr::TailCall(_) => true,
+            MirExpr::Return(inner) => tail_value_is_bare(inner, facts, escaping),
+            // A compound `Add`/`Sub`/`Mul` tail value is bare ONLY when its
+            // RESULT interval provably fits `i64` (BUG 2): a tree whose operands
+            // are each bare can still overflow (`n + i64::MAX`), so route through
+            // the interval-checked `expr_is_bare_i64` — the same gate codegen
+            // uses, so analysis and emit never disagree. (A `Bare` leaf already
+            // carries `escapes == false`, so an escaping operand is `Boxed` and
+            // `expr_is_bare_i64` declines it.)
+            MirExpr::BinOp(b) if matches!(b.node.op, BinOp::Add | BinOp::Sub | BinOp::Mul) => {
+                facts.expr_is_bare_i64(e)
+            }
+            // ETAP-2 carrier-`i64`: a tail `c.value` over a bare carrier reads raw
+            // i64, so the fn may return bare i64 (skip the project bridge).
+            MirExpr::Project(_) => facts.is_carrier_project(e),
+            MirExpr::Call(_) => is_code_carrier_call(e),
+            _ => false,
         }
-        // A self-tail-call's value is the recurrence, not a base value; it
-        // does not constrain the return repr.
-        MirExpr::TailCall(_) => true,
-        MirExpr::Return(inner) => tail_value_is_bare(&inner.node, facts, escaping),
-        // A compound `Add`/`Sub`/`Mul` tail value is bare ONLY when its
-        // RESULT interval provably fits `i64` (BUG 2): a tree whose operands
-        // are each bare can still overflow (`n + i64::MAX`), so route through
-        // the interval-checked `expr_is_bare_i64` — the same gate codegen
-        // uses, so analysis and emit never disagree. (A `Bare` leaf already
-        // carries `escapes == false`, so an escaping operand is `Boxed` and
-        // `expr_is_bare_i64` declines it.)
-        MirExpr::BinOp(b) if matches!(b.node.op, BinOp::Add | BinOp::Sub | BinOp::Mul) => {
-            facts.expr_is_bare_i64(e)
-        }
-        // ETAP-2 carrier-`i64`: a tail `c.value` over a bare carrier reads raw
-        // i64, so the fn may return bare i64 (skip the project bridge).
-        MirExpr::Project(_) => facts.is_carrier_project(e),
-        MirExpr::Call(_) => is_code_carrier_call(e),
-        _ => false,
-    }
+    })
 }
 
 // ── shared traversal + helpers ──────────────────────────────────────────

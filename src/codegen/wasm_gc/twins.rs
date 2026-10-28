@@ -1,5 +1,5 @@
 //! A twin of a function that hands its result back unpacked and takes its
-//! `Int` params as machine words.
+//! `Int` params as machine words and small record params as their fields.
 //!
 //! On wasm-gc every `Int` is an `$AverInt` object, and an `Option` or a
 //! `Result` is a struct. A function that computes its result on
@@ -13,9 +13,13 @@
 //! Such a function gets a twin with the same body:
 //!
 //! - an `Int` result is `(i64, ref null $AverInt)`, the ref non-null only for
-//!   a Big value; an `Option` or `Result` result is its fields;
+//!   a Big value; an `Option`, `Result` or small record result is its fields;
 //! - an `Int` param the body reads as a machine word is an `i64` plus a ref
 //!   after the other params, null unless the value comes packed.
+//! - a small record param observed only through its fields uses those fields
+//!   as extra params. The shared MIR `param_fields` summary establishes that
+//!   use property; this backend bounds the layout to four fields and chooses
+//!   the wasm types. Fresh producers and forwarders need no record object.
 //!
 //! The function itself becomes a small wrapper that calls the twin and packs
 //! the result, so its signature is unchanged for every caller that wants the
@@ -34,6 +38,9 @@
 //! fabricating passes use), and one it prints calls none.
 
 use std::collections::{HashMap, HashSet};
+
+mod callers;
+use callers::{Caller, Use};
 
 use wasm_encoder::{HeapType, ValType};
 
@@ -68,6 +75,9 @@ pub(crate) struct TwinEntry {
     /// the other params, a ref that is null when the value is the `i64` and
     /// is the packed value otherwise.
     pub(crate) unpacked: Vec<bool>,
+    /// Small record params observed only through their fields. Fields replace
+    /// the record ref and follow the ordinary params and unpacked Int refs.
+    pub(crate) records: Vec<Option<RecordFields>>,
 }
 
 /// What `plan` gives a fn.
@@ -75,6 +85,50 @@ pub(crate) struct TwinEntry {
 pub(crate) struct TwinPlan {
     pub(crate) kind: TwinKind,
     pub(crate) unpacked: Vec<bool>,
+    pub(crate) records: Vec<Option<RecordFields>>,
+}
+
+/// Target layout of a small record whose fields can travel independently.
+/// The semantic eligibility comes from `mir::param_fields`, not this layout.
+#[derive(Clone, Debug)]
+pub(crate) struct RecordFields {
+    pub(crate) struct_idx: u32,
+    pub(crate) fields: Vec<(String, String, ValType)>,
+}
+
+impl RecordFields {
+    pub(crate) fn of(name: &str, registry: &TypeRegistry) -> Option<Self> {
+        // Development differential: retain the established Int/Option/Result
+        // twins while measuring just record splitting on the same compiler.
+        if std::env::var_os("AVER_NO_RECORD_TWINS").is_some() {
+            return None;
+        }
+        let name = registry.canonical_type_name(name.trim());
+        if registry.newtype_underlying(name).is_some() || registry.packed_sequence(name).is_some() {
+            return None;
+        }
+        let decl = registry.record_fields.get(name)?;
+        // Bound the calling convention's size. Large state records continue
+        // to cross calls as references, rather than spilling dozens of fields.
+        if !(2..=4).contains(&decl.len())
+            || decl
+                .iter()
+                .any(|(field, _)| registry.is_eligible_carrier_field(name, field))
+        {
+            return None;
+        }
+        let fields = decl
+            .iter()
+            .map(|(field, ty)| {
+                let val = aver_to_wasm(ty, Some(registry)).ok()??;
+                Some((field.clone(), ty.clone(), val))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            struct_idx: registry.record_type_idx(name)?,
+            fields,
+        })
+    }
 }
 
 impl TwinKind {
@@ -117,7 +171,15 @@ fn kind_of(ret: &str, registry: &TypeRegistry) -> Result<Option<TwinKind>, WasmG
             Some((t, e)) => vec![ValType::I32, wasm(t)?, wasm(e)?],
             None => return Ok(None),
         },
-        _ => return Ok(None),
+        _ => match RecordFields::of(ret, registry) {
+            Some(record) => {
+                return Ok(Some(TwinKind::Fields {
+                    struct_idx: record.struct_idx,
+                    fields: record.fields.iter().map(|(_, _, v)| *v).collect(),
+                }));
+            }
+            None => return Ok(None),
+        },
     };
     Ok(Some(TwinKind::Fields {
         struct_idx: idx,
@@ -125,26 +187,7 @@ fn kind_of(ret: &str, registry: &TypeRegistry) -> Result<Option<TwinKind>, WasmG
     }))
 }
 
-/// The expressions whose value is the function's: the body, through the
-/// arms, branches and bodies of a `Match`, an `IfThenElse` and a `Let`.
-pub(crate) fn tails<'a>(
-    e: &'a crate::ast::Spanned<MirExpr>,
-    out: &mut Vec<&'a crate::ast::Spanned<MirExpr>>,
-) {
-    match &e.node {
-        MirExpr::Let(l) => tails(&l.node.body, out),
-        MirExpr::Match(m) => {
-            for arm in &m.node.arms {
-                tails(&arm.body, out);
-            }
-        }
-        MirExpr::IfThenElse(ite) => {
-            tails(&ite.node.then_branch, out);
-            tails(&ite.node.else_branch, out);
-        }
-        _ => out.push(e),
-    }
-}
+pub(crate) use crate::ir::mir::result_values::collect as tails;
 
 fn tail_targets(e: &MirExpr, out: &mut Vec<FnId>) {
     if let MirExpr::TailCall(tc) = e {
@@ -169,6 +212,7 @@ fn produces_unpacked(e: &MirExpr, kind: &TwinKind) -> bool {
         TwinKind::Plain => false,
         TwinKind::Fields { .. } => {
             matches!(e, MirExpr::Construct(c) if matches!(c.node.ctor, MirCtor::Builtin(_)))
+                || matches!(e, MirExpr::RecordCreate(_) | MirExpr::RecordUpdate(_))
         }
     }
 }
@@ -218,127 +262,6 @@ pub(crate) fn has_word(e: &MirExpr, int_twin: &dyn Fn(FnId) -> bool) -> bool {
     }
 }
 
-/// How an expression's value is used: as a machine word (arithmetic, a
-/// comparison, a builtin's arg), as a match subject, as its fn's result, or
-/// otherwise.
-#[derive(Clone, Copy, PartialEq)]
-enum Use {
-    Word,
-    Subject,
-    Tail,
-    Other,
-}
-
-/// A fn's body read for the twins its calls would use (`plan`).
-struct Caller<'a> {
-    at: usize,
-    plans: &'a [Option<TwinPlan>],
-    kept: &'a HashSet<usize>,
-    pos: &'a HashMap<FnId, usize>,
-    params: &'a [crate::ir::mir::MirParam],
-}
-
-impl Caller<'_> {
-    fn plan(&self, id: FnId) -> Option<(usize, &TwinPlan)> {
-        let j = *self.pos.get(&id)?;
-        Some((j, self.plans[j].as_ref()?))
-    }
-
-    /// Whether the kept twin of `id` takes its param `k` as a machine word.
-    fn takes_word(&self, id: FnId, k: usize) -> bool {
-        self.plan(id)
-            .is_some_and(|(j, p)| self.kept.contains(&j) && p.unpacked.get(k) == Some(&true))
-    }
-
-    /// Whether `arg` reaches a call as a machine word.
-    fn word(&self, arg: &MirExpr) -> bool {
-        match arg {
-            MirExpr::Local(l) => {
-                self.kept.contains(&self.at)
-                    && self.params.iter().enumerate().any(|(k, p)| {
-                        p.local == l.node.slot
-                            && self.plans[self.at].as_ref().is_some_and(|p| p.unpacked[k])
-                    })
-            }
-            e => has_word(e, &|id| {
-                self.plan(id)
-                    .is_some_and(|(j, p)| self.kept.contains(&j) && p.kind == TwinKind::Int)
-            }),
-        }
-    }
-
-    fn visit(&self, e: &MirExpr, used: Use, out: &mut Vec<usize>) {
-        let words = |args: &[crate::ast::Spanned<MirExpr>], p: &TwinPlan| {
-            args.iter()
-                .zip(&p.unpacked)
-                .any(|(a, u)| *u && self.word(&a.node))
-        };
-        let own = self.plans[self.at]
-            .as_ref()
-            .filter(|_| self.kept.contains(&self.at));
-        match e {
-            MirExpr::Call(c) => {
-                if let MirCallee::Fn(id) = c.node.callee
-                    && let Some((j, p)) = self.plan(id)
-                {
-                    let result = match &p.kind {
-                        TwinKind::Plain => false,
-                        TwinKind::Int => used == Use::Word,
-                        TwinKind::Fields { .. } => used == Use::Subject,
-                    } || (used == Use::Tail && own.is_some_and(|o| o.kind == p.kind));
-                    if result || words(&c.node.args, p) {
-                        out.push(j);
-                    }
-                }
-                for (k, a) in c.node.args.iter().enumerate() {
-                    let word = match c.node.callee {
-                        MirCallee::Fn(id) => self.takes_word(id, k),
-                        _ => true,
-                    };
-                    self.visit(&a.node, if word { Use::Word } else { Use::Other }, out);
-                }
-            }
-            MirExpr::TailCall(tc) => {
-                // A twin tail-calls twins only; a fn without one, its own fn.
-                if let Some((j, _)) = self.plan(tc.node.target)
-                    && own.is_some()
-                {
-                    out.push(j);
-                }
-                for (k, a) in tc.node.args.iter().enumerate() {
-                    let word = own.is_some() && self.takes_word(tc.node.target, k);
-                    self.visit(&a.node, if word { Use::Word } else { Use::Other }, out);
-                }
-            }
-            MirExpr::BinOp(b) => {
-                for x in [&b.node.lhs, &b.node.rhs] {
-                    self.visit(&x.node, Use::Word, out);
-                }
-            }
-            MirExpr::Neg(x) | MirExpr::Unbox(x) => self.visit(&x.node, Use::Word, out),
-            MirExpr::Try(x) => self.visit(&x.node, Use::Subject, out),
-            MirExpr::Let(l) => {
-                self.visit(&l.node.value.node, Use::Other, out);
-                self.visit(&l.node.body.node, used, out);
-            }
-            MirExpr::Match(m) => {
-                self.visit(&m.node.subject.node, Use::Subject, out);
-                for arm in &m.node.arms {
-                    self.visit(&arm.body.node, used, out);
-                }
-            }
-            MirExpr::IfThenElse(ite) => {
-                self.visit(&ite.node.cond.node, Use::Other, out);
-                self.visit(&ite.node.then_branch.node, used, out);
-                self.visit(&ite.node.else_branch.node, used, out);
-            }
-            other => {
-                crate::ir::mir::expr::walk_children(other, &mut |c| self.visit(c, Use::Other, out))
-            }
-        }
-    }
-}
-
 /// The twin each user function gets, by position in `fn_defs`.
 pub(super) fn plan(
     fn_defs: &[&FnDef],
@@ -352,6 +275,7 @@ pub(super) fn plan(
         return Ok(plans);
     }
     let ints = registry.bignum && registry.aint_struct_idx.is_some();
+    let field_uses = crate::ir::mir::param_fields::analyze(mir);
     let params_too = std::env::var_os("AVER_NO_TWIN_PARAMS").is_none();
     let pos: HashMap<FnId, usize> = resolved
         .iter()
@@ -385,7 +309,28 @@ pub(super) fn plan(
             })
             .collect();
         let kind = kind_of(&fd.return_type, registry)?.unwrap_or(TwinKind::Plain);
-        plans[i] = Some(TwinPlan { kind, unpacked });
+        let records = mf
+            .params
+            .iter()
+            .enumerate()
+            .map(|(k, _)| {
+                let uses = field_uses.get(&mf.fn_id)?.get(k)?;
+                let crate::ir::mir::param_fields::ParamFields::Fields(fields) = uses else {
+                    return None;
+                };
+                let layout = RecordFields::of(&fd.params.get(k)?.1, registry)?;
+                (!fields.is_empty()
+                    && fields
+                        .iter()
+                        .all(|name| layout.fields.iter().any(|(f, _, _)| f == name)))
+                .then_some(layout)
+            })
+            .collect();
+        plans[i] = Some(TwinPlan {
+            kind,
+            unpacked,
+            records,
+        });
     }
     // A result comes back unpacked when a tail produces it (a literal,
     // arithmetic, an unpacked param, the struct built in place) or hands on a
