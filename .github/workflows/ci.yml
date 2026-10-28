@@ -145,6 +145,8 @@ jobs:
         run: printf '\n[profile.dev]\nopt-level = 1\n' >> .cargo/config.toml
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native_tests
 
       - name: Check every steps-level law
         # Keep the complete corpus and the committed baseline. Lean checks
