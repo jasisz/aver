@@ -172,6 +172,17 @@ decision MirEmitterIsTheOnlyEmitter
     rejected = ["PlanDrivenEmission", "CertifyGatedEmission"]
     impacts = ["Codegen", "WasmGC", "Certification"]
 
+decision SharedMirFactsTargetRepresentations
+    date = "2026-10-28"
+    reason =
+        "Which fields a function observes, which expressions supply its result, and which integer operations are pure describe the program independently of its target. MIR owns those facts and their interprocedural propagation."
+        "Backends choose how to use them: a Rust borrow, an inline value, a wasm multi-value call, or a heap object have different costs and lifetime rules. A representation choice does not change the source type."
+        "When a proof depends on a target's treatment of holders or returned wrappers, the shared analysis takes that policy explicitly; an assumption about Rust dropping a wrapper must not silently authorize mutation in a GC backend."
+        "Record field-use summaries and result-position traversal are shared MIR analyses. Wasm record twins choose their own bounded field layout and preserve the ordinary entry signature and certified function bytes."
+    chosen = "SharedFactsTargetRepresentations"
+    rejected = ["RepeatedSemanticAnalysisInEmitters", "OneValueLayoutForAllTargets"]
+    impacts = ["MIR", "Rust", "WasmGC", "Certification", "Performance"]
+
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."
     "Decision: {decName} -> chosen = {pick}"
