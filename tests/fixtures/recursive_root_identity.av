@@ -1,0 +1,54 @@
+module RecursiveRootIdentity
+    intent =
+        "Shared roots of recursive sums and records compare equal when"
+        "their equality is reflexive; a nested NaN still differs from itself."
+    effects [Console.print]
+
+type Tree
+    Leaf(Int)
+    Node(Tree, Tree)
+
+record Chain
+    value: Tree
+    next: Option<Chain>
+
+record Floating
+    values: List<Float>
+    next: Option<Floating>
+
+fn sameTree(a: Tree, b: Tree) -> Bool
+    ? "Equality of recursive sums, including aliases and partly shared roots."
+    a == b
+
+verify sameTree
+    sameTree(Tree.Leaf(9223372036854775808), Tree.Leaf(9223372036854775808)) => true
+    sameTree(Tree.Node(Tree.Leaf(1), Tree.Leaf(2)), Tree.Node(Tree.Leaf(1), Tree.Leaf(3))) => false
+
+fn sameChain(a: Chain, b: Chain) -> Bool
+    ? "Equality of recursive records, not just their first shared field."
+    a == b
+
+verify sameChain
+    sameChain(Chain(value = Tree.Leaf(1), next = Option.None), Chain(value = Tree.Leaf(1), next = Option.None)) => true
+    sameChain(Chain(value = Tree.Leaf(1), next = Option.None), Chain(value = Tree.Leaf(2), next = Option.None)) => false
+
+fn sameFloating(a: Floating, b: Floating) -> Bool
+    ? "A list containing NaN prevents even a shared root from equalling itself."
+    a == b
+
+verify sameFloating
+    sameFloating(Floating(values = [0.0], next = Option.None), Floating(values = [0.0], next = Option.None)) => true
+    sameFloating(Floating(values = [Float.sqrt(0.0 - 1.0)], next = Option.None), Floating(values = [Float.sqrt(0.0 - 1.0)], next = Option.None)) => false
+
+fn main() -> Unit
+    ! [Console.print]
+    leaf = Tree.Leaf(9223372036854775808)
+    tree = Tree.Node(leaf, leaf)
+    chain = Chain(value = tree, next = Option.Some(Chain(value = leaf, next = Option.None)))
+    zero = Float.fromInt(List.len([1]) - 1)
+    nan = Float.sqrt(zero - 1.0)
+    floating = Floating(values = [nan], next = Option.None)
+    parent = Floating(values = [1.0], next = Option.Some(floating))
+    Console.print("{sameTree(tree, tree)} {sameChain(chain, chain)}")
+    Console.print("{sameTree(tree, Tree.Node(leaf, Tree.Leaf(5)))} {sameChain(chain, Chain(value = tree, next = Option.None))}")
+    Console.print("{sameFloating(floating, floating)} {sameFloating(parent, parent)}")

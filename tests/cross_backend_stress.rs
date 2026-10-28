@@ -1739,6 +1739,22 @@ fn cross_nan_equality_wasm_gc() {
         NAN_EQUALITY_OUT,
     );
 }
+
+/// The equality start sees aliased roots of a recursive sum and a recursive
+/// record. A Float nested in a list or under another record prevents the
+/// identity shortcut, even when both arguments are exactly the same object.
+/// Distinct roots with shared fields still compare the fields that differ.
+#[test]
+fn cross_recursive_root_identity_wasm_gc() {
+    let source = include_str!("fixtures/recursive_root_identity.av");
+    let expected = "true true\nfalse false\nfalse false";
+    assert_eq_with_label("VM", &run_vm("aver-root-identity-vm", source), expected);
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-root-identity-wasm", source),
+        expected,
+    );
+}
 #[test]
 fn cross_nan_equality_self_host() {
     assert_eq_with_label(
