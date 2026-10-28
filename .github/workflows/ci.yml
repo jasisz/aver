@@ -128,6 +128,32 @@ jobs:
         # feature only; the producer's unit tests need `engine` as well.
         run: cargo test --workspace --exclude aver-lang && cargo test -p aver-cert --lib --all-features
 
+  proof_steps:
+    name: Proof-step coverage ratchet
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Optimise the build
+        # This ratchet executes the proof kernel written in Aver. It took
+        # nearly sixteen minutes with the WASM lane's unoptimised CLI, after
+        # that lane's other checks. Build only the default-feature CLI here,
+        # with the same optimisation and cache key as the native shards.
+        run: printf '\n[profile.dev]\nopt-level = 1\n' >> .cargo/config.toml
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check every steps-level law
+        # Keep the complete corpus and the committed baseline. Lean checks
+        # every steps-level gain separately in proof.yml; the nightly run
+        # also checks the tactic level.
+        run: |
+          cargo build -p aver-lang --bin aver
+          python3 tools/steps_ratchet.py --aver target/debug/aver
+
   native_tests:
     name: Native tests (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -330,24 +356,6 @@ jobs:
         run: |
           cargo build -p aver-lang --bin aver --features wasm,wasip2
           python3 tools/cert_ratchet.py --aver target/debug/aver
-
-      - name: Proof-step coverage ratchet
-        if: matrix.lane == 'checks'
-        # A producer, kernel or format change that reopens a law closed by
-        # steps must fail the PR that makes it. `--backend aver` checks the
-        # steps with the kernel written in Aver, in process, so this needs no
-        # Lean: it runs over every corpus file with a law and compares the laws
-        # closed by steps with the `steps` level of tools/steps-baseline.json
-        # (the `tactic` level needs Lean and is checked nightly in proof.yml).
-        # A gain is recorded in the same commit with `python3
-        # tools/steps_ratchet.py --update`. The binary is the one the step
-        # above built. It takes about nine minutes with the debug binary.
-        # Built at opt-level 1, as the native test shards are, it took three,
-        # but compiling this lane's unit tests, canaries and binary optimised
-        # cost more than that, so the lane stays unoptimised. The limit leaves
-        # room for the producer to grow.
-        timeout-minutes: 35
-        run: python3 tools/steps_ratchet.py --aver target/debug/aver
 
       - name: Install Node for the JavaScript Work host
         if: matrix.lane == 'wasm-gc'
