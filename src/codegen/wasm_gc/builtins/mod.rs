@@ -2528,7 +2528,7 @@ fn emit_string_from_float(registry: &TypeRegistry) -> Result<Function, WasmGcErr
 /// `__wasmgc_string_eq(a, b) -> i32`. Byte-equal compare over two
 /// `(ref null $string)`. Returns 1 iff lens match and every byte
 /// agrees; 0 otherwise.
-fn emit_string_eq(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+pub(super) fn emit_string_eq(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let (_, preamble) = string_module_preamble(registry)?;
     let wat = format!(
         r#"
@@ -2545,6 +2545,11 @@ fn emit_string_eq(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
             local.get $b array.len
             i32.ne
             (if (then i32.const 0 return))
+
+            local.get $a
+            local.get $b
+            ref.eq
+            (if (then i32.const 1 return))
 
             local.get $a array.len
             local.set $alen

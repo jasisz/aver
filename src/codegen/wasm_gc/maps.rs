@@ -1557,57 +1557,7 @@ pub(super) fn emit_hash_string(registry: &TypeRegistry) -> Result<Function, Wasm
 
 /// Byte-equal compare of two `(ref null $string)`. Returns 1 if equal.
 fn emit_eq_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let s_idx = string_idx(registry)?;
-    let padding = wat_helper::padding_types(s_idx);
-    let wat = format!(
-        r#"
-        (module
-          {padding}
-          (type $string (array (mut i8)))
-          (func (export "helper") (param $a (ref null $string)) (param $b (ref null $string)) (result i32)
-            (local $i i32)
-            (local $n i32)
-            ;; Length mismatch ⇒ 0.
-            local.get $a
-            array.len
-            local.get $b
-            array.len
-            i32.ne
-            (if
-              (then i32.const 0 return))
-
-            local.get $a
-            array.len
-            local.set $n
-            i32.const 0
-            local.set $i
-            (block $break
-              (loop $next
-                local.get $i
-                local.get $n
-                i32.ge_u
-                br_if $break
-
-                local.get $a
-                local.get $i
-                array.get_u $string
-                local.get $b
-                local.get $i
-                array.get_u $string
-                i32.ne
-                (if
-                  (then i32.const 0 return))
-
-                local.get $i
-                i32.const 1
-                i32.add
-                local.set $i
-                br $next))
-            i32.const 1)
-        )
-    "#
-    );
-    wat_helper::compile_wat_helper(&wat)
+    super::builtins::emit_string_eq(registry)
 }
 
 fn slots_for(canonical: &str, registry: &TypeRegistry) -> Result<MapSlots, WasmGcError> {
