@@ -179,22 +179,18 @@ impl<T> Shared<T> {
     }
 
     /// The value, when this is its only owner, as `Arc::try_unwrap`; else
-    /// the `Shared` back. The count goes from 1 to 0 only when no one else
-    /// holds the node, and the `Acquire` fence after it orders the other
-    /// owners' drops before the value is moved out.
-    pub fn try_unwrap(this: Self) -> Result<T, Self> {
-        if this
-            .node()
-            .count
-            .compare_exchange(1, 0, Ordering::Relaxed, Ordering::Relaxed)
-            .is_err()
-        {
+    /// the `Shared` back. `Arc` brings the count from 1 to 0 to keep a weak
+    /// reference from upgrading meanwhile; with none, the unique check of
+    /// `get_mut` is enough: no one else can read the count or make another
+    /// owner from it, so the node is taken back without writing it.
+    #[inline]
+    pub fn try_unwrap(mut this: Self) -> Result<T, Self> {
+        if !Self::is_unique(&mut this) {
             return Err(this);
         }
-        atomic::fence(Ordering::Acquire);
         let ptr = this.ptr;
         std::mem::forget(this);
-        // The count is 0, so this was the last owner: take the node back.
+        // This was the last owner: take the node back.
         let node = unsafe { Box::from_raw(ptr.as_ptr()) };
         Ok(node.value)
     }
