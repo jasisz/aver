@@ -368,7 +368,7 @@ pub(crate) fn emit_mir_record_create(
                 return Ok(None);
             }
         }
-        func.instruction(&Instruction::StructNew(type_idx));
+        super::twin::struct_new(func, type_idx);
         return Ok(Some(()));
     }
     // Written out of declared order.
@@ -406,7 +406,7 @@ pub(crate) fn emit_mir_record_create(
     for slot in &scratch {
         func.instruction(&Instruction::LocalGet(*slot));
     }
-    func.instruction(&Instruction::StructNew(type_idx));
+    super::twin::struct_new(func, type_idx);
     Ok(Some(()))
 }
 
@@ -520,7 +520,7 @@ pub(crate) fn emit_mir_record_update(
                 });
             }
         }
-        func.instruction(&Instruction::StructNew(type_idx));
+        super::twin::struct_new(func, type_idx);
         return Ok(Some(()));
     }
     // Overrides written out of declared order. Evaluate the base first and
@@ -592,6 +592,6 @@ pub(crate) fn emit_mir_record_update(
             field_index: field_idx,
         });
     }
-    func.instruction(&Instruction::StructNew(type_idx));
+    super::twin::struct_new(func, type_idx);
     Ok(Some(()))
 }

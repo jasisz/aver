@@ -1,0 +1,38 @@
+module RecordPipelineBench
+    intent = "A record returned by a recursive producer crosses field-only consumers. Measures aggregate calling conventions rather than a literal consumed in the same expression."
+    effects []
+
+record Pair
+    left: Int
+    right: Int
+
+fn makePair(depth: Int, value: Int) -> Pair
+    ? "Builds the pair after a recursive producer finishes."
+    match depth == 0
+        true -> Pair(left = value, right = value + 1)
+        false -> makePair(depth - 1, value + 1)
+
+verify makePair
+    makePair(3, 10) => Pair(left = 13, right = 14)
+
+fn readPair(p: Pair) -> Int
+    ? "Reads the fields, without observing or storing the pair itself."
+    p.left + p.right
+
+fn forwardPair(p: Pair) -> Int
+    ? "Forwards the field-only use through a second function."
+    readPair(p)
+
+fn sumPairs(n: Int, acc: Int) -> Int
+    ? "Consumes a producer's pair at each step; its fields need no object."
+    match n == 0
+        true -> acc
+        false -> sumPairs(n - 1, acc + forwardPair(makePair(3, n)))
+
+verify sumPairs
+    sumPairs(0, 0) => 0
+    sumPairs(1, 0) => 9
+    sumPairs(2, 0) => 20
+
+fn main() -> Int
+    sumPairs(20000, 0)

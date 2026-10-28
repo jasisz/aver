@@ -56,6 +56,10 @@ pub(crate) fn set_calls(on: bool) {
     CALLS.with(|c| c.set(on));
 }
 
+pub(super) fn calls_allowed() -> bool {
+    CALLS.with(Cell::get)
+}
+
 /// The slots the twin being emitted holds as an `i64`: the params it takes
 /// unpacked, and each `Int` local (`is_int`) bound, by a `let` or as an
 /// `Int` match's subject, to a value with its machine word, that `body`
@@ -107,6 +111,7 @@ pub(crate) fn word_slots(
 
 /// Start emitting the twin `entry` of `mir_fn`, or stop.
 pub(crate) fn set_self(twin: Option<(TwinEntry, &MirFn)>) {
+    super::record_views::set_self(twin.as_ref().map(|(entry, f)| (entry, *f)));
     SELF.with(|s| {
         *s.borrow_mut() = twin.map(|(entry, mir_fn)| {
             let mut ts = Vec::new();
@@ -278,9 +283,14 @@ pub(crate) fn unpackable(arg: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) -> bool {
 /// Whether a call with `args` is better made to `twin`: an arg it takes
 /// unpacked has its value unpacked.
 pub(crate) fn worth_it(args: &[Spanned<MirExpr>], twin: &TwinEntry, ctx: &EmitCtx<'_>) -> bool {
-    args.iter()
-        .enumerate()
-        .any(|(j, a)| twin.unpacked.get(j).copied().unwrap_or(false) && unpackable(a, ctx))
+    args.iter().enumerate().any(|(j, a)| {
+        twin.unpacked.get(j).copied().unwrap_or(false) && unpackable(a, ctx)
+            || twin
+                .records
+                .get(j)
+                .and_then(Option::as_ref)
+                .is_some_and(|r| super::record_views::unpackable(a, r, ctx))
+    })
 }
 
 /// Push `arg` as the `i64` of an unpacked param; the local holding its
@@ -395,8 +405,14 @@ fn emit_args(
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
     let mut refs = Vec::new();
+    let mut fields = Vec::new();
     for (j, arg) in args.iter().enumerate() {
-        if twin.unpacked.get(j).copied().unwrap_or(false) {
+        if let Some(layout) = twin.records.get(j).and_then(Option::as_ref) {
+            let Some(values) = super::record_views::emit_arg(func, arg, layout, slots, ctx)? else {
+                return Ok(None);
+            };
+            fields.extend(values);
+        } else if twin.unpacked.get(j).copied().unwrap_or(false) {
             match emit_word_arg(func, arg, slots, ctx)? {
                 Some(r) => refs.push(r),
                 None => return Ok(None),
@@ -414,6 +430,9 @@ fn emit_args(
             Some(local) => I::LocalGet(local),
             None => I::RefNull(HeapType::Concrete(aint(ctx))),
         });
+    }
+    for slot in fields {
+        func.instruction(&I::LocalGet(slot));
     }
     Ok(Some(()))
 }
@@ -475,6 +494,7 @@ pub(crate) fn pack_result(
 /// The locals of the slots the twin being emitted holds: its entry
 /// (`module.rs`) fills a param's from its ref param, [`bind`] a local's.
 pub(crate) fn emit_entry(slots: &SlotTable, ctx: &EmitCtx<'_>) {
+    super::record_views::emit_entry(slots);
     SELF.with(|s| {
         if let Some(c) = s.borrow_mut().as_mut() {
             c.held = c
