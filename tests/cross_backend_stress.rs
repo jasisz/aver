@@ -1761,7 +1761,7 @@ fn cross_recursive_root_identity_wasm_gc() {
 #[test]
 fn cross_equality_field_order_wasm_gc() {
     let source = include_str!("fixtures/equality_field_order.av");
-    let expected = "true false false\ntrue false true\nfalse false";
+    let expected = "true false false\ntrue false true\nfalse false\ntrue false false";
     assert_eq_with_label("VM", &run_vm("aver-eq-order-vm", source), expected);
     assert_eq_with_label(
         "wasm-gc",

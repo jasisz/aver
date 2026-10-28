@@ -17,20 +17,28 @@ pub(crate) struct NominalFields {
 }
 
 /// Stable scalar-first comparison order, or `None` for declaration order.
-/// Unknown declarations and recursive shapes conservatively stay last.
+/// Scalar shapes without strings precede those with strings, then unknown
+/// declarations and recursive/collection shapes. Int is still unbounded:
+/// this is a comparison-order heuristic, not a constant-time guarantee.
 pub(crate) fn cheap_fields_first(
     types: &[Type],
     scope: Option<&str>,
     resolve: &impl Fn(Option<TypeId>, &str, Option<&str>) -> Option<NominalFields>,
 ) -> Option<Vec<usize>> {
-    let cheap: Vec<bool> = types
+    let rank: Vec<u8> = types
         .iter()
-        .map(|ty| scalar_only(ty, scope, resolve, &mut HashSet::new()))
+        .map(|ty| {
+            if scalar_only(ty, scope, resolve, false, &mut HashSet::new()) {
+                0
+            } else if scalar_only(ty, scope, resolve, true, &mut HashSet::new()) {
+                1
+            } else {
+                2
+            }
+        })
         .collect();
-    let order: Vec<usize> = (0..types.len())
-        .filter(|&i| cheap[i])
-        .chain((0..types.len()).filter(|&i| !cheap[i]))
-        .collect();
+    let mut order: Vec<usize> = (0..types.len()).collect();
+    order.sort_by_key(|&i| rank[i]);
     order
         .iter()
         .enumerate()
@@ -42,25 +50,27 @@ fn scalar_only(
     ty: &Type,
     scope: Option<&str>,
     resolve: &impl Fn(Option<TypeId>, &str, Option<&str>) -> Option<NominalFields>,
+    include_strings: bool,
     seen: &mut HashSet<TypeKey>,
 ) -> bool {
     match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Str => true,
-        Type::Option(inner) => scalar_only(inner, scope, resolve, seen),
+        Type::Int | Type::Float | Type::Bool | Type::Unit => true,
+        Type::Str => include_strings,
+        Type::Option(inner) => scalar_only(inner, scope, resolve, include_strings, seen),
         Type::Result(ok, err) => {
-            scalar_only(ok, scope, resolve, seen) && scalar_only(err, scope, resolve, seen)
+            scalar_only(ok, scope, resolve, include_strings, seen)
+                && scalar_only(err, scope, resolve, include_strings, seen)
         }
         Type::Tuple(items) => items
             .iter()
-            .all(|item| scalar_only(item, scope, resolve, seen)),
+            .all(|item| scalar_only(item, scope, resolve, include_strings, seen)),
         Type::Named { id, name } => resolve(*id, name, scope).is_some_and(|decl| {
             if !seen.insert(decl.key.clone()) {
                 return false;
             }
-            let cheap = decl
-                .fields
-                .iter()
-                .all(|field| scalar_only(field, decl.key.scope_str(), resolve, seen));
+            let cheap = decl.fields.iter().all(|field| {
+                scalar_only(field, decl.key.scope_str(), resolve, include_strings, seen)
+            });
             seen.remove(&decl.key);
             cheap
         }),
@@ -99,9 +109,27 @@ mod tests {
                 ],
                 &[],
             ),
-            Some(vec![1, 3, 5, 0, 2, 4]),
+            Some(vec![3, 5, 1, 0, 2, 4]),
         );
         assert_eq!(order(&["Int", "String", "List<Int>"], &[]), None);
+    }
+
+    #[test]
+    fn numeric_scalar_shapes_precede_text_and_preserve_group_order() {
+        assert_eq!(
+            order(
+                &[
+                    "List<Int>",
+                    "String",
+                    "Int",
+                    "Option<String>",
+                    "Bool",
+                    "Option<Int>"
+                ],
+                &[],
+            ),
+            Some(vec![2, 4, 5, 1, 3, 0]),
+        );
     }
 
     #[test]
@@ -119,7 +147,7 @@ mod tests {
                 &["Tree", "Scalar", "A", "Empty", "HasCollection", "Scalar"],
                 declarations,
             ),
-            Some(vec![1, 3, 5, 0, 2, 4]),
+            Some(vec![3, 1, 5, 0, 2, 4]),
         );
         assert_eq!(order(&["Missing", "Int"], declarations), Some(vec![1, 0]));
     }
