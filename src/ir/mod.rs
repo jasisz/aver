@@ -6,6 +6,7 @@ mod buffer_build;
 mod calls;
 pub mod cert_shape;
 mod chars_fusion;
+pub(crate) mod compare_shape;
 pub mod dump;
 pub mod escape;
 pub(crate) mod field_take;

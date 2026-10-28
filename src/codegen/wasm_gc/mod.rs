@@ -65,6 +65,7 @@ mod capability_imports;
 mod capability_plan;
 mod cert_layout;
 pub(crate) mod effects;
+mod equality_order;
 mod flatten;
 mod jobs;
 mod lists;

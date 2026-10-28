@@ -341,63 +341,21 @@ pub(super) fn variant_field_refs(shared: bool, stem: &str, count: usize) -> (Str
     }
 }
 
-/// The order a generated `==` compares the fields `types` of one record or
-/// constructor in, when it is not the declared one: the fields that compare
-/// at once (scalars, strings, and anything built only from them, such as a
-/// sum whose constructors have no fields) first, then the ones that walk a
-/// collection or a value of a sum with fields. A node that keeps its hash
-/// after its children then tells two different nodes apart at the hash
-/// instead of after walking both subtrees. Every field is still compared and
-/// none has an effect, so the answer is the one in declared order.
+/// Shared scalar-first equality order, with nominal names resolved in the
+/// declaration's owning module. Rust still chooses the comparison machinery.
 pub(super) fn cheap_fields_first(
     types: &[&str],
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> Option<Vec<usize>> {
-    let cheap: Vec<bool> = types
-        .iter()
-        .map(|ty| compares_at_once(&parse_type_str(ty), ctx, scope, &mut HashSet::new()))
-        .collect();
-    let order: Vec<usize> = (0..types.len())
-        .filter(|&i| cheap[i])
-        .chain((0..types.len()).filter(|&i| !cheap[i]))
-        .collect();
-    order
-        .iter()
-        .enumerate()
-        .any(|(i, &f)| i != f)
-        .then_some(order)
-}
-
-fn compares_at_once(
-    ty: &Type,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-    seen: &mut HashSet<String>,
-) -> bool {
-    match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Str => true,
-        Type::Option(inner) => compares_at_once(inner, ctx, scope, seen),
-        Type::Result(ok, err) => {
-            compares_at_once(ok, ctx, scope, seen) && compares_at_once(err, ctx, scope, seen)
-        }
-        Type::Tuple(items) => items
-            .iter()
-            .all(|item| compares_at_once(item, ctx, scope, seen)),
-        Type::Named { id, name } => named_type_def(*id, name, ctx, scope).is_some_and(|td| {
-            let key = crate::codegen::common::backend_type_def_key(ctx, td);
-            if !seen.insert(key.clone()) {
-                return false;
-            }
-            let decl = crate::codegen::common::type_key_for_decl(ctx, td);
-            let cheap = fields_of(td)
-                .all(|field| compares_at_once(&parse_type_str(field), ctx, decl.scope_str(), seen));
-            seen.remove(&key);
-            cheap
-        }),
-        Type::List(_) | Type::Vector(_) | Type::Map(..) | Type::Fn(..) => false,
-        Type::Var(_) | Type::Invalid => false,
-    }
+    let types: Vec<Type> = types.iter().map(|ty| parse_type_str(ty)).collect();
+    crate::ir::compare_shape::cheap_fields_first(&types, scope, &|id, name, owner| {
+        let td = named_type_def(id, name, ctx, owner)?;
+        Some(crate::ir::compare_shape::NominalFields {
+            key: crate::codegen::common::type_key_for_decl(ctx, td),
+            fields: fields_of(td).map(|field| parse_type_str(field)).collect(),
+        })
+    })
 }
 
 /// [`shared_variants`] for one constructor of the type `id`.

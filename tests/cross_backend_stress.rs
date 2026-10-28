@@ -1755,6 +1755,20 @@ fn cross_recursive_root_identity_wasm_gc() {
         expected,
     );
 }
+
+/// Reordered comparisons keep declaration indices for both eager record
+/// equality and recursive sum walks, including erased carriers and NaN.
+#[test]
+fn cross_equality_field_order_wasm_gc() {
+    let source = include_str!("fixtures/equality_field_order.av");
+    let expected = "true false false\ntrue false true\nfalse false";
+    assert_eq_with_label("VM", &run_vm("aver-eq-order-vm", source), expected);
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-eq-order-wasm", source),
+        expected,
+    );
+}
 #[test]
 fn cross_nan_equality_self_host() {
     assert_eq_with_label(
