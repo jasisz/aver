@@ -2546,11 +2546,6 @@ pub(super) fn emit_string_eq(registry: &TypeRegistry) -> Result<Function, WasmGc
             i32.ne
             (if (then i32.const 0 return))
 
-            local.get $a
-            local.get $b
-            ref.eq
-            (if (then i32.const 1 return))
-
             local.get $a array.len
             local.set $alen
             i32.const 0

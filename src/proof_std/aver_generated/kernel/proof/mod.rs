@@ -699,8 +699,8 @@ pub struct Proof__PUnfold(
 impl PartialEq for Proof__PUnfold {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
-            || self.0 == other.0
-                && self.1 == other.1
+            || self.1 == other.1
+                && self.0 == other.0
                 && self.2 == other.2
                 && self.3 == other.3
                 && self.4 == other.4
@@ -709,8 +709,8 @@ impl PartialEq for Proof__PUnfold {
 
 impl aver_rt::WalkEq for Proof__PUnfold {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0 == other.0
-            && self.1 == other.1
+        self.1 == other.1
+            && self.0 == other.0
             && aver_rt::shared_items::eq_list(&self.2, &other.2, walk, |x, y, walk| {
                 (*x).walk_eq(&(*y), walk)
             })
@@ -2319,11 +2319,17 @@ impl aver_rt::AverDisplay for Variant {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Sum {
     pub name: AverStr,
     pub eq: bool,
     pub variants: aver_rt::AverList<Variant>,
+}
+
+impl PartialEq for Sum {
+    fn eq(&self, other: &Self) -> bool {
+        self.eq == other.eq && self.name == other.name && self.variants == other.variants
+    }
 }
 
 impl PartialOrd for Sum {
@@ -2358,11 +2364,17 @@ impl aver_rt::AverDisplay for Sum {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Rec {
     pub name: AverStr,
     pub eq: bool,
     pub fields: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
+}
+
+impl PartialEq for Rec {
+    fn eq(&self, other: &Self) -> bool {
+        self.eq == other.eq && self.name == other.name && self.fields == other.fields
+    }
 }
 
 impl PartialOrd for Rec {

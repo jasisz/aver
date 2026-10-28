@@ -2813,7 +2813,7 @@ impl aver_replay::ReplayValue for FastLeaf {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum FnFastPath {
     FastNone,
     FastSingleExpr,
@@ -2830,6 +2830,40 @@ pub enum FnFastPath {
         aver_rt::AverInt,
         FastLeaf,
     ),
+}
+
+impl PartialEq for FnFastPath {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (FnFastPath::FastNone, FnFastPath::FastNone) => true,
+            (FnFastPath::FastSingleExpr, FnFastPath::FastSingleExpr) => true,
+            (FnFastPath::FastLeaf(a0), FnFastPath::FastLeaf(b0)) => a0 == b0,
+            (FnFastPath::FastForwardCall(a0, a1), FnFastPath::FastForwardCall(b0, b1)) => {
+                a0 == b0 && a1 == b1
+            }
+            (
+                FnFastPath::FastBoolSlotBranch(a0, a1, a2),
+                FnFastPath::FastBoolSlotBranch(b0, b1, b2),
+            ) => a0 == b0 && a1 == b1 && a2 == b2,
+            (
+                FnFastPath::FastEqIntBranch(a0, a1, a2, a3),
+                FnFastPath::FastEqIntBranch(b0, b1, b2, b3),
+            ) => a0 == b0 && a1 == b1 && a2 == b2 && a3 == b3,
+            (
+                FnFastPath::FastEqStringBranch(a0, a1, a2, a3),
+                FnFastPath::FastEqStringBranch(b0, b1, b2, b3),
+            ) => a0 == b0 && a1 == b1 && a2 == b2 && a3 == b3,
+            (
+                FnFastPath::FastLtIntSlotsBranch(a0, a1, a2, a3),
+                FnFastPath::FastLtIntSlotsBranch(b0, b1, b2, b3),
+            ) => a0 == b0 && a1 == b1 && a2 == b2 && a3 == b3,
+            (
+                FnFastPath::FastListSlotBranch(a0, a1, a2, a3, a4),
+                FnFastPath::FastListSlotBranch(b0, b1, b2, b3, b4),
+            ) => a0 == b0 && a2 == b2 && a3 == b3 && a1 == b1 && a4 == b4,
+            _ => false,
+        }
+    }
 }
 
 impl aver_rt::AverDisplay for FnFastPath {
@@ -3192,9 +3226,9 @@ pub struct FnDef__Fields {
 
 impl PartialEq for FnDef__Fields {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.slotCount == other.slotCount
+        self.slotCount == other.slotCount
             && self.tailLoop == other.tailLoop
+            && self.name == other.name
             && self.params == other.params
             && self.body == other.body
             && self.slotMap == other.slotMap
