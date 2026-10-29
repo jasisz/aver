@@ -776,8 +776,8 @@ fn emit_list_arm_body(arm: &ResolvedMatchArm, ctx: &CodegenContext, body: String
     }
 }
 
-/// A constructor of a shared sum binds the one `Shared` that holds its fields
-/// (see `pattern::shared_fields_binder`), so an arm that uses a field needs
+/// A constructor of a thin sum binds the one struct that holds its fields
+/// (see `pattern::thin_fields_binder`), so an arm that uses a field needs
 /// it out of there. Emit `let b = __b_fields.1.clone();` for each such field,
 /// wherever in the pattern its constructor stands: at the top or inside a
 /// tuple, at any depth. A match on a reference (`by_ref`) binds `&Inner`, so
@@ -815,7 +815,7 @@ fn collect_pattern_rebindings(
             }
         }
         ResolvedPattern::Ctor(ctor, bindings) => {
-            let fields = super::pattern::shared_fields_binder(ctor, bindings, ctx);
+            let fields = super::pattern::thin_fields_binder(ctor, bindings, ctx);
             for (idx, b) in bindings.iter().enumerate().filter(|(_, b)| *b != "_") {
                 let borrowed = lent.contains(b);
                 let b = aver_name_to_rust(b);
