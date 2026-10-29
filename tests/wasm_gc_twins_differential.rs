@@ -69,10 +69,9 @@ fn module(file: &Path, twins: bool) -> Vec<u8> {
     bytes
 }
 
-// A held slot bound a second time in one frame must not keep the box of the
-// value before (`twin::set_held` clears it). No program can show that yet: a
-// name cannot be bound again, every binder has its own slot, and a loop is a
-// tail call into a new frame, so the shapes here bind each held slot once.
+// A held slot must not keep a previous value's box (`twin::set_held` clears
+// it). Self-tail loops reuse a frame and reset its locals on every iteration;
+// `fixtures/self_tail_loop.av` separately checks wide-to-small transitions.
 #[test]
 fn twins_print_what_the_vm_prints() {
     let file = fixture("shapes.av");
@@ -83,4 +82,30 @@ fn twins_print_what_the_vm_prints() {
     assert_eq!(vm, run(&file, true));
     // Not vacuous: the module has twins.
     assert_ne!(module(&file, true), module(&file, false));
+}
+
+#[test]
+fn self_tail_loops_preserve_certified_bytes() {
+    let compile = |certify: bool, loops: bool| {
+        let out_dir = tempfile::tempdir().expect("compile directory");
+        let mut cmd = Command::new(aver_cmd::aver_bin());
+        cmd.current_dir(aver_cmd::repo_root())
+            .arg("compile")
+            .arg("tools/certkit/fixtures/recgen.av")
+            .args(["--target", "wasm-gc", "-o"])
+            .arg(out_dir.path());
+        if certify {
+            cmd.arg("--certify");
+        }
+        if !loops {
+            cmd.env("AVER_NO_SELF_TAIL_LOOPS", "1");
+        }
+        let out = cmd.output().expect("aver compile executes");
+        assert!(out.status.success(), "{}", aver_cmd::format_output(&out));
+        std::fs::read(out_dir.path().join("recgen.wasm")).expect("module written")
+    };
+    // The hook changes ordinary output, so the certificate equality is not
+    // vacuous. Certification keeps the established instruction plan.
+    assert_ne!(compile(false, true), compile(false, false));
+    assert_eq!(compile(true, true), compile(true, false));
 }
