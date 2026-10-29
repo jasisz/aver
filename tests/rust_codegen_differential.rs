@@ -538,12 +538,13 @@ fn record_update_values_run_before_the_base_moves() {
     let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
     let emitted = emitted_entry_module("rust_record_update_order", &src);
     for shape in [
-        "pub type Big = Box<Big__Fields>;",
-        "s.b = __field0; s.c = __field1; s }",
-        "s.log = __field0; s.g = __field1; s }",
-        "{ let mut __record0 = s; let __field0 = __record0.e",
+        // `bigKept` copies a `Big`, so it is counted (see `counted_records`).
+        "pub type Big = aver_rt::Counted<Big__Fields>;",
+        "__record0.b = __field0; __record0.c = __field1; aver_rt::Counted::from_box(__record0) }",
+        "__record0.log = __field0; __record0.g = __field1; aver_rt::Counted::from_box(__record0) }",
+        "{ let mut __record0 = aver_rt::Counted::into_box(s); let __field0 = __record0.e",
         "..o.inner }, k: ",
-        "{ let mut __record0 = s.clone(); __record0.h = ",
+        "let mut __record0 = aver_rt::Counted::into_box(s.clone()); __record0.h = __field0;",
         "..s.clone() };",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
