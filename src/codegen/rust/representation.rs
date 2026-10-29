@@ -85,17 +85,6 @@ pub(super) fn type_def_contract(td: &TypeDef, ctx: &CodegenContext) -> Represent
     }
 }
 
-/// How much larger than every other constructor of a sum that is not
-/// recursive one must be to go behind a `Shared` (see [`shared_variants`]).
-/// The pointer costs a value of the large constructor an allocation when it
-/// is built and about 48 bytes (pointer, counts, allocator rounding); at a
-/// 64-byte difference a value of a small one saves as much, so the shared
-/// layout takes less memory whenever fewer than half the values are large.
-/// Measured on lists of two million values: building only large ones is 8%
-/// slower, only small ones 12% faster; at 32 bytes the large ones were 18%
-/// slower and the memory broke even at a quarter of them.
-const LARGE_VARIANT_BYTES: usize = 64;
-
 /// How many bytes the fields of one constructor take before its sum is laid
 /// out thin although it is not recursive (see [`is_thin_sum`]). A value of a
 /// sum takes the room of its largest constructor, and every copy of it
@@ -188,51 +177,6 @@ pub(super) fn type_is_thin(id: crate::ir::TypeId, ctx: &CodegenContext) -> bool 
     named_type_def(Some(id), "", ctx, None).is_some_and(|td| is_thin_sum(td, ctx))
 }
 
-/// Which constructors of a sum that is not thin (see [`is_thin_sum`]) keep
-/// their fields in one `aver_rt::Shared` (`T::Pair(Shared<T__Pair>)`), one
-/// entry per variant in declaration order: only a constructor at least
-/// [`LARGE_VARIANT_BYTES`] larger than every other one, since a value of a
-/// sum takes the room of its largest constructor: without the pointer a
-/// value of a small one would carry that room unused.
-pub(super) fn shared_variants(td: &TypeDef, ctx: &CodegenContext) -> Vec<bool> {
-    let TypeDef::Sum { variants, .. } = td else {
-        return Vec::new();
-    };
-    let key = crate::codegen::common::backend_type_def_key(ctx, td);
-    if is_thin_sum(td, ctx) {
-        return vec![false; variants.len()];
-    }
-    let scope = crate::codegen::common::type_key_for_decl(ctx, td);
-    let sizes: Vec<usize> = variants
-        .iter()
-        .map(|variant| {
-            variant
-                .fields
-                .iter()
-                .map(|field| {
-                    inline_size(
-                        &parse_type_str(field),
-                        ctx,
-                        scope.scope_str(),
-                        &mut HashSet::from([key.clone()]),
-                    )
-                })
-                .sum()
-        })
-        .collect();
-    let largest = (0..sizes.len()).max_by_key(|&i| sizes[i]);
-    (0..sizes.len())
-        .map(|i| {
-            Some(i) == largest
-                && sizes.len() > 1
-                && sizes
-                    .iter()
-                    .enumerate()
-                    .all(|(j, &size)| j == i || size + LARGE_VARIANT_BYTES <= sizes[i])
-        })
-        .collect()
-}
-
 /// How many bytes a record's fields may take inline before the record is
 /// kept behind a `Box` (see [`is_boxed_record`]). A record handed on and
 /// updated in a loop is faster boxed at any size (60% at 80 bytes, 69% at
@@ -301,8 +245,8 @@ pub(super) fn type_inline_size(ty: &Type, ctx: &CodegenContext, scope: Option<&s
 
 /// The bytes a value of `ty` takes inline in the Rust it is lowered to, as
 /// near as the size of the runtime's carriers allows: the measure
-/// [`shared_variants`] compares constructors by and [`is_boxed_record`]
-/// weighs a record by.
+/// [`is_thin_sum`] weighs a constructor by and [`is_boxed_record`] a
+/// record by.
 fn inline_size(
     ty: &Type,
     ctx: &CodegenContext,
@@ -345,14 +289,9 @@ fn inline_size(
                 }
                 TypeDef::Sum { .. } if is_thin_sum(td, ctx) => WORD,
                 TypeDef::Sum { variants, .. } => {
-                    let shared = shared_variants(td, ctx);
                     variants
                         .iter()
-                        .zip(shared)
-                        .map(|(variant, shared)| match shared {
-                            true => WORD,
-                            false => variant.fields.iter().map(&mut field_size).sum(),
-                        })
+                        .map(|variant| variant.fields.iter().map(&mut field_size).sum())
                         .max()
                         .unwrap_or(0)
                         + WORD
@@ -392,17 +331,6 @@ pub(super) fn cheap_fields_first(
             key: crate::codegen::common::type_key_for_decl(ctx, td),
             fields: fields_of(td).map(|field| parse_type_str(field)).collect(),
         })
-    })
-}
-
-/// [`shared_variants`] for one constructor of the type `id`.
-pub(super) fn ctor_is_shared(id: crate::ir::TypeId, variant: &str, ctx: &CodegenContext) -> bool {
-    named_type_def(Some(id), "", ctx, None).is_some_and(|td| match td {
-        TypeDef::Sum { variants, .. } => variants
-            .iter()
-            .zip(shared_variants(td, ctx))
-            .any(|(v, shared)| shared && v.name == variant),
-        TypeDef::Product { .. } => false,
     })
 }
 
