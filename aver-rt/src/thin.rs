@@ -1,4 +1,4 @@
-//! A value of a recursive sum as one pointer.
+//! A value of a recursive or a wide sum as one pointer.
 //!
 //! The Rust backend keeps a value of a recursive sum (a sum a value of which
 //! can hold a value of the same type with no collection in between) as a
@@ -6,7 +6,8 @@
 //! THAT constructor only. The header is a 32-bit atomic count and the 32-bit
 //! tag of the constructor, so a value is 8 bytes, an `Option` of one is 8
 //! bytes too, and a node is 8 bytes plus its own fields rather than the room
-//! of the largest constructor.
+//! of the largest constructor. A sum one constructor of which has wide
+//! fields is kept the same way, so that copying a value copies a pointer.
 //!
 //! A constructor without fields has no node. Its value is a pointer whose
 //! address is the tag plus one, never read through: [`Thin::tag`],

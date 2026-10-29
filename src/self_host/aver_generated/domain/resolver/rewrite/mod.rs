@@ -40,7 +40,7 @@ pub fn rewriteInternalFn(
     mut fd @ _: crate::aver_generated::domain::ast::FnDef,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
-    Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
+    crate::aver_generated::domain::ast::FnDef {
         name: fd.name,
         params: fd.params,
         body: {
@@ -53,7 +53,7 @@ pub fn rewriteInternalFn(
         slotMap: fd.slotMap,
         fastPath: fd.fastPath,
         tailLoop: fd.tailLoop,
-    })
+    }
 }
 
 /// Rewrite statements recursively into lighter internal expression shapes.

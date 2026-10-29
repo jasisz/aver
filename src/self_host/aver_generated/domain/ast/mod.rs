@@ -2813,116 +2813,174 @@ impl aver_replay::ReplayValue for FastLeaf {
     }
 }
 
+::aver_rt::thin_sum! {
+    #[derive(Debug)]
+    pub FnFastPath / FnFastPath__view / FnFastPath__pair {
+        0 FastNone,
+        1 FastSingleExpr,
+        2 FastLeaf(FnFastPath__FastLeaf),
+        3 FastForwardCall(FnFastPath__FastForwardCall),
+        4 FastBoolSlotBranch(FnFastPath__FastBoolSlotBranch),
+        5 FastEqIntBranch(FnFastPath__FastEqIntBranch),
+        6 FastEqStringBranch(FnFastPath__FastEqStringBranch),
+        7 FastLtIntSlotsBranch(FnFastPath__FastLtIntSlotsBranch),
+        8 FastListSlotBranch(FnFastPath__FastListSlotBranch),
+    }
+}
+
+impl std::fmt::Debug for FnFastPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.view(), f)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FnFastPath__FastLeaf(pub FastLeaf);
+
+impl aver_rt::thin::HandOver for FnFastPath__FastLeaf {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FnFastPath__FastForwardCall(pub aver_rt::AverInt, pub aver_rt::AverIntList);
+
+impl aver_rt::thin::HandOver for FnFastPath__FastForwardCall {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FnFastPath__FastBoolSlotBranch(pub aver_rt::AverInt, pub FastLeaf, pub FastLeaf);
+
+impl aver_rt::thin::HandOver for FnFastPath__FastBoolSlotBranch {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FnFastPath__FastEqIntBranch(
+    pub aver_rt::AverInt,
+    pub aver_rt::AverInt,
+    pub FastLeaf,
+    pub FastLeaf,
+);
+
+impl aver_rt::thin::HandOver for FnFastPath__FastEqIntBranch {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FnFastPath__FastEqStringBranch(
+    pub aver_rt::AverInt,
+    pub AverStr,
+    pub FastLeaf,
+    pub FastLeaf,
+);
+
+impl aver_rt::thin::HandOver for FnFastPath__FastEqStringBranch {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FnFastPath__FastLtIntSlotsBranch(
+    pub aver_rt::AverInt,
+    pub aver_rt::AverInt,
+    pub FastLeaf,
+    pub FastLeaf,
+);
+
+impl aver_rt::thin::HandOver for FnFastPath__FastLtIntSlotsBranch {}
+
 #[derive(Clone, Debug)]
-pub enum FnFastPath {
-    FastNone,
-    FastSingleExpr,
-    FastLeaf(FastLeaf),
-    FastForwardCall(aver_rt::AverInt, aver_rt::AverIntList),
-    FastBoolSlotBranch(aver_rt::AverInt, FastLeaf, FastLeaf),
-    FastEqIntBranch(aver_rt::AverInt, aver_rt::AverInt, FastLeaf, FastLeaf),
-    FastEqStringBranch(aver_rt::AverInt, AverStr, FastLeaf, FastLeaf),
-    FastLtIntSlotsBranch(aver_rt::AverInt, aver_rt::AverInt, FastLeaf, FastLeaf),
-    FastListSlotBranch(
-        aver_rt::AverInt,
-        FastLeaf,
-        aver_rt::AverInt,
-        aver_rt::AverInt,
-        FastLeaf,
-    ),
+pub struct FnFastPath__FastListSlotBranch(
+    pub aver_rt::AverInt,
+    pub FastLeaf,
+    pub aver_rt::AverInt,
+    pub aver_rt::AverInt,
+    pub FastLeaf,
+);
+
+impl PartialEq for FnFastPath__FastListSlotBranch {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+            && self.2 == other.2
+            && self.3 == other.3
+            && self.1 == other.1
+            && self.4 == other.4
+    }
+}
+
+impl aver_rt::thin::HandOver for FnFastPath__FastListSlotBranch {}
+
+impl aver_rt::WalkEq for FnFastPath {
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
+        match FnFastPath::view_pair(self, other) {
+            Some(FnFastPath__pair::FastNone) => true,
+            Some(FnFastPath__pair::FastSingleExpr) => true,
+            Some(FnFastPath__pair::FastLeaf(a0, b0)) => a0 == b0,
+            Some(FnFastPath__pair::FastForwardCall(a0, b0)) => a0 == b0,
+            Some(FnFastPath__pair::FastBoolSlotBranch(a0, b0)) => a0 == b0,
+            Some(FnFastPath__pair::FastEqIntBranch(a0, b0)) => a0 == b0,
+            Some(FnFastPath__pair::FastEqStringBranch(a0, b0)) => a0 == b0,
+            Some(FnFastPath__pair::FastLtIntSlotsBranch(a0, b0)) => a0 == b0,
+            Some(FnFastPath__pair::FastListSlotBranch(a0, b0)) => a0 == b0,
+            None => false,
+        }
+    }
 }
 
 impl PartialEq for FnFastPath {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (FnFastPath::FastNone, FnFastPath::FastNone) => true,
-            (FnFastPath::FastSingleExpr, FnFastPath::FastSingleExpr) => true,
-            (FnFastPath::FastLeaf(a0), FnFastPath::FastLeaf(b0)) => a0 == b0,
-            (FnFastPath::FastForwardCall(a0, a1), FnFastPath::FastForwardCall(b0, b1)) => {
-                a0 == b0 && a1 == b1
-            }
-            (
-                FnFastPath::FastBoolSlotBranch(a0, a1, a2),
-                FnFastPath::FastBoolSlotBranch(b0, b1, b2),
-            ) => a0 == b0 && a1 == b1 && a2 == b2,
-            (
-                FnFastPath::FastEqIntBranch(a0, a1, a2, a3),
-                FnFastPath::FastEqIntBranch(b0, b1, b2, b3),
-            ) => a0 == b0 && a1 == b1 && a2 == b2 && a3 == b3,
-            (
-                FnFastPath::FastEqStringBranch(a0, a1, a2, a3),
-                FnFastPath::FastEqStringBranch(b0, b1, b2, b3),
-            ) => a0 == b0 && a1 == b1 && a2 == b2 && a3 == b3,
-            (
-                FnFastPath::FastLtIntSlotsBranch(a0, a1, a2, a3),
-                FnFastPath::FastLtIntSlotsBranch(b0, b1, b2, b3),
-            ) => a0 == b0 && a1 == b1 && a2 == b2 && a3 == b3,
-            (
-                FnFastPath::FastListSlotBranch(a0, a1, a2, a3, a4),
-                FnFastPath::FastListSlotBranch(b0, b1, b2, b3, b4),
-            ) => a0 == b0 && a2 == b2 && a3 == b3 && a1 == b1 && a4 == b4,
-            _ => false,
-        }
+        aver_rt::walk_eq(self, other)
     }
 }
 
 impl aver_rt::AverDisplay for FnFastPath {
     fn aver_display(&self) -> String {
-        match self {
-            FnFastPath::FastNone => "FastNone".to_string(),
-            FnFastPath::FastSingleExpr => "FastSingleExpr".to_string(),
-            FnFastPath::FastLeaf(f0) => format!("FastLeaf({})", f0.aver_display_inner()),
-            FnFastPath::FastForwardCall(f0, f1) => format!(
+        match self.view() {
+            FnFastPath__view::FastNone => "FastNone".to_string(),
+            FnFastPath__view::FastSingleExpr => "FastSingleExpr".to_string(),
+            FnFastPath__view::FastLeaf(f) => format!("FastLeaf({})", (&f.0).aver_display_inner()),
+            FnFastPath__view::FastForwardCall(f) => format!(
                 "FastForwardCall({})",
-                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
             ),
-            FnFastPath::FastBoolSlotBranch(f0, f1, f2) => format!(
+            FnFastPath__view::FastBoolSlotBranch(f) => format!(
                 "FastBoolSlotBranch({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            FnFastPath::FastEqIntBranch(f0, f1, f2, f3) => format!(
+            FnFastPath__view::FastEqIntBranch(f) => format!(
                 "FastEqIntBranch({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            FnFastPath::FastEqStringBranch(f0, f1, f2, f3) => format!(
+            FnFastPath__view::FastEqStringBranch(f) => format!(
                 "FastEqStringBranch({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            FnFastPath::FastLtIntSlotsBranch(f0, f1, f2, f3) => format!(
+            FnFastPath__view::FastLtIntSlotsBranch(f) => format!(
                 "FastLtIntSlotsBranch({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner()
                 ]
                 .join(", ")
             ),
-            FnFastPath::FastListSlotBranch(f0, f1, f2, f3, f4) => format!(
+            FnFastPath__view::FastListSlotBranch(f) => format!(
                 "FastListSlotBranch({})",
                 vec![
-                    f0.aver_display_inner(),
-                    f1.aver_display_inner(),
-                    f2.aver_display_inner(),
-                    f3.aver_display_inner(),
-                    f4.aver_display_inner()
+                    (&f.0).aver_display_inner(),
+                    (&f.1).aver_display_inner(),
+                    (&f.2).aver_display_inner(),
+                    (&f.3).aver_display_inner(),
+                    (&f.4).aver_display_inner()
                 ]
                 .join(", ")
             ),
@@ -2940,8 +2998,8 @@ impl aver_replay::ReplayValue for FnFastPath {
             "type".to_string(),
             serde_json::Value::String("Domain.Ast.FnFastPath".to_string()),
         );
-        match self {
-            FnFastPath::FastNone => {
+        match self.view() {
+            FnFastPath__view::FastNone => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("FastNone".to_string()),
@@ -2949,7 +3007,7 @@ impl aver_replay::ReplayValue for FnFastPath {
                 payload.insert("fields".to_string(), serde_json::Value::Array(vec![]));
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            FnFastPath::FastSingleExpr => {
+            FnFastPath__view::FastSingleExpr => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("FastSingleExpr".to_string()),
@@ -2957,18 +3015,18 @@ impl aver_replay::ReplayValue for FnFastPath {
                 payload.insert("fields".to_string(), serde_json::Value::Array(vec![]));
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            FnFastPath::FastLeaf(f0) => {
+            FnFastPath__view::FastLeaf(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("FastLeaf".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
-                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json((&f.0))]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            FnFastPath::FastForwardCall(f0, f1) => {
+            FnFastPath__view::FastForwardCall(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("FastForwardCall".to_string()),
@@ -2976,13 +3034,13 @@ impl aver_replay::ReplayValue for FnFastPath {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            FnFastPath::FastBoolSlotBranch(f0, f1, f2) => {
+            FnFastPath__view::FastBoolSlotBranch(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("FastBoolSlotBranch".to_string()),
@@ -2990,14 +3048,14 @@ impl aver_replay::ReplayValue for FnFastPath {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            FnFastPath::FastEqIntBranch(f0, f1, f2, f3) => {
+            FnFastPath__view::FastEqIntBranch(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("FastEqIntBranch".to_string()),
@@ -3005,15 +3063,15 @@ impl aver_replay::ReplayValue for FnFastPath {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
-                        ReplayValue::to_replay_json(f3),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
+                        ReplayValue::to_replay_json((&f.3)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            FnFastPath::FastEqStringBranch(f0, f1, f2, f3) => {
+            FnFastPath__view::FastEqStringBranch(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("FastEqStringBranch".to_string()),
@@ -3021,15 +3079,15 @@ impl aver_replay::ReplayValue for FnFastPath {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
-                        ReplayValue::to_replay_json(f3),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
+                        ReplayValue::to_replay_json((&f.3)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            FnFastPath::FastLtIntSlotsBranch(f0, f1, f2, f3) => {
+            FnFastPath__view::FastLtIntSlotsBranch(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("FastLtIntSlotsBranch".to_string()),
@@ -3037,15 +3095,15 @@ impl aver_replay::ReplayValue for FnFastPath {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
-                        ReplayValue::to_replay_json(f3),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
+                        ReplayValue::to_replay_json((&f.3)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
-            FnFastPath::FastListSlotBranch(f0, f1, f2, f3, f4) => {
+            FnFastPath__view::FastListSlotBranch(f) => {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("FastListSlotBranch".to_string()),
@@ -3053,11 +3111,11 @@ impl aver_replay::ReplayValue for FnFastPath {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json(f0),
-                        ReplayValue::to_replay_json(f1),
-                        ReplayValue::to_replay_json(f2),
-                        ReplayValue::to_replay_json(f3),
-                        ReplayValue::to_replay_json(f4),
+                        ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.2)),
+                        ReplayValue::to_replay_json((&f.3)),
+                        ReplayValue::to_replay_json((&f.4)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -3092,14 +3150,14 @@ impl aver_replay::ReplayValue for FnFastPath {
         match variant_name {
             "FastNone" => Ok(FnFastPath::FastNone),
             "FastSingleExpr" => Ok(FnFastPath::FastSingleExpr),
-            "FastLeaf" => Ok(FnFastPath::FastLeaf(
+            "FastLeaf" => Ok(FnFastPath::FastLeaf(FnFastPath__FastLeaf(
                 <FastLeaf as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant FastLeaf missing field #{}", 0))?,
                 )?,
-            )),
-            "FastForwardCall" => Ok(FnFastPath::FastForwardCall(
+            ))),
+            "FastForwardCall" => Ok(FnFastPath::FastForwardCall(FnFastPath__FastForwardCall(
                 <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
@@ -3110,9 +3168,9 @@ impl aver_replay::ReplayValue for FnFastPath {
                         .get(1)
                         .ok_or_else(|| format!("$variant FastForwardCall missing field #{}", 1))?,
                 )?,
-            )),
-            "FastBoolSlotBranch" => {
-                Ok(FnFastPath::FastBoolSlotBranch(
+            ))),
+            "FastBoolSlotBranch" => Ok(FnFastPath::FastBoolSlotBranch(
+                FnFastPath__FastBoolSlotBranch(
                     <aver_rt::AverInt as ReplayValue>::from_replay_json(
                         fields.get(0).ok_or_else(|| {
                             format!("$variant FastBoolSlotBranch missing field #{}", 0)
@@ -3124,10 +3182,10 @@ impl aver_replay::ReplayValue for FnFastPath {
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(
                         || format!("$variant FastBoolSlotBranch missing field #{}", 2),
                     )?)?,
-                ))
-            }
+                ),
+            )),
             "FastEqIntBranch" => {
-                Ok(FnFastPath::FastEqIntBranch(
+                Ok(FnFastPath::FastEqIntBranch(FnFastPath__FastEqIntBranch(
                     <aver_rt::AverInt as ReplayValue>::from_replay_json(
                         fields.get(0).ok_or_else(|| {
                             format!("$variant FastEqIntBranch missing field #{}", 0)
@@ -3144,10 +3202,10 @@ impl aver_replay::ReplayValue for FnFastPath {
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(3).ok_or_else(
                         || format!("$variant FastEqIntBranch missing field #{}", 3),
                     )?)?,
-                ))
+                )))
             }
-            "FastEqStringBranch" => {
-                Ok(FnFastPath::FastEqStringBranch(
+            "FastEqStringBranch" => Ok(FnFastPath::FastEqStringBranch(
+                FnFastPath__FastEqStringBranch(
                     <aver_rt::AverInt as ReplayValue>::from_replay_json(
                         fields.get(0).ok_or_else(|| {
                             format!("$variant FastEqStringBranch missing field #{}", 0)
@@ -3162,24 +3220,30 @@ impl aver_replay::ReplayValue for FnFastPath {
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(3).ok_or_else(
                         || format!("$variant FastEqStringBranch missing field #{}", 3),
                     )?)?,
-                ))
-            }
-            "FastLtIntSlotsBranch" => Ok(FnFastPath::FastLtIntSlotsBranch(
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(
-                    || format!("$variant FastLtIntSlotsBranch missing field #{}", 0),
-                )?)?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
-                    || format!("$variant FastLtIntSlotsBranch missing field #{}", 1),
-                )?)?,
-                <FastLeaf as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(|| {
-                    format!("$variant FastLtIntSlotsBranch missing field #{}", 2)
-                })?)?,
-                <FastLeaf as ReplayValue>::from_replay_json(fields.get(3).ok_or_else(|| {
-                    format!("$variant FastLtIntSlotsBranch missing field #{}", 3)
-                })?)?,
+                ),
             )),
-            "FastListSlotBranch" => {
-                Ok(FnFastPath::FastListSlotBranch(
+            "FastLtIntSlotsBranch" => Ok(FnFastPath::FastLtIntSlotsBranch(
+                FnFastPath__FastLtIntSlotsBranch(
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(0).ok_or_else(|| {
+                            format!("$variant FastLtIntSlotsBranch missing field #{}", 0)
+                        })?,
+                    )?,
+                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                        fields.get(1).ok_or_else(|| {
+                            format!("$variant FastLtIntSlotsBranch missing field #{}", 1)
+                        })?,
+                    )?,
+                    <FastLeaf as ReplayValue>::from_replay_json(fields.get(2).ok_or_else(
+                        || format!("$variant FastLtIntSlotsBranch missing field #{}", 2),
+                    )?)?,
+                    <FastLeaf as ReplayValue>::from_replay_json(fields.get(3).ok_or_else(
+                        || format!("$variant FastLtIntSlotsBranch missing field #{}", 3),
+                    )?)?,
+                ),
+            )),
+            "FastListSlotBranch" => Ok(FnFastPath::FastListSlotBranch(
+                FnFastPath__FastListSlotBranch(
                     <aver_rt::AverInt as ReplayValue>::from_replay_json(
                         fields.get(0).ok_or_else(|| {
                             format!("$variant FastListSlotBranch missing field #{}", 0)
@@ -3201,8 +3265,8 @@ impl aver_replay::ReplayValue for FnFastPath {
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(4).ok_or_else(
                         || format!("$variant FastListSlotBranch missing field #{}", 4),
                     )?)?,
-                ))
-            }
+                ),
+            )),
             _ => Err(format!(
                 "unknown variant '{}' for Domain.Ast.FnFastPath",
                 variant_name
@@ -3211,10 +3275,8 @@ impl aver_replay::ReplayValue for FnFastPath {
     }
 }
 
-pub type FnDef = Box<FnDef__Fields>;
-
 #[derive(Clone, Debug)]
-pub struct FnDef__Fields {
+pub struct FnDef {
     pub name: AverStr,
     pub params: aver_rt::AverList<AverStr>,
     pub body: aver_rt::AverList<Stmt>,
@@ -3224,7 +3286,7 @@ pub struct FnDef__Fields {
     pub tailLoop: bool,
 }
 
-impl PartialEq for FnDef__Fields {
+impl PartialEq for FnDef {
     fn eq(&self, other: &Self) -> bool {
         self.slotCount == other.slotCount
             && self.tailLoop == other.tailLoop
@@ -3236,7 +3298,7 @@ impl PartialEq for FnDef__Fields {
     }
 }
 
-impl aver_rt::AverDisplay for FnDef__Fields {
+impl aver_rt::AverDisplay for FnDef {
     fn aver_display(&self) -> String {
         format!(
             "FnDef({})",
@@ -3310,7 +3372,7 @@ impl aver_replay::ReplayValue for FnDef {
                 .ok_or_else(|| "$record missing field 'fields'".to_string())?,
             "$record.fields",
         )?;
-        Ok(Box::new(FnDef__Fields {
+        Ok(Self {
             name: <AverStr as ReplayValue>::from_replay_json(
                 fields
                     .get("name")
@@ -3347,7 +3409,7 @@ impl aver_replay::ReplayValue for FnDef {
                     .get("tailLoop")
                     .ok_or_else(|| "$record FnDef missing field 'tailLoop'".to_string())?,
             )?,
-        }))
+        })
     }
 }
 

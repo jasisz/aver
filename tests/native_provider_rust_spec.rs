@@ -208,9 +208,10 @@ fn main() {{
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "7:2:2:9");
 }
 
-/// A value of a recursive sum is one pointer to a node in generated Rust;
-/// the provider codec and the replay codec read it through its view and
-/// build it back node by node. Recorded with the provider, replayed without.
+/// A value of a recursive sum, or of a sum with a wide constructor, is one
+/// pointer to a node in generated Rust; the provider codec and the replay
+/// codec read it through its view and build it back node by node. Recorded
+/// with the provider, replayed without.
 #[test]
 fn generated_rust_round_trips_a_recursive_sum_through_provider_and_replay() {
     let project = generate_project("native_provider_recursive", true);
@@ -240,7 +241,7 @@ fn main() {{
     )
     .expect("write recursive-sum host");
 
-    let shown = "Both(Leaf(9), Both(Empty, Leaf(2)))";
+    let shown = "Both(Leaf(9), Both(Empty, Both(Packed(Box(1, 2, 3, 4)), Packed(Blank))))";
     let recording = project.root.join("trees-replay.json");
     let record = Command::new("cargo")
         .current_dir(&project.root)

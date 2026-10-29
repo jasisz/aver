@@ -1837,9 +1837,9 @@ fn left(t: T) -> T
         );
     }
 
-    /// In a sum that is not recursive only a constructor much larger than
-    /// every other one goes behind a `Shared`, so a value of a small one does
-    /// not carry its room; a sum of small constructors keeps them all inline.
+    /// A sum with a constructor of 64 bytes of fields or more is one pointer
+    /// per value like a recursive one, so a copy does not carry the room of
+    /// that constructor; a sum of small constructors keeps them all inline.
     /// `==` compares the fields that answer at once (scalars, strings,
     /// field-less sums) before a subtree or a list, whatever order they are
     /// declared in, and is derived where the declared order already is that.
@@ -1894,9 +1894,9 @@ fn width(s: Shape) -> Int
         let entry = generated_rust_entry_file(&out);
 
         for expected in [
-            "    Dot(aver_rt::AverInt),\n    Label(aver_rt::Shared<Shape__Label>),\n    Blank,",
-            "Shape::Label(aver_rt::Shared::new(Shape__Label(",
-            "Shape::Label(__w_fields) => {",
+            "        0 Dot(Shape__Dot),\n        1 Label(Shape__Label),\n        2 Blank,",
+            "Shape::Label(Shape__Label(",
+            "Shape__view::Label(__w_fields) => {",
             "    One(aver_rt::AverInt),\n    Two(aver_rt::AverInt, aver_rt::AverInt),",
             "#[derive(Clone, Debug, Eq, Hash)]\npub struct Tree__Node(pub Tree, pub Tree, pub aver_rt::AverInt);",
             "impl PartialEq for Tree__Node {\n    fn eq(&self, other: &Self) -> bool {\n        std::ptr::eq(self, other) || self.2 == other.2 && self.0 == other.0 && self.1 == other.1\n    }\n}",
@@ -1912,8 +1912,7 @@ fn width(s: Shape) -> Int
             assert!(entry.contains(expected), "missing `{expected}`:\n{entry}");
         }
         assert!(
-            !entry.contains("impl PartialEq for Point")
-                && !entry.contains("impl PartialEq for Shape {"),
+            !entry.contains("impl PartialEq for Point"),
             "an equality already in cheap-first order is not hand-written:\n{entry}"
         );
     }
