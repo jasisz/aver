@@ -328,7 +328,7 @@ pub struct Ty__TyVar(pub AverStr, pub bool);
 
 impl PartialEq for Ty__TyVar {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+        std::ptr::eq(self, other) || self.1 == other.1 && self.0 == other.0
     }
 }
 
@@ -339,7 +339,7 @@ pub struct Ty__TyRigid(pub AverStr, pub bool);
 
 impl PartialEq for Ty__TyRigid {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+        std::ptr::eq(self, other) || self.1 == other.1 && self.0 == other.0
     }
 }
 

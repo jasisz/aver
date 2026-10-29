@@ -2248,11 +2248,12 @@ impl EqFold<'_> {
         }
     }
 
-    /// Folds the answer of field `i`, the result of a walk when `walked`.
-    fn field(self, f: &mut Function, i: usize, walked: bool) {
+    /// Folds comparison `position`, the result of a walk when `walked`.
+    /// This is its visit position, not its index in the struct layout.
+    fn field(self, f: &mut Function, position: usize, walked: bool) {
         match self {
             EqFold::And => {
-                if i > 0 {
+                if position > 0 {
                     f.instruction(&Instruction::I32And);
                 }
             }
@@ -2366,7 +2367,12 @@ pub(super) fn emit_record_eq_inline(
         }
         _ => None,
     };
-    for (i, (field_name, field_ty)) in fields.iter().enumerate() {
+    let order = super::equality_order::field_order(
+        &fields.iter().map(|(_, ty)| ty.as_str()).collect::<Vec<_>>(),
+        registry,
+    );
+    for (position, i) in order.into_iter().enumerate() {
+        let (field_name, field_ty) = &fields[i];
         // push head.f
         f.instruction(&Instruction::LocalGet(head_local));
         f.instruction(&Instruction::StructGet {
@@ -2388,7 +2394,7 @@ pub(super) fn emit_record_eq_inline(
         // match.
         if registry.is_eligible_carrier(field_ty.trim()) {
             f.instruction(&Instruction::I64Eq);
-            fold.field(f, i, false);
+            fold.field(f, position, false);
             continue;
         }
         // A field whose declared type is newtype-erased is stored as the
@@ -2467,7 +2473,7 @@ pub(super) fn emit_record_eq_inline(
                 }
             }
         }
-        fold.field(f, i, walked);
+        fold.field(f, position, walked);
     }
     if let Some(r) = remember {
         r.remember(f, (head_local, needle_local));
@@ -2546,7 +2552,12 @@ pub(super) fn emit_sum_eq_inline(
                 }
                 _ => None,
             };
-            for (i, field_ty) in info.fields.iter().enumerate() {
+            let order = super::equality_order::field_order(
+                &info.fields.iter().map(String::as_str).collect::<Vec<_>>(),
+                registry,
+            );
+            for (position, i) in order.into_iter().enumerate() {
+                let field_ty = &info.fields[i];
                 f.instruction(&Instruction::LocalGet(head_local));
                 f.instruction(&Instruction::RefCastNonNull(v_heap));
                 f.instruction(&Instruction::StructGet {
@@ -2563,7 +2574,7 @@ pub(super) fn emit_sum_eq_inline(
                 // native `i64` → raw `i64.eq`.
                 if registry.is_eligible_carrier(field_ty.trim()) {
                     f.instruction(&Instruction::I64Eq);
-                    fold.field(f, i, false);
+                    fold.field(f, position, false);
                     continue;
                 }
                 // A field whose declared type is newtype-erased is stored
@@ -2632,7 +2643,7 @@ pub(super) fn emit_sum_eq_inline(
                         f.instruction(&Instruction::Call(idx));
                     }
                 }
-                fold.field(f, i, walked);
+                fold.field(f, position, walked);
             }
             if let Some(r) = remember {
                 r.remember(f, (head_local, needle_local));

@@ -488,8 +488,8 @@ pub struct Node {
 
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
-        self.path == other.path
-            && self.depth == other.depth
+        self.depth == other.depth
+            && self.path == other.path
             && self.goal == other.goal
             && self.from == other.from
     }

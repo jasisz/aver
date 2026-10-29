@@ -185,12 +185,18 @@ impl aver_rt::AverDisplay for Varied {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct Shrink {
     pub f: AverStr,
     pub p: AverStr,
     pub j: aver_rt::AverInt,
     pub n: aver_rt::AverInt,
+}
+
+impl PartialEq for Shrink {
+    fn eq(&self, other: &Self) -> bool {
+        self.j == other.j && self.n == other.n && self.f == other.f && self.p == other.p
+    }
 }
 
 impl PartialOrd for Shrink {

@@ -1,0 +1,64 @@
+module EqualityFieldOrder
+    intent =
+        "Scalar fields can reject unequal values before their collections or"
+        "recursive children, while equal hashes never replace structural equality."
+    effects [Console.print]
+
+type Tree
+    Leaf(Int)
+    Node(Tree, Tree, Int)
+
+record Word
+    value: Int
+
+record Key
+    values: List<Float>
+    marker: Word
+    total: Int
+
+record TextKey
+    child: Tree
+    text: String
+    stamp: Int
+
+fn sameTextKey(a: TextKey, b: TextKey) -> Bool
+    ? "The numeric stamp precedes text but equal stamps still compare all fields."
+    a == b
+
+verify sameTextKey
+    sameTextKey(TextKey(child = Tree.Leaf(1), text = "a", stamp = 7), TextKey(child = Tree.Leaf(1), text = "a", stamp = 7)) => true
+    sameTextKey(TextKey(child = Tree.Leaf(1), text = "a", stamp = 7), TextKey(child = Tree.Leaf(1), text = "b", stamp = 7)) => false
+    sameTextKey(TextKey(child = Tree.Leaf(1), text = "a", stamp = 7), TextKey(child = Tree.Leaf(1), text = "a", stamp = 8)) => false
+
+fn sameTree(a: Tree, b: Tree) -> Bool
+    ? "Compare recursive children as well as the scalar stored after them."
+    a == b
+
+verify sameTree
+    sameTree(Tree.Node(Tree.Leaf(1), Tree.Leaf(2), 5), Tree.Node(Tree.Leaf(1), Tree.Leaf(2), 6)) => false
+    sameTree(Tree.Node(Tree.Leaf(1), Tree.Leaf(2), 5), Tree.Node(Tree.Leaf(1), Tree.Leaf(3), 5)) => false
+    sameTree(Tree.Node(Tree.Leaf(1), Tree.Leaf(2), 5), Tree.Node(Tree.Leaf(1), Tree.Leaf(2), 5)) => true
+
+fn sameKey(a: Key, b: Key) -> Bool
+    ? "Late scalar and erased-newtype fields keep their declared struct indices."
+    a == b
+
+verify sameKey
+    sameKey(Key(values = [1.0], marker = Word(value = 7), total = 9223372036854775808), Key(values = [1.0], marker = Word(value = 7), total = 9223372036854775808)) => true
+    sameKey(Key(values = [1.0], marker = Word(value = 7), total = 2), Key(values = [1.0], marker = Word(value = 8), total = 2)) => false
+    sameKey(Key(values = [1.0], marker = Word(value = 7), total = 2), Key(values = [2.0], marker = Word(value = 7), total = 2)) => false
+
+fn main() -> Unit
+    ! [Console.print]
+    leaf = Tree.Leaf(1)
+    tree = Tree.Node(leaf, Tree.Leaf(2), 5)
+    other = Tree.Node(leaf, Tree.Leaf(3), 5)
+    key = Key(values = [1.0], marker = Word(value = 7), total = 9223372036854775808)
+    changed = Key(values = [2.0], marker = Word(value = 7), total = 9223372036854775808)
+    nan = Float.sqrt(Float.fromInt(List.len([1]) - 2))
+    floating = Key(values = [nan], marker = Word(value = 7), total = 1)
+    textKey = TextKey(child = tree, text = "a", stamp = 7)
+    Console.print("{sameTree(tree, tree)} {sameTree(tree, other)} {sameTree(tree, Tree.Node(leaf, Tree.Leaf(2), 6))}")
+    Console.print("{sameKey(key, key)} {sameKey(key, changed)} {List.contains([key], key)}")
+    Console.print("{sameKey(floating, floating)} {List.contains([floating], floating)}")
+    Console.print("{sameTextKey(textKey, textKey)} {sameTextKey(textKey, TextKey(child = tree, text = "b", stamp = 7))} {sameTextKey(textKey, TextKey(child = tree, text = "a", stamp = 8))}")
