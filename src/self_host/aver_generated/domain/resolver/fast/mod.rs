@@ -47,7 +47,7 @@ pub fn annotateFastFn(
         .get(&fd.name)
         .cloned()
         .unwrap_or(aver_rt::AverInt::from_i64(-1));
-    Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
+    crate::aver_generated::domain::ast::FnDef {
         name: fd.name,
         params: fd.params,
         body: fd.body.clone(),
@@ -55,7 +55,7 @@ pub fn annotateFastFn(
         slotMap: fd.slotMap,
         fastPath: crate::aver_generated::domain::resolver::fast::classifyFastPath(&fd.body),
         tailLoop: crate::aver_generated::domain::resolver::fast::classifyTailLoop(selfId, &fd.body),
-    })
+    }
 }
 
 /// Precompute whether the final expression position can self-tail-call directly.
@@ -233,7 +233,9 @@ pub fn classifyFastExpr(
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(expr) {
-        Some(leaf @ _) => crate::aver_generated::domain::ast::FnFastPath::FastLeaf(leaf),
+        Some(leaf @ _) => crate::aver_generated::domain::ast::FnFastPath::FastLeaf(
+            crate::aver_generated::domain::ast::FnFastPath__FastLeaf(leaf),
+        ),
         None => {
             let __t = expr;
             match __t.view() {
@@ -1166,7 +1168,9 @@ pub fn classifyFastListCons(
                 Some(tailSlot @ _) => {
                     let tailSlot = tailSlot.clone();
                     crate::aver_generated::domain::ast::FnFastPath::FastListSlotBranch(
-                        slot, emptyLeaf, headSlot, tailSlot, consLeaf,
+                        crate::aver_generated::domain::ast::FnFastPath__FastListSlotBranch(
+                            slot, emptyLeaf, headSlot, tailSlot, consLeaf,
+                        ),
                     )
                 }
                 None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
@@ -1191,9 +1195,9 @@ pub fn classifyFastForwardCall(
             )
         };
         match __subject {
-            Some(slotArgs @ _) => {
-                crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(fnId, slotArgs)
-            }
+            Some(slotArgs @ _) => crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(
+                crate::aver_generated::domain::ast::FnFastPath__FastForwardCall(fnId, slotArgs),
+            ),
             None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
         }
     }
@@ -1357,7 +1361,9 @@ pub fn classifyFastMatchScrutinee(
             crate::aver_generated::domain::ast::Expr__view::ExprSlot(__slot_fields) => {
                 let slot = __slot_fields.0.clone();
                 crate::aver_generated::domain::ast::FnFastPath::FastBoolSlotBranch(
-                    slot, thenLeaf, elseLeaf,
+                    crate::aver_generated::domain::ast::FnFastPath__FastBoolSlotBranch(
+                        slot, thenLeaf, elseLeaf,
+                    ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
@@ -1433,13 +1439,17 @@ pub fn classifyFastEqOther(
             crate::aver_generated::domain::ast::Expr__view::ExprInt(__n_fields) => {
                 let n = __n_fields.0.clone();
                 crate::aver_generated::domain::ast::FnFastPath::FastEqIntBranch(
-                    slot, n, thenLeaf, elseLeaf,
+                    crate::aver_generated::domain::ast::FnFastPath__FastEqIntBranch(
+                        slot, n, thenLeaf, elseLeaf,
+                    ),
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprStr(__s_fields) => {
                 let s = __s_fields.0.clone();
                 crate::aver_generated::domain::ast::FnFastPath::FastEqStringBranch(
-                    slot, s, thenLeaf, elseLeaf,
+                    crate::aver_generated::domain::ast::FnFastPath__FastEqStringBranch(
+                        slot, s, thenLeaf, elseLeaf,
+                    ),
                 )
             }
             _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
@@ -1465,9 +1475,7 @@ pub fn classifyFastLtScrutinee(
                     match __t.view() {
                         crate::aver_generated::domain::ast::Expr__view::ExprSlot(__rhs_fields) => {
                             let rhs = __rhs_fields.0.clone();
-                            crate::aver_generated::domain::ast::FnFastPath::FastLtIntSlotsBranch(
-                                lhs, rhs, thenLeaf, elseLeaf,
-                            )
+                            crate::aver_generated::domain::ast::FnFastPath::FastLtIntSlotsBranch(crate::aver_generated::domain::ast::FnFastPath__FastLtIntSlotsBranch(lhs, rhs, thenLeaf, elseLeaf))
                         }
                         _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
                     }

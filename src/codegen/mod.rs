@@ -611,6 +611,9 @@ pub struct CodegenContext {
     /// the emitter renders them; read into [`ProjectOutput::perf_notes`].
     pub rust_copied_targets:
         std::cell::RefCell<HashMap<usize, crate::codegen::rust::perf_notes::CopiedTarget>>,
+    /// Whether each sum, by backend type key, is laid out thin (see
+    /// `rust::representation::is_thin_sum`), kept as it is first asked.
+    pub rust_thin_sums: std::cell::RefCell<HashMap<String, bool>>,
     /// Universal law-claims of a certificate-model Lean emission, in emit
     /// order — see [`UniversalLawClaim`].
     ///
@@ -1166,6 +1169,7 @@ pub fn build_context(
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
         rust_copied_targets: Default::default(),
+        rust_thin_sums: Default::default(),
         universal_law_claims: std::cell::RefCell::new(Vec::new()),
         program_shape,
         resolved_program,
@@ -1672,6 +1676,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
         rust_copied_targets: Default::default(),
+        rust_thin_sums: Default::default(),
         universal_law_claims: std::cell::RefCell::new(Vec::new()),
         resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
         program_shape: None,

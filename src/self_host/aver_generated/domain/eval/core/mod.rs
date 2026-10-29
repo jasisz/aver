@@ -3972,91 +3972,93 @@ pub fn evalResolvedSlotDirect(
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let result @ _ = match &fd.fastPath {
-        crate::aver_generated::domain::ast::FnFastPath::FastLeaf(leaf) => {
-            crate::aver_generated::domain::eval::fast::runFastLeafSlot(leaf, &calleeEnv)
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(targetId, slotArgs) => {
-            let targetId = targetId.clone();
-            crate::aver_generated::domain::eval::core::fastForwardCall(
-                &calleeEnv, targetId, slotArgs, fns,
-            )
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastBoolSlotBranch(
-            slot,
-            thenLeaf,
-            elseLeaf,
-        ) => {
-            let slot = slot.clone();
-            crate::aver_generated::domain::eval::fast::fastBoolSlotBranch(
-                &calleeEnv, slot, thenLeaf, elseLeaf,
-            )
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastEqIntBranch(
-            slot,
-            expected,
-            thenLeaf,
-            elseLeaf,
-        ) => {
-            let slot = slot.clone();
-            let expected = expected.clone();
-            crate::aver_generated::domain::eval::fast::fastEqIntBranch(
-                &calleeEnv, slot, expected, thenLeaf, elseLeaf,
-            )
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastEqStringBranch(
-            slot,
-            expected,
-            thenLeaf,
-            elseLeaf,
-        ) => {
-            let slot = slot.clone();
-            let expected = expected.clone();
-            crate::aver_generated::domain::eval::fast::fastEqStringBranch(
-                &calleeEnv, slot, &expected, thenLeaf, elseLeaf,
-            )
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastLtIntSlotsBranch(
-            lhsSlot,
-            rhsSlot,
-            thenLeaf,
-            elseLeaf,
-        ) => {
-            let lhsSlot = lhsSlot.clone();
-            let rhsSlot = rhsSlot.clone();
-            crate::aver_generated::domain::eval::fast::fastLtIntSlotsBranch(
-                &calleeEnv, lhsSlot, rhsSlot, thenLeaf, elseLeaf,
-            )
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastListSlotBranch(
-            slot,
-            emptyLeaf,
-            headSlot,
-            tailSlot,
-            consLeaf,
-        ) => {
-            let slot = slot.clone();
-            let headSlot = headSlot.clone();
-            let tailSlot = tailSlot.clone();
-            crate::aver_generated::domain::eval::fast::fastListSlotBranch(
-                calleeEnv, slot, emptyLeaf, headSlot, tailSlot, consLeaf,
-            )
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr => {
-            crate::aver_generated::domain::eval::core::evalResolvedSingleExprSlot(
-                &fd.body,
-                calleeEnv,
-                &fd.slotMap,
-                fns,
-            )
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastNone => {
-            crate::aver_generated::domain::eval::core::evalStmtsSlot(
-                fd.body.clone(),
-                calleeEnv,
-                &fd.slotMap,
-                fns,
-            )
+    let result @ _ = {
+        let __t = &fd.fastPath;
+        match __t.view() {
+            crate::aver_generated::domain::ast::FnFastPath__view::FastLeaf(__leaf_fields) => {
+                let leaf = &__leaf_fields.0;
+                crate::aver_generated::domain::eval::fast::runFastLeafSlot(leaf, &calleeEnv)
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastForwardCall(
+                __targetId_fields,
+            ) => {
+                let targetId = __targetId_fields.0.clone();
+                let slotArgs = &__targetId_fields.1;
+                crate::aver_generated::domain::eval::core::fastForwardCall(
+                    &calleeEnv, targetId, slotArgs, fns,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastBoolSlotBranch(
+                __slot_fields,
+            ) => {
+                let slot = __slot_fields.0.clone();
+                let thenLeaf = &__slot_fields.1;
+                let elseLeaf = &__slot_fields.2;
+                crate::aver_generated::domain::eval::fast::fastBoolSlotBranch(
+                    &calleeEnv, slot, thenLeaf, elseLeaf,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastEqIntBranch(
+                __slot_fields,
+            ) => {
+                let slot = __slot_fields.0.clone();
+                let expected = __slot_fields.1.clone();
+                let thenLeaf = &__slot_fields.2;
+                let elseLeaf = &__slot_fields.3;
+                crate::aver_generated::domain::eval::fast::fastEqIntBranch(
+                    &calleeEnv, slot, expected, thenLeaf, elseLeaf,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastEqStringBranch(
+                __slot_fields,
+            ) => {
+                let slot = __slot_fields.0.clone();
+                let expected = __slot_fields.1.clone();
+                let thenLeaf = &__slot_fields.2;
+                let elseLeaf = &__slot_fields.3;
+                crate::aver_generated::domain::eval::fast::fastEqStringBranch(
+                    &calleeEnv, slot, &expected, thenLeaf, elseLeaf,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastLtIntSlotsBranch(
+                __lhsSlot_fields,
+            ) => {
+                let lhsSlot = __lhsSlot_fields.0.clone();
+                let rhsSlot = __lhsSlot_fields.1.clone();
+                let thenLeaf = &__lhsSlot_fields.2;
+                let elseLeaf = &__lhsSlot_fields.3;
+                crate::aver_generated::domain::eval::fast::fastLtIntSlotsBranch(
+                    &calleeEnv, lhsSlot, rhsSlot, thenLeaf, elseLeaf,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastListSlotBranch(
+                __slot_fields,
+            ) => {
+                let slot = __slot_fields.0.clone();
+                let emptyLeaf = &__slot_fields.1;
+                let headSlot = __slot_fields.2.clone();
+                let tailSlot = __slot_fields.3.clone();
+                let consLeaf = &__slot_fields.4;
+                crate::aver_generated::domain::eval::fast::fastListSlotBranch(
+                    calleeEnv, slot, emptyLeaf, headSlot, tailSlot, consLeaf,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastSingleExpr => {
+                crate::aver_generated::domain::eval::core::evalResolvedSingleExprSlot(
+                    &fd.body,
+                    calleeEnv,
+                    &fd.slotMap,
+                    fns,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastNone => {
+                crate::aver_generated::domain::eval::core::evalStmtsSlot(
+                    fd.body.clone(),
+                    calleeEnv,
+                    &fd.slotMap,
+                    fns,
+                )
+            }
         }
     };
     crate::aver_generated::domain::eval::common::normalizeFnReturn(&result)
@@ -4070,130 +4072,132 @@ pub fn evalResolvedSlotStep(
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<SlotTailStep, AverStr> {
     crate::cancel_checkpoint();
-    match &fd.fastPath {
-        crate::aver_generated::domain::ast::FnFastPath::FastLeaf(leaf) => {
-            match crate::aver_generated::domain::eval::fast::runFastLeafSlot(leaf, &calleeEnv) {
-                Ok(v @ _) => {
-                    Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v))
+    {
+        let __t = &fd.fastPath;
+        match __t.view() {
+            crate::aver_generated::domain::ast::FnFastPath__view::FastLeaf(__leaf_fields) => {
+                let leaf = &__leaf_fields.0;
+                match crate::aver_generated::domain::eval::fast::runFastLeafSlot(leaf, &calleeEnv) {
+                    Ok(v @ _) => Ok(
+                        crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
+                    ),
+                    Err(e @ _) => Err(e),
                 }
-                Err(e @ _) => Err(e),
             }
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(targetId, slotArgs) => {
-            let targetId = targetId.clone();
-            match crate::aver_generated::domain::eval::core::fastForwardCall(
-                &calleeEnv, targetId, slotArgs, fns,
-            ) {
-                Ok(v @ _) => {
-                    Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v))
+            crate::aver_generated::domain::ast::FnFastPath__view::FastForwardCall(
+                __targetId_fields,
+            ) => {
+                let targetId = __targetId_fields.0.clone();
+                let slotArgs = &__targetId_fields.1;
+                match crate::aver_generated::domain::eval::core::fastForwardCall(
+                    &calleeEnv, targetId, slotArgs, fns,
+                ) {
+                    Ok(v @ _) => Ok(
+                        crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
+                    ),
+                    Err(e @ _) => Err(e),
                 }
-                Err(e @ _) => Err(e),
             }
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastBoolSlotBranch(
-            slot,
-            thenLeaf,
-            elseLeaf,
-        ) => {
-            let slot = slot.clone();
-            match crate::aver_generated::domain::eval::fast::fastBoolSlotBranch(
-                &calleeEnv, slot, thenLeaf, elseLeaf,
-            ) {
-                Ok(v @ _) => {
-                    Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v))
+            crate::aver_generated::domain::ast::FnFastPath__view::FastBoolSlotBranch(
+                __slot_fields,
+            ) => {
+                let slot = __slot_fields.0.clone();
+                let thenLeaf = &__slot_fields.1;
+                let elseLeaf = &__slot_fields.2;
+                match crate::aver_generated::domain::eval::fast::fastBoolSlotBranch(
+                    &calleeEnv, slot, thenLeaf, elseLeaf,
+                ) {
+                    Ok(v @ _) => Ok(
+                        crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
+                    ),
+                    Err(e @ _) => Err(e),
                 }
-                Err(e @ _) => Err(e),
             }
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastEqIntBranch(
-            slot,
-            expected,
-            thenLeaf,
-            elseLeaf,
-        ) => {
-            let slot = slot.clone();
-            let expected = expected.clone();
-            match crate::aver_generated::domain::eval::fast::fastEqIntBranch(
-                &calleeEnv, slot, expected, thenLeaf, elseLeaf,
-            ) {
-                Ok(v @ _) => {
-                    Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v))
+            crate::aver_generated::domain::ast::FnFastPath__view::FastEqIntBranch(
+                __slot_fields,
+            ) => {
+                let slot = __slot_fields.0.clone();
+                let expected = __slot_fields.1.clone();
+                let thenLeaf = &__slot_fields.2;
+                let elseLeaf = &__slot_fields.3;
+                match crate::aver_generated::domain::eval::fast::fastEqIntBranch(
+                    &calleeEnv, slot, expected, thenLeaf, elseLeaf,
+                ) {
+                    Ok(v @ _) => Ok(
+                        crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
+                    ),
+                    Err(e @ _) => Err(e),
                 }
-                Err(e @ _) => Err(e),
             }
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastEqStringBranch(
-            slot,
-            expected,
-            thenLeaf,
-            elseLeaf,
-        ) => {
-            let slot = slot.clone();
-            let expected = expected.clone();
-            match crate::aver_generated::domain::eval::fast::fastEqStringBranch(
-                &calleeEnv, slot, &expected, thenLeaf, elseLeaf,
-            ) {
-                Ok(v @ _) => {
-                    Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v))
+            crate::aver_generated::domain::ast::FnFastPath__view::FastEqStringBranch(
+                __slot_fields,
+            ) => {
+                let slot = __slot_fields.0.clone();
+                let expected = __slot_fields.1.clone();
+                let thenLeaf = &__slot_fields.2;
+                let elseLeaf = &__slot_fields.3;
+                match crate::aver_generated::domain::eval::fast::fastEqStringBranch(
+                    &calleeEnv, slot, &expected, thenLeaf, elseLeaf,
+                ) {
+                    Ok(v @ _) => Ok(
+                        crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
+                    ),
+                    Err(e @ _) => Err(e),
                 }
-                Err(e @ _) => Err(e),
             }
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastLtIntSlotsBranch(
-            lhsSlot,
-            rhsSlot,
-            thenLeaf,
-            elseLeaf,
-        ) => {
-            let lhsSlot = lhsSlot.clone();
-            let rhsSlot = rhsSlot.clone();
-            match crate::aver_generated::domain::eval::fast::fastLtIntSlotsBranch(
-                &calleeEnv, lhsSlot, rhsSlot, thenLeaf, elseLeaf,
-            ) {
-                Ok(v @ _) => {
-                    Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v))
+            crate::aver_generated::domain::ast::FnFastPath__view::FastLtIntSlotsBranch(
+                __lhsSlot_fields,
+            ) => {
+                let lhsSlot = __lhsSlot_fields.0.clone();
+                let rhsSlot = __lhsSlot_fields.1.clone();
+                let thenLeaf = &__lhsSlot_fields.2;
+                let elseLeaf = &__lhsSlot_fields.3;
+                match crate::aver_generated::domain::eval::fast::fastLtIntSlotsBranch(
+                    &calleeEnv, lhsSlot, rhsSlot, thenLeaf, elseLeaf,
+                ) {
+                    Ok(v @ _) => Ok(
+                        crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
+                    ),
+                    Err(e @ _) => Err(e),
                 }
-                Err(e @ _) => Err(e),
             }
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastListSlotBranch(
-            slot,
-            emptyLeaf,
-            headSlot,
-            tailSlot,
-            consLeaf,
-        ) => {
-            let slot = slot.clone();
-            let headSlot = headSlot.clone();
-            let tailSlot = tailSlot.clone();
-            match crate::aver_generated::domain::eval::fast::fastListSlotBranch(
-                calleeEnv, slot, emptyLeaf, headSlot, tailSlot, consLeaf,
-            ) {
-                Ok(v @ _) => {
-                    Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v))
+            crate::aver_generated::domain::ast::FnFastPath__view::FastListSlotBranch(
+                __slot_fields,
+            ) => {
+                let slot = __slot_fields.0.clone();
+                let emptyLeaf = &__slot_fields.1;
+                let headSlot = __slot_fields.2.clone();
+                let tailSlot = __slot_fields.3.clone();
+                let consLeaf = &__slot_fields.4;
+                match crate::aver_generated::domain::eval::fast::fastListSlotBranch(
+                    calleeEnv, slot, emptyLeaf, headSlot, tailSlot, consLeaf,
+                ) {
+                    Ok(v @ _) => Ok(
+                        crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
+                    ),
+                    Err(e @ _) => Err(e),
                 }
-                Err(e @ _) => Err(e),
             }
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr => {
-            crate::aver_generated::domain::eval::core::evalResolvedSingleExprSlotTail(
-                fnId,
-                &fd.body,
-                fd.slotCount.clone(),
-                &fd.slotMap,
-                calleeEnv,
-                fns,
-            )
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastNone => {
-            crate::aver_generated::domain::eval::core::evalStmtsSlotTail(
-                fnId,
-                fd.body.clone(),
-                fd.slotCount.clone(),
-                calleeEnv,
-                &fd.slotMap,
-                fns,
-            )
+            crate::aver_generated::domain::ast::FnFastPath__view::FastSingleExpr => {
+                crate::aver_generated::domain::eval::core::evalResolvedSingleExprSlotTail(
+                    fnId,
+                    &fd.body,
+                    fd.slotCount.clone(),
+                    &fd.slotMap,
+                    calleeEnv,
+                    fns,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastNone => {
+                crate::aver_generated::domain::eval::core::evalStmtsSlotTail(
+                    fnId,
+                    fd.body.clone(),
+                    fd.slotCount.clone(),
+                    calleeEnv,
+                    &fd.slotMap,
+                    fns,
+                )
+            }
         }
     }
 }
@@ -4205,24 +4209,27 @@ pub fn evalResolvedNamedFn(
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let result @ _ = match &fd.fastPath {
-        crate::aver_generated::domain::ast::FnFastPath::FastLeaf(leaf) => {
-            let leaf = leaf.clone();
-            crate::aver_generated::domain::eval::core::runFastLeafNamed(
-                &leaf, &fd.body, calleeEnv, fns,
-            )
-        }
-        crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr => {
-            crate::aver_generated::domain::eval::core::evalResolvedSingleExprNamed(
+    let result @ _ = {
+        let __t = &fd.fastPath;
+        match __t.view() {
+            crate::aver_generated::domain::ast::FnFastPath__view::FastLeaf(__leaf_fields) => {
+                let leaf = __leaf_fields.0.clone();
+                crate::aver_generated::domain::eval::core::runFastLeafNamed(
+                    &leaf, &fd.body, calleeEnv, fns,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastSingleExpr => {
+                crate::aver_generated::domain::eval::core::evalResolvedSingleExprNamed(
+                    &fd.body, calleeEnv, fns,
+                )
+            }
+            crate::aver_generated::domain::ast::FnFastPath__view::FastNone => {
+                crate::aver_generated::domain::eval::core::evalStmts(&fd.body, calleeEnv, fns)
+            }
+            _ => crate::aver_generated::domain::eval::core::evalResolvedSingleExprNamed(
                 &fd.body, calleeEnv, fns,
-            )
+            ),
         }
-        crate::aver_generated::domain::ast::FnFastPath::FastNone => {
-            crate::aver_generated::domain::eval::core::evalStmts(&fd.body, calleeEnv, fns)
-        }
-        _ => crate::aver_generated::domain::eval::core::evalResolvedSingleExprNamed(
-            &fd.body, calleeEnv, fns,
-        ),
     };
     crate::aver_generated::domain::eval::common::normalizeFnReturn(&result)
 }

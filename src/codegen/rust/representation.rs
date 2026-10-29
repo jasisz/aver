@@ -96,6 +96,19 @@ pub(super) fn type_def_contract(td: &TypeDef, ctx: &CodegenContext) -> Represent
 /// slower and the memory broke even at a quarter of them.
 const LARGE_VARIANT_BYTES: usize = 64;
 
+/// How many bytes the fields of one constructor take before its sum is laid
+/// out thin although it is not recursive (see [`is_thin_sum`]). A value of a
+/// sum takes the room of its largest constructor, and every copy of it
+/// copies that room; behind the pointer a copy is a count. On Pestka (PGO,
+/// 12 pairs) laying sums out thin from 64 bytes took 2.4%
+/// fewer instructions and 2.6% less time on Init, 1.4% fewer instructions
+/// on Etale, at the same memory; sharing only the wide constructors and
+/// keeping the tag inline took 0.9% fewer instructions and 1.6% more time.
+const WIDE_SUM_BYTES: usize = 64;
+
+/// The most constructors a thin sum can have (`aver_rt::thin::MAX_TAGS`).
+const THIN_MAX_TAGS: usize = 256;
+
 /// Whether a sum is laid out as an `aver_rt::thin_sum!`: one pointer per
 /// value, to a node holding the constructor's tag and its fields only.
 ///
@@ -106,28 +119,33 @@ const LARGE_VARIANT_BYTES: usize = 64;
 /// used in many places is one allocation: copying it, or putting it into
 /// another constructor, copies the pointer. Recursion through `List`,
 /// `Vector` or `Map` already goes through the heap.
+///
+/// A sum with a constructor of at least [`WIDE_SUM_BYTES`] is too: such a
+/// value is copied more cheaply as a pointer than as its fields.
 pub(super) fn is_thin_sum(td: &TypeDef, ctx: &CodegenContext) -> bool {
     let TypeDef::Sum { variants, .. } = td else {
         return false;
     };
-    if on_cycle(td, ctx) {
-        return true;
+    let key = crate::codegen::common::backend_type_def_key(ctx, td);
+    if let Some(&thin) = ctx.rust_thin_sums.borrow().get(&key) {
+        return thin;
     }
-    // Opt-in representation probe: a frequently cloned wide, immutable sum
-    // can share the complete constructor payload just as recursive sums do.
-    // This is a conservative source-layout estimate, not an exact Rust size.
-    if std::env::var_os("AVER_WIDE_SUM_POINTERS").is_none() {
-        return false;
-    }
-    let scope = crate::codegen::common::type_key_for_decl(ctx, td);
-    variants.iter().any(|variant| {
-        variant
-            .fields
-            .iter()
-            .map(|field| type_inline_size(&parse_type_str(field), ctx, scope.scope_str()))
-            .sum::<usize>()
-            >= 64
-    })
+    // Sizes of the fields ask the same of the sums they hold; the answer is
+    // kept so a deep chain of sums is weighed once per sum.
+    let thin = on_cycle(td, ctx)
+        || variants.len() <= THIN_MAX_TAGS && {
+            let scope = crate::codegen::common::type_key_for_decl(ctx, td);
+            variants.iter().any(|variant| {
+                variant
+                    .fields
+                    .iter()
+                    .map(|field| type_inline_size(&parse_type_str(field), ctx, scope.scope_str()))
+                    .sum::<usize>()
+                    >= WIDE_SUM_BYTES
+            })
+        };
+    ctx.rust_thin_sums.borrow_mut().insert(key, thin);
+    thin
 }
 
 /// Whether a value of `td` can hold a value of `td` with no collection in
@@ -152,16 +170,15 @@ pub(super) fn hands_over(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -
     }
 }
 
-/// The recursive sum (see [`is_thin_sum`]) `callee` returns, which a
+/// The recursive sum (see [`on_cycle`]) `callee` returns, which a
 /// `lazy callee(…)` defers into a node of (`aver_rt::thin::Lazy`); `None`
 /// when it returns anything else.
 pub(super) fn deferred_sum(callee: crate::ir::FnId, ctx: &CodegenContext) -> Option<&TypeDef> {
     let resolved = ctx.resolved_program.fn_by_id(callee)?;
     let scope = ctx.symbol_table.fn_entry(callee).key.scope_str();
     match &resolved.return_type {
-        Type::Named { id, name } => {
-            named_type_def(*id, name, ctx, scope).filter(|td| is_thin_sum(td, ctx))
-        }
+        Type::Named { id, name } => named_type_def(*id, name, ctx, scope)
+            .filter(|td| matches!(td, TypeDef::Sum { .. }) && on_cycle(td, ctx)),
         _ => None,
     }
 }

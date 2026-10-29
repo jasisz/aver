@@ -14,7 +14,7 @@ pub const ECHO_CONTRACT_HASH: &str =
 pub const SHAPES_CONTRACT_HASH: &str =
     "sha256:32a895c71442e3cf3bf5fbad50ec7aaaa1b3a2c4de3c8ee5d8745abf3840242c";
 pub const TREES_CONTRACT_HASH: &str =
-    "sha256:17432587006dd8cc8c798996beb1f7cd92f6d7d8fbfb8b6dfb456f63e7ce6373";
+    "sha256:9ecfd5cdbe832d1ece5ff9ea6d47b82099c0d7e8f99491c48f337cf2a363d526";
 pub const VAULT_CONTRACT_HASH: &str =
     "sha256:9d47d09bba1f2905acf09cbb1f5d164feccf1e88d9fa36ac4c704ffe7038e138";
 pub const MODES_CONTRACT_HASH: &str =

@@ -491,6 +491,16 @@ fn raw_int_match_subjects_and_free_values_match_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A sum with a wide constructor is one pointer per value like a recursive
+/// one (`representation::is_thin_sum`): matched owned and borrowed, compared,
+/// used as a map key, held in an `Option`, and compared by `Float` fields
+/// that are not equal to themselves.
+#[test]
+fn wide_sums_behind_one_pointer_match_vm() {
+    assert_plain_parity("tests/fixtures/rust_wide_sum_pointers.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Pure `Int` trees are computed on `i64` first and exactly when a leaf is
 /// past `i64` or an operation overflows (`codegen/rust/from_mir/int_tree.rs`):
 /// overflow in the middle of a tree, Big leaves, `i64::MIN`, Euclidean

@@ -1,14 +1,19 @@
 module Trees
     kind = capability
     semantics = effectful
-    exposes [Tree, echo]
+    exposes [Tree, Wide, echo]
+
+type Wide
+    Box(Int, Int, Int, Int)
+    Blank
 
 type Tree
     Leaf(Int)
     Empty
     Both(Tree, Tree)
+    Packed(Wide)
 
 operation echo(value: Tree) -> Result<Tree, String>
-    ? "Round-trip a value of a recursive sum through the provider boundary."
+    ? "Round-trip a value of a recursive sum, holding a wide one, through the provider boundary."
     oracle = generative
     replay = recorded

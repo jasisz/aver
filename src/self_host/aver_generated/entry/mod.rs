@@ -33,7 +33,7 @@ fn __mutual_tco_trampoline_1(
                 mut acc @ _,
             ) => {
                 crate::cancel_checkpoint();
-                let qualified @ _ = Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
+                let qualified @ _ = crate::aver_generated::domain::ast::FnDef {
                     name: ((prefix.clone() + &::aver_rt::str_lit!(".")) + &f.name),
                     params: f.params.clone(),
                     body: f.body.clone(),
@@ -41,7 +41,7 @@ fn __mutual_tco_trampoline_1(
                     slotMap: f.slotMap.clone(),
                     fastPath: f.fastPath.clone(),
                     tailLoop: f.tailLoop,
-                });
+                };
                 let __arg6 @ _ = aver_rt::AverList::prepend_owned(
                     f,
                     aver_rt::AverList::prepend_owned(qualified, acc),
@@ -343,7 +343,7 @@ pub fn shiftFnIdsInFn(
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
-    Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
+    crate::aver_generated::domain::ast::FnDef {
         name: fd.name,
         params: fd.params,
         body: {
@@ -354,7 +354,7 @@ pub fn shiftFnIdsInFn(
         slotMap: fd.slotMap,
         fastPath: shiftFnIdsInFastPath(fd.fastPath, offset),
         tailLoop: fd.tailLoop,
-    })
+    }
 }
 
 /// Shift fast-path target ids that were resolved against a module-local function list.
@@ -363,15 +363,23 @@ pub fn shiftFnIdsInFastPath(
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
-    match &path {
-        crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(targetId, slotArgs) => {
-            let targetId = targetId.clone();
-            crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(
-                targetId.add(&offset),
-                slotArgs.clone(),
-            )
+    {
+        let __t = &path;
+        match __t.view() {
+            crate::aver_generated::domain::ast::FnFastPath__view::FastForwardCall(
+                __targetId_fields,
+            ) => {
+                let targetId = __targetId_fields.0.clone();
+                let slotArgs = &__targetId_fields.1;
+                crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(
+                    crate::aver_generated::domain::ast::FnFastPath__FastForwardCall(
+                        targetId.add(&offset),
+                        slotArgs.clone(),
+                    ),
+                )
+            }
+            _ => path,
         }
-        _ => path,
     }
 }
 

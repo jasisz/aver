@@ -75,7 +75,7 @@ pub fn resolveCallsInFn(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
-    Box::new(crate::aver_generated::domain::ast::FnDef__Fields {
+    crate::aver_generated::domain::ast::FnDef {
         name: fd.name,
         params: fd.params,
         body: {
@@ -88,7 +88,7 @@ pub fn resolveCallsInFn(
         slotMap: fd.slotMap,
         fastPath: fd.fastPath,
         tailLoop: fd.tailLoop,
-    })
+    }
 }
 
 /// Resolve calls in a list of statements.
