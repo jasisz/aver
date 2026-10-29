@@ -5,7 +5,12 @@
     "measured_at": "2026-10-16",
     "default_weight_seconds": 1.0,
     "case_weights_run": "https://github.com/jasisz/aver/actions/runs/38906495526",
-    "case_weights_measured_at": "2026-10-16"
+    "case_weights_measured_at": "2026-10-16",
+    "suite_weight_updates": {
+      "workflow_job": "https://github.com/jasisz/aver/actions/runs/40832439766/job/123309579787",
+      "measured_at": "2026-10-29",
+      "targets": ["proof_steps_vm_differential", "rust_codegen_differential"]
+    }
   },
   "split_targets": [
     "provider_vm_host_spec",
@@ -22,11 +27,11 @@
     "proof_plans_spec": 21.36,
     "proof_spec": 2.91,
     "proof_steps_spec": 147.47,
-    "proof_steps_vm_differential": 159.23,
+    "proof_steps_vm_differential": 196.69,
     "provider_package_workflow_spec": 39.36,
     "provider_vm_host_spec": 1226.22,
     "run_all_spec": 7.34,
-    "rust_codegen_differential": 123.83,
+    "rust_codegen_differential": 405.08,
     "rust_codegen_regression": 20.18,
     "rust_self_host_regen": 6.09,
     "rust_work_spec": 119.97,
