@@ -18,6 +18,13 @@
 //! emitter decides moves by (last uses, the params taken by value, the field
 //! moves); where it cannot tell, it counts a copy. A wrong answer costs time
 //! only: a `Box` clone copies the fields, which is what a copy means.
+//!
+//! A record the program copies still stays a `Box` when a count would make
+//! it worse somewhere: where a field read moves a field out of the record
+//! (a `Box` gives its fields away, a counted pointer only lends them) and no
+//! update binds the record as a `Box` of its own around that read (see
+//! `from_mir::emit_counted_record_update`), the count would turn the move
+//! into a copy of the field, a whole map, say.
 
 use std::collections::{HashMap, HashSet};
 
@@ -174,6 +181,14 @@ impl Walk<'_> {
     /// outside a place an update binds as a `Box`: a counted pointer there
     /// would copy the field instead.
     fn moves_through(&mut self, e: &Expr) {
+        if !e
+            .ty()
+            .is_some_and(|ty| holds_collection(ty, self.ctx, None, &mut HashSet::new()))
+        {
+            // A copy of a number, a string or a node of a sum only counts
+            // one more owner, as a move would hand one over.
+            return;
+        }
         let mut cur = e;
         while let MirExpr::Project(p) = &cur.node {
             let base = &*p.node.base;
@@ -251,9 +266,11 @@ impl Walk<'_> {
                         // it read (`Map.get`, `List.head`).
                         self.copy(e.ty(), false);
                     }
+                    // The string building of an interpolation reads the
+                    // values it shows.
                     _ => {
                         for arg in &call.node.args {
-                            self.expr(arg, Pos::Owned);
+                            self.expr(arg, Pos::Read);
                         }
                     }
                 }
@@ -683,5 +700,44 @@ fn holds(
             }
         }
         _ => {}
+    }
+}
+
+/// Whether a value of `ty` holds a `List`, `Vector` or `Map`, directly or
+/// through `Option`, `Result`, tuples and the fields of records and
+/// constructors: a copy of it, unlike a move, leaves the collection two
+/// owners, and the next write in place copies it whole.
+fn holds_collection(
+    ty: &Type,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    seen: &mut HashSet<String>,
+) -> bool {
+    match ty {
+        Type::List(_) | Type::Vector(_) | Type::Map(..) => true,
+        Type::Option(inner) => holds_collection(inner, ctx, scope, seen),
+        Type::Result(ok, err) => {
+            holds_collection(ok, ctx, scope, seen) || holds_collection(err, ctx, scope, seen)
+        }
+        Type::Tuple(items) => items.iter().any(|t| holds_collection(t, ctx, scope, seen)),
+        Type::Named { id, name } => {
+            let Some(td) = super::representation::named_type_def(*id, name, ctx, scope) else {
+                return true;
+            };
+            if !seen.insert(crate::codegen::common::backend_type_def_key(ctx, td)) {
+                return false;
+            }
+            let decl = crate::codegen::common::type_key_for_decl(ctx, td);
+            let fields: Vec<&String> = match td {
+                TypeDef::Product { fields, .. } => fields.iter().map(|(_, f)| f).collect(),
+                TypeDef::Sum { variants, .. } => {
+                    variants.iter().flat_map(|v| v.fields.iter()).collect()
+                }
+            };
+            fields
+                .into_iter()
+                .any(|f| holds_collection(&parse_type_str(f), ctx, decl.scope_str(), seen))
+        }
+        _ => false,
     }
 }
