@@ -507,9 +507,17 @@ fn large_records_behind_a_counted_pointer_match_vm() {
         "{ let mut __record0 = aver_rt::Counted::into_box(w); ",
         "aver_rt::Counted::from_box(__record0) }",
         "pub type Solo = Box<Solo__Fields>;",
+        // A counted record inside an owned result is updated through it
+        // the same way: its map moves out, it is not copied.
+        "pub type Cache = aver_rt::Counted<Cache__Fields>;",
+        "{ let mut __record0 = aver_rt::Counted::into_box(r.st); let __field0 = cachePut(__record0.m, ",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
     }
+    assert!(
+        !emitted.contains("r.st.m.clone()") && !emitted.contains("__record0.m.clone()"),
+        "a map in a counted record updated through a result is copied:\n{emitted}"
+    );
     assert!(
         !emitted.contains("Solo__Fields { __count"),
         "a record never copied has no count:\n{emitted}"

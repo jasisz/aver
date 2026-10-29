@@ -79,6 +79,48 @@ fn soloLoop(s: Solo, i: Int, n: Int) -> Solo
         true -> s
         false -> soloLoop(soloStep(s, i), i + 1, n)
 
+record Cache
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    tag: String
+    m: Map<Int, Int>
+
+record Held
+    b: Bool
+    st: Cache
+
+fn cachePut(m: Map<Int, Int>, k: Int) -> Map<Int, Int>
+    ? "Caches one answer."
+    Map.set(m, k, k)
+
+fn hold(c: Cache, k: Int) -> Held
+    ? "An answer and the state it leaves."
+    Held(b = Int.mod(k, 3) != 1, st = c)
+
+fn remember(r: Held, k: Int) -> Cache
+    ? "Records the answer in the cache of the state inside the result."
+    match r.b
+        true -> Cache.update(r.st, m = cachePut(r.st.m, k), a = r.st.a + 1)
+        false -> Cache.update(r.st, a = r.st.a + k)
+
+fn sizes(cs: List<Cache>, acc: String) -> String
+    ? "The cache size of every kept state."
+    match cs
+        [] -> acc
+        [c, ..rest] -> sizes(rest, "{acc} {Map.len(c.m)}")
+
+fn caching(c: Cache, k: Int, n: Int, kept: List<Cache>) -> String
+    ? "Updates the state through a result each step and keeps every state: no kept one sees a later write."
+    match k >= n
+        true -> "{Map.len(c.m)} {c.a} {sizes(kept, "")}"
+        false -> caching(remember(hold(c, k), k), k + 1, n, List.prepend(c, kept))
+
 fn keyed(ws: List<Wide>, m: Map<Wide, Int>) -> Map<Wide, Int>
     ? "Counts each record as a map key."
     match ws
@@ -96,5 +138,6 @@ fn main()
     Console.print(listA(snapshots(wide(1), 0, 6, []), "snapshots:"))
     solo = soloLoop(Solo(a = 0, b = 1, c = 2, d = 3, e = 4, f = 5, g = 6, h = 7, tag = "s"), 0, 100)
     Console.print("{solo.a} {solo.b} {solo.tag}")
+    Console.print(caching(Cache(a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, g = 0, h = 0, tag = "c", m = {}), 0, 8, []))
     m = keyed(List.concat(list, [w, w, wide(3)]), {})
     Console.print("{Map.len(m)} {Option.withDefault(Map.get(m, w), 0)} {w == wide(3)} {after == w}")

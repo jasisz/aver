@@ -44,22 +44,29 @@ pub(super) fn compute(ctx: &CodegenContext) -> HashSet<String> {
         return out;
     }
     let mut owned_params = HashMap::new();
+    let mut lost = HashSet::new();
     for (id, f) in program.iter() {
+        let movable =
+            crate::ir::mir::field_moves::movable_projections(&f.body.node, &program.builtins);
         let mut walk = Walk {
             ctx,
             f,
             fn_id: *id,
-            movable: crate::ir::mir::field_moves::movable_projections(
-                &f.body.node,
-                &program.builtins,
-            ),
+            builtins: &program.builtins,
+            moved_paths: crate::ir::mir::field_moves::moved_paths(&f.body.node, &movable),
+            movable,
             owned_params: &mut owned_params,
             loop_carried: HashSet::new(),
             slot_types: slot_types(f, *id, ctx),
+            bound: Vec::new(),
             out: &mut out,
+            lost: &mut lost,
         };
         walk.expr(&f.body, Pos::Owned);
     }
+    // Never worse than a `Box`: a record whose count would turn a field
+    // the program moves out of it into a copy stays a `Box`.
+    out.retain(|key| !lost.contains(key));
     out
 }
 
@@ -75,6 +82,7 @@ struct Walk<'a> {
     ctx: &'a CodegenContext,
     f: &'a MirFn,
     fn_id: FnId,
+    builtins: &'a [String],
     movable: HashSet<usize>,
     owned_params: &'a mut HashMap<FnId, Vec<bool>>,
     /// The params a self tail call hands on unchanged while it computes its
@@ -82,7 +90,17 @@ struct Walk<'a> {
     loop_carried: HashSet<LocalId>,
     /// The type of each local the function binds, where the MIR knows it.
     slot_types: HashMap<LocalId, Type>,
+    /// The field moves of the body (see `field_moves::moved_paths`).
+    moved_paths: Vec<(usize, LocalId, Vec<String>)>,
+    /// The places (a local and a path of fields) an enclosing update of a
+    /// boxed record binds as a `Box` of its own while its new values run
+    /// (see `from_mir::emit_counted_record_update`): a field moves out of
+    /// them even when the record is counted.
+    bound: Vec<(LocalId, Vec<String>)>,
     out: &'a mut HashSet<String>,
+    /// The boxed records a field read moves out of where a counted pointer
+    /// would make it a copy.
+    lost: &'a mut HashSet<String>,
 }
 
 type Expr = crate::ast::Spanned<MirExpr>;
@@ -103,6 +121,75 @@ impl Walk<'_> {
             &mut HashSet::new(),
             self.out,
         );
+    }
+
+    /// The place an update of a boxed record binds as a `Box` of its own
+    /// for its new values, as the emitter does for a counted record: a base
+    /// that moves, held by an owned local, that no value reads whole and
+    /// that did not move out before (unless an owned param holds it).
+    fn binds_base(
+        &mut self,
+        upd: &crate::ir::mir::MirRecordUpdate,
+        local_moves: bool,
+    ) -> Option<(LocalId, Vec<String>)> {
+        let td =
+            super::representation::named_type_def(upd.type_id, &upd.type_name, self.ctx, None)?;
+        if !is_boxed_record(td, self.ctx) {
+            return None;
+        }
+        let (root, _, path) = crate::ir::mir::field_moves::projection_root(&upd.base.node)?;
+        let moves = match &upd.base.node {
+            MirExpr::Local(_) => local_moves,
+            _ => {
+                self.movable
+                    .contains(&(&upd.base.node as *const MirExpr as usize))
+                    && self.local_owned(root)
+                    && !self.loop_carried.contains(&root)
+            }
+        };
+        if !moves {
+            return None;
+        }
+        let in_param = self.f.params.iter().any(|p| p.local == root);
+        let mut inside = HashSet::from([&upd.base.node as *const MirExpr as usize]);
+        fn addresses(expr: &MirExpr, out: &mut HashSet<usize>) {
+            out.insert(expr as *const MirExpr as usize);
+            crate::ir::mir::expr::walk_children(expr, &mut |child| addresses(child, out));
+        }
+        for field in &upd.updates {
+            addresses(&field.value.node, &mut inside);
+        }
+        let moved_before = !in_param
+            && self.moved_paths.iter().any(|(addr, slot, moved)| {
+                *slot == root && moved.as_slice() == path.as_slice() && !inside.contains(addr)
+            });
+        let beside = upd
+            .updates
+            .iter()
+            .any(|field| super::from_mir::reads_record_holder(&field.value.node, root, &path));
+        (!moved_before && !beside).then_some((root, path))
+    }
+
+    /// Note every boxed record a moving field read `e` passes through
+    /// outside a place an update binds as a `Box`: a counted pointer there
+    /// would copy the field instead.
+    fn moves_through(&mut self, e: &Expr) {
+        let mut cur = e;
+        while let MirExpr::Project(p) = &cur.node {
+            let base = &*p.node.base;
+            let bound = crate::ir::mir::field_moves::projection_root(&base.node).is_some_and(
+                |(root, _, path)| self.bound.iter().any(|(r, p)| *r == root && *p == path),
+            );
+            if !bound
+                && let Some(Type::Named { id, name }) = base.ty()
+                && let Some(td) = super::representation::named_type_def(*id, name, self.ctx, None)
+                && is_boxed_record(td, self.ctx)
+            {
+                self.lost
+                    .insert(crate::codegen::common::backend_type_def_key(self.ctx, td));
+            }
+            cur = base;
+        }
     }
 
     /// Whether the param `index` of `id` is taken by value.
@@ -151,8 +238,14 @@ impl Walk<'_> {
                         }
                     }
                     MirCallee::Builtin(_) => {
-                        for arg in &call.node.args {
-                            self.expr(arg, Pos::Owned);
+                        let reads_first =
+                            super::from_mir::builtin_only_reads(&call.node.callee, self.builtins);
+                        for (i, arg) in call.node.args.iter().enumerate() {
+                            let pos = match i == 0 && reads_first {
+                                true => Pos::Read,
+                                false => Pos::Owned,
+                            };
+                            self.expr(arg, pos);
                         }
                         // A built-in's result may be an item of a collection
                         // it read (`Map.get`, `List.head`).
@@ -241,8 +334,15 @@ impl Walk<'_> {
                 if !moves {
                     self.expr(&upd.base, Pos::Owned);
                 }
+                let bound = self.binds_base(upd, moves);
+                if let Some(place) = &bound {
+                    self.bound.push(place.clone());
+                }
                 for field in &upd.updates {
                     self.expr(&field.value, Pos::Owned);
+                }
+                if bound.is_some() {
+                    self.bound.pop();
                 }
             }
             MirExpr::Project(p) => {
@@ -256,6 +356,13 @@ impl Walk<'_> {
                     if !moves {
                         self.copy(e.ty(), false);
                     }
+                }
+                if pos == Pos::Owned
+                    && self.movable.contains(&(&e.node as *const MirExpr as usize))
+                    && crate::ir::mir::field_moves::projection_root(&e.node)
+                        .is_some_and(|(root, _, _)| self.local_owned(root))
+                {
+                    self.moves_through(e);
                 }
                 self.expr(&p.node.base, Pos::Read);
             }

@@ -1429,7 +1429,7 @@ fn unwrapped_at_last_use(expr: &MirExpr, slot: LocalId) -> bool {
 /// Whether `callee` is a built-in that only reads the collection it is given
 /// first and takes it borrowed as it is (`Vector.get(v, i)` on
 /// `v: &AverVector`).
-fn builtin_only_reads(callee: &MirCallee, builtins: &[String]) -> bool {
+pub(super) fn builtin_only_reads(callee: &MirCallee, builtins: &[String]) -> bool {
     let MirCallee::Builtin(id) = callee else {
         return false;
     };
@@ -3310,8 +3310,12 @@ fn emit_counted_record_update(
     };
     let place = crate::ir::mir::field_moves::projection_root(&upd.base.node);
     let holder = projection_root_local(&upd.base.node);
-    if let (Some((root, _, path)), Some(_), true) = (place, holder, moved) {
-        if !moved_before_or_beside(upd, root, &path, ctx) {
+    if let (Some((root, _, path)), Some(holder), true) = (place, holder, moved) {
+        // An owned parameter that holds the record is written where it is,
+        // as for a record that is always boxed: a move out of the place on
+        // another branch does not reach here.
+        let in_param = ctx.is_owned_param(&aver_name_to_rust(&holder.name));
+        if !moved_before_or_beside(upd, root, &path, !in_param, ctx) {
             let alias = RecordAlias {
                 place: &upd.base.node,
                 name: &name,
@@ -3384,6 +3388,7 @@ fn moved_before_or_beside(
     upd: &crate::ir::mir::MirRecordUpdate,
     root: crate::ir::mir::LocalId,
     path: &[String],
+    moves_count: bool,
     ctx: &MirEmitCtx<'_>,
 ) -> bool {
     fn addresses(expr: &MirExpr, out: &mut HashSet<usize>) {
@@ -3394,9 +3399,10 @@ fn moved_before_or_beside(
     for field in &upd.updates {
         addresses(&field.value.node, &mut inside);
     }
-    let moved_before = ctx.moved_paths.iter().any(|(addr, slot, moved)| {
-        *slot == root && moved.as_slice() == path && !inside.contains(addr)
-    });
+    let moved_before = moves_count
+        && ctx.moved_paths.iter().any(|(addr, slot, moved)| {
+            *slot == root && moved.as_slice() == path && !inside.contains(addr)
+        });
     moved_before
         || upd
             .updates
@@ -3500,7 +3506,11 @@ fn emit_boxed_record_update(
 
 /// Whether `expr` reads the local `root` other than through `path` or a
 /// path beside it: as a whole, or through a field `path` lies under.
-fn reads_record_holder(expr: &MirExpr, root: crate::ir::mir::LocalId, path: &[String]) -> bool {
+pub(super) fn reads_record_holder(
+    expr: &MirExpr,
+    root: crate::ir::mir::LocalId,
+    path: &[String],
+) -> bool {
     if let Some((slot, _, read)) = crate::ir::mir::field_moves::projection_root(expr) {
         return slot == root && read.len() < path.len() && path.starts_with(&read);
     }
