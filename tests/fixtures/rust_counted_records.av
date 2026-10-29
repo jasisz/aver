@@ -109,6 +109,22 @@ fn remember(r: Held, k: Int) -> Cache
         true -> Cache.update(r.st, m = cachePut(r.st.m, k), a = r.st.a + 1)
         false -> Cache.update(r.st, a = r.st.a + k)
 
+fn weight(c: Cache) -> Int
+    ? "Reads the whole record."
+    c.a + Map.len(c.m)
+
+record Pack
+    tag: Int
+    st: Cache
+
+fn repack(p: Pack, k: Int) -> Pack
+    ? "An update of a record inside another whose new value reads the record whole before its map moves."
+    Pack(tag = k, st = Cache.update(p.st, b = weight(p.st), m = cachePut(p.st.m, k + 100)))
+
+fn weighedHere(c: Cache, k: Int) -> Cache
+    ? "The same on a record held by a parameter."
+    Cache.update(c, c = weight(c), m = cachePut(c.m, k + 200))
+
 fn sizes(cs: List<Cache>, acc: String) -> String
     ? "The cache size of every kept state."
     match cs
@@ -118,8 +134,8 @@ fn sizes(cs: List<Cache>, acc: String) -> String
 fn caching(c: Cache, k: Int, n: Int, kept: List<Cache>) -> String
     ? "Updates the state through a result each step and keeps every state: no kept one sees a later write."
     match k >= n
-        true -> "{Map.len(c.m)} {c.a} {sizes(kept, "")}"
-        false -> caching(remember(hold(c, k), k), k + 1, n, List.prepend(c, kept))
+        true -> "{Map.len(c.m)} {c.a} {c.b} {c.c} {sizes(kept, "")}"
+        false -> caching(weighedHere(repack(Pack(tag = k, st = remember(hold(c, k), k)), k).st, k), k + 1, n, List.prepend(c, kept))
 
 fn keyed(ws: List<Wide>, m: Map<Wide, Int>) -> Map<Wide, Int>
     ? "Counts each record as a map key."

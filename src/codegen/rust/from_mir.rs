@@ -3326,10 +3326,38 @@ fn emit_counted_record_update(
                 record_alias: Some(&alias),
                 ..*ctx
             };
-            let (parts, _) = emit_update_parts(upd, false, &inner)?;
+            let (inside, _) = emit_update_parts(upd, false, &inner)?;
             // The base moves as it is emitted outside the alias.
             let base = emit_mir_expr(&upd.base, ctx)?;
-            return Some(in_box(&base, &parts));
+            // A value that reads the record whole (`k = f(r.st)`) reads the
+            // counted record, not the `Box`: it and every value before it
+            // run first, as emitted outside the alias, so the order stays.
+            let before = upd
+                .updates
+                .iter()
+                .rposition(|field| reads_place_whole(&field.value.node, root, &path))
+                .map_or(0, |i| i + 1);
+            if before == 0 {
+                return Some(in_box(&base, &inside));
+            }
+            let value = |i: usize| match i < before {
+                true => &parts[i].1,
+                false => &inside[i].1,
+            };
+            let early: String = (0..before)
+                .map(|i| format!("let __field{i} = {}; ", value(i)))
+                .collect();
+            let late: String = (before..parts.len())
+                .map(|i| format!("let __field{i} = {}; ", value(i)))
+                .collect();
+            let writes: String = parts
+                .iter()
+                .enumerate()
+                .map(|(i, (field, _))| format!("{name}.{field} = __field{i}; "))
+                .collect();
+            return Some(format!(
+                "{{ {early}let mut {name} = aver_rt::Counted::into_box({base}); {late}{writes}aver_rt::Counted::from_box({name}) }}"
+            ));
         }
         let fields: Vec<String> = parts.iter().map(|(f, v)| format!("{f}: {v}")).collect();
         return Some(format!(
@@ -3408,6 +3436,18 @@ fn moved_before_or_beside(
             .updates
             .iter()
             .any(|field| reads_record_holder(&field.value.node, root, path))
+}
+
+/// Whether `expr` reads the place `root.path` itself, as a whole record.
+fn reads_place_whole(expr: &MirExpr, root: crate::ir::mir::LocalId, path: &[String]) -> bool {
+    if let Some((slot, _, read)) = crate::ir::mir::field_moves::projection_root(expr) {
+        return slot == root && read == path;
+    }
+    let mut found = false;
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        found = found || reads_place_whole(child, root, path);
+    });
+    found
 }
 
 /// Whether `expr` is a place an enclosing update has bound under a name of
