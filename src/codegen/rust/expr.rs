@@ -305,9 +305,16 @@ fn resolved_callee<'a>(
 /// MIR walker calls this directly with the base local's stamped type,
 /// so the elision decision matches HIR byte-for-byte.
 pub(super) fn record_field_is_copy(named_ty: &Type, field: &str, ctx: &CodegenContext) -> bool {
-    let Some(record_key) = crate::codegen::common::backend_named_type_key(ctx, named_ty) else {
-        return false;
-    };
+    record_field_type(named_ty, field, ctx).is_some_and(|ty| super::emit_ctx::is_copy_type(&ty))
+}
+
+/// The declared type of `field` of the record `named_ty`, when it resolves.
+pub(super) fn record_field_type(
+    named_ty: &Type,
+    field: &str,
+    ctx: &CodegenContext,
+) -> Option<Type> {
+    let record_key = crate::codegen::common::backend_named_type_key(ctx, named_ty)?;
     // Find record definition and look up field type. Iterate
     // through `(module_prefix, td)` pairs so canonical-key
     // matching (`"A.Shape"`) routes to the right module's
@@ -330,12 +337,11 @@ pub(super) fn record_field_is_copy(named_ty: &Type, field: &str, ctx: &CodegenCo
             if canonical == record_key
                 && let Some((_, type_ann)) = fields.iter().find(|(n, _)| n == field)
             {
-                let ty = types::parse_type_str(type_ann);
-                return super::emit_ctx::is_copy_type(&ty);
+                return Some(types::parse_type_str(type_ann));
             }
         }
     }
-    false
+    None
 }
 
 pub(super) fn emit_dispatch_table_match<F>(

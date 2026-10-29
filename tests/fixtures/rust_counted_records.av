@@ -1,0 +1,100 @@
+module RustCountedRecords
+    intent =
+        "Fixture: a large record the program copies, kept behind one counted pointer: copied into a list, updated in a loop, shared and then updated (the other copy must not see the write), kept as snapshots while later calls update it, compared, and used as a map key; and one it never copies, which stays in a Box."
+    effects [Console.print]
+
+record Wide
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    tag: String
+
+fn wide(n: Int) -> Wide
+    ? "A record with every number n."
+    Wide(a = n, b = n, c = n, d = n, e = n, f = n, g = n, h = n, tag = "w{n}")
+
+fn bump(w: Wide, i: Int) -> Wide
+    ? "a grows by i and the tag is replaced."
+    Wide.update(w, a = w.a + i, tag = "t{i}")
+
+fn loop(w: Wide, i: Int, n: Int) -> Wide
+    ? "n updates of one record."
+    match i >= n
+        true -> w
+        false -> loop(bump(w, i), i + 1, n)
+
+fn copies(w: Wide, n: Int, acc: List<Wide>) -> List<Wide>
+    ? "n copies of w, each with its own h."
+    match n <= 0
+        true -> acc
+        false -> copies(w, n - 1, List.prepend(Wide.update(w, h = n), acc))
+
+fn sumH(ws: List<Wide>, acc: Int) -> Int
+    ? "The sum of h over the list."
+    match ws
+        [] -> acc
+        [w, ..rest] -> sumH(rest, acc + w.h)
+
+fn shared(w: Wide) -> String
+    ? "A copy kept beside a changed one: the kept copy keeps its fields."
+    kept = w
+    changed = bump(w, 100)
+    "{kept.a} {changed.a} {kept.tag} {changed.tag} {kept == w} {changed == w}"
+
+fn snapshots(w: Wide, i: Int, n: Int, kept: List<Wide>) -> List<Wide>
+    ? "Keeps the record each round, then updates it in two separate calls: no snapshot sees a later write."
+    match i >= n
+        true -> List.prepend(w, kept)
+        false -> snapshots(bump(bump(w, i), i + 1), i + 2, n, List.prepend(w, kept))
+
+fn listA(ws: List<Wide>, acc: String) -> String
+    ? "The a and tag of every record in the list."
+    match ws
+        [] -> acc
+        [w, ..rest] -> listA(rest, "{acc} {w.a}/{w.tag}")
+
+record Solo
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    tag: String
+
+fn soloStep(s: Solo, i: Int) -> Solo
+    ? "A record never copied: updated where it is."
+    Solo.update(s, a = s.a + i, tag = "s{i}")
+
+fn soloLoop(s: Solo, i: Int, n: Int) -> Solo
+    ? "n updates of a record nobody else holds."
+    match i >= n
+        true -> s
+        false -> soloLoop(soloStep(s, i), i + 1, n)
+
+fn keyed(ws: List<Wide>, m: Map<Wide, Int>) -> Map<Wide, Int>
+    ? "Counts each record as a map key."
+    match ws
+        [] -> m
+        [w, ..rest] -> keyed(rest, Map.set(m, w, Option.withDefault(Map.get(m, w), 0) + 1))
+
+fn main()
+    ! [Console.print]
+    w = wide(3)
+    after = loop(w, 0, 1000)
+    Console.print("{w.a} {after.a} {after.tag} {w.tag}")
+    list = copies(w, 50, [])
+    Console.print("{List.len(list)} {sumH(list, 0)} {w.h}")
+    Console.print(shared(w))
+    Console.print(listA(snapshots(wide(1), 0, 6, []), "snapshots:"))
+    solo = soloLoop(Solo(a = 0, b = 1, c = 2, d = 3, e = 4, f = 5, g = 6, h = 7, tag = "s"), 0, 100)
+    Console.print("{solo.a} {solo.b} {solo.tag}")
+    m = keyed(List.concat(list, [w, w, wide(3)]), {})
+    Console.print("{Map.len(m)} {Option.withDefault(Map.get(m, w), 0)} {w == wide(3)} {after == w}")

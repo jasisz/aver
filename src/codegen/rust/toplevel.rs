@@ -1,9 +1,9 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
 use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
-    RepresentationCapabilities, RepresentationContract, cheap_fields_first, compares_fast,
-    hands_over, is_boxed_record, is_thin_sum, on_cycle, through_collection, type_def_contract,
-    variant_field_refs, walking_def, walks,
+    COUNT_FIELD, RepresentationCapabilities, RepresentationContract, cheap_fields_first,
+    compares_fast, hands_over, is_boxed_record, is_counted_record, is_thin_sum, on_cycle,
+    through_collection, type_def_contract, variant_field_refs, walking_def, walks,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -100,6 +100,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             on_cycle(td, ctx),
             through_collection(td, ctx),
             is_boxed_record(td, ctx),
+            is_counted_record(td, ctx),
             representation,
         ),
     }
@@ -981,6 +982,7 @@ fn emit_product_type(
     cyclic: bool,
     through: bool,
     boxed: bool,
+    counted: bool,
     representation: RepresentationContract,
 ) -> String {
     let packed_u8 = super::uses_packed_u8(ctx, name);
@@ -988,11 +990,17 @@ fn emit_product_type(
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     // A boxed record (see `is_boxed_record`) keeps its fields in
-    // `{name}__Fields`, and `{name}` names the box.
+    // `{name}__Fields`, and `{name}` names the pointer: a `Box`, or a
+    // counted one whose count sits in the fields (see `is_counted_record`).
     let display_name = name;
     let fields_name = format!("{name}__Fields");
+    let counted = boxed && counted;
     let name = if boxed {
-        writeln!(out, "{visibility}type {name} = Box<{fields_name}>;\n").unwrap();
+        let pointer = match counted {
+            true => "aver_rt::Counted",
+            false => "Box",
+        };
+        writeln!(out, "{visibility}type {name} = {pointer}<{fields_name}>;\n").unwrap();
         fields_name.as_str()
     } else {
         name
@@ -1014,6 +1022,9 @@ fn emit_product_type(
     };
     writeln!(out, "{}", derive_line(derived)).unwrap();
     writeln!(out, "{}struct {} {{", visibility, name).unwrap();
+    if counted {
+        writeln!(out, "    {visibility}{COUNT_FIELD}: aver_rt::Count,").unwrap();
+    }
     for (field_name, field_type) in fields {
         let rust_type = if packed_u8 {
             debug_assert_eq!(fields.len(), 1);
@@ -1036,6 +1047,13 @@ fn emit_product_type(
         .unwrap();
     }
     writeln!(out, "}}").unwrap();
+    if counted {
+        write!(
+            out,
+            "\n// SAFETY: `count` is always the same field.\nunsafe impl aver_rt::Counts for {name} {{\n    fn count(&self) -> &aver_rt::Count {{\n        &self.{COUNT_FIELD}\n    }}\n}}\n"
+        )
+        .unwrap();
+    }
     let walking_fields = Walking {
         types: &types,
         ctx,
@@ -2593,6 +2611,7 @@ mod tests {
             mir_program: None,
             bare_i64: Default::default(),
             rust_owned_record_params: Default::default(),
+            rust_counted_records: Default::default(),
             rust_lent_options: Default::default(),
             rust_lazy_sums: Default::default(),
             knowing_trusted: Default::default(),

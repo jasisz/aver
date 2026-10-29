@@ -3,6 +3,7 @@
 pub mod provider;
 
 pub mod bytebuilder;
+mod counted;
 pub mod crypto;
 mod display;
 #[cfg(feature = "http")]
@@ -30,6 +31,7 @@ pub mod thin;
 pub mod work;
 
 pub use bytebuilder::{ByteBuilder, byte_builder_finalize, byte_builder_new, byte_builder_push};
+pub use counted::{Count, Counted, Counts};
 pub use display::{AverDisplay, aver_display};
 pub use int::{
     AverInt, MAX_MATERIALIZED_BITS, ShiftCountError, bit_width_too_large_message,

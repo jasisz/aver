@@ -88,11 +88,15 @@ pub(super) fn value_facts(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> RustValueFact
             // projection moves only where `field_moves` proved no later or
             // still-borrowed read overlaps it and the root is an owned
             // Rust value.
+            // A field read through a record behind a counted pointer never
+            // moves: an update reads it through a `Box` (see
+            // `through_counted`).
             can_move: copy
-                || match projection_root_local(&project.node.base.node) {
-                    None => true,
-                    Some(root) => projection_moves(expr, root, ctx),
-                },
+                || (!through_counted(expr, ctx)
+                    && match projection_root_local(&project.node.base.node) {
+                        None => true,
+                        Some(root) => projection_moves(expr, root, ctx),
+                    }),
             provider_resource: false,
         };
     }
@@ -155,6 +159,24 @@ pub(super) fn materialize_owned(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'
         RustValueMode::Owned if facts.can_move => code,
         RustValueMode::Owned => format!("{}.clone()", code),
     }
+}
+
+/// Whether `expr` reads a field through a record kept behind a counted
+/// pointer (`aver_rt::Counted`, see `representation::is_counted_record`),
+/// which gives out its fields only by reference. A record an enclosing
+/// update has bound as a `Box` of its own (`from_mir::RecordAlias`) is read
+/// through that `Box`, as a record that is always boxed.
+pub(super) fn through_counted(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    let MirExpr::Project(project) = expr else {
+        return false;
+    };
+    let base = &project.node.base;
+    if super::from_mir::is_record_alias(&base.node, ctx) {
+        return false;
+    }
+    matches!(base.ty(), Some(Type::Named { id, name })
+        if super::from_mir::record_is_counted(*id, name, ctx))
+        || through_counted(&base.node, ctx)
 }
 
 /// Materialise `expr` for a Rust position that consumes a shared borrow.

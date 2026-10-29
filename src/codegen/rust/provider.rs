@@ -541,8 +541,21 @@ pub(super) fn emit_represented_type_codec(
     let field_type = |source: &str| type_annotation_to_rust_scoped(source, ctx, Some(module));
     let codec = match type_def {
         TypeDef::Product { name, fields, .. } => {
-            let boxed = super::representation::is_boxed_record(type_def, ctx);
-            emit_record_codec(name, fields, boxed, &canonical, &field_type)
+            // A record behind a counted pointer has its codec on its fields;
+            // the runtime's `Counted` codec carries it across.
+            match super::representation::is_counted_record(type_def, ctx) {
+                true => emit_record_codec(
+                    &format!("{name}__Fields"),
+                    fields,
+                    (false, true),
+                    &canonical,
+                    &field_type,
+                ),
+                false => {
+                    let boxed = super::representation::is_boxed_record(type_def, ctx);
+                    emit_record_codec(name, fields, (boxed, false), &canonical, &field_type)
+                }
+            }
         }
         TypeDef::Sum { name, variants, .. } => emit_sum_codec(
             name,
@@ -561,7 +574,7 @@ pub(super) fn emit_represented_type_codec(
 fn emit_record_codec(
     name: &str,
     fields: &[(String, String)],
-    boxed: bool,
+    (boxed, counted): (bool, bool),
     canonical: &str,
     field_type: &dyn Fn(&str) -> String,
 ) -> String {
@@ -586,7 +599,7 @@ fn emit_record_codec(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let (open, close) = super::representation::record_literal_ends(name, boxed);
+    let (open, close) = super::representation::record_literal_ends(name, boxed, counted);
     format!(
         r#"impl aver_rt::provider::ProviderCodec for {name} {{
     fn into_provider_value(self, registry: &aver_rt::provider::NativeProviderRegistry, capability: &str) -> Result<aver_rt::provider::ProviderValue, String> {{

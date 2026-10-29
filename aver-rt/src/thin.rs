@@ -1306,6 +1306,17 @@ mod tests {
         }
     }
 
+    /// `None` of a thin sum is the null pointer: a value without a node is a
+    /// small non-zero address, so zero is still free for `Option`.
+    #[test]
+    fn an_option_of_a_thin_sum_is_one_word() {
+        let word = std::mem::size_of::<usize>();
+        assert_eq!(std::mem::size_of::<T>(), word);
+        assert_eq!(std::mem::size_of::<Option<T>>(), word);
+        assert_eq!(std::mem::size_of::<Option<F>>(), word);
+        assert_eq!(std::mem::size_of::<Option<Option<T>>>(), 2 * word);
+    }
+
     #[test]
     fn a_sum_knows_whether_a_value_can_be_without_a_node() {
         use super::ThinSum;

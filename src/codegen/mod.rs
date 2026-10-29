@@ -669,6 +669,11 @@ pub struct CodegenContext {
     /// rewrites, so every signature and every call site read the same
     /// decision; empty (borrow by default) everywhere else.
     pub rust_owned_record_params: HashMap<crate::ir::FnId, Vec<bool>>,
+    /// The boxed records (by backend type key) the program may copy, kept
+    /// behind a counted pointer instead of a `Box` (see
+    /// `rust::representation::is_counted_record`). Computed once by the
+    /// Rust transpile with the record params above; empty everywhere else.
+    pub rust_counted_records: HashSet<String>,
     /// `Option` params the Rust backend takes as `Option<&T>` because the
     /// function only reads them, by param position (see
     /// `codegen::rust::lent_option`). Computed with the facts above; empty
@@ -1149,6 +1154,7 @@ pub fn build_context(
         rust_i64_carrier_ctors: HashMap::new(),
         bare_i64,
         rust_owned_record_params: Default::default(),
+        rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
         rust_lazy_sums: Default::default(),
         knowing_trusted: Default::default(),
@@ -1683,6 +1689,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         mir_program: None,
         bare_i64: Default::default(),
         rust_owned_record_params: Default::default(),
+        rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
         rust_lazy_sums: Default::default(),
         knowing_trusted: Default::default(),

@@ -339,7 +339,7 @@ impl<'a> MirEmitCtx<'a> {
         self.loop_carried_params.contains(name)
     }
 
-    fn is_owned_param(&self, name: &str) -> bool {
+    pub(super) fn is_owned_param(&self, name: &str) -> bool {
         self.owned_params.contains(name)
     }
 }
@@ -777,7 +777,7 @@ fn binder_count(expr: &MirExpr, name: &str) -> usize {
 /// on `own_param`'s proof (a cleared alias bit). A param the body only reads
 /// through `Vector.get`, `Map.get` and the like stays borrowed: owning it
 /// would only make a caller that keeps the collection clone it.
-fn collection_graduates(
+pub(super) fn collection_graduates(
     ty: &Type,
     mir_fn: &crate::ir::mir::MirFn,
     index: usize,
@@ -832,7 +832,7 @@ fn is_owned_collection_candidate(ty: &Type) -> bool {
 /// [`compute_owned_record_params`] facts) says the body consumes it. Only a
 /// named record or a `Vector`/`Map` param qualifies: those are the values
 /// whose in-place update copies everything while a second owner lives.
-fn param_handed_on(
+pub(super) fn param_handed_on(
     ty: &Type,
     mir_fn: &crate::ir::mir::MirFn,
     index: usize,
@@ -2929,10 +2929,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
             }
             if record_is_boxed(rec.type_id, &rec.type_name, emit_ctx) {
-                return Some(format!(
-                    "Box::new({rust_type}__Fields {{ {} }})",
-                    parts.join(", ")
-                ));
+                let (open, close) = super::representation::record_literal_ends(
+                    &rust_type,
+                    true,
+                    record_is_counted(rec.type_id, &rec.type_name, emit_ctx),
+                );
+                return Some(format!("{open} {} {close}", parts.join(", ")));
             }
             Some(format!("{} {{ {} }}", rust_type, parts.join(", ")))
         }
@@ -2967,6 +2969,32 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     mir_clone_arg(emitted_base.clone(), &upd.base.node, emit_ctx)
                 };
                 let moved = base == emitted_base;
+                if record_is_counted(upd.type_id, &upd.type_name, emit_ctx) {
+                    let record = format!("{rust_type}__Fields");
+                    let moved = moved || values_end_base(upd, emit_ctx);
+                    return emit_counted_record_update(upd, &record, parts, moved, &base, emit_ctx);
+                }
+                if !moved && values_end_base(upd, emit_ctx) {
+                    // The base's last reads are in the new values, and none
+                    // of them moves a field the update keeps: run the
+                    // values, then move the base into a binding and write
+                    // there, instead of copying it first.
+                    let depth = emit_ctx.record_alias.map_or(0, |alias| alias.depth + 1);
+                    let name = format!("__record{depth}");
+                    let values: String = parts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (_, value))| format!("let __field{i} = {value}; "))
+                        .collect();
+                    let writes: String = parts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (field, _))| format!("{name}.{field} = __field{i}; "))
+                        .collect();
+                    return Some(format!(
+                        "{{ {values}let mut {name} = {emitted_base}; {writes}{name} }}"
+                    ));
+                }
                 let record = format!("{rust_type}__Fields");
                 return emit_boxed_record_update(upd, &record, parts, moved, &base, emit_ctx);
             }
@@ -3179,8 +3207,9 @@ fn emit_update_parts(
 /// Whether `T.update(base, …)` may move its base after running the new
 /// values instead of copying it: the base is an owned local whose last reads
 /// are inside the values, all through fields, and no read there that may move
-/// takes a field the update keeps. Rust then moves the rest of the base, or
-/// the boxed record takes the values in place (`emit_boxed_record_update`).
+/// takes a field the update keeps. Rust then moves the rest of the base, the
+/// boxed record takes the values in place (`emit_boxed_record_update`), or a
+/// counted record reads it where it moved (`emit_counted_record_update`).
 fn values_end_base(upd: &crate::ir::mir::MirRecordUpdate, ctx: &MirEmitCtx<'_>) -> bool {
     let Some(base) = local_of(&upd.base.node) else {
         return false;
@@ -3228,10 +3257,157 @@ fn values_end_base(upd: &crate::ir::mir::MirRecordUpdate, ctx: &MirEmitCtx<'_>) 
 
 /// Whether the record type of a literal or update is kept behind a `Box`
 /// (see [`super::representation::is_boxed_record`]).
-fn record_is_boxed(id: Option<crate::ir::TypeId>, name: &str, ctx: &MirEmitCtx<'_>) -> bool {
+pub(super) fn record_is_boxed(
+    id: Option<crate::ir::TypeId>,
+    name: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
     ctx.codegen.is_some_and(|cg| {
         super::representation::type_is_boxed_record(id, name, cg, ctx.current_module_scope)
     })
+}
+
+/// Whether the record type of a literal or update is kept behind a counted
+/// pointer (see [`super::representation::is_counted_record`]).
+pub(super) fn record_is_counted(
+    id: Option<crate::ir::TypeId>,
+    name: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
+    ctx.codegen.is_some_and(|cg| {
+        super::representation::type_is_counted_record(id, name, cg, ctx.current_module_scope)
+    })
+}
+
+/// `T.update(base, f = v, …)` of a record behind a counted pointer. The
+/// record is turned into a `Box` of its own once (`Counted::into_box`,
+/// which copies the fields only when another owner shares them), the new
+/// values are written and fields moved through that `Box` as for a record
+/// that is always boxed, and the `Box` is turned back (`Counted::from_box`),
+/// all in the same node when the update held the only owner:
+/// - a base that moves (`moved`, the record's last use, or its last reads
+///   are in the values, see [`values_end_base`]) is bound first, and the
+///   values read it there, unless a field of it moved out earlier or a
+///   value reads the local that holds it as a whole;
+/// - a base that is copied is bound after the values, which read the
+///   original;
+/// - otherwise the fields go into a new node.
+fn emit_counted_record_update(
+    upd: &crate::ir::mir::MirRecordUpdate,
+    record: &str,
+    parts: Vec<(String, String)>,
+    moved: bool,
+    base: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let depth = ctx.record_alias.map_or(0, |alias| alias.depth + 1);
+    let name = format!("__record{depth}");
+    let in_box = |base: &str, parts: &[(String, String)]| {
+        format!(
+            "{{ let mut {name} = aver_rt::Counted::into_box({base}); {}aver_rt::Counted::from_box({name}) }}",
+            write_fields(&name, parts)
+        )
+    };
+    let place = crate::ir::mir::field_moves::projection_root(&upd.base.node);
+    let holder = projection_root_local(&upd.base.node);
+    if let (Some((root, _, path)), Some(_), true) = (place, holder, moved) {
+        if !moved_before_or_beside(upd, root, &path, ctx) {
+            let alias = RecordAlias {
+                place: &upd.base.node,
+                name: &name,
+                depth,
+                outer: ctx.record_alias,
+            };
+            let inner = MirEmitCtx {
+                record_alias: Some(&alias),
+                ..*ctx
+            };
+            let (parts, _) = emit_update_parts(upd, false, &inner)?;
+            // The base moves as it is emitted outside the alias.
+            let base = emit_mir_expr(&upd.base, ctx)?;
+            return Some(in_box(&base, &parts));
+        }
+        let fields: Vec<String> = parts.iter().map(|(f, v)| format!("{f}: {v}")).collect();
+        return Some(format!(
+            "aver_rt::Counted::new({record} {{ {}, ..aver_rt::Counted::into_inner({base}) }})",
+            fields.join(", ")
+        ));
+    }
+    if moved {
+        // A computed base: its own node, bound before the values.
+        return Some(in_box(base, &parts));
+    }
+    // A copied base: the values read the original, then the copy is
+    // written.
+    let values: String = parts
+        .iter()
+        .enumerate()
+        .map(|(i, (_, value))| format!("let __field{i} = {value}; "))
+        .collect();
+    let writes: String = parts
+        .iter()
+        .enumerate()
+        .map(|(i, (field, _))| format!("{name}.{field} = __field{i}; "))
+        .collect();
+    Some(format!(
+        "{{ {values}let mut {name} = aver_rt::Counted::into_box({base}); {writes}aver_rt::Counted::from_box({name}) }}"
+    ))
+}
+
+/// Every new value of an update run before any field of `target` is
+/// written, since a value may read the old value of another replaced field.
+fn write_fields(target: &str, parts: &[(String, String)]) -> String {
+    match parts {
+        [(field, value)] => format!("{target}.{field} = {value}; "),
+        _ => {
+            let values: String = parts
+                .iter()
+                .enumerate()
+                .map(|(i, (_, value))| format!("let __field{i} = {value}; "))
+                .collect();
+            let writes: String = parts
+                .iter()
+                .enumerate()
+                .map(|(i, (field, _))| format!("{target}.{field} = __field{i}; "))
+                .collect();
+            values + &writes
+        }
+    }
+}
+
+/// Whether the place an update's base names moved out before the update,
+/// or a new value reads the local holding it as a whole (see
+/// [`reads_record_holder`]): the base cannot then be bound for the values
+/// to read it there. A field under the place never moved out: the place
+/// holds a counted record, which gives out its fields only by reference.
+fn moved_before_or_beside(
+    upd: &crate::ir::mir::MirRecordUpdate,
+    root: crate::ir::mir::LocalId,
+    path: &[String],
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
+    fn addresses(expr: &MirExpr, out: &mut HashSet<usize>) {
+        out.insert(expr as *const MirExpr as usize);
+        crate::ir::mir::expr::walk_children(expr, &mut |child| addresses(child, out));
+    }
+    let mut inside = HashSet::from([&upd.base.node as *const MirExpr as usize]);
+    for field in &upd.updates {
+        addresses(&field.value.node, &mut inside);
+    }
+    let moved_before = ctx.moved_paths.iter().any(|(addr, slot, moved)| {
+        *slot == root && moved.as_slice() == path && !inside.contains(addr)
+    });
+    moved_before
+        || upd
+            .updates
+            .iter()
+            .any(|field| reads_record_holder(&field.value.node, root, path))
+}
+
+/// Whether `expr` is a place an enclosing update has bound under a name of
+/// its own (see [`RecordAlias`]), which holds the record in a `Box`.
+pub(super) fn is_record_alias(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    record_alias_for(expr, ctx).is_some()
 }
 
 /// `T.update(base, f = v, …)` of a boxed record. A base that is cloned or
@@ -3390,6 +3566,11 @@ fn emit_owned_record_field_successor(
         return None;
     }
 
+    // A record behind a counted pointer gives out its map only by
+    // reference; an update reads it through a `Box` of its own instead.
+    if super::ownership::through_counted(&target.node, ctx) {
+        return None;
+    }
     let receiver = emit_mir_expr(target, ctx)?;
     match name {
         "Map.set" if call.node.args.len() == 3 => {
