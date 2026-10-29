@@ -1668,6 +1668,50 @@ fn touch(state: PaymentState) -> String
     }
 
     #[test]
+    fn record_update_moves_a_base_last_read_in_its_values() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+record Small
+    a: Int
+    b: Int
+    name: String
+
+record Big
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    name: String
+
+fn small(s: Small) -> Small
+    Small.update(s, b = s.b + s.a)
+
+fn big(s: Big) -> Big
+    Big.update(s, b = s.b + 1, c = s.c + s.a)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // `s.a` is the last read of `s`, in the new values: they run before
+        // the base moves, so neither record is copied.
+        assert!(!entry.contains("s.clone()"), "{entry}");
+        assert!(entry.contains(", ..s }"), "{entry}");
+        assert!(
+            entry.contains("s.b = __field0; s.c = __field1; s }"),
+            "{entry}"
+        );
+    }
+
+    #[test]
     fn a_record_past_128_bytes_is_boxed() {
         let mut ctx = ctx_from_source(
             r#"

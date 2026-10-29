@@ -501,6 +501,32 @@ fn wide_sums_behind_one_pointer_match_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A record update whose new values hold the base's last reads runs them
+/// first and then moves the base instead of copying it, in a record behind a
+/// pointer and in an inline one: values reading kept fields, the replaced
+/// field, a replaced list taken, a local base, and an update nested in
+/// another. A base still read after the update is copied as before.
+#[test]
+fn record_update_values_run_before_the_base_moves() {
+    let relative = "tests/fixtures/rust_record_update_order.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_record_update_order", &src);
+    for shape in [
+        "pub type Big = Box<Big__Fields>;",
+        "s.b = __field0; s.c = __field1; s }",
+        "s.log = __field0; s.g = __field1; s }",
+        "{ let mut __record0 = s; let __field0 = __record0.e",
+        "..o.inner }, k: ",
+        "{ let mut __record0 = s.clone(); __record0.h = ",
+        "..s.clone() };",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    assert_eq!(emitted.matches("s.clone()").count(), 2, "{emitted}");
+    assert!(!emitted.contains("o.clone()"), "{emitted}");
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Pure `Int` trees are computed on `i64` first and exactly when a leaf is
 /// past `i64` or an operation overflows (`codegen/rust/from_mir/int_tree.rs`):
 /// overflow in the middle of a tree, Big leaves, `i64::MIN`, Euclidean

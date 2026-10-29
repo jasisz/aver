@@ -2956,6 +2956,10 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let owned_final_base = local_of(&upd.base.node)
                 .is_some_and(|base| super::ownership::root_is_owned(base, emit_ctx))
                 && crate::ir::mir::field_moves::update_base_is_final(upd);
+            // The base's last reads are in the new values and none of them
+            // takes a field the update keeps: the values run first, then the
+            // base moves, instead of being copied before them.
+            let owned_final_base = owned_final_base || values_end_base(upd, emit_ctx);
             if record_is_boxed(upd.type_id, &upd.type_name, emit_ctx) {
                 let base = if moved_replaced_field || owned_final_base {
                     emitted_base.clone()
@@ -3170,6 +3174,56 @@ fn emit_update_parts(
         parts.push((aver_name_to_rust(&f.name), val));
     }
     Some((parts, moved_replaced_field))
+}
+
+/// Whether `T.update(base, …)` may move its base after running the new
+/// values instead of copying it: the base is an owned local whose last reads
+/// are inside the values, all through fields, and no read there that may move
+/// takes a field the update keeps. Rust then moves the rest of the base, or
+/// the boxed record takes the values in place (`emit_boxed_record_update`).
+fn values_end_base(upd: &crate::ir::mir::MirRecordUpdate, ctx: &MirEmitCtx<'_>) -> bool {
+    let Some(base) = local_of(&upd.base.node) else {
+        return false;
+    };
+    if !super::ownership::root_is_owned(base, ctx) || i64_carrier_record(upd.type_id, ctx) {
+        return false;
+    }
+    let replaced: Vec<&str> = upd.updates.iter().map(|f| f.name.as_str()).collect();
+    fn walk(
+        expr: &MirExpr,
+        slot: crate::ir::mir::LocalId,
+        replaced: &[&str],
+        ctx: &MirEmitCtx<'_>,
+        last: &mut bool,
+        bad: &mut bool,
+    ) {
+        if let Some((root, last_use, path)) = crate::ir::mir::field_moves::projection_root(expr)
+            && root == slot
+        {
+            *last = *last || last_use;
+            let movable = ctx
+                .movable_projections
+                .contains(&(expr as *const MirExpr as usize));
+            let keeps = path.first().is_none_or(|f| !replaced.contains(&f.as_str()));
+            *bad = *bad || path.is_empty() || (movable && keeps);
+            return;
+        }
+        crate::ir::mir::expr::walk_children(expr, &mut |child| {
+            walk(child, slot, replaced, ctx, last, bad)
+        });
+    }
+    let (mut last, mut bad) = (false, false);
+    for field in &upd.updates {
+        walk(
+            &field.value.node,
+            base.slot,
+            &replaced,
+            ctx,
+            &mut last,
+            &mut bad,
+        );
+    }
+    last && !bad
 }
 
 /// Whether the record type of a literal or update is kept behind a `Box`
