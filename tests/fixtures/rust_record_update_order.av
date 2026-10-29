@@ -1,0 +1,99 @@
+module RustRecordUpdateOrder
+    intent =
+        "Fixture: record updates whose new values read the base, in a large record behind a pointer and in a small inline one: values reading other fields, a value reading the field it replaces, a base still read after the update, a base held by a local, a value that takes a replaced list, and an update nested in another."
+    effects [Console.print]
+
+record Big
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    name: String
+    log: List<Int>
+    seen: Map<Int, Int>
+
+record Small
+    a: Int
+    b: Int
+    name: String
+    log: List<Int>
+
+record Outer
+    inner: Small
+    k: Int
+
+fn bigFresh(n: Int) -> Big
+    ? "A large state with every number n."
+    Big(a = n, b = n, c = n, d = n, e = n, f = n, g = n, h = n, name = "big", log = [], seen = {})
+
+fn bigOthers(s: Big, i: Int) -> Big
+    ? "New values read fields the update keeps."
+    Big.update(s, b = s.b + s.a, c = s.c + s.h + i)
+
+fn bigSame(s: Big) -> Big
+    ? "A new value reads the field it replaces and one it keeps."
+    Big.update(s, d = s.d * 2 + s.e)
+
+fn bigLog(s: Big, i: Int) -> Big
+    ? "A value takes the replaced list while another reads a kept field."
+    Big.update(s, log = List.prepend(s.f + i, s.log), g = s.g + s.a)
+
+fn bigLocal(n: Int, i: Int) -> Big
+    ? "The base is a local, not a parameter."
+    s = bigOthers(bigFresh(n), i)
+    Big.update(s, e = s.e + s.b, seen = Map.set(s.seen, Int.mod(i, 3), s.c))
+
+fn bigKept(s: Big) -> Int
+    ? "The base is still read after the update, so it stays as it was."
+    t = Big.update(s, h = s.h + s.a + 5)
+    t.h - s.h + s.a
+
+fn smallOthers(s: Small, i: Int) -> Small
+    ? "New values read fields the update keeps."
+    Small.update(s, b = s.b + s.a + i)
+
+fn smallSame(s: Small) -> Small
+    ? "A new value reads the field it replaces and one it keeps."
+    Small.update(s, a = s.a * 3 + s.b, log = List.prepend(String.len(s.name), s.log))
+
+fn smallKept(s: Small) -> Int
+    ? "The base is still read after the update."
+    t = Small.update(s, a = s.a + s.b)
+    t.a - s.a
+
+fn nested(o: Outer, i: Int) -> Outer
+    ? "An update of the inner record inside an update of the outer one."
+    Outer.update(o, inner = Small.update(o.inner, b = o.inner.b + o.inner.a + o.k), k = o.k + i)
+
+fn bigRun(s: Big, i: Int, n: Int) -> Big
+    ? "n steps over the large state."
+    match i >= n
+        true -> s
+        false -> bigRun(bigLog(bigSame(bigOthers(s, i)), i), i + 1, n)
+
+fn smallRun(s: Small, i: Int, n: Int) -> Small
+    ? "n steps over the small state."
+    match i >= n
+        true -> s
+        false -> smallRun(smallSame(smallOthers(s, i)), i + 1, n)
+
+fn outerRun(o: Outer, i: Int, n: Int) -> Outer
+    ? "n nested steps."
+    match i >= n
+        true -> o
+        false -> outerRun(nested(o, i), i + 1, n)
+
+fn main()
+    ! [Console.print]
+    big = bigRun(bigFresh(1), 0, 12)
+    local = bigLocal(3, 4)
+    small = smallRun(Small(a = 1, b = 2, name = "abc", log = []), 0, 10)
+    o = outerRun(Outer(inner = Small(a = 2, b = 1, name = "in", log = [7]), k = 1), 0, 9)
+    Console.print("{big.a} {big.b} {big.c} {big.d} {big.g} {List.len(big.log)} {bigKept(big)} {big.h}")
+    Console.print("{local.b} {local.c} {local.e} {Map.len(local.seen)}")
+    Console.print("{small.a} {small.b} {List.len(small.log)} {smallKept(small)} {small.a}")
+    Console.print("{o.inner.a} {o.inner.b} {o.k} {List.len(o.inner.log)}")
