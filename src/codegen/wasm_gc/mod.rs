@@ -75,6 +75,7 @@ mod optimize;
 mod packed_sequences;
 mod run_fail;
 mod run_turn;
+mod self_tail_loop;
 #[cfg(test)]
 mod tests;
 mod top_level;

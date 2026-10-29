@@ -20,6 +20,28 @@ use aver_cmd::{cleanup, format_output, temp_module};
 use std::path::PathBuf;
 use std::process::Command;
 
+const SELF_TAIL_LOOP_SRC: &str = include_str!("fixtures/self_tail_loop.av");
+
+#[test]
+fn cross_self_tail_loop_wasm_gc() {
+    let expected = run_vm("aver-self-tail-loop-vm", SELF_TAIL_LOOP_SRC);
+    assert!(expected.contains("arg 2\narg 1\narg 1\narg 2\nanswer 12"));
+    assert_eq!(
+        run_wasm_gc("aver-self-tail-loop-wasm", SELF_TAIL_LOOP_SRC),
+        expected
+    );
+}
+
+#[test]
+fn cross_self_tail_loop_verify_wasm_gc() {
+    for wasm in [false, true] {
+        let (ok, summary) =
+            run_verify_summary("aver-self-tail-loop-verify", SELF_TAIL_LOOP_SRC, wasm);
+        assert!(ok, "verify failed (wasm={wasm}): {summary}");
+        assert!(summary.contains("9/9 cases passed | 0 failed"), "{summary}");
+    }
+}
+
 fn run_vm(prefix: &str, source: &str) -> String {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");

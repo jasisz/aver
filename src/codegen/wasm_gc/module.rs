@@ -4133,7 +4133,7 @@ pub(super) fn emit_module_with(
             });
             super::body::set_twin_self(None);
             let (func, extra, entry, record_entry) = emitted?;
-            twin_codes.push(with_twin_params(
+            let func = with_twin_params(
                 &func,
                 &extra,
                 &fn_defs[i].params,
@@ -4141,11 +4141,24 @@ pub(super) fn emit_module_with(
                 &record_entry,
                 &twin.records,
                 &registry,
-            )?);
+            )?;
+            twin_codes.push(
+                if certify || std::env::var_os("AVER_NO_SELF_TAIL_LOOPS").is_some() {
+                    func
+                } else {
+                    super::self_tail_loop::lower(func, twin.wasm_idx, twin_params[i].len() as u32)?
+                },
+            );
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
         } else {
             let (func, extra) = emit_body(self_wasm_idx)?;
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
+            let func = if certify || std::env::var_os("AVER_NO_SELF_TAIL_LOOPS").is_some() {
+                func
+            } else {
+                let params = super::types::param_types(&fn_defs[i].params, Some(&registry))?;
+                super::self_tail_loop::lower(func, self_wasm_idx, params.len() as u32)?
+            };
             codes.function(&func);
         }
         super::body::set_int_trees_allowed(true);

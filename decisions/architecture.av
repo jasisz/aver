@@ -180,6 +180,7 @@ decision SharedMirFactsTargetRepresentations
         "When a proof depends on a target's treatment of holders or returned wrappers, the shared analysis takes that policy explicitly; an assumption about Rust dropping a wrapper must not silently authorize mutation in a GC backend."
         "Record field-use summaries and result-position traversal are shared MIR analyses. Wasm record twins choose their own bounded field layout and preserve the ordinary entry signature and certified function bytes."
         "The source-type comparison-shape walk is shared IR: scalar-only fields precede recursive or collection fields in Rust and wasm equality, with string-bearing scalar shapes after other scalars. Each backend resolves its own declaration identities; struct layout, hashing order, equality budgets, and target instructions remain backend choices."
+        "MIR also identifies tail calls for every target. Rust can loop, the VM can reuse a frame, and wasm can turn a self return_call into a local branch after its calling convention is fixed. Reusing a wasm frame resets its local caches and preserves simultaneous argument assignment; certification retains the established instruction plans."
     chosen = "SharedFactsTargetRepresentations"
     rejected = ["RepeatedSemanticAnalysisInEmitters", "OneValueLayoutForAllTargets"]
     impacts = ["MIR", "Rust", "WasmGC", "Certification", "Performance"]

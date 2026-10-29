@@ -1,0 +1,81 @@
+module SelfTailLoop
+    intent = "Tail calls keep simultaneous arguments and fresh local values, including cached wide Int boxes."
+    effects [Console.print]
+
+record Pair
+    first: Int
+    second: Int
+
+fn smallAfterBig(n: Int, x: Int) -> String
+    shown = String.fromInt(x)
+    match n == 0
+        true -> shown
+        false -> smallAfterBig(n - 1, 1)
+
+verify smallAfterBig
+    smallAfterBig(1, 9223372036854775808) => "1"
+    smallAfterBig(2, -9223372036854775809) => "1"
+    smallAfterBig(0, 9223372036854775808) => "9223372036854775808"
+
+fn swap(n: Int, a: Int, b: Int) -> Pair
+    match n == 0
+        true -> Pair(first = a, second = b)
+        false -> swap(n - 1, b, a)
+
+verify swap
+    swap(3, 1, 2) => Pair(first = 2, second = 1)
+    swap(2, 9223372036854775808, -9223372036854775809) => Pair(first = 9223372036854775808, second = -9223372036854775809)
+
+fn optionWalk(n: Int, x: Int) -> Option<Int>
+    match n == 0
+        true -> Option.Some(x)
+        false -> optionWalk(n - 1, x + 1)
+
+verify optionWalk
+    optionWalk(3, 9223372036854775807) => Option.Some(9223372036854775810)
+
+fn resultWalk(n: Int, x: Int) -> Result<Pair, String>
+    match n == 0
+        true -> Result.Ok(Pair(first = x, second = n))
+        false -> resultWalk(n - 1, x + 1)
+
+verify resultWalk
+    resultWalk(3, 40) => Result.Ok(Pair(first = 43, second = 0))
+
+fn even(n: Int) -> Bool
+    match n == 0
+        true -> true
+        false -> odd(n - 1)
+
+fn odd(n: Int) -> Bool
+    match n == 0
+        true -> false
+        false -> even(n - 1)
+
+verify even
+    even(10) => true
+    even(9) => false
+
+fn mark(n: Int) -> Int
+    ! [Console.print]
+    Console.print("arg {n}")
+    n
+
+fn noisySwap(n: Int, a: Int, b: Int) -> Int
+    ! [Console.print]
+    match n == 0
+        true -> a * 10 + b
+        false -> noisySwap(n - 1, mark(b), mark(a))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(smallAfterBig(3, 9223372036854775808))
+    pair = swap(3, 1, 2)
+    Console.print("{pair.first} {pair.second}")
+    optionValue = Option.withDefault(optionWalk(3, 9223372036854775807), 0)
+    Console.print("{optionValue}")
+    resultPair = Result.withDefault(resultWalk(3, 40), Pair(first = 0, second = 0))
+    Console.print("{resultPair.first} {resultPair.second}")
+    Console.print("{even(10)} {even(9)}")
+    answer = noisySwap(2, 1, 2)
+    Console.print("answer {answer}")

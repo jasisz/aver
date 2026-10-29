@@ -534,8 +534,8 @@ pub(crate) fn set_held(func: &mut Function, slot: u32, packed: Option<u32>, ctx:
     };
     // The box and the Big flag belong to the value bound before, if any: a
     // packed read of a slot bound again in the same frame must not return
-    // the old box. Today a slot is bound once per frame (no rebinding, a loop
-    // is a tail call), but nothing else guards that.
+    // the old box. The self-tail-loop lowering also resets frame locals at
+    // every iteration; keep this binding correct independently of that pass.
     func.instruction(&I::RefNull(HeapType::Concrete(aint(ctx))));
     func.instruction(&I::LocalSet(held_packed));
     func.instruction(&I::I32Const(0));
