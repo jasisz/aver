@@ -372,6 +372,7 @@ fn main() -> Unit
     xs = [1, 2, 3]
     Console.print("total {total(xs, 0)} of {List.len(xs)}: {words(["a", "b"], "")}")
 "#;
+    assert_vm_and_wasm_gc("vector-versions-none-answer", source, "total 6 of 3: a b");
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let path = temp_module("vector-versions-none", source);
     let out_dir = path.with_extension("out");
@@ -400,11 +401,14 @@ fn main() -> Unit
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
+    // Self-tail loops changed `total` and `words`. With that lowering off,
+    // this fixture still produces the preceding pinned bytes; versions add
+    // no vector layout here. Keep pinning the current default output too.
     assert_eq!(
         (bytes.len(), digest.as_str()),
         (
-            10641,
-            "03815dc776ea6611edde91ee9b58b981e2123e66344f02887cf9b0ba04506b38"
+            10721,
+            "12030ba01b238781e8d65e2fb4bc11b13653559ba3e7580e34f19eaf0d8f5f27"
         ),
         "a module with no Vector value changed"
     );
