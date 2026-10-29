@@ -1,7 +1,7 @@
 use crate::ast::{TypeDef, TypeVariant};
 use crate::codegen::CodegenContext;
 
-use super::representation::{shared_variants, variant_field_refs};
+use super::representation::variant_field_refs;
 use super::syntax::aver_name_to_rust;
 use super::types::type_annotation_to_rust_scoped;
 
@@ -194,7 +194,7 @@ pub fn emit_replay_value_impl(
         }
         TypeDef::Sum { name, variants, .. } => {
             let thin = super::representation::is_thin_sum(td, ctx);
-            emit_variant_impl(name, variants, &shared_variants(td, ctx), thin, ctx, scope)
+            emit_variant_impl(name, variants, thin, ctx, scope)
         }
     }
 }
@@ -307,7 +307,6 @@ fn emit_record_impl(
 fn emit_variant_impl(
     name: &str,
     variants: &[TypeVariant],
-    shared: &[bool],
     thin: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
@@ -320,15 +319,13 @@ fn emit_variant_impl(
     };
     let to_arms = variants
         .iter()
-        .zip(shared)
-        .map(|(variant, &shared)| emit_variant_to_arm(name, variant, shared, thin))
+        .map(|variant| emit_variant_to_arm(name, variant, thin))
         .collect::<Vec<_>>()
         .join("\n");
 
     let from_arms = variants
         .iter()
-        .zip(shared)
-        .map(|(variant, &shared)| emit_variant_from_arm(name, variant, shared, thin, ctx, scope))
+        .map(|variant| emit_variant_from_arm(name, variant, thin, ctx, scope))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -373,9 +370,8 @@ fn emit_variant_impl(
     )
 }
 
-fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, shared: bool, thin: bool) -> String {
+fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, thin: bool) -> String {
     // A thin sum is matched through its view, its fields borrowed.
-    let shared = shared || thin;
     let case = match thin {
         true => format!("{type_name}__view"),
         false => type_name.to_string(),
@@ -387,7 +383,7 @@ fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, shared: bool, thi
         );
     }
 
-    let (bindings, fields) = variant_field_refs(shared, "f", variant.fields.len());
+    let (bindings, fields) = variant_field_refs(thin, "f", variant.fields.len());
     let field_json = fields
         .iter()
         .map(|name| format!("ReplayValue::to_replay_json({})", name))
@@ -403,7 +399,6 @@ fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, shared: bool, thi
 fn emit_variant_from_arm(
     type_name: &str,
     variant: &TypeVariant,
-    shared: bool,
     thin: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
@@ -432,11 +427,6 @@ fn emit_variant_from_arm(
         .join(", ");
     let field_loads = if thin {
         format!("{type_name}__{}({field_loads})", variant.name)
-    } else if shared {
-        format!(
-            "aver_rt::Shared::new({type_name}__{}({field_loads}))",
-            variant.name
-        )
     } else {
         field_loads
     };

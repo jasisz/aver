@@ -547,7 +547,6 @@ pub(super) fn emit_represented_type_codec(
         TypeDef::Sum { name, variants, .. } => emit_sum_codec(
             name,
             variants,
-            &super::representation::shared_variants(type_def, ctx),
             super::representation::is_thin_sum(type_def, ctx),
             &canonical,
             &field_type,
@@ -628,29 +627,26 @@ fn emit_record_codec(
 fn emit_sum_codec(
     name: &str,
     variants: &[TypeVariant],
-    shared: &[bool],
     thin: bool,
     canonical: &str,
     field_type: &dyn Fn(&str) -> String,
 ) -> String {
     let encode_arms = variants
         .iter()
-        .zip(shared)
-        .map(|(variant, &shared)| {
+        .map(|variant| {
             // A thin sum is matched through its view, its fields borrowed.
-            let shared = shared || thin;
             let case = match thin {
                 true => format!("{name}__view"),
                 false => "Self".to_string(),
             };
-            let (bindings, fields) = variant_field_refs(shared, "field", variant.fields.len());
+            let (bindings, fields) = variant_field_refs(thin, "field", variant.fields.len());
             let pattern = if fields.is_empty() {
                 format!("{case}::{}", variant.name)
             } else {
                 format!("{case}::{}({bindings})", variant.name)
             };
-            // A shared constructor's fields sit behind the constructor's `Shared`.
-            let fields = match shared {
+            // A thin sum's fields are borrowed from its node.
+            let fields = match thin {
                 true => fields.iter().map(|f| format!("{f}.clone()")).collect(),
                 false => fields,
             };
@@ -668,8 +664,7 @@ fn emit_sum_codec(
         .join("\n");
     let decode_arms = variants
         .iter()
-        .zip(shared)
-        .map(|(variant, &shared)| {
+        .map(|variant| {
             let decoded = variant
                 .fields
                 .iter()
@@ -687,13 +682,6 @@ fn emit_sum_codec(
             } else if thin {
                 let payload = format!("{name}__{}", variant.name);
                 format!("Self::{}({payload}({}))", variant.name, decoded.join(", "))
-            } else if shared {
-                let payload = format!("{name}__{}", variant.name);
-                format!(
-                    "Self::{}(aver_rt::Shared::new({payload}({})))",
-                    variant.name,
-                    decoded.join(", ")
-                )
             } else {
                 format!("Self::{}({})", variant.name, decoded.join(", "))
             };

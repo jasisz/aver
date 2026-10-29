@@ -1802,7 +1802,7 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
 /// The locals `pattern` binds by moving them out of an owned subject: the
 /// whole value, the parts of a tuple, of an `Option` or `Result` and of a
 /// user constructor that keeps its fields inline. A list pattern and a
-/// constructor whose fields sit in a shared or thin node clone what they bind.
+/// constructor whose fields sit in a thin node clone what they bind.
 fn moved_parts(pattern: &MirPattern, ctx: &CodegenContext, out: &mut Vec<LocalId>) {
     match pattern {
         MirPattern::Bind(slot, _) => out.push(*slot),
@@ -1817,11 +1817,8 @@ fn moved_parts(pattern: &MirPattern, ctx: &CodegenContext, out: &mut Vec<LocalId
             bindings,
             ..
         } => {
-            let entry = ctx.symbol_table.ctor_entry(*ctor_id);
-            let id = entry.owning_type;
-            let held = super::representation::type_is_thin(id, ctx)
-                || super::representation::ctor_is_shared(id, &entry.name, ctx);
-            if !held {
+            let id = ctx.symbol_table.ctor_entry(*ctor_id).owning_type;
+            if !super::representation::type_is_thin(id, ctx) {
                 out.extend(bindings.iter().copied());
             }
         }
@@ -3079,19 +3076,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     } else {
                         qualified
                     };
-                    // A shared constructor's fields go into one `Shared` (see
-                    // `representation::shared_variants`). The coverage walk
-                    // has no codegen context and only asks whether this renders.
-                    let shared = emit_ctx.codegen.is_some_and(|cg| {
-                        super::representation::ctor_is_shared(
-                            ctor_entry.owning_type,
-                            &variant_name,
-                            cg,
-                        )
-                    });
                     // A thin sum's constructor is a function taking the
                     // struct of its fields (see `representation::is_thin_sum`);
                     // one without fields is a constant, written as an enum's.
+                    // The coverage walk has no codegen context and only asks
+                    // whether this renders.
                     let thin = emit_ctx.codegen.is_some_and(|cg| {
                         super::representation::type_is_thin(ctor_entry.owning_type, cg)
                     });
@@ -3100,10 +3089,6 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     } else if thin {
                         Some(format!(
                             "{head}::{variant_name}({head}__{variant_name}({args_str}))"
-                        ))
-                    } else if shared {
-                        Some(format!(
-                            "{head}::{variant_name}(aver_rt::Shared::new({head}__{variant_name}({args_str})))"
                         ))
                     } else {
                         Some(format!("{}::{}({})", head, variant_name, args_str))
@@ -5366,7 +5351,7 @@ fn lent_parts(
             },
             ResolvedPattern::Ctor(ctor, names),
         ) => {
-            let held = super::pattern::shared_fields_binder(ctor, names, codegen).is_some();
+            let held = super::pattern::thin_fields_binder(ctor, names, codegen).is_some();
             if !held && !by_ref {
                 return out;
             }

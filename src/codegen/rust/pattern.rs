@@ -144,7 +144,7 @@ fn emit_constructor_pattern(
                 ),
                 None => format!("{qualified_type_name}{suffix}::{variant_name}"),
             };
-            match shared_fields_binder(ctor, bindings, ctx) {
+            match thin_fields_binder(ctor, bindings, ctx) {
                 Some(binder) => format!("{rust_name}({binder})"),
                 None => emit_tuple_like_constructor_pattern(&rust_name, bindings),
             }
@@ -172,26 +172,16 @@ pub(super) fn thin_ctor(ctor: &ResolvedCtor, ctx: &CodegenContext) -> bool {
 }
 
 /// The one binder a constructor pattern writes for the struct that holds its
-/// fields: behind a `Shared` (see `representation::shared_variants`) or in
-/// the node of a thin sum (see `representation::is_thin_sum`), or `None`
-/// when the constructor keeps its fields inline. It is named after the first
+/// fields in the node of a thin sum (see `representation::is_thin_sum`), or
+/// `None` when the constructor keeps its fields inline. It is named after the first
 /// field the arm binds, so two constructors in one tuple pattern get two
 /// names; an arm that binds no field matches `_`.
-pub(super) fn shared_fields_binder(
+pub(super) fn thin_fields_binder(
     ctor: &ResolvedCtor,
     bindings: &[String],
     ctx: &CodegenContext,
 ) -> Option<String> {
-    let ResolvedCtor::User {
-        type_id, ctor_id, ..
-    } = ctor
-    else {
-        return None;
-    };
-    let variant = &ctx.symbol_table.ctor_entry(*ctor_id).name;
-    if bindings.is_empty()
-        || !(thin_ctor(ctor, ctx) || super::representation::ctor_is_shared(*type_id, variant, ctx))
-    {
+    if bindings.is_empty() || !thin_ctor(ctor, ctx) {
         return None;
     }
     Some(match bindings.iter().find(|b| *b != "_") {
