@@ -107,7 +107,27 @@ const LARGE_VARIANT_BYTES: usize = 64;
 /// another constructor, copies the pointer. Recursion through `List`,
 /// `Vector` or `Map` already goes through the heap.
 pub(super) fn is_thin_sum(td: &TypeDef, ctx: &CodegenContext) -> bool {
-    matches!(td, TypeDef::Sum { .. }) && on_cycle(td, ctx)
+    let TypeDef::Sum { variants, .. } = td else {
+        return false;
+    };
+    if on_cycle(td, ctx) {
+        return true;
+    }
+    // Opt-in representation probe: a frequently cloned wide, immutable sum
+    // can share the complete constructor payload just as recursive sums do.
+    // This is a conservative source-layout estimate, not an exact Rust size.
+    if std::env::var_os("AVER_WIDE_SUM_POINTERS").is_none() {
+        return false;
+    }
+    let scope = crate::codegen::common::type_key_for_decl(ctx, td);
+    variants.iter().any(|variant| {
+        variant
+            .fields
+            .iter()
+            .map(|field| type_inline_size(&parse_type_str(field), ctx, scope.scope_str()))
+            .sum::<usize>()
+            >= 64
+    })
 }
 
 /// Whether a value of `td` can hold a value of `td` with no collection in

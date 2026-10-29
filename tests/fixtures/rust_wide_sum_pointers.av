@@ -1,0 +1,74 @@
+module RustWideSumPointers
+    intent = "Shared wide sums preserve owned and borrowed patterns, keys, nested options and non-reflexive Float equality."
+    effects [Console.print]
+
+record Header
+    name: String
+    keys: List<Int>
+    id: Int
+
+type Bundle
+    Data(Header, Int, Int, Int, Int)
+    Other(Header, String, List<Int>, Int)
+
+type WideFloat
+    Left(Header, Float, Float, Float, Float)
+    Right(Header, Float, Float, Float, Float)
+
+fn make(n: Int) -> Bundle
+    Bundle.Data(Header(name = "h", keys = [1, 2], id = n), 1, 2, 3, 4)
+
+fn score(value: Bundle) -> Int
+    match value
+        Bundle.Data(h, a, b, c, d) -> h.id + a + b + c + d + List.len(h.keys) + String.len(h.name)
+        Bundle.Other(h, label, xs, n) -> h.id + String.len(label) + List.len(xs) + n
+
+verify score
+    score(make(0)) => 13
+    score(make(5)) => 18
+    score(make(9223372036854775807)) => 9223372036854775820
+    score(Bundle.Other(Header(name = "h", keys = [], id = 10), "ab", [1], 4)) => 17
+
+fn same(n: Int) -> Bool
+    x = make(n)
+    alias = x
+    match x == alias
+        false -> false
+        true -> alias == make(n)
+
+verify same
+    same(0) => true
+    same(9223372036854775807) => true
+
+fn lookup(n: Int) -> Option<Int>
+    m = Map.set({}, make(n), n + 1)
+    Map.get(m, make(n))
+
+verify lookup
+    lookup(3) => Option.Some(4)
+    lookup(9223372036854775807) => Option.Some(9223372036854775808)
+
+fn optional(value: Option<Bundle>) -> Int
+    match value
+        Option.None -> -1
+        Option.Some(x) -> score(x)
+
+verify optional
+    optional(Option.None) => -1
+    optional(Option.Some(make(5))) => 18
+
+fn nanEqual(z: Float) -> Bool
+    h = Header(name = "h", keys = [], id = 0)
+    value = WideFloat.Left(h, z / z, 1.0, 2.0, 3.0)
+    value == value
+
+verify nanEqual
+    nanEqual(0.0) => false
+    nanEqual(1.0) => true
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{score(make(5))}")
+    Console.print("{same(5)}")
+    Console.print("{lookup(3) == Option.Some(4)}")
+    Console.print("{nanEqual(0.0)}")
