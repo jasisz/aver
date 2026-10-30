@@ -32,7 +32,6 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 | a module-level binding that reads itself or a later one | refused by `aver check` |
 | certifying a plain wasm-gc or wasip2 build | build with `--certify` and ship that build |
 | hand-written Rust matching a generated recursive sum as an enum | match on `value.view()` |
-| step scripts and plans written for 0.30 | `docs/` describes the new kernel rules and `Kernel.Proof.Goal` |
 
 A 0.30 `--gate` baseline with `bounded` laws has to be recorded again.
 
