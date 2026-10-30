@@ -4095,6 +4095,89 @@ fn lean_tells_constructors_apart_by_their_steps() {
     let _ = fs::remove_dir_all(out);
 }
 
+const SUM_EQUALITY_LAWS: [&str; 4] = [
+    "pick.alwaysSecond",
+    "sameBoth.leftOfSame",
+    "sameLeft.readsLeft",
+    "sameSome.readsValue",
+];
+
+/// `==` on a sum whose `==` is equality: a true test lets one side stand
+/// for the other, also on a type that holds itself directly, and two
+/// applications of one constructor compare their fields. A type that holds
+/// itself in a list, or a Float, gets neither; the kernel refuses a sum
+/// that does not claim equality, and a field read off the wrong side.
+#[test]
+fn both_kernels_read_sum_equality_and_refuse_mutations() {
+    let out = scratch("sum-equality");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("sum_equality.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), SUM_EQUALITY_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let pick = read("pick.alwaysSecond");
+    let some = read("sameSome.readsValue");
+    let arm = "(arm 1 ((v x)) (match (ctor Option.Some (v x))";
+    assert!(pick.contains("(rule int.eq.of_beq "), "{pick}");
+    assert!(some.contains(arm), "{some}");
+    let mutants = [
+        // Shape no longer claims an equality.
+        pick.replace("(sum Shape eq ", "(sum Shape "),
+        // The field of `Some(x)` read as `y`.
+        some.replace(arm, &arm.replacen("((v x))", "((v y))", 1)),
+    ];
+    for (i, mutant) in mutants.iter().enumerate() {
+        assert!(
+            mutant != &pick && mutant != &some,
+            "mutant {i} changed nothing"
+        );
+        let verdict = aver::proof_kernel::verdict(mutant);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "mutant {i}: {verdict:?}\n{mutant}"
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_reads_sum_equality_by_its_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("sum-equality-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "sum_equality.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "2",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in SUM_EQUALITY_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
 const SHAPES_LAWS: [&str; 11] = [
     "fill.oneStep",
     "implied.always",

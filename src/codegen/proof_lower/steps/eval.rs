@@ -2230,6 +2230,9 @@ impl Env<'_> {
         if let Some(step) = self.pick_step(cur, &blocked)? {
             return Ok(step);
         }
+        if let Some(step) = self.ctor_fields_equal(cur) {
+            return Ok(Step::Progress(Box::new(step)));
+        }
         self.settle(cur, blocked)
     }
 

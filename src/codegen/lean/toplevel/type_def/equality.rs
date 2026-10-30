@@ -25,13 +25,33 @@ pub(super) fn reflects_equality(ty: &Type, ctx: &CodegenContext, scope: Option<&
                 }
                 let name = crate::codegen::common::type_def_name(td);
                 let key = super::canonical_type_name(name, owner);
-                // Recursive derived BEq needs a separate inductive reflection proof.
+                // A type met again inside itself: Lean's `LawfulBEq` handler
+                // derives a nested or mutual inductive's reflection for none
+                // of them.
                 if seen.contains(&key) {
                     return false;
                 }
-                seen.push(key);
+                seen.push(key.clone());
+                // A field that is the type itself, directly, is the
+                // recursion the handler proves by induction, unless a field
+                // is a refinement (a `Subtype`) directly: the handler then
+                // cannot connect the derived `BEq` to it (see
+                // `equality_lines`).
+                let (mut itself_held, mut refined_held) = (false, false);
                 let mut field = |annotation: &str| {
-                    visit(&crate::types::parse_type_str(annotation), ctx, owner, seen)
+                    refined_held |= super::is_direct_refined_field(annotation, ctx, owner);
+                    let ty = crate::types::parse_type_str(annotation);
+                    let itself = matches!(ty, Type::Named { .. })
+                        && crate::codegen::common::backend_named_type_key(ctx, &ty)
+                            .and_then(|n| super::find_type_def_scoped(ctx, &n, owner))
+                            .is_some_and(|(found, at)| {
+                                super::canonical_type_name(
+                                    crate::codegen::common::type_def_name(found),
+                                    at,
+                                ) == key
+                            });
+                    itself_held |= itself;
+                    itself || visit(&ty, ctx, owner, seen)
                 };
                 let result = if let Some(refined) =
                     crate::codegen::common::find_refined_type_scoped(ctx, name, owner)
@@ -48,7 +68,7 @@ pub(super) fn reflects_equality(ty: &Type, ctx: &CodegenContext, scope: Option<&
                     }
                 };
                 seen.pop();
-                result
+                result && !(itself_held && refined_held)
             }
             Type::Float | Type::Fn(..) | Type::Var(_) | Type::Invalid => false,
         }

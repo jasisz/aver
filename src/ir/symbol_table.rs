@@ -1056,8 +1056,10 @@ impl SymbolTable {
     /// Whether a true `a == b` between values of this type makes `a` and
     /// `b` the same value, and Lean's model proves it (`LawfulBEq`): no
     /// Float anywhere inside, no Map or Vector, and a declared type only
-    /// when it does not contain itself (Lean derives `LawfulBEq` for those
-    /// alone). A type this table cannot read answers no.
+    /// when it holds itself, if at all, directly as a field: Lean derives
+    /// `LawfulBEq` for such a type, but not for one that holds itself in a
+    /// list, an option or another declared type (a nested or mutual
+    /// inductive). A type this table cannot read answers no.
     pub fn beq_is_equality(&self, ty: &crate::ast::Type) -> bool {
         self.beq_reflects(ty, &mut Vec::new())
     }
@@ -1086,11 +1088,19 @@ impl SymbolTable {
                             return false;
                         };
                         seen.push(id);
+                        let fields: Vec<Type> = fields
+                            .iter()
+                            .map(|f| crate::types::parse_type_str(f))
+                            .collect();
                         let all = fields
                             .iter()
-                            .all(|f| self.beq_reflects(&crate::types::parse_type_str(f), seen));
+                            .all(|f| self.names_exactly(f, id) || self.beq_reflects(f, seen));
                         seen.pop();
-                        all
+                        // Lean's handler cannot prove a type that holds
+                        // itself lawful when a field is directly a refined
+                        // type: its `BEq` is not the derived one.
+                        all && !(fields.iter().any(|f| self.names_exactly(f, id))
+                            && fields.iter().any(|f| self.names_refined(f)))
                     })
             }
             Type::Map(..)
@@ -1099,6 +1109,39 @@ impl SymbolTable {
             | Type::Fn(..)
             | Type::Var(_)
             | Type::Invalid => false,
+        }
+    }
+
+    /// Whether a field's type is the declared type `id` itself, not inside
+    /// anything: the field a directly recursive type holds itself in. A bare
+    /// name more than one declaration shares answers no.
+    fn names_exactly(&self, ty: &crate::ast::Type, id: TypeId) -> bool {
+        match ty {
+            crate::ast::Type::Named {
+                id: Some(found), ..
+            } => *found == id,
+            crate::ast::Type::Named { id: None, name } => {
+                let bare = name.rsplit('.').next().unwrap_or(name);
+                self.type_name_index.get(bare).map(Vec::as_slice) == Some(&[id][..])
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether a field's type is a refined type itself (`Bytes`,
+    /// `Digest32`), not one inside a container.
+    fn names_refined(&self, ty: &crate::ast::Type) -> bool {
+        match ty {
+            crate::ast::Type::Named {
+                id: Some(found), ..
+            } => self.refinement_types.contains_key(found),
+            crate::ast::Type::Named { id: None, name } => {
+                let bare = name.rsplit('.').next().unwrap_or(name);
+                self.type_name_index
+                    .get(bare)
+                    .is_some_and(|ids| ids.iter().any(|i| self.refinement_types.contains_key(i)))
+            }
+            _ => false,
         }
     }
 
