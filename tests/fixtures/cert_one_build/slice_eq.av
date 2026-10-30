@@ -1,0 +1,21 @@
+module M
+    intent = "A slice compared in place outside the functions a certificate reads, beside one it reads."
+    effects [Console]
+
+fn poly(a: Int, b: Int, c: Int) -> Int
+    ? "A fn the certificate plan printer admits."
+    a * b + c * 3 - 1
+
+fn find(s: String, i: Int, t: String) -> Int
+    ? "The first position from i where t stands, or -1; its slice is compared in place."
+    match String.charAt(s, i)
+        Option.None -> -1
+        Option.Some -> match String.slice(s, i, i + String.len(t)) == t
+            true -> i
+            false -> find(s, i + 1, t)
+
+fn main() -> Unit
+    ? "Prints both."
+    ! [Console.print]
+    n = String.len("abc")
+    Console.print("{poly(n, n, n)} {find("abcabc", 1, "ca")}")

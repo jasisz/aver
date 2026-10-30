@@ -70,8 +70,20 @@ fn compile(
     flags: &[&str],
     int_trees: bool,
 ) -> Result<(Vec<u8>, Vec<String>), String> {
+    compile_with_env(repo_root, entry, flags, int_trees, &[])
+}
+
+/// [`compile`] with extra environment variables set.
+fn compile_with_env(
+    repo_root: &Path,
+    entry: &Entry,
+    flags: &[&str],
+    int_trees: bool,
+    env: &[(&str, &str)],
+) -> Result<(Vec<u8>, Vec<String>), String> {
     let out_dir = temp_dir("one-build");
     let mut cmd = aver_command();
+    cmd.envs(env.iter().copied());
     cmd.current_dir(repo_root).arg("compile").arg(&entry.file);
     if let Some(root) = entry.module_root {
         cmd.arg("--module-root").arg(root);
@@ -214,6 +226,56 @@ fn a_plain_build_takes_the_shapes_a_certified_build_leaves_out() {
         "the plain build matches `quoteOrSelf` on codepoints"
     );
     assert!(names.iter().any(|n| n == "quoteOrSelf"), "{names:?}");
+}
+
+/// A slice compared with a string is compared in place in a `--certify` build
+/// as in a plain one: the helper doing it comes after every other function
+/// and type, so it moves no index the certified functions use, and a function
+/// the certificate does not read keeps the bytes of a plain build.
+#[test]
+fn a_certified_build_compares_slices_in_place_outside_kept_functions() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let entry = Entry {
+        file: "tests/fixtures/cert_one_build/slice_eq.av".into(),
+        module_root: None,
+    };
+    // Without trees, twins and self-tail loops, so that a difference can
+    // only come from the kept functions or the slice comparison.
+    let env = [("AVER_NO_SELF_TAIL_LOOPS", "1")];
+    let (plain, _) = compile_with_env(&repo_root, &entry, &[], false, &env).unwrap();
+    let (certified, names) =
+        compile_with_env(&repo_root, &entry, &["--certify"], false, &env).unwrap();
+    assert!(names.iter().any(|n| n == "poly"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "find"), "{names:?}");
+    assert_eq!(plain, certified, "`find` has the same bytes in both builds");
+
+    // Not vacuous: the last function of the module is the helper,
+    // `(string, index, i64, i64, string) -> i32`.
+    let mut types = Vec::new();
+    let mut func_types = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(&certified) {
+        match payload.expect("module parses") {
+            wasmparser::Payload::TypeSection(reader) => {
+                for group in reader {
+                    for sub in group.expect("rec group").into_types() {
+                        types.push(match sub.composite_type.inner {
+                            wasmparser::CompositeInnerType::Func(f) => Some(f),
+                            _ => None,
+                        });
+                    }
+                }
+            }
+            wasmparser::Payload::FunctionSection(reader) => {
+                func_types.extend(reader.into_iter().map(|t| t.expect("function type")));
+            }
+            _ => {}
+        }
+    }
+    let last = types[*func_types.last().expect("functions") as usize]
+        .as_ref()
+        .expect("a function type");
+    assert_eq!(last.params().len(), 5, "{last:?}");
+    assert_eq!(last.results(), [wasmparser::ValType::I32], "{last:?}");
 }
 
 /// Every function the plan printer prints in its unfused form, by the name
