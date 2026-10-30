@@ -61,6 +61,11 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
+      - name: Every included file is in its crate's package
+        # The checkout builds an `include_str!` of a file missing from
+        # `Cargo.toml`'s `include`; the crates.io package does not (0.31.0).
+        run: python3 tools/ci_package_includes.py
+
       - name: Package standalone certificate engine
         run: |
           cargo package -p aver-cert --all-features
