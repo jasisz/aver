@@ -737,10 +737,13 @@ impl BuiltinName {
 pub(super) struct BuiltinRegistry {
     /// Insertion order — wasm fn indices and type indices follow it.
     order: Vec<BuiltinName>,
-    /// Whether an indexed slice compared with a string gets
-    /// `__str_index_slice_eq`. Off under `--certify`, where a new helper
-    /// would move the indices the certified functions call.
-    pub(super) slices_compared_in_place: bool,
+    /// Whether an indexed slice compared with a string has
+    /// `__str_index_slice_eq`. Kept out of `order`: its type and function
+    /// come after everything else in the module, the twins included
+    /// ([`Self::place_last`]), so registering it moves no index a function
+    /// a certificate describes calls. Those functions never call it: the
+    /// string index pass leaves them unfused (`ir::cert_shape`).
+    slices_compared_in_place: bool,
     wasm_fn_idx: HashMap<BuiltinName, u32>,
     wasm_type_idx: HashMap<BuiltinName, u32>,
 }
@@ -751,9 +754,26 @@ impl BuiltinRegistry {
     }
 
     pub(super) fn register(&mut self, name: BuiltinName) {
-        if !self.order.contains(&name) {
+        if name == BuiltinName::StringIndexSliceEq {
+            self.slices_compared_in_place = true;
+        } else if !self.order.contains(&name) {
             self.order.push(name);
         }
+    }
+
+    /// The helpers that come after everything else in the module, in order
+    /// (see `slices_compared_in_place`); [`Self::iter`] leaves them out.
+    pub(super) fn last(&self) -> impl Iterator<Item = BuiltinName> + '_ {
+        self.slices_compared_in_place
+            .then_some(BuiltinName::StringIndexSliceEq)
+            .into_iter()
+    }
+
+    /// Give a helper of [`Self::last`] its indices, once every other type
+    /// and function has its own.
+    pub(super) fn place_last(&mut self, name: BuiltinName, wasm_fn_idx: u32, type_idx: u32) {
+        self.wasm_fn_idx.insert(name, wasm_fn_idx);
+        self.wasm_type_idx.insert(name, type_idx);
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = BuiltinName> + '_ {

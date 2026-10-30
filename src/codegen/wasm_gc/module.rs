@@ -585,7 +585,6 @@ pub(super) fn emit_module_with(
     // allocation so the registry can reserve indices in declaration
     // order.
     let mut builtin_registry = BuiltinRegistry::new();
-    builtin_registry.slices_compared_in_place = !certify;
     let mut effect_registry = EffectRegistry::new();
     let mut eq_helpers_registry = EqHelperRegistry::new();
     let mut hash_helpers_registry = HashHelperRegistry::new();
@@ -2477,6 +2476,15 @@ pub(super) fn emit_module_with(
             next_type_idx += 1;
         }
     }
+    // The builtins placed last, after the twins: no other index moves.
+    let mut last_builtin_types: Vec<(BuiltinName, u32)> = Vec::new();
+    for name in builtin_registry.last() {
+        types
+            .ty()
+            .function(name.params(&registry)?, name.results(&registry)?);
+        last_builtin_types.push((name, next_type_idx));
+        next_type_idx += 1;
+    }
     let _ = next_type_idx;
 
     module.section(&types);
@@ -2658,6 +2666,10 @@ pub(super) fn emit_module_with(
             );
             funcs.function(ty);
         }
+    }
+    for (name, ty) in last_builtin_types {
+        builtin_registry.place_last(name, import_count + funcs.len(), ty);
+        funcs.function(ty);
     }
     module.section(&funcs);
 
@@ -3173,7 +3185,7 @@ pub(super) fn emit_module_with(
         );
     }
     let mut builtin_idx_lookup: HashMap<String, u32> = HashMap::new();
-    for name in builtin_registry.iter() {
+    for name in builtin_registry.iter().chain(builtin_registry.last()) {
         let idx = builtin_registry
             .lookup_wasm_fn_idx(name)
             .expect("registered builtin has wasm fn idx");
@@ -6452,6 +6464,9 @@ pub(super) fn emit_module_with(
     for func in &twin_codes {
         codes.function(func);
     }
+    for name in builtin_registry.last() {
+        codes.function(&name.emit_helper_body(&registry, case_wiring.as_ref())?);
+    }
 
     module.section(&codes);
 
@@ -7783,8 +7798,10 @@ fn discover_builtins_in_expr(
                         )
                     )
                 };
-                if builtins.slices_compared_in_place
-                    && matches!(op, Op::Eq | Op::Neq)
+                // Its helper comes after everything else
+                // (`BuiltinRegistry::place_last`), so a `--certify` build
+                // has it too.
+                if matches!(op, Op::Eq | Op::Neq)
                     && (indexed_slice(&l.node) || indexed_slice(&r.node))
                 {
                     builtins.register(BuiltinName::StringIndexSliceEq);
