@@ -285,11 +285,13 @@ mod tests {
         let mut boxed = Counted::into_box(a);
         assert_eq!(&*boxed as *const F, at);
         boxed.a = 7;
-        let b = boxed.b;
+        let mut b = boxed.b;
+        b.push(2);
         boxed.b = b;
         let a = Counted::from_box(boxed);
         assert_eq!(&*a as *const F, at);
         assert_eq!(a.a, 7);
+        assert_eq!(a.b, vec![1, 2]);
     }
 
     #[test]
