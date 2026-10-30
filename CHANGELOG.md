@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.31.0 "Kernel" (unreleased)
+## 0.31.0 "Kernel" — 2026-10-30
 
 > _Aver checks its own proofs: a kernel written in Aver judges every proof step, and Lean checks the same steps again._
 

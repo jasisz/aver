@@ -4,7 +4,7 @@ exclude = ["tools/wasm-runner", "fuzz"]
 
 [package]
 name = "aver-lang"
-version = "0.31.0-dev"
+version = "0.31.0"
 edition = "2024"
 default-run = "aver"
 description = "VM and transpiler for Aver, a statically-typed language designed for AI-assisted development"
@@ -100,9 +100,9 @@ wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-encoder", "dep:wit-parse
 playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
-aver-cert = { path = "aver-cert", version = "=0.1.6-dev", default-features = false, features = ["kernels"] }
-aver-memory = { path = "aver-memory", version = "=0.2.17-dev" }
-aver-rt = { path = "aver-rt", version = "=0.4.13-dev", optional = true }
+aver-cert = { path = "aver-cert", version = "=0.1.6", default-features = false, features = ["kernels"] }
+aver-memory = { path = "aver-memory", version = "=0.2.17" }
+aver-rt = { path = "aver-rt", version = "=0.4.13", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 colored = { version = "2", optional = true }
 num-bigint = "0.4"
