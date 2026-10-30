@@ -172,6 +172,7 @@ def valTyD (M : MCtx) (t : Ty) : Option CertDecode.ValType :=
   | .list t => ref (M.listStruct t)
   | .opaque tid => ref (M.opaqueStruct tid)
   | .bytes => ref M.bytesArr
+  | .word => some (.numeric 0x7e)
 
 def storagesOf (M : MCtx) (ts : List Ty) : Option (List CertDecode.StorageType) :=
   ts.mapM fun t => (valTyD M t).map .val
@@ -378,6 +379,7 @@ def inhabTy (R S : List Nat) : Ty → Bool
   | .result t e => inhabTy R S t || inhabTy R S e
   | .record tid => R.contains tid
   | .sum tid => S.contains tid
+  | .word => false
   | .eqref => false
 
 /-- One round: a record whose fields all have a value, a sum with a
@@ -443,6 +445,7 @@ theorem inhabTy_sound {R S : List Nat}
         exact ⟨.err t e v, by simp [HasTy, hv]⟩
   | .record tid, h => hR tid (by simpa [inhabTy] using h)
   | .sum tid, h => hS tid (by simpa [inhabTy] using h)
+  | .word, h => by simp [inhabTy] at h
   | .eqref, h => by simp [inhabTy] at h
 
 theorem inhabTyL_sound {R S : List Nat}

@@ -130,6 +130,9 @@ inductive Ty where
   /-- `Bytes`: the standard library's octet refinement, represented as the
       packed `(array (mut i8))` of its octets (`MCtx.bytesArr`). -/
   | bytes
+  /-- A raw `i64` local: the type of the `Int` tree's machine-word scratch
+      locals only (`int_tree.rs`); no source value has it. -/
+  | word
 deriving DecidableEq, Repr
 
 structure Sig where
@@ -1378,15 +1381,20 @@ structure LCtx where
   n : Nat
   cmp : Nat
   subj : Nat
+  /-- The first of the five `Int` tree locals (two `$AverInt` leaves, three
+      `i64` temporaries), which the emitter reserves last. -/
+  tree : Nat
 
 /-- Scratch positions as a WALL function of the declared locals: the subject
     scratch is the `eqref` local right after the resolver slots, and the
     const-compare scratch follows it (or sits there when there is none). -/
 def FnPlan.lctx (p : FnPlan) : LCtx :=
   if p.locals[p.nslots - p.sig.params.length]? = some .eqref then
-    { n := p.nslots, cmp := p.nslots + 1, subj := p.nslots }
+    { n := p.nslots, cmp := p.nslots + 1, subj := p.nslots,
+      tree := p.sig.params.length + p.locals.length - 5 }
   else
-    { n := p.nslots, cmp := p.nslots, subj := p.nslots }
+    { n := p.nslots, cmp := p.nslots, subj := p.nslots,
+      tree := p.sig.params.length + p.locals.length - 5 }
 
 /-- The typing and slot-layout checks one plan must pass: parameters sit
     below the slot count, the scratch locals are declared, and the body has
