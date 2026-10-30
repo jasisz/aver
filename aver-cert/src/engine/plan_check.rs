@@ -1912,15 +1912,87 @@ impl MCtx<'_> {
         self.lower(&lctx(p), &params_gamma(&p.params), true, &p.body)
     }
 
-    /// `GrammarLower.codeEntryBytes`.
-    fn code_entry_bytes(&self, p: &FnPlan) -> Option<Vec<u8>> {
+    /// `GrammarLower.encZero`: the value a reset local starts each loop
+    /// iteration with.
+    fn enc_zero(&self, t: &PlanTy, out: &mut Vec<u8>) -> Option<()> {
+        match t {
+            PlanTy::Bool => out.extend([0x41, 0x00]),
+            PlanTy::Float => {
+                out.push(0x44);
+                out.extend([0; 8]);
+            }
+            PlanTy::Eqref => out.extend([0xd0, 0x6d]),
+            _ => {
+                let mut ty = Vec::new();
+                self.val_ty(t, &mut ty)?;
+                if ty.first() != Some(&0x63) {
+                    return None;
+                }
+                out.push(0xd0);
+                out.extend(&ty[1..]);
+            }
+        }
+        Some(())
+    }
+
+    /// `GrammarLower.convB` written out: each tail call to `self_idx` at
+    /// `depth` enclosing `if`s stores the arguments into the parameters and
+    /// branches to the loop.
+    fn enc_loop_body(
+        &self,
+        bs: &[BI],
+        self_idx: u64,
+        params: u32,
+        depth: u32,
+        out: &mut Vec<u8>,
+    ) -> Option<()> {
+        for b in bs {
+            match b {
+                BI::Op(WI::ReturnCall(g)) if *g == self_idx => {
+                    for k in (0..params).rev() {
+                        out.push(0x21);
+                        uleb(u64::from(k), out)?;
+                    }
+                    out.push(0x0c);
+                    uleb(u64::from(depth), out)?;
+                }
+                BI::If(bt, t, e) => {
+                    out.push(0x04);
+                    self.val_ty(bt.as_ref()?, out)?;
+                    self.enc_loop_body(t, self_idx, params, depth + 1, out)?;
+                    out.push(0x05);
+                    self.enc_loop_body(e, self_idx, params, depth + 1, out)?;
+                    out.push(0x0b);
+                }
+                other => self.enc(std::slice::from_ref(other), out)?,
+            }
+        }
+        Some(())
+    }
+
+    /// `GrammarLower.codeEntryBytes`: a body that tail-calls its own
+    /// function is emitted as the self tail loop (`GrammarLower.bodyBytes`).
+    fn code_entry_bytes(&self, self_idx: u32, p: &FnPlan) -> Option<Vec<u8>> {
         let mut entry = Vec::new();
         uleb(p.locals.len() as u64, &mut entry)?;
         for t in &p.locals {
             entry.push(0x01);
             self.val_ty(t, &mut entry)?;
         }
-        self.enc(&self.lower_plan(p), &mut entry)?;
+        let body = self.lower_plan(p);
+        if has_self_tail(&body, u64::from(self_idx)) {
+            let params = u32::try_from(p.params.len()).ok()?;
+            entry.extend([0x03, 0x40]);
+            for (i, t) in p.locals.iter().enumerate() {
+                self.enc_zero(t, &mut entry)?;
+                entry.push(0x21);
+                uleb(u64::from(params) + i as u64, &mut entry)?;
+            }
+            self.enc_loop_body(&body, u64::from(self_idx), params, 0, &mut entry)?;
+            entry.extend([0x0f, 0x0b, 0x00]);
+        } else {
+            self.enc(&body, &mut entry)?;
+        }
         entry.push(0x0b);
         let mut out = Vec::new();
         uleb(entry.len() as u64, &mut out)?;
@@ -1947,6 +2019,15 @@ impl MCtx<'_> {
             PlanTy::Bytes => r(self.bytes_arr),
         }
     }
+}
+
+/// `InterpreterSequencing.hasSelfTail`: the lowered body tail-calls `f`.
+fn has_self_tail(bs: &[BI], f: u64) -> bool {
+    bs.iter().any(|b| match b {
+        BI::Op(WI::ReturnCall(g)) => *g == f,
+        BI::If(_, t, e) => has_self_tail(t, f) || has_self_tail(e, f),
+        _ => false,
+    })
 }
 
 /// Every function index a lowered body calls (`ClaimAxes.wCallsL`).

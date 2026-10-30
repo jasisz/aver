@@ -453,7 +453,7 @@ def entryPacked (cs : List Nat) (L : Layout) (fts : List FnType) (M : MCtx) (fns
     (e : FnEntry) (d : FnDecl) : Bool :=
   planTyped M e.plan && callsOrdered fns e &&
   decide (L.imports ≤ e.funcIdx) && decide (e.funcIdx - L.imports < L.count) &&
-  match codeEntryBytes M e.plan, e.plan.sig.params.mapM (valTyD M), valTyD M e.plan.sig.ret with
+  match codeEntryBytes M e.funcIdx e.plan, e.plan.sig.params.mapM (valTyD M), valTyD M e.plan.sig.ret with
   | some bytes, some ps, some r =>
       bytesOk bytes && bytes.length == L.len (e.funcIdx - L.imports) &&
       window 1024 cs (L.off (e.funcIdx - L.imports)) bytes.length ==

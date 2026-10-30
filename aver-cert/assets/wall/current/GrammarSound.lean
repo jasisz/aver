@@ -5355,7 +5355,7 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
       FnCertified S M code host f sig (fun fuel => outer fuel f))
     (hMem : ∀ f p, G f = some p →
       M.sigs f = some p.sig ∧ planTyped M p = true ∧ host f = none ∧
-        code f = some (fnCode M p))
+        code f = some (fnCodeAt M f p))
     (hCons : ∀ t f, M.listCons t = some f → ∀ k h tl sv, HasTy M tl (.list t) →
       groupModel outer G k f [h, tl] = some sv → sv = .cons t h tl) :
     ∀ f p, G f = some p →
@@ -5368,7 +5368,7 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
         HasTy M sv p.sig.ret := by
     intro fuel
     induction fuel with
-    | zero => intro f p _ svs ws r _ _ h; simp [wFuncN] at h
+    | zero => intro f p _ svs ws r _ _ h; simp [wFuncN, wEnter] at h
     | succ k ih =>
         intro f p hG svs ws r hTs hrep hrun
         obtain ⟨_, htyped, _, hcode⟩ := hMem f p hG
@@ -5386,7 +5386,7 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
               obtain ⟨hsig', _, hhost', hcode'⟩ := hMem g p' hg
               rw [hsig] at hsig'
               cases hsig'
-              refine ⟨hhost', by simp [hcode', fnCode], ?_⟩
+              refine ⟨hhost', by simp [hcode', (fnCodeAt_shape M g p').1, fnCode], ?_⟩
               intro svs' ws' r' hT' hr' hc'
               exact ih g p' hg svs' ws' r' hT' hr' hc'
           | none =>
@@ -5397,8 +5397,10 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
               exact ⟨sv, by rw [groupModel_outer outer G hg]; exact hm, hsv, hT⟩
         have hlenw : ws.length = p.sig.params.length := by
           rw [← sreprL_length hrep, hasTyL_length hTs]
-        have hLR : LRel S M p.lctx (argsEnv svs) (initLocals (fnCode M p) ws) := by
-          refine ⟨by simp [initLocals, fnCode]; omega, ?_⟩
+        have hLRp : ∀ pad : List WVal, pad.length = p.locals.length →
+            LRel S M p.lctx (argsEnv svs) (ws ++ pad) := by
+          intro pad hpad
+          refine ⟨by simp [hpad]; omega, ?_⟩
           intro i sv hs
           rw [hXn]
           obtain ⟨w, hw, hsv⟩ := sreprL_get hrep hs
@@ -5407,41 +5409,73 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
             · exact h
             · rw [List.getElem?_eq_none h] at hw; simp at hw
           refine ⟨by omega, w, ?_, hsv⟩
-          simp [initLocals, List.getElem?_append_left hi, hw]
-        unfold wFuncN at hrun
-        rw [hcode] at hrun
-        simp only at hrun
-        cases hw : wRunF host (fun g => (code g).map (·.arity))
-            (fun g as => wFuncN code host k g as) (fnCode M p).body
-            (initLocals (fnCode M p) ws) [] with
-        | none => rw [hw] at hrun; simp at hrun
-        | some o =>
-            rw [hw] at hrun
-            rcases agreement S box add sub mul cmp eq neg Ctr hNegC host
-              (fun g => (code g).map (·.arity)) (fun g as => wFuncN code host k g as) M
-              hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R (groupModel outer G k) hCallees
-              (fun t g hg h tl sv htl hm => hCons t g hg k h tl sv htl hm)
-              p.lctx p.body (paramsΓ p.sig.params) (argsEnv svs) true p.sig.ret
-              (initLocals (fnCode M p) ws) [] o hty (envTy_args hTs) hLR hw with
-              ⟨sv, hev, hT, hres⟩ | hE
-            rotate_left
-            · rw [hbare'] at hE
-              exact (esc_nil hE).elim
-            have hm : groupModel outer G (k + 1) f svs = some sv := by
-              rw [groupModel_member outer G hG]; exact hev
-            cases o with
-            | ok wl' st' =>
-                obtain ⟨w, rfl, hsv, _⟩ := hres
-                simp at hrun
-                subst hrun
-                exact ⟨sv, hm, hsv, hT⟩
-            | ret w =>
-                obtain ⟨_, hsv⟩ := hres
-                simp at hrun
-                subst hrun
-                exact ⟨sv, hm, hsv, hT⟩
+          simp [List.getElem?_append_left hi, hw]
+        -- The run is the body's run from the parameters, whether the
+        -- function is emitted as is or as its self tail loop.
+        have hexp : ∃ l0, LRel S M p.lctx (argsEnv svs) l0 ∧ ∃ o,
+            wRunF host (fun g => (code g).map (·.arity))
+              (fun g as => wFuncN code host k g as) (fnCode M p).body l0 [] = some o ∧
+            ((∃ l' st', o = .ok l' (r :: st')) ∨ o = .ret r) := by
+          cases hst : InterpreterSequencing.hasSelfTail f (fnCode M p).body with
+          | false =>
+              rw [fnCodeAt_plain M f p hst] at hcode
+              rw [InterpreterSequencing.wFuncN_plain hcode (fnCode_loopBody M p)] at hrun
+              refine ⟨initLocals (fnCode M p) ws, hLRp _ (by simp [fnCode]), ?_⟩
+              revert hrun
+              split
+              · rename_i l' v hv
+                intro h; cases h
+                exact ⟨_, hv, Or.inl ⟨l', [], rfl⟩⟩
+              · rename_i v hv
+                intro h; cases h
+                exact ⟨_, hv, Or.inr rfl⟩
+              · intro h; cases h
+          | true =>
+              obtain ⟨zs, vs, L⟩ := fnCodeAt_loop M f p hst
+              obtain ⟨har, hnl, hbody⟩ := fnCodeAt_shape M f p
+              have hlen : ((none : Option (List WVal)).getD
+                  (initLocals (fnCodeAt M f p) ws)).length =
+                  (fnCodeAt M f p).arity + (fnCodeAt M f p).nlocals := by
+                simp [initLocals, har, hnl, fnCode, hlenw]
+              unfold wFuncN at hrun
+              rw [InterpreterSequencing.wEnter_loop hcode L k ws none hlen] at hrun
+              have hp : ((none : Option (List WVal)).getD
+                  (initLocals (fnCodeAt M f p) ws)).take (fnCodeAt M f p).arity = ws := by
+                simp [initLocals, har, fnCode, hlenw]
+              rw [hp, hbody] at hrun
+              refine ⟨ws ++ vs, hLRp vs (by rw [L.len, hnl]; simp [fnCode]), ?_⟩
+              revert hrun
+              unfold InterpreterSequencing.endLoop
+              split
+              · rename_i l' v st' hv
+                intro h; cases h
+                exact ⟨_, hv, Or.inl ⟨l', st', rfl⟩⟩
+              · rename_i v hv
+                intro h; cases h
+                exact ⟨_, hv, Or.inr rfl⟩
+              · intro h; cases h
+        obtain ⟨l0, hLR, o, hw, hro⟩ := hexp
+        rcases agreement S box add sub mul cmp eq neg Ctr hNegC host
+          (fun g => (code g).map (·.arity)) (fun g as => wFuncN code host k g as) M
+          hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R (groupModel outer G k) hCallees
+          (fun t g hg h tl sv htl hm => hCons t g hg k h tl sv htl hm)
+          p.lctx p.body (paramsΓ p.sig.params) (argsEnv svs) true p.sig.ret
+          l0 [] o hty (envTy_args hTs) hLR hw with
+          ⟨sv, hev, hT, hres⟩ | hE
+        rotate_left
+        · rw [hbare'] at hE
+          exact (esc_nil hE).elim
+        have hm : groupModel outer G (k + 1) f svs = some sv := by
+          rw [groupModel_member outer G hG]; exact hev
+        rcases hro with ⟨l', st', rfl⟩ | rfl
+        · obtain ⟨w, hst, hsv, _⟩ := hres
+          simp only [List.cons.injEq] at hst
+          rw [hst.1]
+          exact ⟨sv, hm, hsv, hT⟩
+        · obtain ⟨_, hsv⟩ := hres
+          exact ⟨sv, hm, hsv, hT⟩
   intro f p hG
   obtain ⟨_, _, hhost, hcode⟩ := hMem f p hG
-  exact ⟨hhost, by simp [hcode, fnCode], fun fuel => core fuel f p hG⟩
+  exact ⟨hhost, by simp [hcode, (fnCodeAt_shape M f p).1, fnCode], fun fuel => core fuel f p hG⟩
 
 end AverCert.Grammar

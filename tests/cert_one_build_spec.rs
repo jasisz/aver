@@ -391,3 +391,55 @@ fn printer_admission_implies_the_kept_predicate_on_the_corpus() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert!(admitted > 100, "only {admitted} printer-admitted functions");
 }
+
+/// A self tail call becomes a loop in a `--certify` build too, and the
+/// function is still certified: the checker lowers its plan to the same loop.
+#[test]
+fn a_certified_build_keeps_the_self_tail_loop() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let entry = Entry {
+        file: "tools/certkit/fixtures/recgen.av".into(),
+        module_root: None,
+    };
+    let (certified, names) = compile(&repo_root, &entry, &["--certify"], true).unwrap();
+    assert!(names.iter().any(|n| n == "countDown"), "{names:?}");
+
+    let mut imported = 0;
+    let mut count_down = None;
+    let mut bodies = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(&certified) {
+        match payload.unwrap() {
+            wasmparser::Payload::ImportSection(imports) => {
+                for import in imports.into_imports() {
+                    if matches!(import.unwrap().ty, wasmparser::TypeRef::Func(_)) {
+                        imported += 1;
+                    }
+                }
+            }
+            wasmparser::Payload::ExportSection(exports) => {
+                for export in exports {
+                    let export = export.unwrap();
+                    if export.name == "countDown" {
+                        count_down = Some(export.index);
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => bodies.push(body),
+            _ => {}
+        }
+    }
+    let index = count_down.expect("countDown is exported");
+    let body = &bodies[(index - imported) as usize];
+    let mut ops = body.get_operators_reader().unwrap();
+    let (mut loops, mut self_calls) = (0, 0);
+    while !ops.eof() {
+        match ops.read().unwrap() {
+            wasmparser::Operator::Loop { .. } => loops += 1,
+            wasmparser::Operator::ReturnCall { function_index } if function_index == index => {
+                self_calls += 1
+            }
+            _ => {}
+        }
+    }
+    assert_eq!((loops, self_calls), (1, 0), "countDown is one loop");
+}

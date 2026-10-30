@@ -70,6 +70,7 @@
    instructions the simulation theorem runs and the bytes a certificate pins
    come from the same tree by construction. -/
 import Grammar
+import InterpreterSequencing
 
 namespace AverCert.Grammar
 open CertPrelude AverCert.Schema
@@ -750,14 +751,221 @@ def localGroups (M : MCtx) : List Ty → Option (List Nat)
       | some a, some b => some ([0x01] ++ a ++ b)
       | _, _ => none
 
-/-- The exact code entry (size prefix included) of one function. -/
-def codeEntryBytes (M : MCtx) (p : FnPlan) : Option (List Nat) :=
-  match uleb32 p.locals.length, localGroups M p.locals,
-      encBL M (lowerB M p.lctx (paramsΓ p.sig.params) true p.body) with
+/-! ## The self tail loop
+
+A function whose lowering makes a tail call to itself is emitted as one
+`loop` (`self_tail_loop.rs`): `loop` with the empty block type, every
+declared local reset to its zero value, the body with each self tail call
+replaced by `local.set` of the parameters (the last argument first) and a
+branch back to the loop, then `return`, `end`, `unreachable`. One `LB` tree
+carries both images again: `encLBs` writes its bytes and `eraseLBs` the
+interpreter's `CI` loop body. `InterpreterSequencing.wEnter_loop` shows the
+loop runs as the original body does. -/
+
+/-- A loop-body instruction: a lowered instruction, an `if` whose arms may
+    branch to the loop, `br d`, or the zero value of a local of type `t`. -/
+inductive LB where
+  | b (x : BI)
+  | ifElse (bt : Option Ty) (thenB elseB : List LB)
+  | br (depth : Nat)
+  | zero (t : Ty)
+
+/-- The instruction that pushes the zero value of a local of type `t`. -/
+def zeroW : Ty → WInstr
+  | .bool => .i32Const 0
+  | .float => .f64Const 0
+  | _ => .refNull
+
+mutual
+  def eraseLB : LB → CI
+    | .b x => .w (eraseI x)
+    | .ifElse _ t e => .ifElse (eraseLBs t) (eraseLBs e)
+    | .br d => .br d
+    | .zero t => .w (zeroW t)
+  def eraseLBs : List LB → List CI
+    | [] => []
+    | x :: xs => eraseLB x :: eraseLBs xs
+end
+
+/-- `local.set (k-1); …; local.set 0`. -/
+def setsB : Nat → List LB
+  | 0 => []
+  | k + 1 => .b (.op (.localSet k)) :: setsB k
+
+/-- `convW` over interpreter instructions, kept as loop-body instructions. -/
+def convWB (self n : Nat) : Nat → List WInstr → List LB
+  | _, [] => []
+  | d, .returnCall g :: rest =>
+      (if g = self then setsB n ++ [.br d] else [.b (.op (.returnCall g))]) ++
+        convWB self n d rest
+  | d, .ifElse t e :: rest =>
+      .ifElse none (convWB self n (d + 1) t) (convWB self n (d + 1) e) :: convWB self n d rest
+  | d, x :: rest => .b (.op x) :: convWB self n d rest
+  termination_by _ xs => sizeOf xs
+
+/-- The loop body of a lowered body: each tail call to `self` (with `n`
+    parameters) at `d` enclosing `if`s stores the arguments and branches to
+    the loop. -/
+def convB (self n : Nat) : Nat → List BI → List LB
+  | _, [] => []
+  | d, .op x :: rest => convWB self n d [x] ++ convB self n d rest
+  | d, .ifElse bt t e :: rest =>
+      .ifElse bt (convB self n (d + 1) t) (convB self n (d + 1) e) :: convB self n d rest
+  | d, x :: rest => .b x :: convB self n d rest
+  termination_by _ xs => sizeOf xs
+
+/-- The loop's entry: the declared local `j` on, each set to its zero. -/
+def proB : Nat → List Ty → List LB
+  | _, [] => []
+  | j, t :: ts => .zero t :: .b (.op (.localSet j)) :: proB (j + 1) ts
+
+/-- The loop body of function `self`'s plan. -/
+def loopB (M : MCtx) (self : Nat) (p : FnPlan) : List LB :=
+  proB p.sig.params.length p.locals ++
+    (convB self p.sig.params.length 0 (lowerB M p.lctx (paramsΓ p.sig.params) true p.body) ++
+      [.b (.op .ret)])
+
+/-- The code of function `self`: its plan's lowering, run as the self tail
+    loop when the lowering makes a tail call to `self`. -/
+def fnCodeAt (M : MCtx) (self : Nat) (p : FnPlan) : WCode :=
+  if InterpreterSequencing.hasSelfTail self (fnCode M p).body then
+    { fnCode M p with loopBody := some (eraseLBs (loopB M self p)) }
+  else fnCode M p
+
+/-- `zeroW t`'s bytes: `i32.const 0`, `f64.const 0`, or `ref.null` of the
+    local's heap type. -/
+def encZero (M : MCtx) (t : Ty) : Option (List Nat) :=
+  match t with
+  | .bool => some [0x41, 0x00]
+  | .float => some ([0x44] ++ u64le 0)
+  | .eqref => some [0xd0, 0x6d]
+  | _ =>
+      match valTy M t with
+      | some (0x63 :: h) => some (0xd0 :: h)
+      | _ => none
+
+mutual
+  def encLB (M : MCtx) : LB → Option (List Nat)
+    | .b x => encBI M x
+    | .ifElse bt t e =>
+        match bt.bind (valTy M), encLBs M t, encLBs M e with
+        | some btB, some tB, some eB => some ([0x04] ++ btB ++ tB ++ [0x05] ++ eB ++ [0x0b])
+        | _, _, _ => none
+    | .br d => (uleb32 d).map ([0x0c] ++ ·)
+    | .zero t => encZero M t
+  def encLBs (M : MCtx) : List LB → Option (List Nat)
+    | [] => some []
+    | x :: xs =>
+        match encLB M x, encLBs M xs with
+        | some a, some b => some (a ++ b)
+        | _, _ => none
+end
+
+/-- The instruction bytes of function `self`'s body (its final `end`
+    excluded): `loop (empty) … end unreachable` around the loop body when the
+    lowering tail-calls `self`. -/
+def bodyBytes (M : MCtx) (self : Nat) (p : FnPlan) : Option (List Nat) :=
+  if InterpreterSequencing.hasSelfTail self (fnCode M p).body then
+    (encLBs M (loopB M self p)).map (fun b => [0x03, 0x40] ++ b ++ [0x0b, 0x00])
+  else encBL M (lowerB M p.lctx (paramsΓ p.sig.params) true p.body)
+
+/-- The exact code entry (size prefix included) of function `self`. -/
+def codeEntryBytes (M : MCtx) (self : Nat) (p : FnPlan) : Option (List Nat) :=
+  match uleb32 p.locals.length, localGroups M p.locals, bodyBytes M self p with
   | some cnt, some groups, some body =>
       let entry := cnt ++ groups ++ body ++ [0x0b]
       (uleb32 entry.length).map (· ++ entry)
   | _, _, _ => none
+
+/-! ### The loop body runs the plan's lowering -/
+
+theorem setsB_erase : ∀ n, eraseLBs (setsB n) = InterpreterSequencing.setsW n := by
+  intro n
+  induction n with
+  | zero => rfl
+  | succ k ih => simp [setsB, InterpreterSequencing.setsW, eraseLBs, eraseLB, eraseI, ih]
+
+theorem eraseLBs_append (xs ys : List LB) : eraseLBs (xs ++ ys) = eraseLBs xs ++ eraseLBs ys := by
+  induction xs with
+  | nil => simp [eraseLBs]
+  | cons x xs ih => simp [eraseLBs, ih]
+
+theorem convWB_erase (self n : Nat) (d : Nat) (xs : List WInstr) :
+    eraseLBs (convWB self n d xs) = InterpreterSequencing.convW self n d xs := by
+  induction d, xs using InterpreterSequencing.convW.induct with
+  | case1 d => simp [convWB, InterpreterSequencing.convW, eraseLBs]
+  | case2 d g rest ih =>
+      rw [convWB, InterpreterSequencing.convW, eraseLBs_append, ih]
+      by_cases hg : g = self
+      · simp [hg, eraseLBs_append, setsB_erase, eraseLBs, eraseLB]
+      · simp [hg, eraseLBs, eraseLB, eraseI]
+  | case3 d t e rest iht ihe ihr =>
+      rw [convWB, InterpreterSequencing.convW]
+      simp [eraseLBs, eraseLB, iht, ihe, ihr]
+  | case4 d x rest h1 h2 ih =>
+      rw [convWB, InterpreterSequencing.convW]
+      · simp [eraseLBs, eraseLB, eraseI, ih]
+      all_goals first | exact h1 | exact h2
+
+theorem convW_cons (self n d : Nat) (x : WInstr) (rest : List WInstr) :
+    InterpreterSequencing.convW self n d (x :: rest) =
+      InterpreterSequencing.convW self n d [x] ++ InterpreterSequencing.convW self n d rest := by
+  cases x <;> simp [InterpreterSequencing.convW]
+
+theorem convB_erase (self n : Nat) (d : Nat) (B : List BI) :
+    eraseLBs (convB self n d B) = InterpreterSequencing.convW self n d (eraseL B) := by
+  induction d, B using convB.induct with
+  | case1 d => simp [convB, InterpreterSequencing.convW, eraseLBs, eraseL]
+  | case2 d x rest ih =>
+      rw [convB, eraseLBs_append, ih, convWB_erase, eraseL, eraseI, convW_cons self n d x (eraseL rest)]
+  | case3 d bt t e rest iht ihe ihr =>
+      rw [convB]
+      simp [eraseLBs, eraseLB, iht, ihe, ihr, eraseL, eraseI, InterpreterSequencing.convW]
+  | case4 d x rest h1 h2 ih =>
+      rw [convB]
+      · cases x <;> simp_all [eraseLBs, eraseLB, eraseL, eraseI, InterpreterSequencing.convW]
+      all_goals first | exact h1 | exact h2
+
+theorem proB_erase : ∀ (j : Nat) (ts : List Ty),
+    eraseLBs (proB j ts) = InterpreterSequencing.proW j (ts.map zeroW) := by
+  intro j ts
+  induction ts generalizing j with
+  | nil => rfl
+  | cons t ts ih => simp [proB, InterpreterSequencing.proW, eraseLBs, eraseLB, eraseI, ih]
+
+theorem zeroW_vals : ∀ (ts : List Ty), ∃ vs,
+    (ts.map zeroW).mapM InterpreterSequencing.zeroVal = some vs ∧ vs.length = ts.length := by
+  intro ts
+  induction ts with
+  | nil => exact ⟨[], rfl, rfl⟩
+  | cons t ts ih =>
+      obtain ⟨vs, hvs, hl⟩ := ih
+      have : ∃ v, InterpreterSequencing.zeroVal (zeroW t) = some v := by
+        cases t <;> simp [zeroW, InterpreterSequencing.zeroVal]
+      obtain ⟨v, hv⟩ := this
+      exact ⟨v :: vs, by simp [hv, hvs], by simp [hl]⟩
+
+theorem fnCodeAt_shape (M : MCtx) (self : Nat) (p : FnPlan) :
+    (fnCodeAt M self p).arity = (fnCode M p).arity ∧
+      (fnCodeAt M self p).nlocals = (fnCode M p).nlocals ∧
+      (fnCodeAt M self p).body = (fnCode M p).body := by
+  unfold fnCodeAt; split <;> simp
+
+theorem fnCodeAt_plain (M : MCtx) (self : Nat) (p : FnPlan)
+    (h : InterpreterSequencing.hasSelfTail self (fnCode M p).body = false) :
+    fnCodeAt M self p = fnCode M p := by
+  simp [fnCodeAt, h]
+
+theorem fnCode_loopBody (M : MCtx) (p : FnPlan) : (fnCode M p).loopBody = none := rfl
+
+theorem fnCodeAt_loop (M : MCtx) (self : Nat) (p : FnPlan)
+    (h : InterpreterSequencing.hasSelfTail self (fnCode M p).body = true) :
+    ∃ zs vs, InterpreterSequencing.LoopCode (fnCodeAt M self p) self zs vs := by
+  obtain ⟨vs, hvs, hl⟩ := zeroW_vals p.locals
+  refine ⟨p.locals.map zeroW, vs, ?_, hvs, ?_⟩
+  · simp only [fnCodeAt, h, if_true, loopB, eraseLBs_append, proB_erase, convB_erase]
+    simp [fnCode, lowerW, eraseLBs, eraseLB, eraseI]
+  · rw [hl]; unfold fnCodeAt; split <;> rfl
 
 /-! ## S-3: the byte fact behind the exact `ref.test`
 

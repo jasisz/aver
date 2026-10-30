@@ -4154,18 +4154,16 @@ pub(super) fn emit_module_with(
                 &twin.records,
                 &registry,
             )?;
-            twin_codes.push(
-                if certify || std::env::var_os("AVER_NO_SELF_TAIL_LOOPS").is_some() {
-                    func
-                } else {
-                    super::self_tail_loop::lower(func, twin.wasm_idx, twin_params[i].len() as u32)?
-                },
-            );
+            twin_codes.push(if std::env::var_os("AVER_NO_SELF_TAIL_LOOPS").is_some() {
+                func
+            } else {
+                super::self_tail_loop::lower(func, twin.wasm_idx, twin_params[i].len() as u32)?
+            });
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
         } else {
             let (func, extra) = emit_body(self_wasm_idx)?;
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
-            let func = if certify || std::env::var_os("AVER_NO_SELF_TAIL_LOOPS").is_some() {
+            let func = if std::env::var_os("AVER_NO_SELF_TAIL_LOOPS").is_some() {
                 func
             } else {
                 let params = super::types::param_types(&fn_defs[i].params, Some(&registry))?;

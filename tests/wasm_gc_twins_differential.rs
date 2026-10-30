@@ -85,7 +85,7 @@ fn twins_print_what_the_vm_prints() {
 }
 
 #[test]
-fn self_tail_loops_preserve_certified_bytes() {
+fn self_tail_loops_apply_to_certified_builds() {
     let compile = |certify: bool, loops: bool| {
         let out_dir = tempfile::tempdir().expect("compile directory");
         let mut cmd = Command::new(aver_cmd::aver_bin());
@@ -104,8 +104,10 @@ fn self_tail_loops_preserve_certified_bytes() {
         assert!(out.status.success(), "{}", aver_cmd::format_output(&out));
         std::fs::read(out_dir.path().join("recgen.wasm")).expect("module written")
     };
-    // The hook changes ordinary output, so the certificate equality is not
-    // vacuous. Certification keeps the established instruction plan.
+    // The loop pass runs in ordinary and `--certify` builds alike: the hook
+    // changes both, and the loop bytes it writes are the ones the certificate
+    // wall lowers a self-tail-calling plan to (`GrammarLower.bodyBytes`). A
+    // certified build that silently dropped the loop would fail here.
     assert_ne!(compile(false, true), compile(false, false));
-    assert_eq!(compile(true, true), compile(true, false));
+    assert_ne!(compile(true, true), compile(true, false));
 }

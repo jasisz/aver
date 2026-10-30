@@ -576,7 +576,7 @@ fn check_candidate(
                 .into(),
         );
     }
-    let Some(bytes) = m.code_entry_bytes(plan) else {
+    let Some(bytes) = m.code_entry_bytes(func_idx, plan) else {
         return Some("plan lowering cites an undeclared index or type".into());
     };
     let Some(code) = facts.code_of(func_idx) else {
