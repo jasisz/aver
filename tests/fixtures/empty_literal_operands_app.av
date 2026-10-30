@@ -1,6 +1,7 @@
 module EmptyLiteralOperandsApp
     intent =
-        "Applies every generic List, Map and Vector builtin to an empty literal that nothing else types."
+        "Applies every generic List, Map and Vector builtin to an empty literal that nothing else types,"
+        "and compares Result constructors whose other position only the opposite operand fixes."
         "The checker settles each element type, so every backend prints what the VM prints."
     effects [Console.print]
 
@@ -111,6 +112,38 @@ fn boundNoneEqual() -> Bool
     o: Option<Int> = Option.None
     o == Option.None
 
+fn blank() -> String
+    ? "An empty String the checker cannot fold."
+    ""
+
+fn parsed(text: String) -> Result<String, String>
+    ? "The text when it is not empty, otherwise an error."
+    match text == ""
+        true -> Result.Err("empty")
+        false -> Result.Ok(text)
+
+fn okOperand(text: String) -> Result<Unit, String>
+    ? "Compares with a Result.Ok whose error type only the other operand gives; this function answers a different Result."
+    match parsed(text) == Result.Ok(text)
+        true -> Result.Ok(Unit)
+        false -> Result.Err("differs")
+
+fn errOperand(text: String) -> Result<Unit, String>
+    ? "Compares a Result.Err on the left whose success type only the other operand gives."
+    match Result.Err("empty") == parsed(text)
+        true -> Result.Ok(Unit)
+        false -> Result.Err("differs")
+
+fn outcome(r: Result<Unit, String>) -> String
+    ? "The word for a comparison's answer."
+    match r
+        Result.Ok(done) -> "same"
+        Result.Err(why) -> why
+
+fn someOkOperand(text: String) -> Bool
+    ? "Compares with a Result.Ok nested in Option.Some."
+    Option.Some(parsed(text)) == Option.Some(Result.Ok(text))
+
 fn main() -> Unit
     ! [Console.print]
     Console.print("listLen {listLen()}")
@@ -138,3 +171,6 @@ fn main() -> Unit
     Console.print("boundMapHas {boundMapHas()}")
     Console.print("boundListLen {boundListLen()}")
     Console.print("boundNoneEqual {boundNoneEqual()}")
+    Console.print("okOperand {outcome(okOperand(word()))}")
+    Console.print("errOperand {outcome(errOperand(blank()))}")
+    Console.print("someOkOperand {someOkOperand(word())}")
