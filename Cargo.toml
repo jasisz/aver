@@ -41,6 +41,11 @@ include = [
     "/tools/proof-kernel/kernel/decode.av",
     "/tools/proof-kernel/lib/lib.av",
     "/tools/proof-kernel/lib/wire.av",
+    "/tools/proof-kernel/lib/std.av",
+    "/tools/proof-kernel/kernel/finite.av",
+    "/tools/proof-kernel/kernel/types.av",
+    "/tools/proof-kernel/kernel/builtins.av",
+    "/tools/proof-kernel/kernel/eval.av",
 ]
 
 [lib]
