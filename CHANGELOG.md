@@ -8,74 +8,33 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Highlights
 
-- **Proof steps checked by a kernel written in Aver.** `aver proof` evaluates a law, splits, inducts and does arithmetic as proof steps, and a small kernel written in Aver and compiled into `aver` checks every step. Lean then checks the same steps on its own. `aver proof --backend aver` runs the kernel alone, in a fraction of a second on a whole project. `aver proof --check` says what closed each law: `closed by steps`, `closed by tactic` or `not closed`, with where the steps stopped.
-- **The kernel knows types.** Every term a proof puts in place of a variable is checked against that variable's type, so a proof can no longer cite a law, a rule or an induction hypothesis at a value of another type.
-- **Steps close many more laws.** Induction along the recursion of the function a law is about, or of another function in the claim when that does not close, along a countdown or a division to zero, and on a list, also under a `when` about that list and for every value of another given. Linear arithmetic over the integers, with division by a literal or by a divisor the steps show is not 0, bit masks, and the product of two nonnegative comparisons. `List`, `Map` and `Vector` builtins, `Int.min`, `Int.max`, `Int.abs`, `List.contains`, `Option.withDefault`, `Result.withDefault`, `Bool.or` and `Bool.and` with their arguments in either order, and a field read after `Record.update`. A law over a finite type is checked value by value. `because` lines are proved one by one, and a law without `using` uses the earlier laws that steps closed. Induction on the length of a list covers a function that drops more than one item per call, and a law about what a function reads from a recursive result splits on the cases that function reads.
-- **Hints.** When a law stays open, `aver proof` says which `using` line, `induction` line or plan would close it, that it closes without its `because` lines, or which lemma, stated where the steps stop, would close it. A refusal at a recursive call says why the steps do not open it.
-- **Proof plans in Aver.** A project can write its own proof plans and name one on a law with `by Plans.X`; the kernel checks what a plan returns, so a plan is not trusted. Standard plans ship as `Kernel.Std` (`by Kernel.Std.cases`). A plan can also return a script that the automatic steps finish.
-- **Refined types.** An opaque record with a validating constructor (`Natural` with `n >= 0`) is a refined type: a law over `given n: Natural` holds for the values the constructor admits, a law that cites it at another value has to show the check, and `Natural.fromInt(5)` with a literal in range is a `Natural`, not a `Result`.
-- **What a proof stands on.** For each law closed by steps, `aver proof --check-json` lists under `trust` the kernel rules its steps apply, whether it uses `compute`, `ring` or `linear`, and the laws and facts it cites.
-- **`aver facts`** lists the builtin facts proofs may use, each written as an Aver law.
-- **Lean 4.35.0, and `--paranoid`.** `aver-cert verify --paranoid` and `aver proof --check --paranoid` check the proof with every kernel Lean 4.35 ships (Lean, lean4lean, nanoda, con-leche, con-ron), not Lean's alone; each must accept, and a missing one is an error. Off by default. The certificate wall identity changes with the toolchain, so certificates from 0.30 verify only with 0.30: certify again.
-- **`List.contains` through `List.concat` and `List.reverse`**: the facts `List.contains.ofConcat` and `List.contains.ofReverse`, for elements whose `==` is equality.
-- **A list with a cell in it is not empty**: the facts `List.prepend.notEmpty` and `List.concat.notEmpty` (and with the sides of `==` swapped), for elements whose `==` is equality; a `match` on `List.concat(xs, [x])` splits `xs` into `[]` and a cell, and so does a hypothesis such as `when xs != []`.
-- **Certificates** prove their law-claims with proof steps, as `aver proof` does.
-- **`aver proof` is about twice as fast** and needs about half the memory. Part of it is the allocator: the `aver` binary now allocates with mimalloc, which alone saves about a fifth of the time. It also writes about a fifth less step text on larger projects.
-- **Deferred calls.** `lazy f(x)` makes a call of a pure function that returns a recursive sum (a tree, a term) only when its result is first looked at, and only once; compiled Rust defers the call, the other backends make it at once. `lazy f(x) knowing f.law(x)` gives one value of the result from a law the proof kernel closes without making the call, and "Deferred calls" in the language guide says when `lazy` pays.
-- **`exposes` lists module-level bindings.** A binding with a type annotation can be exposed, and other modules read it as `Module.name` on every backend and in proofs.
-- **`Bits.popCount(x, width)`** counts the one bits among the lowest `width` bits of an `Int`.
-- **`fn main() -> Int` sets the exit status** on every target. A value outside 0..255 ends with status 1 and a message.
-- **Compiled Rust copies far less and uses less memory.** Maps, vectors, records, lists and strings that a function passes on, matches or updates are moved or borrowed instead of copied, so state updated in a loop runs up to twice as fast; an `Int` takes one word, a list 16 bytes, and values of recursive types share their parts behind one pointer (a million nodes pointing at one child take 125 MB instead of 371 MB). Small `Int` arithmetic runs on machine words and is about twice as fast, walking an ASCII string by position or with `String.chars` reads bytes directly (9.3 s to 0.1 s on one 140,000-character line), and building a string with repeated `+` is linear.
-- **Rust build options.** `aver.toml` takes `[rust] allocator = "mimalloc"`, and `[rust] panic = "abort"` builds without unwinding, up to 10% faster on allocation-heavy code (`docs/rust.md` lists what changes at a panic). `aver compile --target rust --perf-notes` lists where the generated code copies a whole Map or Vector and why, and `aver check` warns with `perf-int-carrier` where a refinement over `Int` cannot be held as a machine integer.
-- **wasm-gc runs faster.** `Int` arithmetic runs on machine words and functions hand `Int`, `Option` and `Result` back unpacked, so a Lean kernel written in Aver checks Lean's Init and Std about 40% faster under V8; small and empty maps allocate less, strings are read without a character table, and a function that calls itself in tail position runs as a loop. `tools/wasm-work/run.mjs` runs any wasm-gc command line program under Node.
+- **A proof kernel written in Aver.** `aver proof` closes laws with its own proof steps (induction, case splits, arithmetic), and a small kernel written in Aver checks every step, with types. Lean checks the same steps again. `aver proof --backend aver` runs the kernel alone in seconds on a whole project.
+- **Steps close many more laws**, and when one stays open `aver proof` says which `using`, `induction` or lemma would close it. Projects can write their own proof plans in Aver (`by Plans.X`); the kernel checks what a plan returns.
+- **Refined types.** An opaque record with a validating constructor (`Natural` with `n >= 0`) is a refined type in laws and proofs.
+- **`aver proof` is about twice as fast** and needs half the memory. Lean 4.35.0, and `--paranoid` checks with every kernel Lean ships.
+- **Much faster compiled Rust.** Far fewer copies of maps, lists, records and strings, smaller values, shared parts of trees and terms, faster `Int`, and `aver.toml` options for mimalloc and `panic = "abort"`.
+- **Much faster wasm-gc.** `Int` on machine words, fewer allocations, faster strings and maps, tail calls as loops.
+- **Language**: `lazy f(x)` for deferred calls, `exposes` for module-level bindings, `Bits.popCount`, `fn main() -> Int` sets the exit status.
+- **Many fixes** across the VM, Rust and wasm-gc: no more exponential `==` on shared values, linear string walks, NaN that behaves the same everywhere, deep recursion that no longer overflows.
 
 ### Migration
 
 | Before | Now |
 |---|---|
 | a law over `given a: Int` with `Natural(value = a)` in it, proved for `a >= 0` only | `given a: Natural`; a law over `Int` is about every `Int` |
-| a validating constructor on a record not listed in `exposes opaque` made a refined type | add `exposes opaque [T]`; otherwise the literal call is `Result` again |
+| a validating constructor on a record not listed in `exposes opaque` made a refined type | add `exposes opaque [T]` |
 | `Natural.fromInt(5)` unwrapped with `match`, `?` or `Result.Ok(...)` | drop the unwrapping |
-| a `when`-law restated over its samples when no proof closed it | declined (`declined_claims`); samples with `--examples`; `bounded_laws` is gone from `--check-json` |
-| `aver proof` exporting law samples | only with `--examples` |
-| a function with effects writing `Natural(value = ...)` directly | write it in a pure function or call the constructor |
+| `aver proof` exporting law samples | only with `--examples`; `bounded_laws` is gone from `--check-json` |
 | a `verify` case with sides of different types, failing in `aver verify` | a type error in `aver check` |
 | `Shape.Rect(_)` for a two-field variant, `Option.Some()` | list every field, or write the bare `Shape.Rect` |
-| code `aver check` could not type, accepted silently | an error with the line |
-| `Kernel.Proof.Goal` without `hyps`, givens as bare names | givens are `TypedVar`; names through `Kernel.Proof.givenNames` |
-| step scripts in `proof_steps/` | format 16, with types; the order complement, ring, `bool.not`, `list.len.nil` and `list.reverse.nil` rules are gone (`linear`, `ring` and `compute` show them), and `!=` is read by `int.ne.def` |
-| `fn main() -> Int` returning a value outside 0..255, truncated | exit status 1 with a message |
-| `Args.get()` with no `--`: the whole command line on the VM, the program name first on wasip2 | only the arguments after `--`, on every runner |
-| a module-level binding that reads itself, or a binding written after it, through the functions it calls | refused by `aver check` (the VM read it before it was computed) |
-| a project file under `kernel/` named `Kernel.*` | refused; rename it |
-| certifying a plain `aver compile --target wasm-gc` or `--target wasip2` build | build with `--certify` and ship that build; a plain build is faster but is not what the certificate describes |
-| hand-written Rust matching a generated recursive sum as an enum | match on `value.view()` (`T__view::Variant(fields)`), build with `T::Variant(T__Variant(..))` without `Shared::new` |
+| `fn main() -> Int` returning a value outside 0..255 | exit status 1 with a message |
+| `Args.get()` with no `--` | only the arguments after `--`, on every runner |
+| a module-level binding that reads itself or a later one | refused by `aver check` |
+| certifying a plain wasm-gc or wasip2 build | build with `--certify` and ship that build |
+| hand-written Rust matching a generated recursive sum as an enum | match on `value.view()` |
+| step scripts and plans written for 0.30 | `docs/` describes the new kernel rules and `Kernel.Proof.Goal` |
 
 A 0.30 `--gate` baseline with `bounded` laws has to be recorded again.
-
-### Fixed
-
-- **`aver proof --backend aver` no longer counts as closed** two laws that cite each other, a split on a value that is not a Bool, or a Float `==` read as equality.
-- **A `Map` on the VM keeps apart two keys with the same internal hash.**
-- **Long-running VM programs no longer slow down as they run.** A tail loop that files what a helper returns into a `Map` takes 0.1 s instead of 4.9 s for 320,000 steps, an NDJSON parser takes 3.4 s instead of 139 s on 10 MB, and a type checker that threads its state through every call runs in half the time.
-- **Walking a String by position is linear on every backend.** `String.len` of such a String no longer counts its characters on every step, and a helper in another module or dependency that walks the same String reuses its index.
-- **`==` and map keys on values that share parts no longer take exponential time**, on the VM, in compiled Rust and on wasm-gc. A value nested hundreds of thousands of levels deep no longer overflows the stack when it is compared, returned or freed.
-- **NaN and other special `Float` values behave the same on every backend.** On the VM and the self-host a value holding a NaN is not equal to itself and `<=` and `>=` with a NaN are false, dividing by zero on the self-host gives an infinity or NaN, and wasm-gc prints NaN, `inf`, `-inf` and `-0` instead of trapping.
-- **Self-host maps keyed by records, sums, tuples or lists** find exactly the keys they hold, and `Map.keys` and `Map.entries` return them in key order.
-- **A `withDefault` fallback with an effect runs on wasm-gc as it does on the VM and in Rust**, and a pure fallback is computed only when the value is missing. On wasm-gc, `Result.fromOption` returns the present value even when its error argument unwraps another value.
-- **Compiled to Rust, the branches of `(a, b)!` and `Work` jobs recurse as deep as `main` does.** They ran on a 2 MB stack, so a recursion `main` handled aborted the program inside a branch. A `main` that returns any `Result` gets the same stack.
-- **Deep recursion under `aver run --wasm-gc` and `--wasip2` gets 224 MiB of stack**, and running out of it ends with "stack overflow: recursion too deep" instead of aborting.
-- **wasm-gc and Rust compile more programs**: generic builtins on an empty literal (`List.len([])`, `{}`), values whose type no signature names, a `match` on a tuple with a `String` literal, a recursive field bound inside a tuple pattern, module-level bindings read from any function, a `Float` constant that works out to NaN, maps keyed by tuples of four or more items, mutual tail calls that name a shared parameter differently, and on wasm-gc a `Unit` parameter before others or a type named `Index`. An empty literal bound to a name takes its type from a later read, or `aver check` asks for it.
-- **wasm-gc and wasip2**: a program compiles to the same bytes every time, a map keyed by close, negative or power-of-two `Int`s no longer slows to a crawl, the headers of an `Http.get` response read without a trap, and wasip2 reads files larger than its 128 MiB of memory.
-- **`aver check`** says that a tuple cannot be bound with `=` and points to `match`, and no longer reports `perf-loop-invariant` for a parameter that changes through a mutually recursive call.
-- **A `match` ends with its arms**; a line starting with `(` or `-` after them is no longer read as part of the last arm.
-- **The proof kernel refuses step scripts it used to accept**: recursion through a catch-all pattern taken as structural, a constructor listed under another sum, induction over an incomplete match, a literal pattern hiding a call, cyclic constants, and duplicate laws, names, fields or constructors. Each of these could prove a false law.
-- **`aver proof` no longer runs without end** on a law that reaches a large group of mutually recursive functions, and `--minimize` works on projects where some attempts are declined.
-- **`--paranoid` passes every kernel on certificates with theorems left as `sorry`.** nanoda, con-leche and con-ron check everything else, and nanoda no longer runs out of memory.
-- **`aver verify` no longer crashes** when a dependency fails its own check, and `aver proof` no longer overflows the stack on a deep proof.
-- **Induction along a function whose pattern has a `_` part** (`[_, ..t]`, `Link(_, rest)`) no longer fails with `pattern binds 2 names, 1 given`.
-- **Lean accepts more of what the steps prove**: inductions under a comparison `when`, `match` arguments of `Bool.and`, nested comparisons, products of givens, and long chains of list steps. Laws again depend on fewer axioms: `==` and `<=` on `Int` no longer need `Classical.choice`.
-- **A parameter or binding named `given`, `requires` or `ensures` exports to Lean again**; Lean 4.35 refused the generated code.
 
 ## 0.30.0 "Turn" — 2026-10-03
 
