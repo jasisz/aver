@@ -23,6 +23,8 @@ pub enum PlanTy {
     /// `Bytes`: the packed `(array (mut i8))` of its octets
     /// (`Schema.TypeTable.bytesArr`).
     Bytes,
+    /// A raw `i64` local: only the `Int` tree's machine-word temporaries.
+    Word,
 }
 
 /// `Grammar.Lit`.
@@ -376,6 +378,7 @@ impl PlanTy {
             PlanTy::List(t) => format!("(.list {})", t.lean()),
             PlanTy::Opaque(t) => format!("(.opaque {t})"),
             PlanTy::Bytes => ".bytes".into(),
+            PlanTy::Word => ".word".into(),
         }
     }
 }

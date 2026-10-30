@@ -80,6 +80,7 @@ def LRel (env : Nat → Option SVal) (wl : List WVal) : Prop :=
 def Res (tail : Bool) (env : Nat → Option SVal) (st : List WVal) (sv : SVal) : Out → Prop
   | .ok wl' st' => ∃ w, st' = w :: st ∧ SRepr S M sv w ∧ LRel S M X env wl'
   | .ret w => tail = true ∧ SRepr S M sv w
+  | .br _ _ _ => False
 
 /-- An early return out of a node (a `try_` meeting an `Err`): the run
     returned `w`, the source evaluation `ev` failed, and the escape `es` is a
@@ -88,6 +89,7 @@ def Res (tail : Bool) (env : Nat → Option SVal) (st : List WVal) (sv : SVal) :
 def Esc {α : Type} (ev : Option α) (es : Option SVal) (tys : List Ty) : Out → Prop
   | .ret w => ev = none ∧ ∃ x, es = some x ∧ SRepr S M x w ∧ ∃ R ∈ tys, HasTy M x R
   | .ok _ _ => False
+  | .br _ _ _ => False
 
 end Rel
 
@@ -342,20 +344,270 @@ theorem run_split {host : HostTbl} {ar : Nat → Option Nat} {callee : Callee}
   | none => rw [hx] at h; simp [seqOut] at h
   | some o => exact ⟨o, rfl, by rw [hx] at h; exact h⟩
 
-/-- Running a lone `if` on an i32 condition is running the chosen branch. -/
+/-- Running a lone `if` on an i32 condition is running the chosen branch,
+    when neither arm branches out of itself (lowered code never does,
+    `escFree_lowerB`). -/
 theorem wRunF_ifElse_single (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    (tB eB : List WInstr) (l : List WVal) (c : Int) (st : List WVal) :
+    (tB eB : List WInstr) (l : List WVal) (c : Int) (st : List WVal)
+    (ht : escFreeL 0 tB = true) (he : escFreeL 0 eB = true) :
     wRunF host ar callee [.ifElse tB eB] l (.i32v c :: st) =
       if c = 0 then wRunF host ar callee eB l st else wRunF host ar callee tB l st := by
   by_cases hc : c = 0
   · simp only [wRunF, hc, ite_true]
     cases h : wRunF host ar callee eB l st with
     | none => rfl
-    | some o => cases o <;> simp
+    | some o =>
+        cases o with
+        | ok _ _ => simp
+        | ret _ => simp
+        | br _ _ _ => exact (wRunF_not_br host ar callee he h).elim
   · simp only [wRunF, hc, ite_false]
     cases h : wRunF host ar callee tB l st with
     | none => rfl
-    | some o => cases o <;> simp
+    | some o =>
+        cases o with
+        | ok _ _ => simp
+        | ret _ => simp
+        | br _ _ _ => exact (wRunF_not_br host ar callee ht h).elim
+
+/-! ### Lowered code never branches out of itself -/
+
+section EscFree
+
+theorem escFree_eraseL_append (k : Nat) (xs ys : List BI) :
+    escFreeL k (eraseL (xs ++ ys)) = (escFreeL k (eraseL xs) && escFreeL k (eraseL ys)) := by
+  rw [eraseL_append, escFreeL_append]
+
+theorem escFree_ops (k : Nat) (is : List WInstr) :
+    escFreeL k (eraseL (is.map BI.op)) = escFreeL k is := by
+  rw [eraseL_ops]
+
+theorem escFree_smallCmp (k : Nat) (op : BinOp) : escFreeI k (smallCmpInstr op) = true := by
+  cases op <;> rfl
+
+theorem escFree_boolCmp (k : Nat) (op : BinOp) : escFreeI k (boolCmpInstr op) = true := by
+  cases op <;> rfl
+
+theorem escFree_floatCmp (k : Nat) (op : BinOp) : escFreeI k (floatCmpInstr op) = true := by
+  cases op <;> rfl
+
+theorem escFree_bigCmpArm (k C s : Nat) (op : BinOp) : escFreeL k (bigCmpArm C s op) = true := by
+  cases op <;> rfl
+
+theorem escFree_intCmpTail (k : Nat) (M : MCtx) (op : BinOp) :
+    escFreeL k (intCmpTail M op) = true := by
+  cases op <;> rfl
+
+theorem escFree_dfltB (k : Nat) (M : MCtx) (t : Ty) : escFreeL k (eraseL (dfltB M t)) = true := by
+  cases t <;> rfl
+
+theorem escFree_bindFieldB (k ss idx i b : Nat) :
+    escFreeL k (eraseL (bindFieldB ss idx i b)) = true := by
+  unfold bindFieldB; split <;> rfl
+
+theorem escFree_extractB (k ss idx : Nat) : ∀ (i : Nat) (bs : List Nat),
+    escFreeL k (eraseL (extractB ss idx i bs)) = true
+  | _, [] => rfl
+  | i, b :: bs => by
+      simp only [extractB, escFree_eraseL_append, escFree_bindFieldB,
+        escFree_extractB k ss idx (i + 1) bs, Bool.and_self]
+
+theorem escFree_builtinTail (k : Nat) (M : MCtx) (bi : Builtin) (ts : Option (List Ty)) :
+    escFreeL k (eraseL (builtinTail M bi ts)) = true := by
+  unfold builtinTail helperCall bytesCall
+  (repeat' split) <;> rfl
+
+theorem escFree_strOpTail (k : Nat) (M : MCtx) (op : BinOp) :
+    escFreeL k (eraseL (strOpTail M op)) = true := by
+  cases op <;> rfl
+
+theorem escFree_replicate (k : Nat) (i : BI) (hi : escFreeI k (eraseI i) = true) :
+    ∀ n, escFreeL k (eraseL (List.replicate n i)) = true
+  | 0 => rfl
+  | n + 1 => by
+      simp only [List.replicate_succ, eraseL, escFreeL_cons, hi, escFree_replicate k i hi n,
+        Bool.and_self]
+
+theorem escFree_treeBlock (k : Nat) (M : MCtx) (X : LCtx) (op : BinOp) (a b : Nat) :
+    escFreeI k (eraseI (treeBlock M X op a b)) = true := by
+  cases op <;> simp [treeBlock, eraseI, eraseL, eraseL_ops, smallReadW, treeOpW, escFreeI, escFreeL]
+
+theorem escFree_aheadB (k : Nat) (X : LCtx) (e : Expr) (p : Nat) (code : List BI)
+    (h : escFreeL k (eraseL code) = true) : escFreeL k (eraseL (aheadB X e p code)) = true := by
+  unfold aheadB; split <;> simp [eraseL_append, escFreeL_append, h, eraseL, eraseI, escFreeI]
+
+/-- The lemmas that decide the escape-freedom of the templates. -/
+macro "esc_simp" "[" ls:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
+  `(tactic| simp only [escFree_eraseL_append, escFree_ops, eraseL, eraseI, escFreeL_cons,
+      escFreeL_nil, escFreeL_append, escFreeI, Bool.and_true, Bool.true_and, Bool.and_self,
+      escFree_smallCmp, escFree_boolCmp, escFree_floatCmp, escFree_bigCmpArm, escFree_intCmpTail,
+      escFree_dfltB, escFree_bindFieldB, escFree_extractB, escFree_builtinTail, escFree_strOpTail,
+      strLitB, concatB, cmpArmB, vecGetOrB, divOrB, tryB, tagTestB, List.map,
+      List.cons_append, List.nil_append, $ls,*])
+
+mutual
+  theorem escFree_lowerB (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (e : Expr) (k : Nat), escFreeL k (eraseL (lowerB M X Γ tail e)) = true
+    | _, _, .literal l, k => by cases l <;> simp only [lowerB] <;> esc_simp []
+    | _, _, .local _, k => by simp only [lowerB]; esc_simp []
+    | Γ, tail, .let_ b v body, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ v, escFree_lowerB M X _ _ body]
+    | Γ, _, .call (.fn f) args, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, _, .call (.builtin bi) args, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, _, .tailCall f args, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, _, .binOp op l r, k => by
+        simp only [lowerB]
+        (repeat' split) <;>
+          esc_simp [escFree_lowerB M X _ _ l, escFree_lowerB M X _ _ r, escFree_treeBlock,
+            escFree_aheadB _ _ _ _ _ (escFree_lowerB M X _ _ l _),
+            escFree_aheadB _ _ _ _ _ (escFree_lowerB M X _ _ r _)]
+    | Γ, _, .neg e, k => by simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ e]
+    | Γ, tail, .ifThenElse c t e, k => by
+        simp only [lowerB]
+        esc_simp [escFree_lowerB M X _ _ c, escFree_lowerB M X _ _ t, escFree_lowerB M X _ _ e]
+    | Γ, _, .recordCreate tid fs, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ fs]
+    | Γ, _, .project tid i base, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ base]
+    | Γ, _, .call (.lazy lb) [o, d], k => by
+        simp only [lowerB]
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ o, escFree_lowerB M X _ _ d]
+    | Γ, _, .call (.lazy lb) [], k => by simp only [lowerB]; esc_simp []
+    | Γ, _, .call (.lazy lb) [_], k => by simp only [lowerB]; esc_simp []
+    | Γ, _, .call (.lazy lb) (_ :: _ :: _ :: _), k => by simp only [lowerB]; esc_simp []
+    | Γ, _, .call (.intrinsic ie) args, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, _, .construct c ty args, k => by
+        simp only [lowerB]
+        (repeat' split) <;> esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, tail, .match_ s arms, k => by
+        have hs : ∀ k, escFreeL k (eraseL (lowerB M X Γ false s)) = true :=
+          escFree_lowerB M X Γ false s
+        simp only [lowerB]
+        (repeat' split) <;>
+          esc_simp [escFree_lowerB M X _ _ s, escFree_lowerIntArms M X _ _ _ _ arms _ hs,
+            escFree_lowerBoolArms M X _ _ _ arms, escFree_lowerOptArms M X _ _ _ _ arms,
+            escFree_lowerResArms M X _ _ _ _ _ arms, escFree_lowerVarArms M X _ _ _ _ arms,
+            escFree_lowerStrArms M X _ _ _ arms, escFree_lowerTupArms M X _ _ _ arms,
+            escFree_lowerListArms M X _ _ _ _ arms]
+    | Γ, _, .interp parts, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ parts]
+    | Γ, _, .list t items, k => by
+        simp only [lowerB]
+        (repeat' split) <;>
+          esc_simp [escFree_lowerArgsB M X _ items, escFree_replicate k (BI.op (WInstr.call _)) rfl]
+    | Γ, _, .try_ e R, k => by
+        simp only [lowerB]
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ e]
+    | Γ, tail, .scope e, k => by simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ e]
+  theorem escFree_lowerArgsB (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (es : List Expr)
+      (k : Nat), escFreeL k (eraseL (lowerArgsB M X Γ es)) = true
+    | _, [], k => by simp only [lowerArgsB]; esc_simp []
+    | Γ, e :: es, k => by
+        simp only [lowerArgsB]
+        esc_simp [escFree_lowerB M X _ _ e, escFree_lowerArgsB M X _ es]
+  theorem escFree_lowerIntArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (sc : List BI) (bt : Option Ty) (arms : Arms) (k : Nat),
+      (∀ k, escFreeL k (eraseL sc) = true) →
+      escFreeL k (eraseL (lowerIntArms M X Γ tail sc bt arms)) = true
+    | _, _, _, _, .nil, k, _ => by simp only [lowerIntArms]; esc_simp []
+    | Γ, tail, sc, bt, .cons p b rest, k, hsc => by
+        simp only [lowerIntArms]
+        (repeat' split) <;>
+          esc_simp [hsc, escFree_lowerB M X _ _ b,
+            escFree_lowerIntArms M X _ _ sc bt rest _ hsc]
+  theorem escFree_lowerBoolArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerBoolArms M X Γ tail bt arms)) = true
+    | Γ, tail, bt, .cons p t (.cons p' e r), k => by
+        have ht := escFree_lowerB M X Γ tail t
+        have he := escFree_lowerB M X Γ tail e
+        unfold lowerBoolArms
+        (repeat' split) <;> (try injections) <;> (try subst_vars) <;> esc_simp [ht, he]
+    | _, _, _, .nil, k => by unfold lowerBoolArms; esc_simp []
+    | _, _, _, .cons _ _ .nil, k => by unfold lowerBoolArms; esc_simp []
+  theorem escFree_lowerOptArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (t : Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerOptArms M X Γ tail bt t arms)) = true
+    | Γ, tail, bt, t, .cons p1 b1 (.cons p2 b2 _), k => by
+        unfold lowerOptArms
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ b1, escFree_lowerB M X _ _ b2]
+    | _, _, _, _, .nil, k => by unfold lowerOptArms; esc_simp []
+    | _, _, _, _, .cons _ _ .nil, k => by unfold lowerOptArms; esc_simp []
+  theorem escFree_lowerResArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (t e : Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerResArms M X Γ tail bt t e arms)) = true
+    | Γ, tail, bt, t, e, .cons p1 b1 (.cons p2 b2 _), k => by
+        unfold lowerResArms
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ b1, escFree_lowerB M X _ _ b2]
+    | _, _, _, _, _, .nil, k => by unfold lowerResArms; esc_simp []
+    | _, _, _, _, _, .cons _ _ .nil, k => by unfold lowerResArms; esc_simp []
+  theorem escFree_lowerVarArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (tid : Nat) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerVarArms M X Γ tail bt tid arms)) = true
+    | _, _, _, _, .nil, k => by unfold lowerVarArms; esc_simp []
+    | Γ, tail, bt, tid, .cons p b .nil, k => by
+        unfold lowerVarArms
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ b]
+    | Γ, tail, bt, tid, .cons p b (.cons p' b' r), k => by
+        unfold lowerVarArms
+        (repeat' split) <;>
+          esc_simp [escFree_lowerB M X _ _ b, escFree_lowerVarArms M X _ _ _ _ (.cons p' b' r)]
+  theorem escFree_lowerStrArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerStrArms M X Γ tail bt arms)) = true
+    | _, _, _, .nil, k => by unfold lowerStrArms; esc_simp []
+    | Γ, tail, bt, .cons p b rest, k => by
+        unfold lowerStrArms
+        (repeat' split) <;>
+          esc_simp [escFree_lowerB M X _ _ b, escFree_lowerStrArms M X _ _ _ rest]
+  theorem escFree_lowerTupArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (tid : Nat) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerTupArms M X Γ tail tid arms)) = true
+    | Γ, tail, tid, .cons p b _, k => by
+        have hb : ∀ Γ' k, escFreeL k (eraseL (lowerB M X Γ' tail b)) = true :=
+          fun Γ' => escFree_lowerB M X Γ' tail b
+        unfold lowerTupArms
+        (repeat' split) <;> (try injections) <;> (try subst_vars) <;> esc_simp [hb]
+    | _, _, _, .nil, k => by unfold lowerTupArms; esc_simp []
+  theorem escFree_lowerListArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (t : Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerListArms M X Γ tail bt t arms)) = true
+    | Γ, tail, bt, t, .cons p1 b1 (.cons p2 b2 _), k => by
+        unfold lowerListArms
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ b1, escFree_lowerB M X _ _ b2]
+    | _, _, _, _, .nil, k => by unfold lowerListArms; esc_simp []
+    | _, _, _, _, .cons _ _ .nil, k => by unfold lowerListArms; esc_simp []
+end
+
+theorem escFree_lowerW (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool) (e : Expr)
+    (k : Nat) : escFreeL k (lowerW M X Γ tail e) = true :=
+  escFree_lowerB M X Γ tail e k
+
+theorem escFree_lowerArgsW (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (es : List Expr)
+    (k : Nat) : escFreeL k (lowerArgsW M X Γ es) = true :=
+  escFree_lowerArgsB M X Γ es k
+
+end EscFree
+
+/-- Rewrite a lone `if` to its chosen arm, the arms' escape-freedom decided
+    by the lowering lemmas. -/
+macro "rw_if" " at " h:ident : tactic =>
+  `(tactic| (rw [wRunF_ifElse_single] at $h:ident <;>
+    try (show escFreeL _ _ = true
+         first
+           | exact escFree_lowerW _ _ _ _ _ _
+           | exact escFree_lowerB _ _ _ _ _ _
+           | (esc_simp [escFree_lowerB, escFree_lowerArgsB, escFree_lowerBoolArms,
+                escFree_lowerOptArms, escFree_lowerResArms, escFree_lowerVarArms,
+                escFree_lowerStrArms, escFree_lowerTupArms, escFree_lowerListArms,
+                escFree_lowerW, escFree_lowerArgsW]; done)
+           | exact escFree_lowerIntArms _ _ _ _ _ _ _ _ (by assumption)
+           | apply_assumption
+           | (simp [escFreeI]; done))))
 
 theorem upd_same {α : Type} (f : Nat → Option α) (i : Nat) (a : α) : upd f i a i = some a := by
   simp [upd]
@@ -416,6 +668,7 @@ theorem res_of_upd {tail : Bool} {env : Nat → Option SVal} {st : List WVal} {s
       obtain ⟨w, h1, h2, h3⟩ := h
       exact ⟨w, h1, h2, lrel_of_upd hfree h3⟩
   | ret w => exact h
+  | br _ _ _ => exact h.elim
 
 theorem res_ok {tail : Bool} {env : Nat → Option SVal} {st wl' : List WVal} {sv : SVal}
     {w : WVal} (h : SRepr S M sv w) (hl : LRel S M X env wl') :
@@ -431,6 +684,7 @@ theorem res_false {env : Nat → Option SVal} {st : List WVal} {sv : SVal} {out 
       obtain ⟨w, rfl, hw, hl⟩ := h
       exact ⟨wl', w, rfl, hw, hl⟩
   | ret w => exact absurd h.1 (by simp)
+  | br _ _ _ => exact h.elim
 
 /-- An early return out of a part is one out of the whole: the run is the
     part's `return`, the whole's evaluation fails where the part's does, the
@@ -444,6 +698,7 @@ theorem esc_lift {α β : Type} {ev : Option α} {ev' : Option β} {es es' : Opt
   | ret w =>
       obtain ⟨h1, x, hx, hw, R, hR, hxR⟩ := h
       exact ⟨hev h1, x, hes x hx, hw, R, htys R hR, hxR⟩
+  | br _ _ _ => exact h.elim
 
 /-- The same, past the rest of the run: a `return` skips it. -/
 theorem esc_up {host : HostTbl} {ar : Nat → Option Nat} {callee : Callee} {ys : List WInstr}
@@ -458,6 +713,7 @@ theorem esc_up {host : HostTbl} {ar : Nat → Option Nat} {callee : Callee} {ys 
       simp only [seqOut, Option.some.injEq] at hseq
       subst hseq
       exact esc_lift h hev hes htys
+  | br _ _ _ => exact h.elim
 
 /-- An early return is a `return`. -/
 theorem esc_ret {α : Type} {ev : Option α} {es : Option SVal} {tys : List Ty} {out : Out}
@@ -465,6 +721,7 @@ theorem esc_ret {α : Type} {ev : Option α} {es : Option SVal} {tys : List Ty} 
   cases out with
   | ok _ _ => exact h.elim
   | ret w => exact ⟨w, rfl⟩
+  | br _ _ _ => exact h.elim
 
 /-- No early return leaves a node without a bare `try_`. -/
 theorem esc_nil {α : Type} {ev : Option α} {es : Option SVal} {out : Out}
@@ -474,6 +731,7 @@ theorem esc_nil {α : Type} {ev : Option α} {es : Option SVal} {out : Out}
   | ret w =>
       obtain ⟨_, _, _, _, R, hR, _⟩ := h
       cases hR
+  | br _ _ _ => exact h
 
 /-- An early return is never a successful evaluation. -/
 theorem esc_some {α : Type} {ev : Option α} {v : α} {es : Option SVal} {tys : List Ty}
@@ -484,6 +742,7 @@ theorem esc_some {α : Type} {ev : Option α} {v : α} {es : Option SVal} {tys :
       obtain ⟨h1, _⟩ := h
       rw [hv] at h1
       cases h1
+  | br _ _ _ => exact h
 
 end LRelLemmas
 
@@ -999,6 +1258,7 @@ theorem vecGetOr_step (R : XHost S M host) {v i : Nat} {t : Ty} {vs : List SVal}
     {wv wi : WVal} {wl st : List WVal} {dc : List BI} {out : Out}
     (hwv : wl[v]? = some wv) (hrv : SRepr S M (.vec t vs) wv)
     (hwi : wl[i]? = some wi) (hri : SRepr S M (.i n) wi)
+    (hdc : ∀ k, escFreeL k (eraseL dc) = true)
     (hrun : wRunF host ar callee (eraseL (vecGetOrB M v i t dc)) wl st = some out) :
     ((0 ≤ n ∧ n < vs.length) ∧ ∃ x wx, vs[n.toNat]? = some x ∧ SRepr S M x wx ∧
       out = .ok wl (wx :: st)) ∨
@@ -1024,7 +1284,7 @@ theorem vecGetOr_step (R : XHost S M host) {v i : Nat} {t : Ty} {vs : List SVal}
       rw [hsplit, wRunF_append, hpre] at hrun
       have hseq := hrun
       simp only [seqOut] at hseq
-      rw [wRunF_ifElse_single] at hseq
+      rw_if at hseq
       by_cases hin : 0 ≤ n ∧ n < vs.length
       · left
         have hC := hc.mpr (by rw [hwsl]; exact hin)
@@ -1160,6 +1420,7 @@ theorem res_any_tail {tail : Bool} {env : Nat → Option SVal} {st : List WVal} 
   cases out with
   | ok wl' st' => exact h
   | ret w => exact absurd h.1 (by simp)
+  | br _ _ _ => exact h.elim
 
 /-- The default filler runs, pushes one value and touches no local. -/
 theorem dflt_run (t : Ty) (ht : t.hasDefault = true) (wl st : List WVal) :
@@ -2103,7 +2364,7 @@ theorem divOr_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
     simp only [b32] at hrun
     by_cases hy : y = 0
     · simp only [hy, decide_true, ↓reduceIte] at hrun
-      rw [wRunF_ifElse_single] at hrun
+      rw_if at hrun
       simp only [Int.one_ne_zero, ↓reduceIte] at hrun
       by_cases h3 : X.cmp + 3 < wl.length
       · have g3 : wl'[X.cmp + 3]? = some wd := by
@@ -2115,7 +2376,8 @@ theorem divOr_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
           subst hwl'; simp [List.getElem?_set]; omega
         simp [wRunF, g3] at hrun
     · simp only [hy, decide_false, Bool.false_eq_true, ↓reduceIte] at hrun
-      rw [wRunF_ifElse_single, ite_eq_left rfl] at hrun
+      rw_if at hrun
+      rw [ite_eq_left rfl] at hrun
       cases hr : g [wa, wb, .i32v (if isMod then 1 else 0)] with
       | none => simp [wRunF, g1, g2, hg, popArgs_three, hr] at hrun
       | some r =>
@@ -2793,6 +3055,522 @@ theorem bytesSem_spec {C : Nat} (S : CarrierSpec C) (M : MCtx) (hC : M.carrier =
 
 end BytesStep
 
+/-! ## The `Int` tree on the machine word -/
+
+/-- The exact value of an arithmetic node. -/
+def arithZ : BinOp → Int → Int → Int
+  | .add, x, y => x + y
+  | .sub, x, y => x - y
+  | _, x, y => x * y
+
+theorem in64_iff (x : Int) :
+    in64 x = true ↔ -9223372036854775808 ≤ x ∧ x < 9223372036854775808 := by
+  cases x <;> simp only [in64, Nat.blt_eq, Int.ofNat_eq_natCast, Int.negSucc_eq] <;> omega
+
+theorem xor64_neg (a b : Int) : xor64 a b < 0 ↔ (a < 0 ↔ ¬ b < 0) := by
+  cases a <;> cases b <;> simp only [xor64, Int.ofNat_eq_natCast, Int.negSucc_eq] <;> omega
+
+theorem and64_neg (a b : Int) : and64 a b < 0 ↔ (a < 0 ∧ b < 0) := by
+  cases a <;> cases b <;> simp only [and64, Int.ofNat_eq_natCast, Int.negSucc_eq] <;> omega
+
+theorem gtU64_one (a : Int) (ha : in64 a = true) :
+    gtU64 (wrap64 (a + 1)) 1 = true ↔ (a ≠ -1 ∧ a ≠ 0) := by
+  rw [in64_iff] at ha
+  unfold wrap64
+  generalize hq : (a + 1 + 9223372036854775808) % 18446744073709551616 - 9223372036854775808 = q
+  have : q = a + 1 ∨ q = a + 1 - 18446744073709551616 := by omega
+  show gtU64 q (Int.ofNat 1) = true ↔ _
+  cases q <;> simp only [gtU64, Nat.blt_eq, Int.ofNat_eq_natCast, Int.negSucc_eq] at this ⊢ <;> rcases this with h | h <;> constructor <;> intro <;> (first | trivial | omega)
+
+
+theorem wrap64_id (v : Int) (h1 : -9223372036854775808 ≤ v) (h2 : v < 9223372036854775808) :
+    wrap64 v = v := by
+  unfold wrap64; omega
+
+theorem add_noov (x y : Int) (hx : in64 x = true) (hy : in64 y = true)
+    (h : 0 ≤ and64 (xor64 (wrap64 (x + y)) x) (xor64 (wrap64 (x + y)) y)) :
+    -9223372036854775808 ≤ x + y ∧ x + y < 9223372036854775808 := by
+  rw [in64_iff] at hx hy
+  have h' := (not_congr (and64_neg _ _)).mp (Int.not_lt.mpr h)
+  rw [xor64_neg, xor64_neg] at h'
+  unfold wrap64 at h'
+  omega
+
+theorem sub_noov (x y : Int) (hx : in64 x = true) (hy : in64 y = true)
+    (h : 0 ≤ and64 (xor64 (wrap64 (x - y)) x) (xor64 x y)) :
+    -9223372036854775808 ≤ x - y ∧ x - y < 9223372036854775808 := by
+  rw [in64_iff] at hx hy
+  have h' := (not_congr (and64_neg _ _)).mp (Int.not_lt.mpr h)
+  rw [xor64_neg, xor64_neg] at h'
+  unfold wrap64 at h'
+  omega
+
+theorem mul_noov (x y : Int) (hx : in64 x = true) (hy : in64 y = true)
+    (hne : x ≠ -1 ∧ x ≠ 0) (h : (wrap64 (x * y)).tdiv x = y) :
+    -9223372036854775808 ≤ x * y ∧ x * y < 9223372036854775808 := by
+  rw [in64_iff] at hx hy
+  have hd := Int.mul_tdiv_add_tmod (wrap64 (x * y)) x
+  rw [h] at hd
+  have hr : -(if 0 < x then x else -x) < (wrap64 (x * y)).tmod x ∧
+      (wrap64 (x * y)).tmod x < (if 0 < x then x else -x) := by
+    by_cases hp : 0 < x
+    · simp only [hp, ↓reduceIte]
+      exact ⟨Int.lt_tmod_of_pos _ hp, Int.tmod_lt_of_pos _ hp⟩
+    · simp only [hp, ↓reduceIte]
+      rw [← Int.tmod_neg]
+      exact ⟨by have := Int.lt_tmod_of_pos (wrap64 (x * y)) (show 0 < -x by omega); omega,
+        Int.tmod_lt_of_pos _ (by omega)⟩
+  generalize (wrap64 (x * y)).tmod x = r at hd hr
+  have hw : wrap64 (x * y) = (x * y + 9223372036854775808) % 18446744073709551616 -
+      9223372036854775808 := rfl
+  generalize wrap64 (x * y) = p at hd hw
+  split at hr <;> omega
+
+theorem mul_tail (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (t0 t1 t2 : Nat)
+    (x y : Int) (hx : in64 x = true) (hy : in64 y = true) (L st : List WVal)
+    (rest : List WInstr) (out : Out)
+    (hL0 : L[t0]? = some (.i64v x)) (hL1 : L[t1]? = some (.i64v y))
+    (h : wRunF host ar callee
+      (.i64DivS :: .localGet t1 :: .i64Ne :: .localGet t0 :: .i64Const (-1) :: .i64Eq ::
+        .localGet t1 :: .i64Const (-9223372036854775808) :: .i64Eq :: .i32And ::
+        .localGet t0 :: .i64Const 1 :: .i64Add :: .i64Const 1 :: .i64GtU :: .select :: .brIf 0 ::
+        .localGet t2 :: rest) L
+      ((if gtU64 (wrap64 (x + 1)) 1 = false then WVal.i64v 1 else WVal.i64v x) ::
+        .i64v (wrap64 (x * y)) :: st) = some out) :
+    out = .br 0 L st ∨
+      (-9223372036854775808 ≤ x * y ∧ x * y < 9223372036854775808 ∧
+        wRunF host ar callee (.localGet t2 :: rest) L st = some out) := by
+  have hx' := (in64_iff x).mp hx
+  have hy' := (in64_iff y).mp hy
+  rcases (show x = -1 ∨ x = 0 ∨ (x ≠ -1 ∧ x ≠ 0) by omega) with rfl | rfl | hne
+  · have hg : gtU64 (wrap64 (-1 + 1)) 1 = false := by decide
+    have hw : wrap64 (-1 * y) = if y = -9223372036854775808 then y else -y := by
+      unfold wrap64; split <;> omega
+    simp only [hg, ↓reduceIte] at h
+    simp [wRunF, b32, hL0, hL1, hw, Int.tdiv_one] at h
+    have hg0 : gtU64 (wrap64 0) 1 = false := by decide
+    simp only [hg0, ↓reduceIte] at h
+    obtain ⟨-, -, -, h⟩ := h
+    by_cases hy0 : y = -9223372036854775808
+    · simp [hy0, wRunF] at h; exact Or.inl h.symm
+    · simp [hy0, wRunF] at h; exact Or.inr ⟨by omega, by omega, by simpa [wRunF] using h⟩
+  · have hg : gtU64 (wrap64 (0 + 1)) 1 = false := by decide
+    simp only [hg, ↓reduceIte] at h
+    simp [wRunF, b32, hL0, hL1, wrap64, Int.tdiv_one] at h
+    have hg0 : gtU64 1 1 = false := by decide
+    simp only [hg0, ↓reduceIte] at h
+    obtain ⟨-, -, h⟩ := h
+    simp [wRunF] at h
+    exact Or.inr ⟨by omega, by omega, by simpa [wRunF] using h⟩
+  · have hg := (gtU64_one x hx).mpr hne
+    simp only [hg, ↓reduceIte] at h
+    simp [wRunF, b32, hL0, hL1, hne] at h
+    simp only [hg, Bool.true_eq_false, ↓reduceIte] at h
+    obtain ⟨-, -, -, h⟩ := h
+    by_cases hq : (wrap64 (x * y)).tdiv x = y
+    · have hv := mul_noov x y hx hy hne hq
+      simp [hq, wRunF] at h; exact Or.inr ⟨hv.1, hv.2, by simpa [wRunF] using h⟩
+    · simp [hq, wRunF] at h; exact Or.inl h.symm
+
+/-- What the machine operation of a tree node does: it branches out with
+    only the temporaries changed, or leaves the exact value in the `i64`
+    range. -/
+def TreeOpOk (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (X : LCtx)
+    (wl st : List WVal) (rest : List WInstr) (out : Out) (v : Int) : Prop :=
+  ∃ wl', (∀ j, j < X.tree + 2 → wl'[j]? = wl[j]?) ∧ wl'.length = wl.length ∧
+    (out = .br 0 wl' st ∨
+      (-9223372036854775808 ≤ v ∧ v < 9223372036854775808 ∧
+        wRunF host ar callee rest wl' (.i64v v :: st) = some out))
+
+theorem treeOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (X : LCtx)
+    (op : BinOp) (hop : op.isArith = true)
+    (x y : Int) (wl st : List WVal) (rest : List WInstr) (out : Out)
+    (h : wRunF host ar callee (treeOpW X op ++ rest) wl (.i64v y :: .i64v x :: st) = some out) :
+    TreeOpOk host ar callee X wl st rest out (arithZ op x y) := by
+  by_cases h3 : X.tree + 3 < wl.length
+  rotate_left
+  · exfalso
+    cases op <;> simp [BinOp.isArith] at hop <;>
+      simp [treeOpW, wRunF, List.getElem?_set, h3, b32] at h <;>
+      (repeat' split at h) <;> simp_all
+  by_cases hlen : X.tree + 4 < wl.length
+  rotate_left
+  · have h2 : X.tree + 2 < wl.length := by omega
+    have agree : ∀ (a b c : WVal) j, j < X.tree + 2 →
+        (((wl.set (X.tree + 3) a).set (X.tree + 2) b).set (X.tree + 4) c)[j]? = wl[j]? := by
+      intro a b c j hj
+      simp only [List.getElem?_set]
+      rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]
+    cases op <;> simp [BinOp.isArith] at hop
+    · simp [treeOpW, wRunF, List.getElem?_set, h2, h3, hlen, b32] at h
+    · simp [treeOpW, wRunF, List.getElem?_set, h2, h3, hlen, b32] at h
+      exact ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x - y))), agree _ _ _, by simp, Or.inl h.2.2.2.2.2.symm⟩
+    · simp [treeOpW, wRunF, List.getElem?_set, h2, h3, hlen, b32] at h
+      obtain ⟨⟨hx, hy⟩, -, -, h⟩ := h
+      refine ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x * y))), agree _ _ _, by simp, ?_⟩
+      rcases mul_tail host ar callee (X.tree + 2) (X.tree + 3) (X.tree + 4) x y hx hy _ st rest out
+          (by simp [List.getElem?_set, h2]) (by simp [List.getElem?_set, h3]) h with h | ⟨-, -, h⟩
+      · exact Or.inl h
+      · simp [wRunF, List.getElem?_set, hlen] at h
+  have h2 : X.tree + 2 < wl.length := by omega
+  have agree : ∀ (a b c : WVal) j, j < X.tree + 2 →
+      (((wl.set (X.tree + 3) a).set (X.tree + 2) b).set (X.tree + 4) c)[j]? = wl[j]? := by
+    intro a b c j hj
+    simp only [List.getElem?_set]
+    rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]
+  cases op <;> simp [BinOp.isArith] at hop
+  · simp [treeOpW, wRunF, h2, h3, hlen, b32] at h
+    obtain ⟨⟨hx, hy⟩, -, -, -, h⟩ := h
+    refine ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x + y))), agree _ _ _, by simp, ?_⟩
+    split at h
+    · right
+      have hv := add_noov x y hx hy (by assumption)
+      refine ⟨hv.1, hv.2, ?_⟩
+      rw [wrap64_id _ hv.1 hv.2] at h ⊢
+      exact h
+    · left; injection h with h; exact h.symm
+  · simp [treeOpW, wRunF, h2, h3, hlen, b32] at h
+    obtain ⟨⟨hx, hy⟩, -, -, -, h⟩ := h
+    refine ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x - y))), agree _ _ _, by simp, ?_⟩
+    split at h
+    · right
+      have hv := sub_noov x y hx hy (by assumption)
+      refine ⟨hv.1, hv.2, ?_⟩
+      rw [wrap64_id _ hv.1 hv.2] at h ⊢
+      exact h
+    · left; injection h with h; exact h.symm
+  · simp [treeOpW, wRunF, h2, h3, hlen, b32] at h
+    obtain ⟨⟨hx, hy⟩, -, -, h⟩ := h
+    refine ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x * y))), agree _ _ _, by simp, ?_⟩
+    rcases mul_tail host ar callee (X.tree + 2) (X.tree + 3) (X.tree + 4) x y hx hy _ st rest out
+        (by simp [List.getElem?_set, h2]) (by simp [List.getElem?_set, h3]) h with h | ⟨r1, r2, h⟩
+    · exact Or.inl h
+    · refine Or.inr ⟨r1, r2, ?_⟩
+      simp [wRunF, List.getElem?_set, hlen, wrap64_id _ r1 r2] at h
+      simpa [arithZ, wrap64_id _ r1 r2] using h
+
+theorem smallReadW_run {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat → Option Nat)
+    (callee : Callee) (i : Nat) (x : Int) (w : WVal) (wl st : List WVal) (rest : List WInstr)
+    (hw : wl[i]? = some w) (hx : CanonRepr S x w) :
+    wRunF host ar callee (smallReadW C i ++ rest) wl st = some (.br 0 wl st) ∨
+      wRunF host ar callee (smallReadW C i ++ rest) wl st =
+        wRunF host ar callee rest wl (.i64v x :: st) := by
+  rcases S.car x w hx.1 with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+  · right
+    have := S.smallElim x s sg hx.1
+    subst this
+    simp [smallReadW, wRunF, hw, b32]
+  · left
+    simp [smallReadW, wRunF, hw, b32]
+
+/-- The `i64` path of a tree node: it leaves for the exact path (`br 0`), with
+    only the temporaries changed, or ends at `$done` with the boxed value. -/
+theorem fast_run {C : Nat} (S : CarrierSpec C) (box : List WVal → Option WVal)
+    (hBoxC : ∀ n w, -(2 ^ 63 : Int) ≤ n → n < 2 ^ 63 → box [.i64v n] = some w → CanonRepr S n w)
+    (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (M : MCtx)
+    (hC : M.carrier = C) (hBox : host M.box = some (1, box))
+    (X : LCtx) (op : BinOp) (hop : op.isArith = true) (a b : Nat) (x y : Int) (wa wb : WVal)
+    (wl st : List WVal) (o : Out)
+    (hwa : wl[a]? = some wa) (hxa : CanonRepr S x wa) (hwb : wl[b]? = some wb)
+    (hyb : CanonRepr S y wb)
+    (h : wRunF host ar callee (smallReadW M.carrier a ++ smallReadW M.carrier b ++ treeOpW X op ++
+      [WInstr.call M.box, WInstr.br 1]) wl st = some o) :
+    (∃ L S', (∀ j, j < X.tree + 2 → L[j]? = wl[j]?) ∧ L.length = wl.length ∧ o = .br 0 L S') ∨
+      (∃ L w, (∀ j, j < X.tree + 2 → L[j]? = wl[j]?) ∧ L.length = wl.length ∧
+        CanonRepr S (arithZ op x y) w ∧ o = .br 1 L (w :: st)) := by
+  rw [List.append_assoc, List.append_assoc] at h
+  rcases smallReadW_run S host ar callee a x wa wl st _ hwa hxa with h1 | h1
+  · rw [hC] at h; rw [h1] at h; cases h
+    exact Or.inl ⟨wl, st, fun _ _ => rfl, rfl, rfl⟩
+  rw [hC] at h; rw [h1] at h
+  rcases smallReadW_run S host ar callee b y wb wl (.i64v x :: st) _ hwb hyb with h2 | h2
+  · rw [h2] at h; cases h
+    exact Or.inl ⟨wl, _, fun _ _ => rfl, rfl, rfl⟩
+  rw [h2] at h
+  obtain ⟨L, hL, hlen, hb | ⟨r1, r2, hr⟩⟩ := treeOp_run host ar callee X op hop x y wl st _ o h
+  · exact Or.inl ⟨L, st, hL, hlen, hb⟩
+  · cases hbx : box [.i64v (arithZ op x y)] with
+    | none => simp [wRunF, hBox, popArgs, hbx] at hr
+    | some w =>
+        simp [wRunF, hBox, popArgs, hbx] at hr
+        exact Or.inr ⟨L, w, hL, hlen, hBoxC _ w r1 r2 hbx, hr.symm⟩
+
+theorem run_block (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (A : Nat)
+    (body rest : List WInstr) (l st : List WVal) :
+    wRunF host ar callee (.block A body :: rest) l st =
+      match wRunF host ar callee body l st with
+      | some (.ok l' s') => wRunF host ar callee rest l' s'
+      | some (.br 0 l' s') =>
+          if s'.length < A then none else wRunF host ar callee rest l' (s'.take A ++ st)
+      | some (.br (d + 1) l' s') => some (.br d l' s')
+      | some (.ret v) => some (.ret v)
+      | none => none := by
+  conv => lhs; unfold wRunF
+  rfl
+
+/-- A tree node's block: the boxed exact value, the locals changed only in
+    the tree temporaries. `hexact` is the exact path's call. -/
+theorem tree_run {C : Nat} (S : CarrierSpec C) (box : List WVal → Option WVal)
+    (hBoxC : ∀ n w, -(2 ^ 63 : Int) ≤ n → n < 2 ^ 63 → box [.i64v n] = some w → CanonRepr S n w)
+    (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (M : MCtx)
+    (hC : M.carrier = C) (hBox : host M.box = some (1, box))
+    (X : LCtx) (op : BinOp) (hop : op.isArith = true) (a b : Nat) (x y : Int) (wa wb : WVal)
+    (wl st : List WVal) (out : Out)
+    (ha : a < X.tree + 2) (hb : b < X.tree + 2)
+    (hwa : wl[a]? = some wa) (hxa : CanonRepr S x wa) (hwb : wl[b]? = some wb)
+    (hyb : CanonRepr S y wb)
+    (hexact : ∀ L o, L[a]? = some wa → L[b]? = some wb →
+      wRunF host ar callee [.localGet a, .localGet b, .call (M.arithIdx op)] L st = some o →
+      ∃ w, o = .ok L (w :: st) ∧ CanonRepr S (arithZ op x y) w)
+    (h : wRunF host ar callee [.block 1 [.block 0 (smallReadW M.carrier a ++ smallReadW M.carrier b ++
+      treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]), .localGet a, .localGet b,
+      .call (M.arithIdx op)]] wl st = some out) :
+    ∃ wl' w, out = .ok wl' (w :: st) ∧ CanonRepr S (arithZ op x y) w ∧
+      (∀ j, j < X.tree + 2 → wl'[j]? = wl[j]?) ∧ wl'.length = wl.length := by
+  rw [run_block, run_block] at h
+  cases hi : wRunF host ar callee (smallReadW M.carrier a ++ smallReadW M.carrier b ++
+      treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]) wl st with
+  | none => simp only [hi] at h; simp at h
+  | some o =>
+    rcases fast_run S box hBoxC host ar callee M hC hBox X op hop a b x y wa wb wl st o
+        hwa hxa hwb hyb hi with
+        ⟨L, S', hL, hlen, rfl⟩ | ⟨L, w, hL, hlen, hw, rfl⟩ <;> simp only [hi] at h
+    · have hLa : L[a]? = some wa := by rw [hL a ha]; exact hwa
+      have hLb : L[b]? = some wb := by rw [hL b hb]; exact hwb
+      simp only [Nat.not_lt_zero, ↓reduceIte, List.take_zero, List.nil_append] at h
+      cases he : wRunF host ar callee [.localGet a, .localGet b, .call (M.arithIdx op)] L st with
+      | none => simp only [he] at h; simp at h
+      | some oe =>
+        simp only [he] at h
+        obtain ⟨w, rfl, hw⟩ := hexact L oe hLa hLb he
+        simp [wRunF] at h
+        exact ⟨L, w, h.symm, hw, hL, hlen⟩
+    · simp [wRunF] at h
+      exact ⟨L, w, h.symm, hw, hL, hlen⟩
+
+
+/-- The local a tree leaf reads: the local itself, or the record's local. -/
+def leafBase : Expr → Nat
+  | .local i => i
+  | .project _ _ (.local i) => i
+  | _ => 0
+
+section TreeStep
+variable {C : Nat} {S : CarrierSpec C} {M : MCtx} {X : LCtx}
+  (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
+
+/-- A tree leaf's value: its run reads only its base local and pushes the
+    carrier of its `Int`. -/
+theorem leaf_value (F : Nat → List SVal → Option SVal) {Γ : Nat → Option Ty}
+    {env : Nat → Option SVal} {wl : List WVal} (henv : EnvTy M env Γ) (hl : LRel S M X env wl)
+    (e : Expr) (he : treeLeaf e = true) (ht : tyOf M X.n Γ false e = some .int) :
+    ∃ x w, eval F env e = some (.i x) ∧ CanonRepr S x w ∧ leafBase e < X.n ∧
+      (∀ i, slot? e = some i → wl[i]? = some w) ∧
+      ∀ L st, L[leafBase e]? = wl[leafBase e]? →
+        wRunF host ar callee (lowerW M X Γ false e) L st = some (.ok L (w :: st)) := by
+  match e, he with
+  | .local i, _ =>
+      simp only [tyOf] at ht
+      obtain ⟨v, hv, hTv⟩ := envTy_get henv ht
+      obtain ⟨x, rfl⟩ := hasTy_int hTv
+      obtain ⟨hi, w, hw, hr⟩ := hl.2 i _ hv
+      refine ⟨x, w, by simp [eval, hv], hr, hi, fun j hj => by simp [slot?] at hj; subst hj; exact hw,
+        fun L st hL => ?_⟩
+      simp only [leafBase] at hL
+      simp [lowerW, lowerB, eraseL, eraseI, wRunF, hL, hw]
+  | .project tid j (.local i), _ =>
+      obtain ⟨htb, fts, hR, h2, hj⟩ := tyOf_proj_inv ht
+      simp only [tyOf] at htb
+      obtain ⟨v, hv, hTv⟩ := envTy_get henv htb
+      obtain ⟨fs, fts', rfl, hR', hfs⟩ := hasTy_record hTv
+      rw [hR] at hR'
+      cases hR'
+      obtain ⟨sv, hsv, hTsv⟩ := hasTyL_get hfs hj
+      obtain ⟨x, rfl⟩ := hasTy_int hTsv
+      obtain ⟨hi, wr, hwr, hrr⟩ := hl.2 i _ hv
+      obtain ⟨ws, rfl, hws⟩ := (srepr_record hR h2 _ _).mp hrr
+      obtain ⟨w, hw, hwx⟩ := sreprL_get hws hsv
+      refine ⟨x, w, by simp [eval, hv, hsv], hwx, hi, fun k hk => by simp [slot?] at hk,
+        fun L st hL => ?_⟩
+      simp only [leafBase] at hL
+      simp [lowerW, lowerB, eraseL, eraseI, wRunF, hL, hwr, hw]
+
+/-- Evaluating a leaf ahead stores its carrier in its tree local. -/
+theorem aheadB_run (e : Expr) (p : Nat) (code : List BI) (rest : List WInstr) (w : WVal)
+    (wl st : List WVal)
+    (hcode : aheadLeaf e = true → wRunF host ar callee (eraseL code) wl st = some (.ok wl (w :: st))) :
+    wRunF host ar callee (eraseL (aheadB X e p code) ++ rest) wl st =
+      wRunF host ar callee rest (if aheadLeaf e then wl.set (X.tree + p) w else wl) st := by
+  unfold aheadB
+  split
+  · rename_i ha
+    rw [eraseL_append, List.append_assoc, wRunF_append, hcode ha]
+    simp [seqOut, eraseL, eraseI, wRunF, ha]
+  · rename_i ha
+    simp [eraseL, ha]
+
+theorem eraseI_treeBlock (M : MCtx) (X : LCtx) (op : BinOp) (a b : Nat) :
+    eraseI (treeBlock M X op a b) = .block 1 [.block 0 (smallReadW M.carrier a ++
+      smallReadW M.carrier b ++ treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]),
+      .localGet a, .localGet b, .call (M.arithIdx op)] := by
+  simp only [treeBlock, eraseI, eraseL, eraseL_ops, Option.isSome]
+  rfl
+
+/-- A tree block whose first operand local is missing gets stuck. -/
+theorem tree_missing_a (M : MCtx) (X : LCtx) (op : BinOp) (a b : Nat) (L st : List WVal)
+    (h : L[a]? = none) :
+    wRunF host ar callee [eraseI (treeBlock M X op a b)] L st = none := by
+  rw [eraseI_treeBlock, run_block, run_block]
+  simp [smallReadW, wRunF, h]
+
+/-- So does one whose second operand local is missing. -/
+theorem tree_missing_b (S : CarrierSpec C) (hC : M.carrier = C) (X : LCtx) (op : BinOp)
+    (a b : Nat) (L st : List WVal) (wa : WVal) (x : Int) (ha : L[a]? = some wa)
+    (hx : CanonRepr S x wa) (hb : L[b]? = none) :
+    wRunF host ar callee [eraseI (treeBlock M X op a b)] L st = none := by
+  rw [eraseI_treeBlock, run_block, run_block, hC]
+  rw [show smallReadW C a ++ smallReadW C b ++ treeOpW X op ++ [WInstr.call M.box, WInstr.br 1] =
+    smallReadW C a ++ (smallReadW C b ++ treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]) by
+      simp only [List.append_assoc]]
+  rcases smallReadW_run S host ar callee a x wa L st
+      (smallReadW C b ++ treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]) ha hx with h1 | h1 <;>
+    rw [h1]
+  · simp [wRunF, ha, hb]
+  · simp [smallReadW, wRunF, hb]
+
+theorem lrel_agree {env : Nat → Option SVal} {wl wl' : List WVal} (hl : LRel S M X env wl)
+    (hag : ∀ j, j < X.n → wl'[j]? = wl[j]?) (hlen : wl'.length = wl.length) :
+    LRel S M X env wl' := by
+  refine ⟨by rw [hlen]; exact hl.1, ?_⟩
+  intro i v hv
+  obtain ⟨hi, w, hw, hr⟩ := hl.2 i v hv
+  exact ⟨hi, w, by rw [hag i hi]; exact hw, hr⟩
+
+theorem intBin_arith {op : BinOp} (h : op.isArith = true) (x y : Int) :
+    intBin op x y = .i (arithZ op x y) := by
+  cases op <;> simp_all [intBin, arithZ, BinOp.isArith]
+
+/-- A tree leaf's slot after both leaves were evaluated ahead: its carrier,
+    or nothing when its tree local is not declared. -/
+theorem leafSlot_after {wl : List WVal} (e : Expr) (p : Nat) (hp : p < 2) (he : treeLeaf e = true)
+    (w : WVal) (hs : ∀ i, slot? e = some i → wl[i]? = some w) (hb : leafBase e < X.n)
+    (hnt : X.n ≤ X.tree) (L : List WVal) (hlen : L.length = wl.length)
+    (hlow : ∀ j, j < X.tree → L[j]? = wl[j]?)
+    (hmine : aheadLeaf e = true → X.tree + p < wl.length → L[X.tree + p]? = some w)
+    (hout : X.tree + p < L.length ∨ L[X.tree + p]? = none) :
+    L[leafSlot X e p]? = some w ∨ L[leafSlot X e p]? = none := by
+  unfold leafSlot
+  cases hsl : slot? e with
+  | some i =>
+      left
+      have hi : i = leafBase e := by
+        cases e <;> simp_all [slot?, leafBase]
+      rw [hlow i (by omega)]
+      exact hs i hsl
+  | none =>
+      have ha : aheadLeaf e = true := by
+        cases e <;> simp_all [slot?, treeLeaf]
+      by_cases hin : X.tree + p < wl.length
+      · exact Or.inl (hmine ha hin)
+      · right
+        rcases hout with h | h
+        · omega
+        · exact h
+
+/-- The `Int` tree node: its leaves evaluated ahead, then its block, compute
+    the node's value, the locals changed only in tree locals. -/
+theorem tree_step (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Option WVal)
+    (Ctr : Contracts S box add sub mul cmp eq) (hC : M.carrier = C)
+    (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))
+    (hSub : host M.sub = some (2, sub)) (hMul : host M.mul = some (2, mul))
+    (F : Nat → List SVal → Option SVal) {Γ : Nat → Option Ty} {env : Nat → Option SVal}
+    {wl st : List WVal} {out : Out} (op : BinOp) (l r : Expr) (hA : op.isArith = true)
+    (htree : isTree op l r = true) (hnt : X.n ≤ X.tree)
+    (htl : tyOf M X.n Γ false l = some .int) (htr : tyOf M X.n Γ false r = some .int)
+    (henv : EnvTy M env Γ) (hl : LRel S M X env wl)
+    (hrun : wRunF host ar callee (eraseL (aheadB X l 0 (lowerB M X Γ false l) ++
+      (aheadB X r 1 (lowerB M X Γ false r) ++
+        [treeBlock M X op (leafSlot X l 0) (leafSlot X r 1)]))) wl st = some out) :
+    ∃ sv, eval F env (.binOp op l r) = some sv ∧ HasTy M sv .int ∧
+      Res S M X false env st sv out := by
+  simp only [isTree, Bool.and_eq_true] at htree
+  obtain ⟨⟨⟨_, hlt⟩, hrt⟩, _⟩ := htree
+  obtain ⟨x, wx, hevx, hcx, hbx, hsx, hrx⟩ := leaf_value host ar callee F henv hl l hlt htl
+  obtain ⟨y, wy, hevy, hcy, hby, hsy, hry⟩ := leaf_value host ar callee F henv hl r hrt htr
+  rw [eraseL_append, aheadB_run host ar callee l 0 _ _ wx wl st
+    (fun _ => hrx wl st rfl)] at hrun
+  generalize hL1 : (if aheadLeaf l then wl.set (X.tree + 0) wx else wl) = L1 at hrun
+  have hlen1 : L1.length = wl.length := by subst hL1; split <;> simp
+  have hlow1 : ∀ j, j < X.tree → L1[j]? = wl[j]? := by
+    intro j hj; subst hL1; split
+    · simp only [List.getElem?_set]; rw [if_neg (by omega)]
+    · rfl
+  rw [eraseL_append, aheadB_run host ar callee r 1 _ _ wy L1 st
+    (fun _ => hry L1 st (hlow1 _ (by omega)))] at hrun
+  generalize hL2 : (if aheadLeaf r then L1.set (X.tree + 1) wy else L1) = L2 at hrun
+  have hlen2 : L2.length = wl.length := by subst hL2; split <;> simp [hlen1]
+  have hlow2 : ∀ j, j < X.tree → L2[j]? = wl[j]? := by
+    intro j hj; subst hL2; split
+    · simp only [List.getElem?_set]; rw [if_neg (by omega)]; exact hlow1 j hj
+    · exact hlow1 j hj
+  simp only [eraseL] at hrun
+  have hA2 := leafSlot_after (X := X) l 0 (by omega) hlt wx hsx hbx hnt L2 hlen2 hlow2
+    (fun ha hin => by
+      subst hL2 hL1; simp only [ha, ↓reduceIte]
+      split <;> simp [List.getElem?_set] <;> omega)
+    (by
+      by_cases h : X.tree + 0 < L2.length
+      · exact Or.inl h
+      · right; simp only [List.getElem?_eq_none_iff]; omega)
+  have hB2 := leafSlot_after (X := X) r 1 (by omega) hrt wy hsy hby hnt L2 hlen2 hlow2
+    (fun ha hin => by
+      subst hL2; simp only [ha, ↓reduceIte]
+      simp [List.getElem?_set, hlen1]; omega)
+    (by
+      by_cases h : X.tree + 1 < L2.length
+      · exact Or.inl h
+      · right; simp only [List.getElem?_eq_none_iff]; omega)
+  have hsa : leafSlot X l 0 < X.tree + 2 := by
+    unfold leafSlot; split
+    · rename_i i hi; have : i = leafBase l := by cases l <;> simp_all [slot?, leafBase]
+      omega
+    · omega
+  have hsb : leafSlot X r 1 < X.tree + 2 := by
+    unfold leafSlot; split
+    · rename_i i hi; have : i = leafBase r := by cases r <;> simp_all [slot?, leafBase]
+      omega
+    · omega
+  rcases hA2 with hA2 | hA2
+  rotate_left
+  · rw [tree_missing_a host ar callee M X op _ _ L2 st hA2] at hrun; cases hrun
+  rcases hB2 with hB2 | hB2
+  rotate_left
+  · rw [tree_missing_b host ar callee S hC X op _ _ L2 st wx x hA2 hcx hB2] at hrun; cases hrun
+  have hexact : ∀ L o, L[leafSlot X l 0]? = some wx → L[leafSlot X r 1]? = some wy →
+      wRunF host ar callee [.localGet (leafSlot X l 0), .localGet (leafSlot X r 1),
+        .call (M.arithIdx op)] L st = some o →
+      ∃ w, o = .ok L (w :: st) ∧ CanonRepr S (arithZ op x y) w := by
+    intro L o ha hb h
+    have hp : wRunF host ar callee [.localGet (leafSlot X l 0), .localGet (leafSlot X r 1)] L st =
+        some (.ok L (wy :: wx :: st)) := by simp [wRunF, ha, hb]
+    rw [show [WInstr.localGet (leafSlot X l 0), .localGet (leafSlot X r 1),
+        .call (M.arithIdx op)] = [.localGet (leafSlot X l 0), .localGet (leafSlot X r 1)] ++
+        [.call (M.arithIdx op)] from rfl, wRunF_append, hp] at h
+    simp only [seqOut] at h
+    obtain ⟨w, rfl, hw, _⟩ := arith_step S box add sub mul cmp eq Ctr host ar callee M hAdd hSub
+      hMul op hA x y wx wy hcx hcy L st o h
+    rw [intBin_arith hA] at hw
+    exact ⟨w, rfl, hw⟩
+  rw [eraseI_treeBlock] at hrun
+  obtain ⟨wl', w, rfl, hw, hag, hlen'⟩ := tree_run S box Ctr.hBox host ar callee M hC hBox X op hA
+    _ _ x y wx wy L2 st out hsa hsb hA2 hcx hB2 hcy hexact hrun
+  refine ⟨intBin op x y, by simp [eval, hevx, hevy], by rw [intBin_arith hA]; simp [HasTy],
+    res_ok (by rw [intBin_arith hA]; exact hw) (lrel_agree hl ?_ (by rw [hlen', hlen2]))⟩
+  intro j hj
+  rw [hag j (by omega), hlow2 j (by omega)]
+
+end TreeStep
+
 section Agreement
 variable {C : Nat} (S : CarrierSpec C)
   (box add sub mul cmp eq neg : List WVal → Option WVal)
@@ -2862,6 +3640,7 @@ variable (n : Nat)
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
         ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
           LRel S M X env wl1) →
+      (∀ k, escFreeL k (eraseL sc) = true) →
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
@@ -3118,7 +3897,7 @@ theorem agreement_step :
         simp only [lowerW, lowerB, htl] at hrun
         cases hA : op.isArith
         · -- a comparison
-          simp only [hA, Bool.false_eq_true, ↓reduceIte] at hT hrun
+          simp only [isTree, hA, Bool.false_and, Bool.false_eq_true, ↓reduceIte] at hT hrun
           subst hT
           cases hlk : litInt? l with
           | some kk =>
@@ -3233,6 +4012,14 @@ theorem agreement_step :
         · -- arithmetic
           simp only [hA, ↓reduceIte] at hT hrun
           subst hT
+          by_cases htree : (isTree op l r && decide (X.n ≤ X.tree)) = true
+          · -- the `Int` tree on the machine word
+            simp only [htree, ↓reduceIte, List.append_assoc] at hrun
+            obtain ⟨sv, hev, hTs, hres⟩ := tree_step host ar callee S box add sub mul cmp eq Ctr
+              hCarrier hBox hAdd hSub hMul F op l r hA (Bool.and_eq_true .. |>.mp htree).1
+              (of_decide_eq_true (Bool.and_eq_true .. |>.mp htree).2) htl htr henv hl hrun
+            exact Or.inl ⟨sv, hev, hTs, res_any_tail hres⟩
+          simp only [htree, Bool.false_eq_true, ↓reduceIte] at hrun
           simp only [eraseL_append, eraseL, eraseI, List.append_assoc] at hrun
           obtain ⟨o1, h1, hseq⟩ := run_split hrun
           rcases agreement l Γ env false .int wl st o1 htl henv hl h1 with
@@ -3379,7 +4166,7 @@ theorem agreement_step :
       cases v with
       | false =>
           simp only [seqOut, b32, Bool.false_eq_true, ↓reduceIte] at hseq
-          rw [wRunF_ifElse_single] at hseq
+          rw_if at hseq
           simp only [↓reduceIte] at hseq
           rcases agreement e Γ env tail T wl1 st out hte henv hl1 hseq with
             ⟨sv, hev, hT, hres⟩ | hE
@@ -3389,7 +4176,7 @@ theorem agreement_step :
               (fun R hR => by simp [bareTries, hR]))
       | true =>
           simp only [seqOut, b32, ↓reduceIte] at hseq
-          rw [wRunF_ifElse_single] at hseq
+          rw_if at hseq
           simp only [Int.reduceEq, ↓reduceIte] at hseq
           rcases agreement t Γ env tail T wl1 st out htt henv hl1 hseq with
             ⟨sv, hev, hT, hres⟩ | hE
@@ -3474,7 +4261,7 @@ theorem agreement_step :
                 obtain ⟨dd, rfl⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd] _ st hss)] at hseq
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
-                rw [wRunF_ifElse_single] at hseq
+                rw_if at hseq
                 simp only [Int.reduceEq, ↓reduceIte] at hseq
                 rcases agreement d Γ env false t _ st out htd henv hl2 hseq with
                   ⟨sv, hev, hT, hres⟩ | hE
@@ -3486,7 +4273,7 @@ theorem agreement_step :
                 obtain ⟨xw, rfl, hxw⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw] _ st hss)] at hseq
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
-                rw [wRunF_ifElse_single] at hseq
+                rw_if at hseq
                 simp [wRunF, hss] at hseq
                 subst hseq
                 exact Or.inl ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
@@ -3520,7 +4307,7 @@ theorem agreement_step :
                 obtain ⟨xw, dd, rfl, hxw⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw, dd] _ st hss)] at hseq
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
-                rw [wRunF_ifElse_single] at hseq
+                rw_if at hseq
                 simp [wRunF, hss] at hseq
                 subst hseq
                 exact Or.inl ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
@@ -3528,7 +4315,7 @@ theorem agreement_step :
                 obtain ⟨dd, xw, rfl, hxw⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd, xw] _ st hss)] at hseq
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
-                rw [wRunF_ifElse_single] at hseq
+                rw_if at hseq
                 simp only [Int.reduceEq, ↓reduceIte] at hseq
                 rcases agreement d Γ env false t _ st out htd henv hl2 hseq with
                   ⟨sv, hev, hT, hres⟩ | hE
@@ -3546,7 +4333,7 @@ theorem agreement_step :
         obtain ⟨_, wv, hwv, hrv⟩ := hl.2 v _ hvv
         obtain ⟨_, wi, hwi, hri⟩ := hl.2 i _ hiv
         simp only [lowerW, lowerB, hvg, hΓv] at hrun
-        rcases vecGetOr_step R hwv hrv hwi hri hrun with ⟨hin, x, wx, hx, hwx, rfl⟩ | ⟨hout, hd⟩
+        rcases vecGetOr_step R hwv hrv hwi hri (escFree_lowerB _ _ _ _ _) hrun with ⟨hin, x, wx, hx, hwx, rfl⟩ | ⟨hout, hd⟩
         · refine Or.inl ⟨x, ?_, hasTyAll_get hall hx, res_ok hwx hl⟩
           obtain ⟨hlt, hx'⟩ := List.getElem?_eq_some_iff.mp hx
           simp [eval, evalArgs, hvv, hiv, builtinEval, hin, List.getElem?_eq_getElem hlt, hx']
@@ -3628,6 +4415,7 @@ theorem agreement_step :
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
           | bytes => simp [ctorTy] at hct
+          | word => simp [ctorTy] at hct
           | sum tid' =>
           simp only [ctorTy] at hct
           split at hct
@@ -3667,6 +4455,7 @@ theorem agreement_step :
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
           | bytes => simp [ctorTy] at hct
+          | word => simp [ctorTy] at hct
           | option t =>
           simp only [ctorTy] at hct
           split at hct
@@ -3707,6 +4496,7 @@ theorem agreement_step :
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
           | bytes => simp [ctorTy] at hct
+          | word => simp [ctorTy] at hct
           | option t =>
           simp only [ctorTy] at hct
           split at hct
@@ -3747,6 +4537,7 @@ theorem agreement_step :
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
           | bytes => simp [ctorTy] at hct
+          | word => simp [ctorTy] at hct
           | result t e =>
           simp only [ctorTy] at hct
           split at hct
@@ -3792,6 +4583,7 @@ theorem agreement_step :
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
           | bytes => simp [ctorTy] at hct
+          | word => simp [ctorTy] at hct
           | result t e =>
           simp only [ctorTy] at hct
           split at hct
@@ -3850,7 +4642,7 @@ theorem agreement_step :
           cases hev0
           obtain ⟨wl1, w, rfl, hw, hl1⟩ := res_false hres0
           exact ⟨wl1, w, rfl, by simpa [SRepr] using hw, hl1⟩
-        rcases agreementIntArms arms Γ env tail T wl st out (lowerB M X Γ false s) _ x hsc hta henv hl
+        rcases agreementIntArms arms Γ env tail T wl st out (lowerB M X Γ false s) _ x hsc (escFree_lowerB M X Γ false s) hta henv hl
             hrun with ⟨sv, hev, hT, hres⟩ | hE
         · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
         · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
@@ -4016,7 +4808,7 @@ theorem agreement_step :
               subst hw1
               rw [run_nullTest_null host ar callee _ _ _ _ hss] at hseq
               simp only [b32, ↓reduceIte] at hseq
-              rw [wRunF_ifElse_single] at hseq
+              rw_if at hseq
               simp only [Int.reduceEq, ↓reduceIte] at hseq
               rcases agreement b1 Γ env tail T _ st out hte henv hl2 hseq with ⟨sv, hev, hT, hres⟩ | hE
               · refine Or.inl ⟨sv, ?_, hT, hres⟩
@@ -4034,7 +4826,7 @@ theorem agreement_step :
               obtain ⟨xw, rw', rfl, hxw, hrw⟩ := hw1
               rw [run_nullTest_struct host ar callee _ _ _ _ _ _ hss] at hseq
               simp only [b32, ↓reduceIte] at hseq
-              rw [wRunF_ifElse_single] at hseq
+              rw_if at hseq
               simp only [↓reduceIte, eraseL_append] at hseq
               obtain ⟨env', wl', hbv, henv', hl', _, hrun', hres'⟩ :=
                 extract_run host ar callee X.subj (M.listStruct t) [xw, rw'] [hd, tl] 0 [x, r]
@@ -4063,7 +4855,7 @@ theorem agreement_step :
               subst hw1
               rw [run_nullTest_null host ar callee _ _ _ _ hss] at hseq
               simp only [b32, ↓reduceIte] at hseq
-              rw [wRunF_ifElse_single] at hseq
+              rw_if at hseq
               simp only [Int.reduceEq, ↓reduceIte] at hseq
               rcases agreement b2 Γ env tail T _ st out hte henv hl2 hseq with ⟨sv, hev, hT, hres⟩ | hE
               · refine Or.inl ⟨sv, ?_, hT, hres⟩
@@ -4081,7 +4873,7 @@ theorem agreement_step :
               obtain ⟨xw, rw', rfl, hxw, hrw⟩ := hw1
               rw [run_nullTest_struct host ar callee _ _ _ _ _ _ hss] at hseq
               simp only [b32, ↓reduceIte] at hseq
-              rw [wRunF_ifElse_single] at hseq
+              rw_if at hseq
               simp only [↓reduceIte, eraseL_append] at hseq
               obtain ⟨env', wl', hbv, henv', hl', _, hrun', hres'⟩ :=
                 extract_run host ar callee X.subj (M.listStruct t) [xw, rw'] [hd, tl] 0 [x, r]
@@ -4164,7 +4956,7 @@ theorem agreement_step :
         rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw, dd] _ st hss)] at hseq
         simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true,
           ↓reduceIte] at hseq
-        rw [wRunF_ifElse_single] at hseq
+        rw_if at hseq
         simp [wRunF, hss] at hseq
         subst hseq
         exact Or.inl ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
@@ -4173,7 +4965,7 @@ theorem agreement_step :
         rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd, xw] _ st hss)] at hseq
         simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true,
           ↓reduceIte] at hseq
-        rw [wRunF_ifElse_single] at hseq
+        rw_if at hseq
         simp only [Int.reduceEq, ↓reduceIte, wRunF] at hseq
         obtain ⟨d', hd'⟩ := dflt_run host ar callee (M := M) t' hdt'
           (wl1.set X.subj (.structv (M.resStruct T er) [.i32v 0, dd, xw])) (.i32v 0 :: st)
@@ -4241,14 +5033,15 @@ theorem agreementIntArms_step :
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
         ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
           LRel S M X env wl1) →
+      (∀ k, escFreeL k (eraseL sc) = true) →
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
       (∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
         Res S M X tail env st sv out) ∨
         Esc S M (evalArms F env (.i x) arms) (escvArms F env (.i x) arms) (bareTriesA arms) out
-  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyIntArms] at hty
-  | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, sc, bt, x, hsc, hty, henv, hl, hrun => by
+  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyIntArms] at hty
+  | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, sc, bt, x, hsc, hesc, hty, henv, hl, hrun => by
       cases p with
       | litInt k =>
           simp only [tyIntArms] at hty
@@ -4287,7 +5080,7 @@ theorem agreementIntArms_step :
                           have hseq' := run_seq (xs := [.i64Const k, .call M.box, .call M.eq])
                             (ys := [.ifElse (eraseL (lowerB M X Γ tail b))
                               (eraseL (lowerIntArms M X Γ tail sc bt rest))]) hpre hseq
-                          rw [wRunF_ifElse_single] at hseq'
+                          rw_if at hseq'
                           by_cases hxk : x = k
                           · subst hxk
                             simp only [eqW, ↓reduceIte, Int.reduceEq] at hseq'
@@ -4296,7 +5089,7 @@ theorem agreementIntArms_step :
                             · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
                                 (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
                           · simp only [eqW, hxk, ↓reduceIte] at hseq'
-                            rcases agreementIntArms rest Γ env tail T1 wl1 st out sc bt x hsc hr henv
+                            rcases agreementIntArms rest Γ env tail T1 wl1 st out sc bt x hsc hesc hr henv
                                 hl1 hseq' with ⟨sv, hev, hT, hres⟩ | hE
                             · exact Or.inl ⟨sv, by simp [evalArms, patMatch, hxk, hev], hT, hres⟩
                             · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, hxk, h])
@@ -4378,7 +5171,7 @@ theorem agreementBoolArms_step :
                   rcases hp2 with rfl | rfl <;> cases v <;> cases x <;>
                     simp only [lowerBoolArms, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI]
                       at hrun <;>
-                    rw [wRunF_ifElse_single] at hrun <;>
+                    rw_if at hrun <;>
                     simp only [Int.reduceEq, ↓reduceIte] at hrun
                   · rcases agreement t Γ env tail a wl st out hta henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
                     · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
@@ -4482,7 +5275,7 @@ theorem agreementOptArms_step :
                   obtain ⟨dd, rfl⟩ := hsw
                   rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd] _ st hss)] at hr
                   simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI] at hr
-                  rw [wRunF_ifElse_single] at hr
+                  rw_if at hr
                   simp only [Int.reduceEq, ↓reduceIte] at hr
                   rcases hAn hr with ⟨sv', hev, hT, hres⟩ | hE
                   · exact Or.inl ⟨sv', by rw [evalOpt_none F env hpk, hbn]; exact hev, hT, hres⟩
@@ -4497,7 +5290,7 @@ theorem agreementOptArms_step :
                       env Γ Γs wl st hl.1.2.1 hss (by simp) hx hxw hbo henv hl
                   rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw] _ st hss)] at hr
                   simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI] at hr
-                  rw [wRunF_ifElse_single] at hr
+                  rw_if at hr
                   simp only [Int.reduceEq, ↓reduceIte, eraseL_append] at hr
                   rw [run_seq_eq hbrun] at hr
                   rcases hAs env' wl' henv' hl' hr with ⟨sv', hev, hT, hres⟩ | hE
@@ -4617,7 +5410,7 @@ theorem agreementResArms_step :
                       t xw env Γ Γo wl st hl.1.2.1 hss (by simp) hx hxw hbo henv hl
                   rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw, dd] _ st hss)] at hr
                   simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI] at hr
-                  rw [wRunF_ifElse_single] at hr
+                  rw_if at hr
                   simp only [Int.reduceEq, ↓reduceIte, eraseL_append] at hr
                   rw [run_seq_eq hbrun] at hr
                   rcases hAo env' wl' henv' hl' hr with ⟨sv', hev, hT, hres⟩ | hE
@@ -4635,7 +5428,7 @@ theorem agreementResArms_step :
                       e xw env Γ Γe wl st hl.1.2.1 hss (by simp) hx hxw hbe henv hl
                   rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd, xw] _ st hss)] at hr
                   simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI] at hr
-                  rw [wRunF_ifElse_single] at hr
+                  rw_if at hr
                   simp only [Int.reduceEq, ↓reduceIte, eraseL_append] at hr
                   rw [run_seq_eq hbrun] at hr
                   rcases hAe env' wl' henv' hl' hr with ⟨sv', hev, hT, hres⟩ | hE
@@ -4797,7 +5590,7 @@ theorem agreementVarArms_step :
                                     eraseI, List.cons_append, List.nil_append] at hrun
                                   rw [run_test host ar callee _ _ _ _ _ _ _ hss] at hrun
                                   simp only [b32] at hrun
-                                  rw [wRunF_ifElse_single] at hrun
+                                  rw_if at hrun
                                   by_cases hc : c = cv
                                   · subst hc
                                     rw [hcf] at hcfc
@@ -4907,7 +5700,7 @@ theorem agreementStrArms_step :
                     rw [hsplit] at hrun
                     have hseq := run_seq hpre hrun
                     simp only [b32] at hseq
-                    rw [wRunF_ifElse_single] at hseq
+                    rw_if at hseq
                     by_cases hxk : x = k
                     · subst hxk
                       simp [b32] at hseq
@@ -5004,6 +5797,7 @@ theorem agreement_upto : ∀ n : Nat,
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
         ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
           LRel S M X env wl1) →
+      (∀ k, escFreeL k (eraseL sc) = true) →
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
@@ -5144,6 +5938,7 @@ theorem agreementIntArms :
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
         ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
           LRel S M X env wl1) →
+      (∀ k, escFreeL k (eraseL sc) = true) →
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →

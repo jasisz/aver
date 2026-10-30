@@ -28,6 +28,7 @@ def seqOut
     (ys : List WInstr) : Option Out → Option Out
   | some (.ok locals stack) => wRunF host ar callee ys locals stack
   | some (.ret v) => some (.ret v)
+  | some (.br d locals stack) => some (.br d locals stack)
   | none => none
 
 /-- The audited interpreter distributes over instruction append.  Proved by
@@ -75,6 +76,7 @@ is what `frameOut` does to `.ret`. -/
 def frameOut (extra : List WVal) : Out → Out
   | .ok locals stack => .ok locals (stack ++ extra)
   | .ret v => .ret v
+  | .br d locals stack => .br d locals (stack ++ extra)
 
 -- The shared multi-branch scripts below list every lemma any branch needs;
 -- the per-branch "unused simp argument" lint is expected noise there.
@@ -138,7 +140,8 @@ theorem wRunF_frame
          rw [popArgs_frame _ _ _ _ _ (by assumption)]
          simp_all [frameOut, List.cons_append] <;>
            (subst h; simp [frameOut]))
-      | ((try simp_all [frameOut, popArgs_frame, List.cons_append]) <;>
+      | ((try simp_all [frameOut, popArgs_frame, List.cons_append,
+            List.take_append_of_le_length]) <;>
          first
            | -- Terminal `Out` equations (`[]`, `ret`, return propagation).
              (subst h; simp [frameOut])
@@ -146,7 +149,9 @@ theorem wRunF_frame
              -- map with the induction hypothesis' lambda normal form.
              (simp only [Function.comp_def] at h ⊢
               simp_all [frameOut, List.cons_append])
-           | simp_all [frameOut, List.cons_append])
+           | simp_all [frameOut, List.cons_append]
+           | -- `block`, a branch to it: the kept values lie above the frame.
+             omega)
 
 /-! ## Strong-fuel assembly
 
@@ -209,6 +214,7 @@ def hasSelfTail (self : Nat) : List WInstr → Bool
 def zeroVal : WInstr → Option WVal
   | .i32Const 0 => some (.i32v 0)
   | .f64Const 0 => some (.f64v 0)
+  | .i64Const 0 => some (.i64v 0)
   | .refNull => some .null
   | _ => none
 
@@ -244,12 +250,16 @@ theorem cRun_append (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
       unfold cRun <;>
       simp_all [cseq]
 
-theorem wRunF_ok_length (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
-    ∀ (xs : List WInstr) (l st l' st' : List WVal),
-      wRunF host ar callee xs l st = some (.ok l' st') → l'.length = l.length := by
+/-- A run keeps the number of locals, to a fall-through or a branch. -/
+theorem wRunF_lens (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
+    ∀ (xs : List WInstr) (l st : List WVal),
+      (∀ l' st', wRunF host ar callee xs l st = some (.ok l' st') → l'.length = l.length) ∧
+      (∀ d l' st', wRunF host ar callee xs l st = some (.br d l' st') →
+        l'.length = l.length) := by
   intro xs l st
   induction xs, l, st using wRunF.induct host ar callee <;>
-    intro l' st' h <;>
+    constructor <;>
+    intros <;> rename_i h <;>
     unfold wRunF at h <;>
     (repeat' (first | split at h | (simp only [Function.comp_def] at *))) <;>
     first
@@ -259,6 +269,78 @@ theorem wRunF_ok_length (host : HostTbl) (ar : Nat → Option Nat) (callee : Cal
       | (exfalso; simp_all; omega)
       | (exfalso; solve_by_elim)
       | (simp_all; done)
+
+theorem wRunF_ok_length (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
+    ∀ (xs : List WInstr) (l st l' st' : List WVal),
+      wRunF host ar callee xs l st = some (.ok l' st') → l'.length = l.length := by
+  intro xs l st l' st' h
+  exact (wRunF_lens host ar callee xs l st).1 l' st' h
+
+theorem wRunF_br_length (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
+    ∀ (xs : List WInstr) (l st : List WVal) (d : Nat) (l' st' : List WVal),
+      wRunF host ar callee xs l st = some (.br d l' st') → l'.length = l.length := by
+  intro xs l st d l' st' h
+  exact (wRunF_lens host ar callee xs l st).2 d l' st' h
+
+/-! ## Branches that stay inside
+
+Code whose every branch targets a label inside it never ends in a branch out
+of it. Lowered code is such code (`GrammarSound.escFree_lowerB`): its only
+branches are the `Int` tree's, to the two blocks around them. -/
+
+mutual
+  /-- No branch in `x` leaves more than `k` enclosing labels. -/
+  def escFreeI (k : Nat) : WInstr → Bool
+    | .br d => decide (d < k)
+    | .brIf d => decide (d < k)
+    | .block _ body => escFreeL (k + 1) body
+    | .ifElse t e => escFreeL (k + 1) t && escFreeL (k + 1) e
+    | _ => true
+  def escFreeL (k : Nat) : List WInstr → Bool
+    | [] => true
+    | x :: xs => escFreeI k x && escFreeL k xs
+end
+
+@[simp] theorem escFreeL_nil (k : Nat) : escFreeL k [] = true := by simp [escFreeL]
+
+@[simp] theorem escFreeL_cons (k : Nat) (x : WInstr) (xs : List WInstr) :
+    escFreeL k (x :: xs) = (escFreeI k x && escFreeL k xs) := by simp [escFreeL]
+
+@[simp] theorem escFreeL_append (k : Nat) :
+    ∀ (xs ys : List WInstr), escFreeL k (xs ++ ys) = (escFreeL k xs && escFreeL k ys)
+  | [], ys => by simp
+  | x :: xs, ys => by simp [escFreeL_append k xs ys, Bool.and_assoc]
+
+/-- A run of code whose branches stay within `k` labels branches at most
+    `k - 1` labels out. -/
+theorem wRunF_br_lt (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
+    ∀ (xs : List WInstr) (l st : List WVal) (k d : Nat) (l' st' : List WVal),
+      escFreeL k xs = true →
+      wRunF host ar callee xs l st = some (.br d l' st') → d < k := by
+  intro xs l st
+  induction xs, l, st using wRunF.induct host ar callee <;>
+    intro k d l' st' hf h <;>
+    revert hf <;>
+    simp only [escFreeL, escFreeI, Bool.and_eq_true, decide_eq_true_eq, and_imp] <;>
+    intros <;>
+    unfold wRunF at h <;>
+    (repeat' (first | split at h | (simp only [Function.comp_def] at *))) <;>
+    first
+      | (cases h; done)
+      | (simp at h; done)
+      | (simp_all; done)
+      | ((try injections) <;> (try subst_vars) <;>
+         first
+           | omega
+           | (apply Nat.lt_of_succ_lt_succ; apply_assumption <;> assumption)
+           | (exfalso; apply_assumption <;> rfl))
+
+/-- Escape-free code (`k = 0`) never ends in a branch. -/
+theorem wRunF_not_br (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
+    {xs : List WInstr} (hf : escFreeL 0 xs = true) {l st l' st' : List WVal} {d : Nat}
+    (h : wRunF host ar callee xs l st = some (.br d l' st')) : False := by
+  have := wRunF_br_lt host ar callee xs l st 0 d l' st' hf h
+  omega
 
 /-- The locals after `setsW n` over the stack `st`. -/
 def setTop : Nat → List WVal → List WVal → List WVal
@@ -323,11 +405,18 @@ theorem returnCall_rest (host : HostTbl) (ar : Nat → Option Nat) (callee : Cal
   unfold wRunF
   rfl
 
+/-- A run's outcome with branches out of it forgotten: at the function level a
+    branch out of the body is not modelled either way. -/
+def dropBr : Option Out → Option Out
+  | some (.ok l st) => some (.ok l st)
+  | some (.ret v) => some (.ret v)
+  | _ => none
+
 /-- The converted body runs as the original one does. -/
 theorem conv_sim (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     (self n : Nat) (har : ar self = some n) (d : Nat) (B : List WInstr) :
     ∀ (l st : List WVal), n ≤ l.length →
-      wRunF host ar callee B l st =
+      dropBr (wRunF host ar callee B l st) =
         simO callee self n d (cRun host ar callee (convW self n d B) l st) := by
   induction d, B using convW.induct with
   | case1 d =>
@@ -345,7 +434,7 @@ theorem conv_sim (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
         unfold wRunF
         simp only [har, popArgs]
         by_cases hs : st.length < n
-        · simp [hs, simO]
+        · simp [hs, simO, dropBr]
         · simp only [hs, if_false]
           unfold cRun
           simp only [simO, if_true]
@@ -355,11 +444,11 @@ theorem conv_sim (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
         rw [returnCall_rest]
         unfold cRun
         cases hw : wRunF host ar callee [.returnCall g] l st with
-        | none => simp [simO]
+        | none => simp [simO, dropBr]
         | some o =>
             cases o with
-            | ret v => simp [simO]
-            | ok l' st' =>
+            | ret v => simp [simO, dropBr]
+            | _ =>
                 exfalso
                 unfold wRunF at hw
                 repeat' split at hw
@@ -369,72 +458,61 @@ theorem conv_sim (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
       simp only [convW]
       unfold cRun wRunF
       cases st with
-      | nil => simp [simO]
+      | nil => simp [simO, dropBr]
       | cons c st =>
           cases c with
           | i32v c =>
               simp only
+              have step : ∀ X, (∀ l st, n ≤ l.length →
+                  dropBr (wRunF host ar callee X l st) =
+                    simO callee self n (d + 1) (cRun host ar callee (convW self n (d + 1) X) l st)) →
+                  dropBr (match wRunF host ar callee X l st with
+                    | some (.ok locals' st'') => wRunF host ar callee rest locals' st''
+                    | some (.ret v) => some (.ret v)
+                    | some (.br (k + 1) l' s') => some (.br k l' s')
+                    | _ => none) =
+                  simO callee self n d (match cRun host ar callee (convW self n (d + 1) X) l st with
+                    | some (.ok l' st'') => cRun host ar callee (convW self n d rest) l' st''
+                    | some (.br (k + 1) l' st'') => some (.br k l' st'')
+                    | some (.ret v) => some (.ret v)
+                    | _ => none) := by
+                intro X IH
+                clear iht ihe
+                have ih' := IH l st hl
+                rcases hw : wRunF host ar callee X l st with
+                    _ | ⟨l1, s1⟩ | v1 | ⟨_ | k1, l1, s1⟩ <;>
+                  rcases ho : cRun host ar callee (convW self n (d + 1) X) l st with
+                    _ | ⟨l2, s2⟩ | ⟨_ | k2, l2, s2⟩ | v2 <;>
+                  simp only [hw, ho, dropBr, simO, Nat.add_right_cancel_iff] at ih' ⊢ <;>
+                  first
+                    | rfl
+                    | (simp at ih'; done)
+                    | (simp only [Option.some.injEq, Out.ok.injEq] at ih'
+                       obtain ⟨rfl, rfl⟩ := ih'
+                       exact ihr _ _ (by rw [wRunF_ok_length host ar callee _ _ _ _ _ hw]; exact hl))
+                    | exact ih'
+                    | (exfalso; revert ih'
+                       split <;> (try cases callee self (List.take n l2)) <;> simp)
               by_cases hc : c = 0
               · simp only [hc, if_true]
-                rw [ihe l st hl]
-                cases ho : cRun host ar callee (convW self n (d + 1) e) l st with
-                | none => simp [simO]
-                | some o =>
-                    cases o with
-                    | ok l' st' =>
-                        have hl' : l'.length = l.length := by
-                          have := ihe l st hl
-                          rw [ho] at this
-                          exact wRunF_ok_length host ar callee _ _ _ _ _ this
-                        simp only [simO]
-                        exact ihr l' st' (by omega)
-                    | ret v => simp [simO]
-                    | br d' l' st' =>
-                        cases d' with
-                        | zero => simp [simO]
-                        | succ d' =>
-                            by_cases hd : d' = d
-                            · subst hd
-                              simp only [simO, if_true]
-                              cases callee self (List.take n l') <;> rfl
-                            · simp [simO, hd]
+                exact step e ihe
               · simp only [hc, if_false]
-                rw [iht l st hl]
-                cases ho : cRun host ar callee (convW self n (d + 1) t) l st with
-                | none => simp [simO]
-                | some o =>
-                    cases o with
-                    | ok l' st' =>
-                        have hl' : l'.length = l.length := by
-                          have := iht l st hl
-                          rw [ho] at this
-                          exact wRunF_ok_length host ar callee _ _ _ _ _ this
-                        simp only [simO]
-                        exact ihr l' st' (by omega)
-                    | ret v => simp [simO]
-                    | br d' l' st' =>
-                        cases d' with
-                        | zero => simp [simO]
-                        | succ d' =>
-                            by_cases hd : d' = d
-                            · subst hd
-                              simp only [simO, if_true]
-                              cases callee self (List.take n l') <;> rfl
-                            · simp [simO, hd]
-          | _ => simp [simO]
+                exact step t iht
+          | _ => simp [simO, dropBr]
   | case4 d x rest h1 h2 ih =>
       intro l st hl
       rw [convW]
       · rw [show x :: rest = [x] ++ rest from rfl, wRunF_append]
         unfold cRun
         cases hw : wRunF host ar callee [x] l st with
-        | none => simp [seqOut, simO]
+        | none => simp [seqOut, simO, dropBr]
         | some o =>
             cases o with
             | ok l' st' =>
                 simp only [seqOut]
                 exact ih l' st' (by rw [wRunF_ok_length host ar callee _ _ _ _ _ hw]; exact hl)
-            | ret v => simp [seqOut, simO]
+            | ret v => simp [seqOut, simO, dropBr]
+            | br k l' st' => simp [seqOut, simO, dropBr]
       · exact h1
       · exact h2
 
@@ -498,6 +576,9 @@ def endLoop : Option Out → Option WVal
   | some (.ret v) => some v
   | _ => none
 
+theorem endLoop_dropBr (o : Option Out) : endLoop (dropBr o) = endLoop o := by
+  rcases o with _ | ⟨_, _ | _⟩ | _ | _ <;> rfl
+
 /-- The shape `GrammarLower.fnCodeAt` gives the code of a function `f` whose
     body tail-calls itself: its loop resets the declared locals to `vs` and
     runs the converted body, then returns. -/
@@ -558,7 +639,7 @@ theorem wEnter_loop (hc : code f = some c) (L : LoopCode c f zs vs) (k : Nat)
     simp; omega
   generalize (resume.getD (initLocals c args)).take c.arity = p at hp ⊢
   have har : (fun g => (code g).map (·.arity)) f = some c.arity := by simp [hc]
-  rw [conv_sim host _ _ f c.arity har 0 c.body (p ++ vs) [] (by simp; omega)]
+  rw [← endLoop_dropBr, conv_sim host _ _ f c.arity har 0 c.body (p ++ vs) [] (by simp; omega)]
   unfold loopRun
   rw [cRun_append]
   have hlenB := (cRun_length host (fun g => (code g).map (·.arity))

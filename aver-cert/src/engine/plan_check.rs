@@ -857,7 +857,7 @@ fn inhab_ty(r: &BTreeSet<u32>, s: &BTreeSet<u32>, t: &PlanTy) -> bool {
         PlanTy::Result(x, e) => inhab_ty(r, s, x) || inhab_ty(r, s, e),
         PlanTy::Record(tid) => r.contains(tid),
         PlanTy::Sum(tid) => s.contains(tid),
-        PlanTy::Eqref => false,
+        PlanTy::Eqref | PlanTy::Word => false,
     }
 }
 
@@ -917,21 +917,26 @@ struct LCtx {
     n: u32,
     cmp: u32,
     subj: u32,
+    /// The first of the five `Int` tree locals, reserved last.
+    tree: u32,
 }
 
 fn lctx(p: &FnPlan) -> LCtx {
     let at = (p.nslots as usize).checked_sub(p.params.len());
+    let tree = ((p.params.len() + p.locals.len()) as u32).saturating_sub(5);
     if at.and_then(|i| p.locals.get(i)) == Some(&PlanTy::Eqref) {
         LCtx {
             n: p.nslots,
             cmp: p.nslots + 1,
             subj: p.nslots,
+            tree,
         }
     } else {
         LCtx {
             n: p.nslots,
             cmp: p.nslots,
             subj: p.nslots,
+            tree,
         }
     }
 }
@@ -978,6 +983,17 @@ enum WI {
     RefTest(u64),
     RefCast(u64),
     Ret,
+    Br(u32),
+    BrIf(u32),
+    LocalTee(u32),
+    Select,
+    I64GtU,
+    I64Add,
+    I64Sub,
+    I64Mul,
+    I64DivS,
+    I64And,
+    I64Xor,
 }
 
 /// `GrammarLower.BI`.
@@ -988,6 +1004,80 @@ enum BI {
     NullOf(u64),
     NewData(u64, u64),
     CastNull(u64),
+    /// `block bt body end`: no result (`None`) or one.
+    Block(Option<PlanTy>, Vec<BI>),
+}
+
+/// `GrammarLower.aheadLeaf`: a record field read from a local.
+fn ahead_leaf(e: &PlanExpr) -> bool {
+    matches!(e, PlanExpr::Project(_, _, b) if matches!(**b, PlanExpr::Local(_)))
+}
+
+/// `GrammarLower.isTree`.
+fn is_tree(op: PlanBinOp, l: &PlanExpr, r: &PlanExpr) -> bool {
+    let leaf = |e: &PlanExpr| matches!(e, PlanExpr::Local(_)) || ahead_leaf(e);
+    is_arith(op) && leaf(l) && leaf(r) && (ahead_leaf(l) || ahead_leaf(r))
+}
+
+/// `GrammarLower.leafSlot`.
+fn leaf_slot(x: &LCtx, e: &PlanExpr, p: u32) -> u32 {
+    match e {
+        PlanExpr::Local(i) => *i,
+        _ => x.tree + p,
+    }
+}
+
+/// `GrammarLower.smallReadW`.
+fn small_read(c: u64, i: u32) -> Vec<WI> {
+    vec![
+        WI::LocalGet(i),
+        WI::StructGet(c, 1),
+        WI::RefIsNull,
+        WI::I32Eqz,
+        WI::BrIf(0),
+        WI::LocalGet(i),
+        WI::StructGet(c, 0),
+    ]
+}
+
+/// `GrammarLower.treeOpW`.
+fn tree_op(x: &LCtx, op: PlanBinOp) -> Vec<WI> {
+    let (t0, t1, t2) = (x.tree + 2, x.tree + 3, x.tree + 4);
+    let general = [
+        WI::LocalGet(t0),
+        WI::I64Const(1),
+        WI::I64Add,
+        WI::I64Const(1),
+        WI::I64GtU,
+    ];
+    let mut out = vec![
+        WI::LocalSet(t1),
+        WI::LocalSet(t0),
+        WI::LocalGet(t0),
+        WI::LocalGet(t1),
+    ];
+    match op {
+        PlanBinOp::Add | PlanBinOp::Sub => {
+            let (sum, y) = if op == PlanBinOp::Add {
+                (WI::I64Add, WI::LocalGet(t2))
+            } else {
+                (WI::I64Sub, WI::LocalGet(t0))
+            };
+            out.extend([sum, WI::LocalTee(t2), WI::LocalGet(t0), WI::I64Xor, y]);
+            out.extend([WI::LocalGet(t1), WI::I64Xor, WI::I64And, WI::I64Const(0)]);
+            out.extend([WI::I64LtS, WI::BrIf(0), WI::LocalGet(t2)]);
+        }
+        _ => {
+            out.extend([WI::I64Mul, WI::LocalTee(t2), WI::LocalGet(t0), WI::I64Const(1)]);
+            out.extend(general.clone());
+            out.extend([WI::Select, WI::I64DivS, WI::LocalGet(t1), WI::I64Ne]);
+            out.extend([WI::LocalGet(t0), WI::I64Const(-1), WI::I64Eq, WI::LocalGet(t1)]);
+            out.extend([WI::I64Const(i64::MIN), WI::I64Eq, WI::I32And]);
+            out.extend(general);
+            out.extend([WI::Select, WI::BrIf(0), WI::LocalGet(t2)]);
+        }
+    }
+    out
 }
 
 fn flip(op: PlanBinOp) -> PlanBinOp {
@@ -1236,6 +1326,30 @@ impl MCtx<'_> {
                         out
                     }
                     _ => {
+                        if is_tree(*op, l, r) && x.n <= x.tree {
+                            let mut out = Vec::new();
+                            for (e, p) in [(&**l, 0), (&**r, 1)] {
+                                if ahead_leaf(e) {
+                                    out.extend(self.lower(x, g, false, e));
+                                    out.push(BI::Op(WI::LocalSet(x.tree + p)));
+                                }
+                            }
+                            let (a, b) = (leaf_slot(x, l, 0), leaf_slot(x, r, 1));
+                            let mut fast = small_read(self.carrier, a);
+                            fast.extend(small_read(self.carrier, b));
+                            fast.extend(tree_op(x, *op));
+                            fast.extend([WI::Call(self.box_), WI::Br(1)]);
+                            out.push(BI::Block(
+                                Some(PlanTy::Int),
+                                vec![
+                                    BI::Block(None, ops(fast)),
+                                    BI::Op(WI::LocalGet(a)),
+                                    BI::Op(WI::LocalGet(b)),
+                                    BI::Op(WI::Call(self.arith_idx(*op))),
+                                ],
+                            ));
+                            return out;
+                        }
                         if is_arith(*op) {
                             let mut out = self.lower(x, g, false, l);
                             out.extend(self.lower(x, g, false, r));
@@ -1786,6 +1900,10 @@ impl MCtx<'_> {
             PlanTy::List(x) => heap(self.list_struct(x), out),
             PlanTy::Opaque(tid) => heap(self.opaque_struct(*tid), out),
             PlanTy::Bytes => heap(self.bytes_arr, out),
+            PlanTy::Word => {
+                out.push(0x7e);
+                Some(())
+            }
         }
     }
 
@@ -1874,6 +1992,26 @@ impl MCtx<'_> {
                 s33(*t, out)?
             }
             WI::Ret => out.push(0x0f),
+            WI::Br(d) => {
+                out.push(0x0c);
+                uleb(u64::from(*d), out)?
+            }
+            WI::BrIf(d) => {
+                out.push(0x0d);
+                uleb(u64::from(*d), out)?
+            }
+            WI::LocalTee(x) => {
+                out.push(0x22);
+                uleb(u64::from(*x), out)?
+            }
+            WI::Select => out.push(0x1b),
+            WI::I64GtU => out.push(0x56),
+            WI::I64Add => out.push(0x7c),
+            WI::I64Sub => out.push(0x7d),
+            WI::I64Mul => out.push(0x7e),
+            WI::I64DivS => out.push(0x7f),
+            WI::I64And => out.push(0x83),
+            WI::I64Xor => out.push(0x85),
         }
         Some(())
     }
@@ -1882,6 +2020,15 @@ impl MCtx<'_> {
         for b in bs {
             match b {
                 BI::Op(i) => self.enc_w(i, out)?,
+                BI::Block(bt, body) => {
+                    out.push(0x02);
+                    match bt {
+                        None => out.push(0x40),
+                        Some(t) => self.val_ty(t, out)?,
+                    }
+                    self.enc(body, out)?;
+                    out.push(0x0b);
+                }
                 BI::If(bt, t, e) => {
                     out.push(0x04);
                     self.val_ty(bt.as_ref()?, out)?;
@@ -1922,6 +2069,7 @@ impl MCtx<'_> {
                 out.extend([0; 8]);
             }
             PlanTy::Eqref => out.extend([0xd0, 0x6d]),
+            PlanTy::Word => out.extend([0x42, 0x00]),
             _ => {
                 let mut ty = Vec::new();
                 self.val_ty(t, &mut ty)?;
@@ -2008,6 +2156,7 @@ impl MCtx<'_> {
             PlanTy::Bool => Some(ValT::I32),
             PlanTy::Float => Some(ValT::F64),
             PlanTy::Eqref => Some(ValT::Eqref),
+            PlanTy::Word => Some(ValT::I64),
             PlanTy::Record(tid) => r(self.struct_of(*tid)),
             PlanTy::Sum(tid) => r(self.sum_root(*tid)),
             PlanTy::Option(x) => r(self.opt_struct(x)),

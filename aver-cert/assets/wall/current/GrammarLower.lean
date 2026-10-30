@@ -134,6 +134,8 @@ inductive BI where
   /-- `ref.cast (ref null ht)`: the interpreter's `refCast`, which rejects a
       null the wasm cast would pass (that only makes a run fail). -/
   | castNull (ht : Nat)
+  /-- `block bt body … end`: the empty block type (`none`) or one result. -/
+  | block (bt : Option Ty) (body : List BI)
 
 mutual
   def eraseI : BI → WInstr
@@ -142,6 +144,7 @@ mutual
     | .nullOf _ => .refNull
     | .newData ty _ bytes => .arrayNewData ty bytes
     | .castNull ht => .refCast ht
+    | .block bt body => .block (if bt.isSome then 1 else 0) (eraseL body)
   def eraseL : List BI → List WInstr
     | [] => []
     | x :: xs => eraseI x :: eraseL xs
@@ -365,6 +368,71 @@ def Intrinsic.flag : Intrinsic → Int
 
 /-! ## The lowering -/
 
+/-! ### The `Int` tree on the machine word
+
+Under `--certify` the emitter computes one `Int` node `l op r` (`+`, `-`,
+`*`) on `i64` first (`int_tree.rs`, its certified shape) when each operand is
+a local or a field of a record held in a local, and at least one is a field.
+A field is evaluated ahead into a tree local; then the `i64` path reads the
+`$small` of each operand, leaving for the exact path when the operand is Big
+or the operation overflows, and boxes the machine result; the exact path is
+the ordinary call on the same operands. -/
+
+/-- A record field read from a local: evaluated ahead of the tree. -/
+def aheadLeaf : Expr → Bool
+  | .project _ _ (.local _) => true
+  | _ => false
+
+/-- A local or a field of a record held in a local. -/
+def treeLeaf (e : Expr) : Bool := (slot? e).isSome || aheadLeaf e
+
+/-- The node the emitter computes on the machine word. -/
+def isTree (op : BinOp) (l r : Expr) : Bool :=
+  op.isArith && treeLeaf l && treeLeaf r && (aheadLeaf l || aheadLeaf r)
+
+/-- Where the tree reads operand `p` (0 or 1): its local, or its tree local. -/
+def leafSlot (X : LCtx) (e : Expr) (p : Nat) : Nat :=
+  match slot? e with
+  | some i => i
+  | none => X.tree + p
+
+/-- The `$small` of the carrier in local `i`, or a branch out (`br_if 0`)
+    when it is Big. -/
+def smallReadW (C i : Nat) : List WInstr :=
+  [.localGet i, .structGet C 1, .refIsNull, .i32Eqz, .brIf 0, .localGet i, .structGet C 0]
+
+/-- The machine operation on the two words on the stack, with the overflow
+    test of `bignum.rs` (`emit_fast`): the operands are parked in the first
+    two temporaries and the result in the third; an overflow branches out. -/
+def treeOpW (X : LCtx) (op : BinOp) : List WInstr :=
+  let t0 := X.tree + 2
+  let t1 := X.tree + 3
+  let t2 := X.tree + 4
+  -- a ∉ {-1, 0}, as `(a + 1) >u 1`
+  let general := [.localGet t0, .i64Const 1, .i64Add, .i64Const 1, .i64GtU]
+  [.localSet t1, .localSet t0, .localGet t0, .localGet t1] ++
+  match op with
+  | .add => [.i64Add, .localTee t2, .localGet t0, .i64Xor, .localGet t2,
+      .localGet t1, .i64Xor, .i64And, .i64Const 0, .i64LtS, .brIf 0, .localGet t2]
+  | .sub => [.i64Sub, .localTee t2, .localGet t0, .i64Xor, .localGet t0,
+      .localGet t1, .i64Xor, .i64And, .i64Const 0, .i64LtS, .brIf 0, .localGet t2]
+  | _ => [.i64Mul, .localTee t2, .localGet t0, .i64Const 1] ++ general ++
+      [.select, .i64DivS, .localGet t1, .i64Ne, .localGet t0, .i64Const (-1), .i64Eq,
+        .localGet t1, .i64Const (-9223372036854775808), .i64Eq, .i32And] ++ general ++
+      [.select, .brIf 0, .localGet t2]
+
+/-- `block $done (block $slow <i64 path> br $done) <exact path>` over the
+    operands in locals `a` and `b`. -/
+def treeBlock (M : MCtx) (X : LCtx) (op : BinOp) (a b : Nat) : BI :=
+  .block (some .int)
+    [.block none ((smallReadW M.carrier a ++ smallReadW M.carrier b ++ treeOpW X op ++
+        [WInstr.call M.box, WInstr.br 1]).map .op),
+      .op (.localGet a), .op (.localGet b), .op (.call (M.arithIdx op))]
+
+/-- The tree locals the operands evaluated ahead are stored in. -/
+def aheadB (X : LCtx) (e : Expr) (p : Nat) (code : List BI) : List BI :=
+  if aheadLeaf e then code ++ [.op (.localSet (X.tree + p))] else []
+
 mutual
   def lowerB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool) : Expr → List BI
     | .literal (.int k) => [.op (.i64Const k), .op (.call M.box)]
@@ -390,7 +458,10 @@ mutual
         | some .string =>
             lowerB M X Γ false l ++ lowerB M X Γ false r ++ strOpTail M op
         | _ =>
-            if op.isArith then
+            if isTree op l r && decide (X.n ≤ X.tree) then
+              aheadB X l 0 (lowerB M X Γ false l) ++ aheadB X r 1 (lowerB M X Γ false r) ++
+                [treeBlock M X op (leafSlot X l 0) (leafSlot X r 1)]
+            else if op.isArith then
               lowerB M X Γ false l ++ lowerB M X Γ false r ++ [.op (.call (M.arithIdx op))]
             else
               match litInt? l, litInt? r with
@@ -701,6 +772,17 @@ def encW : WInstr → Option (List Nat)
   | .refTest t => (s33HeapIdx t).map ([0xfb, 0x14] ++ ·)
   | .refCast t => (s33HeapIdx t).map ([0xfb, 0x16] ++ ·)
   | .ret => some [0x0f]
+  | .br d => (uleb32 d).map ([0x0c] ++ ·)
+  | .brIf d => (uleb32 d).map ([0x0d] ++ ·)
+  | .localTee i => (uleb32 i).map ([0x22] ++ ·)
+  | .select => some [0x1b]
+  | .i64GtU => some [0x56]
+  | .i64Add => some [0x7c]
+  | .i64Sub => some [0x7d]
+  | .i64Mul => some [0x7e]
+  | .i64DivS => some [0x7f]
+  | .i64And => some [0x83]
+  | .i64Xor => some [0x85]
   | _ => none
 
 /-- Value-type bytes of a source type: the Int carrier, records, sums (their
@@ -720,6 +802,7 @@ def valTy (M : MCtx) : Ty → Option (List Nat)
   | .list t => (s33HeapIdx (M.listStruct t)).map ([0x63] ++ ·)
   | .opaque tid => (s33HeapIdx (M.opaqueStruct tid)).map ([0x63] ++ ·)
   | .bytes => (s33HeapIdx M.bytesArr).map ([0x63] ++ ·)
+  | .word => some [0x7e]
 
 mutual
   def encBI (M : MCtx) : BI → Option (List Nat)
@@ -734,6 +817,10 @@ mutual
         | some a, some b => some ([0xfb, 0x09] ++ a ++ b)
         | _, _ => none
     | .castNull ht => (s33HeapIdx ht).map ([0xfb, 0x17] ++ ·)
+    | .block bt body =>
+        match (match bt with | none => some [0x40] | some t => valTy M t), encBL M body with
+        | some btB, some b => some ([0x02] ++ btB ++ b ++ [0x0b])
+        | _, _ => none
   def encBL (M : MCtx) : List BI → Option (List Nat)
     | [] => some []
     | x :: xs =>
@@ -774,6 +861,7 @@ inductive LB where
 def zeroW : Ty → WInstr
   | .bool => .i32Const 0
   | .float => .f64Const 0
+  | .word => .i64Const 0
   | _ => .refNull
 
 mutual
@@ -839,6 +927,7 @@ def encZero (M : MCtx) (t : Ty) : Option (List Nat) :=
   | .bool => some [0x41, 0x00]
   | .float => some ([0x44] ++ u64le 0)
   | .eqref => some [0xd0, 0x6d]
+  | .word => some [0x42, 0x00]
   | _ =>
       match valTy M t with
       | some (0x63 :: h) => some (0xd0 :: h)
