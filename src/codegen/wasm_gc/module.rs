@@ -3378,6 +3378,10 @@ pub(super) fn emit_module_with(
     // certificate plan printer prints it): it computes no tree and calls no
     // twin.
     let mut kept_for: Vec<bool> = vec![false; fn_defs.len()];
+    // Whether such a fn computes the certified `Int` tree shape on `i64`
+    // (`int_tree.rs`, `certified_shape`): the plan printer reads its body with
+    // those trees, and the wall lowers them the same way.
+    let mut certified_trees_for: Vec<bool> = vec![false; fn_defs.len()];
     // The locals of each fn emitted without `Int` trees: the plan printer
     // reads a fn with trees as it would without them, so it declines that fn
     // for the reason it has.
@@ -3459,6 +3463,41 @@ pub(super) fn emit_module_with(
             ),
             _ => false,
         };
+        if kept_for[i]
+            && let Some(mir_fn) = mir_fn_for[i]
+        {
+            let mut probe = Function::new([]);
+            super::body::set_int_trees_allowed(false);
+            super::body::set_int_trees_certified(true);
+            let with_trees = emit_fn_body_via_mir(
+                &mut probe,
+                &resolved_fn_defs[i],
+                mir_fn,
+                &mir_program,
+                &fn_map,
+                self_wasm_idx,
+                &registry,
+                &symbol_table,
+                &effect_idx_lookup,
+                &caller_fn_collector,
+                wasip2_lowering.as_ref(),
+            )?;
+            let last = super::body::int_trees_shared_last();
+            super::body::set_int_trees_certified(false);
+            super::body::set_int_trees_allowed(true);
+            certified_trees_for[i] = last
+                && std::env::var_os("AVER_NO_INT_TREE").is_none()
+                && with_trees.as_deref().is_some_and(|extra| {
+                    kept_by_printer(
+                        certify,
+                        mir_fn,
+                        &resolved_fn_defs[i],
+                        extra,
+                        &cert_layout,
+                        &mut trees_types,
+                    )
+                });
+        }
         trees_for[i] = emitted.is_some()
             && registry.bignum
             && std::env::var_os("AVER_NO_INT_TREE").is_none()
@@ -4070,6 +4109,7 @@ pub(super) fn emit_module_with(
         // signature. So the dry-run only needs locals for the MIR path;
         // the stub path contributes none.
         super::body::set_int_trees_allowed(trees_for[i]);
+        super::body::set_int_trees_certified(certified_trees_for[i]);
         super::body::set_twin_calls(!kept_for[i]);
         let emit_body = |self_wasm_idx: u32| -> Result<(Function, Vec<ValType>), WasmGcError> {
             let extra_locals_dry = if mir_dispatch[i] {
@@ -4172,6 +4212,7 @@ pub(super) fn emit_module_with(
             codes.function(&func);
         }
         super::body::set_int_trees_allowed(true);
+        super::body::set_int_trees_certified(false);
         super::body::set_twin_calls(false);
     }
 

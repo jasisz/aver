@@ -193,6 +193,9 @@ pub(in crate::codegen::wasm_gc) struct SlotTable {
     /// The three `i64` locals every `Int` tree of the fn computes each
     /// operation in (`from_mir/int_tree.rs`). Lazily allocated.
     int_tree_temps: Cell<Option<[u32; 3]>>,
+    /// The five locals every `Int` tree of a certified fn uses (two `$AverInt`
+    /// operands evaluated ahead, three `i64` temporaries). Lazily allocated.
+    int_tree_shared: Cell<Option<[u32; 5]>>,
     /// Lazily allocated locals, appended after `by_slot` in
     /// `extra_locals`. Index `i` here is wasm local `by_slot.len() + i`.
     lazy_locals: RefCell<Vec<ValType>>,
@@ -498,6 +501,7 @@ impl SlotTable {
             run_turn_scratch: RefCell::new(None),
             job_task_scratch: RefCell::new(HashMap::new()),
             int_tree_temps: Cell::new(None),
+            int_tree_shared: Cell::new(None),
             lazy_locals: RefCell::new(Vec::new()),
         })
     }
@@ -630,6 +634,20 @@ impl SlotTable {
         temps
     }
 
+    /// The tree locals of a fn whose trees take the certified shape
+    /// (`int_tree.rs`): its two operands' `$AverInt` locals, then the three
+    /// `i64` temporaries, reserved once.
+    pub(in crate::codegen::wasm_gc) fn int_tree_shared(&self, aint: ValType) -> [u32; 5] {
+        if let Some(shared) = self.int_tree_shared.get() {
+            return shared;
+        }
+        let tys = [aint, aint, ValType::I64, ValType::I64, ValType::I64];
+        let shared = tys.map(|t| self.push_lazy_local(t));
+        self.int_tree_shared.set(Some(shared));
+        super::from_mir::int_tree::note_shared_reserved();
+        shared
+    }
+
     /// A fresh local of `ty` per call; the dry run and the real emit reserve
     /// them in the same order.
     pub(in crate::codegen::wasm_gc) fn fresh_local(&self, ty: ValType) -> u32 {
@@ -637,6 +655,9 @@ impl SlotTable {
     }
 
     fn push_lazy_local(&self, ty: ValType) -> u32 {
+        if self.int_tree_shared.get().is_some() {
+            super::from_mir::int_tree::note_local_after_shared();
+        }
         let mut lazy = self.lazy_locals.borrow_mut();
         let idx = (self.by_slot.len() + lazy.len()) as u32;
         lazy.push(ty);

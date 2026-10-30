@@ -252,7 +252,7 @@ impl TypeTableBuilder {
             PlanTy::List(x) => t.lists.iter().find(|l| &l.0 == x.as_ref()).map(|l| l.1),
             PlanTy::Opaque(tid) => t.opaques.iter().find(|o| o.0 == *tid).map(|o| o.1),
             PlanTy::Bytes => t.bytes_arr,
-            PlanTy::Bool | PlanTy::Float | PlanTy::Eqref => None,
+            PlanTy::Bool | PlanTy::Float | PlanTy::Eqref | PlanTy::Word => None,
         }
     }
 
@@ -1206,6 +1206,7 @@ fn scratch_ty(vt: &wasm_encoder::ValType, types: &TypeTableBuilder) -> Option<Pl
     use wasm_encoder::{AbstractHeapType, HeapType, ValType};
     match vt {
         ValType::I32 => Some(PlanTy::Bool),
+        ValType::I64 => Some(PlanTy::Word),
         ValType::F64 => Some(PlanTy::Float),
         ValType::Ref(rt) if rt.nullable => match rt.heap_type {
             HeapType::Abstract {

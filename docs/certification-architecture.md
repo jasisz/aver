@@ -121,12 +121,12 @@ For wasip2 the same rule covers the component wrapper. The manifest declares the
 
 The wall is one hash-addressed unit of 33 Lean files. By module:
 
-- `CertPrelude`, `InterpreterSequencing`: the wasm instruction model and its interpreter;
+- `CertPrelude`, `InterpreterSequencing`: the wasm instruction model and its interpreter, including blocks and branches; `InterpreterSequencing.wRunF_br_lt` shows that code whose branches stay inside it never branches out, which `GrammarSound.escFree_lowerB` establishes for every lowering;
 - `CertDecode`, `WasmSlice`, `Wasip2Envelope`: decoders over the actual module and component bytes;
 - `SchemaBase`, `SchemaCore`, `Schema`: the statement, meaning `Subject`, `TypeTable`, `FnEntry`, `Obligation` with `holds` and `holdsTotal`, `HostContracts`, `Manifest`, and `Holds`;
 - `Grammar`: the plan grammar, its typing `tyOf` and its meaning `eval` and `groupModel`;
 - `GrammarLower`: the lowering to instructions and code-entry bytes, and the byte pins `S3Pin` and `DataPin`;
-- `GrammarSound`: the simulation theorem (`agreement`, `fn_certified_group`) and the exact `ref.test` argument;
+- `GrammarSound`: the simulation theorem (`agreement`, `fn_certified_group`), the exact `ref.test` argument, and `tree_step`, which shows that an `Int` node computed on machine words (`GrammarLower.isTree`, the emitter's `int_tree.rs` under `--certify`) returns the node's value: its `i64` path either branches to the exact call or leaves the exact result in the `i64` range;
 - `GrammarTotal`: the L3 check (`checkTermGroup`) and `fn_certified_total`;
 - `TypeTable`: the lowering context from the declarations, and their confirmation against the type and data sections;
 - `DeclaredLayout`: the producer-declared module layout (where each function's code entry, type and export entry are), confirmed against the decoders once, with a proof that the checks reading it imply the decoder-based ones, so the declaration saves searching and decoding without changing what is accepted;

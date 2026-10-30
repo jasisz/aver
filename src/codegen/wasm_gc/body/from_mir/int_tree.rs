@@ -34,6 +34,38 @@ thread_local! {
     /// each fn's in its pre-pass), and the global holding each one shared.
     static LITERALS: RefCell<Option<std::collections::BTreeSet<i64>>> = const { RefCell::new(None) };
     static POOL: RefCell<HashMap<i64, u32>> = RefCell::new(HashMap::new());
+    /// Whether the fn being emitted is one a `--certify` build keeps for its
+    /// certificate (`module.rs`): it computes only the certified shape on
+    /// `i64` (`certified_shape`), which the Lean wall lowers too.
+    static CERTIFIED: Cell<bool> = const { Cell::new(false) };
+    /// The certified shape's tree locals: 0 not reserved, 1 reserved and the
+    /// fn's last locals, 2 a local reserved after them.
+    static SHARED: Cell<u8> = const { Cell::new(0) };
+}
+
+/// Whether the fn being emitted computes the certified shape on `i64`. Its
+/// tree locals are forgotten, so a new probe starts afresh.
+pub(crate) fn set_certified(on: bool) {
+    CERTIFIED.with(|c| c.set(on));
+    SHARED.with(|s| s.set(0));
+}
+
+pub(crate) fn note_shared_reserved() {
+    SHARED.with(|s| s.set(1));
+}
+
+pub(crate) fn note_local_after_shared() {
+    SHARED.with(|s| {
+        if s.get() == 1 {
+            s.set(2);
+        }
+    });
+}
+
+/// Whether the certified trees' locals are the fn's last five locals, where
+/// the wall's lowering reads them (`Grammar.FnPlan.lctx`).
+pub(crate) fn shared_last() -> bool {
+    SHARED.with(|s| s.get() != 2)
 }
 
 /// Whether the fn being emitted computes on the machine word at all.
@@ -59,6 +91,7 @@ impl Drop for IntTreeReset {
         twin::set_calls(false);
         twin::set_self(None);
         set_allowed(true);
+        set_certified(false);
         set_literal_pool(HashMap::new());
         record_literals(false);
     }
@@ -164,6 +197,33 @@ fn twin_leaf(e: Node<'_>, ctx: &EmitCtx<'_>) -> bool {
     }
 }
 
+/// The shape a fn kept for its certificate computes on `i64`, which the Lean
+/// wall lowers the same way (`GrammarLower.isTree`): one `+`, `-` or `*` of
+/// two operands that are each an `Int` local or a field of a record held in a
+/// local, at least one a field. A field is evaluated ahead into the first or
+/// second tree local by its position.
+fn certified_shape<'e>(e: Node<'e>, ctx: &EmitCtx<'_>) -> Option<(Op, [Node<'e>; 2])> {
+    let (op, a, b) = op_of(e, ctx)?;
+    let b = b?;
+    let local = |x: Node<'_>| {
+        matches!(&x.node, MirExpr::Local(l)
+            if !ctx.slot_is_bare(l.node.slot.0) && twin::held(l.node.slot.0).is_none())
+    };
+    let ahead = |x: Node<'_>| {
+        matches!(&x.node, MirExpr::Project(p)
+        if matches!(p.node.base.node, MirExpr::Local(_)))
+            && !mir_is_eligible_carrier_value_project(&x.node, ctx)
+    };
+    let leaf = |x: Node<'_>| local(x) || ahead(x);
+    (matches!(op, Op::Add | Op::Sub | Op::Mul) && leaf(a) && leaf(b) && (ahead(a) || ahead(b)))
+        .then_some((op, [a, b]))
+}
+
+/// Whether the certified shape is what the fn computes on `i64`.
+fn certified() -> bool {
+    CERTIFIED.with(Cell::get) && !ALLOWED.with(Cell::get)
+}
+
 /// `unpacked`: the tree's value is compared or unboxed, not boxed.
 fn enabled(ctx: &EmitCtx<'_>, roots: &[Node<'_>], unpacked: bool) -> bool {
     // A comparison of two leaves is worth it too, unless a side is a literal
@@ -179,8 +239,11 @@ fn enabled(ctx: &EmitCtx<'_>, roots: &[Node<'_>], unpacked: bool) -> bool {
     ctx.registry.bignum
         && ctx.registry.aint_struct_idx.is_some()
         && EXACT.with(|d| d.get() == 0)
-        && ALLOWED.with(|a| a.get())
-        && weights().is_some_and(|w| w > 0 || leaves || twin())
+        && if certified() {
+            roots.len() == 1 && !unpacked && certified_shape(roots[0], ctx).is_some()
+        } else {
+            ALLOWED.with(|a| a.get()) && weights().is_some_and(|w| w > 0 || leaves || twin())
+        }
 }
 
 /// On the exact path, a leaf evaluated ahead is read from its local.
@@ -298,9 +361,27 @@ fn emit_tree(
 ) -> Result<Option<()>, WasmGcError> {
     let aint = struct_ref(ctx.registry.aint_struct_idx.unwrap_or_default());
     let mut ahead = Hoisted::new();
-    for r in roots {
-        if hoist(func, r, aint, slots, ctx, &mut ahead)?.is_none() {
+    let mut temps = None;
+    if certified() {
+        let Some((_, leaves)) = certified_shape(roots[0], ctx) else {
             return Ok(None);
+        };
+        let shared = slots.int_tree_shared(aint);
+        for (p, x) in leaves.into_iter().enumerate() {
+            if matches!(x.node, MirExpr::Project(_)) {
+                if emit_mir_expr(func, x, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                func.instruction(&I::LocalSet(shared[p]));
+                ahead.insert(x as *const _ as usize, Held::Boxed(shared[p]));
+            }
+        }
+        temps = Some([shared[2], shared[3], shared[4]]);
+    } else {
+        for r in roots {
+            if hoist(func, r, aint, slots, ctx, &mut ahead)?.is_none() {
+                return Ok(None);
+            }
         }
     }
     let ty = if cmp.is_some() {
@@ -314,7 +395,7 @@ fn emit_tree(
         func,
         &[I::Block(BlockType::Result(ty)), I::Block(BlockType::Empty)],
     );
-    let temps = slots.int_tree_temps();
+    let temps = temps.unwrap_or_else(|| slots.int_tree_temps());
     for r in roots {
         if emit_fast(func, r, &ahead, temps, slots, ctx)?.is_none() {
             return Ok(None);
