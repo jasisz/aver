@@ -281,6 +281,66 @@ theorem wRunF_br_length (host : HostTbl) (ar : Nat → Option Nat) (callee : Cal
   intro xs l st d l' st' h
   exact (wRunF_lens host ar callee xs l st).2 d l' st' h
 
+/-! ## Branches that stay inside
+
+Code whose every branch targets a label inside it never ends in a branch out
+of it. Lowered code is such code (`GrammarSound.escFree_lowerB`): its only
+branches are the `Int` tree's, to the two blocks around them. -/
+
+mutual
+  /-- No branch in `x` leaves more than `k` enclosing labels. -/
+  def escFreeI (k : Nat) : WInstr → Bool
+    | .br d => decide (d < k)
+    | .brIf d => decide (d < k)
+    | .block _ body => escFreeL (k + 1) body
+    | .ifElse t e => escFreeL (k + 1) t && escFreeL (k + 1) e
+    | _ => true
+  def escFreeL (k : Nat) : List WInstr → Bool
+    | [] => true
+    | x :: xs => escFreeI k x && escFreeL k xs
+end
+
+@[simp] theorem escFreeL_nil (k : Nat) : escFreeL k [] = true := by simp [escFreeL]
+
+@[simp] theorem escFreeL_cons (k : Nat) (x : WInstr) (xs : List WInstr) :
+    escFreeL k (x :: xs) = (escFreeI k x && escFreeL k xs) := by simp [escFreeL]
+
+@[simp] theorem escFreeL_append (k : Nat) :
+    ∀ (xs ys : List WInstr), escFreeL k (xs ++ ys) = (escFreeL k xs && escFreeL k ys)
+  | [], ys => by simp
+  | x :: xs, ys => by simp [escFreeL_append k xs ys, Bool.and_assoc]
+
+/-- A run of code whose branches stay within `k` labels branches at most
+    `k - 1` labels out. -/
+theorem wRunF_br_lt (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
+    ∀ (xs : List WInstr) (l st : List WVal) (k d : Nat) (l' st' : List WVal),
+      escFreeL k xs = true →
+      wRunF host ar callee xs l st = some (.br d l' st') → d < k := by
+  intro xs l st
+  induction xs, l, st using wRunF.induct host ar callee <;>
+    intro k d l' st' hf h <;>
+    revert hf <;>
+    simp only [escFreeL, escFreeI, Bool.and_eq_true, decide_eq_true_eq, and_imp] <;>
+    intros <;>
+    unfold wRunF at h <;>
+    (repeat' (first | split at h | (simp only [Function.comp_def] at *))) <;>
+    first
+      | (cases h; done)
+      | (simp at h; done)
+      | (simp_all; done)
+      | ((try injections) <;> (try subst_vars) <;>
+         first
+           | omega
+           | (apply Nat.lt_of_succ_lt_succ; apply_assumption <;> assumption)
+           | (exfalso; apply_assumption <;> rfl))
+
+/-- Escape-free code (`k = 0`) never ends in a branch. -/
+theorem wRunF_not_br (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
+    {xs : List WInstr} (hf : escFreeL 0 xs = true) {l st l' st' : List WVal} {d : Nat}
+    (h : wRunF host ar callee xs l st = some (.br d l' st')) : False := by
+  have := wRunF_br_lt host ar callee xs l st 0 d l' st' hf h
+  omega
+
 /-- The locals after `setsW n` over the stack `st`. -/
 def setTop : Nat → List WVal → List WVal → List WVal
   | 0, l, _ => l

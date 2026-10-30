@@ -344,25 +344,259 @@ theorem run_split {host : HostTbl} {ar : Nat → Option Nat} {callee : Callee}
   | none => rw [hx] at h; simp [seqOut] at h
   | some o => exact ⟨o, rfl, by rw [hx] at h; exact h⟩
 
-/-- An `if`'s outcome from its arm's: a branch to the `if` itself is not
-    modelled, a branch further out leaves it one level shallower. -/
-@[simp] def ifOut : Option Out → Option Out
-  | some (.ok l s) => some (.ok l s)
-  | some (.ret v) => some (.ret v)
-  | some (.br 0 _ _) => none
-  | some (.br (k + 1) l s) => some (.br k l s)
-  | none => none
-
-/-- Running a lone `if` on an i32 condition is running the chosen branch. -/
+/-- Running a lone `if` on an i32 condition is running the chosen branch,
+    when neither arm branches out of itself (lowered code never does,
+    `escFree_lowerB`). -/
 theorem wRunF_ifElse_single (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    (tB eB : List WInstr) (l : List WVal) (c : Int) (st : List WVal) :
+    (tB eB : List WInstr) (l : List WVal) (c : Int) (st : List WVal)
+    (ht : escFreeL 0 tB = true) (he : escFreeL 0 eB = true) :
     wRunF host ar callee [.ifElse tB eB] l (.i32v c :: st) =
-      ifOut (if c = 0 then wRunF host ar callee eB l st else wRunF host ar callee tB l st) := by
+      if c = 0 then wRunF host ar callee eB l st else wRunF host ar callee tB l st := by
   by_cases hc : c = 0
   · simp only [wRunF, hc, ite_true]
-    rcases wRunF host ar callee eB l st with _ | ⟨_, _⟩ | _ | ⟨_ | _, _, _⟩ <;> simp
+    cases h : wRunF host ar callee eB l st with
+    | none => rfl
+    | some o =>
+        cases o with
+        | ok _ _ => simp
+        | ret _ => simp
+        | br _ _ _ => exact (wRunF_not_br host ar callee he h).elim
   · simp only [wRunF, hc, ite_false]
-    rcases wRunF host ar callee tB l st with _ | ⟨_, _⟩ | _ | ⟨_ | _, _, _⟩ <;> simp
+    cases h : wRunF host ar callee tB l st with
+    | none => rfl
+    | some o =>
+        cases o with
+        | ok _ _ => simp
+        | ret _ => simp
+        | br _ _ _ => exact (wRunF_not_br host ar callee ht h).elim
+
+/-! ### Lowered code never branches out of itself -/
+
+section EscFree
+
+theorem escFree_eraseL_append (k : Nat) (xs ys : List BI) :
+    escFreeL k (eraseL (xs ++ ys)) = (escFreeL k (eraseL xs) && escFreeL k (eraseL ys)) := by
+  rw [eraseL_append, escFreeL_append]
+
+theorem escFree_ops (k : Nat) (is : List WInstr) :
+    escFreeL k (eraseL (is.map BI.op)) = escFreeL k is := by
+  rw [eraseL_ops]
+
+theorem escFree_smallCmp (k : Nat) (op : BinOp) : escFreeI k (smallCmpInstr op) = true := by
+  cases op <;> rfl
+
+theorem escFree_boolCmp (k : Nat) (op : BinOp) : escFreeI k (boolCmpInstr op) = true := by
+  cases op <;> rfl
+
+theorem escFree_floatCmp (k : Nat) (op : BinOp) : escFreeI k (floatCmpInstr op) = true := by
+  cases op <;> rfl
+
+theorem escFree_bigCmpArm (k C s : Nat) (op : BinOp) : escFreeL k (bigCmpArm C s op) = true := by
+  cases op <;> rfl
+
+theorem escFree_intCmpTail (k : Nat) (M : MCtx) (op : BinOp) :
+    escFreeL k (intCmpTail M op) = true := by
+  cases op <;> rfl
+
+theorem escFree_dfltB (k : Nat) (M : MCtx) (t : Ty) : escFreeL k (eraseL (dfltB M t)) = true := by
+  cases t <;> rfl
+
+theorem escFree_bindFieldB (k ss idx i b : Nat) :
+    escFreeL k (eraseL (bindFieldB ss idx i b)) = true := by
+  unfold bindFieldB; split <;> rfl
+
+theorem escFree_extractB (k ss idx : Nat) : ∀ (i : Nat) (bs : List Nat),
+    escFreeL k (eraseL (extractB ss idx i bs)) = true
+  | _, [] => rfl
+  | i, b :: bs => by
+      simp only [extractB, escFree_eraseL_append, escFree_bindFieldB,
+        escFree_extractB k ss idx (i + 1) bs, Bool.and_self]
+
+theorem escFree_builtinTail (k : Nat) (M : MCtx) (bi : Builtin) (ts : Option (List Ty)) :
+    escFreeL k (eraseL (builtinTail M bi ts)) = true := by
+  unfold builtinTail helperCall bytesCall
+  (repeat' split) <;> rfl
+
+theorem escFree_strOpTail (k : Nat) (M : MCtx) (op : BinOp) :
+    escFreeL k (eraseL (strOpTail M op)) = true := by
+  cases op <;> rfl
+
+theorem escFree_replicate (k : Nat) (i : BI) (hi : escFreeI k (eraseI i) = true) :
+    ∀ n, escFreeL k (eraseL (List.replicate n i)) = true
+  | 0 => rfl
+  | n + 1 => by
+      simp only [List.replicate_succ, eraseL, escFreeL_cons, hi, escFree_replicate k i hi n,
+        Bool.and_self]
+
+/-- The lemmas that decide the escape-freedom of the templates. -/
+macro "esc_simp" "[" ls:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
+  `(tactic| simp only [escFree_eraseL_append, escFree_ops, eraseL, eraseI, escFreeL_cons,
+      escFreeL_nil, escFreeL_append, escFreeI, Bool.and_true, Bool.true_and, Bool.and_self,
+      escFree_smallCmp, escFree_boolCmp, escFree_floatCmp, escFree_bigCmpArm, escFree_intCmpTail,
+      escFree_dfltB, escFree_bindFieldB, escFree_extractB, escFree_builtinTail, escFree_strOpTail,
+      strLitB, concatB, cmpArmB, vecGetOrB, divOrB, tryB, tagTestB, List.map,
+      List.cons_append, List.nil_append, $ls,*])
+
+mutual
+  theorem escFree_lowerB (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (e : Expr) (k : Nat), escFreeL k (eraseL (lowerB M X Γ tail e)) = true
+    | _, _, .literal l, k => by cases l <;> simp only [lowerB] <;> esc_simp []
+    | _, _, .local _, k => by simp only [lowerB]; esc_simp []
+    | Γ, tail, .let_ b v body, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ v, escFree_lowerB M X _ _ body]
+    | Γ, _, .call (.fn f) args, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, _, .call (.builtin bi) args, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, _, .tailCall f args, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, _, .binOp op l r, k => by
+        simp only [lowerB]
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ l, escFree_lowerB M X _ _ r]
+    | Γ, _, .neg e, k => by simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ e]
+    | Γ, tail, .ifThenElse c t e, k => by
+        simp only [lowerB]
+        esc_simp [escFree_lowerB M X _ _ c, escFree_lowerB M X _ _ t, escFree_lowerB M X _ _ e]
+    | Γ, _, .recordCreate tid fs, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ fs]
+    | Γ, _, .project tid i base, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ base]
+    | Γ, _, .call (.lazy lb) [o, d], k => by
+        simp only [lowerB]
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ o, escFree_lowerB M X _ _ d]
+    | Γ, _, .call (.lazy lb) [], k => by simp only [lowerB]; esc_simp []
+    | Γ, _, .call (.lazy lb) [_], k => by simp only [lowerB]; esc_simp []
+    | Γ, _, .call (.lazy lb) (_ :: _ :: _ :: _), k => by simp only [lowerB]; esc_simp []
+    | Γ, _, .call (.intrinsic ie) args, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, _, .construct c ty args, k => by
+        simp only [lowerB]
+        (repeat' split) <;> esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, tail, .match_ s arms, k => by
+        have hs : ∀ k, escFreeL k (eraseL (lowerB M X Γ false s)) = true :=
+          escFree_lowerB M X Γ false s
+        simp only [lowerB]
+        (repeat' split) <;>
+          esc_simp [escFree_lowerB M X _ _ s, escFree_lowerIntArms M X _ _ _ _ arms _ hs,
+            escFree_lowerBoolArms M X _ _ _ arms, escFree_lowerOptArms M X _ _ _ _ arms,
+            escFree_lowerResArms M X _ _ _ _ _ arms, escFree_lowerVarArms M X _ _ _ _ arms,
+            escFree_lowerStrArms M X _ _ _ arms, escFree_lowerTupArms M X _ _ _ arms,
+            escFree_lowerListArms M X _ _ _ _ arms]
+    | Γ, _, .interp parts, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ parts]
+    | Γ, _, .list t items, k => by
+        simp only [lowerB]
+        (repeat' split) <;>
+          esc_simp [escFree_lowerArgsB M X _ items, escFree_replicate k (BI.op (WInstr.call _)) rfl]
+    | Γ, _, .try_ e R, k => by
+        simp only [lowerB]
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ e]
+    | Γ, tail, .scope e, k => by simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ e]
+  theorem escFree_lowerArgsB (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (es : List Expr)
+      (k : Nat), escFreeL k (eraseL (lowerArgsB M X Γ es)) = true
+    | _, [], k => by simp only [lowerArgsB]; esc_simp []
+    | Γ, e :: es, k => by
+        simp only [lowerArgsB]
+        esc_simp [escFree_lowerB M X _ _ e, escFree_lowerArgsB M X _ es]
+  theorem escFree_lowerIntArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (sc : List BI) (bt : Option Ty) (arms : Arms) (k : Nat),
+      (∀ k, escFreeL k (eraseL sc) = true) →
+      escFreeL k (eraseL (lowerIntArms M X Γ tail sc bt arms)) = true
+    | _, _, _, _, .nil, k, _ => by simp only [lowerIntArms]; esc_simp []
+    | Γ, tail, sc, bt, .cons p b rest, k, hsc => by
+        simp only [lowerIntArms]
+        (repeat' split) <;>
+          esc_simp [hsc, escFree_lowerB M X _ _ b,
+            escFree_lowerIntArms M X _ _ sc bt rest _ hsc]
+  theorem escFree_lowerBoolArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerBoolArms M X Γ tail bt arms)) = true
+    | Γ, tail, bt, .cons p t (.cons p' e r), k => by
+        have ht := escFree_lowerB M X Γ tail t
+        have he := escFree_lowerB M X Γ tail e
+        unfold lowerBoolArms
+        (repeat' split) <;> (try injections) <;> (try subst_vars) <;> esc_simp [ht, he]
+    | _, _, _, .nil, k => by unfold lowerBoolArms; esc_simp []
+    | _, _, _, .cons _ _ .nil, k => by unfold lowerBoolArms; esc_simp []
+  theorem escFree_lowerOptArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (t : Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerOptArms M X Γ tail bt t arms)) = true
+    | Γ, tail, bt, t, .cons p1 b1 (.cons p2 b2 _), k => by
+        unfold lowerOptArms
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ b1, escFree_lowerB M X _ _ b2]
+    | _, _, _, _, .nil, k => by unfold lowerOptArms; esc_simp []
+    | _, _, _, _, .cons _ _ .nil, k => by unfold lowerOptArms; esc_simp []
+  theorem escFree_lowerResArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (t e : Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerResArms M X Γ tail bt t e arms)) = true
+    | Γ, tail, bt, t, e, .cons p1 b1 (.cons p2 b2 _), k => by
+        unfold lowerResArms
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ b1, escFree_lowerB M X _ _ b2]
+    | _, _, _, _, _, .nil, k => by unfold lowerResArms; esc_simp []
+    | _, _, _, _, _, .cons _ _ .nil, k => by unfold lowerResArms; esc_simp []
+  theorem escFree_lowerVarArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (tid : Nat) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerVarArms M X Γ tail bt tid arms)) = true
+    | _, _, _, _, .nil, k => by unfold lowerVarArms; esc_simp []
+    | Γ, tail, bt, tid, .cons p b .nil, k => by
+        unfold lowerVarArms
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ b]
+    | Γ, tail, bt, tid, .cons p b (.cons p' b' r), k => by
+        unfold lowerVarArms
+        (repeat' split) <;>
+          esc_simp [escFree_lowerB M X _ _ b, escFree_lowerVarArms M X _ _ _ _ (.cons p' b' r)]
+  theorem escFree_lowerStrArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerStrArms M X Γ tail bt arms)) = true
+    | _, _, _, .nil, k => by unfold lowerStrArms; esc_simp []
+    | Γ, tail, bt, .cons p b rest, k => by
+        unfold lowerStrArms
+        (repeat' split) <;>
+          esc_simp [escFree_lowerB M X _ _ b, escFree_lowerStrArms M X _ _ _ rest]
+  theorem escFree_lowerTupArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (tid : Nat) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerTupArms M X Γ tail tid arms)) = true
+    | Γ, tail, tid, .cons p b _, k => by
+        have hb : ∀ Γ' k, escFreeL k (eraseL (lowerB M X Γ' tail b)) = true :=
+          fun Γ' => escFree_lowerB M X Γ' tail b
+        unfold lowerTupArms
+        (repeat' split) <;> (try injections) <;> (try subst_vars) <;> esc_simp [hb]
+    | _, _, _, .nil, k => by unfold lowerTupArms; esc_simp []
+  theorem escFree_lowerListArms (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (t : Ty) (arms : Arms) (k : Nat),
+      escFreeL k (eraseL (lowerListArms M X Γ tail bt t arms)) = true
+    | Γ, tail, bt, t, .cons p1 b1 (.cons p2 b2 _), k => by
+        unfold lowerListArms
+        (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ b1, escFree_lowerB M X _ _ b2]
+    | _, _, _, _, .nil, k => by unfold lowerListArms; esc_simp []
+    | _, _, _, _, .cons _ _ .nil, k => by unfold lowerListArms; esc_simp []
+end
+
+theorem escFree_lowerW (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool) (e : Expr)
+    (k : Nat) : escFreeL k (lowerW M X Γ tail e) = true :=
+  escFree_lowerB M X Γ tail e k
+
+theorem escFree_lowerArgsW (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (es : List Expr)
+    (k : Nat) : escFreeL k (lowerArgsW M X Γ es) = true :=
+  escFree_lowerArgsB M X Γ es k
+
+end EscFree
+
+/-- Rewrite a lone `if` to its chosen arm, the arms' escape-freedom decided
+    by the lowering lemmas. -/
+macro "rw_if" " at " h:ident : tactic =>
+  `(tactic| (rw [wRunF_ifElse_single] at $h:ident <;>
+    try (show escFreeL _ _ = true
+         first
+           | exact escFree_lowerW _ _ _ _ _ _
+           | exact escFree_lowerB _ _ _ _ _ _
+           | (esc_simp [escFree_lowerB, escFree_lowerArgsB, escFree_lowerBoolArms,
+                escFree_lowerOptArms, escFree_lowerResArms, escFree_lowerVarArms,
+                escFree_lowerStrArms, escFree_lowerTupArms, escFree_lowerListArms,
+                escFree_lowerW, escFree_lowerArgsW]; done)
+           | exact escFree_lowerIntArms _ _ _ _ _ _ _ _ (by assumption)
+           | apply_assumption
+           | (simp [escFreeI]; done))))
 
 theorem upd_same {α : Type} (f : Nat → Option α) (i : Nat) (a : α) : upd f i a i = some a := by
   simp [upd]
@@ -1013,6 +1247,7 @@ theorem vecGetOr_step (R : XHost S M host) {v i : Nat} {t : Ty} {vs : List SVal}
     {wv wi : WVal} {wl st : List WVal} {dc : List BI} {out : Out}
     (hwv : wl[v]? = some wv) (hrv : SRepr S M (.vec t vs) wv)
     (hwi : wl[i]? = some wi) (hri : SRepr S M (.i n) wi)
+    (hdc : ∀ k, escFreeL k (eraseL dc) = true)
     (hrun : wRunF host ar callee (eraseL (vecGetOrB M v i t dc)) wl st = some out) :
     ((0 ≤ n ∧ n < vs.length) ∧ ∃ x wx, vs[n.toNat]? = some x ∧ SRepr S M x wx ∧
       out = .ok wl (wx :: st)) ∨
@@ -1038,7 +1273,7 @@ theorem vecGetOr_step (R : XHost S M host) {v i : Nat} {t : Ty} {vs : List SVal}
       rw [hsplit, wRunF_append, hpre] at hrun
       have hseq := hrun
       simp only [seqOut] at hseq
-      rw [wRunF_ifElse_single] at hseq
+      rw_if at hseq
       by_cases hin : 0 ≤ n ∧ n < vs.length
       · left
         have hC := hc.mpr (by rw [hwsl]; exact hin)
@@ -1174,6 +1409,7 @@ theorem res_any_tail {tail : Bool} {env : Nat → Option SVal} {st : List WVal} 
   cases out with
   | ok wl' st' => exact h
   | ret w => exact absurd h.1 (by simp)
+  | br _ _ _ => exact h.elim
 
 /-- The default filler runs, pushes one value and touches no local. -/
 theorem dflt_run (t : Ty) (ht : t.hasDefault = true) (wl st : List WVal) :
@@ -2117,7 +2353,7 @@ theorem divOr_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
     simp only [b32] at hrun
     by_cases hy : y = 0
     · simp only [hy, decide_true, ↓reduceIte] at hrun
-      rw [wRunF_ifElse_single] at hrun
+      rw_if at hrun
       simp only [Int.one_ne_zero, ↓reduceIte] at hrun
       by_cases h3 : X.cmp + 3 < wl.length
       · have g3 : wl'[X.cmp + 3]? = some wd := by
@@ -2129,7 +2365,8 @@ theorem divOr_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
           subst hwl'; simp [List.getElem?_set]; omega
         simp [wRunF, g3] at hrun
     · simp only [hy, decide_false, Bool.false_eq_true, ↓reduceIte] at hrun
-      rw [wRunF_ifElse_single, ite_eq_left rfl] at hrun
+      rw_if at hrun
+      rw [ite_eq_left rfl] at hrun
       cases hr : g [wa, wb, .i32v (if isMod then 1 else 0)] with
       | none => simp [wRunF, g1, g2, hg, popArgs_three, hr] at hrun
       | some r =>
@@ -2876,6 +3113,7 @@ variable (n : Nat)
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
         ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
           LRel S M X env wl1) →
+      (∀ k, escFreeL k (eraseL sc) = true) →
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
@@ -3393,7 +3631,7 @@ theorem agreement_step :
       cases v with
       | false =>
           simp only [seqOut, b32, Bool.false_eq_true, ↓reduceIte] at hseq
-          rw [wRunF_ifElse_single] at hseq
+          rw_if at hseq
           simp only [↓reduceIte] at hseq
           rcases agreement e Γ env tail T wl1 st out hte henv hl1 hseq with
             ⟨sv, hev, hT, hres⟩ | hE
@@ -3403,7 +3641,7 @@ theorem agreement_step :
               (fun R hR => by simp [bareTries, hR]))
       | true =>
           simp only [seqOut, b32, ↓reduceIte] at hseq
-          rw [wRunF_ifElse_single] at hseq
+          rw_if at hseq
           simp only [Int.reduceEq, ↓reduceIte] at hseq
           rcases agreement t Γ env tail T wl1 st out htt henv hl1 hseq with
             ⟨sv, hev, hT, hres⟩ | hE
@@ -3488,7 +3726,7 @@ theorem agreement_step :
                 obtain ⟨dd, rfl⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd] _ st hss)] at hseq
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
-                rw [wRunF_ifElse_single] at hseq
+                rw_if at hseq
                 simp only [Int.reduceEq, ↓reduceIte] at hseq
                 rcases agreement d Γ env false t _ st out htd henv hl2 hseq with
                   ⟨sv, hev, hT, hres⟩ | hE
@@ -3500,7 +3738,7 @@ theorem agreement_step :
                 obtain ⟨xw, rfl, hxw⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw] _ st hss)] at hseq
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
-                rw [wRunF_ifElse_single] at hseq
+                rw_if at hseq
                 simp [wRunF, hss] at hseq
                 subst hseq
                 exact Or.inl ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
@@ -3534,7 +3772,7 @@ theorem agreement_step :
                 obtain ⟨xw, dd, rfl, hxw⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw, dd] _ st hss)] at hseq
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
-                rw [wRunF_ifElse_single] at hseq
+                rw_if at hseq
                 simp [wRunF, hss] at hseq
                 subst hseq
                 exact Or.inl ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
@@ -3542,7 +3780,7 @@ theorem agreement_step :
                 obtain ⟨dd, xw, rfl, hxw⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd, xw] _ st hss)] at hseq
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
-                rw [wRunF_ifElse_single] at hseq
+                rw_if at hseq
                 simp only [Int.reduceEq, ↓reduceIte] at hseq
                 rcases agreement d Γ env false t _ st out htd henv hl2 hseq with
                   ⟨sv, hev, hT, hres⟩ | hE
@@ -3560,7 +3798,7 @@ theorem agreement_step :
         obtain ⟨_, wv, hwv, hrv⟩ := hl.2 v _ hvv
         obtain ⟨_, wi, hwi, hri⟩ := hl.2 i _ hiv
         simp only [lowerW, lowerB, hvg, hΓv] at hrun
-        rcases vecGetOr_step R hwv hrv hwi hri hrun with ⟨hin, x, wx, hx, hwx, rfl⟩ | ⟨hout, hd⟩
+        rcases vecGetOr_step R hwv hrv hwi hri (escFree_lowerB _ _ _ _ _) hrun with ⟨hin, x, wx, hx, hwx, rfl⟩ | ⟨hout, hd⟩
         · refine Or.inl ⟨x, ?_, hasTyAll_get hall hx, res_ok hwx hl⟩
           obtain ⟨hlt, hx'⟩ := List.getElem?_eq_some_iff.mp hx
           simp [eval, evalArgs, hvv, hiv, builtinEval, hin, List.getElem?_eq_getElem hlt, hx']
@@ -3864,7 +4102,7 @@ theorem agreement_step :
           cases hev0
           obtain ⟨wl1, w, rfl, hw, hl1⟩ := res_false hres0
           exact ⟨wl1, w, rfl, by simpa [SRepr] using hw, hl1⟩
-        rcases agreementIntArms arms Γ env tail T wl st out (lowerB M X Γ false s) _ x hsc hta henv hl
+        rcases agreementIntArms arms Γ env tail T wl st out (lowerB M X Γ false s) _ x hsc (escFree_lowerB M X Γ false s) hta henv hl
             hrun with ⟨sv, hev, hT, hres⟩ | hE
         · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
         · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
@@ -4030,7 +4268,7 @@ theorem agreement_step :
               subst hw1
               rw [run_nullTest_null host ar callee _ _ _ _ hss] at hseq
               simp only [b32, ↓reduceIte] at hseq
-              rw [wRunF_ifElse_single] at hseq
+              rw_if at hseq
               simp only [Int.reduceEq, ↓reduceIte] at hseq
               rcases agreement b1 Γ env tail T _ st out hte henv hl2 hseq with ⟨sv, hev, hT, hres⟩ | hE
               · refine Or.inl ⟨sv, ?_, hT, hres⟩
@@ -4048,7 +4286,7 @@ theorem agreement_step :
               obtain ⟨xw, rw', rfl, hxw, hrw⟩ := hw1
               rw [run_nullTest_struct host ar callee _ _ _ _ _ _ hss] at hseq
               simp only [b32, ↓reduceIte] at hseq
-              rw [wRunF_ifElse_single] at hseq
+              rw_if at hseq
               simp only [↓reduceIte, eraseL_append] at hseq
               obtain ⟨env', wl', hbv, henv', hl', _, hrun', hres'⟩ :=
                 extract_run host ar callee X.subj (M.listStruct t) [xw, rw'] [hd, tl] 0 [x, r]
@@ -4077,7 +4315,7 @@ theorem agreement_step :
               subst hw1
               rw [run_nullTest_null host ar callee _ _ _ _ hss] at hseq
               simp only [b32, ↓reduceIte] at hseq
-              rw [wRunF_ifElse_single] at hseq
+              rw_if at hseq
               simp only [Int.reduceEq, ↓reduceIte] at hseq
               rcases agreement b2 Γ env tail T _ st out hte henv hl2 hseq with ⟨sv, hev, hT, hres⟩ | hE
               · refine Or.inl ⟨sv, ?_, hT, hres⟩
@@ -4095,7 +4333,7 @@ theorem agreement_step :
               obtain ⟨xw, rw', rfl, hxw, hrw⟩ := hw1
               rw [run_nullTest_struct host ar callee _ _ _ _ _ _ hss] at hseq
               simp only [b32, ↓reduceIte] at hseq
-              rw [wRunF_ifElse_single] at hseq
+              rw_if at hseq
               simp only [↓reduceIte, eraseL_append] at hseq
               obtain ⟨env', wl', hbv, henv', hl', _, hrun', hres'⟩ :=
                 extract_run host ar callee X.subj (M.listStruct t) [xw, rw'] [hd, tl] 0 [x, r]
@@ -4178,7 +4416,7 @@ theorem agreement_step :
         rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw, dd] _ st hss)] at hseq
         simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true,
           ↓reduceIte] at hseq
-        rw [wRunF_ifElse_single] at hseq
+        rw_if at hseq
         simp [wRunF, hss] at hseq
         subst hseq
         exact Or.inl ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
@@ -4187,7 +4425,7 @@ theorem agreement_step :
         rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd, xw] _ st hss)] at hseq
         simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true,
           ↓reduceIte] at hseq
-        rw [wRunF_ifElse_single] at hseq
+        rw_if at hseq
         simp only [Int.reduceEq, ↓reduceIte, wRunF] at hseq
         obtain ⟨d', hd'⟩ := dflt_run host ar callee (M := M) t' hdt'
           (wl1.set X.subj (.structv (M.resStruct T er) [.i32v 0, dd, xw])) (.i32v 0 :: st)
@@ -4255,14 +4493,15 @@ theorem agreementIntArms_step :
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
         ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
           LRel S M X env wl1) →
+      (∀ k, escFreeL k (eraseL sc) = true) →
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
       (∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
         Res S M X tail env st sv out) ∨
         Esc S M (evalArms F env (.i x) arms) (escvArms F env (.i x) arms) (bareTriesA arms) out
-  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyIntArms] at hty
-  | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, sc, bt, x, hsc, hty, henv, hl, hrun => by
+  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyIntArms] at hty
+  | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, sc, bt, x, hsc, hesc, hty, henv, hl, hrun => by
       cases p with
       | litInt k =>
           simp only [tyIntArms] at hty
@@ -4301,7 +4540,7 @@ theorem agreementIntArms_step :
                           have hseq' := run_seq (xs := [.i64Const k, .call M.box, .call M.eq])
                             (ys := [.ifElse (eraseL (lowerB M X Γ tail b))
                               (eraseL (lowerIntArms M X Γ tail sc bt rest))]) hpre hseq
-                          rw [wRunF_ifElse_single] at hseq'
+                          rw_if at hseq'
                           by_cases hxk : x = k
                           · subst hxk
                             simp only [eqW, ↓reduceIte, Int.reduceEq] at hseq'
@@ -4310,7 +4549,7 @@ theorem agreementIntArms_step :
                             · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
                                 (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
                           · simp only [eqW, hxk, ↓reduceIte] at hseq'
-                            rcases agreementIntArms rest Γ env tail T1 wl1 st out sc bt x hsc hr henv
+                            rcases agreementIntArms rest Γ env tail T1 wl1 st out sc bt x hsc hesc hr henv
                                 hl1 hseq' with ⟨sv, hev, hT, hres⟩ | hE
                             · exact Or.inl ⟨sv, by simp [evalArms, patMatch, hxk, hev], hT, hres⟩
                             · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, hxk, h])
@@ -4392,7 +4631,7 @@ theorem agreementBoolArms_step :
                   rcases hp2 with rfl | rfl <;> cases v <;> cases x <;>
                     simp only [lowerBoolArms, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI]
                       at hrun <;>
-                    rw [wRunF_ifElse_single] at hrun <;>
+                    rw_if at hrun <;>
                     simp only [Int.reduceEq, ↓reduceIte] at hrun
                   · rcases agreement t Γ env tail a wl st out hta henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
                     · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
@@ -4496,7 +4735,7 @@ theorem agreementOptArms_step :
                   obtain ⟨dd, rfl⟩ := hsw
                   rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd] _ st hss)] at hr
                   simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI] at hr
-                  rw [wRunF_ifElse_single] at hr
+                  rw_if at hr
                   simp only [Int.reduceEq, ↓reduceIte] at hr
                   rcases hAn hr with ⟨sv', hev, hT, hres⟩ | hE
                   · exact Or.inl ⟨sv', by rw [evalOpt_none F env hpk, hbn]; exact hev, hT, hres⟩
@@ -4511,7 +4750,7 @@ theorem agreementOptArms_step :
                       env Γ Γs wl st hl.1.2.1 hss (by simp) hx hxw hbo henv hl
                   rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw] _ st hss)] at hr
                   simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI] at hr
-                  rw [wRunF_ifElse_single] at hr
+                  rw_if at hr
                   simp only [Int.reduceEq, ↓reduceIte, eraseL_append] at hr
                   rw [run_seq_eq hbrun] at hr
                   rcases hAs env' wl' henv' hl' hr with ⟨sv', hev, hT, hres⟩ | hE
@@ -4631,7 +4870,7 @@ theorem agreementResArms_step :
                       t xw env Γ Γo wl st hl.1.2.1 hss (by simp) hx hxw hbo henv hl
                   rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw, dd] _ st hss)] at hr
                   simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI] at hr
-                  rw [wRunF_ifElse_single] at hr
+                  rw_if at hr
                   simp only [Int.reduceEq, ↓reduceIte, eraseL_append] at hr
                   rw [run_seq_eq hbrun] at hr
                   rcases hAo env' wl' henv' hl' hr with ⟨sv', hev, hT, hres⟩ | hE
@@ -4649,7 +4888,7 @@ theorem agreementResArms_step :
                       e xw env Γ Γe wl st hl.1.2.1 hss (by simp) hx hxw hbe henv hl
                   rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd, xw] _ st hss)] at hr
                   simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI] at hr
-                  rw [wRunF_ifElse_single] at hr
+                  rw_if at hr
                   simp only [Int.reduceEq, ↓reduceIte, eraseL_append] at hr
                   rw [run_seq_eq hbrun] at hr
                   rcases hAe env' wl' henv' hl' hr with ⟨sv', hev, hT, hres⟩ | hE
@@ -4811,7 +5050,7 @@ theorem agreementVarArms_step :
                                     eraseI, List.cons_append, List.nil_append] at hrun
                                   rw [run_test host ar callee _ _ _ _ _ _ _ hss] at hrun
                                   simp only [b32] at hrun
-                                  rw [wRunF_ifElse_single] at hrun
+                                  rw_if at hrun
                                   by_cases hc : c = cv
                                   · subst hc
                                     rw [hcf] at hcfc
@@ -4921,7 +5160,7 @@ theorem agreementStrArms_step :
                     rw [hsplit] at hrun
                     have hseq := run_seq hpre hrun
                     simp only [b32] at hseq
-                    rw [wRunF_ifElse_single] at hseq
+                    rw_if at hseq
                     by_cases hxk : x = k
                     · subst hxk
                       simp [b32] at hseq
@@ -5018,6 +5257,7 @@ theorem agreement_upto : ∀ n : Nat,
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
         ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
           LRel S M X env wl1) →
+      (∀ k, escFreeL k (eraseL sc) = true) →
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
@@ -5158,6 +5398,7 @@ theorem agreementIntArms :
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
         ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
           LRel S M X env wl1) →
+      (∀ k, escFreeL k (eraseL sc) = true) →
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →

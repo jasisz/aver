@@ -742,7 +742,7 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
           ↓reduceIte, litInt?, slot?, eraseL_append, eraseL, eraseI, hCarrier]
       rw [hbodyEq, wRunF_append, guard_run S _ _ _ 0 _ [] n w0 hget hw0]
       simp only [seqOut, b32]
-      rw [wRunF_ifElse_single]
+      rw [wRunF_ifElse_single _ _ _ _ _ _ _ _ (escFree_lowerB _ _ _ _ _ 0) (escFree_lowerB _ _ _ _ _ 0)]
       by_cases hn : n ≤ 0
       · simp only [hn, decide_true, ↓reduceIte, Int.reduceEq]
         have hbty := (tyOf_ite_inv (hb ▸ hty)).2.1
@@ -794,6 +794,7 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
         obtain ⟨w, rfl, _, _⟩ := hres
         exact Or.inl ⟨wl', w, rfl⟩
     | ret w => exact Or.inr ⟨w, rfl⟩
+    | br _ _ _ => exact hres.elim
   have term : ∀ m f p, G f = some p → ∀ n tl ws, HasTyL M (.i n :: tl) p.sig.params →
       SReprL S M (.i n :: tl) ws → n.natAbs = m →
       ∃ r, wFuncN code host (m + 1) f ws = some r := by
