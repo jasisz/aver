@@ -13,8 +13,9 @@
 //! `decodeCode` to the oracle values, and lets `lake env lean` be the verdict —
 //! a divergence is a kernel `rfl` failure with a full repro, never a string
 //! compare (the lesson from the v1 substring checker). It also drives the
-//! 39-opcode coverage matrix (33 opcodes exercised by fixture bodies plus 6
-//! covered by a synthetic single-body probe) fail-closed.
+//! 42-opcode coverage matrix (opcodes exercised by fixture bodies, a self tail
+//! loop's `loop`, `br` and `unreachable` among them, plus 7 covered by a
+//! synthetic single-body probe) fail-closed.
 //!
 //! The certkit fixtures are all pure (no import section), so the import-section
 //! decode path (`decImportVec`, a non-zero function-index base) is exercised by
@@ -22,11 +23,12 @@
 //! `Console.print` lowers to a real import, and the test asserts the decoded
 //! import list is non-empty so this coverage cannot silently regress.
 //!
-//! A second test performs the mutation suite M1–M6 on real bytes: a flip in a
+//! A second test performs the mutation suite M1–M8 on real bytes: a flip in a
 //! certified body changes the decode, a flip in a decoder-skipped section does
 //! not, an export relabel changes the export map, and overlong LEB / truncation
 //! / out-of-function-space indices all decode to `none` (never a garbage
-//! success).
+//! success), and so does a self tail loop whose block type or closing
+//! `unreachable` differs from the one the emitter writes.
 //!
 //! Gated behind `wasm` (the wasm-gc backend) and skipped when `lake` or
 //! `python3` is unavailable, mirroring `cert_verify_spec.rs`.
@@ -96,10 +98,11 @@ const S1_FIXTURES: &[&str] = &[
     "widenedmatch",
 ];
 
-/// The 39 measured user-code opcode mnemonics (mirrors `decode_ref.py`).
+/// The 42 measured user-code opcode mnemonics (mirrors `decode_ref.py`).
 const ALL_OPCODES: &[&str] = &[
     "array.new_data",
     "array.new_fixed",
+    "br",
     "call",
     "else",
     "end",
@@ -129,6 +132,7 @@ const ALL_OPCODES: &[&str] = &[
     "if",
     "local.get",
     "local.set",
+    "loop",
     "ref.cast",
     "ref.is_null",
     "ref.null",
@@ -137,10 +141,12 @@ const ALL_OPCODES: &[&str] = &[
     "return_call",
     "struct.get",
     "struct.new",
+    "unreachable",
 ];
 
 /// The opcodes never surfaced by a certkit user-function body; the decoder's
 /// arm for each is exercised by a synthetic single-body probe instead.
+/// `return_call` is here because every self tail call is now a loop.
 const SYNTH_OPCODES: &[&str] = &[
     "i32.and",
     "i32.eq",
@@ -148,15 +154,17 @@ const SYNTH_OPCODES: &[&str] = &[
     "return",
     "ref.null",
     "array.new_fixed",
+    "return_call",
 ];
 
 /// Raw bytes of the synthetic probe body and the term it must decode to. Covers
-/// exactly the six opcodes above (i32.and, i32.eq, i64.eqz, return, ref.null +
-/// heaptype, array.new_fixed) followed by the function `end`.
+/// exactly the seven opcodes above (i32.and, i32.eq, i64.eqz, return, ref.null +
+/// heaptype, array.new_fixed, return_call) followed by the function `end`.
 const SYNTH_BYTES: &[u8] = &[
-    0x71, 0x46, 0x50, 0x0f, 0xd0, 0x70, 0xfb, 0x08, 0x02, 0x03, 0x0b,
+    0x71, 0x46, 0x50, 0x0f, 0xd0, 0x70, 0xfb, 0x08, 0x02, 0x03, 0x12, 0x05, 0x0b,
 ];
-const SYNTH_TERM: &str = "[.i32And, .i32Eq, .i64Eqz, .ret, .refNull, .arrayNewFixed 2 3]";
+const SYNTH_TERM: &str =
+    "[.i32And, .i32Eq, .i64Eqz, .ret, .refNull, .arrayNewFixed 2 3, .returnCall 5]";
 
 /// Differential-only views stay in the test witness instead of enlarging the
 /// checker-owned decoder API. They still reduce in Lean's kernel against the
@@ -1007,8 +1015,9 @@ fn cert_decode_three_way_differential_and_coverage() {
             let arity = f["arity"].as_u64().unwrap();
             let nlocals = f["nlocals"].as_u64().unwrap();
             let body = f["body"].as_str().unwrap();
+            let loop_body = f["loop"].as_str().unwrap();
             src.push_str(&format!(
-                "example : CertDecode.decodeCode bytesN bytesLen {idx} = some ⟨{arity}, {nlocals}, {body}⟩ := rfl\n"
+                "example : CertDecode.decodeCode bytesN bytesLen {idx} = some ⟨{arity}, {nlocals}, {body}, {loop_body}⟩ := rfl\n"
             ));
             // opcode census for the coverage matrix.
         }
@@ -1051,7 +1060,7 @@ fn cert_decode_three_way_differential_and_coverage() {
         }
     }
 
-    // Synthetic single-body probe for the six opcodes no fixture body surfaces.
+    // Synthetic single-body probe for the opcodes no fixture body surfaces.
     {
         let mut src = String::new();
         src.push_str("import CertDecode\nopen CertPrelude\n\n");
@@ -1084,11 +1093,12 @@ fn cert_decode_three_way_differential_and_coverage() {
         src.push_str(&format!("def bytesN : Nat := 0x{}\n", hex_le(&bytes)));
         src.push_str(&format!("def bytesLen : Nat := {}\n\n", bytes.len()));
         src.push_str(&format!(
-            "theorem tCode : CertDecode.decodeCode bytesN bytesLen {} = some ⟨{}, {}, {}⟩ := rfl\n",
+            "theorem tCode : CertDecode.decodeCode bytesN bytesLen {} = some ⟨{}, {}, {}, {}⟩ := rfl\n",
             sumto["idx"].as_u64().unwrap(),
             sumto["arity"].as_u64().unwrap(),
             sumto["nlocals"].as_u64().unwrap(),
-            sumto["body"].as_str().unwrap()
+            sumto["body"].as_str().unwrap(),
+            sumto["loop"].as_str().unwrap()
         ));
         src.push_str("#print axioms tCode\n");
         let (ok, report) = run_lean(&prelude, &src);
@@ -1111,7 +1121,7 @@ fn cert_decode_three_way_differential_and_coverage() {
         }
     }
 
-    // Coverage matrix, fail-closed: every one of the 39 must be exercised.
+    // Coverage matrix, fail-closed: every one of the 42 must be exercised.
     let missing: Vec<&str> = ALL_OPCODES
         .iter()
         .copied()
@@ -1119,7 +1129,7 @@ fn cert_decode_three_way_differential_and_coverage() {
         .collect();
     assert!(
         missing.is_empty(),
-        "opcode coverage FAIL — {} of 39 exercised, missing: {:?}",
+        "opcode coverage FAIL — {} of 42 exercised, missing: {:?}",
         covered
             .iter()
             .filter(|c| ALL_OPCODES.contains(&c.as_str()))
@@ -1128,7 +1138,7 @@ fn cert_decode_three_way_differential_and_coverage() {
     );
 }
 
-// ---- mutation suite M1–M7 ------------------------------------------------
+// ---- mutation suite M1–M8 ------------------------------------------------
 
 /// Minimal section walk: returns (id, body_start, size) for each section.
 fn walk_sections(b: &[u8]) -> Vec<(u8, usize, usize)> {
@@ -1229,10 +1239,16 @@ fn cert_decode_mutations_fail_closed() {
         .find(|f| f["idx"].as_u64() == Some(self_idx))
         .expect("sumTo body in the oracle decode");
     let orig_wcode = format!(
-        "⟨{}, {}, {}⟩",
+        "⟨{}, {}, {}, {}⟩",
         sumto["arity"].as_u64().unwrap(),
         sumto["nlocals"].as_u64().unwrap(),
-        sumto["body"].as_str().unwrap()
+        sumto["body"].as_str().unwrap(),
+        sumto["loop"].as_str().unwrap()
+    );
+    assert_eq!(
+        sumto["loop"].as_str(),
+        Some("none"),
+        "sumTo became a self tail loop"
     );
     let carrier = oracle["carrier"]
         .as_u64()
@@ -1443,4 +1459,91 @@ fn cert_decode_mutations_fail_closed() {
             "M7: a declared-size/content mismatch must decline at the bounded section wall:\n{report}"
         );
     }
+
+    // M8 (self tail loop): `countDown` tail-calls itself, so its body is
+    // `loop (empty) … end unreachable`, decoded to `WCode.loopBody`. Any other
+    // block type, or a missing `unreachable`, decodes to `none`.
+    {
+        let loop_idx = oracle["exports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e[0].as_str() == Some("countDown"))
+            .and_then(|e| e[1].as_u64())
+            .expect("countDown export in the oracle export map");
+        let count_down = oracle["funcs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["idx"].as_u64() == Some(loop_idx))
+            .expect("countDown body in the oracle decode");
+        let loop_body = count_down["loop"].as_str().unwrap();
+        assert!(
+            loop_body.starts_with("some ") && loop_body.contains(".br "),
+            "countDown is no longer a self tail loop: {loop_body}"
+        );
+        let loop_wcode = format!(
+            "⟨{}, {}, {}, {loop_body}⟩",
+            count_down["arity"].as_u64().unwrap(),
+            count_down["nlocals"].as_u64().unwrap(),
+            count_down["body"].as_str().unwrap(),
+        );
+        let nimp = oracle["imports"].as_array().unwrap().len();
+        let (body, end) = code_body(&bytes, loop_idx as usize - nimp);
+        assert_eq!(
+            &bytes[body..body + 2],
+            &[0x03, 0x40],
+            "countDown loop header"
+        );
+        assert_eq!(
+            &bytes[end - 3..end],
+            &[0x0b, 0x00, 0x0b],
+            "countDown loop tail"
+        );
+
+        let example = format!(
+            "example : CertDecode.decodeCode bytesN bytesLen {loop_idx} = some {loop_wcode} := rfl"
+        );
+        let (ok0, r0) = run_lean(&prelude, &witness(&bytes, &example));
+        assert!(ok0, "M8 positive control: the loop decode must hold:\n{r0}");
+
+        let none =
+            format!("example : CertDecode.decodeCode bytesN bytesLen {loop_idx} = none := rfl");
+        for (what, off, byte) in [
+            ("a loop with a result type", body + 1, 0x7e),
+            ("a loop not followed by unreachable", end - 2, 0x01),
+        ] {
+            let mut m = bytes.clone();
+            m[off] = byte;
+            let (ok, report) = run_lean(&prelude, &witness(&m, &none));
+            assert!(ok, "M8: {what} must decode to none:\n{report}");
+        }
+    }
+}
+
+/// `(body start, entry end)` of the defined function `def_idx` in the code
+/// section, past its locals declaration.
+fn code_body(b: &[u8], def_idx: usize) -> (usize, usize) {
+    let secs = walk_sections(b);
+    let (_, cstart, _) = *secs.iter().find(|s| s.0 == 10).unwrap();
+    let (_nf, mut i) = read_uleb(b, cstart);
+    for _ in 0..def_idx {
+        let (sz, ni) = read_uleb(b, i);
+        i = ni + sz;
+    }
+    let (sz, ni) = read_uleb(b, i);
+    let end = ni + sz;
+    let (ng, mut j) = read_uleb(b, ni);
+    for _ in 0..ng {
+        let (_count, nj) = read_uleb(b, j);
+        j = nj;
+        let t = b[j];
+        j += 1;
+        if t == 0x63 || t == 0x64 {
+            // heap type: an s33 whose byte length a uleb read measures too
+            let (_ht, nj) = read_uleb(b, j);
+            j = nj;
+        }
+    }
+    (j, end)
 }

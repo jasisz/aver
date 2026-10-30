@@ -270,7 +270,10 @@ SIMPLE = {
 }
 
 
-def decode_block(b, i, end, nfields, data_segs, pend):
+def decode_block(b, i, end, nfields, data_segs, pend, loop=False):
+    """Decode a block to Lean terms: `WInstr`s, or with `loop` the `CI`s of a
+    self tail loop's body (twin of `CertDecode.decLoopBlock`), where every
+    other instruction is wrapped in `.w` and `br d` is read."""
     out = []
     while i < end:
         op = b[i]
@@ -279,14 +282,20 @@ def decode_block(b, i, end, nfields, data_segs, pend):
             return out, i - 1
         if op == 0x04:             # if
             i = skip_blocktype(b, i)
-            tb, i = decode_block(b, i, end, nfields, data_segs, pend)
+            tb, i = decode_block(b, i, end, nfields, data_segs, pend, loop)
             eb = []
             if b[i] == 0x05:
                 i += 1
-                eb, i = decode_block(b, i, end, nfields, data_segs, pend)
+                eb, i = decode_block(b, i, end, nfields, data_segs, pend, loop)
             i += 1                 # closing end
             out.append(f".ifElse [{', '.join(tb)}] [{', '.join(eb)}]")
-        elif op == 0x20:
+            continue
+        if loop and op == 0x0c:    # br
+            d, i = uleb(b, i)
+            out.append(f".br {d}")
+            continue
+        n_before = len(out)
+        if op == 0x20:
             v, i = uleb(b, i)
             out.append(f".localGet {v}")
         elif op == 0x21:
@@ -345,7 +354,22 @@ def decode_block(b, i, end, nfields, data_segs, pend):
             out.append(SIMPLE[op])
         else:
             raise ValueError(f"opcode {op:#x}")
+        if loop:
+            out[n_before] = f".w ({out[n_before]})"
     return out, i
+
+
+def decode_body(b, bstart, bend, nfields, data_segs):
+    """A function body's `(body, loopBody)` Lean terms. A self tail loop
+    (`loop` with the empty block type, its body, `end`, `unreachable`, the
+    function's `end`) has an empty `body`; any other body has `none`."""
+    if bend - bstart >= 2 and b[bstart] == 0x03 and b[bstart + 1] == 0x40:
+        lb, i = decode_block(b, bstart + 2, bend, nfields, data_segs, [], True)
+        if b[i:bend] != bytes([0x0b, 0x00, 0x0b]):
+            raise ValueError("self tail loop not closed by end unreachable end")
+        return "[]", "some [" + ", ".join(lb) + "]"
+    body, _ = decode_block(b, bstart, bend, nfields, data_segs, [])
+    return "[" + ", ".join(body) + "]", "none"
 
 
 def analyze(wasm_path):
@@ -385,12 +409,12 @@ def analyze(wasm_path):
     for name, fidx in sorted(user.items(), key=lambda kv: kv[1]):
         di = fidx - nimp
         bstart, bend, nloc = entries[di]
-        body, _ = decode_block(b, bstart, bend, nfields, data_segs, [])
+        body, loop_body = decode_body(b, bstart, bend, nfields, data_segs)
         tyidx = funcsec[di]
         arity = arities.get(tyidx, 0)
         funcs.append({
             "name": name, "idx": fidx, "arity": arity, "nlocals": nloc,
-            "body": "[" + ", ".join(body) + "]",
+            "body": body, "loop": loop_body,
         })
         for ln in bodies.get(fidx, {}).get("lines", []):
             if ln.split():

@@ -6,7 +6,8 @@
   Int carrier type index, exact data/code locations, and per-function `WCode`
   (arity from the type section, nlocals from the locals declaration, body as
   `List CertPrelude.WInstr` — the full 39-opcode fragment, if/else/end folded
-  into `WInstr.ifElse`).
+  into `WInstr.ifElse`; a self tail loop's body, `loop … end unreachable`,
+  as `WCode.loopBody`).
 
   Differential fixtures pin this decoder against the producer decoder and the
   standalone certkit reference implementation.
@@ -856,6 +857,58 @@ def decBlock (nfields : List Nat) (segs : List (List Nat)) :
               | none => none
               | some (rest, pend3, n3, len3, t3) => some (ins :: rest, pend3, n3, len3, t3)
 
+/-- Decode the body of a function's top-level `loop` into `CI`: as
+    `decBlock`, except that every `if` is a `CI.ifElse` (its arms may branch)
+    and `br d` (0x0c) is read. Any other control instruction, a nested `loop`
+    included, is not decoded (`none`). -/
+def decLoopBlock (nfields : List Nat) (segs : List (List Nat)) :
+    Nat → List Int → Nat → Nat → Option (List CI × List Int × Nat × Nat × Nat)
+  | 0,      _,       _, _   => none
+  | fuel+1, pending, n, len =>
+      if len == 0 then none else
+        let op := n &&& 0xff
+        let n1 := n >>> 8
+        let len1 := len - 1
+        if op == 0x0b then some ([], pending, n1, len1, 0)
+        else if op == 0x05 then some ([], pending, n1, len1, 1)
+        else if op == 0x04 then
+          match skipBlockType n1 len1 with
+          | none => none
+          | some (n2, len2) =>
+              match decLoopBlock nfields segs fuel pending n2 len2 with
+              | none => none
+              | some (thenB, pend1, n3, len3, t1) =>
+                  if t1 == 1 then
+                    match decLoopBlock nfields segs fuel pend1 n3 len3 with
+                    | none => none
+                    | some (elseB, pend2, n4, len4, t2) =>
+                        if t2 == 0 then
+                          match decLoopBlock nfields segs fuel pend2 n4 len4 with
+                          | none => none
+                          | some (rest, pend3, n5, len5, t3) =>
+                              some (CI.ifElse thenB elseB :: rest, pend3, n5, len5, t3)
+                        else none
+                  else if t1 == 0 then
+                    match decLoopBlock nfields segs fuel pend1 n3 len3 with
+                    | none => none
+                    | some (rest, pend3, n5, len5, t3) =>
+                        some (CI.ifElse thenB [] :: rest, pend3, n5, len5, t3)
+                  else none
+        else if op == 0x0c then
+          match readU n1 len1 with
+          | none => none
+          | some (d, n2, len2) =>
+              match decLoopBlock nfields segs fuel pending n2 len2 with
+              | none => none
+              | some (rest, pend3, n3, len3, t3) => some (CI.br d :: rest, pend3, n3, len3, t3)
+        else
+          match decInstr nfields segs pending op n1 len1 with
+          | none => none
+          | some (ins, pending', n2, len2) =>
+              match decLoopBlock nfields segs fuel pending' n2 len2 with
+              | none => none
+              | some (rest, pend3, n3, len3, t3) => some (CI.w ins :: rest, pend3, n3, len3, t3)
+
 /- ===================================================================== -/
 /-  Per-function obligation decode                                        -/
 /- ===================================================================== -/
@@ -930,12 +983,24 @@ def decodeCode (n len funcidx : Nat) : Option WCode :=
                 match locs[funcidx - nimp]? with
                 | none => none
                 | some loc =>
-                  match decBlock ti.nfields segs loc.bodyLen [] loc.bodyN loc.bodyLen with
-                  | none => none
-                  | some (instrs, _, _, restLen, term) =>
-                      if term == 0 && restLen == 0 then
-                        some ⟨ar, loc.nlocals, instrs, none⟩
-                      else none
+                  -- A self tail loop: `loop` (empty block type), its body,
+                  -- `end`, `unreachable`, then the function's `end`. The bytes
+                  -- hold only the loop, so `body` is empty.
+                  if loc.bodyN &&& 0xffff == 0x4003 then
+                    match decLoopBlock ti.nfields segs loc.bodyLen []
+                        (loc.bodyN >>> 16) (loc.bodyLen - 2) with
+                    | none => none
+                    | some (lb, _, restN, restLen, term) =>
+                        if term == 0 && restLen == 2 && restN == 0x0b00 then
+                          some ⟨ar, loc.nlocals, [], some lb⟩
+                        else none
+                  else
+                    match decBlock ti.nfields segs loc.bodyLen [] loc.bodyN loc.bodyLen with
+                    | none => none
+                    | some (instrs, _, _, restLen, term) =>
+                        if term == 0 && restLen == 0 then
+                          some ⟨ar, loc.nlocals, instrs, none⟩
+                        else none
 
 /- ===================================================================== -/
 /-  Plan-first add/mul/sub/box host-role table                           -/
