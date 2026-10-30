@@ -861,6 +861,7 @@ inductive LB where
 def zeroW : Ty → WInstr
   | .bool => .i32Const 0
   | .float => .f64Const 0
+  | .word => .i64Const 0
   | _ => .refNull
 
 mutual
@@ -926,6 +927,7 @@ def encZero (M : MCtx) (t : Ty) : Option (List Nat) :=
   | .bool => some [0x41, 0x00]
   | .float => some ([0x44] ++ u64le 0)
   | .eqref => some [0xd0, 0x6d]
+  | .word => some [0x42, 0x00]
   | _ =>
       match valTy M t with
       | some (0x63 :: h) => some (0xd0 :: h)

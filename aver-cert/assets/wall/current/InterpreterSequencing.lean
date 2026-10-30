@@ -214,6 +214,7 @@ def hasSelfTail (self : Nat) : List WInstr → Bool
 def zeroVal : WInstr → Option WVal
   | .i32Const 0 => some (.i32v 0)
   | .f64Const 0 => some (.f64v 0)
+  | .i64Const 0 => some (.i64v 0)
   | .refNull => some .null
   | _ => none
 
