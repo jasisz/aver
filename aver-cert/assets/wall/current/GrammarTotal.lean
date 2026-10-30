@@ -631,7 +631,7 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
       FnCertified S M code host f sig (fun fuel => outer fuel f))
     (hMem : ∀ f p, G f = some p →
       M.sigs f = some p.sig ∧ planTyped M p = true ∧ host f = none ∧
-        code f = some (fnCode M p))
+        code f = some (fnCodeAt M f p))
     (hCons : ∀ t f, M.listCons t = some f → ∀ k h tl sv, HasTy M tl (.list t) →
       groupModel outer G k f [h, tl] = some sv → sv = .cons t h tl)
     (hBoxT : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → ∃ w, box [.i64v k] = some w)
@@ -673,8 +673,10 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
     have hCallees := groupCallees S M code host G outer hOuter hSigOf hCert m
     have hlenw : ws.length = p.sig.params.length := by
       rw [← sreprL_length hrep, hasTyL_length hTs]
-    have hLR : LRel S M p.lctx (argsEnv (.i n :: tl)) (initLocals (fnCode M p) ws) := by
-      refine ⟨by simp [initLocals, fnCode]; omega, ?_⟩
+    have hLRp : ∀ pad : List WVal, pad.length = p.locals.length →
+        LRel S M p.lctx (argsEnv (.i n :: tl)) (ws ++ pad) := by
+      intro pad hpad
+      refine ⟨by simp [hpad]; omega, ?_⟩
       intro i sv hs
       rw [hXn]
       obtain ⟨w, hw, hsv⟩ := sreprL_get hrep hs
@@ -683,18 +685,56 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
         · exact h
         · rw [List.getElem?_eq_none h] at hw; simp at hw
       refine ⟨by omega, w, ?_, hsv⟩
-      simp [initLocals, List.getElem?_append_left hi, hw]
+      simp [List.getElem?_append_left hi, hw]
+    -- The entry locals of the body's run, and how its end becomes the
+    -- function's result: as is, or as the self tail loop.
+    have hentry : ∃ pad : List WVal, pad.length = p.locals.length ∧
+        ∀ out, wRunF host (fun g => (code g).map (·.arity))
+            (fun g as => wFuncN code host m g as) (fnCode M p).body (ws ++ pad) [] = some out →
+          ((∃ l' w, out = .ok l' [w]) ∨ (∃ w, out = .ret w)) →
+          ∃ r, wFuncN code host (m + 1) f ws = some r := by
+      cases hst : InterpreterSequencing.hasSelfTail f (fnCode M p).body with
+      | false =>
+          rw [fnCodeAt_plain M f p hst] at hcode
+          refine ⟨List.replicate p.locals.length .null, by simp, ?_⟩
+          intro out hout hshape
+          rw [InterpreterSequencing.wFuncN_plain hcode (fnCode_loopBody M p)]
+          have hi : initLocals (fnCode M p) ws = ws ++ List.replicate p.locals.length .null := by
+            simp [initLocals, fnCode]
+          rw [hi, hout]
+          rcases hshape with ⟨l', w, rfl⟩ | ⟨w, rfl⟩
+          · exact ⟨w, rfl⟩
+          · exact ⟨w, rfl⟩
+      | true =>
+          obtain ⟨zs, vs, L⟩ := fnCodeAt_loop M f p hst
+          obtain ⟨har, hnl, hbody⟩ := fnCodeAt_shape M f p
+          refine ⟨vs, by rw [L.len, hnl]; simp [fnCode], ?_⟩
+          intro out hout hshape
+          have hlen : ((none : Option (List WVal)).getD
+              (initLocals (fnCodeAt M f p) ws)).length =
+              (fnCodeAt M f p).arity + (fnCodeAt M f p).nlocals := by
+            simp [initLocals, har, hnl, fnCode, hlenw]
+          have hp : ((none : Option (List WVal)).getD
+              (initLocals (fnCodeAt M f p) ws)).take (fnCodeAt M f p).arity = ws := by
+            simp [initLocals, har, fnCode, hlenw]
+          unfold wFuncN
+          rw [InterpreterSequencing.wEnter_loop hcode L m ws none hlen, hp, hbody, hout]
+          rcases hshape with ⟨l', w, rfl⟩ | ⟨w, rfl⟩
+          · exact ⟨w, rfl⟩
+          · exact ⟨w, rfl⟩
+    obtain ⟨pad, hpad, hfin⟩ := hentry
+    have hLR := hLRp pad hpad
     have henv := envTy_args hTs
     have hΓ := paramsΓ_int hall
     have h0 : argsEnv (.i n :: tl) 0 = some (.i n) := rfl
     obtain ⟨w0, ws', rfl, hw0, _⟩ := sreprL_cons_inv hrep
-    have hget : (initLocals (fnCode M p) (w0 :: ws'))[0]? = some w0 := by
-      simp [initLocals]
+    have hget : ((w0 :: ws') ++ pad)[0]? = some w0 := by
+      simp
     have hΓ0 : paramsΓ p.sig.params 0 = some .int := by simp [paramsΓ, hps]
     -- the body runs to some outcome
     have hrun : ∃ out, wRunF host (fun g => (code g).map (·.arity))
         (fun g as => wFuncN code host m g as) (fnCode M p).body
-        (initLocals (fnCode M p) (w0 :: ws')) [] = some out := by
+        ((w0 :: ws') ++ pad) [] = some out := by
       have hbodyEq : (fnCode M p).body = eraseL (cmpArmB C 0 .lte 0) ++
           [WInstr.ifElse (eraseL (lowerB M p.lctx (paramsΓ p.sig.params) true base))
             (eraseL (lowerB M p.lctx (paramsΓ p.sig.params) true step))] := by
@@ -744,19 +784,16 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
       hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R (groupModel outer G m) hCallees
       (fun t g hg h tl sv htl hm => hCons t g hg m h tl sv htl hm)
       p.lctx p.body (paramsΓ p.sig.params) (argsEnv (.i n :: tl)) true p.sig.ret
-      (initLocals (fnCode M p) (w0 :: ws')) [] out hty henv hLR hout with ⟨sv, _, _, hres⟩ | hE
+      ((w0 :: ws') ++ pad) [] out hty henv hLR hout with ⟨sv, _, _, hres⟩ | hE
     rotate_left
     · rw [hbare'] at hE
       exact (esc_nil hE).elim
-    unfold wFuncN
-    rw [hcode]
-    simp only
-    rw [hout]
+    refine hfin out hout ?_
     cases out with
     | ok wl' st' =>
         obtain ⟨w, rfl, _, _⟩ := hres
-        exact ⟨w, rfl⟩
-    | ret w => exact ⟨w, rfl⟩
+        exact Or.inl ⟨wl', w, rfl⟩
+    | ret w => exact Or.inr ⟨w, rfl⟩
   have term : ∀ m f p, G f = some p → ∀ n tl ws, HasTyL M (.i n :: tl) p.sig.params →
       SReprL S M (.i n :: tl) ws → n.natAbs = m →
       ∃ r, wFuncN code host (m + 1) f ws = some r := by
@@ -800,7 +837,7 @@ theorem fn_certified_total_of_check {C : Nat} (S : CarrierSpec C)
       FnCertified S M code host f sig (fun fuel => outer fuel f))
     (hMem : ∀ f p, G f = some p →
       M.sigs f = some p.sig ∧ planTyped M p = true ∧ host f = none ∧
-        code f = some (fnCode M p))
+        code f = some (fnCodeAt M f p))
     (hCons : ∀ t f, M.listCons t = some f → ∀ k h tl sv, HasTy M tl (.list t) →
       groupModel outer G k f [h, tl] = some sv → sv = .cons t h tl)
     (hBoxT : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → ∃ w, box [.i64v k] = some w)

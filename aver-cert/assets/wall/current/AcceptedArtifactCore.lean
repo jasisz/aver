@@ -81,7 +81,7 @@ def roleIndices (M : MCtx) : List Nat :=
    M.toI64Sat, M.fromInt] ++ M.listHelpers.map (·.2.2) ++ M.bytesHelpers.map (·.2)
 
 /-- The emitted code of every planned function: its plan's lowering. -/
-def codeOf (M : MCtx) (fns : List FnEntry) : CodeTbl := fun f => (planOf fns f).map (fnCode M)
+def codeOf (M : MCtx) (fns : List FnEntry) : CodeTbl := fun f => (planOf fns f).map (fnCodeAt M f)
 
 /-- The meaning of every planned function: ONE group model over all plans (at
     fuel `k + 1` a body runs with every callee at fuel `k`). -/
@@ -186,7 +186,7 @@ def sigPinned (n len : Nat) (M : MCtx) (sig : Sig) (typeIdx : Nat) : Bool :=
     EXACTLY `codeEntryBytes` of the plan (locals vector included). -/
 def boundFunction (n len : Nat) (M : MCtx) (e : FnEntry) :
     Option _root_.AverCert.WasmSlice.FuncBinding :=
-  match codeEntryBytes M e.plan with
+  match codeEntryBytes M e.funcIdx e.plan with
   | none => none
   | some bytes =>
       if e.exported then

@@ -7,8 +7,10 @@
 //! is overwritten, and every defaultable local is reset on loop entry:
 //! cached boxes and Big flags belong to the previous invocation.
 //!
-//! This runs only outside certification builds, whose instruction plans
-//! continue to describe the established function bodies byte for byte.
+//! Certification builds run it too: the certificate wall lowers a plan whose
+//! body tail-calls its own function to exactly this loop
+//! (`GrammarLower.bodyBytes`) and proves that the loop runs as the body does
+//! (`InterpreterSequencing.wEnter_loop`).
 
 use wasm_encoder::reencode::{Reencode, RoundtripReencoder};
 use wasm_encoder::{BlockType, Function, Instruction as I, ValType};

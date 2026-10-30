@@ -934,7 +934,7 @@ def decodeCode (n len funcidx : Nat) : Option WCode :=
                   | none => none
                   | some (instrs, _, _, restLen, term) =>
                       if term == 0 && restLen == 0 then
-                        some ⟨ar, loc.nlocals, instrs⟩
+                        some ⟨ar, loc.nlocals, instrs, none⟩
                       else none
 
 /- ===================================================================== -/

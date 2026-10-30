@@ -1,6 +1,7 @@
 /-
   CertPrelude — certificate semantics for the measured Aver wasm-gc user-code
-  fragment (43 distinct opcodes, no loops, no linear memory).
+  fragment (43 distinct opcodes, no linear memory; a function's one top-level
+  loop through `CI`/`cRun`/`wEnter`).
 
   Architecture is fixed by the kill-fast probes (probe-artifacts/pcc-kill):
   * `wRunF` is STRUCTURAL on the instruction tree and takes the call
@@ -124,10 +125,23 @@ inductive WInstr where
   | ret
 deriving Repr
 
+/-- Function-body control around the straight-line fragment: an
+    instruction `wRunF` runs, an `if … else … end` whose arms may branch, and
+    `br d`, a branch to the label `d` levels out. Only a function's top-level
+    `loop` (`WCode.loopBody`) is a label a `br` can reach. -/
+inductive CI where
+  | w (x : WInstr)
+  | ifElse (thenB elseB : List CI)
+  | br (depth : Nat)
+deriving Repr
+
 structure WCode where
   arity : Nat
   nlocals : Nat
   body : List WInstr
+  /-- `some lb`: the function's body is `loop lb end unreachable`, with the
+      empty block type, and `body` is not run. -/
+  loopBody : Option (List CI) := none
 
 abbrev CodeTbl := Nat → Option WCode
 /-- host function index → (arity, semantics). -/
@@ -433,19 +447,76 @@ def wRunF (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
       | [] => none
   termination_by instrs _ _ => sizeOf instrs
 
-/-- Fueled call semantics: recursion only on fuel, burned on call-into-code. -/
-def wFuncN (code : CodeTbl) (host : HostTbl) : Nat → Nat → List WVal → Option WVal
-  | 0, _, _ => none
-  | fuel + 1, fn, args =>
+/-- The outcome of a `CI` sequence: it falls through, it branches to the
+    label `depth` levels out (with the locals and the stack at the branch), or
+    it returns. -/
+inductive COut where
+  | ok (locals stack : List WVal)
+  | br (depth : Nat) (locals stack : List WVal)
+  | ret (v : WVal)
+
+/-- The control interpreter: every `w` instruction runs through `wRunF`; an
+    arm's fall-through continues after the `if`, a branch further out leaves
+    it one level shallower, and a branch to the `if`'s own label is not
+    modelled (`none`). Structural on the instruction tree, like `wRunF`. -/
+def cRun (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
+    List CI → List WVal → List WVal → Option COut
+  | [], l, st => some (.ok l st)
+  | .w x :: rest, l, st =>
+      match wRunF host ar callee [x] l st with
+      | some (.ok l' st') => cRun host ar callee rest l' st'
+      | some (.ret v) => some (.ret v)
+      | none => none
+  | .ifElse tB eB :: rest, l, st =>
+      match st with
+      | .i32v c :: st' =>
+          if c = 0 then
+            match cRun host ar callee eB l st' with
+            | some (.ok l' st'') => cRun host ar callee rest l' st''
+            | some (.br (d + 1) l' st'') => some (.br d l' st'')
+            | some (.ret v) => some (.ret v)
+            | _ => none
+          else
+            match cRun host ar callee tB l st' with
+            | some (.ok l' st'') => cRun host ar callee rest l' st''
+            | some (.br (d + 1) l' st'') => some (.br d l' st'')
+            | some (.ret v) => some (.ret v)
+            | _ => none
+      | _ => none
+  | .br d :: _, l, st => some (.br d l st)
+  termination_by instrs _ _ => sizeOf instrs
+
+/-- Fueled call semantics: recursion only on fuel, burned on call-into-code
+    and on each further iteration of a function's top-level loop. `resume`
+    re-enters that loop of `fn` with the locals a `br` to it left (`args` is
+    then unused); a fresh call starts from `initLocals`. -/
+def wEnter (code : CodeTbl) (host : HostTbl) :
+    Nat → Nat → List WVal → Option (List WVal) → Option WVal
+  | 0, _, _, _ => none
+  | fuel + 1, fn, args, resume =>
       match code fn with
       | some c =>
-          match wRunF host (fun g => (code g).map (·.arity))
-              (fun g as => wFuncN code host fuel g as)
-              c.body (initLocals c args) [] with
-          | some (.ok _ [v]) => some v
-          | some (.ret v) => some v
-          | _ => none
+          match c.loopBody with
+          | none =>
+              match wRunF host (fun g => (code g).map (·.arity))
+                  (fun g as => wEnter code host fuel g as none)
+                  c.body (initLocals c args) [] with
+              | some (.ok _ [v]) => some v
+              | some (.ret v) => some v
+              | _ => none
+          | some lb =>
+              match cRun host (fun g => (code g).map (·.arity))
+                  (fun g as => wEnter code host fuel g as none)
+                  lb (resume.getD (initLocals c args)) [] with
+              | some (.ret v) => some v
+              | some (.br 0 l _) => wEnter code host fuel fn [] (some l)
+              | _ => none
       | none => none
+
+/-- A call into code: `wEnter` without a loop to resume. -/
+def wFuncN (code : CodeTbl) (host : HostTbl) (fuel fn : Nat) (args : List WVal) :
+    Option WVal :=
+  wEnter code host fuel fn args none
 
 /-! ## Value-representation relation (Repr)
 

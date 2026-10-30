@@ -506,7 +506,7 @@ def entryFast (n : Nat) (L : Layout) (fts : List FnType)
     (e : FnEntry) (d : FnDecl) : Bool :=
   planTyped M e.plan && callsOrdered fns e &&
   decide (L.imports ≤ e.funcIdx) && decide (e.funcIdx - L.imports < L.count) &&
-  match codeEntryBytes M e.plan, e.plan.sig.params.mapM (valTyD M), valTyD M e.plan.sig.ret with
+  match codeEntryBytes M e.funcIdx e.plan, e.plan.sig.params.mapM (valTyD M), valTyD M e.plan.sig.ret with
   | some bytes, some ps, some r =>
       L.entry n (e.funcIdx - L.imports) == bytes &&
       fts[d.sigPos]? == some (L.ty (e.funcIdx - L.imports), ps, [r]) &&

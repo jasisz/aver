@@ -21,7 +21,7 @@ namespace CertPrelude
 /-! ## Ported simulation theorem: addTwo (non-recursive), carrier type 2 -/
 
 def addTwoCode : CodeTbl := fun fn =>
-  if fn = 1 then some ⟨1, 1, [.localGet 0, .i64Const 2, .call 6, .call 7]⟩ else none
+  if fn = 1 then some ⟨1, 1, [.localGet 0, .i64Const 2, .call 6, .call 7], none⟩ else none
 
 def addTwoHost (add7 : List WVal → Option WVal) : HostTbl := fun fn =>
   if fn = 6 then some (1, boxRef 2)
@@ -41,7 +41,7 @@ theorem addTwo_wasm_certified
   intro n v hv
   obtain ⟨w, hw, hrepr⟩ := h7 n 2 v (carrierSmall 2 2) hv (S.smallIntro 2)
   refine ⟨w, ?_, hrepr⟩
-  simp only [wFuncN, addTwoCode, addTwoHost, boxRef, carrierSmall, initLocals,
+  simp only [wFuncN, wEnter, addTwoCode, addTwoHost, boxRef, carrierSmall, initLocals,
     wRunF, popArgs, List.getElem?_cons_zero, List.length, List.take, List.drop,
     List.reverse, List.replicate, ite_true, reduceIte]
   simp only [carrierSmall] at hw
@@ -87,7 +87,7 @@ def cSumTo : CodeTbl := fun fn =>
       .ifElse [.localGet 1, .structGet 5 0, .i64Const 0, .i64LeS]
               [.localGet 1, .structGet 5 2, .i32Const 0, .i32LtS],
       .ifElse [.i64Const 0, .call 6]
-              [.localGet 0, .localGet 0, .i64Const 1, .call 6, .call 8, .call 1, .call 7] ]⟩
+              [.localGet 0, .localGet 0, .i64Const 1, .call 6, .call 8, .call 1, .call 7] ], none⟩
   else none
 
 example :
@@ -110,7 +110,7 @@ def cTick : CodeTbl := fun fn =>
               [.localGet 0, .structGet 5 2, .i32Const 0, .i32LtS],
       .ifElse [.localGet 1]
               [.localGet 0, .i64Const 1, .call 6, .call 8, .localGet 1, .localGet 0, .call 7,
-               .returnCall 1] ]⟩
+               .returnCall 1] ], none⟩
   else none
 
 example :
@@ -127,7 +127,7 @@ def cClassify : CodeTbl := fun fn =>
               [.localGet 4, .refTest 1,
                .ifElse [.localGet 4, .refCast 1, .structGet 1 0, .localSet 2,
                         .localGet 4, .refCast 1, .structGet 1 1, .localSet 3, .i64Const 2, .call 6]
-                       [.i64Const 3, .call 6]] ]⟩
+                       [.i64Const 3, .call 6]] ], none⟩
   else none
 
 example :
@@ -144,7 +144,7 @@ def cDescribe : CodeTbl := fun fn =>
     [ .localGet 0, .localSet 4,
       .localGet 4, .refTest 0,
       .ifElse [.i32Const 0, .i32Const 6, .arrayNewData 3 [99,105,114,99,108,101]] -- "circle"
-              [.i32Const 0, .i32Const 5, .arrayNewData 3 [112,111,105,110,116]] ]⟩ -- "point"
+              [.i32Const 0, .i32Const 5, .arrayNewData 3 [112,111,105,110,116]] ], none⟩ -- "point"
   else none
 
 example :
@@ -154,7 +154,7 @@ example :
 -- 5) f64 arithmetic + comparison, Bool result: (a < a*a) style through opcodes.
 def cFcmp : CodeTbl := fun fn =>
   if fn = 1 then some ⟨2, 1, [.localGet 0, .localGet 1, .f64Lt,
-    .ifElse [.i32Const 1] [.localGet 0, .localGet 1, .f64Eq]]⟩
+    .ifElse [.i32Const 1] [.localGet 0, .localGet 1, .f64Eq]], none⟩
   else none
 
 example :
@@ -172,7 +172,7 @@ example :
 -- 6) f64 arithmetic value: 8.0 / 2.0 - 1.0 = 3.0 (bit-exact through the opcodes).
 def cFarith : CodeTbl := fun fn =>
   if fn = 1 then some ⟨2, 0,
-    [.localGet 1, .localGet 0, .f64Div, .f64Const (1.0 : Float).toBits, .f64Sub]⟩
+    [.localGet 1, .localGet 0, .f64Div, .f64Const (1.0 : Float).toBits, .f64Sub], none⟩
   else none
 
 example :
@@ -181,7 +181,7 @@ example :
 
 -- 7) Bool logic via i32.eq / i32.and and list head via structGet on a cons cell.
 def cAnd : CodeTbl := fun fn =>
-  if fn = 1 then some ⟨2, 0, [.localGet 0, .localGet 1, .i32And]⟩ else none
+  if fn = 1 then some ⟨2, 0, [.localGet 0, .localGet 1, .i32And], none⟩ else none
 
 example :
     ((wFuncN cAnd gHost 4 1 [WVal.i32v 1, WVal.i32v 1]).bind asBool) = some true := by decide +kernel
@@ -201,13 +201,13 @@ def asIntList : WVal → Option (List Int)
 -- array.new_fixed: build [10, 20] as an array of carriers.
 def cArrFixed : CodeTbl := fun fn =>
   if fn = 1 then some ⟨0, 0,
-    [.i64Const 10, .call 6, .i64Const 20, .call 6, .arrayNewFixed 7 2]⟩ else none
+    [.i64Const 10, .call 6, .i64Const 20, .call 6, .arrayNewFixed 7 2], none⟩ else none
 example :
     ((wFuncN cArrFixed gHost 4 1 []).bind asIntList) = some [10, 20] := by decide +kernel
 
 -- i32.eq
 def cI32Eq : CodeTbl := fun fn =>
-  if fn = 1 then some ⟨2, 0, [.localGet 0, .localGet 1, .i32Eq]⟩ else none
+  if fn = 1 then some ⟨2, 0, [.localGet 0, .localGet 1, .i32Eq], none⟩ else none
 example : ((wFuncN cI32Eq gHost 4 1 [WVal.i32v 5, WVal.i32v 5]).bind asBool) = some true := by
   decide +kernel
 example : ((wFuncN cI32Eq gHost 4 1 [WVal.i32v 5, WVal.i32v 4]).bind asBool) = some false := by
@@ -215,25 +215,25 @@ example : ((wFuncN cI32Eq gHost 4 1 [WVal.i32v 5, WVal.i32v 4]).bind asBool) = s
 
 -- i64.eqz
 def cI64Eqz : CodeTbl := fun fn =>
-  if fn = 1 then some ⟨1, 0, [.localGet 0, .i64Eqz]⟩ else none
+  if fn = 1 then some ⟨1, 0, [.localGet 0, .i64Eqz], none⟩ else none
 example : ((wFuncN cI64Eqz gHost 4 1 [WVal.i64v 0]).bind asBool) = some true := by decide +kernel
 example : ((wFuncN cI64Eqz gHost 4 1 [WVal.i64v 3]).bind asBool) = some false := by decide +kernel
 
 -- ref.null (+ ref.is_null)
 def cRefNull : CodeTbl := fun fn =>
-  if fn = 1 then some ⟨0, 0, [.refNull, .refIsNull]⟩ else none
+  if fn = 1 then some ⟨0, 0, [.refNull, .refIsNull], none⟩ else none
 example : ((wFuncN cRefNull gHost 4 1 []).bind asBool) = some true := by decide +kernel
 
 -- return (plain): box the argument then early-return it.
 def cRet : CodeTbl := fun fn =>
-  if fn = 1 then some ⟨1, 0, [.localGet 0, .structGet 5 0, .call 6, .ret, .i64Const 999, .call 6]⟩
+  if fn = 1 then some ⟨1, 0, [.localGet 0, .structGet 5 0, .call 6, .ret, .i64Const 999, .call 6], none⟩
   else none
 example :
     ((wFuncN cRet gHost 4 1 [carrierSmall 5 42]).bind carrierToInt) = some 42 := by decide +kernel
 
 -- remaining i32 / i64 / f64 comparison + arithmetic opcodes, each executed once.
 def cMisc (ops : List WInstr) : CodeTbl := fun fn =>
-  if fn = 1 then some ⟨2, 0, ops⟩ else none
+  if fn = 1 then some ⟨2, 0, ops, none⟩ else none
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .i32GtS]) gHost 4 1
     [WVal.i32v 7, WVal.i32v 3]).bind asBool) = some true := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .i32LeS]) gHost 4 1
