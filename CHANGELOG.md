@@ -8,51 +8,32 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Highlights
 
-- **Proof steps checked by a kernel written in Aver.** `aver proof` evaluates a law, splits, inducts and does arithmetic as proof steps, and a small kernel written in Aver and compiled into `aver` checks every step. Lean then checks the same steps on its own. `aver proof --backend aver` runs the kernel alone, in a fraction of a second on a whole project. `aver proof --check` says what closed each law: `closed by steps`, `closed by tactic` or `not closed`, with where the steps stopped.
-- **The kernel knows types.** Every term a proof puts in place of a variable is checked against that variable's type, so a proof can no longer cite a law, a rule or an induction hypothesis at a value of another type.
-- **Steps close many more laws.** Induction along the recursion of the function a law is about, or of another function in the claim when that does not close, along a countdown or a division to zero, and on a list, also under a `when` about that list and for every value of another given. Linear arithmetic over the integers, with division by a literal or by a divisor the steps show is not 0, bit masks, and the product of two nonnegative comparisons. `List`, `Map` and `Vector` builtins, `Int.min`, `Int.max`, `Int.abs`, `List.contains`, `Option.withDefault`, `Result.withDefault`, `Bool.or` and `Bool.and` with their arguments in either order, and a field read after `Record.update`. A law over a finite type is checked value by value. `because` lines are proved one by one, and a law without `using` uses the earlier laws that steps closed.
-- **Hints.** When a law stays open, `aver proof` says which `using` line, `induction` line or plan would close it, that it closes without its `because` lines, or which lemma, stated where the steps stop, would close it.
-- **Proof plans in Aver.** A project can write its own proof plans and name one on a law with `by Plans.X`; the kernel checks what a plan returns, so a plan is not trusted. Standard plans ship as `Kernel.Std` (`by Kernel.Std.cases`). A plan can also return a script that the automatic steps finish.
-- **Refined types.** An opaque record with a validating constructor (`Natural` with `n >= 0`) is a refined type: a law over `given n: Natural` holds for the values the constructor admits, a law that cites it at another value has to show the check, and `Natural.fromInt(5)` with a literal in range is a `Natural`, not a `Result`.
-- **What a proof stands on.** For each law closed by steps, `aver proof --check-json` lists under `trust` the kernel rules its steps apply, whether it uses `compute`, `ring` or `linear`, and the laws and facts it cites.
-- **`aver facts`** lists the builtin facts proofs may use, each written as an Aver law.
-- **Lean 4.35.0, and `--paranoid`.** `aver-cert verify --paranoid` and `aver proof --check --paranoid` check the proof with every kernel Lean 4.35 ships (Lean, lean4lean, nanoda, con-leche, con-ron), not Lean's alone; each must accept, and a missing one is an error. Off by default. The certificate wall identity changes with the toolchain, so certificates from 0.30 verify only with 0.30: certify again.
-- **`List.contains` through `List.concat` and `List.reverse`**: the facts `List.contains.ofConcat` and `List.contains.ofReverse`, for elements whose `==` is equality.
-- **A list with a cell in it is not empty**: the facts `List.prepend.notEmpty` and `List.concat.notEmpty` (and with the sides of `==` swapped), for elements whose `==` is equality; a `match` on `List.concat(xs, [x])` splits `xs` into `[]` and a cell, and so does a hypothesis such as `when xs != []`.
-- **Certificates** prove their law-claims with proof steps, as `aver proof` does.
-- **`aver proof` is about twice as fast** and needs about half the memory. Part of it is the allocator: the `aver` binary now allocates with mimalloc, which alone saves about a fifth of the time.
+- **A proof kernel written in Aver.** `aver proof` closes laws with its own proof steps (induction, case splits, arithmetic), and a small kernel written in Aver checks every step, with types. Lean checks the same steps again. `aver proof --backend aver` runs the kernel alone in seconds on a whole project.
+- **Steps close many more laws**, and when one stays open `aver proof` says which `using`, `induction` or lemma would close it. Projects can write their own proof plans in Aver (`by Plans.X`); the kernel checks what a plan returns.
+- **Refined types.** An opaque record with a validating constructor (`Natural` with `n >= 0`) is a refined type in laws and proofs.
+- **`aver proof` is about twice as fast** and needs half the memory. Lean 4.35.0, and `--paranoid` checks with every kernel Lean ships.
+- **Much faster compiled Rust.** Far fewer copies of maps, lists, records and strings, smaller values, shared parts of trees and terms, faster `Int`, and `aver.toml` options for mimalloc and `panic = "abort"`.
+- **Much faster wasm-gc.** `Int` on machine words, fewer allocations, faster strings and maps, tail calls as loops.
+- **Language**: `lazy f(x)` for deferred calls, `exposes` for module-level bindings, `Bits.popCount`, `fn main() -> Int` sets the exit status.
+- **Many fixes** across the VM, Rust and wasm-gc: no more exponential `==` on shared values, linear string walks, NaN that behaves the same everywhere, deep recursion that no longer overflows.
 
 ### Migration
 
 | Before | Now |
 |---|---|
 | a law over `given a: Int` with `Natural(value = a)` in it, proved for `a >= 0` only | `given a: Natural`; a law over `Int` is about every `Int` |
-| a validating constructor on a record not listed in `exposes opaque` made a refined type | add `exposes opaque [T]`; otherwise the literal call is `Result` again |
+| a validating constructor on a record not listed in `exposes opaque` made a refined type | add `exposes opaque [T]` |
 | `Natural.fromInt(5)` unwrapped with `match`, `?` or `Result.Ok(...)` | drop the unwrapping |
-| a `when`-law restated over its samples when no proof closed it | declined (`declined_claims`); samples with `--examples`; `bounded_laws` is gone from `--check-json` |
-| `aver proof` exporting law samples | only with `--examples` |
-| a function with effects writing `Natural(value = ...)` directly | write it in a pure function or call the constructor |
+| `aver proof` exporting law samples | only with `--examples`; `bounded_laws` is gone from `--check-json` |
 | a `verify` case with sides of different types, failing in `aver verify` | a type error in `aver check` |
 | `Shape.Rect(_)` for a two-field variant, `Option.Some()` | list every field, or write the bare `Shape.Rect` |
-| code `aver check` could not type, accepted silently | an error with the line |
-| `Kernel.Proof.Goal` without `hyps`, givens as bare names | givens are `TypedVar`; names through `Kernel.Proof.givenNames` |
-| step scripts in `proof_steps/` | format 16, with types; the order complement, ring, `bool.not`, `list.len.nil` and `list.reverse.nil` rules are gone (`linear`, `ring` and `compute` show them), and `!=` is read by `int.ne.def` |
+| `fn main() -> Int` returning a value outside 0..255 | exit status 1 with a message |
+| `Args.get()` with no `--` | only the arguments after `--`, on every runner |
+| a module-level binding that reads itself or a later one | refused by `aver check` |
+| certifying a plain wasm-gc or wasip2 build | build with `--certify` and ship that build |
+| hand-written Rust matching a generated recursive sum as an enum | match on `value.view()` |
 
 A 0.30 `--gate` baseline with `bounded` laws has to be recorded again.
-
-### Fixed
-
-- **`aver proof --backend aver` no longer counts as closed** two laws that cite each other, a split on a value that is not a Bool, or a Float `==` read as equality.
-- **A `Map` on the VM keeps apart two keys with the same internal hash.**
-- **A tail loop on the VM no longer slows down as it runs** when it files what a helper returns into a `Map`: 320,000 steps take 0.1 s instead of 4.9 s.
-- **Compiled to Rust, small `Int` arithmetic is about twice as fast**: `+`, `-`, `*`, `Int.div` and `Int.mod` on values that fit in 64 bits no longer go through a function call.
-- **Compiled to Rust, the branches of `(a, b)!` and `Work` jobs recurse as deep as `main` does.** They ran on a 2 MB stack, so a recursion `main` handled aborted the program inside a branch.
-- **wasm-gc and Rust compile more programs**: generic builtins on an empty literal (`List.len([])`, `{}`), values whose type no signature names, a `match` on a tuple with a `String` literal, a recursive field bound inside a tuple pattern, module-level bindings read from any function.
-- **A `match` ends with its arms**; a line starting with `(` or `-` after them is no longer read as part of the last arm.
-- **`aver verify` no longer crashes** when a dependency fails its own check, and `aver proof` no longer overflows the stack on a deep proof.
-- **Induction along a function whose pattern has a `_` part** (`[_, ..t]`, `Link(_, rest)`) no longer fails with `pattern binds 2 names, 1 given`.
-- **Lean accepts more of what the steps prove**: inductions under a comparison `when`, `match` arguments of `Bool.and`, nested comparisons, products of givens, and laws again depend on fewer axioms.
-- **A parameter or binding named `given`, `requires` or `ensures` exports to Lean again**; Lean 4.35 refused the generated code.
 
 ## 0.30.0 "Turn" — 2026-10-03
 
