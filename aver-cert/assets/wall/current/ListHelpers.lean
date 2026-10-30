@@ -176,7 +176,7 @@ def hRun (host : HostTbl) : Nat → List HI → List WVal → List WVal → Opti
       match step1 host x l st with
       | some (.ok l' st') => hRun host k rest l' st'
       | some (.ret v) => some (.ret v)
-      | none => none
+      | _ => none
   | k + 1, .i64Add :: rest, l, st =>
       match st with
       | .i64v y :: .i64v x :: st' => hRun host k rest l (.i64v (wrapI64 (x + y)) :: st')
@@ -658,7 +658,7 @@ theorem hRun_b (k : Nat) (x : BI) (rest : List HI) (l st : List WVal) :
       match step1 host x l st with
       | some (.ok l' st') => hRun host k rest l' st'
       | some (.ret v) => some (.ret v)
-      | none => none := by
+      | _ => none := by
   simp only [hRun]
 
 /-- `i64.const c` pushes `c`, for a symbolic `c`. The interpreter recurses on

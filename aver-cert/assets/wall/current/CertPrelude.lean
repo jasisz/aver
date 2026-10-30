@@ -1,7 +1,7 @@
 /-
   CertPrelude — certificate semantics for the measured Aver wasm-gc user-code
-  fragment (43 distinct opcodes, no linear memory; a function's one top-level
-  loop through `CI`/`cRun`/`wEnter`).
+  fragment (no linear memory; blocks and branches, and a function's one
+  top-level loop through `CI`/`cRun`/`wEnter`).
 
   Architecture is fixed by the kill-fast probes (probe-artifacts/pcc-kill):
   * `wRunF` is STRUCTURAL on the instruction tree and takes the call
@@ -123,6 +123,15 @@ inductive WInstr where
   | call (f : Nat)
   | returnCall (f : Nat)
   | ret
+  -- Structured control and machine-word arithmetic: the `Int` tree's `i64`
+  -- path (`int_tree.rs`). `block a body` is a block whose type leaves `a`
+  -- values.
+  | block (arity : Nat) (body : List WInstr)
+  | br (depth : Nat)
+  | brIf (depth : Nat)
+  | localTee (i : Nat)
+  | select
+  | i64Add | i64Sub | i64Mul | i64And | i64Xor | i64DivS | i64GtU
 deriving Repr
 
 /-- Function-body control around the straight-line fragment: an
@@ -152,6 +161,9 @@ abbrev Callee := Nat → List WVal → Option WVal
 inductive Out where
   | ok (locals : List WVal) (stack : List WVal)
   | ret (v : WVal)
+  /-- A branch to the label `depth` levels out, with the locals and the stack
+      at the branch. -/
+  | br (depth : Nat) (locals stack : List WVal)
 
 def popArgs (arity : Nat) (st : List WVal) : Option (List WVal × List WVal) :=
   if st.length < arity then none
@@ -179,6 +191,38 @@ def i32Word : Int → Bool
 def toU32 : Int → Int
   | .ofNat n => .ofNat n
   | .negSucc n => .ofNat (4294967295 - n)
+
+/-- The signed `i64` range. Decided on the constructors of `Int`. -/
+def in64 : Int → Bool
+  | .ofNat n => n.blt 9223372036854775808
+  | .negSucc n => n.blt 9223372036854775808
+
+/-- Two's-complement wrap-around to the signed `i64` range. -/
+def wrap64 (x : Int) : Int :=
+  (x + 9223372036854775808) % 18446744073709551616 - 9223372036854775808
+
+/-- `i64.gt_u` on two `i64` words: a negative word reads as `2^64` plus
+    itself, above every non-negative one. -/
+def gtU64 : Int → Int → Bool
+  | .ofNat a, .ofNat b => b.blt a
+  | .ofNat _, .negSucc _ => false
+  | .negSucc _, .ofNat _ => true
+  | .negSucc a, .negSucc b => a.blt b
+
+/-- Bitwise `xor` of two's-complement integers (`-[n+1]` is the complement
+    of `n`). -/
+def xor64 : Int → Int → Int
+  | .ofNat a, .ofNat b => .ofNat (a ^^^ b)
+  | .ofNat a, .negSucc b => .negSucc (a ^^^ b)
+  | .negSucc a, .ofNat b => .negSucc (a ^^^ b)
+  | .negSucc a, .negSucc b => .ofNat (a ^^^ b)
+
+/-- Bitwise `and` of two's-complement integers. -/
+def and64 : Int → Int → Int
+  | .ofNat a, .ofNat b => .ofNat (a &&& b)
+  | .ofNat a, .negSucc b => .ofNat (a ^^^ (a &&& b))
+  | .negSucc a, .ofNat b => .ofNat (b ^^^ (a &&& b))
+  | .negSucc a, .negSucc b => .negSucc (a ||| b)
 
 /-- Structural interpreter: recursion only on the instruction tree; calls go
     through `host` (concrete contracts) or the opaque `callee`. -/
@@ -405,12 +449,14 @@ def wRunF (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
             match wRunF host ar callee eB locals st' with
             | some (.ok locals' st'') => wRunF host ar callee rest locals' st''
             | some (.ret v) => some (.ret v)
-            | none => none
+            | some (.br (d + 1) l' s') => some (.br d l' s')
+            | _ => none
           else
             match wRunF host ar callee tB locals st' with
             | some (.ok locals' st'') => wRunF host ar callee rest locals' st''
             | some (.ret v) => some (.ret v)
-            | none => none
+            | some (.br (d + 1) l' s') => some (.br d l' s')
+            | _ => none
       | _ => none
   | .call fn :: rest, locals, st =>
       match host fn with
@@ -445,6 +491,76 @@ def wRunF (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
       match st with
       | v :: _ => some (.ret v)
       | [] => none
+  | .block a body :: rest, locals, st =>
+      -- A branch to the block keeps the top `a` values over the stack the
+      -- block was entered with; a branch further out leaves it.
+      match wRunF host ar callee body locals st with
+      | some (.ok locals' st') => wRunF host ar callee rest locals' st'
+      | some (.br 0 locals' st') =>
+          if st'.length < a then none
+          else wRunF host ar callee rest locals' (st'.take a ++ st)
+      | some (.br (d + 1) l' s') => some (.br d l' s')
+      | some (.ret v) => some (.ret v)
+      | none => none
+  | .br d :: _, locals, st => some (.br d locals st)
+  | .brIf d :: rest, locals, st =>
+      match st with
+      | .i32v c :: st' =>
+          if c = 0 then wRunF host ar callee rest locals st' else some (.br d locals st')
+      | _ => none
+  | .localTee i :: rest, locals, st =>
+      match st with
+      | v :: st' => wRunF host ar callee rest (locals.set i v) (v :: st')
+      | [] => none
+  | .select :: rest, locals, st =>
+      match st with
+      | .i32v c :: v2 :: v1 :: st' =>
+          wRunF host ar callee rest locals ((if c = 0 then v2 else v1) :: st')
+      | _ => none
+  | .i64Add :: rest, locals, st =>
+      match st with
+      | .i64v b :: .i64v a :: st' =>
+          if in64 a && in64 b then wRunF host ar callee rest locals (.i64v (wrap64 (a + b)) :: st')
+          else none
+      | _ => none
+  | .i64Sub :: rest, locals, st =>
+      match st with
+      | .i64v b :: .i64v a :: st' =>
+          if in64 a && in64 b then wRunF host ar callee rest locals (.i64v (wrap64 (a - b)) :: st')
+          else none
+      | _ => none
+  | .i64Mul :: rest, locals, st =>
+      match st with
+      | .i64v b :: .i64v a :: st' =>
+          if in64 a && in64 b then wRunF host ar callee rest locals (.i64v (wrap64 (a * b)) :: st')
+          else none
+      | _ => none
+  | .i64And :: rest, locals, st =>
+      match st with
+      | .i64v b :: .i64v a :: st' =>
+          if in64 a && in64 b then wRunF host ar callee rest locals (.i64v (and64 a b) :: st')
+          else none
+      | _ => none
+  | .i64Xor :: rest, locals, st =>
+      match st with
+      | .i64v b :: .i64v a :: st' =>
+          if in64 a && in64 b then wRunF host ar callee rest locals (.i64v (xor64 a b) :: st')
+          else none
+      | _ => none
+  | .i64DivS :: rest, locals, st =>
+      -- Truncating division; a zero divisor and `i64::MIN / -1` trap.
+      match st with
+      | .i64v b :: .i64v a :: st' =>
+          if in64 a && in64 b && b != 0 && !(a == -9223372036854775808 && b == -1) then
+            wRunF host ar callee rest locals (.i64v (a.tdiv b) :: st')
+          else none
+      | _ => none
+  | .i64GtU :: rest, locals, st =>
+      match st with
+      | .i64v b :: .i64v a :: st' =>
+          if in64 a && in64 b then wRunF host ar callee rest locals (b32 (gtU64 a b) :: st')
+          else none
+      | _ => none
   termination_by instrs _ _ => sizeOf instrs
 
 /-- The outcome of a `CI` sequence: it falls through, it branches to the
@@ -466,7 +582,7 @@ def cRun (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
       match wRunF host ar callee [x] l st with
       | some (.ok l' st') => cRun host ar callee rest l' st'
       | some (.ret v) => some (.ret v)
-      | none => none
+      | _ => none
   | .ifElse tB eB :: rest, l, st =>
       match st with
       | .i32v c :: st' =>

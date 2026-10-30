@@ -80,6 +80,7 @@ def LRel (env : Nat → Option SVal) (wl : List WVal) : Prop :=
 def Res (tail : Bool) (env : Nat → Option SVal) (st : List WVal) (sv : SVal) : Out → Prop
   | .ok wl' st' => ∃ w, st' = w :: st ∧ SRepr S M sv w ∧ LRel S M X env wl'
   | .ret w => tail = true ∧ SRepr S M sv w
+  | .br _ _ _ => False
 
 /-- An early return out of a node (a `try_` meeting an `Err`): the run
     returned `w`, the source evaluation `ev` failed, and the escape `es` is a
@@ -88,6 +89,7 @@ def Res (tail : Bool) (env : Nat → Option SVal) (st : List WVal) (sv : SVal) :
 def Esc {α : Type} (ev : Option α) (es : Option SVal) (tys : List Ty) : Out → Prop
   | .ret w => ev = none ∧ ∃ x, es = some x ∧ SRepr S M x w ∧ ∃ R ∈ tys, HasTy M x R
   | .ok _ _ => False
+  | .br _ _ _ => False
 
 end Rel
 
@@ -342,20 +344,25 @@ theorem run_split {host : HostTbl} {ar : Nat → Option Nat} {callee : Callee}
   | none => rw [hx] at h; simp [seqOut] at h
   | some o => exact ⟨o, rfl, by rw [hx] at h; exact h⟩
 
+/-- An `if`'s outcome from its arm's: a branch to the `if` itself is not
+    modelled, a branch further out leaves it one level shallower. -/
+@[simp] def ifOut : Option Out → Option Out
+  | some (.ok l s) => some (.ok l s)
+  | some (.ret v) => some (.ret v)
+  | some (.br 0 _ _) => none
+  | some (.br (k + 1) l s) => some (.br k l s)
+  | none => none
+
 /-- Running a lone `if` on an i32 condition is running the chosen branch. -/
 theorem wRunF_ifElse_single (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     (tB eB : List WInstr) (l : List WVal) (c : Int) (st : List WVal) :
     wRunF host ar callee [.ifElse tB eB] l (.i32v c :: st) =
-      if c = 0 then wRunF host ar callee eB l st else wRunF host ar callee tB l st := by
+      ifOut (if c = 0 then wRunF host ar callee eB l st else wRunF host ar callee tB l st) := by
   by_cases hc : c = 0
   · simp only [wRunF, hc, ite_true]
-    cases h : wRunF host ar callee eB l st with
-    | none => rfl
-    | some o => cases o <;> simp
+    rcases wRunF host ar callee eB l st with _ | ⟨_, _⟩ | _ | ⟨_ | _, _, _⟩ <;> simp
   · simp only [wRunF, hc, ite_false]
-    cases h : wRunF host ar callee tB l st with
-    | none => rfl
-    | some o => cases o <;> simp
+    rcases wRunF host ar callee tB l st with _ | ⟨_, _⟩ | _ | ⟨_ | _, _, _⟩ <;> simp
 
 theorem upd_same {α : Type} (f : Nat → Option α) (i : Nat) (a : α) : upd f i a i = some a := by
   simp [upd]
@@ -416,6 +423,7 @@ theorem res_of_upd {tail : Bool} {env : Nat → Option SVal} {st : List WVal} {s
       obtain ⟨w, h1, h2, h3⟩ := h
       exact ⟨w, h1, h2, lrel_of_upd hfree h3⟩
   | ret w => exact h
+  | br _ _ _ => exact h.elim
 
 theorem res_ok {tail : Bool} {env : Nat → Option SVal} {st wl' : List WVal} {sv : SVal}
     {w : WVal} (h : SRepr S M sv w) (hl : LRel S M X env wl') :
@@ -431,6 +439,7 @@ theorem res_false {env : Nat → Option SVal} {st : List WVal} {sv : SVal} {out 
       obtain ⟨w, rfl, hw, hl⟩ := h
       exact ⟨wl', w, rfl, hw, hl⟩
   | ret w => exact absurd h.1 (by simp)
+  | br _ _ _ => exact h.elim
 
 /-- An early return out of a part is one out of the whole: the run is the
     part's `return`, the whole's evaluation fails where the part's does, the
@@ -444,6 +453,7 @@ theorem esc_lift {α β : Type} {ev : Option α} {ev' : Option β} {es es' : Opt
   | ret w =>
       obtain ⟨h1, x, hx, hw, R, hR, hxR⟩ := h
       exact ⟨hev h1, x, hes x hx, hw, R, htys R hR, hxR⟩
+  | br _ _ _ => exact h.elim
 
 /-- The same, past the rest of the run: a `return` skips it. -/
 theorem esc_up {host : HostTbl} {ar : Nat → Option Nat} {callee : Callee} {ys : List WInstr}
@@ -458,6 +468,7 @@ theorem esc_up {host : HostTbl} {ar : Nat → Option Nat} {callee : Callee} {ys 
       simp only [seqOut, Option.some.injEq] at hseq
       subst hseq
       exact esc_lift h hev hes htys
+  | br _ _ _ => exact h.elim
 
 /-- An early return is a `return`. -/
 theorem esc_ret {α : Type} {ev : Option α} {es : Option SVal} {tys : List Ty} {out : Out}
@@ -465,6 +476,7 @@ theorem esc_ret {α : Type} {ev : Option α} {es : Option SVal} {tys : List Ty} 
   cases out with
   | ok _ _ => exact h.elim
   | ret w => exact ⟨w, rfl⟩
+  | br _ _ _ => exact h.elim
 
 /-- No early return leaves a node without a bare `try_`. -/
 theorem esc_nil {α : Type} {ev : Option α} {es : Option SVal} {out : Out}
@@ -474,6 +486,7 @@ theorem esc_nil {α : Type} {ev : Option α} {es : Option SVal} {out : Out}
   | ret w =>
       obtain ⟨_, _, _, _, R, hR, _⟩ := h
       cases hR
+  | br _ _ _ => exact h
 
 /-- An early return is never a successful evaluation. -/
 theorem esc_some {α : Type} {ev : Option α} {v : α} {es : Option SVal} {tys : List Ty}
@@ -484,6 +497,7 @@ theorem esc_some {α : Type} {ev : Option α} {v : α} {es : Option SVal} {tys :
       obtain ⟨h1, _⟩ := h
       rw [hv] at h1
       cases h1
+  | br _ _ _ => exact h
 
 end LRelLemmas
 
