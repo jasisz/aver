@@ -41,6 +41,9 @@ reversedEqual true
 boundMapHas false
 boundListLen 0
 boundNoneEqual true
+okOperand same
+errOperand same
+someOkOperand true
 ";
 
 fn run(extra: &[&str]) -> String {

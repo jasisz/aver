@@ -205,7 +205,34 @@ fn equality_needs_context(expr: &Expr) -> bool {
         }
         Expr::Tuple(items) => items.iter().any(|item| equality_needs_context(&item.node)),
         Expr::MapLiteral(entries) => entries.is_empty(),
-        _ => is_bare_none_expr(expr),
+        _ => match builtin_ctor_payload(expr) {
+            // `Result.Ok(v)` fixes only the success type and `Result.Err(e)`
+            // only the error type; the other position is the opposite
+            // operand's. Left open, a backend with one representation per
+            // instantiation has to guess it.
+            Some(("Ok" | "Err", _)) => true,
+            Some((_, payload)) => equality_needs_context(payload),
+            None => is_bare_none_expr(expr),
+        },
+    }
+}
+
+/// `Result.Ok(v)`, `Result.Err(e)` and `Option.Some(v)`, in either spelling:
+/// the short constructor name and its payload.
+fn builtin_ctor_payload(expr: &Expr) -> Option<(&'static str, &Expr)> {
+    let short = |name: &str| match name {
+        "Ok" | "Result.Ok" => Some("Ok"),
+        "Err" | "Result.Err" => Some("Err"),
+        "Some" | "Option.Some" => Some("Some"),
+        _ => None,
+    };
+    match expr {
+        Expr::Constructor(name, Some(arg)) => Some((short(name)?, &arg.node)),
+        Expr::FnCall(callee, args) if args.len() == 1 => {
+            let name = TypeChecker::callee_key(&callee.node)?;
+            Some((short(&name)?, &args[0].node))
+        }
+        _ => None,
     }
 }
 
