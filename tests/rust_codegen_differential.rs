@@ -491,6 +491,44 @@ fn raw_int_match_subjects_and_free_values_match_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A large record the program copies sits behind one counted pointer:
+/// copied into a list, updated in a loop, shared and then updated (the kept
+/// copy keeps its fields), kept as snapshots while later calls update it,
+/// compared, and used as a map key. An update turns it into a `Box` once and
+/// back. A large record the program never copies stays in a `Box`.
+#[test]
+fn large_records_behind_a_counted_pointer_match_vm() {
+    let relative = "tests/fixtures/rust_counted_records.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_counted_records", &src);
+    for shape in [
+        "pub type Wide = aver_rt::Counted<Wide__Fields>;",
+        "unsafe impl aver_rt::Counts for Wide__Fields {",
+        "{ let mut __record0 = aver_rt::Counted::into_box(w); ",
+        "aver_rt::Counted::from_box(__record0) }",
+        "pub type Solo = Box<Solo__Fields>;",
+        // A counted record inside an owned result is updated through it
+        // the same way: its map moves out, it is not copied.
+        "pub type Cache = aver_rt::Counted<Cache__Fields>;",
+        "{ let mut __record0 = aver_rt::Counted::into_box(r.st); let __field0 = cachePut(__record0.m, ",
+        // A value that reads the record whole runs before it turns into
+        // a `Box`, reading the counted record.
+        "{ let __field0 = weight(&p.st); let mut __record0 = aver_rt::Counted::into_box(p.st); let __field1 = cachePut(__record0.m",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    assert!(
+        !emitted.contains("r.st.m.clone()")
+            && !emitted.contains("into_box(r.st); let __field0 = cachePut(__record0.m.clone()"),
+        "a map in a counted record updated through a result is copied:\n{emitted}"
+    );
+    assert!(
+        !emitted.contains("Solo__Fields { __count"),
+        "a record never copied has no count:\n{emitted}"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A sum with a wide constructor is one pointer per value like a recursive
 /// one (`representation::is_thin_sum`): matched owned and borrowed, compared,
 /// used as a map key, held in an `Option`, and compared by `Float` fields
@@ -512,12 +550,13 @@ fn record_update_values_run_before_the_base_moves() {
     let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
     let emitted = emitted_entry_module("rust_record_update_order", &src);
     for shape in [
-        "pub type Big = Box<Big__Fields>;",
-        "s.b = __field0; s.c = __field1; s }",
-        "s.log = __field0; s.g = __field1; s }",
-        "{ let mut __record0 = s; let __field0 = __record0.e",
+        // `bigKept` copies a `Big`, so it is counted (see `counted_records`).
+        "pub type Big = aver_rt::Counted<Big__Fields>;",
+        "__record0.b = __field0; __record0.c = __field1; aver_rt::Counted::from_box(__record0) }",
+        "__record0.log = __field0; __record0.g = __field1; aver_rt::Counted::from_box(__record0) }",
+        "{ let mut __record0 = aver_rt::Counted::into_box(s); let __field0 = __record0.e",
         "..o.inner }, k: ",
-        "{ let mut __record0 = s.clone(); __record0.h = ",
+        "let mut __record0 = aver_rt::Counted::into_box(s.clone()); __record0.h = __field0;",
         "..s.clone() };",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
@@ -5541,31 +5580,44 @@ fn a_loop_moves_a_param_it_passes_on_out_on_exit() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
-/// A record whose fields take more than 128 bytes is one pointer to them
-/// (`pub type St = Box<St__Fields>`), so handing it on copies the pointer.
-/// An update of its last use writes into its own box: where it is when an
-/// owned parameter holds it (also after a field was read out of it, and
-/// with two fields swapped), through a binding of its own when a local
-/// holds it, and into a new box only when a field moved out of that local
-/// first or a value reads the local whole. A copy made beside it is a box of
-/// its own. The VM and the binary, also with replay, print the same.
+/// A record whose fields take more than 128 bytes is one pointer to them,
+/// so handing it on copies the pointer: a `Box` when the program never
+/// copies it (`Big`), a counted pointer when it may (`St`, kept beside a
+/// changed copy). An update of its last use writes into its own node: for a
+/// counted record through the `Box` it turns into once (also after a field
+/// was read out of it, and with two fields swapped, where the record sits in
+/// a parameter or inside another record), and into a new node only when a
+/// value reads the record that holds it whole. A copy made beside it is a
+/// node of its own. The VM and the binary, also with replay, print the
+/// same.
 #[test]
 fn a_large_record_is_boxed_and_updated_in_its_box() {
     let relative = "tests/fixtures/boxed_state_app.av";
     let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
     let emitted = emitted_entry_module("boxed_state_app", &src);
     for shape in [
-        "pub type St = Box<St__Fields>;",
+        // `kept` and `main` copy the state, so it is counted; the record
+        // that holds it is never copied and stays a `Box`.
+        "pub type St = aver_rt::Counted<St__Fields>;",
         "pub type Big = Box<Big__Fields>;",
-        "s.a = __field0; s.seen = __field1; s }",
-        "{ let __field0 = s.b; let __field1 = s.a; s.a = __field0; s.b = __field1; s }",
-        "{ let mut __record0 = r.st; __record0.c = __record0.c.add(&r.v); __record0 }",
+        "{ let mut __record0 = aver_rt::Counted::into_box(s); let __field0 = was.add(&i); let __field1 = __record0.seen.insert_owned(",
+        "{ let mut __record0 = aver_rt::Counted::into_box(s); let __field0 = __record0.b; let __field1 = __record0.a; __record0.a = __field0; __record0.b = __field1; aver_rt::Counted::from_box(__record0) }",
+        "{ let mut __record0 = aver_rt::Counted::into_box(r.st); __record0.c = __record0.c.add(&r.v); aver_rt::Counted::from_box(__record0) }",
         "b.st = __field0; b.x = __field1; b }",
-        "{ let mut __record0 = s.clone(); __record0.e = ",
+        "let mut __record0 = aver_rt::Counted::into_box(s.clone()); __record0.e = __field0;",
+        // A field read out of a counted record is copied, not moved, so the
+        // record is still whole for the update.
+        "let old @ _ = r.st.name.clone();\n    { let mut __record0 = aver_rt::Counted::into_box(r.st); __record0.name = ",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
     }
-    assert_eq!(emitted.matches("..*r.st })").count(), 2, "{emitted}");
+    assert_eq!(
+        emitted
+            .matches("..aver_rt::Counted::into_inner(r.st) })")
+            .count(),
+        1,
+        "{emitted}"
+    );
     assert!(
         !emitted.contains("pub type Res"),
         "a small record stays inline"

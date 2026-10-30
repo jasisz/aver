@@ -2,10 +2,11 @@
 use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
-pub type Env = Box<Env__Fields>;
+pub type Env = aver_rt::Counted<Env__Fields>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Env__Fields {
+    pub __count: aver_rt::Count,
     pub defs: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     pub consts: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
     pub laws: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
@@ -14,6 +15,13 @@ pub struct Env__Fields {
     pub sums: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>,
     pub recs: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec>,
     pub sigs: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::FnSig>,
+}
+
+// SAFETY: `count` is always the same field.
+unsafe impl aver_rt::Counts for Env__Fields {
+    fn count(&self) -> &aver_rt::Count {
+        &self.__count
+    }
 }
 
 impl PartialOrd for Env__Fields {
@@ -1164,8 +1172,9 @@ pub fn checkFactThen(
 /// No definitions, laws or hypotheses.
 pub fn emptyEnv() -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    Box::new(
+    aver_rt::Counted::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            __count: aver_rt::Count::new(),
             defs: aver_rt::AverList::empty(),
             consts: aver_rt::AverList::empty(),
             laws: aver_rt::AverList::empty(),
@@ -1199,8 +1208,9 @@ pub fn withVars(
     vs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
 ) -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    Box::new(
+    aver_rt::Counted::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            __count: aver_rt::Count::new(),
             defs: env.defs.clone(),
             consts: env.consts.clone(),
             laws: env.laws.clone(),
@@ -1397,8 +1407,9 @@ pub fn argsFit(
 /// Every definition body and constant value fits the type its declaration gives it; theorem givens are not in their scope.
 pub fn declarationsTyped(env @ _: &Env, path @ _: AverStr) -> Result<(), AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    let scope @ _ = Box::new(
+    let scope @ _ = aver_rt::Counted::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            __count: aver_rt::Count::new(),
             defs: env.defs.clone(),
             consts: env.consts.clone(),
             laws: aver_rt::AverList::empty(),
@@ -3230,8 +3241,9 @@ pub fn splitConstructors(
 /// A given x of a declared sum C with bare constructors C.A and C.B.
 pub fn sumEnv() -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    Box::new(
+    aver_rt::Counted::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            __count: aver_rt::Count::new(),
             defs: aver_rt::AverList::empty(),
             consts: aver_rt::AverList::empty(),
             laws: aver_rt::AverList::empty(),
@@ -3697,8 +3709,9 @@ pub fn withHyp(
     value @ _: bool,
 ) -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    Box::new(
+    aver_rt::Counted::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            __count: aver_rt::Count::new(),
             defs: env.defs.clone(),
             consts: env.consts.clone(),
             laws: env.laws.clone(),
@@ -4037,8 +4050,9 @@ pub fn withHyps(
     hs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
 ) -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    Box::new(
+    aver_rt::Counted::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            __count: aver_rt::Count::new(),
             defs: env.defs.clone(),
             consts: env.consts.clone(),
             laws: env.laws.clone(),
@@ -5603,8 +5617,9 @@ pub fn checkScript(
             <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>>::empty();
         crate::proof_kernel::aver_generated::kernel::check::checkFacts(s.facts.clone(), __arg11)
     }?;
-    let env @ _ = Box::new(
+    let env @ _ = aver_rt::Counted::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            __count: aver_rt::Count::new(),
             defs: s.defs,
             consts: s.consts,
             laws: aver_rt::AverList::concat(
@@ -7701,8 +7716,9 @@ pub fn lenCase(
         }),
     );
     {
-        let __arg15 @ _ = Box::new(
+        let __arg15 @ _ = aver_rt::Counted::new(
             crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+                __count: aver_rt::Count::new(),
                 defs: env.defs.clone(),
                 consts: env.consts.clone(),
                 laws: aver_rt::AverList::prepend(ih.clone(), &env.laws),
@@ -7853,8 +7869,9 @@ pub fn conjoined(
 /// The environment with a record R of two Int fields a and b declared.
 pub fn withRec(env @ _: &Env) -> Env {
     crate::proof_kernel::cancel_checkpoint();
-    Box::new(
+    aver_rt::Counted::new(
         crate::proof_kernel::aver_generated::kernel::check::Env__Fields {
+            __count: aver_rt::Count::new(),
             defs: env.defs.clone(),
             consts: env.consts.clone(),
             laws: env.laws.clone(),

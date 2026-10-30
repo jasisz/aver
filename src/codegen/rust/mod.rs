@@ -5,6 +5,7 @@ mod arg_order;
 mod builtins;
 mod carrier;
 pub(crate) mod composition;
+mod counted_records;
 pub mod emit_ctx;
 mod expr;
 mod from_mir;
@@ -214,6 +215,7 @@ fn transpile_project(
         boxing_notes = perf_notes::boxing(ctx);
         arg_order::bind_computed_arguments(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
+        ctx.rust_counted_records = counted_records::compute(ctx);
         ctx.rust_lent_options = lent_option::compute(ctx);
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
         ctx.rust_knowing = knowing::compute(ctx);
@@ -1752,6 +1754,62 @@ fn make(n: Int) -> Nine
         assert!(entry.contains("pub struct Nine__Fields {"));
         assert!(entry.contains("Box::new(Nine__Fields { a: n.clone(),"));
         assert!(entry.contains("format!(\"Nine({})\""));
+    }
+
+    #[test]
+    fn a_large_record_the_program_copies_is_counted() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+record Nine
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    i: Int
+
+record Ten
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    i: Int
+    j: Int
+
+fn bump(r: Nine) -> Nine
+    Nine.update(r, a = r.a + 1)
+
+fn both(r: Nine) -> List<Nine>
+    [r, bump(r)]
+
+fn step(t: Ten) -> Ten
+    Ten.update(t, a = t.a + 1)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // `both` keeps `r` and hands it on: a copy.
+        assert!(entry.contains("pub type Nine = aver_rt::Counted<Nine__Fields>;"));
+        assert!(entry.contains("pub __count: aver_rt::Count,"));
+        assert!(entry.contains("unsafe impl aver_rt::Counts for Nine__Fields {"));
+        assert!(entry.contains(
+            "{ let mut __record0 = aver_rt::Counted::into_box(r); __record0.a = __record0.a.add(&aver_rt::AverInt::from_i64(1)); aver_rt::Counted::from_box(__record0) }"
+        ));
+        // Nothing copies a `Ten`.
+        assert!(entry.contains("pub type Ten = Box<Ten__Fields>;"));
+        assert!(!entry.contains("Counts for Ten__Fields"));
     }
 
     #[test]

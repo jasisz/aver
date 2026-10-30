@@ -623,3 +623,24 @@ pub fn compare_map_keys(left: &ProviderValue, right: &ProviderValue) -> std::cmp
         (left, right) => shape_tag(left).cmp(&shape_tag(right)),
     }
 }
+
+/// A large record behind a counted pointer crosses the boundary as its fields.
+impl<T: ProviderCodec + crate::Counts + Clone> ProviderCodec for crate::Counted<T> {
+    fn into_provider_value(
+        self,
+        registry: &NativeProviderRegistry,
+        capability: &str,
+    ) -> Result<ProviderValue, String> {
+        crate::Counted::into_inner(self).into_provider_value(registry, capability)
+    }
+
+    fn from_provider_value(
+        value: ProviderValue,
+        registry: &NativeProviderRegistry,
+        capability: &str,
+        minted_resource: Option<&str>,
+    ) -> Result<Self, String> {
+        T::from_provider_value(value, registry, capability, minted_resource)
+            .map(crate::Counted::new)
+    }
+}

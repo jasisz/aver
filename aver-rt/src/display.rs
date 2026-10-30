@@ -161,6 +161,16 @@ impl<T: AverDisplay> AverDisplay for Box<T> {
     }
 }
 
+impl<T: AverDisplay + crate::Counts> AverDisplay for crate::Counted<T> {
+    fn aver_display(&self) -> String {
+        (**self).aver_display()
+    }
+
+    fn aver_display_inner(&self) -> String {
+        (**self).aver_display_inner()
+    }
+}
+
 impl<T: AverDisplay> AverDisplay for Vec<T> {
     fn aver_display(&self) -> String {
         let parts: Vec<String> = self.iter().map(|x| x.aver_display_inner()).collect();

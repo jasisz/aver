@@ -178,7 +178,7 @@ pub(super) fn type_is_thin(id: crate::ir::TypeId, ctx: &CodegenContext) -> bool 
 }
 
 /// How many bytes a record's fields may take inline before the record is
-/// kept behind a `Box` (see [`is_boxed_record`]). A record handed on and
+/// kept behind a pointer (see [`is_boxed_record`]). A record handed on and
 /// updated in a loop is faster boxed at any size (60% at 80 bytes, 69% at
 /// 272), but one built many times into a list costs an allocation each:
 /// 17-20% slower and a third more memory at 80 to 272 bytes. Records up to
@@ -188,12 +188,14 @@ pub(super) fn type_is_thin(id: crate::ir::TypeId, ctx: &CodegenContext) -> bool 
 /// state stayed inline.
 const BOXED_RECORD_BYTES: usize = 128;
 
-/// Whether a record is laid out as `pub type T = Box<T__Fields>`: a value
-/// is one pointer to its fields. State is handed from function to function
-/// in a record, so without the pointer every call and every return copies
-/// all of it, and the copy grows with the state. With it an update of the
-/// last use writes the field in place. A record on a cycle of a thin sum
-/// already sits behind that sum's pointer.
+/// Whether a record is kept behind a pointer to its fields, which sit in
+/// `T__Fields`: a value is one pointer. State is handed from function to
+/// function in a record, so without the pointer every call and every return
+/// copies all of it, and the copy grows with the state. With it an update of
+/// the last use writes the field in place. A record on a cycle of a thin sum
+/// already sits behind that sum's pointer. The pointer is a `Box`, or a
+/// counted one when the program may copy the record (see
+/// [`is_counted_record`]).
 pub(super) fn is_boxed_record(td: &TypeDef, ctx: &CodegenContext) -> bool {
     let TypeDef::Product { name, fields, .. } = td else {
         return false;
@@ -219,14 +221,48 @@ fn boxes(size: usize, td: &TypeDef, name: &str, ctx: &CodegenContext) -> bool {
     size > BOXED_RECORD_BYTES && !super::uses_packed_u8(ctx, name) && !on_cycle(td, ctx)
 }
 
+/// Whether a boxed record (see [`is_boxed_record`]) is kept behind a
+/// counted pointer, `pub type T = aver_rt::Counted<T__Fields>`, rather than
+/// a `Box`: the program may copy it (see `counted_records`). A copy is then
+/// one more owner instead of a copy of every field. An update turns the
+/// pointer into a `Box` once, copying the fields only when another owner
+/// shares them, writes through the `Box` and turns it back
+/// (`aver_rt::Counted::into_box`, `from_box`). A record the program never
+/// copies stays a `Box` and skips that check.
+pub(super) fn is_counted_record(td: &TypeDef, ctx: &CodegenContext) -> bool {
+    is_boxed_record(td, ctx)
+        && ctx
+            .rust_counted_records
+            .contains(&crate::codegen::common::backend_type_def_key(ctx, td))
+}
+
 /// What a record literal of the Rust type `name` opens and closes with:
-/// `Self { … }`, or `Box::new(T__Fields { … })` for a boxed record.
-pub(super) fn record_literal_ends(name: &str, boxed: bool) -> (String, &'static str) {
-    match boxed {
-        true => (format!("Box::new({name}__Fields {{"), "})"),
-        false => ("Self {".to_string(), "}"),
+/// `Self { … }`, `Box::new(T__Fields { … })` for a boxed record, or
+/// `aver_rt::Counted::new(T__Fields { __count: …, … })` for a counted one.
+pub(super) fn record_literal_ends(
+    name: &str,
+    boxed: bool,
+    counted: bool,
+) -> (String, &'static str) {
+    match (boxed, counted) {
+        (true, true) => (
+            format!(
+                "aver_rt::Counted::new({name}__Fields {{ {COUNT_FIELD}: aver_rt::Count::new(),"
+            ),
+            "})",
+        ),
+        (true, false) => (format!("Box::new({name}__Fields {{"), "})"),
+        (false, true) => (
+            format!("Self {{ {COUNT_FIELD}: aver_rt::Count::new(),"),
+            "}",
+        ),
+        (false, false) => ("Self {".to_string(), "}"),
     }
 }
+
+/// The field of `T__Fields` that holds the count of a counted record (see
+/// [`is_counted_record`]).
+pub(super) const COUNT_FIELD: &str = "__count";
 
 /// [`is_boxed_record`] for the type `id` (or `name` without one).
 pub(super) fn type_is_boxed_record(
@@ -236,6 +272,16 @@ pub(super) fn type_is_boxed_record(
     scope: Option<&str>,
 ) -> bool {
     named_type_def(id, name, ctx, scope).is_some_and(|td| is_boxed_record(td, ctx))
+}
+
+/// [`is_counted_record`] for the type `id` (or `name` without one).
+pub(super) fn type_is_counted_record(
+    id: Option<crate::ir::TypeId>,
+    name: &str,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> bool {
+    named_type_def(id, name, ctx, scope).is_some_and(|td| is_counted_record(td, ctx))
 }
 
 /// [`inline_size`] of a param or field of type `ty`, declared in `scope`.
@@ -675,7 +721,7 @@ fn orderable_type(
     }
 }
 
-fn named_type_def<'a>(
+pub(super) fn named_type_def<'a>(
     id: Option<crate::ir::TypeId>,
     name: &str,
     ctx: &'a CodegenContext,
