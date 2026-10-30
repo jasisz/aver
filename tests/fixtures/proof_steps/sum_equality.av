@@ -1,0 +1,103 @@
+module SumEquality
+    intent =
+        "`==` on a sum type whose `==` is equality: a test decided true lets one side stand for"
+        "the other, and two applications of one constructor are equal exactly when their fields are."
+    exposes [pick, sameLeft, sameBoth, sameSome, pickTree, pickReading, Shape, Tree, Reading]
+    effects []
+
+type Shape
+    Dot
+    Pair(Shape, Shape)
+
+fn pick(a: Shape, b: Shape) -> Shape
+    ? "a when both are the same shape, else b."
+    match a == b
+        true -> a
+        false -> b
+
+verify pick
+    pick(Shape.Dot, Shape.Dot) => Shape.Dot
+    pick(Shape.Dot, Shape.Pair(Shape.Dot, Shape.Dot)) => Shape.Pair(Shape.Dot, Shape.Dot)
+
+verify pick law alwaysSecond
+    given a: Shape = [Shape.Dot, Shape.Pair(Shape.Dot, Shape.Dot)]
+    given b: Shape = [Shape.Dot, Shape.Pair(Shape.Dot, Shape.Dot)]
+    pick(a, b) => b
+
+fn sameLeft(x: Shape, y: Shape) -> Bool
+    ? "Whether two pairs with a dot on the right are the same."
+    Shape.Pair(x, Shape.Dot) == Shape.Pair(y, Shape.Dot)
+
+verify sameLeft
+    sameLeft(Shape.Dot, Shape.Dot) => true
+    sameLeft(Shape.Dot, Shape.Pair(Shape.Dot, Shape.Dot)) => false
+
+verify sameLeft law readsLeft
+    given x: Shape = [Shape.Dot, Shape.Pair(Shape.Dot, Shape.Dot)]
+    given y: Shape = [Shape.Dot, Shape.Pair(Shape.Dot, Shape.Dot)]
+    sameLeft(x, y) => x == y
+
+fn sameBoth(a: Shape, b: Shape, c: Shape, d: Shape) -> Bool
+    ? "Whether two pairs are the same."
+    Shape.Pair(a, b) == Shape.Pair(c, d)
+
+verify sameBoth
+    sameBoth(Shape.Dot, Shape.Dot, Shape.Dot, Shape.Dot) => true
+    sameBoth(Shape.Dot, Shape.Dot, Shape.Pair(Shape.Dot, Shape.Dot), Shape.Dot) => false
+
+verify sameBoth law leftOfSame
+    given a: Shape = [Shape.Dot, Shape.Pair(Shape.Dot, Shape.Dot)]
+    given b: Shape = [Shape.Dot]
+    given c: Shape = [Shape.Dot, Shape.Pair(Shape.Dot, Shape.Dot)]
+    given d: Shape = [Shape.Dot]
+    when sameBoth(a, b, c, d)
+    a == c => true
+
+fn sameSome(x: Int, y: Int) -> Bool
+    ? "Whether two options of an Int hold the same one."
+    Option.Some(x) == Option.Some(y)
+
+verify sameSome
+    sameSome(1, 1) => true
+    sameSome(1, 2) => false
+
+verify sameSome law readsValue
+    given x: Int = [0, 1]
+    given y: Int = [0, 2]
+    sameSome(x, y) => x == y
+
+type Tree
+    Leaf
+    Node(List<Tree>)
+
+fn pickTree(a: Tree, b: Tree) -> Tree
+    ? "a when both are the same tree, else b. Tree holds itself in a list, so Lean's model has no lawful == for it."
+    match a == b
+        true -> a
+        false -> b
+
+verify pickTree
+    pickTree(Tree.Leaf, Tree.Leaf) => Tree.Leaf
+
+verify pickTree law alwaysSecond
+    given a: Tree = [Tree.Leaf, Tree.Node([])]
+    given b: Tree = [Tree.Leaf, Tree.Node([])]
+    pickTree(a, b) => b
+
+type Reading
+    Missing
+    Value(Float)
+
+fn pickReading(a: Reading, b: Reading) -> Reading
+    ? "a when both are the same reading, else b. 0.0 == -0.0 holds, so == on a Float is not equality and the law is false."
+    match a == b
+        true -> a
+        false -> b
+
+verify pickReading
+    pickReading(Reading.Missing, Reading.Missing) => Reading.Missing
+
+verify pickReading law alwaysSecond
+    given a: Reading = [Reading.Missing, Reading.Value(1.0)]
+    given b: Reading = [Reading.Missing, Reading.Value(1.0)]
+    pickReading(a, b) => b

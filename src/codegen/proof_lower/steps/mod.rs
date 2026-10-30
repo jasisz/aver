@@ -43,6 +43,7 @@
 mod accumulator;
 mod by_plan;
 mod chain;
+mod ctor_eq;
 mod decls;
 mod divisor;
 mod egraph;
