@@ -140,11 +140,7 @@ pub(super) fn emit_eq_intrinsic(
             func.instruction(&Instruction::GlobalSet(memo.steps));
         }
         // One node more for the scope to count.
-        (BuiltinIntrinsic::EqCount, [body]) if std::env::var("AVER_EQ_X").is_ok_and(|x| x.contains('A')) => {
-            if emit(func, body)?.is_none() {
-                return Ok(None);
-            }
-        }
+        // One node more for the scope to count.
         (BuiltinIntrinsic::EqCount, [body]) => {
             let memo = memo(ctx)?;
             func.instruction(&Instruction::GlobalGet(memo.steps));
@@ -155,8 +151,15 @@ pub(super) fn emit_eq_intrinsic(
                 return Ok(None);
             }
         }
-        // Within the budget the fields are compared, past it the pair is
-        // looked up first and remembered once found equal.
+        // Whether the scope is past its budget.
+        (BuiltinIntrinsic::EqPast, []) => {
+            let memo = memo(ctx)?;
+            func.instruction(&Instruction::GlobalGet(memo.steps));
+            func.instruction(&Instruction::I32Const(EQ_BUDGET));
+            func.instruction(&Instruction::I32GtU);
+        }
+        // A pair found among the remembered ones is equal; one found equal
+        // is remembered.
         (BuiltinIntrinsic::EqMemo, [a, b, tag, rest @ ..]) if !rest.is_empty() => {
             let memo = memo(ctx)?;
             let (body, keys) = rest.split_last().expect("checked non-empty");
@@ -166,36 +169,23 @@ pub(super) fn emit_eq_intrinsic(
                 }
                 emit_key(func, tag, keys, slots, ctx)
             };
-            let past_budget = |func: &mut Function| {
-                func.instruction(&Instruction::GlobalGet(memo.steps));
-                func.instruction(&Instruction::I32Const(EQ_BUDGET));
-                func.instruction(&Instruction::I32GtU);
-            };
             func.instruction(&Instruction::Block(BlockType::Result(ValType::I32)));
-            // Past the budget, a pair found among the remembered ones is equal.
-            past_budget(func);
-            func.instruction(&Instruction::If(BlockType::Empty));
             if pair(func)?.is_none() {
                 return Ok(None);
             }
             func.instruction(&Instruction::Call(memo.lookup));
             func.instruction(&Instruction::If(BlockType::Empty));
             func.instruction(&Instruction::I32Const(1));
-            func.instruction(&Instruction::Br(2));
-            func.instruction(&Instruction::End);
+            func.instruction(&Instruction::Br(1));
             func.instruction(&Instruction::End);
             if emit(func, body)?.is_none() {
                 return Ok(None);
             }
-            // Found equal past the budget: remembered.
             func.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
-            past_budget(func);
-            func.instruction(&Instruction::If(BlockType::Empty));
             if pair(func)?.is_none() {
                 return Ok(None);
             }
             func.instruction(&Instruction::Call(memo.insert));
-            func.instruction(&Instruction::End);
             func.instruction(&Instruction::I32Const(1));
             func.instruction(&Instruction::Else);
             func.instruction(&Instruction::I32Const(0));

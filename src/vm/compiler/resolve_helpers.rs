@@ -74,6 +74,7 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::EqSameRef
         | BuiltinIntrinsic::EqScope
         | BuiltinIntrinsic::EqCount
+        | BuiltinIntrinsic::EqPast
         | BuiltinIntrinsic::EqMemo => None,
     }
 }

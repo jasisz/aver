@@ -8405,6 +8405,7 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::EqSameRef
             | BuiltinIntrinsic::EqScope
             | BuiltinIntrinsic::EqCount
+            | BuiltinIntrinsic::EqPast
             | BuiltinIntrinsic::EqMemo => true,
             // Generic collector fabrications remain VM / Rust only.
             BuiltinIntrinsic::LstNew

@@ -686,6 +686,10 @@ pub enum BuiltinIntrinsic {
     /// comparison of one node of a recursive value: one more node for the
     /// scope under way to count (`EqScope`, `EqMemo`).
     EqCount,
+    /// `__eq_past()` — `Bool`, whether the scope under way has counted more
+    /// nodes than its budget (`EqCount`), so the next node is compared by
+    /// the step that remembers pairs (`EqMemo`).
+    EqPast,
     /// `__eq_memo(<a>, <b>, <tag>, <key fields>…, <body>)` — `Bool`, the
     /// answer of `body`, which compares the two nodes `a` and `b` field by
     /// field. Once a scope (`EqScope`) has counted more nodes (`EqCount`)
@@ -740,6 +744,7 @@ impl BuiltinIntrinsic {
             Self::EqSameRef => "__eq_same_ref",
             Self::EqScope => "__eq_scope",
             Self::EqCount => "__eq_count",
+            Self::EqPast => "__eq_past",
             Self::EqMemo => "__eq_memo",
         }
     }

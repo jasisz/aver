@@ -1319,6 +1319,7 @@ pub(crate) fn emit_mir_expr(
                         BuiltinIntrinsic::EqSameRef
                             | BuiltinIntrinsic::EqScope
                             | BuiltinIntrinsic::EqCount
+                            | BuiltinIntrinsic::EqPast
                             | BuiltinIntrinsic::EqMemo
                     ) {
                         return equality::emit_eq_intrinsic(func, intr, &call.args, slots, ctx);

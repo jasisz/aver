@@ -97,8 +97,12 @@ pub(crate) const EQ_BUDGET: i32 = 1024;
 pub(crate) struct EqFns {
     /// Where a comparison of a value of the type starts.
     pub(crate) entry: BTreeMap<String, FnId>,
-    /// For a type that reaches itself: every node after the first.
+    /// For a type that reaches itself: every node after the first, within
+    /// the budget.
     pub(crate) node: BTreeMap<String, FnId>,
+    /// For a type that reaches itself: every node once the budget is spent,
+    /// looked up among and remembered with the pairs found equal.
+    pub(crate) mem: BTreeMap<String, FnId>,
     /// `List.contains` over a list of the type, by the element type.
     pub(crate) contains: BTreeMap<String, FnId>,
     /// `==` on `List<T>`, by `List<T>`.
@@ -128,6 +132,7 @@ enum Role {
     Plain,
     Entry,
     Node,
+    Mem,
 }
 
 /// Canonical (whitespace-free) spelling of a type string.
@@ -228,8 +233,9 @@ impl Writer<'_> {
 
     /// The function a comparison in `role` calls for a value of `name`.
     fn callee(&self, name: &str, role: Role) -> FnId {
-        match (role, self.fns.node.get(name)) {
-            (Role::Entry | Role::Node, Some(node)) => *node,
+        match (role, self.fns.node.get(name), self.fns.mem.get(name)) {
+            (Role::Entry | Role::Node, Some(node), _) => *node,
+            (Role::Mem, _, Some(mem)) => *mem,
             _ => self.fns.entry[name],
         }
     }
@@ -287,6 +293,30 @@ impl Body {
             aliased_slots: std::sync::Arc::new(vec![false; n]),
         }
     }
+}
+
+/// One slot for each field `keep` marks, none (`_`) for the others.
+fn bind_fields(body: &mut Body, prefix: &str, tys: &[Type], keep: &[bool]) -> Vec<Option<u16>> {
+    tys.iter()
+        .zip(keep)
+        .map(|(t, k)| k.then(|| body.bind(prefix, t.clone())))
+        .collect()
+}
+
+/// The binder names of a constructor pattern, `_` for an unbound field.
+fn binder_names(body: &Body, slots: &[Option<u16>]) -> Vec<String> {
+    slots
+        .iter()
+        .map(|s| match s {
+            Some(s) => body.names[*s as usize].clone(),
+            None => "_".to_string(),
+        })
+        .collect()
+}
+
+/// The resolver slots of a constructor pattern, `u16::MAX` for `_`.
+fn bound_slots(slots: &[Option<u16>]) -> Vec<u16> {
+    slots.iter().map(|s| s.unwrap_or(u16::MAX)).collect()
 }
 
 fn typed(node: ResolvedExpr, ty: Type) -> Spanned<ResolvedExpr> {
@@ -468,11 +498,28 @@ impl Writer<'_> {
         if role == Role::Plain {
             return rest;
         }
-        // Every node after the first counts once, as one step of the scope.
-        let rest = if role == Role::Node {
-            intrinsic(BuiltinIntrinsic::EqCount, vec![rest])
-        } else {
-            rest
+        // Within the budget, every node after the first counts once, as one
+        // step of the scope; past it, the node goes on to the step that
+        // remembers pairs, as do all the nodes after it.
+        let rest = match (role, self.fns.mem.get(name)) {
+            (Role::Node, Some(mem)) => {
+                let onward = typed(
+                    ResolvedExpr::TailCall {
+                        target: *mem,
+                        args: Shared::new(vec![body.local(0), body.local(1)]),
+                    },
+                    Type::Bool,
+                );
+                intrinsic(
+                    BuiltinIntrinsic::EqCount,
+                    vec![choose(
+                        intrinsic(BuiltinIntrinsic::EqPast, vec![]),
+                        onward,
+                        rest,
+                    )],
+                )
+            }
+            _ => rest,
         };
         if !self.eq.reflexive_type(name, self.registry) {
             return rest;
@@ -520,7 +567,7 @@ impl Writer<'_> {
         }
         let tys: Vec<String> = fields.iter().map(|(_, t)| t.clone()).collect();
         let mut rest = self.fields(compared, role);
-        if role == Role::Node && self.holds_walk(&tys) {
+        if role == Role::Mem && self.holds_walk(&tys) {
             let tag = self.registry.record_type_idx(name)?;
             rest = self.remembered((body.local(0), body.local(1)), tag, keys, rest);
         }
@@ -565,46 +612,99 @@ impl Writer<'_> {
                 .iter()
                 .map(|t| self.ty(t))
                 .collect::<Option<_>>()?;
-            let xs: Vec<u16> = tys.iter().map(|t| body.bind("x", t.clone())).collect();
-            let ys: Vec<u16> = tys.iter().map(|t| body.bind("y", t.clone())).collect();
-            let compared = info
-                .fields
-                .iter()
-                .enumerate()
-                .map(|(i, ty)| Field {
-                    left: body.local(xs[i]),
-                    right: body.local(ys[i]),
-                    ty: ty.clone(),
-                })
-                .collect();
-            let mut same = self.fields(compared, role);
-            if role == Role::Node && self.holds_walk(&info.fields) {
+            let order = super::equality_order::field_order(
+                &info.fields.iter().map(String::as_str).collect::<Vec<_>>(),
+                self.registry,
+            );
+            // Where a comparison starts, a value usually differs from the
+            // other already in its first field: when that field is a scalar,
+            // the node's other fields are read only once it is equal.
+            let first = order.first().copied();
+            let staged = first.filter(|&f| {
+                matches!(role, Role::Plain | Role::Entry)
+                    && info.fields.len() > 1
+                    && self.is_key(&info.fields[f])
+            });
+            let all: Vec<bool> = vec![true; tys.len()];
+            let (keep_now, keep_later): (Vec<bool>, Vec<bool>) = match staged {
+                Some(f) => (
+                    (0..tys.len()).map(|i| i == f).collect(),
+                    (0..tys.len()).map(|i| i != f).collect(),
+                ),
+                None => (all.clone(), Vec::new()),
+            };
+            let xs = bind_fields(body, "x", &tys, &keep_now);
+            let ys = bind_fields(body, "y", &tys, &keep_now);
+            let compare_kept = |body: &Body, xs: &[Option<u16>], ys: &[Option<u16>]| {
+                info.fields
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, ty)| {
+                        Some(Field {
+                            left: body.local(xs[i]?),
+                            right: body.local(ys[i]?),
+                            ty: ty.clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let mut same = match staged {
+                Some(f) => {
+                    let xs2 = bind_fields(body, "x", &tys, &keep_later);
+                    let ys2 = bind_fields(body, "y", &tys, &keep_later);
+                    let later = self.fields(compare_kept(body, &xs2, &ys2), role);
+                    let inner = vec![
+                        arm(
+                            ResolvedPattern::Ctor(user.clone(), binder_names(body, &ys2)),
+                            bound_slots(&ys2),
+                            later,
+                        ),
+                        arm(ResolvedPattern::Wildcard, vec![], boolean(false)),
+                    ];
+                    let again = matching(
+                        body.local(0),
+                        vec![
+                            arm(
+                                ResolvedPattern::Ctor(user.clone(), binder_names(body, &xs2)),
+                                bound_slots(&xs2),
+                                matching(body.local(1), inner),
+                            ),
+                            arm(ResolvedPattern::Wildcard, vec![], boolean(false)),
+                        ],
+                    );
+                    let head = self.compare(
+                        Field {
+                            left: body.local(xs[f].expect("kept")),
+                            right: body.local(ys[f].expect("kept")),
+                            ty: info.fields[f].clone(),
+                        },
+                        role,
+                    );
+                    and_then(head, again)
+                }
+                None => self.fields(compare_kept(body, &xs, &ys), role),
+            };
+            if role == Role::Mem && self.holds_walk(&info.fields) {
                 let keys = info
                     .fields
                     .iter()
                     .enumerate()
                     .filter(|(_, ty)| self.is_key(ty))
-                    .map(|(i, _)| body.local(xs[i]))
+                    .filter_map(|(i, _)| xs[i].map(|x| body.local(x)))
                     .collect();
                 same = self.remembered((body.local(0), body.local(1)), info.type_idx, keys, same);
             }
-            let names = |slots: &[u16]| -> Vec<String> {
-                slots
-                    .iter()
-                    .map(|s| body.names[*s as usize].clone())
-                    .collect()
-            };
             let mut inner = vec![arm(
-                ResolvedPattern::Ctor(user.clone(), names(&ys)),
-                ys.clone(),
+                ResolvedPattern::Ctor(user.clone(), binder_names(body, &ys)),
+                bound_slots(&ys),
                 same,
             )];
             if many {
                 inner.push(arm(ResolvedPattern::Wildcard, vec![], boolean(false)));
             }
             outer.push(arm(
-                ResolvedPattern::Ctor(user, names(&xs)),
-                xs.clone(),
+                ResolvedPattern::Ctor(user, binder_names(body, &xs)),
+                bound_slots(&xs),
                 matching(body.local(1), inner),
             ));
         }
@@ -865,6 +965,10 @@ pub(super) fn synthesize(
                 name.clone(),
                 symbols.register_synthetic_fn(&format!("__eqnode_{name}")),
             );
+            fns.mem.insert(
+                name.clone(),
+                symbols.register_synthetic_fn(&format!("__eqmem_{name}")),
+            );
         }
     }
     for elem in &contains {
@@ -940,6 +1044,10 @@ pub(super) fn synthesize(
         if let Some(node) = writer.fns.node.get(name) {
             let (body, expr) = writer.eq_body(name, *kind, Role::Node)?;
             push(*node, format!("__eqnode_{name}"), body, expr);
+        }
+        if let Some(mem) = writer.fns.mem.get(name) {
+            let (body, expr) = writer.eq_body(name, *kind, Role::Mem)?;
+            push(*mem, format!("__eqmem_{name}"), body, expr);
         }
     }
     for elem in &contains {

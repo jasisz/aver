@@ -9381,6 +9381,7 @@ fn emit_mir_intrinsic_call(
         BuiltinIntrinsic::EqSameRef
         | BuiltinIntrinsic::EqScope
         | BuiltinIntrinsic::EqCount
+        | BuiltinIntrinsic::EqPast
         | BuiltinIntrinsic::EqMemo => None,
     }
 }
