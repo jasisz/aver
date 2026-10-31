@@ -1103,11 +1103,16 @@ mod produce_tests {
 
     /// The two certprobe2 plans, exactly as the compiler prints them.
     fn certprobe2_plans(sum_to: FnPlan) -> ModulePlans {
-        let count_down = rec(
-            2,
-            l(1),
-            PlanExpr::TailCall(2, vec![desc(), bin(PlanBinOp::Add, l(1), l(0))]),
-        );
+        // It tail-calls itself, and the compiler marks its self tail calls
+        // as a loop.
+        let count_down = FnPlan {
+            self_loop: true,
+            ..rec(
+                2,
+                l(1),
+                PlanExpr::TailCall(2, vec![desc(), bin(PlanBinOp::Add, l(1), l(0))]),
+            )
+        };
         ModulePlans {
             fns: vec![
                 PlannedFn {
