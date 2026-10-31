@@ -13,7 +13,8 @@
 
    Representation: Int is a canonical carrier word (`CanonRepr`, as in the
    existing wall), Bool is `i32` 0/1, a record is the struct of its type (a
-   one-field newtype record its field's value) and a variant the struct of
+   one-field newtype record its field's value, a word record the `i64` of its
+   Int, in the band) and a variant the struct of
    its constructor, both with pointwise represented fields; an Option /
    Result is the struct of its instantiation with the tag in field 0; a
    Float is its `f64` bits, a String the `$string` array of its bytes, a
@@ -399,7 +400,8 @@ theorem escFree_intCmpTail (k : Nat) (M : MCtx) (op : BinOp) :
   cases op <;> rfl
 
 theorem escFree_dfltB (k : Nat) (M : MCtx) (t : Ty) : escFreeL k (eraseL (dfltB M t)) = true := by
-  cases t <;> rfl
+  cases t <;> try rfl
+  simp only [dfltB]; split <;> rfl
 
 theorem escFree_bindFieldB (k ss idx i b : Nat) :
     escFreeL k (eraseL (bindFieldB ss idx i b)) = true := by
@@ -471,7 +473,7 @@ mutual
     | Γ, _, .recordCreate tid fs, k => by
         simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ fs]
     | Γ, _, .project tid i base, k => by
-        simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ base]
+        simp only [lowerB]; split <;> esc_simp [escFree_lowerB M X _ _ base]
     | Γ, _, .call (.lazy lb) [o, d], k => by
         simp only [lowerB]
         (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ o, escFree_lowerB M X _ _ d]
@@ -1101,6 +1103,24 @@ theorem srepr_record {C : Nat} {S : CarrierSpec C} {M : MCtx} {tid : Nat} {fts :
     SRepr S M (.record tid fs) w ↔ ∃ ws, w = .structv (M.structOf tid) ws ∧ SReprL S M fs ws := by
   simp [SRepr, newtype_false hR h2]
 
+theorem isWord_fields {M : MCtx} {tid : Nat} (h : M.isWord tid = true) :
+    M.recFields tid = some [.int] := by
+  simp only [MCtx.isWord, Bool.and_eq_true, decide_eq_true_eq] at h
+  exact h.2
+
+theorem isWord_false {M : MCtx} {tid : Nat} {fts : List Ty} (hR : M.recFields tid = some fts)
+    (h2 : 2 ≤ fts.length) : M.isWord tid = false := by
+  match fts, h2 with
+  | _ :: _ :: _, _ => simp [MCtx.isWord, hR]
+
+/-- A word record is the `i64` of its Int, in the i64 band. -/
+theorem srepr_word {C : Nat} {S : CarrierSpec C} {M : MCtx} {tid : Nat}
+    (h : M.isWord tid = true) (fs : List SVal) (w : WVal) :
+    SRepr S M (.record tid fs) w ↔
+      ∃ n, fs = [.i n] ∧ w = .i64v n ∧ -(2 ^ 63 : Int) ≤ n ∧ n < 2 ^ 63 := by
+  have hn : M.newtype tid = true := by simp [MCtx.newtype, isWord_fields h]
+  simp [SRepr, hn, h]
+
 theorem wByteListEq_map : ∀ (x y : List Nat),
     wByteListEq (x.map fun (b : Nat) => .i32v (b : Int)) (y.map fun (b : Nat) => .i32v (b : Int)) =
       (x == y)
@@ -1426,6 +1446,7 @@ theorem res_any_tail {tail : Bool} {env : Nat → Option SVal} {st : List WVal} 
 theorem dflt_run (t : Ty) (ht : t.hasDefault = true) (wl st : List WVal) :
     ∃ d, wRunF host ar callee (eraseL (dfltB M t)) wl st = some (.ok wl (d :: st)) := by
   cases t <;> simp_all [Ty.hasDefault, dfltB, eraseL, eraseI, wRunF, popArgs_three]
+  split <;> simp [eraseL, eraseI, wRunF]
 
 /-- The Option / Result tag test on the struct in the subject scratch. -/
 theorem tagTest_run (ss idx : Nat) (tag : Int) (fs : List WVal) (wl st : List WVal)
@@ -1670,7 +1691,8 @@ theorem tyOf_rec_inv {tid : Nat} {fs : List Expr} {T : Ty}
 theorem tyOf_proj_inv {tid i : Nat} {base : Expr} {T : Ty}
     (h : tyOf M n Γ tail (.project tid i base) = some T) :
     tyOf M n Γ false base = some (.record tid) ∧
-      ∃ fts, M.recFields tid = some fts ∧ 2 ≤ fts.length ∧ fts[i]? = some T := by
+      ∃ fts, M.recFields tid = some fts ∧ (2 ≤ fts.length ∨ M.isWord tid = true) ∧
+        fts[i]? = some T := by
   simp only [tyOf] at h
   split at h
   · rename_i tid' fts hb hR
@@ -3363,7 +3385,8 @@ variable {C : Nat} {S : CarrierSpec C} {M : MCtx} {X : LCtx}
     carrier of its `Int`. -/
 theorem leaf_value (F : Nat → List SVal → Option SVal) {Γ : Nat → Option Ty}
     {env : Nat → Option SVal} {wl : List WVal} (henv : EnvTy M env Γ) (hl : LRel S M X env wl)
-    (e : Expr) (he : treeLeaf e = true) (ht : tyOf M X.n Γ false e = some .int) :
+    (e : Expr) (he : treeLeaf e = true) (hnw : wordLeaf M e = false)
+    (ht : tyOf M X.n Γ false e = some .int) :
     ∃ x w, eval F env e = some (.i x) ∧ CanonRepr S x w ∧ leafBase e < X.n ∧
       (∀ i, slot? e = some i → wl[i]? = some w) ∧
       ∀ L st, L[leafBase e]? = wl[leafBase e]? →
@@ -3380,6 +3403,7 @@ theorem leaf_value (F : Nat → List SVal → Option SVal) {Γ : Nat → Option 
       simp [lowerW, lowerB, eraseL, eraseI, wRunF, hL, hw]
   | .project tid j (.local i), _ =>
       obtain ⟨htb, fts, hR, h2, hj⟩ := tyOf_proj_inv ht
+      replace h2 : 2 ≤ fts.length := h2.resolve_right (by simpa [wordLeaf] using hnw)
       simp only [tyOf] at htb
       obtain ⟨v, hv, hTv⟩ := envTy_get henv htb
       obtain ⟨fs, fts', rfl, hR', hfs⟩ := hasTy_record hTv
@@ -3393,7 +3417,7 @@ theorem leaf_value (F : Nat → List SVal → Option SVal) {Γ : Nat → Option 
       refine ⟨x, w, by simp [eval, hv, hsv], hwx, hi, fun k hk => by simp [slot?] at hk,
         fun L st hL => ?_⟩
       simp only [leafBase] at hL
-      simp [lowerW, lowerB, eraseL, eraseI, wRunF, hL, hwr, hw]
+      simp [lowerW, lowerB, isWord_false hR h2, eraseL, eraseI, wRunF, hL, hwr, hw]
 
 /-- Evaluating a leaf ahead stores its carrier in its tree local. -/
 theorem aheadB_run (e : Expr) (p : Nat) (code : List BI) (rest : List WInstr) (w : WVal)
@@ -3486,6 +3510,7 @@ theorem tree_step (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Op
     (F : Nat → List SVal → Option SVal) {Γ : Nat → Option Ty} {env : Nat → Option SVal}
     {wl st : List WVal} {out : Out} (op : BinOp) (l r : Expr) (hA : op.isArith = true)
     (htree : isTree op l r = true) (hnt : X.n ≤ X.tree)
+    (hnwl : wordLeaf M l = false) (hnwr : wordLeaf M r = false)
     (htl : tyOf M X.n Γ false l = some .int) (htr : tyOf M X.n Γ false r = some .int)
     (henv : EnvTy M env Γ) (hl : LRel S M X env wl)
     (hrun : wRunF host ar callee (eraseL (aheadB X l 0 (lowerB M X Γ false l) ++
@@ -3495,8 +3520,8 @@ theorem tree_step (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Op
       Res S M X false env st sv out := by
   simp only [isTree, Bool.and_eq_true] at htree
   obtain ⟨⟨⟨_, hlt⟩, hrt⟩, _⟩ := htree
-  obtain ⟨x, wx, hevx, hcx, hbx, hsx, hrx⟩ := leaf_value host ar callee F henv hl l hlt htl
-  obtain ⟨y, wy, hevy, hcy, hby, hsy, hry⟩ := leaf_value host ar callee F henv hl r hrt htr
+  obtain ⟨x, wx, hevx, hcx, hbx, hsx, hrx⟩ := leaf_value host ar callee F henv hl l hlt hnwl htl
+  obtain ⟨y, wy, hevy, hcy, hby, hsy, hry⟩ := leaf_value host ar callee F henv hl r hrt hnwr htr
   rw [eraseL_append, aheadB_run host ar callee l 0 _ _ wx wl st
     (fun _ => hrx wl st rfl)] at hrun
   generalize hL1 : (if aheadLeaf l then wl.set (X.tree + 0) wx else wl) = L1 at hrun
@@ -4012,12 +4037,15 @@ theorem agreement_step :
         · -- arithmetic
           simp only [hA, ↓reduceIte] at hT hrun
           subst hT
-          by_cases htree : (isTree op l r && decide (X.n ≤ X.tree)) = true
+          by_cases htree :
+              (isTree op l r && decide (X.n ≤ X.tree) && !(wordLeaf M l || wordLeaf M r)) = true
           · -- the `Int` tree on the machine word
             simp only [htree, ↓reduceIte, List.append_assoc] at hrun
+            simp only [Bool.and_eq_true, Bool.not_eq_true', Bool.or_eq_false_iff,
+              decide_eq_true_eq] at htree
+            obtain ⟨⟨hit, hnt⟩, hnwl, hnwr⟩ := htree
             obtain ⟨sv, hev, hTs, hres⟩ := tree_step host ar callee S box add sub mul cmp eq Ctr
-              hCarrier hBox hAdd hSub hMul F op l r hA (Bool.and_eq_true .. |>.mp htree).1
-              (of_decide_eq_true (Bool.and_eq_true .. |>.mp htree).2) htl htr henv hl hrun
+              hCarrier hBox hAdd hSub hMul F op l r hA hit hnt hnwl hnwr htl htr henv hl hrun
             exact Or.inl ⟨sv, hev, hTs, res_any_tail hres⟩
           simp only [htree, Bool.false_eq_true, ↓reduceIte] at hrun
           simp only [eraseL_append, eraseL, eraseI, List.append_assoc] at hrun
@@ -4204,7 +4232,34 @@ theorem agreement_step :
       · exact (srepr_record hR h2 _ _).mpr ⟨ws, rfl, hrep⟩
   | .project tid i base, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨htb, fts, hR, h2, hi⟩ := tyOf_proj_inv hty
-      simp only [lowerW, lowerB, eraseL_append] at hrun
+      by_cases hwd : M.isWord tid = true
+      · -- a word record: its `i64`, boxed
+        rw [isWord_fields hwd] at hR
+        cases hR
+        obtain ⟨rfl, rfl⟩ : i = 0 ∧ T = .int := by
+          rcases i with _ | i
+          · simp at hi; exact ⟨rfl, hi.symm⟩
+          · simp at hi
+        simp only [lowerW, lowerB, hwd, ↓reduceIte, eraseL_append] at hrun
+        obtain ⟨o1, h1, hseq⟩ := run_split hrun
+        rcases agreement base Γ env false (.record tid) wl st o1 htb henv hl h1 with
+          ⟨sv1, hev1, hT1, hres1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
+        obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
+        obtain ⟨fs, fts', rfl, _, _⟩ := hasTy_record hT1
+        obtain ⟨x, rfl, rfl, hlo, hhi⟩ := (srepr_word hwd _ _).mp hw1
+        simp only [seqOut, eraseL, eraseI] at hseq
+        cases hq : box [.i64v x] with
+        | none => simp [wRunF, hBox, popArgs_one, hq] at hseq
+        | some r =>
+            simp [wRunF, hBox, popArgs_one, hq] at hseq
+            subst hseq
+            exact Or.inl ⟨.i x, by simp [eval, hev1], by simp [HasTy],
+              res_ok (by simp only [SRepr]; exact Ctr.hBox x r hlo hhi hq) hl1⟩
+      replace h2 : 2 ≤ fts.length := h2.resolve_right hwd
+      simp only [lowerW, lowerB, hwd, Bool.false_eq_true, ↓reduceIte, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
       rcases agreement base Γ env false (.record tid) wl st o1 htb henv hl h1 with
         ⟨sv1, hev1, hT1, hres1⟩ | hE

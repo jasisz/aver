@@ -98,6 +98,16 @@ impl<'a> MCtx<'a> {
         self.record(tid).map(|r| r.fields.as_slice())
     }
 
+    /// `GrammarLower.wordLeaf`: a field read of a word record.
+    fn word_leaf(&self, e: &PlanExpr) -> bool {
+        matches!(e, PlanExpr::Project(tid, _, _) if self.is_word(*tid))
+    }
+
+    /// `MCtx.isWord`: a declared word record, whose fields are `[Int]`.
+    fn is_word(&self, tid: u32) -> bool {
+        self.tt.words.contains(&tid) && self.rec_fields(tid) == Some(&[PlanTy::Int][..])
+    }
+
     fn struct_of(&self, tid: u32) -> u64 {
         idx_or(8, self.record(tid).map(|r| r.struct_idx))
     }
@@ -519,7 +529,9 @@ impl MCtx<'_> {
             }
             PlanExpr::Project(tid, i, base) => {
                 match (self.ty_of(n, g, false, base)?, self.rec_fields(*tid)) {
-                    (PlanTy::Record(t2), Some(fts)) if t2 == *tid && fts.len() >= 2 => {
+                    (PlanTy::Record(t2), Some(fts))
+                        if t2 == *tid && (fts.len() >= 2 || self.is_word(*tid)) =>
+                    {
                         fts.get(*i as usize).cloned()
                     }
                     _ => None,
@@ -1179,6 +1191,7 @@ impl MCtx<'_> {
                 BI::Op(WI::StructNew(self.carrier)),
             ],
             PlanTy::Bool => vec![BI::Op(WI::I32Const(0))],
+            PlanTy::Record(tid) if self.is_word(*tid) => vec![BI::Op(WI::I64Const(0))],
             PlanTy::Record(tid) => vec![BI::NullOf(self.struct_of(*tid))],
             PlanTy::Sum(tid) => vec![BI::NullOf(self.sum_root(*tid))],
             PlanTy::Option(x) => vec![BI::NullOf(self.opt_struct(x))],
@@ -1326,7 +1339,10 @@ impl MCtx<'_> {
                         out
                     }
                     _ => {
-                        if is_tree(*op, l, r) && x.n <= x.tree {
+                        if is_tree(*op, l, r)
+                            && x.n <= x.tree
+                            && !(self.word_leaf(l) || self.word_leaf(r))
+                        {
                             let mut out = Vec::new();
                             for (e, p) in [(&**l, 0), (&**r, 1)] {
                                 if ahead_leaf(e) {
@@ -1414,7 +1430,11 @@ impl MCtx<'_> {
             }
             PlanExpr::Project(tid, i, base) => {
                 let mut out = self.lower(x, g, false, base);
-                out.push(BI::Op(WI::StructGet(self.struct_of(*tid), *i)));
+                if self.is_word(*tid) {
+                    out.push(BI::Op(WI::Call(self.box_)));
+                } else {
+                    out.push(BI::Op(WI::StructGet(self.struct_of(*tid), *i)));
+                }
                 out
             }
             PlanExpr::Call(PlanCallee::Lazy(lb), args) => {
@@ -1883,6 +1903,10 @@ impl MCtx<'_> {
                 out.push(0x7f);
                 Some(())
             }
+            PlanTy::Record(tid) if self.is_word(*tid) => {
+                out.push(0x7e);
+                Some(())
+            }
             PlanTy::Record(tid) => heap(self.struct_of(*tid), out),
             PlanTy::Sum(tid) => heap(self.sum_root(*tid), out),
             PlanTy::Option(x) => heap(self.opt_struct(x), out),
@@ -2157,6 +2181,7 @@ impl MCtx<'_> {
             PlanTy::Float => Some(ValT::F64),
             PlanTy::Eqref => Some(ValT::Eqref),
             PlanTy::Word => Some(ValT::I64),
+            PlanTy::Record(tid) if self.is_word(*tid) => Some(ValT::I64),
             PlanTy::Record(tid) => r(self.struct_of(*tid)),
             PlanTy::Sum(tid) => r(self.sum_root(*tid)),
             PlanTy::Option(x) => r(self.opt_struct(x)),

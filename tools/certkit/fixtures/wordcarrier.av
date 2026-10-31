@@ -1,0 +1,70 @@
+module WordCarrier
+    intent =
+        "A word record: a one-field Int record behind an opaque type whose"
+        "only constructor keeps the value below 2^62, so the wasm-gc emitter"
+        "holds it as a machine word. The functions that pass words along,"
+        "pick between them, take them out of a sum and read their value are"
+        "certified; the smart constructor is not, because building a word"
+        "narrows a boxed Int."
+    exposes [Node, wordOf, valueOf, pick, labelOf, labelValue, relabel]
+    exposes opaque [Word]
+
+record Word
+    value: Int
+
+type Node
+    Leaf(Word)
+    Pair(Word, Node, Node)
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "A word from an Int in range."
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+fn wordOf(n: Int) -> Word
+    ? "A word, or the zero word when out of range."
+    match fromInt(n)
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 0)
+
+fn valueOf(w: Word) -> Int
+    ? "The Int of a word."
+    w.value
+
+fn pick(a: Word, b: Word, first: Bool) -> Word
+    ? "One of two words."
+    match first
+        true -> a
+        false -> b
+
+fn labelOf(n: Node) -> Word
+    ? "The word a node carries."
+    match n
+        Node.Leaf(w) -> w
+        Node.Pair(w, _, _) -> w
+
+fn labelValue(n: Node) -> Int
+    ? "The Int of the word a node carries."
+    labelOf(n).value
+
+fn relabel(n: Node, w: Word) -> Node
+    ? "The node with its word replaced."
+    match n
+        Node.Leaf(_) -> Node.Leaf(w)
+        Node.Pair(_, l, r) -> Node.Pair(w, l, r)
+
+verify valueOf
+    valueOf(wordOf(7)) => 7
+    valueOf(wordOf(-1)) => 0
+
+verify pick
+    valueOf(pick(wordOf(1), wordOf(2), true)) => 1
+    valueOf(pick(wordOf(1), wordOf(2), false)) => 2
+
+verify labelValue
+    labelValue(Node.Leaf(wordOf(5))) => 5
+    labelValue(Node.Pair(wordOf(3), Node.Leaf(wordOf(1)), Node.Leaf(wordOf(2)))) => 3
+
+verify relabel
+    labelValue(relabel(Node.Leaf(wordOf(5)), wordOf(9))) => 9

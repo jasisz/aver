@@ -3029,5 +3029,16 @@
    "boxInt": "L1"
   },
   "laws": []
+ },
+ "tools/certkit/fixtures/wordcarrier.av": {
+  "bridges": [],
+  "certified": {
+   "labelOf": "L1",
+   "labelValue": "L1",
+   "pick": "L1",
+   "relabel": "L1",
+   "valueOf": "L1"
+  },
+  "laws": []
  }
 }

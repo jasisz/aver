@@ -479,6 +479,12 @@ impl Cited {
             bytes_helpers: tt.bytes_helpers.clone(),
             int_chk: tt.int_chk,
             str_from_int: tt.str_from_int,
+            words: tt
+                .words
+                .iter()
+                .filter(|t| has(PlanTy::Record(**t)))
+                .copied()
+                .collect(),
         }
     }
 }

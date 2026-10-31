@@ -443,3 +443,62 @@ fn a_certified_build_keeps_the_self_tail_loop() {
     }
     assert_eq!((loops, self_calls), (1, 0), "countDown is one loop");
 }
+
+/// A word record (a one-field `Int` carrier the emitter holds as an `i64`)
+/// is certified where it is passed, picked, matched out of a constructor,
+/// stored in one and read; building one is declined. The `--certify` build
+/// keeps the carrier on the machine word: `valueOf(w: Word)` takes an `i64`.
+#[test]
+fn a_certified_build_certifies_word_records_on_the_machine_word() {
+    use wasmparser::{CompositeInnerType, Parser, Payload, TypeRef, ValType};
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let entry = Entry {
+        file: "tools/certkit/fixtures/wordcarrier.av".into(),
+        module_root: None,
+    };
+    let (certified, names) = compile(&repo_root, &entry, &["--certify"], true).unwrap();
+    for name in ["valueOf", "pick", "labelOf", "labelValue", "relabel"] {
+        assert!(names.iter().any(|n| n == name), "{name} not in {names:?}");
+    }
+    for name in ["fromInt", "wordOf"] {
+        assert!(!names.iter().any(|n| n == name), "{name} in {names:?}");
+    }
+    let mut types = Vec::new();
+    let mut fn_types = Vec::new();
+    let mut imported = 0;
+    let mut value_of = None;
+    for payload in Parser::new(0).parse_all(&certified) {
+        match payload.unwrap() {
+            Payload::TypeSection(reader) => {
+                for group in reader {
+                    types.extend(group.unwrap().into_types());
+                }
+            }
+            Payload::ImportSection(imports) => {
+                for import in imports.into_imports() {
+                    if matches!(import.unwrap().ty, TypeRef::Func(_)) {
+                        imported += 1;
+                    }
+                }
+            }
+            Payload::FunctionSection(reader) => {
+                fn_types.extend(reader.into_iter().map(|t| t.unwrap()));
+            }
+            Payload::ExportSection(exports) => {
+                for export in exports {
+                    let export = export.unwrap();
+                    if export.name == "valueOf" {
+                        value_of = Some(export.index);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let index = value_of.expect("valueOf is exported");
+    let ty = fn_types[(index - imported) as usize] as usize;
+    let CompositeInnerType::Func(sig) = &types[ty].composite_type.inner else {
+        panic!("valueOf has a function type");
+    };
+    assert_eq!(sig.params(), &[ValType::I64], "the word is an i64");
+}

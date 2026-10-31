@@ -102,8 +102,15 @@ impl PlanLayout for CertLayout<'_> {
 
     fn special(&self, name: &str) -> bool {
         let registry = self.registry;
+        // An eligible carrier that is a one-field record is a word record
+        // (`record`); any other eligible carrier keeps its own layout.
+        let word_record = registry.is_eligible_carrier(name)
+            && registry
+                .record_fields
+                .get(registry.canonical_type_name(name))
+                .is_some_and(|fs| fs.len() == 1);
         registry.packed_sequence(name).is_some()
-            || registry.is_eligible_carrier(name)
+            || (registry.is_eligible_carrier(name) && !word_record)
             || registry.is_capability_resource(name)
             || (self.sum_entry(name).is_some() && registry.newtype_underlying(name).is_some())
     }
@@ -161,10 +168,14 @@ impl PlanLayout for CertLayout<'_> {
         } else {
             Some(registry.record_type_idx(canonical)?)
         };
+        let word = registry.is_eligible_carrier(canonical)
+            && struct_idx.is_none()
+            && matches!(fields.as_slice(), [(_, t)] if t.trim() == "Int");
         Some(RecordLayout {
             key: key.clone(),
             struct_idx,
             fields: fields.clone(),
+            word,
         })
     }
 

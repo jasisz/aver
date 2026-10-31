@@ -96,6 +96,7 @@ const S1_FIXTURES: &[&str] = &[
     "verbatimgen",
     "verbatimwiden",
     "widenedmatch",
+    "wordcarrier",
 ];
 
 /// The 42 measured user-code opcode mnemonics (mirrors `decode_ref.py`).

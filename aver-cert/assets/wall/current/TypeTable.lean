@@ -17,8 +17,11 @@
      `{T, ref null self}`, `Vector<T>` arrays, `$string` = `(array (mut i8))`
      and `Vector<String>` = `(array (ref null $string))`;
    * a one-field (newtype) record is represented by its field's value, whose
-     declared heap type must be the record's declared index (a raw-`i64`
-     newtype has no heap type and is declined);
+     declared heap type must be the record's declared index; a word record
+     (`TypeTable.words`, a one-field `Int` record the emitter erases to the
+     `i64` of its value) declares the carrier like any `Int` newtype, and its
+     values and locals are `i64` (`valTyD`), confirmed by the code-entry
+     byte equality of every plan that holds one;
    * every sum passes `Grammar.sumOk` (distinct constructor structs) and the
      S-3 pin `GrammarLower.S3Pin` over the raw bytes of the opening rec group;
    * no struct index serves two declarations;
@@ -110,7 +113,8 @@ def mctxOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) : MCtx :=
     bytesArr := idxOr 25 tt.bytesArr
     bytesHelpers := tt.bytesHelpers
     toI64Chk := idxOr 26 tt.intChk
-    fromInt := idxOr 27 tt.strFromInt }
+    fromInt := idxOr 27 tt.strFromInt
+    words := tt.words }
 
 /-! ## The opening rec group, raw and decoded
 
@@ -163,7 +167,7 @@ def valTyD (M : MCtx) (t : Ty) : Option CertDecode.ValType :=
   | .bool => some (.numeric 0x7f)
   | .float => some (.numeric 0x7c)
   | .eqref => some (.abstract 0x6d)
-  | .record tid => ref (M.structOf tid)
+  | .record tid => if M.isWord tid then some (.numeric 0x7e) else ref (M.structOf tid)
   | .sum tid => ref (M.sumRoot tid)
   | .option t => ref (M.optStruct t)
   | .result t e => ref (M.resStruct t e)
