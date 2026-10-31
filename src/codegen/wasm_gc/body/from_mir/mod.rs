@@ -415,40 +415,19 @@ pub(crate) fn emit_fn_body_via_mir(
     }
     let slots = slots;
     let return_type_str = rfd.return_type.display();
-
-    let ctx = EmitCtx {
+    let ctx = fn_ctx(
+        rfd,
+        mir_fn,
+        mir_program,
         fn_map,
         self_wasm_idx,
-        self_fn_name: rfd.name.as_str(),
-        return_type: &return_type_str,
         registry,
         symbol_table,
-        resolution: rfd.resolution.as_ref(),
-        // MIR path: alias facts ride the MIR fn (cloned from the
-        // resolver at lowering), so the owned-mutate fast path reads
-        // its gate off MIR rather than the AST `FnResolution`. Identical
-        // bits to the resolver table today; the home is what changes.
-        aliased_slots: mir_fn.aliased_slots.as_slice(),
-        // ETAP-2 SLICE 2a: per-slot Int repr rides the MIR fn (mirror of
-        // `aliased_slots`). Default-empty today (no wasm-gc rewrite is
-        // wired), so every slot stays boxed.
-        repr: &mir_fn.repr,
-        params: &rfd.params,
         effect_idx_lookup,
         caller_fn_collector,
         wasip2_lowering,
-        mir_builtins: Some(&mir_program.builtins),
-        // ETAP-2 SLICE 2b: carry the whole program so call sites can read
-        // the CALLEE's bare param/return repr (the per-fn `repr` above only
-        // covers the current fn).
-        mir_program: Some(mir_program),
-        // ETAP-2 SLICE 2b: the body is in RETURN position — colour it raw
-        // when THIS fn's return is bare (`repr.bare_return`), so the tail
-        // value (and the tails of any `Match` / `IfThenElse` / `Let` it
-        // descends through) produces an `i64` to match the bare `i64`
-        // signature result. Set just below, before the body walk.
-        int_result_raw: std::cell::Cell::new(false),
-    };
+        &return_type_str,
+    );
 
     // A twin first reads the params it takes unpacked.
     if twin::self_kind().is_some() {
@@ -480,6 +459,111 @@ pub(crate) fn emit_fn_body_via_mir(
     func.instruction(&Instruction::End);
 
     Ok(Some(slots.extra_locals()))
+}
+
+/// The emitter's view of one fn.
+#[allow(clippy::too_many_arguments)]
+fn fn_ctx<'a>(
+    rfd: &'a ResolvedFnDef,
+    mir_fn: &'a MirFn,
+    mir_program: &'a MirProgram,
+    fn_map: &'a FnMap,
+    self_wasm_idx: u32,
+    registry: &'a TypeRegistry,
+    symbol_table: &'a SymbolTable,
+    effect_idx_lookup: &'a HashMap<String, u32>,
+    caller_fn_collector: &'a std::cell::RefCell<CallerFnCollector>,
+    wasip2_lowering: Option<&'a Wasip2Lowering>,
+    return_type_str: &'a str,
+) -> EmitCtx<'a> {
+    EmitCtx {
+        fn_map,
+        self_wasm_idx,
+        self_fn_name: rfd.name.as_str(),
+        return_type: return_type_str,
+        registry,
+        symbol_table,
+        resolution: rfd.resolution.as_ref(),
+        // MIR path: alias facts ride the MIR fn (cloned from the
+        // resolver at lowering), so the owned-mutate fast path reads
+        // its gate off MIR rather than the AST `FnResolution`. Identical
+        // bits to the resolver table today; the home is what changes.
+        aliased_slots: mir_fn.aliased_slots.as_slice(),
+        // ETAP-2 SLICE 2a: per-slot Int repr rides the MIR fn (mirror of
+        // `aliased_slots`). Default-empty today (no wasm-gc rewrite is
+        // wired), so every slot stays boxed.
+        repr: &mir_fn.repr,
+        params: &rfd.params,
+        effect_idx_lookup,
+        caller_fn_collector,
+        wasip2_lowering,
+        mir_builtins: Some(&mir_program.builtins),
+        // ETAP-2 SLICE 2b: carry the whole program so call sites can read
+        // the CALLEE's bare param/return repr (the per-fn `repr` above only
+        // covers the current fn).
+        mir_program: Some(mir_program),
+        // ETAP-2 SLICE 2b: the body is in RETURN position — colour it raw
+        // when THIS fn's return is bare (`repr.bare_return`), so the tail
+        // value (and the tails of any `Match` / `IfThenElse` / `Let` it
+        // descends through) produces an `i64` to match the bare `i64`
+        // signature result. Set just below, before the body walk.
+        int_result_raw: std::cell::Cell::new(false),
+    }
+}
+
+/// `mir_fn` with the `Int` trees it computes on the machine word marked as
+/// `MirExpr::IntWord` nodes (`ir::mir::int_word`), read off this target's
+/// representation: the `bare_i64` facts, the word records, and, inside a
+/// twin (`set_self`), the twins it may call and the slots it holds as
+/// words. `None` when it has none. Outside a fn a `--certify` build keeps.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn mark_int_words(
+    rfd: &ResolvedFnDef,
+    mir_fn: &MirFn,
+    mir_program: &MirProgram,
+    fn_map: &FnMap,
+    self_wasm_idx: u32,
+    registry: &TypeRegistry,
+    symbol_table: &SymbolTable,
+    effect_idx_lookup: &HashMap<String, u32>,
+    caller_fn_collector: &std::cell::RefCell<CallerFnCollector>,
+    wasip2_lowering: Option<&Wasip2Lowering>,
+) -> Result<Option<MirFn>, WasmGcError> {
+    if !registry.bignum || registry.aint_struct_idx.is_none() {
+        return Ok(None);
+    }
+    let slots = SlotTable::build_for_fn(rfd, registry, fn_map, &mir_fn.repr)?;
+    let boxed =
+        crate::codegen::wasm_gc::types::struct_ref(registry.aint_struct_idx.unwrap_or_default());
+    let is_int = |slot: u32| slots.by_slot.get(slot as usize) == Some(&boxed);
+    let held: std::collections::HashSet<u32> = twin::held_slots(&mir_fn.body, &is_int, fn_map)
+        .into_iter()
+        .collect();
+    let return_type_str = rfd.return_type.display();
+    let ctx = fn_ctx(
+        rfd,
+        mir_fn,
+        mir_program,
+        fn_map,
+        self_wasm_idx,
+        registry,
+        symbol_table,
+        effect_idx_lookup,
+        caller_fn_collector,
+        wasip2_lowering,
+        &return_type_str,
+    );
+    let target = crate::ir::mir::int_word::Target {
+        kept: false,
+        builtins: &mir_program.builtins,
+        is_word_field: &|_| false,
+        renders_raw: &|e| mir_renders_raw_i64(e, &ctx),
+        binop_is_raw: &|b| mir_int_binop_is_raw(b, &ctx),
+        raw_field: &|e| mir_is_eligible_carrier_value_project(e, &ctx),
+        int_twin_call: &|e| twin::callee(e, &ctx).is_some_and(|(_, t)| t.kind == TwinKind::Int),
+        held: &|slot| held.contains(&slot),
+    };
+    Ok(crate::ir::mir::int_word::mark_fn(mir_fn, &target))
 }
 
 /// Mirror of `emit_expr`'s `nullary_variant_idx`: if `operand` is a
@@ -536,11 +620,8 @@ pub(crate) fn emit_mir_expr(
     if let Some(produced) = int_tree::emit_hoisted_leaf(func, expr, ctx)? {
         return Ok(Some(produced));
     }
-    if !result_raw && let Some(r) = int_tree::try_emit_value(func, expr, None, slots, ctx)? {
-        return Ok(r);
-    }
     match &expr.node {
-        MirExpr::IntWord(word) => int_tree::emit_int_word(func, &word.node, slots, ctx),
+        MirExpr::IntWord(word) => int_tree::emit_int_word(func, expr, &word.node, slots, ctx),
         MirExpr::Literal(lit) => match &lit.node {
             Literal::Int(n) => {
                 // bignum slice 1 — under the opt-in flag every Int value
@@ -1974,8 +2055,10 @@ pub(crate) fn emit_mir_expr(
             Ok(Some(true))
         }
         MirExpr::Unbox(inner) => {
-            if let Some(r) = int_tree::try_emit_value(func, inner, Some(expr), slots, ctx)? {
-                return Ok(r);
+            if let MirExpr::IntWord(word) = &inner.node
+                && matches!(word.node.kind, crate::ir::mir::IntWordKind::Word)
+            {
+                return int_tree::emit_unboxed(func, expr, &word.node, slots, ctx);
             }
             if let Some(checked) = ctx.fn_map.builtins.get("__aint_to_i64_checked").copied()
                 && let Some(done) = twin::emit_word_lowered(func, inner, checked, slots, ctx)?

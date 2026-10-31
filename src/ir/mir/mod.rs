@@ -89,10 +89,10 @@ pub mod stats;
 
 pub use crate::ir::hir::BuiltinCtor;
 pub use expr::{
-    IntWordNode, IntWordOp, MirBinOp, MirCall, MirCallee, MirConstruct, MirCtor,
-    MirEffectAnnotation, MirExpr, MirIfThenElse, MirIndependentProduct, MirIntWord, MirLet,
-    MirLocal, MirMatch, MirMatchArm, MirPattern, MirProject, MirRecordCreate, MirRecordField,
-    MirRecordUpdate, MirStrPart, MirTailCall,
+    IntWordHold, IntWordKind, IntWordNode, IntWordOp, MirBinOp, MirCall, MirCallee, MirConstruct,
+    MirCtor, MirEffectAnnotation, MirExpr, MirIfThenElse, MirIndependentProduct, MirIntWord,
+    MirLet, MirLocal, MirMatch, MirMatchArm, MirPattern, MirProject, MirRecordCreate,
+    MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
 };
 pub use instantiations::{InstantiationRegistry, discover_instantiations};
 pub use lower::{lower_program, lower_top_level_value};

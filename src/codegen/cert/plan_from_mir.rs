@@ -907,6 +907,11 @@ impl Printer<'_> {
             }),
             MirExpr::Local(local) => PlanExpr::Local(local.node.slot.0),
             MirExpr::IntWord(word) => {
+                // The wall proves a tree's `Int` value; a comparison of two,
+                // or a machine word under an `Unbox`, it does not.
+                if !matches!(word.node.kind, crate::ir::mir::IntWordKind::Value) {
+                    return Err("IntWord comparison or machine word (not in the wall)".into());
+                }
                 let w = self.scratch_local(word.node.words)?;
                 for k in 1..3 {
                     if self.scratch_local(word.node.words + k)? != w + k {
@@ -1238,16 +1243,29 @@ impl Printer<'_> {
     /// local, a leaf read ahead a field of a record held in a local.
     fn word_tree(&mut self, node: &IntWordNode) -> Result<PlanWTree, String> {
         Ok(match node {
-            IntWordNode::Op(op, a, b) => PlanWTree::Op(
-                bin_op(&op.bin_op())?,
-                Box::new(self.word_tree(a)?),
-                Box::new(self.word_tree(b)?),
-            ),
+            IntWordNode::Op { op, args, .. } => {
+                // The wall proves `+`, `-` and `*`; any other operation is
+                // refused.
+                let (Some(bop), [a, b]) = (op.bin_op(), args.as_slice()) else {
+                    return Err(format!("IntWord operation {op:?} (not in the wall)"));
+                };
+                PlanWTree::Op(
+                    bin_op(&bop)?,
+                    Box::new(self.word_tree(a)?),
+                    Box::new(self.word_tree(b)?),
+                )
+            }
+            IntWordNode::Lit(_) => {
+                return Err("IntWord literal leaf (not in the wall)".into());
+            }
             IntWordNode::Local(e) => match self.expr(e)? {
                 PlanExpr::Local(i) => PlanWTree::Leaf(PlanWLeaf::Local(i)),
                 _ => return Err("IntWord leaf read in place (not a local)".into()),
             },
-            IntWordNode::Ahead(e, k) => match self.expr(e)? {
+            IntWordNode::Ahead(_, _, hold) if *hold != crate::ir::mir::IntWordHold::Int => {
+                return Err("IntWord leaf held as a raw word (not in the wall)".into());
+            }
+            IntWordNode::Ahead(e, k, _) => match self.expr(e)? {
                 PlanExpr::Project(tid, field, base) if !self.types.is_word(tid) => {
                     let PlanExpr::Local(base) = *base else {
                         return Err("IntWord leaf read ahead (not a field of a local)".into());

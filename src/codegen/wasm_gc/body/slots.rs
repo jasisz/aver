@@ -6,7 +6,7 @@
 //! (`expr_needs_scratch` etc.) survive because they classify pattern
 //! shape, not type.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::ValType;
@@ -190,9 +190,6 @@ pub(in crate::codegen::wasm_gc) struct SlotTable {
     /// One local per job kind this fn starts a job of. See
     /// `job_task_scratch`.
     job_task_scratch: RefCell<HashMap<i32, u32>>,
-    /// The three `i64` locals every `Int` tree of the fn computes each
-    /// operation in (`from_mir/int_tree.rs`). Lazily allocated.
-    int_tree_temps: Cell<Option<[u32; 3]>>,
     /// The wasm local of each scratch local the fn's `IntWord` trees use,
     /// by its index in `MirFnRepr::scratch`. Lazily allocated.
     int_word_scratch: RefCell<HashMap<u32, u32>>,
@@ -500,7 +497,6 @@ impl SlotTable {
             run_reason_scratch: RefCell::new(None),
             run_turn_scratch: RefCell::new(None),
             job_task_scratch: RefCell::new(HashMap::new()),
-            int_tree_temps: Cell::new(None),
             int_word_scratch: RefCell::new(HashMap::new()),
             lazy_locals: RefCell::new(Vec::new()),
         }
@@ -628,20 +624,13 @@ impl SlotTable {
         self.push_lazy_local(ty)
     }
 
-    pub(in crate::codegen::wasm_gc) fn int_tree_temps(&self) -> [u32; 3] {
-        let temps = self.int_tree_temps.get();
-        let temps = temps.unwrap_or_else(|| [(); 3].map(|()| self.push_lazy_local(ValType::I64)));
-        self.int_tree_temps.set(Some(temps));
-        temps
-    }
-
-    /// The `$AverInt` local of `IntWord` scratch `k` (an `Int` leaf read
-    /// ahead), reserved at its first use.
-    pub(in crate::codegen::wasm_gc) fn int_word_scratch(&self, k: u32, aint: ValType) -> u32 {
+    /// The local of `IntWord` scratch `k` (a leaf read ahead, held as a
+    /// `ty`), reserved at its first use.
+    pub(in crate::codegen::wasm_gc) fn int_word_scratch(&self, k: u32, ty: ValType) -> u32 {
         if let Some(found) = self.int_word_scratch.borrow().get(&k) {
             return *found;
         }
-        let idx = self.push_lazy_local(aint);
+        let idx = self.push_lazy_local(ty);
         self.note_int_word_scratch(k, idx);
         idx
     }

@@ -22,23 +22,6 @@ pub(crate) enum MirBuiltinEmit {
     Produced(bool),
 }
 
-/// Look up a registered `__aint_*` helper fn idx, erroring (not silently
-/// miscompiling) when the prelude wasn't registered. Registration is
-/// unconditional whenever Int arithmetic is reachable (`module.rs`), so a
-/// miss is a real wiring bug.
-pub(crate) fn aint_helper_idx(ctx: &EmitCtx<'_>, name: &str) -> Result<u32, WasmGcError> {
-    aint_helper(ctx, name)
-}
-
-/// The exact `+`, `-` or `*` of the two `$AverInt`s on the stack.
-pub(crate) fn emit_aint_binop_exact(
-    func: &mut Function,
-    op: BinOp,
-    ctx: &EmitCtx<'_>,
-) -> Result<Option<()>, WasmGcError> {
-    emit_aint_binop(func, op, ctx)
-}
-
 fn aint_helper(ctx: &EmitCtx<'_>, name: &str) -> Result<u32, WasmGcError> {
     ctx.fn_map
         .aint_helper_idx(name)
@@ -2895,9 +2878,6 @@ pub(crate) fn emit_mir_numeric_binop(
         };
         func.instruction(&inst);
         return Ok(Some(()));
-    }
-    if let Some(r) = super::int_tree::try_emit_compare(func, bop, slots, ctx)? {
-        return Ok(r);
     }
     let l_ty = wasm_type_of(l, ctx.registry)?;
     let r_ty = wasm_type_of(r, ctx.registry)?;

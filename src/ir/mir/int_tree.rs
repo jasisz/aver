@@ -1,7 +1,6 @@
 //! The pure `Int` operations a backend computes on a machine word first and
-//! again exactly, on a Big leaf or an overflow: wasm-gc in
-//! `codegen/wasm_gc/body/from_mir/int_tree.rs`, Rust in
-//! `codegen/rust/int_tree.rs`. Each is total on ℤ, so running the operations
+//! again exactly, on a Big leaf or an overflow: wasm-gc through the
+//! [`super::int_word`] pass, Rust in `codegen/rust/from_mir/int_tree.rs`. Each is total on ℤ, so running the operations
 //! of a tree after all its leaves, or twice, cannot be observed.
 
 use crate::ast::{BinOp, Literal, Spanned, Type};
@@ -29,6 +28,33 @@ pub enum IntOp {
     Shl(i64),
     Shr(i64),
     Low(i64),
+}
+
+impl IntOp {
+    /// The `BinOp` it is written as, for `+`, `-` and `*`.
+    pub fn bin_op(self) -> Option<BinOp> {
+        match self {
+            IntOp::Add => Some(BinOp::Add),
+            IntOp::Sub => Some(BinOp::Sub),
+            IntOp::Mul => Some(BinOp::Mul),
+            _ => None,
+        }
+    }
+
+    /// Whether it takes two operands.
+    pub fn is_binary(self) -> bool {
+        matches!(
+            self,
+            IntOp::Add
+                | IntOp::Sub
+                | IntOp::Mul
+                | IntOp::Min
+                | IntOp::Max
+                | IntOp::And
+                | IntOp::Or
+                | IntOp::Xor
+        )
+    }
 }
 
 pub type Node<'e> = &'e Spanned<MirExpr>;
@@ -85,11 +111,7 @@ pub fn op_of<'e>(e: Node<'e>, builtins: &[String]) -> Option<(IntOp, Node<'e>, O
                 },
                 _ => return None,
             };
-            let binary = matches!(
-                op,
-                IntOp::Min | IntOp::Max | IntOp::And | IntOp::Or | IntOp::Xor
-            );
-            Some((op, &args[0], binary.then(|| &args[1])))
+            Some((op, &args[0], op.is_binary().then(|| &args[1])))
         }
         _ => None,
     }

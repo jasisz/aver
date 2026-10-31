@@ -233,6 +233,9 @@ pub(crate) fn read_as_word(
             MirExpr::Call(c) => c.node.args.iter().any(is),
             MirExpr::TailCall(c) => c.node.args.iter().any(is),
             MirExpr::Match(m) => is(&m.node.subject),
+            // A local an `Int` tree reads in place is an operand of one of
+            // its operations or comparisons.
+            MirExpr::IntWord(w) => w.node.trees().iter().any(|t| reads_in_place(t, slot)),
             _ => false,
         };
         let mut found = direct;
@@ -248,12 +251,22 @@ pub(crate) fn read_as_word(
         || walk(&body.node, slot)
 }
 
+/// Whether the `Int` tree `t` reads the local in `slot` in place.
+fn reads_in_place(t: &crate::ir::mir::IntWordNode, slot: crate::ir::mir::LocalId) -> bool {
+    use crate::ir::mir::IntWordNode;
+    match t {
+        IntWordNode::Op { args, .. } => args.iter().any(|a| reads_in_place(a, slot)),
+        IntWordNode::Local(e) => matches!(&e.node, MirExpr::Local(l) if l.node.slot == slot),
+        IntWordNode::Lit(_) | IntWordNode::Ahead(..) => false,
+    }
+}
+
 /// Whether `e`, an `Int`, comes with its machine word: a literal, arithmetic,
 /// a builtin's result, or the result of a fn with an `Int` twin (`int_twin`).
 pub(crate) fn has_word(e: &MirExpr, int_twin: &dyn Fn(FnId) -> bool) -> bool {
     match e {
         MirExpr::Literal(l) => matches!(l.node, crate::ast::Literal::Int(_)),
-        MirExpr::Box(_) | MirExpr::BinOp(_) | MirExpr::Neg(_) => true,
+        MirExpr::Box(_) | MirExpr::BinOp(_) | MirExpr::Neg(_) | MirExpr::IntWord(_) => true,
         MirExpr::Call(c) => match c.node.callee {
             MirCallee::Fn(id) => int_twin(id),
             _ => true,
