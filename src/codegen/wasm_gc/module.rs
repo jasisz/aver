@@ -3382,6 +3382,11 @@ pub(super) fn emit_module_with(
     // certificate plan printer prints it): it computes no tree and calls no
     // twin.
     let mut kept_for: Vec<bool> = vec![false; fn_defs.len()];
+    // The functions the printed plan of each kept fn calls.
+    let mut kept_calls: Vec<Vec<u32>> = vec![Vec::new(); fn_defs.len()];
+    // The boxed `Int` literals of each fn, pooled for the fns with trees.
+    let mut literals_for: Vec<std::collections::BTreeSet<i64>> =
+        vec![std::collections::BTreeSet::new(); fn_defs.len()];
     // Such a fn with its `Int` trees on the machine word made explicit by the
     // MIR pass (`ir::mir::int_word`), when the plan printer prints it so: it
     // is emitted and printed from this MIR, and the wall lowers its nodes.
@@ -3473,7 +3478,7 @@ pub(super) fn emit_module_with(
         super::body::set_int_trees_allowed(true);
         let literals = super::body::record_int_literals(false);
         let used_mir = emitted.is_some();
-        kept_for[i] = match (mir_fn_for[i], &emitted) {
+        let calls = match (mir_fn_for[i], &emitted) {
             (Some(mir_fn), Some(extra)) => kept_by_printer(
                 certify,
                 mir_fn,
@@ -3482,8 +3487,10 @@ pub(super) fn emit_module_with(
                 &cert_layout,
                 &mut trees_types,
             ),
-            _ => false,
+            _ => None,
         };
+        kept_for[i] = calls.is_some();
+        kept_calls[i] = calls.unwrap_or_default();
         if kept_for[i]
             && std::env::var_os("AVER_NO_INT_TREE").is_none()
             && let Some(word_fn) = mir_fn_for[i]
@@ -3527,14 +3534,46 @@ pub(super) fn emit_module_with(
             && std::env::var_os("AVER_NO_INT_TREE").is_none()
             && !kept_for[i];
         plain_locals_for[i] = emitted;
-        if trees_for[i] {
-            pooled_literals.extend(literals);
-        }
+        literals_for[i] = literals;
         mir_dispatch[i] = used_mir;
         if !used_mir {
             stub_reasons[i] = Some(super::body::take_unsupported_reason().unwrap_or_else(|| {
                 "a construct the wasm-gc body emitter does not lower".to_string()
             }));
+        }
+    }
+    // A kept fn whose plan calls a user fn that is not kept can never be
+    // certified: that call has no plan, and the producer declines every
+    // caller of a declined fn. It is emitted as a plain build emits it, with
+    // its `Int` trees and its twin calls. Repeated until no fn changes, so a
+    // chain of callers is released too; a group of kept fns that call only
+    // each other stays kept.
+    let first_user = import_count + 1;
+    let user_count = fn_defs.len() as u32;
+    loop {
+        let mut changed = false;
+        for i in 0..fn_defs.len() {
+            let calls_unkept = kept_calls[i].iter().any(|&t| {
+                t >= first_user
+                    && t < first_user + user_count
+                    && !kept_for[(t - first_user) as usize]
+            });
+            if kept_for[i] && calls_unkept {
+                kept_for[i] = false;
+                word_fn_for[i] = None;
+                trees_for[i] = plain_locals_for[i].is_some()
+                    && registry.bignum
+                    && std::env::var_os("AVER_NO_INT_TREE").is_none();
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    for i in 0..fn_defs.len() {
+        if trees_for[i] {
+            pooled_literals.extend(std::mem::take(&mut literals_for[i]));
         }
     }
     // From here on a fn kept with explicit word trees is its marked MIR.
@@ -6702,7 +6741,9 @@ pub(super) fn emit_module_with(
 /// certificate plan printer admits is kept, so a certificate reads the bytes
 /// it reads: the checker lowers the printed plan the ordinary way and compares
 /// it with the code (the rule `ir::cert_shape` keeps for the fabricating
-/// passes). A plain build asks the printer nothing.
+/// passes). A plain build asks the printer nothing. `Some` holds the
+/// functions the printed plan calls (the caller releases a kept fn that calls
+/// one that is not kept).
 fn kept_by_printer(
     certify: bool,
     mir_fn: &crate::ir::mir::MirFn,
@@ -6710,8 +6751,14 @@ fn kept_by_printer(
     extra: &[ValType],
     layout: &super::cert_layout::CertLayout<'_>,
     types: &mut crate::codegen::cert::TypeTableBuilder,
-) -> bool {
-    certify && crate::codegen::cert::print_fn(mir_fn, rfd, extra, &[], layout, types).is_ok()
+) -> Option<Vec<u32>> {
+    if !certify {
+        return None;
+    }
+    let plan = crate::codegen::cert::print_fn(mir_fn, rfd, extra, &[], layout, types).ok()?;
+    let mut calls = Vec::new();
+    crate::codegen::cert::call_targets(&plan.body, &mut calls);
+    Some(calls)
 }
 
 /// The body of a fn that has a twin (`super::twins`): call the twin with the

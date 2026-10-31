@@ -2259,44 +2259,6 @@ fn lowered_calls(bs: &[BI], out: &mut Vec<u64>) {
     }
 }
 
-/// `AcceptedArtifact.callTargets`.
-fn call_targets(e: &PlanExpr, out: &mut Vec<u32>) {
-    match e {
-        PlanExpr::Literal(_) | PlanExpr::Local(_) => {}
-        PlanExpr::Let(_, v, b) => {
-            call_targets(v, out);
-            call_targets(b, out);
-        }
-        PlanExpr::Call(PlanCallee::Fn(f), args) | PlanExpr::TailCall(f, args) => {
-            out.push(*f);
-            args.iter().for_each(|a| call_targets(a, out));
-        }
-        PlanExpr::Call(_, args)
-        | PlanExpr::RecordCreate(_, args)
-        | PlanExpr::Construct(_, _, args)
-        | PlanExpr::Interp(args)
-        | PlanExpr::List(_, args) => args.iter().for_each(|a| call_targets(a, out)),
-        PlanExpr::BinOp(_, l, r) => {
-            call_targets(l, out);
-            call_targets(r, out);
-        }
-        PlanExpr::Neg(x)
-        | PlanExpr::Project(_, _, x)
-        | PlanExpr::Try(x, _)
-        | PlanExpr::Scope(x) => call_targets(x, out),
-        PlanExpr::IntWord(..) => {}
-        PlanExpr::If(c, t, el) => {
-            call_targets(c, out);
-            call_targets(t, out);
-            call_targets(el, out);
-        }
-        PlanExpr::Match(s, arms) => {
-            call_targets(s, out);
-            arms.iter().for_each(|(_, b)| call_targets(b, out));
-        }
-    }
-}
-
 /// The element types of the non-empty list literals of a plan: each one
 /// calls its type's cons helper (`MCtx.listCons`), which must therefore be
 /// offered with the plan.

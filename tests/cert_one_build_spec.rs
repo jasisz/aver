@@ -507,3 +507,145 @@ fn a_certified_build_certifies_word_records_on_the_machine_word() {
     };
     assert_eq!(sig.params(), &[ValType::I64], "the word is an i64");
 }
+
+/// A Vector a function only passes along (chooses, stores in a constructor or
+/// a record, matches or projects out, returns) is certified as an opaque
+/// value: the plan holds the emitter's own reference, the version struct over
+/// the Vector's array, and no plan operation reads it. A function that reads
+/// a Vector (`Vector.get`) or builds one (`Vector.new`) is declined.
+#[test]
+fn a_certified_build_passes_vectors_along_as_opaque_values() {
+    use wasmparser::{CompositeInnerType, HeapType, Parser, Payload, TypeRef, ValType};
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let entry = Entry {
+        file: "tools/certkit/fixtures/vectorpass.av".into(),
+        module_root: None,
+    };
+    let (certified, names) = compile(&repo_root, &entry, &["--certify"], true).unwrap();
+    for name in [
+        "pick",
+        "branchOf",
+        "childrenOf",
+        "sizeOf",
+        "cellsOf",
+        "withCells",
+    ] {
+        assert!(names.iter().any(|n| n == name), "{name} not in {names:?}");
+    }
+    for name in ["cellAt", "emptyCells"] {
+        assert!(!names.iter().any(|n| n == name), "{name} in {names:?}");
+    }
+    let mut types = Vec::new();
+    let mut fn_types = Vec::new();
+    let mut imported = 0;
+    let mut pick = None;
+    for payload in Parser::new(0).parse_all(&certified) {
+        match payload.unwrap() {
+            Payload::TypeSection(reader) => {
+                for group in reader {
+                    types.extend(group.unwrap().into_types());
+                }
+            }
+            Payload::ImportSection(imports) => {
+                for import in imports.into_imports() {
+                    if matches!(import.unwrap().ty, TypeRef::Func(_)) {
+                        imported += 1;
+                    }
+                }
+            }
+            Payload::FunctionSection(reader) => {
+                fn_types.extend(reader.into_iter().map(|t| t.unwrap()));
+            }
+            Payload::ExportSection(exports) => {
+                for export in exports {
+                    let export = export.unwrap();
+                    if export.name == "pick" {
+                        pick = Some(export.index);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let index = pick.expect("pick is exported");
+    let ty = fn_types[(index - imported) as usize] as usize;
+    let CompositeInnerType::Func(sig) = &types[ty].composite_type.inner else {
+        panic!("pick has a function type");
+    };
+    let ValType::Ref(r) = sig.params()[0] else {
+        panic!("a Vector parameter is a reference: {:?}", sig.params());
+    };
+    let HeapType::Concrete(idx) = r.heap_type() else {
+        panic!("a Vector parameter has a concrete heap type: {r:?}");
+    };
+    let version = idx.as_module_index().expect("module type index") as usize;
+    let CompositeInnerType::Struct(st) = &types[version].composite_type.inner else {
+        panic!("a Vector value is a version struct, not a bare array");
+    };
+    assert_eq!(st.fields.len(), 3, "arr, diff and held");
+}
+
+/// The `i64.mul` count of each named export's body.
+fn i64_muls(bytes: &[u8], names: &[&str]) -> Vec<usize> {
+    use wasmparser::{Operator, Parser, Payload, TypeRef};
+    let mut imported = 0;
+    let mut index = vec![None; names.len()];
+    let mut bodies = Vec::new();
+    for payload in Parser::new(0).parse_all(bytes) {
+        match payload.unwrap() {
+            Payload::ImportSection(imports) => {
+                for import in imports.into_imports() {
+                    if matches!(import.unwrap().ty, TypeRef::Func(_)) {
+                        imported += 1;
+                    }
+                }
+            }
+            Payload::ExportSection(exports) => {
+                for export in exports {
+                    let export = export.unwrap();
+                    if let Some(k) = names.iter().position(|n| *n == export.name) {
+                        index[k] = Some(export.index);
+                    }
+                }
+            }
+            Payload::CodeSectionEntry(body) => bodies.push(body),
+            _ => {}
+        }
+    }
+    index
+        .iter()
+        .zip(names)
+        .map(|(i, name)| {
+            let i = i.unwrap_or_else(|| panic!("{name} is exported"));
+            let mut ops = bodies[(i - imported) as usize]
+                .get_operators_reader()
+                .unwrap();
+            let mut muls = 0;
+            while !ops.eof() {
+                if matches!(ops.read().unwrap(), Operator::I64Mul) {
+                    muls += 1;
+                }
+            }
+            muls
+        })
+        .collect()
+}
+
+/// A function the plan printer prints but that calls one it does not can
+/// never be certified, so a `--certify` build does not keep it in the
+/// ordinary form: `area` (which calls the unprintable `width`) computes its
+/// `Int` tree on machine words as in a plain build, while the certified
+/// `spread` keeps the boxed arithmetic its plan reads.
+#[test]
+fn a_certified_build_releases_a_function_that_calls_an_unprintable_one() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let entry = Entry {
+        file: "tests/fixtures/cert_one_build/released.av".into(),
+        module_root: None,
+    };
+    let (certified, names) = compile(&repo_root, &entry, &["--certify"], true).unwrap();
+    assert_eq!(names, vec!["spread".to_string()]);
+    let muls = i64_muls(&certified, &["area", "spread"]);
+    assert!(muls[0] > 0, "area computes on machine words: {muls:?}");
+    assert_eq!(muls[1], 0, "spread is kept in the ordinary form");
+}

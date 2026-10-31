@@ -1,0 +1,25 @@
+module Released
+    intent =
+        "A function the plan printer prints but that calls one it does not:"
+        "it can never be certified, so a --certify build emits it as a plain"
+        "build does, with its Int arithmetic on machine words."
+    exposes [area, spread]
+    effects []
+
+fn width(s: String) -> Int
+    ? "A builtin the printer declines."
+    String.len(s)
+
+fn area(s: String, h: Int) -> Int
+    ? "Printable itself, but calls width."
+    width(s) * h + h * h + 1
+
+fn spread(a: Int, b: Int) -> Int
+    ? "Printable and calls nothing unprintable."
+    a * b + a * a + 1
+
+verify area
+    area("abc", 2) => 11
+
+verify spread
+    spread(2, 3) => 11
