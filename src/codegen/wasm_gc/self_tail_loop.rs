@@ -1,8 +1,10 @@
 //! Reuse a wasm frame for a function's own tail calls.
 //!
-//! MIR has already identified tail calls. Once the wasm calling convention
-//! is final (including twins), a `return_call` to this same function can
-//! assign the incoming arguments and branch to a loop. Other calls retain
+//! MIR decides which functions run their self tail calls as a loop
+//! (`MirFnRepr::self_tail_loop`, `ir/mir/self_tail.rs`); this lowers the
+//! marked ones. Once the wasm calling convention is final (including twins),
+//! a `return_call` to this same function assigns the incoming arguments and
+//! branches to the loop. Other calls retain
 //! their calling convention. Arguments are evaluated before any parameter
 //! is overwritten, and every defaultable local is reset on loop entry:
 //! cached boxes and Big flags belong to the previous invocation.
@@ -29,19 +31,6 @@ pub(super) fn lower(
     let parsed = wasmparser::FunctionBody::new(wasmparser::BinaryReader::new(&raw, 0));
     let invalid =
         |error: &dyn std::fmt::Display| WasmGcError::Validation(format!("self tail loop: {error}"));
-    let mut reader = parsed.get_operators_reader().map_err(|e| invalid(&e))?;
-    let mut has_self_call = false;
-    while !reader.eof() {
-        if matches!(reader.read().map_err(|e| invalid(&e))?,
-            wasmparser::Operator::ReturnCall { function_index } if function_index == self_index)
-        {
-            has_self_call = true;
-            break;
-        }
-    }
-    if !has_self_call {
-        return Ok(body);
-    }
     let mut reader = parsed.get_operators_reader().map_err(|e| invalid(&e))?;
     let mut reencoder = RoundtripReencoder;
     let mut instructions = Vec::new();

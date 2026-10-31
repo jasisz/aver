@@ -254,6 +254,10 @@ pub struct MirFnRepr {
     /// use, declared here by what each holds (`super::int_word`). Empty
     /// everywhere else.
     pub scratch: Vec<MirScratch>,
+    /// The fn's tail calls to itself run as one loop that reuses its frame
+    /// (`super::self_tail`). The wasm-gc emitter lowers them so and the
+    /// certificate plan states it; neither looks for the calls again.
+    pub self_tail_loop: bool,
 }
 
 /// What one scratch local of [`MirFnRepr::scratch`] holds.

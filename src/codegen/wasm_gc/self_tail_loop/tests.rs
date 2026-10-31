@@ -185,10 +185,21 @@ fn keeps_other_tail_calls_and_ordinary_self_calls() {
         ),
         19
     );
-    let mut body = Function::new([]);
-    body.instruction(&I::I32Const(0));
-    body.instruction(&I::Call(0));
-    body.instruction(&I::End);
-    let unchanged = body.clone().into_raw_body();
-    assert_eq!(lower(body, 0, 0).unwrap().into_raw_body(), unchanged);
+    // MIR decides which fns are lowered (`MirFnRepr::self_tail_loop`); an
+    // ordinary self call in a lowered fn stays a call.
+    assert_eq!(
+        run(
+            r#"(module
+        (func (param i32) (result i32)
+            local.get 0 i32.eqz
+            if (result i32)
+                i32.const 5
+            else
+                local.get 0 i32.const 1 i32.sub call 0 i32.const 1 i32.add
+            end)
+        (func (export "run") (result i32) i32.const 3 call 0))"#,
+            &[1, 0]
+        ),
+        8
+    );
 }

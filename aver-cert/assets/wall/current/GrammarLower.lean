@@ -912,9 +912,9 @@ def loopB (M : MCtx) (self : Nat) (p : FnPlan) : List LB :=
       [.b (.op .ret)])
 
 /-- The code of function `self`: its plan's lowering, run as the self tail
-    loop when the lowering makes a tail call to `self`. -/
+    loop when the plan says its self tail calls are a loop (`selfLoop`). -/
 def fnCodeAt (M : MCtx) (self : Nat) (p : FnPlan) : WCode :=
-  if InterpreterSequencing.hasSelfTail self (fnCode M p).body then
+  if p.selfLoop then
     { fnCode M p with loopBody := some (eraseLBs (loopB M self p)) }
   else fnCode M p
 
@@ -950,9 +950,9 @@ end
 
 /-- The instruction bytes of function `self`'s body (its final `end`
     excluded): `loop (empty) … end unreachable` around the loop body when the
-    lowering tail-calls `self`. -/
+    plan's self tail calls are a loop (`selfLoop`). -/
 def bodyBytes (M : MCtx) (self : Nat) (p : FnPlan) : Option (List Nat) :=
-  if InterpreterSequencing.hasSelfTail self (fnCode M p).body then
+  if p.selfLoop then
     (encLBs M (loopB M self p)).map (fun b => [0x03, 0x40] ++ b ++ [0x0b, 0x00])
   else encBL M (lowerB M p.lctx (paramsΓ p.sig.params) true p.body)
 
@@ -1039,14 +1039,14 @@ theorem fnCodeAt_shape (M : MCtx) (self : Nat) (p : FnPlan) :
   unfold fnCodeAt; split <;> simp
 
 theorem fnCodeAt_plain (M : MCtx) (self : Nat) (p : FnPlan)
-    (h : InterpreterSequencing.hasSelfTail self (fnCode M p).body = false) :
+    (h : p.selfLoop = false) :
     fnCodeAt M self p = fnCode M p := by
   simp [fnCodeAt, h]
 
 theorem fnCode_loopBody (M : MCtx) (p : FnPlan) : (fnCode M p).loopBody = none := rfl
 
 theorem fnCodeAt_loop (M : MCtx) (self : Nat) (p : FnPlan)
-    (h : InterpreterSequencing.hasSelfTail self (fnCode M p).body = true) :
+    (h : p.selfLoop = true) :
     ∃ zs vs, InterpreterSequencing.LoopCode (fnCodeAt M self p) self zs vs := by
   obtain ⟨vs, hvs, hl⟩ := zeroW_vals p.locals
   refine ⟨p.locals.map zeroW, vs, ?_, hvs, ?_⟩

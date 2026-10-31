@@ -6384,7 +6384,7 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
             wRunF host (fun g => (code g).map (·.arity))
               (fun g as => wFuncN code host k g as) (fnCode M p).body l0 [] = some o ∧
             ((∃ l' st', o = .ok l' (r :: st')) ∨ o = .ret r) := by
-          cases hst : InterpreterSequencing.hasSelfTail f (fnCode M p).body with
+          cases hst : p.selfLoop with
           | false =>
               rw [fnCodeAt_plain M f p hst] at hcode
               rw [InterpreterSequencing.wFuncN_plain hcode (fnCode_loopBody M p)] at hrun

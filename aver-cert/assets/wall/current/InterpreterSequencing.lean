@@ -202,14 +202,6 @@ def convW (self n : Nat) : Nat → List WInstr → List CI
   | d, x :: rest => .w x :: convW self n d rest
   termination_by _ xs => sizeOf xs
 
-/-- `true` when `body` makes a tail call to `self`. -/
-def hasSelfTail (self : Nat) : List WInstr → Bool
-  | [] => false
-  | .returnCall g :: rest => g == self || hasSelfTail self rest
-  | .ifElse t e :: rest => hasSelfTail self t || hasSelfTail self e || hasSelfTail self rest
-  | _ :: rest => hasSelfTail self rest
-  termination_by xs => sizeOf xs
-
 /-- The value a local-reset instruction pushes. -/
 def zeroVal : WInstr → Option WVal
   | .i32Const 0 => some (.i32v 0)

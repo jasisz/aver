@@ -531,7 +531,7 @@ pub(super) fn emit_module_with(
     };
     registry.install_packed_sequences(packed_sequence_layouts);
 
-    let mir_program: crate::ir::mir::MirProgram = {
+    let mut mir_program: crate::ir::mir::MirProgram = {
         // Reuse the `optimized` MIR built above for carrier-eligibility
         // Map-key discovery — the box/unbox boundary rewrite is the only
         // step layered on top, and it does not change the type stamps the
@@ -570,6 +570,10 @@ pub(super) fn emit_module_with(
     // a compile error naming the intrinsic, not a module whose
     // rewritten call sites trap at runtime.
     refuse_fabricated_intrinsics(&mir_program)?;
+    // Which fns run their self tail calls as a loop: decided here, in MIR,
+    // and read by `self_tail_loop.rs` and the certificate plan printer.
+    crate::ir::mir::self_tail::mark(&mut mir_program);
+    let mir_program = mir_program;
 
     // Lazy caller_fn name registry — populated during user-fn body
     // emit by `emit_caller_fn_idx` call sites. Threaded into every
@@ -4215,21 +4219,21 @@ pub(super) fn emit_module_with(
                 &twin.records,
                 &registry,
             )?;
-            twin_codes.push(if std::env::var_os("AVER_NO_SELF_TAIL_LOOPS").is_some() {
-                func
-            } else {
+            twin_codes.push(if mir_fn.repr.self_tail_loop && mir_dispatch[i] {
                 super::self_tail_loop::lower(func, twin.wasm_idx, twin_params[i].len() as u32)?
+            } else {
+                func
             });
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
         } else {
             let (func, extra) = emit_body(self_wasm_idx)?;
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
             word_locals_for[i] = super::body::int_word_locals();
-            let func = if std::env::var_os("AVER_NO_SELF_TAIL_LOOPS").is_some() {
-                func
-            } else {
+            let func = if mir_dispatch[i] && mir_fn_for[i].is_some_and(|f| f.repr.self_tail_loop) {
                 let params = super::types::param_types(&fn_defs[i].params, Some(&registry))?;
                 super::self_tail_loop::lower(func, self_wasm_idx, params.len() as u32)?
+            } else {
+                func
             };
             codes.function(&func);
         }
