@@ -93,6 +93,7 @@ const S1_FIXTURES: &[&str] = &[
     "stringconcat",
     "stringeq",
     "tupleproj",
+    "vectorpass",
     "verbatimgen",
     "verbatimwiden",
     "widenedmatch",

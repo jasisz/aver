@@ -3001,6 +3001,18 @@
   },
   "laws": []
  },
+ "tools/certkit/fixtures/vectorpass.av": {
+  "bridges": [],
+  "certified": {
+   "branchOf": "L1",
+   "cellsOf": "L1",
+   "childrenOf": "L1",
+   "pick": "L1",
+   "sizeOf": "L1",
+   "withCells": "L1"
+  },
+  "laws": []
+ },
  "tools/certkit/fixtures/verbatimgen.av": {
   "bridges": [
    "tagName",

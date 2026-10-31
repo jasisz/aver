@@ -5559,8 +5559,8 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 
 /// A function that reads a Vector is declined, and says why. A `Vector<T>`
 /// value is a version struct over its array on wasm-gc, and a read may reroot
-/// the versions sharing that array; the wall models a Vector as the plain
-/// array of its elements, so `cellAt` (the fused
+/// the versions sharing that array; a plan holds a Vector only as an opaque
+/// value it passes along, so `cellAt` (the fused
 /// `Option.withDefault(Vector.get(vec, idx), d)` read) must not be offered.
 #[test]
 fn cert_declines_a_function_that_reads_a_vector() {
@@ -5602,8 +5602,8 @@ fn cert_declines_a_function_that_reads_a_vector() {
         .expect("cellAt is declared uncertified with a reason")
         .to_string();
     assert!(
-        reason.contains("Vector<Int>") && reason.contains("versioned struct"),
-        "the reason names the Vector representation: {reason}"
+        reason.contains("Vector.get"),
+        "the reason names the Vector read: {reason}"
     );
 }
 
