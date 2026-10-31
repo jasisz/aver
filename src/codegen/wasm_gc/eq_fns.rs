@@ -900,9 +900,8 @@ impl Writer<'_> {
 
 /// Writes the functions for every type `eq` registered (except a packed
 /// sequence, which keeps its own helper), `List.contains` over the element
-/// types `contains` and `==` on the lists `lists`. `None` when a type has a
-/// shape these functions do not cover; the backend then keeps comparing in
-/// its byte helpers.
+/// types `contains` and `==` on the lists `lists`. `Ok(None)` when there is
+/// nothing to compare; an error names a type whose shape is not covered.
 pub(super) fn synthesize(
     eq: &EqHelperRegistry,
     registry: &TypeRegistry,
@@ -910,10 +909,7 @@ pub(super) fn synthesize(
     current_module: Option<String>,
     contains: &BTreeSet<String>,
     lists: &BTreeSet<String>,
-) -> Option<Synthesized> {
-    if std::env::var_os("AVER_NO_EQ_FNS").is_some() {
-        return None;
-    }
+) -> Result<Option<Synthesized>, String> {
     let types: Vec<(String, EqKind)> = eq
         .iter()
         .filter(|(_, kind)| !matches!(kind, EqKind::PackedSequence))
@@ -950,7 +946,7 @@ pub(super) fn synthesize(
         .into_iter()
         .collect();
     if types.is_empty() && contains.is_empty() && lists.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     // Identities first: a body calls the functions of its field types.
@@ -1039,28 +1035,39 @@ pub(super) fn synthesize(
         } else {
             Role::Plain
         };
-        let (body, expr) = writer.eq_body(name, *kind, entry_role)?;
+        let unwritten = || format!("structural equality of `{name}` has a shape it cannot write");
+        let (body, expr) = writer
+            .eq_body(name, *kind, entry_role)
+            .ok_or_else(unwritten)?;
         push(writer.fns.entry[name], format!("__eq_{name}"), body, expr);
         if let Some(node) = writer.fns.node.get(name) {
-            let (body, expr) = writer.eq_body(name, *kind, Role::Node)?;
+            let (body, expr) = writer
+                .eq_body(name, *kind, Role::Node)
+                .ok_or_else(unwritten)?;
             push(*node, format!("__eqnode_{name}"), body, expr);
         }
         if let Some(mem) = writer.fns.mem.get(name) {
-            let (body, expr) = writer.eq_body(name, *kind, Role::Mem)?;
+            let (body, expr) = writer
+                .eq_body(name, *kind, Role::Mem)
+                .ok_or_else(unwritten)?;
             push(*mem, format!("__eqmem_{name}"), body, expr);
         }
     }
     for elem in &contains {
         let me = writer.fns.contains[elem];
-        let (body, expr) = writer.contains_body(elem, me)?;
+        let (body, expr) = writer
+            .contains_body(elem, me)
+            .ok_or_else(|| format!("`List.contains` over `{elem}` cannot be written"))?;
         push(me, format!("__contains_{elem}"), body, expr);
     }
     for elem in &lists {
         let me = writer.fns.lists[&format!("List<{elem}>")];
-        let (body, expr) = writer.list_body(elem, me)?;
+        let (body, expr) = writer
+            .list_body(elem, me)
+            .ok_or_else(|| format!("`==` on `List<{elem}>` cannot be written"))?;
         push(me, format!("__eq_List<{elem}>"), body, expr);
     }
-    Some(out)
+    Ok(Some(out))
 }
 
 /// The canonical name `eq_helpers` keys the type of `ty` under.

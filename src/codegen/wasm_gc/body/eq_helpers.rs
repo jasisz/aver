@@ -1,54 +1,25 @@
-//! Per-record / per-sum equality helpers for `BinOp::Eq` / `BinOp::Neq`
-//! over user-defined nominal types.
+//! The types `==` reaches on wasm-gc, and the few comparisons still
+//! written in bytes.
 //!
-//! ## Why
+//! Every record, sum, `Option`, `Result` and tuple that a `==`, a
+//! collection helper or a map key compares is registered here, with every
+//! type its fields reach (`register_transitive`). Those types are compared
+//! by functions of the program (`eq_fns`); this registry only places them
+//! (`use_functions`) so that the byte helpers of lists, vectors and maps
+//! call them by index, and declares the table of remembered pairs their
+//! comparisons of recursive values use (`node_table::Entry::Memo`).
 //!
-//! Aver's surface `==` on a sum type means "same variant + same fields";
-//! `ref.eq` (struct identity) won't do because `Color.Red` constructed in
-//! two different call sites yields two distinct refs even though they
-//! denote the same enum value. Numeric `i64.eq` won't do either — the
-//! lowering passes a `(ref null eq)` carrier through the BinOp default
-//! path, then validation fails with "expected i64, found eqref" (the
-//! checkers blocker).
-//!
-//! Each Sum/Record type that appears in a `BinOp::Eq` / `BinOp::Neq`
-//! gets a per-type wasm helper fn `__eq_<TypeName>` registered by the
-//! discovery walker. The body reuses the existing structural-eq logic
-//! that powers `List.contains` over records / sums (`emit_record_eq_inline`
-//! / `emit_sum_eq_inline` in `lists.rs`), wrapped as a standalone
-//! `(ref null eq, ref null eq) -> i32` function so call sites just emit
-//! `Call(eq_helper_idx)`.
-//!
-//! ## Field-type coverage
-//!
-//! Inherits the cap from the inline emitters: record/sum field types
-//! must be in `{Int, Float, Bool, String}`. Nested records, lists,
-//! vectors as fields surface as `Unimplemented` from the inline
-//! emitters. Lifting that cap is a follow-up; today it covers every
-//! enum-style sum (no fields) — including the `Color` enum that
-//! checkers needs.
-//!
-//! ## Shared subterms
-//!
-//! A value of a recursive type can hold one subterm under many nodes, and
-//! two equal values built apart are different objects all the way down: a
-//! comparison node by node meets a shared subterm once for every path to it,
-//! which is exponential in the depth of the sharing. A record or sum that
-//! reaches itself through its fields, directly or through an `Option`, is
-//! compared in steps. `__eq_<T>` compares the two roots and hands each field
-//! of such a type to a step that takes a budget of [`WALK_BUDGET`] steps and
-//! returns what is left. A comparison that runs out starts again with steps
-//! that remember every pair of nodes they find equal in a table
-//! (`node_table`) and do not compare those again. A field holding such a type
-//! in a collection begins a comparison of its own. Programs without such a
-//! type emit the same bytes as before.
+//! A packed sequence (a record whose `List<Int>` is held as one packed
+//! array, `PackedSequenceType`) keeps a helper written here: MIR has no node
+//! that reads an element of the packed array without building the list
+//! again, so its comparison of lengths and elements stays in bytes, as the
+//! other packed `Bytes` helpers do.
 
 use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::{Function, Instruction};
 
 use super::super::WasmGcError;
-use super::super::lists::{emit_record_eq_inline, emit_sum_eq_inline};
 use super::super::types::TypeRegistry;
 use super::node_table::{Entry, TableGlobals, TableSlots};
 
@@ -68,23 +39,19 @@ pub(crate) enum EqKind {
     TupleEq,
 }
 
-/// Per-module registry of `__eq_<TypeName>` helpers needed by
-/// `BinOp::Eq` / `BinOp::Neq` sites. Slots allocated alongside other
-/// per-instantiation helpers (Map, List, Vector); body emission reuses
-/// the structural-eq routines from `lists.rs`.
+/// Per-module registry of the types `==` reaches (see the module doc).
 #[derive(Default)]
 pub(crate) struct EqHelperRegistry {
     /// Insertion order — wasm fn indices follow it.
     order: Vec<String>,
     kinds: HashMap<String, EqKind>,
-    /// `type_name -> (wasm_fn_idx, wasm_type_idx)`.
+    /// `type_name -> (wasm_fn_idx, wasm_type_idx)` of a packed sequence's
+    /// helper.
     slots: HashMap<String, (u32, u32)>,
-    /// The helpers whose type reaches itself, in slot order, each with the
-    /// first `(wasm_fn_idx, wasm_type_idx)` of its two steps: against the
-    /// budget, then with memory.
-    walks: Vec<(String, (u32, u32))>,
-    /// The table of the remembered pairs, which follows the walks when there
-    /// are any.
+    /// The types that reach themselves through records, sums and `Option`s
+    /// held directly (`self_reaching`).
+    walks: Vec<String>,
+    /// The table of the remembered pairs, when a function walks.
     table: Option<TableSlots>,
     /// The types compared by a function of the program (`eq_fns`), each with
     /// its position among the program's functions; they get no helper here.
@@ -96,9 +63,6 @@ pub(crate) struct EqHelperRegistry {
     functions_walk: bool,
 }
 
-/// Steps a comparison takes before it starts again with memory.
-const WALK_BUDGET: i32 = 1024;
-
 fn eq_ref_type() -> wasm_encoder::ValType {
     wasm_encoder::ValType::Ref(wasm_encoder::RefType {
         nullable: true,
@@ -107,56 +71,6 @@ fn eq_ref_type() -> wasm_encoder::ValType {
             ty: wasm_encoder::AbstractHeapType::Eq,
         },
     })
-}
-
-/// What the helpers of a comparison in steps call.
-struct Walks {
-    walked: HashSet<String>,
-    /// The table of the remembered pairs.
-    table: TableSlots,
-    /// The helper each type is compared by within a step against the
-    /// budget, and within a step with memory.
-    step_map: HashMap<String, u32>,
-    memory_map: HashMap<String, u32>,
-}
-
-/// Which body of a helper: the plain one, or for a type that walks the
-/// start of a comparison and its two steps.
-#[derive(Clone, Copy)]
-enum Body<'a> {
-    Plain,
-    Start(&'a Walks),
-    Step(&'a Walks),
-    Memory(&'a Walks),
-}
-
-fn answer_if(f: &mut Function, value: Instruction) {
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&value);
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
-}
-
-/// One object is equal to itself when `==` on its type is reflexive.
-fn same_object(f: &mut Function, reflexive: bool, equal: Instruction) {
-    if reflexive {
-        f.instruction(&Instruction::LocalGet(0));
-        f.instruction(&Instruction::LocalGet(1));
-        f.instruction(&Instruction::RefEq);
-        answer_if(f, equal);
-    }
-}
-
-/// An identical reflexive node needs no traversal. Every other step takes
-/// one from the budget in param 2 and answers -1 once it is spent.
-fn step_prologue(f: &mut Function, reflexive: bool) {
-    same_object(f, reflexive, Instruction::LocalGet(2));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::LocalTee(2));
-    f.instruction(&Instruction::I32Eqz);
-    answer_if(f, Instruction::I32Const(-1));
 }
 
 /// The registered helpers a field of type `field_ty` compares through:
@@ -536,43 +450,23 @@ impl EqHelperRegistry {
 
     /// The table of remembered pairs the functions of the program use.
     pub(crate) fn memo_table(&self) -> Option<TableSlots> {
-        self.table.filter(|_| self.functions_walk)
+        self.table
     }
 
     pub(crate) fn assign_slots(&mut self, next_fn_idx: &mut u32, next_type_idx: &mut u32) {
-        // Discovery can reach otherwise independent nominal types through a
-        // HashMap-backed registry walk. Their relative order has no semantic
-        // meaning, but letting it choose function/type indices makes identical
-        // source emit different wasm bytes and defeats Wasmtime's content
-        // cache. Canonical names are the stable ordering key used by the rest
-        // of the wasm-gc registries.
+        // Canonical names order the helpers, so the same source always gets
+        // the same function and type indices (and Wasmtime's cache hits).
         self.order.sort_unstable();
-        let mut slot = || {
-            let s = (*next_fn_idx, *next_type_idx);
-            *next_fn_idx += 1;
-            *next_type_idx += 1;
-            s
-        };
-        if !self.functions.is_empty() {
-            for name in &self.order {
-                if !self.functions.contains_key(name) {
-                    self.slots.insert(name.clone(), slot());
-                }
-            }
-            if self.functions_walk {
-                self.table = Some(TableSlots::assign(Entry::Memo, next_fn_idx, next_type_idx));
-            }
-            return;
-        }
         for name in &self.order {
-            self.slots.insert(name.clone(), slot());
+            if self.kinds[name] == EqKind::PackedSequence {
+                self.slots
+                    .insert(name.clone(), (*next_fn_idx, *next_type_idx));
+                *next_fn_idx += 1;
+                *next_type_idx += 1;
+            }
         }
-        for (_, walk) in &mut self.walks {
-            *walk = slot();
-            slot();
-        }
-        if !self.walks.is_empty() {
-            self.table = Some(TableSlots::assign(Entry::Pair, next_fn_idx, next_type_idx));
+        if self.functions_walk {
+            self.table = Some(TableSlots::assign(Entry::Memo, next_fn_idx, next_type_idx));
         }
     }
 
@@ -581,13 +475,12 @@ impl EqHelperRegistry {
     /// every helper is registered.
     pub(crate) fn find_walks(&mut self, registry: &TypeRegistry) {
         self.order.sort_unstable();
-        let walks = self_reaching(&self.order, &self.kinds, registry);
-        self.walks = walks.into_iter().map(|name| (name, (0, 0))).collect();
+        self.walks = self_reaching(&self.order, &self.kinds, registry);
     }
 
     /// Whether the helper of `name` compares in steps.
     pub(crate) fn walks(&self, name: &str) -> bool {
-        self.walks.iter().any(|(walked, _)| walked == name)
+        self.walks.iter().any(|walked| walked == name)
     }
 
     /// Whether `==` on `name` is reflexive (`reflexive`), for the functions
@@ -623,9 +516,6 @@ impl EqHelperRegistry {
             .iter()
             .filter_map(|n| self.slots.get(n).map(|s| s.1))
             .collect();
-        if self.functions.is_empty() {
-            out.extend(self.walks.iter().flat_map(|(_, (_, t))| [*t, t + 1]));
-        }
         if let Some(table) = &self.table {
             out.extend(table.function_types());
         }
@@ -667,295 +557,31 @@ impl EqHelperRegistry {
                 types.ty().function([eq_ref, eq_ref], [i32]);
             }
         }
-        if self.functions.is_empty() {
-            for _ in &self.walks {
-                types.ty().function([eq_ref, eq_ref, i32], [i32]);
-                types.ty().function([eq_ref, eq_ref], [i32]);
-            }
-        }
         if let Some(table) = &self.table {
             table.emit_types(types);
         }
     }
 
-    /// Emits the helper bodies. Each helper takes the two operands as
-    /// params 0/1 (eqref) and returns i32 (1 = equal, 0 = different),
-    /// reusing the structural-eq routines from `lists.rs` that already
-    /// power `List.contains` over the same types.
+    /// Emits the packed sequences' helpers, then the bodies of the table of
+    /// remembered pairs.
     pub(crate) fn emit_helper_bodies(
         &self,
         codes: &mut wasm_encoder::CodeSection,
         registry: &TypeRegistry,
-        string_eq_fn_idx: Option<u32>,
-        compound_lookup: &HashMap<String, u32>,
         walk_globals: Option<&TableGlobals>,
     ) -> Result<(), WasmGcError> {
-        // Snapshot type_name → fn_idx so the inline emitters can
-        // dispatch nested record/sum fields by `Call(idx)` instead
-        // of erroring on `Unimplemented`. Self-recursive fields
-        // (parent==field) get their own `self_fn_idx` argument so
-        // recursive sum/record types (Tree.Node holding Tree, …)
-        // resolve to a recursive call into the same helper. Compound
-        // lookups (`List<T>`, `Vector<T>`) are merged in so a record
-        // field of type `List<Option<Int>>` can `Call(__eq_List<…>)`
-        // — list_helpers owns those fn idxs and threads them in via
-        // the `compound_lookup` arg.
-        let mut helper_idx_map: HashMap<String, u32> = self
-            .slots
-            .iter()
-            .map(|(n, (fn_idx, _))| (n.clone(), *fn_idx))
-            .collect();
-        for (canonical, fn_idx) in compound_lookup {
-            helper_idx_map.insert(canonical.clone(), *fn_idx);
-        }
-        if !self.functions.is_empty() {
-            // The program's functions compare everything but the packed
-            // sequences, which keep their helper; the memo table follows.
-            for name in self.functions.keys() {
-                if let Some(idx) = self.lookup_fn_idx(name) {
-                    helper_idx_map.insert(name.clone(), idx);
-                }
-            }
-            for name in &self.order {
-                if self.slots.contains_key(name) {
-                    self.emit_body(
-                        codes,
-                        name,
-                        registry,
-                        string_eq_fn_idx,
-                        &helper_idx_map,
-                        Body::Plain,
-                    )?;
-                }
-            }
-            if let Some(table) = self.memo_table() {
-                let globals = walk_globals.ok_or_else(|| {
-                    WasmGcError::Validation(
-                        "eq functions walk but the remembered pairs were not declared".into(),
-                    )
-                })?;
-                for f in table.emit_bodies(globals)? {
-                    codes.function(&f);
-                }
-            }
-            return Ok(());
-        }
-        let walk_parts = match (self.table, walk_globals) {
-            (Some(table), Some(globals)) => {
-                let mut step_map = helper_idx_map.clone();
-                let mut memory_map = helper_idx_map.clone();
-                for (name, (step, _)) in &self.walks {
-                    step_map.insert(name.clone(), *step);
-                    memory_map.insert(name.clone(), step + 1);
-                }
-                let walked = self.walks.iter().map(|(n, _)| n.clone()).collect();
-                Some((
-                    Walks {
-                        walked,
-                        table,
-                        step_map,
-                        memory_map,
-                    },
-                    globals,
-                ))
-            }
-            (None, _) => None,
-            (Some(_), None) => {
-                return Err(WasmGcError::Validation(
-                    "eq helpers walk but the remembered pairs were not declared".into(),
-                ));
-            }
-        };
         for name in &self.order {
-            let body = match &walk_parts {
-                Some((walks, _))
-                    if walks.walked.contains(name)
-                        && matches!(self.kinds[name], EqKind::Record | EqKind::Sum) =>
-                {
-                    Body::Start(walks)
-                }
-                _ => Body::Plain,
-            };
-            self.emit_body(
-                codes,
-                name,
-                registry,
-                string_eq_fn_idx,
-                &helper_idx_map,
-                body,
-            )?;
-        }
-        if let Some((walks, globals)) = &walk_parts {
-            for (name, _) in &self.walks {
-                for body in [Body::Step(walks), Body::Memory(walks)] {
-                    self.emit_body(
-                        codes,
-                        name,
-                        registry,
-                        string_eq_fn_idx,
-                        &helper_idx_map,
-                        body,
-                    )?;
-                }
-            }
-            for f in walks.table.emit_bodies(globals)? {
-                codes.function(&f);
-            }
-        }
-        Ok(())
-    }
-
-    /// One body of the helper of `name`.
-    fn emit_body(
-        &self,
-        codes: &mut wasm_encoder::CodeSection,
-        name: &str,
-        registry: &TypeRegistry,
-        string_eq_fn_idx: Option<u32>,
-        helper_idx_map: &HashMap<String, u32>,
-        body: Body,
-    ) -> Result<(), WasmGcError> {
-        use super::super::lists::{BudgetFold, EqFold, RememberFold};
-        let (map, params) = match body {
-            Body::Plain => (helper_idx_map, 2),
-            Body::Start(w) => (&w.step_map, 2),
-            Body::Step(w) => (&w.step_map, 3),
-            Body::Memory(w) => (&w.memory_map, 2),
-        };
-        let self_fn_idx = map.get(name).copied();
-        let reflexive = !matches!(body, Body::Plain) && self.reflexive(name, registry);
-        // The start keeps its budget, and a step with memory the key of its
-        // node, in one more local after the body's own.
-        let extra: Vec<_> = match body {
-            Body::Start(_) | Body::Memory(_) => vec![(1, wasm_encoder::ValType::I32)],
-            _ => Vec::new(),
-        };
-        let kind = self.kinds[name];
-        let typed = match kind {
-            EqKind::Record => 2,
-            _ => 0,
-        };
-        let extra_local = params + typed;
-        let fold_budget;
-        let fold_memory;
-        let fold = match body {
-            Body::Plain => EqFold::And,
-            Body::Memory(w) => {
-                fold_memory = RememberFold {
-                    lookup: w.table.lookup(),
-                    insert: w.table.insert(),
-                    key: extra_local,
-                    walked: &w.walked,
-                };
-                EqFold::Remember(&fold_memory)
-            }
-            Body::Start(w) => {
-                fold_budget = BudgetFold {
-                    budget: extra_local,
-                    walked: &w.walked,
-                    restart: Some((w.memory_map[name], w.table.enter(), w.table.leave())),
-                };
-                EqFold::Budget(&fold_budget)
-            }
-            Body::Step(w) => {
-                fold_budget = BudgetFold {
-                    budget: 2,
-                    walked: &w.walked,
-                    restart: None,
-                };
-                EqFold::Budget(&fold_budget)
-            }
-        };
-        let prologue = |f: &mut Function| match body {
-            Body::Plain => {}
-            Body::Start(_) => {
-                // Shared roots need no walk or budget. Use the same type
-                // guard as recursive steps: a value holding NaN need not
-                // equal itself, even when both refs are one object.
-                same_object(f, reflexive, Instruction::I32Const(1));
-                f.instruction(&Instruction::I32Const(WALK_BUDGET));
-                f.instruction(&Instruction::LocalSet(extra_local));
-            }
-            Body::Step(_) => step_prologue(f, reflexive),
-            // A step with memory answers 1 for one object against itself.
-            Body::Memory(_) => same_object(f, reflexive, Instruction::I32Const(1)),
-        };
-        match kind {
-            EqKind::Sum => {
-                // Sum's emit_sum_eq_inline does its own
-                // ref.test/ref.cast cascade per variant — the
-                // raw eqref params are fine to feed in directly.
-                let mut f = Function::new(extra);
-                prologue(&mut f);
-                emit_sum_eq_inline(
-                    &mut f,
-                    name,
-                    registry,
-                    0,
-                    1,
-                    string_eq_fn_idx,
-                    map,
-                    self_fn_idx,
-                    fold,
-                )?;
-                f.instruction(&Instruction::End);
-                codes.function(&f);
-            }
-            EqKind::Record => {
-                // Record's emit_record_eq_inline reads fields via
-                // `struct.get $record_idx <i>` straight off the
-                // local — that needs a typed `(ref null $record)`,
-                // not the eqref the helper signature carries. So
-                // declare two typed locals after the params, `ref.cast`
-                // each param into its slot, then drive the inline
-                // emitter against the typed locals.
-                let r_idx = registry
-                    .record_type_idx(name)
-                    .ok_or(WasmGcError::Validation(format!(
-                        "eq helper for record `{name}`: record not registered"
-                    )))?;
-                let r_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
-                    nullable: true,
-                    heap_type: wasm_encoder::HeapType::Concrete(r_idx),
-                });
-                let mut f = Function::new([vec![(2, r_ref)], extra].concat());
-                prologue(&mut f);
-                let r_heap = wasm_encoder::HeapType::Concrete(r_idx);
-                for side in 0..2 {
-                    f.instruction(&Instruction::LocalGet(side));
-                    f.instruction(&Instruction::RefCastNonNull(r_heap));
-                    f.instruction(&Instruction::LocalSet(params + side));
-                }
-                emit_record_eq_inline(
-                    &mut f,
-                    name,
-                    registry,
-                    params,
-                    params + 1,
-                    string_eq_fn_idx,
-                    map,
-                    self_fn_idx,
-                    fold,
-                )?;
-                f.instruction(&Instruction::End);
-                codes.function(&f);
-            }
-            // The steps of an `Option` hand its payload on: the records and
-            // sums it holds count the budget and remember the pairs.
-            EqKind::PackedSequence => {
+            if self.slots.contains_key(name) {
                 codes.function(&emit_packed_sequence_eq_body(name, registry)?);
             }
-            EqKind::OptionEq => {
-                let budget = matches!(body, Body::Step(_)).then_some(2);
-                let f = emit_option_eq_body(name, registry, string_eq_fn_idx, map, budget)?;
-                codes.function(&f);
-            }
-            EqKind::ResultEq => {
-                let f = emit_result_eq_body(name, registry, string_eq_fn_idx, map)?;
-                codes.function(&f);
-            }
-            EqKind::TupleEq => {
-                let f = emit_tuple_eq_body(name, registry, string_eq_fn_idx, map)?;
+        }
+        if let Some(table) = self.table {
+            let globals = walk_globals.ok_or_else(|| {
+                WasmGcError::Validation(
+                    "eq functions walk but the remembered pairs were not declared".into(),
+                )
+            })?;
+            for f in table.emit_bodies(globals)? {
                 codes.function(&f);
             }
         }
@@ -983,11 +609,11 @@ mod tests {
     #[test]
     fn slot_assignment_is_independent_of_discovery_order() {
         let mut left = EqHelperRegistry::new();
-        left.register("Zulu", EqKind::Record);
-        left.register("Alpha", EqKind::Record);
+        left.register("Zulu", EqKind::PackedSequence);
+        left.register("Alpha", EqKind::PackedSequence);
         let mut right = EqHelperRegistry::new();
-        right.register("Alpha", EqKind::Record);
-        right.register("Zulu", EqKind::Record);
+        right.register("Alpha", EqKind::PackedSequence);
+        right.register("Zulu", EqKind::PackedSequence);
 
         left.assign_slots(&mut 10, &mut 20);
         right.assign_slots(&mut 10, &mut 20);
@@ -1044,360 +670,6 @@ fn parse_tuple_elems(canonical: &str) -> Option<Vec<&str>> {
     }
     out.push(inner[start..].trim());
     Some(out)
-}
-
-/// Emit `(eqref, eqref) -> i32` body for `Option<X>`. Layout:
-/// `(struct (mut i32 tag) (mut X value))`, tag=0 None, tag=1 Some.
-/// Compare tags first; if differ → 0; if both 0 → 1; if both 1 →
-/// inner eq.
-fn emit_option_eq_body(
-    canonical: &str,
-    registry: &TypeRegistry,
-    string_eq_fn_idx: Option<u32>,
-    helper_idx_map: &HashMap<String, u32>,
-    budget: Option<u32>,
-) -> Result<Function, WasmGcError> {
-    let opt_idx = registry
-        .option_type_idx(canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "eq helper for `{canonical}`: option not registered"
-        )))?;
-    let inner = TypeRegistry::option_element_type(canonical).ok_or(WasmGcError::Validation(
-        format!("eq helper for `{canonical}`: can't parse inner"),
-    ))?;
-    let opt_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
-        nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
-    });
-    // A step against a budget takes it as a third param.
-    let (lhs, rhs) = match budget {
-        Some(_) => (3, 4),
-        None => (2, 3),
-    };
-    let mut f = Function::new(vec![(2, opt_ref)]);
-    let opt_heap = wasm_encoder::HeapType::Concrete(opt_idx);
-    // Cast both eqref params → typed Option ref into the two locals.
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefCastNonNull(opt_heap));
-    f.instruction(&Instruction::LocalSet(lhs));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::RefCastNonNull(opt_heap));
-    f.instruction(&Instruction::LocalSet(rhs));
-    // if tag(lhs) != tag(rhs) → return 0
-    f.instruction(&Instruction::LocalGet(lhs));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: opt_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::LocalGet(rhs));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: opt_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::I32Ne);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
-    // tags equal — if 0 (None), return 1 (or the budget left)
-    f.instruction(&Instruction::LocalGet(lhs));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: opt_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&match budget {
-        Some(b) => Instruction::LocalGet(b),
-        None => Instruction::I32Const(1),
-    });
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
-    // Both Some — compare inner via per-type dispatch.
-    f.instruction(&Instruction::LocalGet(lhs));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: opt_idx,
-        field_index: 1,
-    });
-    f.instruction(&Instruction::LocalGet(rhs));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: opt_idx,
-        field_index: 1,
-    });
-    match budget {
-        // The payload's step answers for the option.
-        Some(b) => {
-            let step = helper_idx_map.get(inner.trim()).ok_or_else(|| {
-                WasmGcError::Validation(format!("`{canonical}`: its payload has no step"))
-            })?;
-            f.instruction(&Instruction::LocalGet(b));
-            f.instruction(&Instruction::Call(*step));
-        }
-        None => emit_inner_eq_dispatch(
-            &mut f,
-            inner.trim(),
-            registry,
-            string_eq_fn_idx,
-            helper_idx_map,
-        )?,
-    }
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-/// Emit `(eqref, eqref) -> i32` body for `Result<X, Y>`. Layout:
-/// `(struct (mut i32 tag) (mut X ok) (mut Y err))`, tag=0 Err,
-/// tag=1 Ok. Compare tags; if differ → 0; both 0 → err eq;
-/// both 1 → ok eq.
-fn emit_result_eq_body(
-    canonical: &str,
-    registry: &TypeRegistry,
-    string_eq_fn_idx: Option<u32>,
-    helper_idx_map: &HashMap<String, u32>,
-) -> Result<Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx(canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "eq helper for `{canonical}`: result not registered"
-        )))?;
-    let (ok_inner, err_inner) = parse_result_kv(canonical).ok_or(WasmGcError::Validation(
-        format!("eq helper for `{canonical}`: can't parse inner"),
-    ))?;
-    let res_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
-        nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(res_idx),
-    });
-    let mut f = Function::new(vec![(2, res_ref)]);
-    let res_heap = wasm_encoder::HeapType::Concrete(res_idx);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefCastNonNull(res_heap));
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::RefCastNonNull(res_heap));
-    f.instruction(&Instruction::LocalSet(3));
-    // if tag(lhs) != tag(rhs) → 0
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: res_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: res_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::I32Ne);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
-    // tags equal — branch on tag value: tag=1 (Ok) → field 1 eq;
-    // tag=0 (Err) → field 2 eq.
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: res_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
-        wasm_encoder::ValType::I32,
-    )));
-    // Ok arm
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: res_idx,
-        field_index: 1,
-    });
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: res_idx,
-        field_index: 1,
-    });
-    emit_inner_eq_dispatch(
-        &mut f,
-        ok_inner.trim(),
-        registry,
-        string_eq_fn_idx,
-        helper_idx_map,
-    )?;
-    f.instruction(&Instruction::Else);
-    // Err arm
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: res_idx,
-        field_index: 2,
-    });
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: res_idx,
-        field_index: 2,
-    });
-    emit_inner_eq_dispatch(
-        &mut f,
-        err_inner.trim(),
-        registry,
-        string_eq_fn_idx,
-        helper_idx_map,
-    )?;
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-/// Emit `(eqref, eqref) -> i32` body for `Tuple<A, B, C, …>`.
-/// Layout: `(struct field0 field1 …)`. Per-element eq, AND-fold.
-fn emit_tuple_eq_body(
-    canonical: &str,
-    registry: &TypeRegistry,
-    string_eq_fn_idx: Option<u32>,
-    helper_idx_map: &HashMap<String, u32>,
-) -> Result<Function, WasmGcError> {
-    let tup_idx = registry
-        .tuple_type_idx(canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "eq helper for `{canonical}`: tuple not registered"
-        )))?;
-    let elems = parse_tuple_elems(canonical).ok_or(WasmGcError::Validation(format!(
-        "eq helper for `{canonical}`: can't parse elements"
-    )))?;
-    let tup_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
-        nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(tup_idx),
-    });
-    let mut f = Function::new(vec![(2, tup_ref)]);
-    let tup_heap = wasm_encoder::HeapType::Concrete(tup_idx);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefCastNonNull(tup_heap));
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::RefCastNonNull(tup_heap));
-    f.instruction(&Instruction::LocalSet(3));
-    for (i, elem) in elems.iter().enumerate() {
-        f.instruction(&Instruction::LocalGet(2));
-        f.instruction(&Instruction::StructGet {
-            struct_type_index: tup_idx,
-            field_index: i as u32,
-        });
-        f.instruction(&Instruction::LocalGet(3));
-        f.instruction(&Instruction::StructGet {
-            struct_type_index: tup_idx,
-            field_index: i as u32,
-        });
-        emit_inner_eq_dispatch(
-            &mut f,
-            elem.trim(),
-            registry,
-            string_eq_fn_idx,
-            helper_idx_map,
-        )?;
-        if i > 0 {
-            f.instruction(&Instruction::I32And);
-        }
-    }
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-/// Stack: `[lhs_value, rhs_value]` of `inner` aver type. Push i32
-/// eq verdict. Same shape used by Option's payload, Result's two
-/// arms, Tuple's per-element compares.
-///
-/// Newtype-optimised records (`Box(val: Int)` → i64) are handled
-/// before the helper-map lookup: the actual stack values are the
-/// underlying primitive, so dispatch through the primitive arm.
-fn emit_inner_eq_dispatch(
-    f: &mut Function,
-    inner: &str,
-    registry: &TypeRegistry,
-    string_eq_fn_idx: Option<u32>,
-    helper_idx_map: &HashMap<String, u32>,
-) -> Result<(), WasmGcError> {
-    // ETAP-2 carrier-`i64`: an eligible carrier field/payload is a NATIVE
-    // `i64` (erased to `i64`, not the `$AverInt` ref a plain `Int` field
-    // lowers to), so it compares with a raw `i64.eq` — NOT `__aint_eq`,
-    // which expects two refs and fails validation on a scalar `i64`. Check
-    // before the newtype resolution, which would fold the carrier into
-    // `Int` → `emit_aint_field_eq` → `__aint_eq`.
-    if registry.is_eligible_carrier(inner) {
-        f.instruction(&Instruction::I64Eq);
-        return Ok(());
-    }
-    // Resolve newtypes — `Box(n: Int)` reaches here as "Box" but
-    // its wasm representation is i64.
-    let resolved: String = if let Some(under) = registry.newtype_underlying(inner) {
-        under.to_string()
-    } else {
-        inner.to_string()
-    };
-    match resolved.as_str() {
-        // `Int = ℤ` — an `Int` payload lowers to the `$aint` ref under
-        // bignum, so it compares via `__aint_eq` (an `i64.eq` on a ref is
-        // invalid wasm and wrong across the Small/Big boundary). This
-        // holds for BOTH a genuine `Int` field (`inner == "Int"`) AND a
-        // newtype-erased Int (`Box(v: Int)` → "Box" resolves to "Int"):
-        // the erased field's wasm representation is still `$aint`, not a
-        // scalar i64. Off-path (no Int reachable) both fall to `i64.eq`.
-        "Int" => {
-            // `emit_aint_field_eq` itself branches on `registry.bignum`
-            // (→ `__aint_eq` under ℤ, → `i64.eq` when no Int is reachable),
-            // so this single call is correct for both a genuine and an
-            // erased Int field.
-            super::super::lists::emit_aint_field_eq(f, registry)?;
-        }
-        "Bool" => {
-            f.instruction(&Instruction::I32Eq);
-        }
-        "Unit" => {
-            // `Unit` has no wasm representation, but the surrounding
-            // `Result<Unit, X>` / `Tuple<Unit, X>` struct uses a
-            // dummy `i32` slot (see module.rs:4150, "Unit on either
-            // side has no wasm value; we use a dummy `i32` slot").
-            // The caller did two `struct.get` and pushed two dummy
-            // i32s; comparing them with `I32Eq` always yields 1
-            // since any two Unit values are equal by definition.
-            // `Option<Unit>` uses the same private i32 placeholder, so this
-            // branch also gives its represented payload the right equality.
-            f.instruction(&Instruction::I32Eq);
-        }
-        // jasisz/aver#1329 — two job handles are the same job exactly when
-        // they are the same reference. That agrees with the VM's identity,
-        // whose handle is its `id`, because one job owns exactly one struct:
-        // `begin` mints it and nothing rebuilds a handle from a recorded id,
-        // not even in replay, where the module keeps the handle it minted.
-        crate::capability::work::WORK_JOB => {
-            f.instruction(&Instruction::RefEq);
-        }
-        "Float" => {
-            f.instruction(&Instruction::F64Eq);
-        }
-        "String" => {
-            let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
-                "carrier eq with String inner needs __wasmgc_string_eq".into(),
-            ))?;
-            f.instruction(&Instruction::Call(eq_fn));
-        }
-        other if helper_idx_map.contains_key(other) => {
-            f.instruction(&Instruction::Call(helper_idx_map[other]));
-        }
-        // Flattening renames a dependency's type to its bare name unless two
-        // declarers collide, so a qualified spelling that reached here
-        // through a contract boundary (`Wait.Item`) finds its helper under
-        // the bare one. Every other name-keyed lookup in this backend does
-        // the same fallback.
-        other
-            if other
-                .rsplit_once('.')
-                .is_some_and(|(_, bare)| helper_idx_map.contains_key(bare)) =>
-        {
-            let bare = other.rsplit_once('.').expect("checked above").1;
-            f.instruction(&Instruction::Call(helper_idx_map[bare]));
-        }
-        other => {
-            return Err(WasmGcError::Validation(format!(
-                "carrier eq inner type `{other}` has no eq dispatch"
-            )));
-        }
-    }
-    Ok(())
 }
 
 fn type_has_string_field(

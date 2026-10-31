@@ -1,5 +1,5 @@
 //! The table a comparison or a hash in steps remembers nodes in once its
-//! budget is spent (`eq_helpers`, `hash_helpers`).
+//! budget is spent (`eq_fns`, `hash_helpers`).
 //!
 //! Wasm-gc gives a node no address to key a table on, so an entry falls
 //! where the key of its node says: the node's constructor mixed with its
@@ -47,8 +47,6 @@ const FIRST_ENTRIES: i32 = 4096;
 /// What an entry of a table holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Entry {
-    /// Two nodes found equal (`==`).
-    Pair,
     /// One node and its hash.
     Hash,
     /// Two nodes found equal by a structural equality function of the
@@ -62,7 +60,7 @@ pub(crate) enum Entry {
 impl Entry {
     fn refs(self) -> u32 {
         match self {
-            Entry::Pair | Entry::Memo => 2,
+            Entry::Memo => 2,
             Entry::Hash => 1,
         }
     }
@@ -71,7 +69,7 @@ impl Entry {
     fn fn_count(self) -> u32 {
         match self {
             Entry::Memo => 3,
-            Entry::Pair | Entry::Hash => 4,
+            Entry::Hash => 4,
         }
     }
 
@@ -182,7 +180,7 @@ impl TableSlots {
         ]
         .concat();
         let found = match self.entry {
-            Entry::Pair | Entry::Memo => ValType::I32,
+            Entry::Memo => ValType::I32,
             Entry::Hash => ValType::I64,
         };
         let mut insert = lookup.clone();
@@ -280,7 +278,7 @@ impl TableSlots {
 
     /// The bodies of the functions, in function order.
     pub(crate) fn emit_bodies(&self, g: &TableGlobals) -> Result<Vec<Function>, WasmGcError> {
-        let pair = matches!(self.entry, Entry::Pair | Entry::Memo);
+        let pair = self.entry == Entry::Memo;
         // A key mixed at the call site from a node's fields (`__eq_memo`)
         // is spread here, the same way `emit_node_key` does, and is never 0.
         let spread = if self.entry == Entry::Memo {

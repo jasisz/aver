@@ -846,7 +846,8 @@ pub(super) fn emit_module_with(
         }),
         &contains_uses,
         &list_uses,
-    );
+    )
+    .map_err(WasmGcError::Validation)?;
     let mut mir_program = mir_program;
     let fn_defs: Vec<&FnDef> = match &eq_synth {
         Some(synth) => {
@@ -4535,21 +4536,11 @@ pub(super) fn emit_module_with(
     // `List<T>` / `Vector<T>` fn idxs so a record field of type
     // `List<Option<Int>>` (etc.) can dispatch via
     // `Call(__eq_List<…>)`. Same shape on the hash side.
-    let compound_eq_lookup: HashMap<String, u32> = compound_eq_hash_lookup
-        .iter()
-        .map(|(n, (eq, _))| (n.clone(), *eq))
-        .collect();
     let compound_hash_lookup: HashMap<String, u32> = compound_eq_hash_lookup
         .iter()
         .map(|(n, (_, h))| (n.clone(), *h))
         .collect();
-    eq_helpers_registry.emit_helper_bodies(
-        &mut codes,
-        &registry,
-        string_eq_fn_idx,
-        &compound_eq_lookup,
-        eq_walk_globals.as_ref(),
-    )?;
+    eq_helpers_registry.emit_helper_bodies(&mut codes, &registry, eq_walk_globals.as_ref())?;
     // `__hash_<X>` helper bodies — emitted right after eq helpers so
     // every nominal/carrier hash dispatch finds its target fn_idx.
     hash_helpers_registry.emit_helper_bodies(
@@ -7850,8 +7841,7 @@ fn discover_builtins_in_stmt(
 /// reaches in `eq_helpers`. Needed for `==` on collection types
 /// whose element/key/value type is nominal — `List<Tree>`,
 /// `Map<Color, Tree>`, `Option<Box>`, etc. Without this, the
-/// helper-body emit (`emit_list_eq`, `emit_record_eq_inline`,
-/// `emit_eq_record`) would dispatch by `Call(__eq_<Tree>)` against
+/// helper-body emit (`emit_list_eq`, `emit_eq_record`) would dispatch by `Call(__eq_<Tree>)` against
 /// an unregistered slot.
 /// Canonical wasm-gc `TypeRegistry` key for a `Type::Named` reference.
 ///
@@ -7878,8 +7868,7 @@ fn named_type_registry_key(symbol_table: &crate::ir::SymbolTable, ty: &AverType)
 /// reaches in `eq_helpers`. Needed for `==` on collection types
 /// whose element/key/value type is nominal — `List<Tree>`,
 /// `Map<Color, Tree>`, `Option<Box>`, etc. Without this, the
-/// helper-body emit (`emit_list_eq`, `emit_record_eq_inline`,
-/// `emit_eq_record`) would dispatch by `Call(__eq_<Tree>)` against
+/// helper-body emit (`emit_list_eq`, `emit_eq_record`) would dispatch by `Call(__eq_<Tree>)` against
 /// an unregistered slot.
 fn register_nominal_in_type(
     t: &AverType,
