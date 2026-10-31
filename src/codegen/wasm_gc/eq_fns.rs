@@ -1111,6 +1111,14 @@ fn rewrite(
         rewrite(child, fns, symbols, not, builtins)
     });
     let replacement = match &e.node {
+        // `x == C` for a constructor `C` with no fields stays as it is: the
+        // emitter answers it with one `ref.test` on `x`.
+        MirExpr::BinOp(b)
+            if matches!(b.node.op, BinOp::Eq | BinOp::Neq)
+                && (is_nullary(&b.node.lhs) || is_nullary(&b.node.rhs)) =>
+        {
+            None
+        }
         MirExpr::BinOp(b) if matches!(b.node.op, BinOp::Eq | BinOp::Neq) => {
             let target = b.node.lhs.ty().and_then(|t| {
                 let key = key_of(t, symbols);
@@ -1170,6 +1178,12 @@ fn rewrite(
     if let Some(node) = replacement {
         e.node = node;
     }
+}
+
+/// A constructor of a user type with no fields, written as a value.
+fn is_nullary(e: &Spanned<MirExpr>) -> bool {
+    matches!(&e.node, MirExpr::Construct(c)
+        if matches!(c.node.ctor, crate::ir::mir::MirCtor::User(_)) && c.node.args.is_empty())
 }
 
 fn retyped<T, U>(node: T, like: &Spanned<U>) -> Spanned<T> {
