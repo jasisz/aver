@@ -437,21 +437,25 @@ struct AcceptedLoop {
 /// have kept is the safe direction, and the shape that would need the
 /// finer answer — a local shadowing a same-named top-level function in
 /// one branch only — has never appeared.
+///
+/// The module's names are borrowed and the body's binders kept beside
+/// them, not subtracted into a set of their own: that set is as long as
+/// the module, and building one per function made the pass quadratic in
+/// the number of functions (`aver verify` adds a helper per case).
 struct CallScope<'a> {
-    callable: HashSet<&'a str>,
+    fn_names: &'a HashSet<String>,
+    bound: HashSet<String>,
 }
 
 impl<'a> CallScope<'a> {
     fn of(fd: &FnDef, fn_names: &'a HashSet<String>) -> Self {
         let mut bound = HashSet::new();
         collect_bound_names(fd, &mut bound);
-        Self {
-            callable: fn_names
-                .iter()
-                .filter(|name| !bound.contains(*name))
-                .map(String::as_str)
-                .collect(),
-        }
+        Self { fn_names, bound }
+    }
+
+    fn callable(&self, name: &str) -> bool {
+        self.fn_names.contains(name) && !self.bound.contains(name)
     }
 }
 
@@ -465,7 +469,7 @@ fn collect_producer_sites(
 ) {
     if let Expr::FnCall(callee, args) = &expr.node
         && let Expr::Ident(name) = &callee.node
-        && scope.callable.contains(name.as_str())
+        && scope.callable(name)
     {
         for (i, arg) in args.iter().enumerate() {
             if is_string_chars_call(&arg.node) {
@@ -508,7 +512,7 @@ fn rewrite_producer_calls(
     let Expr::Ident(name) = &callee.node else {
         return count;
     };
-    if !scope.callable.contains(name.as_str()) {
+    if !scope.callable(name) {
         return count;
     }
     let Some(loop_info) = accepted.get(name) else {

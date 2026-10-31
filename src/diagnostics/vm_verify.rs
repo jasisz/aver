@@ -835,7 +835,6 @@ fn prepare_prechecked_items_vm(
         verify_blocks.retain(|block| matches!(block.kind, VerifyKind::Law(_)));
     }
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
-    crate::ir::pipeline::resolve(&mut items);
     if plans.is_empty() {
         return Ok(PreparedVmVerify {
             machine: None,
@@ -852,18 +851,16 @@ fn prepare_prechecked_items_vm(
         .iter()
         .map(crate::codegen::ModuleInfo::from_loaded)
         .collect::<Vec<_>>();
+    let lowered = lower_verify_items(&mut items, &dep_modules, &capabilities);
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let mut symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
-    symbol_table.merge_capability_registry(&capabilities);
-    let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
     let (code, globals) = vm::compile_program_with_loaded_modules(
-        &resolved_items,
-        &symbol_table,
+        &lowered.resolved_items,
+        &lowered.symbol_table,
         &mut arena,
         loaded,
         source_file,
-        None,
+        lowered.analysis.as_ref(),
     )
     .map_err(|error| format!("VM compile error: {error}"))?;
     Ok(PreparedVmVerify {
@@ -1016,28 +1013,17 @@ fn run_verify_for_items_vm_impl(
     }
 
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
-    crate::ir::pipeline::resolve(&mut items);
+    let lowered = lower_verify_items(&mut items, &dep_modules, &tc_result.capabilities);
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    // verify path runs `pipeline::tco` / the typecheck gate / `resolve`
-    // directly without the canonical `pipeline::run` orchestrator (it
-    // has to interleave verify-block work between them), so no
-    // AnalysisResult is available
-    // here — the VM compiler falls through to the conservative
-    // "assume allocates" branch (no per-fn `no_alloc` promotion).
-    // Build the resolved-identity table + lift the items to resolved
-    // HIR ourselves so the VM compiler stays on the Phase E contract.
-    let mut symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
-    symbol_table.merge_capability_registry(&tc_result.capabilities);
-    let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
     let (code, globals) = vm::compile_program_with_modules(
-        &resolved_items,
-        &symbol_table,
+        &lowered.resolved_items,
+        &lowered.symbol_table,
         &mut arena,
         base_dir,
         source_file,
-        None,
+        lowered.analysis.as_ref(),
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
@@ -1401,7 +1387,6 @@ fn run_verify_for_items_vm_with_loaded_impl(
     }
 
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
-    crate::ir::pipeline::resolve(&mut items);
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
@@ -1412,16 +1397,14 @@ fn run_verify_for_items_vm_with_loaded_impl(
     // "missing VM symbol for exposed function" path that the disk path
     // hit before the fix.
     let dep_modules = crate::source::loaded_to_module_info(&loaded);
-    let mut symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
-    symbol_table.merge_capability_registry(&tc_result.capabilities);
-    let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
+    let lowered = lower_verify_items(&mut items, &dep_modules, &tc_result.capabilities);
     let (code, globals) = vm::compile_program_with_loaded_modules(
-        &resolved_items,
-        &symbol_table,
+        &lowered.resolved_items,
+        &lowered.symbol_table,
         &mut arena,
         loaded,
         source_file,
-        None,
+        lowered.analysis.as_ref(),
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
@@ -1625,6 +1608,39 @@ fn build_verify_vm_plans(
     }
 
     plans
+}
+
+/// Lower the checked verify program with the stages `aver run` applies
+/// after the front door, the case helpers from [`build_verify_vm_plans`]
+/// included, so a case runs the code `aver run` would run for the same
+/// call.
+///
+/// The `last_use` + alias facts are what this buys the VM: with them a
+/// `Map.set` / `Vector.set` on a dead, unshared local changes the
+/// container in place instead of copying it. That is sound across cases
+/// because each case half and guard is its own function, called afresh
+/// on the shared base VM: a value one case builds is never a local of
+/// another, and anything both can reach (a constant, a global, a value
+/// read out of another container) is aliased or not dead, which is
+/// exactly what the facts refuse and what the VM's runtime holder check
+/// refuses again. A verify case is then no different from `aver run`
+/// calling the same function twice.
+#[cfg(feature = "runtime")]
+fn lower_verify_items(
+    items: &mut Vec<TopLevel>,
+    dep_modules: &[crate::codegen::ModuleInfo],
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> crate::ir::PipelineResult {
+    crate::ir::pipeline::run_after_front(
+        items,
+        crate::ir::PipelineConfig {
+            run_tco: false,
+            typecheck: None,
+            dep_modules,
+            ..Default::default()
+        },
+        capabilities,
+    )
 }
 
 // ─── Trace projection ─────────────────────────────────────────────────────────
