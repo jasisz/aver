@@ -115,6 +115,21 @@ pub(crate) fn pooled_literal(n: i64) -> Option<u32> {
         .flatten()
 }
 
+/// Push the shared box of literal `n` held in `global`, making it on the
+/// first read: the global starts null (see the literal pool in
+/// `module.rs`), and `$AverInt` is never written after it is made, so the
+/// box made once serves every later read.
+pub(crate) fn emit_pooled_literal(func: &mut Function, global: u32, n: i64, from_i64: u32) {
+    func.instruction(&I::GlobalGet(global));
+    func.instruction(&I::RefIsNull);
+    func.instruction(&I::If(BlockType::Empty));
+    func.instruction(&I::I64Const(n));
+    func.instruction(&I::Call(from_i64));
+    func.instruction(&I::GlobalSet(global));
+    func.instruction(&I::End);
+    func.instruction(&I::GlobalGet(global));
+}
+
 /// Where a leaf evaluated ahead is held: an `$AverInt`, a raw `i64` (the
 /// exact path boxes it), or an `Int` twin's result `(n, r)`.
 #[derive(Clone, Copy)]
