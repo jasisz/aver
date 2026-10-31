@@ -525,7 +525,8 @@ impl MCtx<'_> {
             PlanExpr::RecordCreate(tid, fs) => {
                 let fts = self.rec_fields(*tid)?;
                 let ts = self.tys_of(n, g, fs)?;
-                (fts.len() >= 2 && ts == fts).then_some(PlanTy::Record(*tid))
+                ((fts.len() >= 2 || self.is_word(*tid)) && ts == fts)
+                    .then_some(PlanTy::Record(*tid))
             }
             PlanExpr::Project(tid, i, base) => {
                 match (self.ty_of(n, g, false, base)?, self.rec_fields(*tid)) {
@@ -1425,7 +1426,11 @@ impl MCtx<'_> {
             }
             PlanExpr::RecordCreate(tid, fs) => {
                 let mut out = self.lower_args(x, g, fs);
-                out.push(BI::Op(WI::StructNew(self.struct_of(*tid))));
+                if self.is_word(*tid) {
+                    out.push(BI::Op(WI::Call(self.to_i64_chk)));
+                } else {
+                    out.push(BI::Op(WI::StructNew(self.struct_of(*tid))));
+                }
                 out
             }
             PlanExpr::Project(tid, i, base) => {

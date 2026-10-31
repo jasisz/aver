@@ -117,6 +117,7 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
     hostOf M h M.toI64Sat = some (1, _root_.AverCert.ListHelpers.satSem M.carrier) ∧
     hostOf M h M.fromInt =
       some (1, _root_.AverCert.StringHelpers.fromIntSem M.carrier M.mag M.str) ∧
+    hostOf M h M.toI64Chk = some (1, _root_.AverCert.BytesHelpers.chkSem M.carrier) ∧
     (∀ x ∈ M.listHelpers, hostOf M h x.2.2 =
       some (x.2.1.arity, _root_.AverCert.ListHelpers.helperSem M h.eq h.stringEq x.2.1 x.1)) ∧
     (∀ x ∈ M.bytesHelpers, hostOf M h x.2 =
@@ -131,7 +132,7 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
-    L (by simp [hostAssoc]),
+    L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     fun x hx => L (by simp only [hostAssoc, List.mem_append]; left; right
                       exact List.mem_map.mpr ⟨x, hx, rfl⟩),
     fun x hx => L (by simp only [hostAssoc, List.mem_append]; right
@@ -178,6 +179,7 @@ theorem PlanFacts.nodup {s : Subject} {tt : TypeTable} {fns : List FnEntry}
     (hf : PlanFacts s tt fns) : (fns.map (·.funcIdx)).Nodup :=
   (List.nodup_append.mp hf.distinct).2.1
 
+set_option maxHeartbeats 800000 in
 theorem planFacts_of_accepted (artifact : ArtifactData) (h : plansAccepted artifact = true) :
     PlanFacts artifact.manifest.subject artifact.manifest.types artifact.manifest.fnPlans := by
   simp only [plansAccepted, consPinned, Bool.and_eq_true, List.all_eq_true] at h

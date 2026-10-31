@@ -446,7 +446,7 @@ fn a_certified_build_keeps_the_self_tail_loop() {
 
 /// A word record (a one-field `Int` carrier the emitter holds as an `i64`)
 /// is certified where it is passed, picked, matched out of a constructor,
-/// stored in one and read; building one is declined. The `--certify` build
+/// stored in one, built and read. The `--certify` build
 /// keeps the carrier on the machine word: `valueOf(w: Word)` takes an `i64`.
 #[test]
 fn a_certified_build_certifies_word_records_on_the_machine_word() {
@@ -457,11 +457,16 @@ fn a_certified_build_certifies_word_records_on_the_machine_word() {
         module_root: None,
     };
     let (certified, names) = compile(&repo_root, &entry, &["--certify"], true).unwrap();
-    for name in ["valueOf", "pick", "labelOf", "labelValue", "relabel"] {
+    for name in [
+        "fromInt",
+        "wordOf",
+        "valueOf",
+        "pick",
+        "labelOf",
+        "labelValue",
+        "relabel",
+    ] {
         assert!(names.iter().any(|n| n == name), "{name} not in {names:?}");
-    }
-    for name in ["fromInt", "wordOf"] {
-        assert!(!names.iter().any(|n| n == name), "{name} in {names:?}");
     }
     let mut types = Vec::new();
     let mut fn_types = Vec::new();

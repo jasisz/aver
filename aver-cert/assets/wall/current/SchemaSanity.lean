@@ -17,7 +17,8 @@ import SchemaCore
 
 `CarrierSpec` is the abstract representation the whole certificate is
 quantified over, and `Canon` — the runtime's normal form — was added to it as
-a bare predicate with two axioms (`canonSmall`, `canonBig`). An abstract
+a bare predicate with three axioms (`canonSmall`, `canonBig`,
+`canonSmallBand`). An abstract
 structure with contradictory fields would make every obligation vacuously
 true, so the structure needs a WITNESS: one concrete inhabitant, built here
 and checked by the kernel.
@@ -56,7 +57,7 @@ def sanityCanon (C : Nat) (w : WVal) : Prop :=
     (∃ s lty les sg, w = .structv C [.i64v s, .arr lty les, .i32v sg] ∧
       ¬(-(2 ^ 63 : Int) ≤ s ∧ s < 2 ^ 63) ∧ (sg = -1 ∨ sg = 1))
 
-/-- A concrete inhabitant of `CarrierSpec C`: the six fields are jointly
+/-- A concrete inhabitant of `CarrierSpec C`: its fields are jointly
     satisfiable, so no obligation is vacuously true through an empty
     representation type. -/
 def sanityCarrierSpec (C : Nat) : CarrierSpec C where
@@ -113,6 +114,18 @@ def sanityCarrierSpec (C : Nat) : CarrierSpec C where
       subst hs
       subst hsgEq
       exact ⟨hband, by rcases hsg with rfl | rfl <;> simp⟩
+  canonSmallBand := by
+    intro n s sg hrepr hcanon
+    have hsn : s = n := by
+      rcases hrepr with h | ⟨lty', les', sg', h, -, -⟩
+      · simp only [carrierSmall, WVal.structv.injEq, List.cons.injEq, WVal.i64v.injEq] at h
+        exact h.2.1
+      · simp at h
+    subst hsn
+    rcases hcanon with ⟨k, h, hlo, hhi⟩ | ⟨s', lty', les', sg', h, -, -⟩
+    · simp only [carrierSmall, WVal.structv.injEq, List.cons.injEq, WVal.i64v.injEq] at h
+      exact h.2.1 ▸ ⟨hlo, hhi⟩
+    · simp at h
 
 #print axioms sanityCarrierSpec
 

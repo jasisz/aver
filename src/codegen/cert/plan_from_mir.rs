@@ -542,6 +542,19 @@ impl TypeTableBuilder {
         Ok(PlanTy::Bytes)
     }
 
+    /// Declare `__aint_to_i64_checked`, which `pack` and the construction of
+    /// a word record call.
+    fn int_chk(&mut self, layout: &dyn PlanLayout) -> Result<(), String> {
+        if self.table.int_chk.is_none() {
+            self.table.int_chk = Some(
+                layout
+                    .int_chk()
+                    .ok_or("__aint_to_i64_checked is not emitted")?,
+            );
+        }
+        Ok(())
+    }
+
     /// Whether type id `tid` is a word record.
     fn is_word(&self, tid: u32) -> bool {
         self.table.words.contains(&tid)
@@ -564,12 +577,8 @@ impl TypeTableBuilder {
             Some(x) if x.1 == f => {}
             Some(_) => return Err(format!("Bytes helper ({role:?}) at two indices")),
         }
-        if role == PlanBytesRole::Pack && self.table.int_chk.is_none() {
-            self.table.int_chk = Some(
-                layout
-                    .int_chk()
-                    .ok_or("__aint_to_i64_checked is not emitted")?,
-            );
+        if role == PlanBytesRole::Pack {
+            self.int_chk(layout)?;
         }
         if matches!(role, PlanBytesRole::Take | PlanBytesRole::Drop) && self.table.int_sat.is_none()
         {
@@ -1047,12 +1056,16 @@ impl Printer<'_> {
                 let (tid, declared) = self.types.record_tid(self.layout, &rec.type_name)?;
                 if self.types.is_word(tid) {
                     // The emitter narrows the boxed value with
-                    // `__aint_to_i64_checked`; that its `i64` is in the band
-                    // rests on a Small carrier's value being in the band,
-                    // which the wall does not assume.
-                    return Err(
-                        "RecordCreate of a word record (machine word of a Small Int)".into(),
-                    );
+                    // `__aint_to_i64_checked`, which traps on a Big one. A
+                    // value already raw (`Box`/`Unbox`) takes another path.
+                    let [field] = rec.fields.as_slice() else {
+                        return Err("RecordCreate of a word record (not one field)".into());
+                    };
+                    if matches!(field.value.node, MirExpr::Box(_) | MirExpr::Unbox(_)) {
+                        return Err("RecordCreate of a word record (raw value)".into());
+                    }
+                    self.types.int_chk(self.layout)?;
+                    return Ok(PlanExpr::RecordCreate(tid, vec![self.expr(&field.value)?]));
                 }
                 if declared.len() < 2 {
                     return Err("RecordCreate of a one-field record (newtype)".into());

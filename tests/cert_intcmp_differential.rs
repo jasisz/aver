@@ -205,6 +205,7 @@ struct Harness {
     min_int: wasmtime::Func,
     product_non_neg: wasmtime::Func,
     product_non_pos: wasmtime::Func,
+    to_i64_checked: wasmtime::Func,
 }
 
 fn harness() -> Harness {
@@ -247,6 +248,7 @@ fn harness() -> Harness {
     let min_int = func(&mut store, "minInt");
     let product_non_neg = func(&mut store, "productNonNeg");
     let product_non_pos = func(&mut store, "productNonPos");
+    let to_i64_checked = func(&mut store, "__rt_aint_to_i64_checked");
     Harness {
         store,
         from_i64,
@@ -265,6 +267,7 @@ fn harness() -> Harness {
         min_int,
         product_non_neg,
         product_non_pos,
+        to_i64_checked,
     }
 }
 
@@ -760,4 +763,91 @@ fn the_three_faces_match_their_models_on_every_pair() {
             );
         }
     }
+}
+
+/// `CarrierSpec.canonSmallBand`: a canonical carrier without limbs represents
+/// a value in the i64 band. The wall uses it to read `__aint_to_i64_checked`
+/// on a canonical Int as an exact machine word in the band, when a word
+/// record (a one-field `Int` carrier held as an `i64`) is built. Checked here
+/// on the real runtime, at the band's edges and one past each, over carriers
+/// built by boxing and by each arithmetic helper: every limbless carrier's
+/// value is in the band, the checked conversion returns exactly that value,
+/// and on every limb-carrying carrier it traps.
+#[test]
+fn a_limbless_carrier_is_in_the_band_and_the_checked_conversion_returns_it() {
+    let mut h = harness();
+    let edges: &[i128] = &[
+        i64::MAX as i128 - 1,
+        i64::MAX as i128,
+        i64::MAX as i128 + 1,
+        i64::MIN as i128 + 1,
+        i64::MIN as i128,
+        i64::MIN as i128 - 1,
+    ];
+    let mut values: Vec<i128> = VALUES.to_vec();
+    values.extend_from_slice(edges);
+    let mut limbless = 0usize;
+    let mut traps = 0usize;
+    let mut check = |h: &mut Harness, carrier: wasmtime::Val, value: i128, label: &str| {
+        assert_canonical(&mut h.store, &carrier, value, label);
+        let mut out = [wasmtime::Val::I64(0)];
+        let run = h
+            .to_i64_checked
+            .clone()
+            .call(&mut h.store, &[carrier], &mut out);
+        if is_small(&mut h.store, &carrier) {
+            assert!(
+                i64::try_from(value).is_ok(),
+                "{label} = {value}: a limbless carrier outside the i64 band (canonSmallBand)"
+            );
+            run.unwrap_or_else(|e| {
+                panic!("{label} = {value}: the checked conversion trapped: {e}")
+            });
+            match out[0] {
+                wasmtime::Val::I64(v) => assert_eq!(
+                    i128::from(v),
+                    value,
+                    "{label}: the checked conversion returned another word"
+                ),
+                other => panic!("{label}: expected an i64, got {other:?}"),
+            }
+            limbless += 1;
+        } else {
+            assert!(
+                run.is_err(),
+                "{label} = {value}: the checked conversion returned on a limb-carrying carrier"
+            );
+            traps += 1;
+        }
+    };
+    for &v in &values {
+        let boxed = carrier_of(&mut h, v);
+        check(&mut h, boxed, v, "built");
+        // The same value as each arithmetic helper's result.
+        let zero = small_carrier(&mut h, 0);
+        let one = small_carrier(&mut h, 1);
+        let c = carrier_of(&mut h, v);
+        let sum = call_one(&mut h.store, &h.add_i.clone(), &[c, zero]);
+        check(&mut h, sum, v, "add");
+        let c = carrier_of(&mut h, v);
+        let diff = call_one(&mut h.store, &h.sub_i.clone(), &[c, zero]);
+        check(&mut h, diff, v, "sub");
+        let c = carrier_of(&mut h, v);
+        let prod = call_one(&mut h.store, &h.mul_i.clone(), &[c, one]);
+        check(&mut h, prod, v, "mul");
+    }
+    // Crossing the edge by arithmetic on two in-band operands.
+    let max = small_carrier(&mut h, i64::MAX);
+    let one = small_carrier(&mut h, 1);
+    let over = call_one(&mut h.store, &h.add_i.clone(), &[max, one]);
+    check(&mut h, over, i64::MAX as i128 + 1, "max + 1");
+    let min = small_carrier(&mut h, i64::MIN);
+    let under = call_one(&mut h.store, &h.sub_i.clone(), &[min, one]);
+    check(&mut h, under, i64::MIN as i128 - 1, "min - 1");
+    let back = call_one(&mut h.store, &h.sub_i.clone(), &[over, one]);
+    check(&mut h, back, i64::MAX as i128, "(max + 1) - 1");
+    assert!(
+        limbless > 0 && traps > 0,
+        "both shapes occur: {limbless} limbless, {traps} traps"
+    );
 }

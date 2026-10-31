@@ -70,7 +70,8 @@ def hostAssoc (M : MCtx) (h : HostFns) : List (Nat × (Nat × (List WVal → Opt
    (M.concat, (1, h.stringConcat M.str)), (M.streq, (2, h.stringEq)),
    (M.toIndex, (1, h.toIndex)), (M.divmod, (3, h.divmod)),
    (M.toI64Sat, (1, _root_.AverCert.ListHelpers.satSem M.carrier)),
-   (M.fromInt, (1, _root_.AverCert.StringHelpers.fromIntSem M.carrier M.mag M.str))] ++
+   (M.fromInt, (1, _root_.AverCert.StringHelpers.fromIntSem M.carrier M.mag M.str)),
+   (M.toI64Chk, (1, _root_.AverCert.BytesHelpers.chkSem M.carrier))] ++
   helperAssoc M h ++ bytesAssoc M
 
 def hostOf (M : MCtx) (h : HostFns) : HostTbl := fun f => (hostAssoc M h).lookup f
@@ -78,7 +79,7 @@ def hostOf (M : MCtx) (h : HostFns) : HostTbl := fun f => (hostAssoc M h).lookup
 /-- The role indices of a lowering context, in `hostAssoc` order. -/
 def roleIndices (M : MCtx) : List Nat :=
   [M.box, M.add, M.sub, M.mul, M.neg, M.cmp, M.eq, M.concat, M.streq, M.toIndex, M.divmod,
-   M.toI64Sat, M.fromInt] ++ M.listHelpers.map (·.2.2) ++ M.bytesHelpers.map (·.2)
+   M.toI64Sat, M.fromInt, M.toI64Chk] ++ M.listHelpers.map (·.2.2) ++ M.bytesHelpers.map (·.2)
 
 /-- The emitted code of every planned function: its plan's lowering. -/
 def codeOf (M : MCtx) (fns : List FnEntry) : CodeTbl := fun f => (planOf fns f).map (fnCodeAt M f)

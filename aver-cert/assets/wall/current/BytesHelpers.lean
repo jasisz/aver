@@ -320,6 +320,18 @@ theorem chkSem_spec {C : Nat} (S : AverCert.Schema.CarrierSpec C) (n : Int) (w r
   · rw [chkSem_big] at h
     cases h
 
+/-- On a canonical Int, a successful checked conversion returns the Int
+    itself, and it is in the i64 band (`CarrierSpec.canonSmallBand`): the
+    conversion succeeds only on a limbless carrier. -/
+theorem chkSem_canon {C : Nat} (S : AverCert.Schema.CarrierSpec C) (n : Int) (w r : WVal)
+    (hw : AverCert.Schema.CanonRepr S n w) (h : chkSem C [w] = some r) :
+    r = .i64v n ∧ -(2 ^ 63 : Int) ≤ n ∧ n < 2 ^ 63 := by
+  refine ⟨chkSem_spec S n w r hw.1 h, ?_⟩
+  rcases S.car n w hw.1 with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+  · exact S.canonSmallBand n s sg hw.1 hw.2
+  · rw [chkSem_big] at h
+    cases h
+
 /-! ## `concat` -/
 
 theorem catSemB_run (B : Nat) (xs ys : List WVal) :

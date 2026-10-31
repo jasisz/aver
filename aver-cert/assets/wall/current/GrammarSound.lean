@@ -168,6 +168,12 @@ structure XHost {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop
       Int. -/
   fromInt : ∃ g, host M.fromInt = some (1, g) ∧
     ∀ n w v, S.Repr n w → g [w] = some v → v = strW M (decBytes n)
+  /-- `__aint_to_i64_checked`, the wall's run of its pinned template
+      (`BytesHelpers.chkSem_canon`): on a canonical Int, the Int's own `i64`,
+      in the band, or a trap. -/
+  toI64Chk : ∃ g, host M.toI64Chk = some (1, g) ∧
+    ∀ n w v, CanonRepr S n w → g [w] = some v →
+      v = .i64v n ∧ -(2 ^ 63 : Int) ≤ n ∧ n < 2 ^ 63
 
 /-- Assume–guarantee contract of a code function `f` at signature `sig` for
     one opaque `callee`: the ONLY thing a caller knows about `f`. -/
@@ -471,7 +477,7 @@ mutual
         simp only [lowerB]
         esc_simp [escFree_lowerB M X _ _ c, escFree_lowerB M X _ _ t, escFree_lowerB M X _ _ e]
     | Γ, _, .recordCreate tid fs, k => by
-        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ fs]
+        simp only [lowerB]; split <;> esc_simp [escFree_lowerArgsB M X _ fs]
     | Γ, _, .project tid i base, k => by
         simp only [lowerB]; split <;> esc_simp [escFree_lowerB M X _ _ base]
     | Γ, _, .call (.lazy lb) [o, d], k => by
@@ -1676,8 +1682,8 @@ theorem tyOf_ite_inv {c t e : Expr} {T : Ty}
 
 theorem tyOf_rec_inv {tid : Nat} {fs : List Expr} {T : Ty}
     (h : tyOf M n Γ tail (.recordCreate tid fs) = some T) :
-    ∃ fts, M.recFields tid = some fts ∧ tysOf M n Γ fs = some fts ∧ 2 ≤ fts.length ∧
-      T = .record tid := by
+    ∃ fts, M.recFields tid = some fts ∧ tysOf M n Γ fs = some fts ∧
+      (2 ≤ fts.length ∨ M.isWord tid = true) ∧ T = .record tid := by
   simp only [tyOf] at h
   split at h
   · rename_i fts ts hR hts
@@ -4214,7 +4220,36 @@ theorem agreement_step :
               (fun R hR => by simp [bareTries, hR]))
   | .recordCreate tid fs, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨fts, hR, hts, h2, rfl⟩ := tyOf_rec_inv hty
-      simp only [lowerW, lowerB, eraseL_append] at hrun
+      by_cases hwd : M.isWord tid = true
+      · -- a word record: the checked conversion of its boxed Int
+        rw [isWord_fields hwd] at hR
+        cases hR
+        simp only [lowerW, lowerB, hwd, ↓reduceIte, eraseL_append] at hrun
+        obtain ⟨o1, h1, hseq⟩ := run_split hrun
+        rcases agreementArgs fs Γ env [.int] wl st o1 hts henv hl h1 with
+          ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
+        obtain ⟨a, svs1, rfl, ha, hT1⟩ := hasTyL_cons_inv hTs
+        have := hasTyL_nil_inv hT1; subst this
+        obtain ⟨wa, ws1, rfl, hwa, hr1⟩ := sreprL_cons_inv hrep
+        have := sreprL_nil_inv hr1; subst this
+        obtain ⟨x, rfl⟩ := hasTy_int ha
+        obtain ⟨g, hg, hgs⟩ := R.toI64Chk
+        simp only [seqOut, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+          List.nil_append, List.cons_append] at hseq
+        cases hq : g [wa] with
+        | none => simp [wRunF, hg, popArgs_one, hq] at hseq
+        | some r =>
+            simp [wRunF, hg, popArgs_one, hq] at hseq
+            subst hseq
+            obtain ⟨rfl, hlo, hhi⟩ := hgs x wa r (by simpa [SRepr] using hwa) hq
+            refine Or.inl ⟨.record tid [.i x], by simp [eval, hevs], ?_, res_ok ?_ hl1⟩
+            · simp [HasTy, HasTyL, isWord_fields hwd]
+            · exact (srepr_word hwd _ _).mpr ⟨x, rfl, rfl, hlo, hhi⟩
+      replace h2 : 2 ≤ fts.length := h2.resolve_right hwd
+      simp only [lowerW, lowerB, hwd, Bool.false_eq_true, ↓reduceIte, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
       rcases agreementArgs fs Γ env fts wl st o1 hts henv hl h1 with
         ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
