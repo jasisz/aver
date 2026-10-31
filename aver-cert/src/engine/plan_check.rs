@@ -2192,8 +2192,8 @@ impl MCtx<'_> {
         Some(())
     }
 
-    /// `GrammarLower.codeEntryBytes`: a body that tail-calls its own
-    /// function is emitted as the self tail loop (`GrammarLower.bodyBytes`).
+    /// `GrammarLower.codeEntryBytes`: a plan whose self tail calls are a loop
+    /// (`selfLoop`) is emitted as that loop (`GrammarLower.bodyBytes`).
     fn code_entry_bytes(&self, self_idx: u32, p: &FnPlan) -> Option<Vec<u8>> {
         let mut entry = Vec::new();
         uleb(p.locals.len() as u64, &mut entry)?;
@@ -2202,7 +2202,7 @@ impl MCtx<'_> {
             self.val_ty(t, &mut entry)?;
         }
         let body = self.lower_plan(p);
-        if has_self_tail(&body, u64::from(self_idx)) {
+        if p.self_loop {
             let params = u32::try_from(p.params.len()).ok()?;
             entry.extend([0x03, 0x40]);
             for (i, t) in p.locals.iter().enumerate() {
@@ -2243,15 +2243,6 @@ impl MCtx<'_> {
             PlanTy::Bytes => r(self.bytes_arr),
         }
     }
-}
-
-/// `InterpreterSequencing.hasSelfTail`: the lowered body tail-calls `f`.
-fn has_self_tail(bs: &[BI], f: u64) -> bool {
-    bs.iter().any(|b| match b {
-        BI::Op(WI::ReturnCall(g)) => *g == f,
-        BI::If(_, t, e) => has_self_tail(t, f) || has_self_tail(e, f),
-        _ => false,
-    })
 }
 
 /// Every function index a lowered body calls (`ClaimAxes.wCallsL`).

@@ -84,6 +84,7 @@ pub mod optimize;
 pub mod param_fields;
 pub mod program;
 pub mod result_values;
+pub mod self_tail;
 pub mod stats;
 
 pub use crate::ir::hir::BuiltinCtor;

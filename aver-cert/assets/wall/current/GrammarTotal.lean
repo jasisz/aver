@@ -696,7 +696,7 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
             (fun g as => wFuncN code host m g as) (fnCode M p).body (ws ++ pad) [] = some out →
           ((∃ l' w, out = .ok l' [w]) ∨ (∃ w, out = .ret w)) →
           ∃ r, wFuncN code host (m + 1) f ws = some r := by
-      cases hst : InterpreterSequencing.hasSelfTail f (fnCode M p).body with
+      cases hst : p.selfLoop with
       | false =>
           rw [fnCodeAt_plain M f p hst] at hcode
           refine ⟨List.replicate p.locals.length .null, by simp, ?_⟩

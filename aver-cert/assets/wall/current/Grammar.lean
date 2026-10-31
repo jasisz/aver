@@ -446,6 +446,10 @@ structure FnPlan where
   nslots : Nat
   locals : List Ty
   body : Expr
+  /-- The function's tail calls to itself run as one loop that reuses its
+      frame (`MirFnRepr::self_tail_loop`): its code is that loop
+      (`GrammarLower.bodyBytes`). -/
+  selfLoop : Bool := false
 
 /-- Point update of a slot map. -/
 def upd {α : Type} (f : Nat → Option α) (i : Nat) (a : α) : Nat → Option α :=

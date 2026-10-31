@@ -348,6 +348,9 @@ pub struct FnPlan {
     /// Declared locals past the parameters, as the emitter declares them.
     pub locals: Vec<PlanTy>,
     pub body: PlanExpr,
+    /// `Grammar.FnPlan.selfLoop`: the function's self tail calls run as one
+    /// loop (`MirFnRepr::self_tail_loop`).
+    pub self_loop: bool,
 }
 
 /// `Schema.RecordDecl`.
@@ -717,6 +720,7 @@ impl FnPlan {
             params: vec![t.clone(), PlanTy::List(Box::new(t.clone()))],
             ret: PlanTy::List(Box::new(t.clone())),
             nslots: 2,
+            self_loop: false,
             locals: Vec::new(),
             body: PlanExpr::Call(
                 PlanCallee::Builtin(PlanBuiltin::ListPrepend),
@@ -728,11 +732,12 @@ impl FnPlan {
     /// The Lean `Grammar.FnPlan` term.
     pub fn lean(&self) -> String {
         format!(
-            "{{ sig := ⟨{}, {}⟩, nslots := {}, locals := {},\n    body := {} }}",
+            "{{ sig := ⟨{}, {}⟩, nslots := {}, locals := {},{}\n    body := {} }}",
             lean_ty_list(&self.params),
             self.ret.lean(),
             self.nslots,
             lean_ty_list(&self.locals),
+            if self.self_loop { " selfLoop := true," } else { "" },
             self.body.lean()
         )
     }

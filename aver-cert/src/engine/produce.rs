@@ -1078,6 +1078,7 @@ mod produce_tests {
             params: vec![PlanTy::Int; params],
             ret: PlanTy::Int,
             nslots: params as u32,
+            self_loop: false,
             locals: vec![PlanTy::Int],
             body: PlanExpr::If(
                 Box::new(bin(PlanBinOp::Lte, l(0), k(0))),
@@ -1237,6 +1238,7 @@ mod produce_tests {
             params: vec![PlanTy::Int],
             ret: shape.clone(),
             nslots: 1,
+            self_loop: false,
             locals: vec![PlanTy::Int],
             body: PlanExpr::Construct(PlanCtor::User(0, 0), shape.clone(), vec![l(0)]),
         };
@@ -1244,6 +1246,7 @@ mod produce_tests {
             params: vec![shape.clone()],
             ret: PlanTy::Int,
             nslots: 4,
+            self_loop: false,
             locals: vec![
                 PlanTy::Int,
                 PlanTy::Int,
@@ -1264,6 +1267,7 @@ mod produce_tests {
             params: vec![shape.clone()],
             ret: PlanTy::Bool,
             nslots: 1,
+            self_loop: false,
             locals: vec![PlanTy::Eqref, PlanTy::Int],
             body: PlanExpr::Match(
                 Box::new(l(0)),
@@ -1337,6 +1341,7 @@ mod produce_tests {
             params: vec![PlanTy::Str],
             ret: PlanTy::Str,
             nslots: 1,
+            self_loop: false,
             locals: vec![],
             body: PlanExpr::Interp(vec![s(b"Hello, "), l(0)]),
         };
@@ -1344,6 +1349,7 @@ mod produce_tests {
             params: vec![PlanTy::Str],
             ret: PlanTy::Str,
             nslots: 1,
+            self_loop: false,
             locals: vec![],
             body: PlanExpr::Interp(vec![l(0), s(b"!!!")]),
         };

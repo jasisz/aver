@@ -1345,6 +1345,7 @@ fn print_fn_inner(
         params,
         ret,
         nslots: nslots as u32,
+        self_loop: repr.self_tail_loop,
         locals,
         body,
     })
