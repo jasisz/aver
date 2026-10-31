@@ -159,6 +159,22 @@ inductive BinOp where
   | add | sub | mul | eq | neq | lt | gt | lte | gte
 deriving DecidableEq, Repr
 
+/-- A leaf of an `Int` tree computed on the machine word (`Expr.intWord`,
+    `MirExpr::IntWord`). -/
+inductive WLeaf where
+  /-- An `Int` local, read where it is. -/
+  | local (i : Nat)
+  /-- Field `k` of the record of type `tid` held in local `base`, read once
+      ahead of the tree into the local `slot`. -/
+  | field (tid k base slot : Nat)
+deriving DecidableEq, Repr
+
+/-- The operations of an `Int` tree computed on the machine word. -/
+inductive WTree where
+  | leaf (l : WLeaf)
+  | op (o : BinOp) (a b : WTree)
+deriving DecidableEq, Repr
+
 /-- `MirCallee::Builtin`, admitted part (by dotted name). -/
 inductive Builtin where
   | boolAnd | boolOr | boolNot
@@ -311,6 +327,10 @@ mutual
         printer wraps a function body that has one. The wasm `return` leaves
         the function, so a scope is typed only in tail position. -/
     | scope (e : Expr)
+    /-- `MirExpr::IntWord`: the `Int` tree `t` computed on the machine word
+        first, its operations parking words in the locals `w`, `w + 1` and
+        `w + 2`. Its value is the tree's as plain `Int` arithmetic. -/
+    | intWord (t : WTree) (w : Nat)
   /-- The arms of a `Match`, in source order. -/
   inductive Arms where
     | nil
@@ -610,6 +630,7 @@ mutual
     | .list _ items => bareTriesL items
     | .try_ e R => R :: bareTries e
     | .scope _ => []
+    | .intWord _ _ => []
   def bareTriesL : List Expr → List Ty
     | [] => []
     | e :: es => bareTries e ++ bareTriesL es
@@ -688,6 +709,52 @@ def ctorTy (M : MCtx) : CtorTag → Ty → List Ty → Option Ty
   | .err, .result t e, ts =>
       if ts = [e] ∧ t.hasDefault ∧ e.hasDefault then some (.result t e) else none
   | _, _, _ => none
+
+/-! ### The `Int` tree on the machine word -/
+
+/-- The local a tree leaf is read from on both paths. -/
+def WLeaf.loc : WLeaf → Nat
+  | .local i => i
+  | .field _ _ _ slot => slot
+
+/-- The leaves of a tree, in evaluation order. -/
+def WTree.leaves : WTree → List WLeaf
+  | .leaf l => [l]
+  | .op _ a b => a.leaves ++ b.leaves
+
+/-- The locals the tree's leaves read ahead are stored in. -/
+def WTree.slots : WTree → List Nat
+  | .leaf (.field _ _ _ slot) => [slot]
+  | .leaf (.local _) => []
+  | .op _ a b => a.slots ++ b.slots
+
+/-- No number occurs twice. -/
+def distinct : List Nat → Bool
+  | [] => true
+  | x :: xs => !xs.contains x && distinct xs
+
+/-- A typed leaf: an `Int` local, or an `Int` field of a record of two or
+    more fields held in a local, stored ahead in a local past the resolver
+    slots. -/
+def WLeaf.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WLeaf → Bool
+  | .local i => Γ i == some .int
+  | .field tid k base slot =>
+      decide (n ≤ slot) &&
+        match Γ base, M.recFields tid with
+        | some (.record tid'), some fts =>
+            decide (tid' = tid) && decide (2 ≤ fts.length) && fts[k]? == some .int
+        | _, _ => false
+
+/-- A typed tree: `+`, `-` and `*` over typed leaves. -/
+def WTree.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WTree → Bool
+  | .leaf l => l.ok M n Γ
+  | .op o a b => o.isArith && a.ok M n Γ && b.ok M n Γ
+
+/-- A typed `Expr.intWord t w`: its tree is typed, and the locals it writes
+    (its leaves stored ahead and its three words) are past the resolver slots
+    and pairwise distinct. -/
+def wordOk (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (t : WTree) (w : Nat) : Bool :=
+  t.ok M n Γ && decide (n ≤ w) && distinct (t.slots ++ [w, w + 1, w + 2])
 
 mutual
   def tyOf (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (tail : Bool) :
@@ -798,6 +865,7 @@ mutual
           | some T => if (bareTries e).all (fun R => decide (R = T)) then some T else none
           | none => none
         else none
+    | .intWord t w => if wordOk M n Γ t w then some .int else none
     | .match_ s arms =>
         match tyOf M n Γ false s with
         | some .int => if arms.firstLit then tyIntArms M n Γ tail arms else none
@@ -1190,6 +1258,22 @@ def bindVals (env : Nat → Option SVal) : List Nat → List SVal → Option (Na
   | b :: bs, v :: vs => if b = noSlot then bindVals env bs vs else bindVals (upd env b v) bs vs
   | _, _ => none
 
+/-- A tree leaf's value: its local's, or its record's field. -/
+def WLeaf.val (env : Nat → Option SVal) : WLeaf → Option SVal
+  | .local i => env i
+  | .field _ k base _ =>
+      match env base with
+      | some (.record _ fs) => fs[k]?
+      | _ => none
+
+/-- A tree's value as plain `Int` arithmetic. -/
+def WTree.val (env : Nat → Option SVal) : WTree → Option SVal
+  | .leaf l => l.val env
+  | .op o a b =>
+      match a.val env, b.val env with
+      | some (.i x), some (.i y) => some (intBin o x y)
+      | _, _ => none
+
 mutual
   def eval (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
       Expr → Option SVal
@@ -1278,6 +1362,7 @@ mutual
         match eval F env e with
         | some v => some v
         | none => escv F env e
+    | .intWord t _ => t.val env
   def evalArgs (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
       List Expr → Option (List SVal)
     | [] => some []
@@ -1364,6 +1449,7 @@ mutual
             | some (.err _ _ y), .result t' e' => some (.err t' e' y)
             | _, _ => none
     | .scope _ => none
+    | .intWord _ _ => none
   def escvArgs (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
       List Expr → Option SVal
     | [] => none
@@ -1398,20 +1484,15 @@ structure LCtx where
   n : Nat
   cmp : Nat
   subj : Nat
-  /-- The first of the five `Int` tree locals (two `$AverInt` leaves, three
-      `i64` temporaries), which the emitter reserves last. -/
-  tree : Nat
 
 /-- Scratch positions as a WALL function of the declared locals: the subject
     scratch is the `eqref` local right after the resolver slots, and the
     const-compare scratch follows it (or sits there when there is none). -/
 def FnPlan.lctx (p : FnPlan) : LCtx :=
   if p.locals[p.nslots - p.sig.params.length]? = some .eqref then
-    { n := p.nslots, cmp := p.nslots + 1, subj := p.nslots,
-      tree := p.sig.params.length + p.locals.length - 5 }
+    { n := p.nslots, cmp := p.nslots + 1, subj := p.nslots }
   else
-    { n := p.nslots, cmp := p.nslots, subj := p.nslots,
-      tree := p.sig.params.length + p.locals.length - 5 }
+    { n := p.nslots, cmp := p.nslots, subj := p.nslots }
 
 /-- The typing and slot-layout checks one plan must pass: parameters sit
     below the slot count, the scratch locals are declared, and the body has
@@ -1606,6 +1687,7 @@ theorem eval_none_of_escv {F : Nat → List SVal → Option SVal} :
               cases v <;> (try simp at h)
               simp [eval, hv]
   | env, .scope e, x, h => by simp [escv] at h
+  | env, .intWord _ _, x, h => by simp [escv] at h
 theorem evalArgs_none_of_escv {F : Nat → List SVal → Option SVal} :
     ∀ (env : Nat → Option SVal) (es : List Expr) (x : SVal), escvArgs F env es = some x →
       evalArgs F env es = none

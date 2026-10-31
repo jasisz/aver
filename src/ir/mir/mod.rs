@@ -78,6 +78,7 @@ pub mod expr;
 pub mod field_moves;
 pub mod instantiations;
 pub mod int_tree;
+pub mod int_word;
 pub mod lower;
 pub mod optimize;
 pub mod param_fields;
@@ -87,9 +88,10 @@ pub mod stats;
 
 pub use crate::ir::hir::BuiltinCtor;
 pub use expr::{
-    MirBinOp, MirCall, MirCallee, MirConstruct, MirCtor, MirEffectAnnotation, MirExpr,
-    MirIfThenElse, MirIndependentProduct, MirLet, MirLocal, MirMatch, MirMatchArm, MirPattern,
-    MirProject, MirRecordCreate, MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
+    IntWordNode, IntWordOp, MirBinOp, MirCall, MirCallee, MirConstruct, MirCtor,
+    MirEffectAnnotation, MirExpr, MirIfThenElse, MirIndependentProduct, MirIntWord, MirLet,
+    MirLocal, MirMatch, MirMatchArm, MirPattern, MirProject, MirRecordCreate, MirRecordField,
+    MirRecordUpdate, MirStrPart, MirTailCall,
 };
 pub use instantiations::{InstantiationRegistry, discover_instantiations};
 pub use lower::{lower_program, lower_top_level_value};
@@ -98,5 +100,5 @@ pub use optimize::{
     BareI64Facts, FnBareFacts, Repr, ValueFact, algebraic_simplify, bool_match_to_if,
     branch_collapse, const_fold, dead_code, inline_nullary_literals, optimize,
 };
-pub use program::{LocalId, MirEntryCheck, MirFn, MirFnRepr, MirParam, MirProgram};
+pub use program::{LocalId, MirEntryCheck, MirFn, MirFnRepr, MirParam, MirProgram, MirScratch};
 pub use stats::{LowerStats, SkipReason};

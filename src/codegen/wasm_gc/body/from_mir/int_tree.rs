@@ -21,6 +21,7 @@ use super::*;
 use crate::codegen::wasm_gc::twins::TwinKind;
 use crate::codegen::wasm_gc::types::struct_ref;
 use crate::ir::mir::int_tree::{self, IntOp as Op, Node, is_int};
+use crate::ir::mir::{IntWordNode, IntWordOp, MirIntWord};
 
 thread_local! {
     /// Exact paths being emitted: while non-zero no tree is computed on `i64`.
@@ -34,38 +35,30 @@ thread_local! {
     /// each fn's in its pre-pass), and the global holding each one shared.
     static LITERALS: RefCell<Option<std::collections::BTreeSet<i64>>> = const { RefCell::new(None) };
     static POOL: RefCell<HashMap<i64, u32>> = RefCell::new(HashMap::new());
-    /// Whether the fn being emitted is one a `--certify` build keeps for its
-    /// certificate (`module.rs`): it computes only the certified shape on
-    /// `i64` (`certified_shape`), which the Lean wall lowers too.
-    static CERTIFIED: Cell<bool> = const { Cell::new(false) };
-    /// The certified shape's tree locals: 0 not reserved, 1 reserved and the
-    /// fn's last locals, 2 a local reserved after them.
-    static SHARED: Cell<u8> = const { Cell::new(0) };
+    /// The wasm local of each `IntWord` scratch local of the fn last
+    /// emitted, by its index in `MirFnRepr::scratch`: the certificate plan
+    /// printer names these locals in the printed nodes.
+    static INT_WORD_LOCALS: RefCell<Vec<Option<u32>>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Whether the fn being emitted computes the certified shape on `i64`. Its
-/// tree locals are forgotten, so a new probe starts afresh.
-pub(crate) fn set_certified(on: bool) {
-    CERTIFIED.with(|c| c.set(on));
-    SHARED.with(|s| s.set(0));
+pub(crate) fn forget_int_word_locals() {
+    INT_WORD_LOCALS.with(|l| l.borrow_mut().clear());
 }
 
-pub(crate) fn note_shared_reserved() {
-    SHARED.with(|s| s.set(1));
-}
-
-pub(crate) fn note_local_after_shared() {
-    SHARED.with(|s| {
-        if s.get() == 1 {
-            s.set(2);
+pub(crate) fn note_int_word_local(k: u32, idx: u32) {
+    INT_WORD_LOCALS.with(|l| {
+        let mut l = l.borrow_mut();
+        let k = k as usize;
+        if l.len() <= k {
+            l.resize(k + 1, None);
         }
+        l[k] = Some(idx);
     });
 }
 
-/// Whether the certified trees' locals are the fn's last five locals, where
-/// the wall's lowering reads them (`Grammar.FnPlan.lctx`).
-pub(crate) fn shared_last() -> bool {
-    SHARED.with(|s| s.get() != 2)
+/// The wasm local of each `IntWord` scratch local of the fn last emitted.
+pub(crate) fn int_word_locals() -> Vec<Option<u32>> {
+    INT_WORD_LOCALS.with(|l| l.borrow().clone())
 }
 
 /// Whether the fn being emitted computes on the machine word at all.
@@ -91,7 +84,6 @@ impl Drop for IntTreeReset {
         twin::set_calls(false);
         twin::set_self(None);
         set_allowed(true);
-        set_certified(false);
         set_literal_pool(HashMap::new());
         record_literals(false);
     }
@@ -197,33 +189,6 @@ fn twin_leaf(e: Node<'_>, ctx: &EmitCtx<'_>) -> bool {
     }
 }
 
-/// The shape a fn kept for its certificate computes on `i64`, which the Lean
-/// wall lowers the same way (`GrammarLower.isTree`): one `+`, `-` or `*` of
-/// two operands that are each an `Int` local or a field of a record held in a
-/// local, at least one a field. A field is evaluated ahead into the first or
-/// second tree local by its position.
-fn certified_shape<'e>(e: Node<'e>, ctx: &EmitCtx<'_>) -> Option<(Op, [Node<'e>; 2])> {
-    let (op, a, b) = op_of(e, ctx)?;
-    let b = b?;
-    let local = |x: Node<'_>| {
-        matches!(&x.node, MirExpr::Local(l)
-            if !ctx.slot_is_bare(l.node.slot.0) && twin::held(l.node.slot.0).is_none())
-    };
-    let ahead = |x: Node<'_>| {
-        matches!(&x.node, MirExpr::Project(p)
-        if matches!(p.node.base.node, MirExpr::Local(_)))
-            && !mir_is_eligible_carrier_value_project(&x.node, ctx)
-    };
-    let leaf = |x: Node<'_>| local(x) || ahead(x);
-    (matches!(op, Op::Add | Op::Sub | Op::Mul) && leaf(a) && leaf(b) && (ahead(a) || ahead(b)))
-        .then_some((op, [a, b]))
-}
-
-/// Whether the certified shape is what the fn computes on `i64`.
-fn certified() -> bool {
-    CERTIFIED.with(Cell::get) && !ALLOWED.with(Cell::get)
-}
-
 /// `unpacked`: the tree's value is compared or unboxed, not boxed.
 fn enabled(ctx: &EmitCtx<'_>, roots: &[Node<'_>], unpacked: bool) -> bool {
     // A comparison of two leaves is worth it too, unless a side is a literal
@@ -239,11 +204,8 @@ fn enabled(ctx: &EmitCtx<'_>, roots: &[Node<'_>], unpacked: bool) -> bool {
     ctx.registry.bignum
         && ctx.registry.aint_struct_idx.is_some()
         && EXACT.with(|d| d.get() == 0)
-        && if certified() {
-            roots.len() == 1 && !unpacked && certified_shape(roots[0], ctx).is_some()
-        } else {
-            ALLOWED.with(|a| a.get()) && weights().is_some_and(|w| w > 0 || leaves || twin())
-        }
+        && ALLOWED.with(|a| a.get())
+        && weights().is_some_and(|w| w > 0 || leaves || twin())
 }
 
 /// On the exact path, a leaf evaluated ahead is read from its local.
@@ -361,27 +323,9 @@ fn emit_tree(
 ) -> Result<Option<()>, WasmGcError> {
     let aint = struct_ref(ctx.registry.aint_struct_idx.unwrap_or_default());
     let mut ahead = Hoisted::new();
-    let mut temps = None;
-    if certified() {
-        let Some((_, leaves)) = certified_shape(roots[0], ctx) else {
+    for r in roots {
+        if hoist(func, r, aint, slots, ctx, &mut ahead)?.is_none() {
             return Ok(None);
-        };
-        let shared = slots.int_tree_shared(aint);
-        for (p, x) in leaves.into_iter().enumerate() {
-            if matches!(x.node, MirExpr::Project(_)) {
-                if emit_mir_expr(func, x, slots, ctx)?.is_none() {
-                    return Ok(None);
-                }
-                func.instruction(&I::LocalSet(shared[p]));
-                ahead.insert(x as *const _ as usize, Held::Boxed(shared[p]));
-            }
-        }
-        temps = Some([shared[2], shared[3], shared[4]]);
-    } else {
-        for r in roots {
-            if hoist(func, r, aint, slots, ctx, &mut ahead)?.is_none() {
-                return Ok(None);
-            }
         }
     }
     let ty = if cmp.is_some() {
@@ -395,7 +339,7 @@ fn emit_tree(
         func,
         &[I::Block(BlockType::Result(ty)), I::Block(BlockType::Empty)],
     );
-    let temps = temps.unwrap_or_else(|| slots.int_tree_temps());
+    let temps = slots.int_tree_temps();
     for r in roots {
         if emit_fast(func, r, &ahead, temps, slots, ctx)?.is_none() {
             return Ok(None);
@@ -509,8 +453,8 @@ fn emit_fast(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
-    let [t0, t1, t2] = temps;
-    let (g0, g1, g2) = (I::LocalGet(t0), I::LocalGet(t1), I::LocalGet(t2));
+    let [t0, t1, _] = temps;
+    let (g0, g1) = (I::LocalGet(t0), I::LocalGet(t1));
     let Some((op, a, b)) = op_of(e, ctx) else {
         let boxed = match leaf_of(e, slots, ctx) {
             Leaf::Lit(n) => {
@@ -573,47 +517,10 @@ fn emit_fast(
         }
     }
     let both = [I::LocalSet(t1), I::LocalSet(t0), g0.clone(), g1.clone()];
-    // a ∉ {-1, 0}, as `(a + 1) >u 1`.
-    let general = [
-        g0.clone(),
-        I::I64Const(1),
-        I::I64Add,
-        I::I64Const(1),
-        I::I64GtU,
-    ];
     match op {
-        Op::Add | Op::Sub => {
-            seq(func, &both);
-            let sum = if op == Op::Add { I::I64Add } else { I::I64Sub };
-            seq(func, &[sum, I::LocalTee(t2)]);
-            // Add: (s ^ a) & (s ^ b) < 0; sub: (a ^ b) & (a ^ d) < 0.
-            let [x, y, z] = if op == Op::Add {
-                [g0, g2.clone(), g1]
-            } else {
-                [g0.clone(), g0, g1]
-            };
-            seq(func, &[x, I::I64Xor, y, z, I::I64Xor, I::I64And]);
-            seq(func, &[I::I64Const(0), I::I64LtS, I::BrIf(0), g2]);
-        }
-        Op::Mul => {
-            // As `bignum.rs` tests it: for a ∉ {-1, 0} the product overflowed
-            // iff p / a != b; for a = -1 iff b = i64::MIN; for a = 0 never.
-            // The divisor is 1 for a ∈ {-1, 0}, so `div_s` cannot trap.
-            seq(func, &both);
-            seq(
-                func,
-                &[I::I64Mul, I::LocalTee(t2), g0.clone(), I::I64Const(1)],
-            );
-            seq(func, &general);
-            seq(func, &[I::Select, I::I64DivS, g1.clone(), I::I64Ne, g0]);
-            seq(
-                func,
-                &[I::I64Const(-1), I::I64Eq, g1, I::I64Const(i64::MIN)],
-            );
-            seq(func, &[I::I64Eq, I::I32And]);
-            seq(func, &general);
-            seq(func, &[I::Select, I::BrIf(0), g2]);
-        }
+        Op::Add => emit_word_op(func, IntWordOp::Add, temps),
+        Op::Sub => emit_word_op(func, IntWordOp::Sub, temps),
+        Op::Mul => emit_word_op(func, IntWordOp::Mul, temps),
         Op::Neg | Op::Abs | Op::Div(-1) => {
             guard(func, min + 1, max, t0);
             seq(func, &[I::I64Const(0), g0.clone(), I::I64Sub]);
@@ -676,5 +583,187 @@ fn emit_fast(
             func.instruction(&g0);
         }
     }
+    Ok(Some(()))
+}
+
+/// The machine `+`, `-` or `*` of the two words on the stack, with the
+/// overflow test of `builtins/bignum.rs`: the operands are parked in the
+/// first two `temps` and the result in the third; an overflow leaves the
+/// `i64` path (`br_if 0`). The Lean wall's `GrammarLower.treeOpW` is this
+/// sequence.
+fn emit_word_op(func: &mut Function, op: IntWordOp, temps: [u32; 3]) {
+    let [t0, t1, t2] = temps;
+    let (g0, g1, g2) = (I::LocalGet(t0), I::LocalGet(t1), I::LocalGet(t2));
+    seq(
+        func,
+        &[I::LocalSet(t1), I::LocalSet(t0), g0.clone(), g1.clone()],
+    );
+    // a ∉ {-1, 0}, as `(a + 1) >u 1`.
+    let general = [
+        g0.clone(),
+        I::I64Const(1),
+        I::I64Add,
+        I::I64Const(1),
+        I::I64GtU,
+    ];
+    match op {
+        IntWordOp::Add | IntWordOp::Sub => {
+            let sum = if op == IntWordOp::Add {
+                I::I64Add
+            } else {
+                I::I64Sub
+            };
+            seq(func, &[sum, I::LocalTee(t2)]);
+            // Add: (s ^ a) & (s ^ b) < 0; sub: (a ^ b) & (a ^ d) < 0.
+            let [x, y, z] = if op == IntWordOp::Add {
+                [g0, g2.clone(), g1]
+            } else {
+                [g0.clone(), g0, g1]
+            };
+            seq(func, &[x, I::I64Xor, y, z, I::I64Xor, I::I64And]);
+            seq(func, &[I::I64Const(0), I::I64LtS, I::BrIf(0), g2]);
+        }
+        IntWordOp::Mul => {
+            // As `bignum.rs` tests it: for a ∉ {-1, 0} the product overflowed
+            // iff p / a != b; for a = -1 iff b = i64::MIN; for a = 0 never.
+            // The divisor is 1 for a ∈ {-1, 0}, so `div_s` cannot trap.
+            seq(
+                func,
+                &[I::I64Mul, I::LocalTee(t2), g0.clone(), I::I64Const(1)],
+            );
+            seq(func, &general);
+            seq(func, &[I::Select, I::I64DivS, g1.clone(), I::I64Ne, g0]);
+            seq(
+                func,
+                &[I::I64Const(-1), I::I64Eq, g1, I::I64Const(i64::MIN)],
+            );
+            seq(func, &[I::I64Eq, I::I32And]);
+            seq(func, &general);
+            seq(func, &[I::Select, I::BrIf(0), g2]);
+        }
+    }
+}
+
+/// An [`MirExpr::IntWord`] node, lowered as it is: each leaf read ahead
+/// stored in its scratch local, then
+/// `block $done (block $slow <i64 path> box br $done) <exact path>`. The
+/// Lean wall lowers the printed node to the same code (`GrammarLower`,
+/// `wordBlock`).
+pub(crate) fn emit_int_word(
+    func: &mut Function,
+    word: &MirIntWord,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<bool>, WasmGcError> {
+    let Some(aint_idx) = ctx.registry.aint_struct_idx.filter(|_| ctx.registry.bignum) else {
+        return unsupported("an Int tree on the machine word without the Int carrier");
+    };
+    let aint = struct_ref(aint_idx);
+    for (e, k) in ahead_leaves(&word.root) {
+        if emit_mir_expr(func, e, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        func.instruction(&I::LocalSet(slots.int_word_scratch(k, aint)));
+    }
+    let temps = slots.int_word_words(word.words);
+    seq(
+        func,
+        &[
+            I::Block(BlockType::Result(aint)),
+            I::Block(BlockType::Empty),
+        ],
+    );
+    if word_fast(func, &word.root, temps, aint, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&I::Call(builtins::aint_helper_idx(ctx, "__aint_from_i64")?));
+    seq(func, &[I::Br(1), I::End]);
+    if word_exact(func, &word.root, aint, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&I::End);
+    Ok(Some(true))
+}
+
+fn ahead_leaves(node: &IntWordNode) -> Vec<(&Spanned<MirExpr>, u32)> {
+    match node {
+        IntWordNode::Op(_, a, b) => {
+            let mut out = ahead_leaves(a);
+            out.extend(ahead_leaves(b));
+            out
+        }
+        IntWordNode::Ahead(e, k) => vec![(&**e, *k)],
+        IntWordNode::Local(_) => Vec::new(),
+    }
+}
+
+/// The local an `IntWord` leaf is read from (`None` for an operation).
+fn word_leaf_local(
+    node: &IntWordNode,
+    aint: ValType,
+    slots: &SlotTable,
+) -> Result<Option<u32>, WasmGcError> {
+    Ok(match node {
+        IntWordNode::Local(e) => match &e.node {
+            MirExpr::Local(l) => Some(slots.local(l.node.slot.0)),
+            _ => return unsupported("an Int tree leaf read in place that is not a local"),
+        },
+        IntWordNode::Ahead(_, k) => Some(slots.int_word_scratch(*k, aint)),
+        IntWordNode::Op(..) => None,
+    })
+}
+
+fn word_fast(
+    func: &mut Function,
+    node: &IntWordNode,
+    temps: [u32; 3],
+    aint: ValType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    if let IntWordNode::Op(op, a, b) = node {
+        for x in [a, b] {
+            if word_fast(func, x, temps, aint, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        }
+        emit_word_op(func, *op, temps);
+        return Ok(Some(()));
+    }
+    let Some(local) = word_leaf_local(node, aint, slots)? else {
+        return Ok(None);
+    };
+    // The `$small` of a Small `$AverInt`; a Big one leaves the path.
+    let field = |field_index| I::StructGet {
+        struct_type_index: ctx.registry.aint_struct_idx.unwrap_or_default(),
+        field_index,
+    };
+    seq(
+        func,
+        &[I::LocalGet(local), field(1), I::RefIsNull, I::I32Eqz],
+    );
+    seq(func, &[I::BrIf(0), I::LocalGet(local), field(0)]);
+    Ok(Some(()))
+}
+
+fn word_exact(
+    func: &mut Function,
+    node: &IntWordNode,
+    aint: ValType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    if let IntWordNode::Op(op, a, b) = node {
+        for x in [a, b] {
+            if word_exact(func, x, aint, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        }
+        return builtins::emit_aint_binop_exact(func, op.bin_op(), ctx);
+    }
+    let Some(local) = word_leaf_local(node, aint, slots)? else {
+        return Ok(None);
+    };
+    func.instruction(&I::LocalGet(local));
     Ok(Some(()))
 }

@@ -250,6 +250,19 @@ pub struct MirFnRepr {
     /// entry (Rust only): the signature keeps it boxed and the loop holds it
     /// in `bare_slots`. `None` everywhere else.
     pub entry_check: Option<MirEntryCheck>,
+    /// The scratch locals the fn's [`super::expr::MirExpr::IntWord`] trees
+    /// use, declared here by what each holds (`super::int_word`). Empty
+    /// everywhere else.
+    pub scratch: Vec<MirScratch>,
+}
+
+/// What one scratch local of [`MirFnRepr::scratch`] holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirScratch {
+    /// An `Int` leaf of a tree, evaluated ahead.
+    Int,
+    /// A machine word (`i64`) an operation of a tree parks a value in.
+    Word,
 }
 
 /// The entry check of a position param: a start in `[lo, hi]` enters the

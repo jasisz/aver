@@ -3378,10 +3378,20 @@ pub(super) fn emit_module_with(
     // certificate plan printer prints it): it computes no tree and calls no
     // twin.
     let mut kept_for: Vec<bool> = vec![false; fn_defs.len()];
-    // Whether such a fn computes the certified `Int` tree shape on `i64`
-    // (`int_tree.rs`, `certified_shape`): the plan printer reads its body with
-    // those trees, and the wall lowers them the same way.
-    let mut certified_trees_for: Vec<bool> = vec![false; fn_defs.len()];
+    // Such a fn with its `Int` trees on the machine word made explicit by the
+    // MIR pass (`ir::mir::int_word`), when the plan printer prints it so: it
+    // is emitted and printed from this MIR, and the wall lowers its nodes.
+    let mut word_fn_for: Vec<Option<crate::ir::mir::MirFn>> = vec![None; fn_defs.len()];
+    let is_word_field = |e: &crate::ast::Spanned<crate::ir::mir::MirExpr>| match &e.node {
+        crate::ir::mir::MirExpr::Project(p) => p.node.base.ty().is_some_and(|t| {
+            let record = t.display();
+            registry.is_eligible_carrier(&record) && registry.newtype_underlying(&record).is_some()
+        }),
+        _ => false,
+    };
+    let word_target = crate::ir::mir::int_word::Target {
+        is_word_field: &is_word_field,
+    };
     // The locals of each fn emitted without `Int` trees: the plan printer
     // reads a fn with trees as it would without them, so it declines that fn
     // for the reason it has.
@@ -3464,15 +3474,16 @@ pub(super) fn emit_module_with(
             _ => false,
         };
         if kept_for[i]
-            && let Some(mir_fn) = mir_fn_for[i]
+            && std::env::var_os("AVER_NO_INT_TREE").is_none()
+            && let Some(word_fn) = mir_fn_for[i]
+                .and_then(|mir_fn| crate::ir::mir::int_word::mark_fn(mir_fn, &word_target))
         {
             let mut probe = Function::new([]);
             super::body::set_int_trees_allowed(false);
-            super::body::set_int_trees_certified(true);
             let with_trees = emit_fn_body_via_mir(
                 &mut probe,
                 &resolved_fn_defs[i],
-                mir_fn,
+                &word_fn,
                 &mir_program,
                 &fn_map,
                 self_wasm_idx,
@@ -3482,21 +3493,23 @@ pub(super) fn emit_module_with(
                 &caller_fn_collector,
                 wasip2_lowering.as_ref(),
             )?;
-            let last = super::body::int_trees_shared_last();
-            super::body::set_int_trees_certified(false);
+            let scratch = super::body::int_word_locals();
             super::body::set_int_trees_allowed(true);
-            certified_trees_for[i] = last
-                && std::env::var_os("AVER_NO_INT_TREE").is_none()
-                && with_trees.as_deref().is_some_and(|extra| {
-                    kept_by_printer(
-                        certify,
-                        mir_fn,
+            let printed = with_trees.as_deref().is_some_and(|extra| {
+                certify
+                    && crate::codegen::cert::print_fn(
+                        &word_fn,
                         &resolved_fn_defs[i],
                         extra,
+                        &scratch,
                         &cert_layout,
                         &mut trees_types,
                     )
-                });
+                    .is_ok()
+            });
+            if printed {
+                word_fn_for[i] = Some(word_fn);
+            }
         }
         trees_for[i] = emitted.is_some()
             && registry.bignum
@@ -3513,6 +3526,12 @@ pub(super) fn emit_module_with(
             }));
         }
     }
+    // From here on a fn kept with explicit word trees is its marked MIR.
+    let mir_fn_for: Vec<Option<&crate::ir::mir::MirFn>> = mir_fn_for
+        .iter()
+        .zip(&word_fn_for)
+        .map(|(plain, word)| word.as_ref().or(*plain))
+        .collect();
     // A Small `$AverInt` per literal, as `__aint_from_i64` makes it.
     let mut literal_pool = HashMap::new();
     if let (Some(aint), Some(mag)) = (registry.aint_struct_idx, registry.aint_mag_array_idx) {
@@ -4094,6 +4113,9 @@ pub(super) fn emit_module_with(
     // The declared locals of every MIR-emitted fn, for the certificate plan
     // printer (which transcribes them; the code entry pins them).
     let mut extra_locals_for: Vec<Option<Vec<ValType>>> = vec![None; fn_defs.len()];
+    // The wasm local of each `IntWord` scratch local, per fn: the plan
+    // printer names them in the printed nodes.
+    let mut word_locals_for: Vec<Vec<Option<u32>>> = vec![Vec::new(); fn_defs.len()];
     // The twins' bodies, emitted after every other fn (`super::twins`).
     let mut twin_codes: Vec<Function> = Vec::new();
     for (i, _fd) in fn_defs.iter().enumerate() {
@@ -4109,7 +4131,6 @@ pub(super) fn emit_module_with(
         // signature. So the dry-run only needs locals for the MIR path;
         // the stub path contributes none.
         super::body::set_int_trees_allowed(trees_for[i]);
-        super::body::set_int_trees_certified(certified_trees_for[i]);
         super::body::set_twin_calls(!kept_for[i]);
         let emit_body = |self_wasm_idx: u32| -> Result<(Function, Vec<ValType>), WasmGcError> {
             let extra_locals_dry = if mir_dispatch[i] {
@@ -4203,6 +4224,7 @@ pub(super) fn emit_module_with(
         } else {
             let (func, extra) = emit_body(self_wasm_idx)?;
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
+            word_locals_for[i] = super::body::int_word_locals();
             let func = if std::env::var_os("AVER_NO_SELF_TAIL_LOOPS").is_some() {
                 func
             } else {
@@ -4212,7 +4234,6 @@ pub(super) fn emit_module_with(
             codes.function(&func);
         }
         super::body::set_int_trees_allowed(true);
-        super::body::set_int_trees_certified(false);
         super::body::set_twin_calls(false);
     }
 
@@ -6618,6 +6639,7 @@ pub(super) fn emit_module_with(
                 } else {
                     extra_locals_for[i].as_deref()
                 },
+                word_locals_for[i].as_slice(),
             )
         })
         .collect();
@@ -6644,7 +6666,7 @@ fn kept_by_printer(
     layout: &super::cert_layout::CertLayout<'_>,
     types: &mut crate::codegen::cert::TypeTableBuilder,
 ) -> bool {
-    certify && crate::codegen::cert::print_fn(mir_fn, rfd, extra, layout, types).is_ok()
+    certify && crate::codegen::cert::print_fn(mir_fn, rfd, extra, &[], layout, types).is_ok()
 }
 
 /// The body of a fn that has a twin (`super::twins`): call the twin with the
@@ -8267,6 +8289,12 @@ fn refuse_fabricated_intrinsics(
             | MirExpr::Return(inner)
             | MirExpr::Box(inner)
             | MirExpr::Unbox(inner) => walk(&inner.node, fn_name),
+            MirExpr::IntWord(w) => {
+                for leaf in w.node.root.leaves() {
+                    walk(&leaf.node, fn_name)?;
+                }
+                Ok(())
+            }
             MirExpr::Match(m) => {
                 walk(&m.node.subject.node, fn_name)?;
                 for arm in &m.node.arms {
@@ -8379,6 +8407,11 @@ fn collect_address_taken(mir_program: &crate::ir::mir::MirProgram) -> Vec<String
             | MirExpr::Box(inner)
             | MirExpr::Unbox(inner) => {
                 walk(&inner.node, seen, order);
+            }
+            MirExpr::IntWord(w) => {
+                for leaf in w.node.root.leaves() {
+                    walk(&leaf.node, seen, order);
+                }
             }
             MirExpr::Match(m) => {
                 walk(&m.node.subject.node, seen, order);
@@ -8498,6 +8531,11 @@ fn collect_call_indirect_sigs(
             | MirExpr::Return(inner)
             | MirExpr::Box(inner)
             | MirExpr::Unbox(inner) => walk(&inner.node, note),
+            MirExpr::IntWord(w) => {
+                for leaf in w.node.root.leaves() {
+                    walk(&leaf.node, note);
+                }
+            }
             MirExpr::Match(m) => {
                 walk(&m.node.subject.node, note);
                 for arm in &m.node.arms {

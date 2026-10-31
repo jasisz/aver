@@ -41,9 +41,8 @@ mod slots;
 
 pub(super) use emit::{emit_caller_fn_idx, emit_default_value, emit_string_literal_bytes};
 pub(super) use from_mir::int_tree::{
-    IntTreeReset, record_literals as record_int_literals, set_allowed as set_int_trees_allowed,
-    set_certified as set_int_trees_certified, set_literal_pool as set_int_literal_pool,
-    shared_last as int_trees_shared_last,
+    IntTreeReset, int_word_locals, record_literals as record_int_literals,
+    set_allowed as set_int_trees_allowed, set_literal_pool as set_int_literal_pool,
 };
 pub(super) use from_mir::record_entry_locals as twin_record_entry_locals;
 pub(super) use from_mir::twin::{

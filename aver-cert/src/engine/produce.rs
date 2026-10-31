@@ -339,6 +339,14 @@ impl Cited {
                 self.ty(&PlanTy::Record(*tid));
                 self.expr(b);
             }
+            PlanExpr::IntWord(t, _) => {
+                self.ty(&PlanTy::Int);
+                for l in t.leaves() {
+                    if let PlanWLeaf::Field { tid, .. } = l {
+                        self.ty(&PlanTy::Record(*tid));
+                    }
+                }
+            }
             PlanExpr::Match(s, arms) => {
                 self.expr(s);
                 for (p, b) in arms {

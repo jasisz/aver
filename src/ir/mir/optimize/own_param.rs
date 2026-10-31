@@ -1295,6 +1295,11 @@ fn scan_leaks(
             scan_leaks(&b.node.lhs.node, prov, captures_param, builtins, out);
             scan_leaks(&b.node.rhs.node, prov, captures_param, builtins, out);
         }
+        MirExpr::IntWord(w) => {
+            for leaf in w.node.root.leaves() {
+                scan_leaks(&leaf.node, prov, captures_param, builtins, out);
+            }
+        }
         MirExpr::Neg(inner) => scan_leaks(&inner.node, prov, captures_param, builtins, out),
         MirExpr::Project(p) => {
             // `base.field` reads a field; the projected value may itself

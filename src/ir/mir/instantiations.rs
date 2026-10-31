@@ -229,6 +229,12 @@ impl Walker {
                 self.register_ty(inner.ty());
                 self.visit_expr(&inner.node);
             }
+            MirExpr::IntWord(w) => {
+                for leaf in w.node.root.leaves() {
+                    self.register_ty(leaf.ty());
+                    self.visit_expr(&leaf.node);
+                }
+            }
             MirExpr::List(items) => {
                 // Seed `List<T>` from the items even when the
                 // outer literal has no stamp (empty-list shape

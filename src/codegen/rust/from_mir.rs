@@ -2318,6 +2318,7 @@ fn label_for(expr: &MirExpr) -> &'static str {
         MirExpr::FnValue(_) => "FnValue",
         MirExpr::Box(_) => "Box",
         MirExpr::Unbox(_) => "Unbox",
+        MirExpr::IntWord(_) => "IntWord",
     }
 }
 

@@ -370,37 +370,13 @@ def Intrinsic.flag : Intrinsic → Int
 
 /-! ### The `Int` tree on the machine word
 
-Under `--certify` the emitter computes one `Int` node `l op r` (`+`, `-`,
-`*`) on `i64` first (`int_tree.rs`, its certified shape) when each operand is
-a local or a field of a record held in a local, and at least one is a field.
-A field is evaluated ahead into a tree local; then the `i64` path reads the
-`$small` of each operand, leaving for the exact path when the operand is Big
-or the operation overflows, and boxes the machine result; the exact path is
-the ordinary call on the same operands. -/
-
-/-- A record field read from a local: evaluated ahead of the tree. -/
-def aheadLeaf : Expr → Bool
-  | .project _ _ (.local _) => true
-  | _ => false
-
-/-- A local or a field of a record held in a local. -/
-def treeLeaf (e : Expr) : Bool := (slot? e).isSome || aheadLeaf e
-
-/-- A field read of a word record: its value is already a word, not a carrier
-    whose `$small` a tree reads, so a node over it is not a tree. -/
-def wordLeaf (M : MCtx) : Expr → Bool
-  | .project tid _ _ => M.isWord tid
-  | _ => false
-
-/-- The node the emitter computes on the machine word. -/
-def isTree (op : BinOp) (l r : Expr) : Bool :=
-  op.isArith && treeLeaf l && treeLeaf r && (aheadLeaf l || aheadLeaf r)
-
-/-- Where the tree reads operand `p` (0 or 1): its local, or its tree local. -/
-def leafSlot (X : LCtx) (e : Expr) (p : Nat) : Nat :=
-  match slot? e with
-  | some i => i
-  | none => X.tree + p
+`Expr.intWord t w` (`MirExpr::IntWord`) is lowered as the emitter lowers it
+(`int_tree.rs`, `emit_int_word`): each field leaf is read once, ahead, into
+its local; then the `i64` path reads the `$small` of each leaf, leaving for
+the exact path when a leaf is Big or an operation overflows, and boxes the
+machine result; the exact path is the ordinary calls on the same leaves. The
+plan names every local it writes, so nothing here depends on where the
+emitter put them. -/
 
 /-- The `$small` of the carrier in local `i`, or a branch out (`br_if 0`)
     when it is Big. -/
@@ -408,12 +384,13 @@ def smallReadW (C i : Nat) : List WInstr :=
   [.localGet i, .structGet C 1, .refIsNull, .i32Eqz, .brIf 0, .localGet i, .structGet C 0]
 
 /-- The machine operation on the two words on the stack, with the overflow
-    test of `bignum.rs` (`emit_fast`): the operands are parked in the first
-    two temporaries and the result in the third; an overflow branches out. -/
-def treeOpW (X : LCtx) (op : BinOp) : List WInstr :=
-  let t0 := X.tree + 2
-  let t1 := X.tree + 3
-  let t2 := X.tree + 4
+    test of `bignum.rs` (`emit_word_op`): the operands are parked in the
+    words `w` and `w + 1` and the result in `w + 2`; an overflow branches
+    out. -/
+def treeOpW (w : Nat) (op : BinOp) : List WInstr :=
+  let t0 := w
+  let t1 := w + 1
+  let t2 := w + 2
   -- a ∉ {-1, 0}, as `(a + 1) >u 1`
   let general := [.localGet t0, .i64Const 1, .i64Add, .i64Const 1, .i64GtU]
   [.localSet t1, .localSet t0, .localGet t0, .localGet t1] ++
@@ -427,17 +404,30 @@ def treeOpW (X : LCtx) (op : BinOp) : List WInstr :=
         .localGet t1, .i64Const (-9223372036854775808), .i64Eq, .i32And] ++ general ++
       [.select, .brIf 0, .localGet t2]
 
-/-- `block $done (block $slow <i64 path> br $done) <exact path>` over the
-    operands in locals `a` and `b`. -/
-def treeBlock (M : MCtx) (X : LCtx) (op : BinOp) (a b : Nat) : BI :=
-  .block (some .int)
-    [.block none ((smallReadW M.carrier a ++ smallReadW M.carrier b ++ treeOpW X op ++
-        [WInstr.call M.box, WInstr.br 1]).map .op),
-      .op (.localGet a), .op (.localGet b), .op (.call (M.arithIdx op))]
+/-- The `i64` path of a tree: the word of each leaf, and each operation on
+    the words. -/
+def fastW (C w : Nat) : WTree → List WInstr
+  | .leaf l => smallReadW C l.loc
+  | .op o a b => fastW C w a ++ fastW C w b ++ treeOpW w o
 
-/-- The tree locals the operands evaluated ahead are stored in. -/
-def aheadB (X : LCtx) (e : Expr) (p : Nat) (code : List BI) : List BI :=
-  if aheadLeaf e then code ++ [.op (.localSet (X.tree + p))] else []
+/-- The exact path of a tree: each leaf's carrier, and each operation's
+    call. -/
+def exactW (M : MCtx) : WTree → List WInstr
+  | .leaf l => [.localGet l.loc]
+  | .op o a b => exactW M a ++ exactW M b ++ [.call (M.arithIdx o)]
+
+/-- The field leaves read ahead, in order, each stored in its local. -/
+def aheadW (M : MCtx) : WTree → List WInstr
+  | .leaf (.local _) => []
+  | .leaf (.field tid k base slot) =>
+      [.localGet base, .structGet (M.structOf tid) k, .localSet slot]
+  | .op _ a b => aheadW M a ++ aheadW M b
+
+/-- `block $done (block $slow <i64 path> box br $done) <exact path>`. -/
+def wordBlock (M : MCtx) (t : WTree) (w : Nat) : BI :=
+  .block (some .int)
+    (.block none ((fastW M.carrier w t ++ [WInstr.call M.box, WInstr.br 1]).map .op) ::
+      (exactW M t).map .op)
 
 mutual
   def lowerB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool) : Expr → List BI
@@ -464,10 +454,7 @@ mutual
         | some .string =>
             lowerB M X Γ false l ++ lowerB M X Γ false r ++ strOpTail M op
         | _ =>
-            if isTree op l r && decide (X.n ≤ X.tree) && !(wordLeaf M l || wordLeaf M r) then
-              aheadB X l 0 (lowerB M X Γ false l) ++ aheadB X r 1 (lowerB M X Γ false r) ++
-                [treeBlock M X op (leafSlot X l 0) (leafSlot X r 1)]
-            else if op.isArith then
+            if op.isArith then
               lowerB M X Γ false l ++ lowerB M X Γ false r ++ [.op (.call (M.arithIdx op))]
             else
               match litInt? l, litInt? r with
@@ -587,6 +574,7 @@ mutual
             lowerB M X Γ false e ++ [.op (.localSet X.subj)] ++ tryB M X t er t' er'
         | _, _ => []
     | .scope e => lowerB M X Γ tail e
+    | .intWord t w => (aheadW M t).map .op ++ [wordBlock M t w]
   def lowerArgsB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) : List Expr → List BI
     | [] => []
     | e :: es => lowerB M X Γ false e ++ lowerArgsB M X Γ es
@@ -1126,6 +1114,7 @@ mutual
     | .list _ items => argsLits items
     | .try_ e _ => exprLits e
     | .scope e => exprLits e
+    | .intWord _ _ => []
   def argsLits : List Expr → List (List Nat)
     | [] => []
     | e :: es => exprLits e ++ argsLits es

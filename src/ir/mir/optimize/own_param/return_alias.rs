@@ -200,6 +200,7 @@ fn return_aliases_of_expr(
         MirExpr::MapLiteral(_) => Some(HashSet::new()),
         MirExpr::Literal(_)
         | MirExpr::BinOp(_)
+        | MirExpr::IntWord(_)
         | MirExpr::Neg(_)
         | MirExpr::InterpolatedStr(_)
         | MirExpr::FnValue(_)
@@ -209,6 +210,7 @@ fn return_aliases_of_expr(
         }
         MirExpr::Literal(_)
         | MirExpr::BinOp(_)
+        | MirExpr::IntWord(_)
         | MirExpr::Neg(_)
         | MirExpr::Try(_)
         | MirExpr::List(_)

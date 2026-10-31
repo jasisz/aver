@@ -246,6 +246,96 @@ pub enum PlanExpr {
     Try(Box<PlanExpr>, PlanTy),
     /// `Grammar.Expr.scope`: a body whose `?` returns land here.
     Scope(Box<PlanExpr>),
+    /// `Grammar.Expr.intWord`: an `Int` tree computed on the machine word
+    /// first, its operations parking words in the locals `w`, `w + 1` and
+    /// `w + 2`.
+    IntWord(PlanWTree, u32),
+}
+
+/// `Grammar.WLeaf`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlanWLeaf {
+    /// An `Int` local, read where it is.
+    Local(u32),
+    /// Field `field` of the record of type `tid` held in local `base`, read
+    /// once ahead into the local `slot`.
+    Field {
+        tid: u32,
+        field: u32,
+        base: u32,
+        slot: u32,
+    },
+}
+
+/// `Grammar.WTree`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlanWTree {
+    Leaf(PlanWLeaf),
+    Op(PlanBinOp, Box<PlanWTree>, Box<PlanWTree>),
+}
+
+impl PlanWLeaf {
+    /// `Grammar.WLeaf.loc`: the local both paths read the leaf from.
+    pub fn loc(&self) -> u32 {
+        match self {
+            PlanWLeaf::Local(i) => *i,
+            PlanWLeaf::Field { slot, .. } => *slot,
+        }
+    }
+
+    fn lean(&self) -> String {
+        match self {
+            PlanWLeaf::Local(i) => format!("(.local {i})"),
+            PlanWLeaf::Field {
+                tid,
+                field,
+                base,
+                slot,
+            } => format!("(.field {tid} {field} {base} {slot})"),
+        }
+    }
+}
+
+impl PlanWTree {
+    /// `Grammar.WTree.leaves`.
+    pub fn leaves(&self) -> Vec<&PlanWLeaf> {
+        match self {
+            PlanWTree::Leaf(l) => vec![l],
+            PlanWTree::Op(_, a, b) => {
+                let mut out = a.leaves();
+                out.extend(b.leaves());
+                out
+            }
+        }
+    }
+
+    /// `Grammar.WTree.slots`.
+    pub fn slots(&self) -> Vec<u32> {
+        self.leaves()
+            .into_iter()
+            .filter_map(|l| match l {
+                PlanWLeaf::Field { slot, .. } => Some(*slot),
+                PlanWLeaf::Local(_) => None,
+            })
+            .collect()
+    }
+
+    pub fn write_lean(&self, out: &mut String) {
+        match self {
+            PlanWTree::Leaf(l) => {
+                out.push_str("(.leaf ");
+                out.push_str(&l.lean());
+                out.push(')');
+            }
+            PlanWTree::Op(op, a, b) => {
+                out.push_str(&format!("(.op {} ", op.lean()));
+                a.write_lean(out);
+                out.push(' ');
+                b.write_lean(out);
+                out.push(')');
+            }
+        }
+    }
 }
 
 /// `Grammar.FnPlan`.
@@ -569,6 +659,11 @@ impl PlanExpr {
                 out.push_str(&format!("(.project {tid} {i} "));
                 b.write_lean(out);
                 out.push(')');
+            }
+            PlanExpr::IntWord(t, w) => {
+                out.push_str("(.intWord ");
+                t.write_lean(out);
+                out.push_str(&format!(" {w})"));
             }
             PlanExpr::Match(s, arms) => {
                 out.push_str("(.match_ ");

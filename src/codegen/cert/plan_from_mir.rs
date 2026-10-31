@@ -19,12 +19,12 @@ use std::collections::HashMap;
 use aver_cert::{
     FnPlan, ModulePlans, PLAN_NO_SLOT, PlanBinOp, PlanBuiltin, PlanBytesRole, PlanCallee, PlanCtor,
     PlanExpr, PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat, PlanRecordDecl, PlanSumDecl,
-    PlanTy, PlanTypeTable, PlannedFn,
+    PlanTy, PlanTypeTable, PlanWLeaf, PlanWTree, PlannedFn,
 };
 
 use crate::ast::{BinOp, Literal, Spanned};
 use crate::ir::hir::{BuiltinCtor, BuiltinIntrinsic, ResolvedFnDef};
-use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirFn, MirPattern, MirStrPart};
+use crate::ir::mir::{IntWordNode, MirCallee, MirCtor, MirExpr, MirFn, MirPattern, MirStrPart};
 use crate::ir::{BuiltinId, CtorId, FnId};
 
 /// A user sum as the emitter laid it out: its root struct and, per
@@ -654,6 +654,9 @@ struct Printer<'a> {
     /// The parameters holding a word record whose `.value` the emitter reads
     /// as the raw `i64` (`MirFnRepr::carrier_slots`).
     carrier_slots: &'a std::collections::HashSet<crate::ir::mir::LocalId>,
+    /// The wasm local of each `IntWord` scratch local (`MirFnRepr::scratch`),
+    /// as the emitter reserved them.
+    scratch: &'a [Option<u32>],
 }
 
 fn stamped(expr: &Spanned<MirExpr>) -> Result<String, String> {
@@ -687,6 +690,7 @@ fn node_name(expr: &MirExpr) -> &'static str {
         MirExpr::FnValue(_) => "FnValue",
         MirExpr::Box(_) => "Box",
         MirExpr::Unbox(_) => "Unbox",
+        MirExpr::IntWord(_) => "IntWord",
     }
 }
 
@@ -902,6 +906,15 @@ impl Printer<'_> {
                 Literal::Unit => return Err("Literal Unit".into()),
             }),
             MirExpr::Local(local) => PlanExpr::Local(local.node.slot.0),
+            MirExpr::IntWord(word) => {
+                let w = self.scratch_local(word.node.words)?;
+                for k in 1..3 {
+                    if self.scratch_local(word.node.words + k)? != w + k {
+                        return Err("IntWord words not in a row".into());
+                    }
+                }
+                PlanExpr::IntWord(self.word_tree(&word.node.root)?, w)
+            }
             MirExpr::Let(l) => {
                 let l = &l.node;
                 if l.binding_name.is_empty() {
@@ -1211,22 +1224,66 @@ impl Printer<'_> {
     }
 }
 
+impl Printer<'_> {
+    /// The wasm local of `IntWord` scratch `k`.
+    fn scratch_local(&self, k: u32) -> Result<u32, String> {
+        self.scratch
+            .get(k as usize)
+            .copied()
+            .flatten()
+            .ok_or_else(|| "IntWord scratch local not reserved".into())
+    }
+
+    /// An `IntWord` tree as `Grammar.WTree`: a leaf read in place is a
+    /// local, a leaf read ahead a field of a record held in a local.
+    fn word_tree(&mut self, node: &IntWordNode) -> Result<PlanWTree, String> {
+        Ok(match node {
+            IntWordNode::Op(op, a, b) => PlanWTree::Op(
+                bin_op(&op.bin_op())?,
+                Box::new(self.word_tree(a)?),
+                Box::new(self.word_tree(b)?),
+            ),
+            IntWordNode::Local(e) => match self.expr(e)? {
+                PlanExpr::Local(i) => PlanWTree::Leaf(PlanWLeaf::Local(i)),
+                _ => return Err("IntWord leaf read in place (not a local)".into()),
+            },
+            IntWordNode::Ahead(e, k) => match self.expr(e)? {
+                PlanExpr::Project(tid, field, base) if !self.types.is_word(tid) => {
+                    let PlanExpr::Local(base) = *base else {
+                        return Err("IntWord leaf read ahead (not a field of a local)".into());
+                    };
+                    PlanWTree::Leaf(PlanWLeaf::Field {
+                        tid,
+                        field,
+                        base,
+                        slot: self.scratch_local(*k)?,
+                    })
+                }
+                _ => return Err("IntWord leaf read ahead (not a field of a local)".into()),
+            },
+        })
+    }
+}
+
 /// Print one function. `extra_locals` is the emitter's declared locals vector
-/// past the parameters, as the code entry declares it.
+/// past the parameters, as the code entry declares it; `scratch` is the wasm
+/// local the emitter reserved for each `IntWord` scratch local of the fn.
 pub fn print_fn(
     mir_fn: &MirFn,
     rfd: &ResolvedFnDef,
     extra_locals: &[wasm_encoder::ValType],
+    scratch: &[Option<u32>],
     layout: &dyn PlanLayout,
     types: &mut TypeTableBuilder,
 ) -> Result<FnPlan, String> {
-    print_fn_inner(mir_fn, rfd, extra_locals, layout, types).map_err(clip)
+    print_fn_inner(mir_fn, rfd, extra_locals, scratch, layout, types).map_err(clip)
 }
 
 fn print_fn_inner(
     mir_fn: &MirFn,
     rfd: &ResolvedFnDef,
     extra_locals: &[wasm_encoder::ValType],
+    scratch: &[Option<u32>],
     layout: &dyn PlanLayout,
     types: &mut TypeTableBuilder,
 ) -> Result<FnPlan, String> {
@@ -1254,6 +1311,7 @@ fn print_fn_inner(
         ret: PlanTy::Bool,
         tries: false,
         carrier_slots: &repr.carrier_slots,
+        scratch,
     };
     let params = rfd
         .params
@@ -1321,6 +1379,7 @@ pub type EmittedFn<'a> = (
     Option<&'a MirFn>,
     &'a ResolvedFnDef,
     Option<&'a [wasm_encoder::ValType]>,
+    &'a [Option<u32>],
 );
 
 /// Print every emitted user function, one `EmittedFn` per user function.
@@ -1331,9 +1390,11 @@ pub fn print_module(
 ) -> ModulePlans {
     let mut types = TypeTableBuilder::new(layout);
     let mut out = Vec::with_capacity(fns.len());
-    for (func_idx, mir_fn, rfd, extra) in fns {
+    for (func_idx, mir_fn, rfd, extra, scratch) in fns {
         let plan = match (mir_fn, extra) {
-            (Some(mir_fn), Some(extra)) => print_fn(mir_fn, rfd, extra, layout, &mut types),
+            (Some(mir_fn), Some(extra)) => {
+                print_fn(mir_fn, rfd, extra, scratch, layout, &mut types)
+            }
             _ => Err("fn has no MIR body (trap stub)".to_string()),
         };
         out.push(PlannedFn {
