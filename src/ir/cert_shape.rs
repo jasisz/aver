@@ -38,7 +38,6 @@ pub const PRINTED_BUILTINS: &[&str] = &[
     "List.take",
     "List.drop",
     "List.contains",
-    "Vector.get",
     "Option.withDefault",
     "Result.withDefault",
     "Int.div",

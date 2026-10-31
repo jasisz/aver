@@ -68,6 +68,13 @@ impl PlanLayout for CertLayout<'_> {
         self.registry.vector_type_idx(canonical)
     }
 
+    fn vector_value(&self, canonical: &str) -> Option<u32> {
+        match self.registry.vector_slots(canonical) {
+            Some(slots) => Some(slots.version),
+            None => self.registry.vector_type_idx(canonical),
+        }
+    }
+
     fn list(&self, canonical: &str) -> Option<u32> {
         self.registry.list_type_idx(canonical)
     }

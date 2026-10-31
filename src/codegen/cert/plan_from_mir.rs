@@ -64,6 +64,9 @@ pub trait PlanLayout {
     fn option(&self, canonical: &str) -> Option<u32>;
     fn result(&self, canonical: &str) -> Option<u32>;
     fn vector(&self, canonical: &str) -> Option<u32>;
+    /// The heap type of a `Vector<T>` value: its version struct when the
+    /// program has versions (`codegen::wasm_gc::vectors`), else its array.
+    fn vector_value(&self, canonical: &str) -> Option<u32>;
     fn list(&self, canonical: &str) -> Option<u32>;
     /// The function index of the `List<T>` cons helper a non-empty literal
     /// calls once per item (`emit_mir_list_literal`).
@@ -308,15 +311,21 @@ impl TypeTableBuilder {
                 Ok(PlanTy::Result(Box::new(t), Box::new(e)))
             }
             // A `Vector<T>` value is a version struct over its array on
-            // wasm-gc (`codegen::wasm_gc::vectors`), and reading it may
-            // reroot the versions sharing that array. The wall models a
-            // Vector as the plain array of its elements, so a function that
-            // touches one is declined rather than certified against the
-            // wrong representation.
-            ("Vector", 1) => Err(format!(
-                "type `{canon}`: a Vector is a versioned struct on wasm-gc, and the wall \
-                 models it as a plain array"
-            )),
+            // wasm-gc (`codegen::wasm_gc::vectors`), and reading its
+            // elements may reroot the versions sharing that array. A plan
+            // only passes it along: it is an opaque value, the wasm
+            // reference itself, and no plan operation reads it.
+            ("Vector", 1) => {
+                let key = format!("opaque:{canon}");
+                let idx = layout
+                    .vector_value(&canon)
+                    .ok_or_else(|| format!("type `{canon}` is not registered"))?;
+                let (tid, fresh) = self.tid(key);
+                if fresh {
+                    self.table.opaques.push((tid, idx));
+                }
+                Ok(PlanTy::Opaque(tid))
+            }
             ("List", 1) => {
                 let t = arg(self, 0)?;
                 let idx = layout
@@ -994,7 +1003,6 @@ impl Printer<'_> {
                                     .list_helper(self.layout, &canonical, &elem, role)?;
                                 PlanCallee::Builtin(b)
                             }
-                            "Vector.get" => PlanCallee::Builtin(PlanBuiltin::VecGet),
                             "Option.withDefault" => PlanCallee::Lazy(PlanLazy::OptWithDefault),
                             "Result.withDefault" => {
                                 // `Int.div` / `Int.mod` print only fused here.

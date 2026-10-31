@@ -1,0 +1,66 @@
+module VectorPass
+    intent =
+        "Vectors passed along without being read: a sum and a record that"
+        "hold a Vector, and functions that choose, store, match out and"
+        "return it. They are certified with the Vector as an opaque value."
+        "The functions that read or build a Vector are not."
+    exposes [Node, Table, pick, branchOf, childrenOf, sizeOf, cellsOf, withCells, cellAt, emptyCells]
+    effects []
+
+type Node
+    Leaf(Int)
+    Branch(Int, Vector<Node>, Int)
+
+record Table
+    cells: Vector<Int>
+    size: Int
+
+fn pick(a: Vector<Int>, b: Vector<Int>, first: Bool) -> Vector<Int>
+    ? "One of two vectors."
+    match first
+        true -> a
+        false -> b
+
+fn branchOf(mask: Int, children: Vector<Node>, n: Int) -> Node
+    ? "A branch over the given children."
+    Node.Branch(mask, children, n)
+
+fn childrenOf(n: Node, other: Vector<Node>) -> Vector<Node>
+    ? "The children of a branch, or the other vector for a leaf."
+    match n
+        Node.Leaf(_) -> other
+        Node.Branch(_, children, _) -> children
+
+fn sizeOf(n: Node) -> Int
+    ? "The count of a branch, or the value of a leaf."
+    match n
+        Node.Leaf(x) -> x
+        Node.Branch(_, _, count) -> count
+
+fn cellsOf(t: Table) -> Vector<Int>
+    ? "The cells of a table."
+    t.cells
+
+fn withCells(cells: Vector<Int>, size: Int) -> Table
+    ? "A table over the given cells."
+    Table(cells = cells, size = size)
+
+fn cellAt(t: Table, i: Int) -> Int
+    ? "A cell of the table, or 0 outside it: reads the Vector, so it is not certified."
+    Option.withDefault(Vector.get(t.cells, i), 0)
+
+fn emptyCells(n: Int) -> Vector<Int>
+    ? "A vector of zeros, or an empty one for a negative size: builds a Vector, so it is not certified."
+    Result.withDefault(Vector.new(n, 0), Vector.fromList([]))
+
+verify pick
+    pick(emptyCells(2), emptyCells(3), true) => emptyCells(2)
+    pick(emptyCells(2), emptyCells(3), false) => emptyCells(3)
+
+verify sizeOf
+    sizeOf(Node.Leaf(4)) => 4
+    sizeOf(branchOf(1, Vector.fromList([Node.Leaf(0)]), 7)) => 7
+
+verify cellAt
+    cellAt(withCells(Vector.fromList([5, 5, 5]), 3), 1) => 5
+    cellAt(withCells(Vector.fromList([5, 5, 5]), 3), 9) => 0
