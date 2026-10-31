@@ -48,6 +48,10 @@ pub struct RecordLayout {
     pub key: String,
     pub struct_idx: Option<u32>,
     pub fields: Vec<(String, String)>,
+    /// A one-field `Int` record the emitter erases to the machine word of its
+    /// value (an eligible carrier): its values are `i64`, and reading its
+    /// field boxes the word (`Schema.TypeTable.words`).
+    pub word: bool,
 }
 
 /// The emitter's view the printer reads: the type registry, the function
@@ -236,6 +240,7 @@ impl TypeTableBuilder {
         match ty {
             PlanTy::Int => t.carrier,
             PlanTy::Str => t.str_,
+            PlanTy::Record(tid) if t.words.contains(tid) => None,
             PlanTy::Record(tid) => t
                 .records
                 .iter()
@@ -403,6 +408,29 @@ impl TypeTableBuilder {
                     }
                 }
             }
+            if rec.word {
+                if fields != [PlanTy::Int] {
+                    let reason = format!("word record `{name}` is not one Int field");
+                    self.tids.remove(&key);
+                    self.failed.insert(key, reason.clone());
+                    return Err(reason);
+                }
+                // Declared like any one-field record: its struct is the heap
+                // type of its field's boxed representation, the carrier.
+                let Some(carrier) = self.table.carrier else {
+                    let reason = format!("word record `{name}` without the Int carrier");
+                    self.tids.remove(&key);
+                    self.failed.insert(key, reason.clone());
+                    return Err(reason);
+                };
+                self.table.records.push(PlanRecordDecl {
+                    tid,
+                    struct_idx: carrier,
+                    fields,
+                });
+                self.table.words.push(tid);
+                return Ok(PlanTy::Record(tid));
+            }
             // A one-field record the emitter erases (a newtype) is represented
             // by its field's value; any other record needs two or more fields.
             let struct_idx = match (rec.struct_idx, fields.as_slice()) {
@@ -514,6 +542,11 @@ impl TypeTableBuilder {
         Ok(PlanTy::Bytes)
     }
 
+    /// Whether type id `tid` is a word record.
+    fn is_word(&self, tid: u32) -> bool {
+        self.table.words.contains(&tid)
+    }
+
     /// Declare the `role` helper of the packed type `name`, the checked
     /// conversion `pack` calls, and `__aint_to_i64_sat` for a take / drop
     /// count.
@@ -609,6 +642,9 @@ struct Printer<'a> {
     /// A `?` was printed: the body becomes the `scope` its early returns
     /// land in.
     tries: bool,
+    /// The parameters holding a word record whose `.value` the emitter reads
+    /// as the raw `i64` (`MirFnRepr::carrier_slots`).
+    carrier_slots: &'a std::collections::HashSet<crate::ir::mir::LocalId>,
 }
 
 fn stamped(expr: &Spanned<MirExpr>) -> Result<String, String> {
@@ -1009,6 +1045,15 @@ impl Printer<'_> {
                     return self.bytes_create(&rec.type_name, arr, &rec.fields);
                 }
                 let (tid, declared) = self.types.record_tid(self.layout, &rec.type_name)?;
+                if self.types.is_word(tid) {
+                    // The emitter narrows the boxed value with
+                    // `__aint_to_i64_checked`; that its `i64` is in the band
+                    // rests on a Small carrier's value being in the band,
+                    // which the wall does not assume.
+                    return Err(
+                        "RecordCreate of a word record (machine word of a Small Int)".into(),
+                    );
+                }
                 if declared.len() < 2 {
                     return Err("RecordCreate of a one-field record (newtype)".into());
                 }
@@ -1034,6 +1079,18 @@ impl Printer<'_> {
                     ));
                 }
                 let (tid, declared) = self.types.record_tid(self.layout, &base_ty)?;
+                if self.types.is_word(tid) {
+                    // Outside a `Box`, the emitter reads the word and boxes it
+                    // only when the base is not already a raw word read.
+                    if self.raw_word(&p.node.base) {
+                        return Err("Project of a word record read as a raw i64".into());
+                    }
+                    return Ok(PlanExpr::Project(
+                        tid,
+                        0,
+                        Box::new(self.expr(&p.node.base)?),
+                    ));
+                }
                 if declared.len() < 2 {
                     return Err("Project of a one-field record (newtype)".into());
                 }
@@ -1111,8 +1168,33 @@ impl Printer<'_> {
                 }
                 PlanExpr::List(*elem, self.exprs(items)?)
             }
+            MirExpr::Box(inner) => {
+                // `Box` over the raw read of a word record's value: the
+                // emitter reads the word and boxes it, the same code as the
+                // project's own read.
+                let MirExpr::Project(p) = &inner.node else {
+                    return Err("Box (not a word read)".into());
+                };
+                let base_ty = stamped(&p.node.base)?;
+                let (tid, _) = self.types.record_tid(self.layout, &base_ty)?;
+                if !self.types.is_word(tid) || !self.raw_word(&p.node.base) {
+                    return Err("Box (not a raw word read)".into());
+                }
+                PlanExpr::Project(tid, 0, Box::new(self.expr(&p.node.base)?))
+            }
             other => return Err(node_name(other).to_string()),
         })
+    }
+
+    /// Whether the emitter reads the `.value` of a word record held by `base`
+    /// as the raw `i64` (`mir_base_renders_carrier_i64_raw`): a parameter in
+    /// `carrier_slots`, or a field read whose type is a word record.
+    fn raw_word(&self, base: &Spanned<MirExpr>) -> bool {
+        match &base.node {
+            MirExpr::Local(l) => self.carrier_slots.contains(&l.node.slot),
+            MirExpr::Project(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -1139,11 +1221,7 @@ fn print_fn_inner(
         return Err("fn declares effects".into());
     }
     let repr = &mir_fn.repr;
-    if repr.bare_return
-        || !repr.bare_slots.is_empty()
-        || !repr.carrier_slots.is_empty()
-        || repr.bare_params.iter().any(|b| *b)
-    {
+    if repr.bare_return || !repr.bare_slots.is_empty() || repr.bare_params.iter().any(|b| *b) {
         return Err("raw i64 slots (D5)".into());
     }
     for (i, param) in mir_fn.params.iter().enumerate() {
@@ -1162,6 +1240,7 @@ fn print_fn_inner(
         types,
         ret: PlanTy::Bool,
         tries: false,
+        carrier_slots: &repr.carrier_slots,
     };
     let params = rfd
         .params

@@ -91,6 +91,10 @@ structure TypeTable where
   /-- `String.fromInt`, which an `Int` interpolation part calls, pinned to its
       template (`AcceptedArtifact.listHelpersPinned`). -/
   strFromInt : Option Nat := none
+  /-- The word records: one-field `Int` records the emitter erases to the
+      machine word of their value (`Grammar.MCtx.isWord`). A tid here that is
+      not a record of fields `[.int]` is not a word record. -/
+  words : List Nat := []
 deriving Repr
 
 /-- One planned function: the plan is the function's MIR body printed 1:1

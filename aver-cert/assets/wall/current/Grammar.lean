@@ -37,7 +37,10 @@
      declared order (the printer lists the values in that order); records
      with fewer than two fields are declined, because the emitter lowers a
      one-field record as a newtype.
-   * `project tid field base` — `Project`, the field by declared index.
+   * `project tid field base` — `Project`, the field by declared index; also
+     the field read of a word record (`MCtx.isWord`), which the emitter
+     lowers as the word followed by the box call (MIR's `Box` around a raw
+     read prints as this same node).
    * `call (.builtin .bytesOfList | .bytesValues | .bytesLen | .bytesConcat |
      .bytesTake | .bytesDrop) args` — the `RecordCreate` / `Project` of the
      packed `Bytes` refinement, as the emitter lowers them: a call of the
@@ -395,6 +398,8 @@ structure MCtx where
   /-- `String.fromInt`, which an `Int` interpolation part calls, pinned to its
       template (`StringHelpers`). -/
   fromInt : Nat := 0
+  /-- The declared word records (`MCtx.isWord`). -/
+  words : List Nat := []
 
 /-- The declared helper of `role` for `List<t>`. -/
 def MCtx.listHelper (M : MCtx) (r : ListRole) (t : Ty) : Option Nat :=
@@ -457,6 +462,15 @@ def MCtx.newtype (M : MCtx) (tid : Nat) : Bool :=
   match M.recFields tid with
   | some [_] => true
   | _ => false
+
+/-- A word record: a declared one-field `Int` record the emitter erases to the
+    `i64` of its value (an eligible carrier, `is_eligible_carrier`), always in
+    the i64 band. A field read boxes the word. Building one is not admitted:
+    the emitter narrows a boxed value with `__aint_to_i64_checked`, and that
+    the result is in the band rests on a Small carrier's value being in the
+    band, which the carrier specification does not state. -/
+def MCtx.isWord (M : MCtx) (tid : Nat) : Bool :=
+  M.words.contains tid && decide (M.recFields tid = some [.int])
 
 /-- A type with a default filler value (the emitter's `emit_default_value`):
     the Small zero carrier, `i32 0`, `f64 0`, or `ref.null` of the type's
@@ -725,7 +739,7 @@ mutual
     | .project tid i base =>
         match tyOf M n Γ false base, M.recFields tid with
         | some (.record tid'), some fts =>
-            if tid' = tid ∧ 2 ≤ fts.length then fts[i]? else none
+            if tid' = tid ∧ (2 ≤ fts.length ∨ M.isWord tid = true) then fts[i]? else none
         | _, _ => none
     | .call (.lazy lb) args =>
         match args with
@@ -1443,7 +1457,10 @@ mutual
     | .i n, w => CanonRepr S n w
     | .b v, w => w = b32 v
     | .record tid fs, w =>
-        if M.newtype tid then SReprL S M fs [w]
+        if M.newtype tid then
+          if M.isWord tid then
+            ∃ n, fs = [.i n] ∧ w = .i64v n ∧ -(2 ^ 63 : Int) ≤ n ∧ n < 2 ^ 63
+          else SReprL S M fs [w]
         else ∃ ws, w = .structv (M.structOf tid) ws ∧ SReprL S M fs ws
     | .variant tid c fs, w => ∃ ws, w = .structv (M.ctorStruct tid c) ws ∧ SReprL S M fs ws
     | .none t, w => ∃ d, w = .structv (M.optStruct t) [.i32v 0, d]

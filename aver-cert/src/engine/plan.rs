@@ -316,6 +316,10 @@ pub struct PlanTypeTable {
     /// `String.fromInt`, which an `Int` interpolation part calls
     /// (`Schema.TypeTable.strFromInt`), pinned to its template.
     pub str_from_int: Option<u32>,
+    /// The one-field records whose value is the machine word of their `Int`
+    /// (`Schema.TypeTable.words`): an eligible carrier the emitter erases to
+    /// `i64`. Each names a record declared with fields `[Int]`.
+    pub words: Vec<u32>,
 }
 
 /// One user function as the compiler printed it: its wasm function index, its
@@ -844,6 +848,10 @@ impl PlanTypeTable {
             }
             if let Some(i) = self.str_from_int {
                 out.push_str(&format!(",\n    strFromInt := some {i}"));
+            }
+            if !self.words.is_empty() {
+                let items = self.words.iter().map(u32::to_string).collect::<Vec<_>>();
+                out.push_str(&format!(",\n    words := [{}]", items.join(", ")));
             }
             out
         };

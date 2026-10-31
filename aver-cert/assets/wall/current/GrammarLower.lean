@@ -308,7 +308,7 @@ def vecGetOrB (M : MCtx) (v i : Nat) (t : Ty) (dc : List BI) : List BI :=
 def dfltB (M : MCtx) : Ty → List BI
   | .int => [.op (.i64Const 0), .nullOf M.mag, .op (.i32Const 0), .op (.structNew M.carrier 3)]
   | .bool => [.op (.i32Const 0)]
-  | .record tid => [.nullOf (M.structOf tid)]
+  | .record tid => if M.isWord tid then [.op (.i64Const 0)] else [.nullOf (M.structOf tid)]
   | .sum tid => [.nullOf (M.sumRoot tid)]
   | .option t => [.nullOf (M.optStruct t)]
   | .result t e => [.nullOf (M.resStruct t e)]
@@ -386,6 +386,12 @@ def aheadLeaf : Expr → Bool
 /-- A local or a field of a record held in a local. -/
 def treeLeaf (e : Expr) : Bool := (slot? e).isSome || aheadLeaf e
 
+/-- A field read of a word record: its value is already a word, not a carrier
+    whose `$small` a tree reads, so a node over it is not a tree. -/
+def wordLeaf (M : MCtx) : Expr → Bool
+  | .project tid _ _ => M.isWord tid
+  | _ => false
+
 /-- The node the emitter computes on the machine word. -/
 def isTree (op : BinOp) (l r : Expr) : Bool :=
   op.isArith && treeLeaf l && treeLeaf r && (aheadLeaf l || aheadLeaf r)
@@ -458,7 +464,7 @@ mutual
         | some .string =>
             lowerB M X Γ false l ++ lowerB M X Γ false r ++ strOpTail M op
         | _ =>
-            if isTree op l r && decide (X.n ≤ X.tree) then
+            if isTree op l r && decide (X.n ≤ X.tree) && !(wordLeaf M l || wordLeaf M r) then
               aheadB X l 0 (lowerB M X Γ false l) ++ aheadB X r 1 (lowerB M X Γ false r) ++
                 [treeBlock M X op (leafSlot X l 0) (leafSlot X r 1)]
             else if op.isArith then
@@ -485,7 +491,9 @@ mutual
           [.ifElse (tyOf M X.n Γ tail t) (lowerB M X Γ tail t) (lowerB M X Γ tail e)]
     | .recordCreate tid fs =>
         lowerArgsB M X Γ fs ++ [.op (.structNew (M.structOf tid) fs.length)]
-    | .project tid i base => lowerB M X Γ false base ++ [.op (.structGet (M.structOf tid) i)]
+    | .project tid i base =>
+        if M.isWord tid then lowerB M X Γ false base ++ [.op (.call M.box)]
+        else lowerB M X Γ false base ++ [.op (.structGet (M.structOf tid) i)]
     | .call (.lazy lb) args =>
         match args with
         | [o, d] =>
@@ -791,7 +799,8 @@ def encW : WInstr → Option (List Nat)
 def valTy (M : MCtx) : Ty → Option (List Nat)
   | .int => (s33HeapIdx M.carrier).map ([0x63] ++ ·)
   | .bool => some [0x7f]
-  | .record tid => (s33HeapIdx (M.structOf tid)).map ([0x63] ++ ·)
+  | .record tid =>
+      if M.isWord tid then some [0x7e] else (s33HeapIdx (M.structOf tid)).map ([0x63] ++ ·)
   | .sum tid => (s33HeapIdx (M.sumRoot tid)).map ([0x63] ++ ·)
   | .option t => (s33HeapIdx (M.optStruct t)).map ([0x63] ++ ·)
   | .result t e => (s33HeapIdx (M.resStruct t e)).map ([0x63] ++ ·)
