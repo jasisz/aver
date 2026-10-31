@@ -1111,13 +1111,42 @@ fn rewrite(
         rewrite(child, fns, symbols, not, builtins)
     });
     let replacement = match &e.node {
-        // `x == C` for a constructor `C` with no fields stays as it is: the
-        // emitter answers it with one `ref.test` on `x`.
+        // `x == C` for a constructor `C` with no fields is a match on `x`:
+        // one `ref.test`, no `C` built and no call.
         MirExpr::BinOp(b)
             if matches!(b.node.op, BinOp::Eq | BinOp::Neq)
                 && (is_nullary(&b.node.lhs) || is_nullary(&b.node.rhs)) =>
         {
-            None
+            let (value, ctor) = if is_nullary(&b.node.rhs) {
+                (&b.node.lhs, &b.node.rhs)
+            } else {
+                (&b.node.rhs, &b.node.lhs)
+            };
+            let MirExpr::Construct(c) = &ctor.node else {
+                unreachable!("checked by is_nullary")
+            };
+            let equal = b.node.op == BinOp::Eq;
+            let answer = |v: bool| retyped(MirExpr::Literal(retyped(Literal::Bool(v), e)), e);
+            Some(MirExpr::Match(retyped(
+                crate::ir::mir::MirMatch {
+                    subject: value.clone(),
+                    arms: vec![
+                        crate::ir::mir::MirMatchArm {
+                            pattern: crate::ir::mir::MirPattern::Ctor {
+                                ctor: c.node.ctor.clone(),
+                                bindings: Vec::new(),
+                                binding_names: Vec::new(),
+                            },
+                            body: answer(equal),
+                        },
+                        crate::ir::mir::MirMatchArm {
+                            pattern: crate::ir::mir::MirPattern::Wildcard,
+                            body: answer(!equal),
+                        },
+                    ],
+                },
+                e,
+            )))
         }
         MirExpr::BinOp(b) if matches!(b.node.op, BinOp::Eq | BinOp::Neq) => {
             let target = b.node.lhs.ty().and_then(|t| {

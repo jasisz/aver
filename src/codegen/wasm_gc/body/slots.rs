@@ -964,8 +964,15 @@ pub(super) fn expr_needs_scratch(expr: &ResolvedExpr, registry: &TypeRegistry) -
             arms.iter()
                 .any(|a| expr_needs_scratch(&a.body.node, registry))
         }
-        ResolvedExpr::BinOp(_, l, r) => {
-            expr_needs_scratch(&l.node, registry) || expr_needs_scratch(&r.node, registry)
+        ResolvedExpr::BinOp(op, l, r) => {
+            // `x == C` against a constructor with no fields is a match on
+            // `x` in MIR (`eq_fns::rewrite_program`), which keeps its
+            // subject in the scratch.
+            let nullary = |e: &ResolvedExpr| matches!(e, ResolvedExpr::Ctor(crate::ir::hir::ResolvedCtor::User { .. }, args) if args.is_empty());
+            (matches!(op, crate::ast::BinOp::Eq | crate::ast::BinOp::Neq)
+                && (nullary(&l.node) || nullary(&r.node)))
+                || expr_needs_scratch(&l.node, registry)
+                || expr_needs_scratch(&r.node, registry)
         }
         ResolvedExpr::Neg(inner) => expr_needs_scratch(&inner.node, registry),
         ResolvedExpr::Call(callee, args) => {
