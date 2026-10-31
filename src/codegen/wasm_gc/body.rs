@@ -55,6 +55,18 @@ pub(super) use from_mir::{
 };
 pub(super) use slots::SlotTable;
 
+/// What `__eq_memo` and `__eq_scope` lower to (`eq_fns`): the lookup,
+/// insert and drop of the table of remembered pairs, and the global that
+/// counts the nodes the scopes under way have compared.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct EqMemo {
+    pub(super) lookup: u32,
+    pub(super) insert: u32,
+    pub(super) drop_all: u32,
+    pub(super) steps: u32,
+    pub(super) seen: u32,
+}
+
 /// Maps fn identity → wasm fn index + return type. Built once per
 /// module in `module::emit_module_with`. PR 9.3c keyed dispatch by
 /// stable [`crate::ir::FnId`] (mirror of the FnKey-based
@@ -100,6 +112,10 @@ pub(super) struct FnMap {
     /// Per-(record/sum) `__eq_<TypeName>` helpers used by `BinOp::Eq`
     /// / `BinOp::Neq` over nominal types. Key = bare type name.
     pub(super) eq_helpers: std::collections::HashMap<String, u32>,
+    /// The table of remembered pairs the structural equality functions of
+    /// the program use (`eq_fns`, `__eq_memo` / `__eq_scope`), when one of
+    /// them walks a type that reaches itself.
+    pub(super) eq_memo: Option<EqMemo>,
     /// Address-taken user fn name → dense funcref-table index (table 0).
     /// A `MirExpr::FnValue(name)` lowers to `i32.const <idx>`; a
     /// `Fn`-param call dispatches that index via `call_indirect`. Names

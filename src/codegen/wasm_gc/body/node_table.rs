@@ -51,13 +51,27 @@ pub(crate) enum Entry {
     Pair,
     /// One node and its hash.
     Hash,
+    /// Two nodes found equal by a structural equality function of the
+    /// program (`eq_fns`), which files a pair under a key it mixed from the
+    /// node's fields (`__eq_memo`). Three functions: lookup, insert, and the
+    /// drop of the table at the end of the outermost scope; and one more
+    /// global, the nodes the scopes under way have compared.
+    Memo,
 }
 
 impl Entry {
     fn refs(self) -> u32 {
         match self {
-            Entry::Pair => 2,
+            Entry::Pair | Entry::Memo => 2,
             Entry::Hash => 1,
+        }
+    }
+
+    /// The functions of a table of this entry.
+    fn fn_count(self) -> u32 {
+        match self {
+            Entry::Memo => 3,
+            Entry::Pair | Entry::Hash => 4,
         }
     }
 
@@ -120,8 +134,8 @@ impl TableSlots {
             fns: *next_fn_idx,
             types: *next_type_idx,
         };
-        *next_fn_idx += 4;
-        *next_type_idx += 5 + u32::from(entry.hashes());
+        *next_fn_idx += entry.fn_count();
+        *next_type_idx += entry.fn_count() + 1 + u32::from(entry.hashes());
         slots
     }
 
@@ -141,17 +155,22 @@ impl TableSlots {
         self.fns + 3
     }
 
+    /// `Entry::Memo`: forgets every pair, at the end of the outermost scope.
+    pub(crate) fn drop_all(&self) -> u32 {
+        self.fns + 2
+    }
+
     fn nodes_type(&self) -> u32 {
-        self.types + 4
+        self.types + self.entry.fn_count()
     }
 
     fn hashes_type(&self) -> u32 {
-        self.types + 5
+        self.nodes_type() + 1
     }
 
-    /// The function types of the four functions, in function order.
-    pub(crate) fn function_types(&self) -> [u32; 4] {
-        [0, 1, 2, 3].map(|i| self.types + i)
+    /// The function types of the functions, in function order.
+    pub(crate) fn function_types(&self) -> Vec<u32> {
+        (0..self.entry.fn_count()).map(|i| self.types + i).collect()
     }
 
     pub(crate) fn emit_types(&self, types: &mut TypeSection) {
@@ -163,7 +182,7 @@ impl TableSlots {
         ]
         .concat();
         let found = match self.entry {
-            Entry::Pair => ValType::I32,
+            Entry::Pair | Entry::Memo => ValType::I32,
             Entry::Hash => ValType::I64,
         };
         let mut insert = lookup.clone();
@@ -173,7 +192,9 @@ impl TableSlots {
         types.ty().function(lookup, [found]);
         types.ty().function(insert, []);
         types.ty().function([], []);
-        types.ty().function([], []);
+        if self.entry != Entry::Memo {
+            types.ty().function([], []);
+        }
         types.ty().array(&StorageType::Val(eq_ref()), true);
         if self.entry.hashes() {
             types.ty().array(&StorageType::Val(ValType::I32), true);
@@ -201,7 +222,29 @@ impl TableSlots {
             ("l1", Global::Node),
             ("r1", second),
         ]);
+        if self.entry == Entry::Memo {
+            out.push(("steps", Global::Int));
+        }
         out
+    }
+
+    /// `Entry::Memo`: the global counting the nodes the scopes under way
+    /// have compared (`TableGlobals::first` plus its position).
+    pub(crate) fn steps_global(&self, g: &TableGlobals) -> Option<u32> {
+        self.global_named(g, "steps")
+    }
+
+    /// The global counting the pairs remembered since the table was last
+    /// emptied (`seen`); not zero once anything is remembered.
+    pub(crate) fn seen_global(&self, g: &TableGlobals) -> Option<u32> {
+        self.global_named(g, "seen")
+    }
+
+    fn global_named(&self, g: &TableGlobals, name: &str) -> Option<u32> {
+        self.globals()
+            .iter()
+            .position(|(n, _)| *n == name)
+            .map(|i| g.first + i as u32)
     }
 
     pub(crate) fn emit_globals(
@@ -235,9 +278,21 @@ impl TableSlots {
         TableGlobals { first }
     }
 
-    /// The bodies of the four functions, in function order.
-    pub(crate) fn emit_bodies(&self, g: &TableGlobals) -> Result<[Function; 4], WasmGcError> {
-        let pair = self.entry == Entry::Pair;
+    /// The bodies of the functions, in function order.
+    pub(crate) fn emit_bodies(&self, g: &TableGlobals) -> Result<Vec<Function>, WasmGcError> {
+        let pair = matches!(self.entry, Entry::Pair | Entry::Memo);
+        // A key mixed at the call site from a node's fields (`__eq_memo`)
+        // is spread here, the same way `emit_node_key` does, and is never 0.
+        let spread = if self.entry == Entry::Memo {
+            "local.get $key local.get $key i32.const 16 i32.shr_u i32.xor
+             i32.const 0x85ebca6b i32.mul local.set $key
+             local.get $key local.get $key i32.const 13 i32.shr_u i32.xor
+             i32.const 0xc2b2ae35 i32.mul local.set $key
+             local.get $key local.get $key i32.const 16 i32.shr_u i32.xor
+             i32.const 1 i32.or local.set $key"
+        } else {
+            ""
+        };
         // A slot holds two nodes of a pair, so its first is at twice its index.
         let first = if pair { "i32.const 1 i32.shl" } else { "" };
         let nodes_param = if pair {
@@ -290,6 +345,7 @@ impl TableSlots {
         let lookup = format!(
             r#"{nodes_param} (param $key i32) (result {found_ty}) {locals} (local $first eqref)
             {recent}
+            {spread}
             global.get $nodes local.tee $nodes ref.is_null
             (if (then {missing} return))
             {home}
@@ -317,6 +373,7 @@ impl TableSlots {
         };
         let insert = format!(
             r#"{nodes_param} (param $key i32) {hash_param} {locals}
+            {spread}
             global.get $l0 global.set $l1 global.get $r0 global.set $r1
             local.get $a global.set $l0 local.get {second_param} global.set $r0
             ;; A comparison keeps its first entries in the last two only.
@@ -409,7 +466,16 @@ impl TableSlots {
             }
             wat_helper::compile_wat_helper(&format!("{wat}(func (export \"helper\") {body}))"))
         };
-        Ok([
+        if self.entry == Entry::Memo {
+            // Every pair forgotten, and the count of nodes back at zero.
+            let drop_all = "ref.null $nodes global.set $nodes
+                 i32.const 0 global.set $count i32.const 0 global.set $seen
+                 ref.null eq global.set $l0 ref.null eq global.set $l1
+                 ref.null eq global.set $r0 ref.null eq global.set $r1
+                 i32.const 0 global.set $steps";
+            return Ok(vec![module(&lookup)?, module(&insert)?, module(drop_all)?]);
+        }
+        Ok(vec![
             module(&lookup)?,
             module(&insert)?,
             module(enter)?,

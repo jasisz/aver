@@ -821,7 +821,7 @@ fn parse_builtin_ctor(name: &str) -> Option<BuiltinCtor> {
 /// `id: None` otherwise (builtin records, unresolved typo, …).
 /// Recurses through compound shapes so `Result<A.Shape, String>`
 /// gets the inner `A.Shape` resolved too.
-fn canonicalise_type(ctx: &ResolveCtx<'_>, ty: crate::ast::Type) -> crate::ast::Type {
+pub(crate) fn canonicalise_type(ctx: &ResolveCtx<'_>, ty: crate::ast::Type) -> crate::ast::Type {
     use crate::ast::Type;
     match ty {
         // `TypeId` is the canonical TypeKey fingerprint, not a vector index,

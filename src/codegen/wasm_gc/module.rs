@@ -161,8 +161,8 @@ pub(super) fn emit_module_with(
         capability_wit_plan,
         capability_wasm_gc_plan,
     )?;
-    let symbol_table = view.symbol_table;
-    let resolved_fn_defs = view.resolved_fn_defs;
+    let mut symbol_table = view.symbol_table;
+    let mut resolved_fn_defs = view.resolved_fn_defs;
 
     let capability_resources = capability_wasm_gc_plan
         .map(|plan| plan.resource_types().iter().cloned().collect())
@@ -829,6 +829,75 @@ pub(super) fn emit_module_with(
     if eq_helpers_registry.needs_string_eq(&registry) {
         builtin_registry.register(BuiltinName::StringEq);
     }
+    // Structural `==` on records, sums and their carriers as functions of
+    // the program (`eq_fns`), one per type, appended after the declared
+    // functions; every `==` / `!=` / `List.contains` on such a type calls
+    // its function. The declared functions keep their positions.
+    let user_fn_count = fn_defs.len();
+    eq_helpers_registry.find_walks(&registry);
+    let (contains_uses, list_uses) = super::eq_fns::uses_in(&mir_program);
+    let eq_synth = super::eq_fns::synthesize(
+        &eq_helpers_registry,
+        &registry,
+        &mut symbol_table,
+        items.iter().find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.name.clone()),
+            _ => None,
+        }),
+        &contains_uses,
+        &list_uses,
+    );
+    let mut mir_program = mir_program;
+    let fn_defs: Vec<&FnDef> = match &eq_synth {
+        Some(synth) => {
+            let lowered = crate::ir::mir::lower_program(
+                &synth
+                    .resolved
+                    .iter()
+                    .cloned()
+                    .map(crate::ir::hir::ResolvedTopLevel::FnDef)
+                    .collect::<Vec<_>>(),
+            );
+            if lowered.fns.len() != synth.resolved.len() {
+                return Err(WasmGcError::Validation(format!(
+                    "structural equality functions did not lower to MIR: {:?}",
+                    lowered.stats
+                )));
+            }
+            if std::env::var_os("AVER_EQ_FNS_DUMP").is_some() {
+                let mut fns: Vec<_> = lowered.fns.values().collect();
+                fns.sort_by_key(|f| f.fn_id);
+                for f in fns {
+                    eprintln!("{f}");
+                }
+            }
+            mir_program.fns.extend(lowered.fns);
+            for rfd in &synth.resolved {
+                discover_builtins_in_fn(
+                    rfd,
+                    &mut builtin_registry,
+                    &mut effect_registry,
+                    &mut eq_helpers_registry,
+                    &registry,
+                    &symbol_table,
+                );
+            }
+            resolved_fn_defs.extend(synth.resolved.iter().cloned());
+            super::eq_fns::rewrite_program(&mut mir_program, &synth.fns, &symbol_table);
+            crate::ir::mir::self_tail::mark(&mut mir_program);
+            let positions: HashMap<crate::ir::FnId, u32> = resolved_fn_defs
+                .iter()
+                .enumerate()
+                .map(|(i, rfd)| (rfd.fn_id, i as u32))
+                .collect();
+            eq_helpers_registry.use_functions(&synth.fns, |id| positions[&id]);
+            fn_defs.iter().copied().chain(&synth.fn_defs).collect()
+        }
+        None => fn_defs,
+    };
+    let mir_program = mir_program;
+    let resolved_fn_defs = resolved_fn_defs;
+    let symbol_table = symbol_table;
     // `--handler X` on `--target wasm-gc` (AverBridge) — the
     // synthesised `aver_http_handle` wrapper reads `Request.*` and
     // dispatches `Response.text` / `Response.setHeader` via the JS
@@ -1153,6 +1222,8 @@ pub(super) fn emit_module_with(
         super::TargetMode::AverBridge => wasm_gc_import_count,
         super::TargetMode::Wasip2 => wasip2_import_count,
     };
+    // The i-th function of the program lives at `import_count + 1 + i`.
+    eq_helpers_registry.set_functions_base(import_count + 1);
 
     // ── Funcref table for first-class `Fn` values ──────────────────
     //
@@ -3307,6 +3378,16 @@ pub(super) fn emit_module_with(
         string_split_ops,
         packed_sequence_ops,
         eq_helpers: eq_helpers_lookup,
+        eq_memo: eq_helpers_registry.memo_table().and_then(|table| {
+            let globals = eq_walk_globals.as_ref()?;
+            Some(super::body::EqMemo {
+                lookup: table.lookup(),
+                insert: table.insert(),
+                drop_all: table.drop_all(),
+                steps: table.steps_global(globals)?,
+                seen: table.seen_global(globals)?,
+            })
+        }),
         funcref_table,
         call_indirect_types,
         run_failure_global,
@@ -3677,7 +3758,9 @@ pub(super) fn emit_module_with(
         (super::TargetMode::Wasip2, true) => "wasi:http/incoming-handler@0.2.4#handle",
     };
     exports.export(start_export_name, ExportKind::Func, start_wasm_idx);
-    for (i, fd) in fn_defs.iter().enumerate() {
+    // The structural equality functions (`eq_fns`) are the module's own,
+    // called only from inside it.
+    for (i, fd) in fn_defs.iter().enumerate().take(user_fn_count) {
         let wasm_idx = import_count + 1 + (i as u32);
         exports.export(&fd.name, ExportKind::Func, wasm_idx);
     }
@@ -8317,7 +8400,12 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::ToStr
             | BuiltinIntrinsic::BytNew
             | BuiltinIntrinsic::BytPush
-            | BuiltinIntrinsic::BytFinalize => true,
+            | BuiltinIntrinsic::BytFinalize
+            // The structural equality functions (`eq_fns`).
+            | BuiltinIntrinsic::EqSameRef
+            | BuiltinIntrinsic::EqScope
+            | BuiltinIntrinsic::EqCount
+            | BuiltinIntrinsic::EqMemo => true,
             // Generic collector fabrications remain VM / Rust only.
             BuiltinIntrinsic::LstNew
             | BuiltinIntrinsic::LstPush

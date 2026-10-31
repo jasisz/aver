@@ -1816,6 +1816,30 @@ fn certify_declines_overflowing_multiplication_recursion() {
     );
 }
 
+/// `==` and `!=` on a record, a sum, an `Option` and a `List` of a type that
+/// does not reach itself, and `List.contains` over it, run on wasm-gc as
+/// functions of the program (`codegen::wasm_gc::eq_fns`): the functions that
+/// compare certify, and so do the callees their plans call, through the
+/// plan grammar the wall already has.
+#[test]
+fn certify_structural_equality_of_plain_types() {
+    let (out_dir, manifest) =
+        certify_fixture("tests/fixtures/eq_plain_cert.av", &[], "certify-eq-plain");
+    for name in [
+        "sameColor",
+        "samePoint",
+        "differ",
+        "hasRed",
+        "sameOpt",
+        "sameList",
+    ] {
+        certified_entry(&manifest, name);
+    }
+    if lean_required::lake_available() {
+        assert_certificate_target_builds(&out_dir.join("cert"), "structural equality");
+    }
+}
+
 #[test]
 fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
     if !lean_required::lake_available() {

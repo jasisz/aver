@@ -86,6 +86,14 @@ pub(crate) struct EqHelperRegistry {
     /// The table of the remembered pairs, which follows the walks when there
     /// are any.
     table: Option<TableSlots>,
+    /// The types compared by a function of the program (`eq_fns`), each with
+    /// its position among the program's functions; they get no helper here.
+    functions: HashMap<String, u32>,
+    /// The wasm index of the program's first function, once known.
+    functions_base: Option<u32>,
+    /// Whether a function of the program walks a type that reaches itself,
+    /// so the table of remembered pairs (`Entry::Memo`) is needed.
+    functions_walk: bool,
 }
 
 /// Steps a comparison takes before it starts again with memory.
@@ -249,7 +257,7 @@ pub(crate) fn reached_from(
 }
 
 /// The declared types of the fields of helper `name`.
-fn helper_field_types(name: &str, kind: EqKind, registry: &TypeRegistry) -> Vec<String> {
+pub(crate) fn helper_field_types(name: &str, kind: EqKind, registry: &TypeRegistry) -> Vec<String> {
     match kind {
         EqKind::Record => registry
             .record_fields
@@ -505,6 +513,32 @@ impl EqHelperRegistry {
         self.order.iter().map(|n| (n.as_str(), self.kinds[n]))
     }
 
+    /// The types `fns` compares become functions of the program, at
+    /// `position` among its functions: their helpers here are not written.
+    pub(crate) fn use_functions(
+        &mut self,
+        fns: &crate::codegen::wasm_gc::eq_fns::EqFns,
+        position: impl Fn(crate::ir::FnId) -> u32,
+    ) {
+        self.functions = fns
+            .entry
+            .iter()
+            .chain(&fns.lists)
+            .map(|(name, id)| (name.clone(), position(*id)))
+            .collect();
+        self.functions_walk = fns.walks();
+    }
+
+    /// The wasm index of the program's first function.
+    pub(crate) fn set_functions_base(&mut self, base: u32) {
+        self.functions_base = Some(base);
+    }
+
+    /// The table of remembered pairs the functions of the program use.
+    pub(crate) fn memo_table(&self) -> Option<TableSlots> {
+        self.table.filter(|_| self.functions_walk)
+    }
+
     pub(crate) fn assign_slots(&mut self, next_fn_idx: &mut u32, next_type_idx: &mut u32) {
         // Discovery can reach otherwise independent nominal types through a
         // HashMap-backed registry walk. Their relative order has no semantic
@@ -519,6 +553,17 @@ impl EqHelperRegistry {
             *next_type_idx += 1;
             s
         };
+        if !self.functions.is_empty() {
+            for name in &self.order {
+                if !self.functions.contains_key(name) {
+                    self.slots.insert(name.clone(), slot());
+                }
+            }
+            if self.functions_walk {
+                self.table = Some(TableSlots::assign(Entry::Memo, next_fn_idx, next_type_idx));
+            }
+            return;
+        }
         for name in &self.order {
             self.slots.insert(name.clone(), slot());
         }
@@ -545,6 +590,12 @@ impl EqHelperRegistry {
         self.walks.iter().any(|(walked, _)| walked == name)
     }
 
+    /// Whether `==` on `name` is reflexive (`reflexive`), for the functions
+    /// of the program (`eq_fns`).
+    pub(crate) fn reflexive_type(&self, name: &str, registry: &TypeRegistry) -> bool {
+        self.kinds.contains_key(name) && self.reflexive(name, registry)
+    }
+
     /// Whether `==` on `name` is reflexive: no `Float` is named in any
     /// field type it compares through, its own or a nested one's.
     fn reflexive(&self, name: &str, registry: &TypeRegistry) -> bool {
@@ -567,8 +618,14 @@ impl EqHelperRegistry {
 
     /// The type idx of every helper function, in function index order.
     pub(crate) fn function_types(&self) -> Vec<u32> {
-        let mut out: Vec<u32> = self.order.iter().map(|n| self.slots[n].1).collect();
-        out.extend(self.walks.iter().flat_map(|(_, (_, t))| [*t, t + 1]));
+        let mut out: Vec<u32> = self
+            .order
+            .iter()
+            .filter_map(|n| self.slots.get(n).map(|s| s.1))
+            .collect();
+        if self.functions.is_empty() {
+            out.extend(self.walks.iter().flat_map(|(_, (_, t))| [*t, t + 1]));
+        }
         if let Some(table) = &self.table {
             out.extend(table.function_types());
         }
@@ -585,6 +642,13 @@ impl EqHelperRegistry {
     }
 
     pub(crate) fn lookup_fn_idx(&self, type_name: &str) -> Option<u32> {
+        if let Some(position) = self.functions.get(type_name) {
+            return Some(
+                self.functions_base
+                    .expect("the program's functions are placed before helpers are looked up")
+                    + position,
+            );
+        }
         self.slots.get(type_name).map(|(f, _)| *f)
     }
 
@@ -598,12 +662,16 @@ impl EqHelperRegistry {
     pub(crate) fn emit_helper_types(&self, types: &mut wasm_encoder::TypeSection) {
         let eq_ref = eq_ref_type();
         let i32 = wasm_encoder::ValType::I32;
-        for _ in &self.order {
-            types.ty().function([eq_ref, eq_ref], [i32]);
+        for name in &self.order {
+            if self.slots.contains_key(name) {
+                types.ty().function([eq_ref, eq_ref], [i32]);
+            }
         }
-        for _ in &self.walks {
-            types.ty().function([eq_ref, eq_ref, i32], [i32]);
-            types.ty().function([eq_ref, eq_ref], [i32]);
+        if self.functions.is_empty() {
+            for _ in &self.walks {
+                types.ty().function([eq_ref, eq_ref, i32], [i32]);
+                types.ty().function([eq_ref, eq_ref], [i32]);
+            }
         }
         if let Some(table) = &self.table {
             table.emit_types(types);
@@ -639,6 +707,38 @@ impl EqHelperRegistry {
             .collect();
         for (canonical, fn_idx) in compound_lookup {
             helper_idx_map.insert(canonical.clone(), *fn_idx);
+        }
+        if !self.functions.is_empty() {
+            // The program's functions compare everything but the packed
+            // sequences, which keep their helper; the memo table follows.
+            for name in self.functions.keys() {
+                if let Some(idx) = self.lookup_fn_idx(name) {
+                    helper_idx_map.insert(name.clone(), idx);
+                }
+            }
+            for name in &self.order {
+                if self.slots.contains_key(name) {
+                    self.emit_body(
+                        codes,
+                        name,
+                        registry,
+                        string_eq_fn_idx,
+                        &helper_idx_map,
+                        Body::Plain,
+                    )?;
+                }
+            }
+            if let Some(table) = self.memo_table() {
+                let globals = walk_globals.ok_or_else(|| {
+                    WasmGcError::Validation(
+                        "eq functions walk but the remembered pairs were not declared".into(),
+                    )
+                })?;
+                for f in table.emit_bodies(globals)? {
+                    codes.function(&f);
+                }
+            }
+            return Ok(());
         }
         let walk_parts = match (self.table, walk_globals) {
             (Some(table), Some(globals)) => {

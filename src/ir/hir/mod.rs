@@ -670,6 +670,30 @@ pub enum BuiltinIntrinsic {
     /// standard library's own message about the first non-octet. The retarget
     /// wraps the `Ok` payload into the `Bytes` record in synthesized AST.
     BytFinalize,
+    /// `__eq_same_ref(<a>, <b>)` — `(T, T) -> Bool`, whether the two values
+    /// are one object (`ref.eq`). Only wasm-gc's structural equality
+    /// functions (`codegen::wasm_gc::eq_fns`) contain it, where `T` holds no
+    /// `Float`, so one object is equal to itself; and in place of `==` on a
+    /// job handle, which is equal exactly when it is the same object.
+    EqSameRef,
+    /// `__eq_scope(<body>)` — `Bool -> Bool`, the answer of `body`, a
+    /// comparison of nodes of a recursive value. Lowered so that the scope
+    /// counts its own nodes (`EqCount`) from zero and gives the scope it is
+    /// in back its count when it ends, and so that a scope outside every
+    /// other one forgets the pairs remembered while it ran (`EqMemo`).
+    EqScope,
+    /// `__eq_count(<body>)` — `Bool -> Bool`, the answer of `body`, the
+    /// comparison of one node of a recursive value: one more node for the
+    /// scope under way to count (`EqScope`, `EqMemo`).
+    EqCount,
+    /// `__eq_memo(<a>, <b>, <tag>, <key fields>…, <body>)` — `Bool`, the
+    /// answer of `body`, which compares the two nodes `a` and `b` field by
+    /// field. Once a scope (`EqScope`) has counted more nodes (`EqCount`)
+    /// than a budget, it first asks the table of remembered pairs whether `a` and
+    /// `b` were found equal before, and remembers them when `body` finds
+    /// them equal. `tag` (an `Int` literal) and the key fields (scalar
+    /// fields of `a`) only choose where in the table the pair is filed.
+    EqMemo,
 }
 
 impl BuiltinIntrinsic {
@@ -713,6 +737,10 @@ impl BuiltinIntrinsic {
             Self::BytNew => "__byt_new",
             Self::BytPush => "__byt_push",
             Self::BytFinalize => "__byt_finalize",
+            Self::EqSameRef => "__eq_same_ref",
+            Self::EqScope => "__eq_scope",
+            Self::EqCount => "__eq_count",
+            Self::EqMemo => "__eq_memo",
         }
     }
 
