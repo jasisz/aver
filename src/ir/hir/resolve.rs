@@ -361,9 +361,19 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             // (`is_literal_nonzero_int_divisor`); it must key on syntax,
             // not type stamps, because this resolver also runs in
             // pipelines that never typecheck.
+            //
+            // A call the typechecker already typed as `Result` keeps the
+            // builtin: a rewrite after the check (the `escape` pass
+            // inlining a record field read, say) can turn its divisor
+            // into a literal, and discharging it then would hand a plain
+            // `Int` to a consumer the program wrote for a `Result`
+            // (`Result.withDefault(Int.div(p.done, p.target), 0)` read 0).
+            // MIR const-fold still folds such a call, into `Result.Ok`.
+            let typed_partial = matches!(expr.ty(), Some(crate::types::Type::Result(..)));
             if let ResolvedCallee::Builtin(name) = &resolved_callee
                 && resolved_args.len() == 2
                 && args.len() == 2
+                && !typed_partial
             {
                 // Two sibling discharges, each with its OWN syntactic
                 // predicate because the two families are partial for

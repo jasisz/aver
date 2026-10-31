@@ -608,13 +608,26 @@ fn specialised_builtin_result_with_default_emits_unwrap_result_or() {
 
 #[test]
 fn last_use_emits_move_local() {
-    // `x + x`: the final read of `x` emits MOVE_LOCAL (skips the
-    // ref-count bump so the VM yard can reclaim the slot).
+    // The final read of a container local emits MOVE_LOCAL (empties the
+    // slot so the VM yard can reclaim it and an owned write may take it).
     assert_emits(
-        "fn double(x: Int) -> Int\n    x + x\n",
-        "double",
+        "fn twice(xs: List<Int>) -> Int\n    List.len(xs) + List.len(xs)\n",
+        "twice",
         opcode::MOVE_LOCAL,
         "MOVE_LOCAL",
+    );
+}
+
+#[test]
+fn last_use_of_a_scalar_keeps_the_local_const_fusion() {
+    // A dead Int owns nothing to take, so its last read stays a plain
+    // LOAD_LOCAL and `n - 1` fuses into LOAD_LOCAL_CONST.
+    let cs = compile_mir("fn dec(n: Int) -> Int\n    n - 1\n");
+    let code = fn_code(&cs, "dec");
+    assert_eq!(
+        code.first(),
+        Some(&opcode::LOAD_LOCAL_CONST),
+        "dec must start with LOAD_LOCAL_CONST; code={code:?}"
     );
 }
 

@@ -80,7 +80,17 @@ pub(super) fn compile_mir_expr(
             // Mirrors HIR's last-use revival; skips ref-count
             // bumps + lets the VM yard reclaim the slot's heap
             // value immediately.
-            fc.emit_op(if local.last_use {
+            //
+            // An Int, Float or Bool owns no container that could be
+            // changed in place, so emptying its slot buys nothing,
+            // and a plain read keeps `LOAD_LOCAL + LOAD_CONST` fused
+            // into `LOAD_LOCAL_CONST`: `n - 1` on a dead `n` is one
+            // dispatch instead of two.
+            let scalar = matches!(
+                expr.ty(),
+                Some(crate::ast::Type::Int | crate::ast::Type::Float | crate::ast::Type::Bool)
+            );
+            fc.emit_op(if local.last_use && !scalar {
                 MOVE_LOCAL
             } else {
                 LOAD_LOCAL

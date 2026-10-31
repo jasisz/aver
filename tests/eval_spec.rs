@@ -3987,3 +3987,18 @@ fn branch_path_dynamic_valid_inputs_return_ok() {
 // ---------------------------------------------------------------------------
 // Terminal service runtime
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// A divisor that becomes a literal only after the typecheck
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_division_typed_as_result_stays_a_result_when_inlining_makes_its_divisor_literal() {
+    // `escape` inlines the record field reads into the caller, so the call
+    // reaches the resolver as `Int.div(75 * 100, 200)`. The typechecker had
+    // typed it `Result<Int, String>`; discharging it to a bare division then
+    // handed `Result.withDefault` a plain Int, and the answer read 0.
+    let src = "record Progress\n    done: Int\n    target: Int\n\nfn percentOf(progress: Progress) -> Int\n    match progress.target > 0\n        true -> Result.withDefault(Int.div(progress.done * 100, progress.target), 0)\n        false -> 0\n";
+    let got = run_pipeline_lookup(src, "percentOf(Progress(done = 75, target = 200))", "Int");
+    assert_eq!(got, Value::int(37));
+}

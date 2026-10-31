@@ -1368,14 +1368,6 @@ pub fn last_use(items: &mut [TopLevel]) {
 pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineResult {
     let mut result = PipelineResult::default();
 
-    // Proof stages run at the tail of the pipeline but read an AST from
-    // its head — see [`AstView`]. Knowing up front whether any of them
-    // is on is what makes the snapshot free for runtime-only pipelines.
-    let proof_stages = cfg.run_refinement_lower
-        || cfg.run_interval_analyze
-        || cfg.run_contract_lower
-        || cfg.run_law_lower;
-
     // The front door: TCO, `yield` lowering and the typecheck gate, in
     // the one order every other door uses too. Nothing has been appended
     // to `items` here, so the shadowing ban's scope is the whole program.
@@ -1400,6 +1392,49 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             return result;
         }
     }
+
+    back(items, cfg, result, None)
+}
+
+/// Every stage [`run`] applies after its front door, for a door that
+/// passed [`front`] itself and had to do its own work between the gate
+/// and the lowering. `aver verify` is that door: it merges verify blocks,
+/// expands hostile cases and appends one helper function per case after
+/// the typecheck, and the orchestrator has no seam there. Running the
+/// same tail here is what makes verify execute the program `aver run`
+/// executes: interpolation buffers, deforestation, the String index,
+/// list builders, `analyze`, `escape`, and the `last_use` + alias facts
+/// the VM reads as permission to change a container in place.
+///
+/// `cfg` must not ask for TCO or a typecheck: `items` has been through
+/// the front door already, and a second pass would lower `yield`
+/// functions twice. `capabilities` is the registry the caller's gate
+/// returned, merged into the symbol table as [`run`] merges its own.
+pub fn run_after_front(
+    items: &mut Vec<TopLevel>,
+    cfg: PipelineConfig<'_>,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> PipelineResult {
+    assert!(
+        !cfg.run_tco && cfg.typecheck.is_none(),
+        "run_after_front takes items that already passed the front door"
+    );
+    back(items, cfg, PipelineResult::default(), Some(capabilities))
+}
+
+fn back(
+    items: &mut Vec<TopLevel>,
+    mut cfg: PipelineConfig<'_>,
+    mut result: PipelineResult,
+    capabilities: Option<&crate::capability::CapabilityRegistry>,
+) -> PipelineResult {
+    // Proof stages run at the tail of the pipeline but read an AST from
+    // its head — see [`AstView`]. Knowing up front whether any of them
+    // is on is what makes the snapshot free for runtime-only pipelines.
+    let proof_stages = cfg.run_refinement_lower
+        || cfg.run_interval_analyze
+        || cfg.run_contract_lower
+        || cfg.run_law_lower;
 
     // ── The proof snapshot point ────────────────────────────────────
     //
@@ -1539,6 +1574,9 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         if let Some(typecheck) = result.typecheck.as_ref() {
             symbol_table.merge_capability_registry(&typecheck.capabilities);
         }
+        if let Some(capabilities) = capabilities {
+            symbol_table.merge_capability_registry(capabilities);
+        }
         result
             .pass_diagnostics
             .push(diag_for_build_symbols(&symbol_table));
@@ -1593,6 +1631,9 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         let mut proof_symbol_table = crate::ir::SymbolTable::build(&proof_items, cfg.dep_modules);
         if let Some(typecheck) = result.typecheck.as_ref() {
             proof_symbol_table.merge_capability_registry(&typecheck.capabilities);
+        }
+        if let Some(capabilities) = capabilities {
+            proof_symbol_table.merge_capability_registry(capabilities);
         }
         let proof_resolved_items =
             crate::ir::hir::resolve_program(&proof_symbol_table, &proof_items);
