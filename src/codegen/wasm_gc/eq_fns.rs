@@ -36,19 +36,25 @@
 //! comparison node by node meets a shared subterm once for every path to
 //! it, which is exponential in the depth of the sharing. A type that
 //! reaches itself through its fields, directly or through an `Option`
-//! (`eq_helpers::self_reaching`), therefore has two functions:
+//! (`eq_helpers::self_reaching`), therefore has three functions:
 //!
 //! - `__eq_<T>`, where a comparison starts, compares the two roots and
 //!   holds the comparison of their fields of such types in a scope
 //!   (`__eq_scope`), which counts the nodes compared within it from zero,
 //!   as the byte helpers gave every comparison its own budget;
-//! - `__eqnode_<T>` compares every node after the first, and counts it as
-//!   one step of the scope (`__eq_count`). Around the fields of a node that
-//!   holds such a type it puts `__eq_memo`: once the scope has counted more
-//!   than its budget of nodes, the pair is looked up among
-//!   the pairs remembered as equal, and remembered when its fields are
-//!   found equal. A pair found there answers `true` without comparing
-//!   again, so from then on the comparison costs the graph, not the tree.
+//! - `__eqnode_<T>` compares a node after the first while the scope is
+//!   within its budget of nodes, and counts it (`__eq_count`); past the
+//!   budget (`__eq_past`) it hands the node on to
+//! - `__eqmem_<T>`, which compares this node and every one after it: a
+//!   node whose fields step to another node is wrapped in `__eq_memo`, which
+//!   looks the pair up among the pairs remembered as equal first, and
+//!   remembers it once its fields are found equal. A pair found there
+//!   answers `true` without comparing again, so from then on the comparison
+//!   costs the graph, not the tree.
+//!
+//! The two kinds of step are apart, as the byte helpers' were, so neither
+//! carries the code of the other; an engine inlines the table's helpers
+//! into the small one that calls them.
 //!
 //! A sum's constructors are tested in the order of their names, as the byte
 //! helpers tested them; a common constructor further down the list costs
@@ -61,8 +67,13 @@
 //! replaced, a comparison past its budget does not start again from the
 //! roots: it goes on, remembering from there.
 //!
+//! At the start of a comparison (`__eq_<T>` and the functions of types
+//! that do not reach themselves) a constructor whose first field compared
+//! is a scalar reads that field alone first, and the node's other fields
+//! only once it is equal: there a value usually differs in it already.
+//!
 //! The certificate wall has no node for `__eq_same_ref`, `__eq_count`,
-//! `__eq_scope` or `__eq_memo` yet, so the plan printer declines a function
+//! `__eq_past`, `__eq_scope` or `__eq_memo` yet, so the plan printer declines a function
 //! that holds one: `==` on a type that reaches itself is not certified, `==`
 //! on any other record, sum or carrier is, as an ordinary function.
 //!
