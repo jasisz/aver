@@ -874,6 +874,43 @@ impl Printer<'_> {
         }
     }
 
+    /// `T.update(base, f = v, …)` as `emit_mir_record_update` lowers it when
+    /// the overrides follow the declared order: a new struct whose every
+    /// field is the override, or `base` read again and that field taken
+    /// from it (`struct.get`). That is the record built from the overrides
+    /// and from projections of `base`, so it prints as one. Overrides out
+    /// of declared order are parked in scratch locals first, which the
+    /// grammar does not have; packed, newtype and word records take paths of
+    /// their own.
+    fn record_update(&mut self, u: &crate::ir::mir::MirRecordUpdate) -> Result<PlanExpr, String> {
+        if self.layout.bytes_array(&u.type_name).is_some() {
+            return Err("RecordUpdate of a packed record".into());
+        }
+        let (tid, declared) = self.types.record_tid(self.layout, &u.type_name)?;
+        if self.types.is_word(tid) || declared.len() < 2 {
+            return Err("RecordUpdate of a one-field record".into());
+        }
+        let mut at = Vec::with_capacity(u.updates.len());
+        for f in &u.updates {
+            let i = declared
+                .iter()
+                .position(|d| d == &f.name)
+                .ok_or("RecordUpdate (field not declared)")?;
+            if at.last().is_some_and(|&p| p >= i) {
+                return Err("RecordUpdate (overrides not in declared order)".into());
+            }
+            at.push(i);
+        }
+        let mut fields = Vec::with_capacity(declared.len());
+        for i in 0..declared.len() {
+            fields.push(match at.iter().position(|&k| k == i) {
+                Some(k) => self.expr(&u.updates[k].value)?,
+                None => PlanExpr::Project(tid, i as u32, Box::new(self.expr(&u.base)?)),
+            });
+        }
+        Ok(PlanExpr::RecordCreate(tid, fields))
+    }
+
     /// `Bytes(values = v)` (`emit_mir_record_create`'s packed path): a packed
     /// carrier expression stays packed, any other value is packed by `pack`.
     fn bytes_create(
@@ -1104,6 +1141,7 @@ impl Printer<'_> {
                     rec.fields.iter().map(|f| f.value.clone()).collect();
                 PlanExpr::RecordCreate(tid, self.exprs(&values)?)
             }
+            MirExpr::RecordUpdate(u) => self.record_update(&u.node)?,
             MirExpr::Project(p) => {
                 let base_ty = stamped(&p.node.base)?;
                 if let Some(arr) = self.layout.bytes_array(&base_ty) {
@@ -1687,6 +1725,56 @@ fn lst(xs: List<Int>) -> Int
         );
         assert!(types.sums.iter().any(|s| s.ctors.len() == 2));
         assert!(types.str_segs.iter().any(|(b, _)| b == b"Hello, "));
+    }
+
+    const UPDATE_SRC: &str = r#"
+module U
+    intent = "record update printer probes"
+    exposes [moveX, moveBoth, swapped]
+
+record Box3
+    x: Int
+    y: Int
+    z: Int
+
+fn moveX(b: Box3, a: Int) -> Box3
+    Box3.update(b, x = a)
+
+fn moveBoth(b: Box3, a: Int) -> Box3
+    Box3.update(b, x = a, z = a + 1)
+
+fn swapped(b: Box3, a: Int) -> Box3
+    Box3.update(b, z = a, x = a)
+"#;
+
+    /// `T.update` in declared order prints as the record built from the
+    /// overrides and from projections of the base, as the emitter builds
+    /// it; out of declared order it is refused.
+    #[test]
+    fn record_update_prints_as_create_from_base_fields() {
+        let (map, _) = plans(UPDATE_SRC);
+        use PlanExpr as E;
+        let E::RecordCreate(tid, fs) = plan(&map, "moveX").body else {
+            panic!("moveX: {:?}", plan(&map, "moveX").body)
+        };
+        assert_eq!(
+            fs,
+            vec![
+                E::Local(1),
+                E::Project(tid, 1, Box::new(E::Local(0))),
+                E::Project(tid, 2, Box::new(E::Local(0))),
+            ]
+        );
+        let E::RecordCreate(_, fs) = plan(&map, "moveBoth").body else {
+            panic!("moveBoth")
+        };
+        assert!(matches!(
+            fs.as_slice(),
+            [E::Local(1), E::Project(_, 1, _), E::BinOp(..)]
+        ));
+        // Out of declared order the emitter parks the overrides in scratch
+        // locals first; the function is refused.
+        assert!(map["swapped"].is_err());
     }
 
     const DIV_SRC: &str = r#"
