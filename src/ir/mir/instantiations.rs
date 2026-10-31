@@ -230,7 +230,7 @@ impl Walker {
                 self.visit_expr(&inner.node);
             }
             MirExpr::IntWord(w) => {
-                for leaf in w.node.root.leaves() {
+                for leaf in w.node.leaves() {
                     self.register_ty(leaf.ty());
                     self.visit_expr(&leaf.node);
                 }

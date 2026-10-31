@@ -50,7 +50,9 @@ pub(super) use from_mir::twin::{
     set_calls as set_twin_calls, set_self as set_twin_self,
 };
 pub use from_mir::{CoverageReport, coverage_report};
-pub(super) use from_mir::{PROOF_ONLY_BRANCH_PATH, emit_fn_body_via_mir, take_unsupported_reason};
+pub(super) use from_mir::{
+    PROOF_ONLY_BRANCH_PATH, emit_fn_body_via_mir, mark_int_words, take_unsupported_reason,
+};
 pub(super) use slots::SlotTable;
 
 /// Maps fn identity → wasm fn index + return type. Built once per

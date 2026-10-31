@@ -310,7 +310,7 @@ impl Walk<'_> {
                 self.expr(inner, Pos::Read)
             }
             MirExpr::IntWord(w) => {
-                for leaf in w.node.root.leaves() {
+                for leaf in w.node.leaves() {
                     self.expr(leaf, Pos::Read);
                 }
             }
@@ -535,7 +535,7 @@ fn spanned_children(e: &Expr) -> Vec<&Expr> {
         | MirExpr::Return(inner)
         | MirExpr::Box(inner)
         | MirExpr::Unbox(inner) => vec![&**inner],
-        MirExpr::IntWord(w) => w.node.root.leaves(),
+        MirExpr::IntWord(w) => w.node.leaves(),
         MirExpr::Match(m) => std::iter::once(&*m.node.subject)
             .chain(m.node.arms.iter().map(|arm| &arm.body))
             .collect(),

@@ -1296,7 +1296,7 @@ fn scan_leaks(
             scan_leaks(&b.node.rhs.node, prov, captures_param, builtins, out);
         }
         MirExpr::IntWord(w) => {
-            for leaf in w.node.root.leaves() {
+            for leaf in w.node.leaves() {
                 scan_leaks(&leaf.node, prov, captures_param, builtins, out);
             }
         }

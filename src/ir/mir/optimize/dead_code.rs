@@ -143,7 +143,7 @@ pub fn is_pure(expr: &Spanned<MirExpr>) -> bool {
         // a pure `from_i64` / `to_i64` conversion over the inner result.
         MirExpr::Box(inner) | MirExpr::Unbox(inner) => is_pure(inner),
         // `+`, `-` and `*` on `Int` are total.
-        MirExpr::IntWord(w) => w.node.root.leaves().into_iter().all(is_pure),
+        MirExpr::IntWord(w) => w.node.leaves().into_iter().all(is_pure),
         MirExpr::Call(_)
         | MirExpr::TailCall(_)
         | MirExpr::Try(_)

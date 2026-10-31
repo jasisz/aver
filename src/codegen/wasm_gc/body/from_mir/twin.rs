@@ -63,8 +63,23 @@ pub(super) fn calls_allowed() -> bool {
 /// The slots the twin being emitted holds as an `i64`: the params it takes
 /// unpacked, and each `Int` local (`is_int`) bound, by a `let` or as an
 /// `Int` match's subject, to a value with its machine word, that `body`
-/// reads where the word serves.
+/// reads where the word serves. Recorded for the twin's emission.
 pub(crate) fn word_slots(
+    body: &Spanned<MirExpr>,
+    is_int: &dyn Fn(u32) -> bool,
+    fn_map: &FnMap,
+) -> Vec<u32> {
+    let words = held_slots(body, is_int, fn_map);
+    SELF.with(|s| {
+        if let Some(c) = s.borrow_mut().as_mut() {
+            c.words = words.clone();
+        }
+    });
+    words
+}
+
+/// [`word_slots`], without recording them: empty outside a twin.
+pub(crate) fn held_slots(
     body: &Spanned<MirExpr>,
     is_int: &dyn Fn(u32) -> bool,
     fn_map: &FnMap,
@@ -89,8 +104,8 @@ pub(crate) fn word_slots(
             .is_some_and(|t| t.kind == TwinKind::Int)
     };
     SELF.with(|s| {
-        let mut s = s.borrow_mut();
-        let Some(c) = s.as_mut() else {
+        let s = s.borrow();
+        let Some(c) = s.as_ref() else {
             return Vec::new();
         };
         let mut values = Vec::new();
@@ -99,13 +114,11 @@ pub(crate) fn word_slots(
             is_int(*slot) && has_word(value, &int_twin) && read_as_word(body, LocalId(*slot))
         };
         let locals = values.iter().filter(local).map(|(slot, _)| *slot);
-        c.words = c
-            .params
+        c.params
             .iter()
             .map(|(_, slot)| *slot)
             .chain(locals)
-            .collect();
-        c.words.clone()
+            .collect()
     })
 }
 
@@ -275,7 +288,7 @@ pub(crate) fn unpackable(arg: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) -> bool {
         _ => {
             callee(arg, ctx).is_some_and(|(_, t)| t.kind == TwinKind::Int)
                 || mir_renders_raw_i64(&arg.node, ctx)
-                || int_tree::makes_word(arg, ctx)
+                || int_tree::makes_word(arg)
         }
     }
 }
@@ -338,17 +351,14 @@ fn emit_word_arg(
         func.instruction(&I::LocalSet(r));
         return Ok(Some(Some(r)));
     }
-    if int_tree::makes_word(arg, ctx) {
+    if int_tree::makes_word(arg) {
         func.instruction(&I::RefNull(HeapType::Concrete(aint(ctx))));
         func.instruction(&I::LocalSet(r));
-        let exact = &mut |f: &mut Function| {
-            if emit_mir_expr(f, arg, slots, ctx)?.is_none() {
-                return Ok(None);
-            }
+        let after_exact = &mut |f: &mut Function| {
             packed(f);
             Ok(Some(()))
         };
-        return Ok(int_tree::emit_word(func, arg, slots, ctx, exact)?.map(|()| Some(r)));
+        return Ok(int_tree::emit_word(func, arg, slots, ctx, after_exact)?.map(|()| Some(r)));
     }
     if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
         return Ok(None);

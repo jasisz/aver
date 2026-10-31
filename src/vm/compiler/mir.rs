@@ -552,7 +552,7 @@ pub(super) fn compile_mir_expr(
         // transparently (defensive — keeps the walker total).
         MirExpr::Box(inner) | MirExpr::Unbox(inner) => compile_mir_expr(fc, inner),
         // Never on the VM path (`MirExpr::IntWord`); computed exactly.
-        MirExpr::IntWord(w) => compile_mir_expr(fc, &w.node.exact(w.line)),
+        MirExpr::IntWord(w) => compile_mir_expr(fc, &w.node.exact()),
 
         // ── Phase 4d: tail-call dispatch ────────────────────────
         MirExpr::TailCall(spanned_tail) => {
@@ -1183,7 +1183,7 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::Try(inner) => can_compile(inner),
         // ETAP-2 boundaries are Rust-codegen-only; never on the VM path.
         MirExpr::Box(inner) | MirExpr::Unbox(inner) => can_compile(inner),
-        MirExpr::IntWord(w) => w.node.root.leaves().into_iter().all(can_compile),
+        MirExpr::IntWord(w) => w.node.leaves().into_iter().all(can_compile),
         MirExpr::TailCall(t) => t.node.args.iter().all(can_compile),
         // Phase 4f additions:
         MirExpr::List(items) => items.iter().all(can_compile),
@@ -2158,7 +2158,6 @@ fn contains_last_use_slot_mir(expr: &MirExpr, target: u32) -> bool {
         }
         MirExpr::IntWord(w) => w
             .node
-            .root
             .leaves()
             .into_iter()
             .any(|l| contains_last_use_slot_mir(&l.node, target)),

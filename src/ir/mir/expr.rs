@@ -215,52 +215,131 @@ pub enum MirExpr {
     /// arithmetic ([`MirIntWord::exact`]).
     ///
     /// Inserted ONLY by the `int_word` MIR→MIR pass (`super::int_word`), on
-    /// the functions a `--certify` wasm-gc build keeps for its certificate.
-    /// The wasm-gc emitter lowers it and the certificate plan printer prints
-    /// it as it is; every other walker reads it as [`MirIntWord::exact`].
+    /// a wasm-gc build's own copy of each fn's MIR. The wasm-gc emitter
+    /// lowers it and the certificate plan printer prints it as it is; every
+    /// other walker reads it as [`MirIntWord::exact`].
     IntWord(std::boxed::Box<Spanned<MirIntWord>>),
 }
 
-/// The operations an [`MirExpr::IntWord`] tree computes on the machine word.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntWordOp {
-    Add,
-    Sub,
-    Mul,
-}
-
-impl IntWordOp {
-    pub fn bin_op(self) -> BinOp {
-        match self {
-            IntWordOp::Add => BinOp::Add,
-            IntWordOp::Sub => BinOp::Sub,
-            IntWordOp::Mul => BinOp::Mul,
-        }
-    }
-}
+pub use super::int_tree::IntOp as IntWordOp;
 
 /// One node of an [`MirExpr::IntWord`] tree.
 #[derive(Debug, Clone)]
 pub enum IntWordNode {
-    /// An operation on the values of two subtrees.
-    Op(IntWordOp, Box<IntWordNode>, Box<IntWordNode>),
+    /// An operation on the values of one or two subtrees. `shell` is the
+    /// expression the operation was written as, with each operand replaced
+    /// by a placeholder: the exact path computes it with the operands put
+    /// back ([`IntWordNode::exact`]).
+    Op {
+        op: IntWordOp,
+        args: Vec<IntWordNode>,
+        shell: Box<Spanned<MirExpr>>,
+    },
+    /// An `Int` literal (a [`MirExpr::Literal`]).
+    Lit(Box<Spanned<MirExpr>>),
     /// An `Int` local (a [`MirExpr::Local`]), read where it is by both paths.
     Local(Box<Spanned<MirExpr>>),
     /// A leaf evaluated once, ahead of both paths, into the scratch local
-    /// `scratch` (an index into [`super::program::MirFnRepr::scratch`],
-    /// declared [`super::program::MirScratch::Int`]).
-    Ahead(Box<Spanned<MirExpr>>, u32),
+    /// `scratch` (an index into [`super::program::MirFnRepr::scratch`]),
+    /// held as `hold` says.
+    Ahead(Box<Spanned<MirExpr>>, u32, IntWordHold),
+}
+
+/// How a leaf evaluated ahead is held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntWordHold {
+    /// As its `Int` value (scratch [`super::program::MirScratch::Int`]).
+    Int,
+    /// A [`MirExpr::Box`] of a raw `i64` expression, as that `i64`
+    /// (scratch [`super::program::MirScratch::Word`]).
+    RawBox,
+    /// A field of a record the target keeps as the machine word of its one
+    /// `Int` field, as that word (scratch
+    /// [`super::program::MirScratch::Word`]).
+    RawField,
+}
+
+/// What an [`MirExpr::IntWord`] node gives its parent.
+#[derive(Debug, Clone)]
+pub enum IntWordKind {
+    /// The tree's `Int` value.
+    Value,
+    /// The tree's value as a machine word: the node is the operand of a
+    /// [`MirExpr::Unbox`], which leaves it so.
+    Word,
+    /// The comparison `op` of the tree `root` with the tree `rhs`: a
+    /// `Bool`. `shell` is the comparison as written, its operands replaced
+    /// by placeholders.
+    Compare {
+        op: BinOp,
+        rhs: IntWordNode,
+        shell: Box<Spanned<MirExpr>>,
+    },
 }
 
 /// An `Int` tree computed on the machine word: its operations, its leaves,
-/// and its three word temporaries `words`, `words + 1`, `words + 2` (indices
-/// into [`super::program::MirFnRepr::scratch`], declared
+/// what it gives its parent, and its three word temporaries `words`,
+/// `words + 1`, `words + 2` (indices into
+/// [`super::program::MirFnRepr::scratch`], declared
 /// [`super::program::MirScratch::Word`]), which each operation parks its
 /// operands and result in.
 #[derive(Debug, Clone)]
 pub struct MirIntWord {
     pub root: IntWordNode,
+    pub kind: IntWordKind,
     pub words: u32,
+}
+
+/// The placeholder an operand of a shell is replaced by.
+pub(crate) fn int_word_hole(line: crate::ast::SourceLine) -> Spanned<MirExpr> {
+    let hole = Spanned::new(
+        MirExpr::Literal(Spanned::new(crate::ast::Literal::Int(0), line)),
+        line,
+    );
+    hole.set_ty(crate::ast::Type::Int);
+    hole
+}
+
+/// The operand places of a shell, in evaluation order: `n` of them.
+fn shell_places(shell: &mut Spanned<MirExpr>, n: usize) -> Vec<&mut Spanned<MirExpr>> {
+    match &mut shell.node {
+        MirExpr::BinOp(b) => {
+            let b = &mut b.node;
+            vec![&mut *b.lhs, &mut *b.rhs]
+        }
+        MirExpr::Neg(x) => vec![&mut **x],
+        MirExpr::Call(c) => c.node.args.iter_mut().take(n).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The operands of an exact expression built by [`IntWordNode::exact`].
+fn shell_operands(shell: &Spanned<MirExpr>, n: usize) -> Vec<&Spanned<MirExpr>> {
+    match &shell.node {
+        MirExpr::BinOp(b) => vec![&*b.node.lhs, &*b.node.rhs],
+        MirExpr::Neg(x) => vec![&**x],
+        MirExpr::Call(c) => c.node.args.iter().take(n).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `shell` with its `n` operand places emptied.
+pub(crate) fn int_word_shell(e: &Spanned<MirExpr>, n: usize) -> Box<Spanned<MirExpr>> {
+    let mut shell = e.clone();
+    let line = e.line;
+    for place in shell_places(&mut shell, n) {
+        *place = int_word_hole(line);
+    }
+    Box::new(shell)
+}
+
+fn fill(shell: &Spanned<MirExpr>, args: Vec<Spanned<MirExpr>>) -> Spanned<MirExpr> {
+    let mut out = shell.clone();
+    let n = args.len();
+    for (place, arg) in shell_places(&mut out, n).into_iter().zip(args) {
+        *place = arg;
+    }
+    out
 }
 
 impl IntWordNode {
@@ -273,46 +352,118 @@ impl IntWordNode {
 
     fn visit_leaves<'a>(&'a self, f: &mut dyn FnMut(&'a Spanned<MirExpr>)) {
         match self {
-            IntWordNode::Op(_, a, b) => {
-                a.visit_leaves(f);
-                b.visit_leaves(f);
+            IntWordNode::Op { args, .. } => {
+                for a in args {
+                    a.visit_leaves(f);
+                }
             }
-            IntWordNode::Local(e) | IntWordNode::Ahead(e, _) => f(e),
+            IntWordNode::Lit(e) | IntWordNode::Local(e) | IntWordNode::Ahead(e, ..) => f(e),
         }
     }
 
     fn visit_leaves_mut(&mut self, f: &mut dyn FnMut(&mut Spanned<MirExpr>)) {
         match self {
-            IntWordNode::Op(_, a, b) => {
-                a.visit_leaves_mut(f);
-                b.visit_leaves_mut(f);
+            IntWordNode::Op { args, .. } => {
+                for a in args {
+                    a.visit_leaves_mut(f);
+                }
             }
-            IntWordNode::Local(e) | IntWordNode::Ahead(e, _) => f(e),
+            IntWordNode::Lit(e) | IntWordNode::Local(e) | IntWordNode::Ahead(e, ..) => f(e),
         }
     }
 
-    fn exact(&self, line: crate::ast::SourceLine) -> Spanned<MirExpr> {
+    /// The value of the literal leaf this is.
+    pub fn literal(&self) -> Option<i64> {
         match self {
-            IntWordNode::Op(op, a, b) => {
-                let bin = MirBinOp {
-                    op: op.bin_op(),
-                    lhs: Box::new(a.exact(line)),
-                    rhs: Box::new(b.exact(line)),
-                };
-                let node = Spanned::new(MirExpr::BinOp(Spanned::new(bin, line)), line);
-                node.set_ty(crate::ast::Type::Int);
-                node
+            IntWordNode::Lit(e) => super::int_tree::int_literal(&e.node),
+            _ => None,
+        }
+    }
+
+    /// The tree as plain `Int` arithmetic: each operation its shell with the
+    /// operands put back, each leaf itself.
+    pub fn exact(&self) -> Spanned<MirExpr> {
+        match self {
+            IntWordNode::Op { args, shell, .. } => {
+                fill(shell, args.iter().map(IntWordNode::exact).collect())
             }
-            IntWordNode::Local(e) | IntWordNode::Ahead(e, _) => (**e).clone(),
+            IntWordNode::Lit(e) | IntWordNode::Local(e) | IntWordNode::Ahead(e, ..) => {
+                (**e).clone()
+            }
+        }
+    }
+
+    /// The nodes of `exact` (built by [`IntWordNode::exact`]) that are this
+    /// tree's leaves, in evaluation order.
+    pub fn leaf_sites<'a>(&self, exact: &'a Spanned<MirExpr>, out: &mut Vec<&'a Spanned<MirExpr>>) {
+        match self {
+            IntWordNode::Op { args, .. } => {
+                for (a, e) in args.iter().zip(shell_operands(exact, args.len())) {
+                    a.leaf_sites(e, out);
+                }
+            }
+            _ => out.push(exact),
         }
     }
 }
 
 impl MirIntWord {
-    /// The tree as plain `Int` arithmetic: what it computes, and what the
-    /// exact path runs.
-    pub fn exact(&self, line: crate::ast::SourceLine) -> Spanned<MirExpr> {
-        self.root.exact(line)
+    /// The leaves, in evaluation order.
+    pub fn leaves(&self) -> Vec<&Spanned<MirExpr>> {
+        let mut out = self.root.leaves();
+        if let IntWordKind::Compare { rhs, .. } = &self.kind {
+            out.extend(rhs.leaves());
+        }
+        out
+    }
+
+    fn visit_leaves<'a>(&'a self, f: &mut dyn FnMut(&'a Spanned<MirExpr>)) {
+        self.root.visit_leaves(f);
+        if let IntWordKind::Compare { rhs, .. } = &self.kind {
+            rhs.visit_leaves(f);
+        }
+    }
+
+    fn visit_leaves_mut(&mut self, f: &mut dyn FnMut(&mut Spanned<MirExpr>)) {
+        self.root.visit_leaves_mut(f);
+        if let IntWordKind::Compare { rhs, .. } = &mut self.kind {
+            rhs.visit_leaves_mut(f);
+        }
+    }
+
+    /// The trees, in evaluation order: one, or the two compared.
+    pub fn trees(&self) -> Vec<&IntWordNode> {
+        match &self.kind {
+            IntWordKind::Compare { rhs, .. } => vec![&self.root, rhs],
+            _ => vec![&self.root],
+        }
+    }
+
+    /// What the node computes as plain arithmetic: the tree's `Int` (for a
+    /// [`IntWordKind::Word`] node too: its `Unbox` narrows it), or the
+    /// comparison. The exact path runs it.
+    pub fn exact(&self) -> Spanned<MirExpr> {
+        match &self.kind {
+            IntWordKind::Compare { rhs, shell, .. } => {
+                fill(shell, vec![self.root.exact(), rhs.exact()])
+            }
+            _ => self.root.exact(),
+        }
+    }
+
+    /// The nodes of `exact` (built by [`MirIntWord::exact`]) that are the
+    /// leaves, in evaluation order.
+    pub fn leaf_sites<'a>(&self, exact: &'a Spanned<MirExpr>) -> Vec<&'a Spanned<MirExpr>> {
+        let mut out = Vec::new();
+        match &self.kind {
+            IntWordKind::Compare { rhs, .. } => {
+                let ops = shell_operands(exact, 2);
+                self.root.leaf_sites(ops[0], &mut out);
+                rhs.leaf_sites(ops[1], &mut out);
+            }
+            _ => self.root.leaf_sites(exact, &mut out),
+        }
+        out
     }
 }
 
@@ -413,7 +564,7 @@ pub(crate) fn walk_children<'a>(e: &'a MirExpr, f: &mut dyn FnMut(&'a MirExpr)) 
                 f(&i.node);
             }
         }
-        MirExpr::IntWord(w) => w.node.root.visit_leaves(&mut |e| f(&e.node)),
+        MirExpr::IntWord(w) => w.node.visit_leaves(&mut |e| f(&e.node)),
     }
 }
 
@@ -499,7 +650,7 @@ pub(crate) fn walk_children_mut(e: &mut MirExpr, f: &mut dyn FnMut(&mut Spanned<
                 f(i);
             }
         }
-        MirExpr::IntWord(w) => w.node.root.visit_leaves_mut(f),
+        MirExpr::IntWord(w) => w.node.visit_leaves_mut(f),
     }
 }
 

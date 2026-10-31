@@ -3394,7 +3394,14 @@ pub(super) fn emit_module_with(
         _ => false,
     };
     let word_target = crate::ir::mir::int_word::Target {
+        kept: true,
+        builtins: &mir_program.builtins,
         is_word_field: &is_word_field,
+        renders_raw: &|_| false,
+        binop_is_raw: &|_| false,
+        raw_field: &|_| false,
+        int_twin_call: &|_| false,
+        held: &|_| false,
     };
     // The locals of each fn emitted without `Int` trees: the plan printer
     // reads a fn with trees as it would without them, so it declines that fn
@@ -4136,13 +4143,36 @@ pub(super) fn emit_module_with(
         // the stub path contributes none.
         super::body::set_int_trees_allowed(trees_for[i]);
         super::body::set_twin_calls(!kept_for[i]);
-        let emit_body = |self_wasm_idx: u32| -> Result<(Function, Vec<ValType>), WasmGcError> {
+        // A fn emitted with its `Int` trees on the machine word is emitted
+        // from its MIR with the trees marked (`ir::mir::int_word`), read off
+        // the context it is emitted in (inside its twin or not).
+        let mark = |self_wasm_idx: u32| -> Result<Option<crate::ir::mir::MirFn>, WasmGcError> {
+            match mir_fn_for[i] {
+                Some(mir_fn) if trees_for[i] && mir_dispatch[i] => super::body::mark_int_words(
+                    &resolved_fn_defs[i],
+                    mir_fn,
+                    &mir_program,
+                    &fn_map,
+                    self_wasm_idx,
+                    &registry,
+                    &symbol_table,
+                    &effect_idx_lookup,
+                    &caller_fn_collector,
+                    wasip2_lowering.as_ref(),
+                ),
+                _ => Ok(None),
+            }
+        };
+        let emit_body = |self_wasm_idx: u32,
+                         marked: Option<&crate::ir::mir::MirFn>|
+         -> Result<(Function, Vec<ValType>), WasmGcError> {
+            let body_fn = marked.or(mir_fn_for[i]);
             let extra_locals_dry = if mir_dispatch[i] {
                 let mut probe = Function::new([]);
                 emit_fn_body_via_mir(
                     &mut probe,
                     &resolved_fn_defs[i],
-                    mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
+                    body_fn.expect("mir_dispatch ⇒ mir_fn_for is Some"),
                     &mir_program,
                     &fn_map,
                     self_wasm_idx,
@@ -4168,7 +4198,7 @@ pub(super) fn emit_module_with(
                 emit_fn_body_via_mir(
                     &mut func,
                     &resolved_fn_defs[i],
-                    mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
+                    body_fn.expect("mir_dispatch ⇒ mir_fn_for is Some"),
                     &mir_program,
                     &fn_map,
                     self_wasm_idx,
@@ -4200,7 +4230,17 @@ pub(super) fn emit_module_with(
                 &fn_map,
             )?);
             super::body::set_twin_self(Some((twin.clone(), mir_fn)));
-            let emitted = emit_body(twin.wasm_idx).map(|(func, extra)| {
+            let marked = match mark(twin.wasm_idx) {
+                Ok(marked) => marked,
+                Err(e) => {
+                    super::body::set_twin_self(None);
+                    return Err(e);
+                }
+            };
+            if let Some(marked) = &marked {
+                super::body::set_twin_self(Some((twin.clone(), marked)));
+            }
+            let emitted = emit_body(twin.wasm_idx, marked.as_ref()).map(|(func, extra)| {
                 (
                     func,
                     extra,
@@ -4226,7 +4266,8 @@ pub(super) fn emit_module_with(
             });
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
         } else {
-            let (func, extra) = emit_body(self_wasm_idx)?;
+            let marked = mark(self_wasm_idx)?;
+            let (func, extra) = emit_body(self_wasm_idx, marked.as_ref())?;
             extra_locals_for[i] = mir_dispatch[i].then_some(extra);
             word_locals_for[i] = super::body::int_word_locals();
             let func = if mir_dispatch[i] && mir_fn_for[i].is_some_and(|f| f.repr.self_tail_loop) {
@@ -8294,7 +8335,7 @@ fn refuse_fabricated_intrinsics(
             | MirExpr::Box(inner)
             | MirExpr::Unbox(inner) => walk(&inner.node, fn_name),
             MirExpr::IntWord(w) => {
-                for leaf in w.node.root.leaves() {
+                for leaf in w.node.leaves() {
                     walk(&leaf.node, fn_name)?;
                 }
                 Ok(())
@@ -8413,7 +8454,7 @@ fn collect_address_taken(mir_program: &crate::ir::mir::MirProgram) -> Vec<String
                 walk(&inner.node, seen, order);
             }
             MirExpr::IntWord(w) => {
-                for leaf in w.node.root.leaves() {
+                for leaf in w.node.leaves() {
                     walk(&leaf.node, seen, order);
                 }
             }
@@ -8536,7 +8577,7 @@ fn collect_call_indirect_sigs(
             | MirExpr::Box(inner)
             | MirExpr::Unbox(inner) => walk(&inner.node, note),
             MirExpr::IntWord(w) => {
-                for leaf in w.node.root.leaves() {
+                for leaf in w.node.leaves() {
                     walk(&leaf.node, note);
                 }
             }
