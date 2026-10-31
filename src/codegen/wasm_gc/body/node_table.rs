@@ -345,9 +345,9 @@ impl TableSlots {
         let lookup = format!(
             r#"{nodes_param} (param $key i32) (result {found_ty}) {locals} (local $first eqref)
             {recent}
-            {spread}
             global.get $nodes local.tee $nodes ref.is_null
             (if (then {missing} return))
+            {spread}
             {home}
             (loop $probe
               local.get $nodes local.get $slot {first} array.get $nodes local.tee $first
@@ -373,12 +373,12 @@ impl TableSlots {
         };
         let insert = format!(
             r#"{nodes_param} (param $key i32) {hash_param} {locals}
-            {spread}
             global.get $l0 global.set $l1 global.get $r0 global.set $r1
             local.get $a global.set $l0 local.get {second_param} global.set $r0
             ;; A comparison keeps its first entries in the last two only.
             global.get $seen i32.const {first_entries} i32.lt_u
             (if (then global.get $seen i32.const 1 i32.add global.set $seen return))
+            {spread}
             global.get $nodes ref.is_null
             (if (then {start} i32.const 0 global.set $count)
               (else
