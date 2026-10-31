@@ -1133,7 +1133,7 @@ fn rewrite(
                     arms: vec![
                         crate::ir::mir::MirMatchArm {
                             pattern: crate::ir::mir::MirPattern::Ctor {
-                                ctor: c.node.ctor.clone(),
+                                ctor: c.node.ctor,
                                 bindings: Vec::new(),
                                 binding_names: Vec::new(),
                             },
