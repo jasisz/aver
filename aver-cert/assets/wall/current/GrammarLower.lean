@@ -490,7 +490,8 @@ mutual
         lowerB M X Γ false c ++
           [.ifElse (tyOf M X.n Γ tail t) (lowerB M X Γ tail t) (lowerB M X Γ tail e)]
     | .recordCreate tid fs =>
-        lowerArgsB M X Γ fs ++ [.op (.structNew (M.structOf tid) fs.length)]
+        if M.isWord tid then lowerArgsB M X Γ fs ++ [.op (.call M.toI64Chk)]
+        else lowerArgsB M X Γ fs ++ [.op (.structNew (M.structOf tid) fs.length)]
     | .project tid i base =>
         if M.isWord tid then lowerB M X Γ false base ++ [.op (.call M.box)]
         else lowerB M X Γ false base ++ [.op (.structGet (M.structOf tid) i)]

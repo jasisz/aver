@@ -3033,11 +3033,13 @@
  "tools/certkit/fixtures/wordcarrier.av": {
   "bridges": [],
   "certified": {
+   "fromInt": "L1",
    "labelOf": "L1",
    "labelValue": "L1",
    "pick": "L1",
    "relabel": "L1",
-   "valueOf": "L1"
+   "valueOf": "L1",
+   "wordOf": "L1"
   },
   "laws": []
  }

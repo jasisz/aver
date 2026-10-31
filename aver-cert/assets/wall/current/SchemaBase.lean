@@ -362,17 +362,26 @@ deriving Repr, DecidableEq
       or inlined), which strips leading limbs and demotes an in-band magnitude
       back to `Small`.
 
-    `Canon` names that state abstractly and the two axioms below say only what
-    the helpers need:
+    `Canon` names that state abstractly and the three axioms below say only
+    what the helpers need:
 
     * `canonSmall` — a literal small carrier is canonical EXACTLY on the i64
       band. The forward direction is what the boxing helper's output needs;
       the backward one says an out-of-band `Small` is not in normal form, which
       is what separates the two shapes;
     * `canonBig` — a canonical carrier that CARRIES LIMBS represents a value
-      outside the i64 band and has a non-zero sign.
+      outside the i64 band and has a non-zero sign;
+    * `canonSmallBand` — a canonical carrier WITHOUT limbs represents a value
+      inside the i64 band, whatever its sign field holds. `canonSmall` says
+      this only of the literal small word (sign field 0); this one covers a
+      limbless word from any producer. It is what lets the checked
+      conversion `__aint_to_i64_checked`, which returns the `$small` field of
+      a limbless carrier, be read as an exact machine word. On the runtime it
+      holds because a limbless carrier's value IS its `$small` field, an
+      `i64` (`tests/cert_intcmp_differential.rs` checks the class and the
+      conversion at the band's edges and just outside them).
 
-    Nothing else about `Canon` is assumed, and the two axioms are exactly what
+    Nothing else about `Canon` is assumed, and the three axioms are exactly what
     the proofs consume — no more. In particular they do NOT establish that the
     real `wat/eq.wat` and `wat/cmp.wat` are exact on a canonical pair: that is
     an assumption, carried as an explicit hypothesis of `Obligation.holds` and
@@ -398,6 +407,10 @@ structure CarrierSpec (C : Nat) where
       Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
       Canon (.structv C [.i64v s, .arr lty les, .i32v sg]) →
       ¬(-(2 ^ 63 : Int) ≤ n ∧ n < 2 ^ 63) ∧ sg ≠ 0
+  canonSmallBand : ∀ n s sg,
+      Repr n (.structv C [.i64v s, .null, .i32v sg]) →
+      Canon (.structv C [.i64v s, .null, .i32v sg]) →
+      -(2 ^ 63 : Int) ≤ n ∧ n < 2 ^ 63
 
 /-- A represented Int whose carrier word is in the runtime's normal form. -/
 def CanonRepr {C : Nat} (S : CarrierSpec C) (n : Int) (w : WVal) : Prop :=

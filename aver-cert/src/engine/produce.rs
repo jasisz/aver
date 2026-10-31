@@ -897,9 +897,9 @@ pub fn analyze(
         .filter(|(_, f)| called(f))
         .cloned()
         .collect();
-    let used_chk = types
-        .int_chk
-        .filter(|_| used_bytes.iter().any(|(r, _)| *r == PlanBytesRole::Pack));
+    let used_chk = types.int_chk.filter(|f| {
+        called(f) || used_bytes.iter().any(|(r, _)| *r == PlanBytesRole::Pack)
+    });
     for (t, r, _) in &used_helpers {
         calls.extend(m.helper_inner_calls(*r, t));
     }

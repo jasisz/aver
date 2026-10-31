@@ -36,7 +36,8 @@
    * `recordCreate tid fields` — `RecordCreate` whose fields are written in
      declared order (the printer lists the values in that order); records
      with fewer than two fields are declined, because the emitter lowers a
-     one-field record as a newtype.
+     one-field record as a newtype, except a word record (`MCtx.isWord`),
+     built by `__aint_to_i64_checked` on its boxed value.
    * `project tid field base` — `Project`, the field by declared index; also
      the field read of a word record (`MCtx.isWord`), which the emitter
      lowers as the word followed by the box call (MIR's `Box` around a raw
@@ -465,10 +466,10 @@ def MCtx.newtype (M : MCtx) (tid : Nat) : Bool :=
 
 /-- A word record: a declared one-field `Int` record the emitter erases to the
     `i64` of its value (an eligible carrier, `is_eligible_carrier`), always in
-    the i64 band. A field read boxes the word. Building one is not admitted:
-    the emitter narrows a boxed value with `__aint_to_i64_checked`, and that
-    the result is in the band rests on a Small carrier's value being in the
-    band, which the carrier specification does not state. -/
+    the i64 band. A field read boxes the word; building one narrows the boxed
+    value with `__aint_to_i64_checked`, which traps on a Big carrier and
+    returns a limbless one's word, in the band by
+    `CarrierSpec.canonSmallBand`. -/
 def MCtx.isWord (M : MCtx) (tid : Nat) : Bool :=
   M.words.contains tid && decide (M.recFields tid = some [.int])
 
@@ -734,7 +735,9 @@ mutual
         | _, _, _ => none
     | .recordCreate tid fs =>
         match M.recFields tid, tysOf M n Γ fs with
-        | some fts, some ts => if 2 ≤ fts.length ∧ ts = fts then some (.record tid) else none
+        | some fts, some ts =>
+            if (2 ≤ fts.length ∨ M.isWord tid = true) ∧ ts = fts then some (.record tid)
+            else none
         | _, _ => none
     | .project tid i base =>
         match tyOf M n Γ false base, M.recFields tid with

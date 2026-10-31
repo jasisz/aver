@@ -2,10 +2,9 @@ module WordCarrier
     intent =
         "A word record: a one-field Int record behind an opaque type whose"
         "only constructor keeps the value below 2^62, so the wasm-gc emitter"
-        "holds it as a machine word. The functions that pass words along,"
-        "pick between them, take them out of a sum and read their value are"
-        "certified; the smart constructor is not, because building a word"
-        "narrows a boxed Int."
+        "holds it as a machine word. The functions that build words, pass"
+        "them along, pick between them, take them out of a sum and read their"
+        "value are certified."
     exposes [Node, wordOf, valueOf, pick, labelOf, labelValue, relabel]
     exposes opaque [Word]
 
