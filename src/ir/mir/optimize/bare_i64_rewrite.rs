@@ -309,6 +309,7 @@ fn rewrite_fn(
         bare_return: facts.bare_return,
         carrier_slots,
         entry_check: None,
+        scratch: Vec::new(),
     };
 
     // 2. Insert boundary nodes. The body is in RETURN position: a bare
@@ -1040,7 +1041,8 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
         | MirExpr::Local(_)
         | MirExpr::FnValue(_)
         | MirExpr::Box(_)
-        | MirExpr::Unbox(_)) => Spanned::new(node, line),
+        | MirExpr::Unbox(_)
+        | MirExpr::IntWord(_)) => Spanned::new(node, line),
     }
 }
 

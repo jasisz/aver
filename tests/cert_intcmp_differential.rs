@@ -60,8 +60,20 @@ module IntCmpDiff
     intent =
         "Differential fixture for the two Int value-comparison host contracts"
         "and the three faces built on them."
-    exposes [compose, addI, subI, mulI, divBy7, modBy7, shiftUp, andWith, atLeast, sameKey, minInt, productNonNeg, productNonPos]
+    exposes [compose, addI, subI, mulI, divBy7, modBy7, shiftUp, andWith, atLeast, sameKey, minInt, productNonNeg, productNonPos, crossOf]
     effects []
+
+record Pair
+    a: Int
+    b: Int
+
+fn cross(x: Pair, y: Pair) -> Int
+    ? "An Int tree of depth three over record fields: computed on the machine word in a --certify build."
+    x.a * y.b + y.a * x.b - x.b * y.b
+
+fn crossOf(a: Int, b: Int, c: Int, d: Int) -> Int
+    ? "Drives `cross` from Int arguments."
+    cross(Pair(a = a, b = b), Pair(a = c, b = d))
 
 fn compose(hi: Int, lo: Int) -> Int
     ? "Assemble an arbitrary-width Int from a 2^62-radix quotient/remainder pair."
@@ -206,6 +218,7 @@ struct Harness {
     product_non_neg: wasmtime::Func,
     product_non_pos: wasmtime::Func,
     to_i64_checked: wasmtime::Func,
+    cross_of: wasmtime::Func,
 }
 
 fn harness() -> Harness {
@@ -249,6 +262,7 @@ fn harness() -> Harness {
     let product_non_neg = func(&mut store, "productNonNeg");
     let product_non_pos = func(&mut store, "productNonPos");
     let to_i64_checked = func(&mut store, "__rt_aint_to_i64_checked");
+    let cross_of = func(&mut store, "crossOf");
     Harness {
         store,
         from_i64,
@@ -268,6 +282,7 @@ fn harness() -> Harness {
         product_non_neg,
         product_non_pos,
         to_i64_checked,
+        cross_of,
     }
 }
 
@@ -850,4 +865,80 @@ fn a_limbless_carrier_is_in_the_band_and_the_checked_conversion_returns_it() {
         limbless > 0 && traps > 0,
         "both shapes occur: {limbless} limbless, {traps} traps"
     );
+}
+
+/// A `--certify` build computes `cross`, an `Int` tree of depth three over
+/// record fields, on the machine word (`MirExpr::IntWord`, printed as
+/// `Expr.intWord`): its `i64` path must leave for the exact path on a Big
+/// leaf or on an overflow at any node, and give the exact value either way.
+#[test]
+fn int_word_tree_is_exact_across_the_carrier_boundaries() {
+    let mut items = parse_source(SOURCE).expect("parse");
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            ..Default::default()
+        },
+    );
+    let out =
+        compile_to_wasm_gc_with_handler_and_cert_plans(&items, result.analysis.as_ref(), None)
+            .expect("compile");
+    let cross = out
+        .cert_plans
+        .fns
+        .iter()
+        .find(|f| f.name == "cross")
+        .expect("cross is planned");
+    let plan = cross.plan.as_ref().expect("cross is printed");
+    assert!(
+        matches!(
+            &plan.body,
+            aver_cert::PlanExpr::IntWord(aver_cert::PlanWTree::Op(..), _)
+        ),
+        "cross is one Int tree on the machine word: {:?}",
+        plan.body
+    );
+
+    let mut h = harness();
+    let edges: [i128; 9] = [
+        0,
+        1,
+        -1,
+        3_037_000_499,
+        -3_037_000_500,
+        i128::from(i64::MAX),
+        i128::from(i64::MIN),
+        i128::from(i64::MAX) + 1,
+        i128::from(i64::MIN) - 1,
+    ];
+    let mut rows = 0;
+    for &a in &edges {
+        for &b in &edges {
+            for (c, d) in [(b, a), (1, b), (a, -1), (i128::from(i64::MIN), 2)] {
+                // The oracle stays within i128.
+                let Some(want) = (a * d)
+                    .checked_add(c * b)
+                    .and_then(|x| x.checked_sub(b * d))
+                else {
+                    continue;
+                };
+                if want.unsigned_abs() >= 1 << 120 {
+                    continue;
+                }
+                let args = [a, b, c, d].map(|v| carrier_of(&mut h, v));
+                let got = call_one(&mut h.store, &h.cross_of.clone(), &args);
+                assert_canonical(
+                    &mut h.store,
+                    &got,
+                    want,
+                    &format!("cross({a}, {b}, {c}, {d})"),
+                );
+                rows += 1;
+            }
+        }
+    }
+    assert!(rows > 150, "{rows} rows");
 }

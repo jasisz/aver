@@ -436,13 +436,32 @@ theorem escFree_replicate (k : Nat) (i : BI) (hi : escFreeI k (eraseI i) = true)
       simp only [List.replicate_succ, eraseL, escFreeL_cons, hi, escFree_replicate k i hi n,
         Bool.and_self]
 
-theorem escFree_treeBlock (k : Nat) (M : MCtx) (X : LCtx) (op : BinOp) (a b : Nat) :
-    escFreeI k (eraseI (treeBlock M X op a b)) = true := by
-  cases op <;> simp [treeBlock, eraseI, eraseL, eraseL_ops, smallReadW, treeOpW, escFreeI, escFreeL]
+theorem escFree_treeOpW (k w : Nat) (op : BinOp) (hk : 0 < k) :
+    escFreeL k (treeOpW w op) = true := by
+  cases op <;> simp [treeOpW, escFreeI, hk]
 
-theorem escFree_aheadB (k : Nat) (X : LCtx) (e : Expr) (p : Nat) (code : List BI)
-    (h : escFreeL k (eraseL code) = true) : escFreeL k (eraseL (aheadB X e p code)) = true := by
-  unfold aheadB; split <;> simp [eraseL_append, escFreeL_append, h, eraseL, eraseI, escFreeI]
+theorem escFree_fastW (k C w : Nat) (hk : 0 < k) :
+    ∀ t : WTree, escFreeL k (fastW C w t) = true
+  | .leaf _ => by simp [fastW, smallReadW, escFreeI, hk]
+  | .op o a b => by
+      simp only [fastW, escFreeL_append, escFree_fastW k C w hk a, escFree_fastW k C w hk b,
+        escFree_treeOpW k w o hk, Bool.and_self]
+
+theorem escFree_exactW (k : Nat) (M : MCtx) : ∀ t : WTree, escFreeL k (exactW M t) = true
+  | .leaf _ => by simp [exactW, escFreeI]
+  | .op _ a b => by
+      simp [exactW, escFree_exactW k M a, escFree_exactW k M b, escFreeI]
+
+theorem escFree_aheadW (k : Nat) (M : MCtx) : ∀ t : WTree, escFreeL k (aheadW M t) = true
+  | .leaf (.local _) => by simp [aheadW]
+  | .leaf (.field _ _ _ _) => by simp [aheadW, escFreeI]
+  | .op _ a b => by simp [aheadW, escFree_aheadW k M a, escFree_aheadW k M b]
+
+theorem escFree_wordBlock (k : Nat) (M : MCtx) (t : WTree) (w : Nat) :
+    escFreeI k (eraseI (wordBlock M t w)) = true := by
+  simp only [wordBlock, eraseI, eraseL, eraseL_ops, escFreeI, escFreeL_cons, escFreeL_append,
+    escFree_fastW (k + 1 + 1) M.carrier w (by omega) t, escFree_exactW (k + 1) M t]
+  simp [escFreeI]
 
 /-- The lemmas that decide the escape-freedom of the templates. -/
 macro "esc_simp" "[" ls:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
@@ -469,9 +488,7 @@ mutual
     | Γ, _, .binOp op l r, k => by
         simp only [lowerB]
         (repeat' split) <;>
-          esc_simp [escFree_lowerB M X _ _ l, escFree_lowerB M X _ _ r, escFree_treeBlock,
-            escFree_aheadB _ _ _ _ _ (escFree_lowerB M X _ _ l _),
-            escFree_aheadB _ _ _ _ _ (escFree_lowerB M X _ _ r _)]
+          esc_simp [escFree_lowerB M X _ _ l, escFree_lowerB M X _ _ r]
     | Γ, _, .neg e, k => by simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ e]
     | Γ, tail, .ifThenElse c t e, k => by
         simp only [lowerB]
@@ -511,6 +528,9 @@ mutual
         simp only [lowerB]
         (repeat' split) <;> esc_simp [escFree_lowerB M X _ _ e]
     | Γ, tail, .scope e, k => by simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ e]
+    | Γ, _, .intWord t w, k => by
+        simp only [lowerB, escFree_eraseL_append, escFree_ops, escFree_aheadW, eraseL,
+          escFreeL_cons, escFree_wordBlock, escFreeL_nil, Bool.and_self]
   theorem escFree_lowerArgsB (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (es : List Expr)
       (k : Nat), escFreeL k (eraseL (lowerArgsB M X Γ es)) = true
     | _, [], k => by simp only [lowerArgsB]; esc_simp []
@@ -3200,56 +3220,69 @@ theorem mul_tail (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (t
       simp [hq, wRunF] at h; exact Or.inr ⟨hv.1, hv.2, by simpa [wRunF] using h⟩
     · simp [hq, wRunF] at h; exact Or.inl h.symm
 
+/-- A run that changed no local but the words `w`, `w + 1`, `w + 2`. -/
+def WordsOnly (w : Nat) (wl wl' : List WVal) : Prop :=
+  wl'.length = wl.length ∧ ∀ j, (j < w ∨ w + 3 ≤ j) → wl'[j]? = wl[j]?
+
+theorem WordsOnly.refl (w : Nat) (wl : List WVal) : WordsOnly w wl wl :=
+  ⟨rfl, fun _ _ => rfl⟩
+
+theorem WordsOnly.trans {w : Nat} {a b c : List WVal} (h1 : WordsOnly w a b)
+    (h2 : WordsOnly w b c) : WordsOnly w a c :=
+  ⟨h2.1.trans h1.1, fun j hj => (h2.2 j hj).trans (h1.2 j hj)⟩
+
 /-- What the machine operation of a tree node does: it branches out with
-    only the temporaries changed, or leaves the exact value in the `i64`
-    range. -/
-def TreeOpOk (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (X : LCtx)
+    only the words changed, or leaves the exact value in the `i64` range. -/
+def TreeOpOk (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat)
     (wl st : List WVal) (rest : List WInstr) (out : Out) (v : Int) : Prop :=
-  ∃ wl', (∀ j, j < X.tree + 2 → wl'[j]? = wl[j]?) ∧ wl'.length = wl.length ∧
+  ∃ wl', WordsOnly w wl wl' ∧
     (out = .br 0 wl' st ∨
       (-9223372036854775808 ≤ v ∧ v < 9223372036854775808 ∧
         wRunF host ar callee rest wl' (.i64v v :: st) = some out))
 
-theorem treeOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (X : LCtx)
+theorem treeOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat)
     (op : BinOp) (hop : op.isArith = true)
     (x y : Int) (wl st : List WVal) (rest : List WInstr) (out : Out)
-    (h : wRunF host ar callee (treeOpW X op ++ rest) wl (.i64v y :: .i64v x :: st) = some out) :
-    TreeOpOk host ar callee X wl st rest out (arithZ op x y) := by
-  by_cases h3 : X.tree + 3 < wl.length
+    (h : wRunF host ar callee (treeOpW w op ++ rest) wl (.i64v y :: .i64v x :: st) = some out) :
+    TreeOpOk host ar callee w wl st rest out (arithZ op x y) := by
+  by_cases h3 : w + 1 < wl.length
   rotate_left
   · exfalso
     cases op <;> simp [BinOp.isArith] at hop <;>
       simp [treeOpW, wRunF, List.getElem?_set, h3, b32] at h <;>
       (repeat' split at h) <;> simp_all
-  by_cases hlen : X.tree + 4 < wl.length
+  by_cases hlen : w + 2 < wl.length
   rotate_left
-  · have h2 : X.tree + 2 < wl.length := by omega
-    have agree : ∀ (a b c : WVal) j, j < X.tree + 2 →
-        (((wl.set (X.tree + 3) a).set (X.tree + 2) b).set (X.tree + 4) c)[j]? = wl[j]? := by
+  · have h2 : w < wl.length := by omega
+    have agree : ∀ (a b c : WVal) j, (j < w ∨ w + 3 ≤ j) →
+        (((wl.set (w + 1) a).set w b).set (w + 2) c)[j]? = wl[j]? := by
       intro a b c j hj
       simp only [List.getElem?_set]
       rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]
     cases op <;> simp [BinOp.isArith] at hop
     · simp [treeOpW, wRunF, List.getElem?_set, h2, h3, hlen, b32] at h
     · simp [treeOpW, wRunF, List.getElem?_set, h2, h3, hlen, b32] at h
-      exact ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x - y))), agree _ _ _, by simp, Or.inl h.2.2.2.2.2.symm⟩
+      exact ⟨((wl.set (w + 1) (.i64v y)).set w (.i64v x)).set (w + 2) (.i64v (wrap64 (x - y))),
+        ⟨by simp, agree _ _ _⟩, Or.inl h.2.2.2.2.2.symm⟩
     · simp [treeOpW, wRunF, List.getElem?_set, h2, h3, hlen, b32] at h
       obtain ⟨⟨hx, hy⟩, -, -, h⟩ := h
-      refine ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x * y))), agree _ _ _, by simp, ?_⟩
-      rcases mul_tail host ar callee (X.tree + 2) (X.tree + 3) (X.tree + 4) x y hx hy _ st rest out
+      refine ⟨((wl.set (w + 1) (.i64v y)).set w (.i64v x)).set (w + 2) (.i64v (wrap64 (x * y))),
+        ⟨by simp, agree _ _ _⟩, ?_⟩
+      rcases mul_tail host ar callee w (w + 1) (w + 2) x y hx hy _ st rest out
           (by simp [List.getElem?_set, h2]) (by simp [List.getElem?_set, h3]) h with h | ⟨-, -, h⟩
       · exact Or.inl h
       · simp [wRunF, List.getElem?_set, hlen] at h
-  have h2 : X.tree + 2 < wl.length := by omega
-  have agree : ∀ (a b c : WVal) j, j < X.tree + 2 →
-      (((wl.set (X.tree + 3) a).set (X.tree + 2) b).set (X.tree + 4) c)[j]? = wl[j]? := by
+  have h2 : w < wl.length := by omega
+  have agree : ∀ (a b c : WVal) j, (j < w ∨ w + 3 ≤ j) →
+      (((wl.set (w + 1) a).set w b).set (w + 2) c)[j]? = wl[j]? := by
     intro a b c j hj
     simp only [List.getElem?_set]
     rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]
   cases op <;> simp [BinOp.isArith] at hop
   · simp [treeOpW, wRunF, h2, h3, hlen, b32] at h
     obtain ⟨⟨hx, hy⟩, -, -, -, h⟩ := h
-    refine ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x + y))), agree _ _ _, by simp, ?_⟩
+    refine ⟨((wl.set (w + 1) (.i64v y)).set w (.i64v x)).set (w + 2) (.i64v (wrap64 (x + y))),
+      ⟨by simp, agree _ _ _⟩, ?_⟩
     split at h
     · right
       have hv := add_noov x y hx hy (by assumption)
@@ -3259,7 +3292,8 @@ theorem treeOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) 
     · left; injection h with h; exact h.symm
   · simp [treeOpW, wRunF, h2, h3, hlen, b32] at h
     obtain ⟨⟨hx, hy⟩, -, -, -, h⟩ := h
-    refine ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x - y))), agree _ _ _, by simp, ?_⟩
+    refine ⟨((wl.set (w + 1) (.i64v y)).set w (.i64v x)).set (w + 2) (.i64v (wrap64 (x - y))),
+      ⟨by simp, agree _ _ _⟩, ?_⟩
     split at h
     · right
       have hv := sub_noov x y hx hy (by assumption)
@@ -3269,59 +3303,118 @@ theorem treeOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) 
     · left; injection h with h; exact h.symm
   · simp [treeOpW, wRunF, h2, h3, hlen, b32] at h
     obtain ⟨⟨hx, hy⟩, -, -, h⟩ := h
-    refine ⟨((wl.set (X.tree + 3) (.i64v y)).set (X.tree + 2) (.i64v x)).set (X.tree + 4) (.i64v (wrap64 (x * y))), agree _ _ _, by simp, ?_⟩
-    rcases mul_tail host ar callee (X.tree + 2) (X.tree + 3) (X.tree + 4) x y hx hy _ st rest out
+    refine ⟨((wl.set (w + 1) (.i64v y)).set w (.i64v x)).set (w + 2) (.i64v (wrap64 (x * y))),
+      ⟨by simp, agree _ _ _⟩, ?_⟩
+    rcases mul_tail host ar callee w (w + 1) (w + 2) x y hx hy _ st rest out
         (by simp [List.getElem?_set, h2]) (by simp [List.getElem?_set, h3]) h with h | ⟨r1, r2, h⟩
     · exact Or.inl h
     · refine Or.inr ⟨r1, r2, ?_⟩
       simp [wRunF, List.getElem?_set, hlen, wrap64_id _ r1 r2] at h
       simpa [arithZ, wrap64_id _ r1 r2] using h
 
-theorem smallReadW_run {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat → Option Nat)
-    (callee : Callee) (i : Nat) (x : Int) (w : WVal) (wl st : List WVal) (rest : List WInstr)
-    (hw : wl[i]? = some w) (hx : CanonRepr S x w) :
-    wRunF host ar callee (smallReadW C i ++ rest) wl st = some (.br 0 wl st) ∨
-      wRunF host ar callee (smallReadW C i ++ rest) wl st =
-        wRunF host ar callee rest wl (.i64v x :: st) := by
-  rcases S.car x w hx.1 with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
-  · right
-    have := S.smallElim x s sg hx.1
-    subst this
-    simp [smallReadW, wRunF, hw, b32]
-  · left
-    simp [smallReadW, wRunF, hw, b32]
+theorem intBin_arith {op : BinOp} (h : op.isArith = true) (x y : Int) :
+    intBin op x y = .i (arithZ op x y) := by
+  cases op <;> simp_all [intBin, arithZ, BinOp.isArith]
 
-/-- The `i64` path of a tree node: it leaves for the exact path (`br 0`), with
-    only the temporaries changed, or ends at `$done` with the boxed value. -/
+/-- A tree whose operations are all `+`, `-` and `*`. -/
+def WTree.arith : WTree → Bool
+  | .leaf _ => true
+  | .op o a b => o.isArith && a.arith && b.arith
+
+theorem WTree.arith_of_ok {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} :
+    ∀ {t : WTree}, t.ok M n Γ = true → t.arith = true
+  | .leaf _, _ => rfl
+  | .op _ a b, h => by
+      simp only [WTree.ok, Bool.and_eq_true] at h
+      simp only [WTree.arith, h.1.1, WTree.arith_of_ok h.1.2, WTree.arith_of_ok h.2,
+        Bool.and_self]
+
+/-- A tree's leaves are held: each leaf's local lies outside the words, and
+    holds, when it is a local at all, the canonical carrier of the leaf's
+    value. -/
+def LeavesHeld {C : Nat} (S : CarrierSpec C) (w : Nat) (env : Nat → Option SVal)
+    (wl : List WVal) (t : WTree) : Prop :=
+  ∀ l ∈ t.leaves, (l.loc < w ∨ w + 3 ≤ l.loc) ∧
+    ∃ x, l.val env = some (.i x) ∧ ∀ wv, wl[l.loc]? = some wv → CanonRepr S x wv
+
+theorem LeavesHeld.after {C : Nat} {S : CarrierSpec C} {w : Nat} {env : Nat → Option SVal}
+    {wl wl' : List WVal} {t : WTree} (h : LeavesHeld S w env wl t) (hw : WordsOnly w wl wl') :
+    LeavesHeld S w env wl' t := by
+  intro l hl
+  obtain ⟨hout, x, hv, hc⟩ := h l hl
+  exact ⟨hout, x, hv, fun wv hwv => hc wv (by rw [← hw.2 _ hout]; exact hwv)⟩
+
+/-- The `i64` path of a tree: it branches out (`br 0`) with only the words
+    changed, or pushes the tree's exact value, in the `i64` range. One
+    induction over the tree covers every depth. -/
+theorem fastW_run {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat → Option Nat)
+    (callee : Callee) (w : Nat) (env : Nat → Option SVal) :
+    ∀ (t : WTree) (wl st : List WVal) (rest : List WInstr) (out : Out),
+      t.arith = true → LeavesHeld S w env wl t →
+      wRunF host ar callee (fastW C w t ++ rest) wl st = some out →
+      ∃ L, WordsOnly w wl L ∧
+        ((∃ S', out = .br 0 L S') ∨
+          ∃ v, t.val env = some (.i v) ∧ -9223372036854775808 ≤ v ∧ v < 9223372036854775808 ∧
+            wRunF host ar callee rest L (.i64v v :: st) = some out)
+  | .leaf l, wl, st, rest, out, _, hh, h => by
+      obtain ⟨_, x, hv, hc⟩ := hh l (by simp [WTree.leaves])
+      simp only [fastW] at h
+      cases hwl : wl[l.loc]? with
+      | none => simp [smallReadW, wRunF, hwl] at h
+      | some wv =>
+          have hx := hc wv hwl
+          rcases S.car x wv hx.1 with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+          · have hs := S.smallElim x s sg hx.1
+            subst hs
+            have hb := S.canonSmallBand s s sg hx.1 hx.2
+            have hb' : -9223372036854775808 ≤ s ∧ s < 9223372036854775808 := by
+              simpa using hb
+            simp [smallReadW, wRunF, hwl, b32] at h
+            exact ⟨wl, WordsOnly.refl w wl,
+              Or.inr ⟨s, by simpa [WTree.val] using hv, hb'.1, hb'.2, h⟩⟩
+          · simp [smallReadW, wRunF, hwl, b32] at h
+            exact ⟨wl, WordsOnly.refl w wl, Or.inl ⟨st, h.symm⟩⟩
+  | .op o a b, wl, st, rest, out, ht, hh, h => by
+      simp only [WTree.arith, Bool.and_eq_true] at ht
+      obtain ⟨⟨ho, ha⟩, hb⟩ := ht
+      have hha : LeavesHeld S w env wl a := fun l hl => hh l (by simp [WTree.leaves, hl])
+      have hhb : LeavesHeld S w env wl b := fun l hl => hh l (by simp [WTree.leaves, hl])
+      simp only [fastW, List.append_assoc] at h
+      obtain ⟨L1, h1, hr1⟩ := fastW_run S host ar callee w env a wl st _ out ha hha h
+      rcases hr1 with ⟨S', rfl⟩ | ⟨va, hva, -, -, h⟩
+      · exact ⟨L1, h1, Or.inl ⟨S', rfl⟩⟩
+      obtain ⟨L2, h2, hr2⟩ :=
+        fastW_run S host ar callee w env b L1 (.i64v va :: st) _ out hb (hhb.after h1) h
+      rcases hr2 with ⟨S', rfl⟩ | ⟨vb, hvb, -, -, h⟩
+      · exact ⟨L2, h1.trans h2, Or.inl ⟨S', rfl⟩⟩
+      obtain ⟨L3, h3, hr3⟩ := treeOp_run host ar callee w o ho va vb L2 st rest out h
+      refine ⟨L3, (h1.trans h2).trans h3, ?_⟩
+      rcases hr3 with rfl | ⟨r1, r2, hr⟩
+      · exact Or.inl ⟨st, rfl⟩
+      · exact Or.inr ⟨arithZ o va vb, by simp [WTree.val, hva, hvb, intBin_arith ho], r1, r2, hr⟩
+
+/-- The `i64` path of a tree's block: it leaves for the exact path (`br 0`),
+    with only the words changed, or ends at `$done` with the boxed value. -/
 theorem fast_run {C : Nat} (S : CarrierSpec C) (box : List WVal → Option WVal)
     (hBoxC : ∀ n w, -(2 ^ 63 : Int) ≤ n → n < 2 ^ 63 → box [.i64v n] = some w → CanonRepr S n w)
     (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (M : MCtx)
     (hC : M.carrier = C) (hBox : host M.box = some (1, box))
-    (X : LCtx) (op : BinOp) (hop : op.isArith = true) (a b : Nat) (x y : Int) (wa wb : WVal)
-    (wl st : List WVal) (o : Out)
-    (hwa : wl[a]? = some wa) (hxa : CanonRepr S x wa) (hwb : wl[b]? = some wb)
-    (hyb : CanonRepr S y wb)
-    (h : wRunF host ar callee (smallReadW M.carrier a ++ smallReadW M.carrier b ++ treeOpW X op ++
-      [WInstr.call M.box, WInstr.br 1]) wl st = some o) :
-    (∃ L S', (∀ j, j < X.tree + 2 → L[j]? = wl[j]?) ∧ L.length = wl.length ∧ o = .br 0 L S') ∨
-      (∃ L w, (∀ j, j < X.tree + 2 → L[j]? = wl[j]?) ∧ L.length = wl.length ∧
-        CanonRepr S (arithZ op x y) w ∧ o = .br 1 L (w :: st)) := by
-  rw [List.append_assoc, List.append_assoc] at h
-  rcases smallReadW_run S host ar callee a x wa wl st _ hwa hxa with h1 | h1
-  · rw [hC] at h; rw [h1] at h; cases h
-    exact Or.inl ⟨wl, st, fun _ _ => rfl, rfl, rfl⟩
-  rw [hC] at h; rw [h1] at h
-  rcases smallReadW_run S host ar callee b y wb wl (.i64v x :: st) _ hwb hyb with h2 | h2
-  · rw [h2] at h; cases h
-    exact Or.inl ⟨wl, _, fun _ _ => rfl, rfl, rfl⟩
-  rw [h2] at h
-  obtain ⟨L, hL, hlen, hb | ⟨r1, r2, hr⟩⟩ := treeOp_run host ar callee X op hop x y wl st _ o h
-  · exact Or.inl ⟨L, st, hL, hlen, hb⟩
-  · cases hbx : box [.i64v (arithZ op x y)] with
+    (w : Nat) (env : Nat → Option SVal) (t : WTree) (ht : t.arith = true)
+    (wl st : List WVal) (o : Out) (hh : LeavesHeld S w env wl t)
+    (h : wRunF host ar callee (fastW M.carrier w t ++ [WInstr.call M.box, WInstr.br 1]) wl st =
+      some o) :
+    (∃ L S', WordsOnly w wl L ∧ o = .br 0 L S') ∨
+      (∃ L v wv, WordsOnly w wl L ∧ t.val env = some (.i v) ∧ CanonRepr S v wv ∧
+        o = .br 1 L (wv :: st)) := by
+  rw [hC] at h
+  obtain ⟨L, hL, hr⟩ := fastW_run S host ar callee w env t wl st _ o ht hh h
+  rcases hr with ⟨S', rfl⟩ | ⟨v, hv, r1, r2, hr⟩
+  · exact Or.inl ⟨L, S', hL, rfl⟩
+  · cases hbx : box [.i64v v] with
     | none => simp [wRunF, hBox, popArgs, hbx] at hr
-    | some w =>
+    | some wv =>
         simp [wRunF, hBox, popArgs, hbx] at hr
-        exact Or.inr ⟨L, w, hL, hlen, hBoxC _ w r1 r2 hbx, hr.symm⟩
+        exact Or.inr ⟨L, v, wv, hL, hv, hBoxC _ wv r1 r2 hbx, hr.symm⟩
 
 theorem run_block (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (A : Nat)
     (body rest : List WInstr) (l st : List WVal) :
@@ -3336,137 +3429,84 @@ theorem run_block (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (
   conv => lhs; unfold wRunF
   rfl
 
-/-- A tree node's block: the boxed exact value, the locals changed only in
-    the tree temporaries. `hexact` is the exact path's call. -/
-theorem tree_run {C : Nat} (S : CarrierSpec C) (box : List WVal → Option WVal)
-    (hBoxC : ∀ n w, -(2 ^ 63 : Int) ≤ n → n < 2 ^ 63 → box [.i64v n] = some w → CanonRepr S n w)
-    (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (M : MCtx)
-    (hC : M.carrier = C) (hBox : host M.box = some (1, box))
-    (X : LCtx) (op : BinOp) (hop : op.isArith = true) (a b : Nat) (x y : Int) (wa wb : WVal)
-    (wl st : List WVal) (out : Out)
-    (ha : a < X.tree + 2) (hb : b < X.tree + 2)
-    (hwa : wl[a]? = some wa) (hxa : CanonRepr S x wa) (hwb : wl[b]? = some wb)
-    (hyb : CanonRepr S y wb)
-    (hexact : ∀ L o, L[a]? = some wa → L[b]? = some wb →
-      wRunF host ar callee [.localGet a, .localGet b, .call (M.arithIdx op)] L st = some o →
-      ∃ w, o = .ok L (w :: st) ∧ CanonRepr S (arithZ op x y) w)
-    (h : wRunF host ar callee [.block 1 [.block 0 (smallReadW M.carrier a ++ smallReadW M.carrier b ++
-      treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]), .localGet a, .localGet b,
-      .call (M.arithIdx op)]] wl st = some out) :
-    ∃ wl' w, out = .ok wl' (w :: st) ∧ CanonRepr S (arithZ op x y) w ∧
-      (∀ j, j < X.tree + 2 → wl'[j]? = wl[j]?) ∧ wl'.length = wl.length := by
-  rw [run_block, run_block] at h
-  cases hi : wRunF host ar callee (smallReadW M.carrier a ++ smallReadW M.carrier b ++
-      treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]) wl st with
-  | none => simp only [hi] at h; simp at h
-  | some o =>
-    rcases fast_run S box hBoxC host ar callee M hC hBox X op hop a b x y wa wb wl st o
-        hwa hxa hwb hyb hi with
-        ⟨L, S', hL, hlen, rfl⟩ | ⟨L, w, hL, hlen, hw, rfl⟩ <;> simp only [hi] at h
-    · have hLa : L[a]? = some wa := by rw [hL a ha]; exact hwa
-      have hLb : L[b]? = some wb := by rw [hL b hb]; exact hwb
-      simp only [Nat.not_lt_zero, ↓reduceIte, List.take_zero, List.nil_append] at h
-      cases he : wRunF host ar callee [.localGet a, .localGet b, .call (M.arithIdx op)] L st with
-      | none => simp only [he] at h; simp at h
-      | some oe =>
-        simp only [he] at h
-        obtain ⟨w, rfl, hw⟩ := hexact L oe hLa hLb he
-        simp [wRunF] at h
-        exact ⟨L, w, h.symm, hw, hL, hlen⟩
-    · simp [wRunF] at h
-      exact ⟨L, w, h.symm, hw, hL, hlen⟩
-
-
-/-- The local a tree leaf reads: the local itself, or the record's local. -/
-def leafBase : Expr → Nat
-  | .local i => i
-  | .project _ _ (.local i) => i
-  | _ => 0
-
-section TreeStep
+section WordStep
 variable {C : Nat} {S : CarrierSpec C} {M : MCtx} {X : LCtx}
   (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
 
-/-- A tree leaf's value: its run reads only its base local and pushes the
-    carrier of its `Int`. -/
-theorem leaf_value (F : Nat → List SVal → Option SVal) {Γ : Nat → Option Ty}
-    {env : Nat → Option SVal} {wl : List WVal} (henv : EnvTy M env Γ) (hl : LRel S M X env wl)
-    (e : Expr) (he : treeLeaf e = true) (hnw : wordLeaf M e = false)
-    (ht : tyOf M X.n Γ false e = some .int) :
-    ∃ x w, eval F env e = some (.i x) ∧ CanonRepr S x w ∧ leafBase e < X.n ∧
-      (∀ i, slot? e = some i → wl[i]? = some w) ∧
-      ∀ L st, L[leafBase e]? = wl[leafBase e]? →
-        wRunF host ar callee (lowerW M X Γ false e) L st = some (.ok L (w :: st)) := by
-  match e, he with
-  | .local i, _ =>
-      simp only [tyOf] at ht
-      obtain ⟨v, hv, hTv⟩ := envTy_get henv ht
-      obtain ⟨x, rfl⟩ := hasTy_int hTv
-      obtain ⟨hi, w, hw, hr⟩ := hl.2 i _ hv
-      refine ⟨x, w, by simp [eval, hv], hr, hi, fun j hj => by simp [slot?] at hj; subst hj; exact hw,
-        fun L st hL => ?_⟩
-      simp only [leafBase] at hL
-      simp [lowerW, lowerB, eraseL, eraseI, wRunF, hL, hw]
-  | .project tid j (.local i), _ =>
-      obtain ⟨htb, fts, hR, h2, hj⟩ := tyOf_proj_inv ht
-      replace h2 : 2 ≤ fts.length := h2.resolve_right (by simpa [wordLeaf] using hnw)
-      simp only [tyOf] at htb
-      obtain ⟨v, hv, hTv⟩ := envTy_get henv htb
-      obtain ⟨fs, fts', rfl, hR', hfs⟩ := hasTy_record hTv
-      rw [hR] at hR'
-      cases hR'
-      obtain ⟨sv, hsv, hTsv⟩ := hasTyL_get hfs hj
-      obtain ⟨x, rfl⟩ := hasTy_int hTsv
-      obtain ⟨hi, wr, hwr, hrr⟩ := hl.2 i _ hv
-      obtain ⟨ws, rfl, hws⟩ := (srepr_record hR h2 _ _).mp hrr
-      obtain ⟨w, hw, hwx⟩ := sreprL_get hws hsv
-      refine ⟨x, w, by simp [eval, hv, hsv], hwx, hi, fun k hk => by simp [slot?] at hk,
-        fun L st hL => ?_⟩
-      simp only [leafBase] at hL
-      simp [lowerW, lowerB, isWord_false hR h2, eraseL, eraseI, wRunF, hL, hwr, hw]
+/-- The exact path of a tree: the calls on its leaves' carriers push the
+    canonical carrier of the tree's value, the locals unchanged. -/
+theorem exactW_run (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Option WVal)
+    (Ctr : Contracts S box add sub mul cmp eq)
+    (hAdd : host M.add = some (2, add)) (hSub : host M.sub = some (2, sub))
+    (hMul : host M.mul = some (2, mul)) (env : Nat → Option SVal) :
+    ∀ (t : WTree) (L st : List WVal) (rest : List WInstr) (out : Out),
+      t.arith = true →
+      (∀ l ∈ t.leaves, ∃ x, l.val env = some (.i x) ∧
+        ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv) →
+      wRunF host ar callee (exactW M t ++ rest) L st = some out →
+      ∃ v wv, t.val env = some (.i v) ∧ CanonRepr S v wv ∧
+        wRunF host ar callee rest L (wv :: st) = some out
+  | .leaf l, L, st, rest, out, _, hh, h => by
+      obtain ⟨x, hv, hc⟩ := hh l (by simp [WTree.leaves])
+      cases hl : L[l.loc]? with
+      | none => simp [exactW, wRunF, hl] at h
+      | some wv =>
+          simp [exactW, wRunF, hl] at h
+          exact ⟨x, wv, by simpa [WTree.val] using hv, hc wv hl, h⟩
+  | .op o a b, L, st, rest, out, ht, hh, h => by
+      simp only [WTree.arith, Bool.and_eq_true] at ht
+      obtain ⟨⟨ho, ha⟩, hb⟩ := ht
+      simp only [exactW, List.append_assoc] at h
+      obtain ⟨va, wa, hva, hca, h⟩ := exactW_run S box add sub mul cmp eq Ctr hAdd hSub hMul env
+        a L st _ out ha (fun l hl => hh l (by simp [WTree.leaves, hl])) h
+      obtain ⟨vb, wb, hvb, hcb, h⟩ := exactW_run S box add sub mul cmp eq Ctr hAdd hSub hMul env
+        b L (wa :: st) _ out hb (fun l hl => hh l (by simp [WTree.leaves, hl])) h
+      obtain ⟨o1, h1, hseq⟩ := run_split h
+      obtain ⟨r, rfl, hr, _⟩ := arith_step S box add sub mul cmp eq Ctr host ar callee M hAdd hSub
+        hMul o ho va vb wa wb hca hcb L st o1 h1
+      rw [intBin_arith ho] at hr
+      exact ⟨arithZ o va vb, r, by simp [WTree.val, hva, hvb, intBin_arith ho], hr,
+        by simpa [seqOut] using hseq⟩
 
-/-- Evaluating a leaf ahead stores its carrier in its tree local. -/
-theorem aheadB_run (e : Expr) (p : Nat) (code : List BI) (rest : List WInstr) (w : WVal)
-    (wl st : List WVal)
-    (hcode : aheadLeaf e = true → wRunF host ar callee (eraseL code) wl st = some (.ok wl (w :: st))) :
-    wRunF host ar callee (eraseL (aheadB X e p code) ++ rest) wl st =
-      wRunF host ar callee rest (if aheadLeaf e then wl.set (X.tree + p) w else wl) st := by
-  unfold aheadB
-  split
-  · rename_i ha
-    rw [eraseL_append, List.append_assoc, wRunF_append, hcode ha]
-    simp [seqOut, eraseL, eraseI, wRunF, ha]
-  · rename_i ha
-    simp [eraseL, ha]
-
-theorem eraseI_treeBlock (M : MCtx) (X : LCtx) (op : BinOp) (a b : Nat) :
-    eraseI (treeBlock M X op a b) = .block 1 [.block 0 (smallReadW M.carrier a ++
-      smallReadW M.carrier b ++ treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]),
-      .localGet a, .localGet b, .call (M.arithIdx op)] := by
-  simp only [treeBlock, eraseI, eraseL, eraseL_ops, Option.isSome]
+theorem eraseI_wordBlock (M : MCtx) (t : WTree) (w : Nat) :
+    eraseI (wordBlock M t w) = .block 1 (.block 0 (fastW M.carrier w t ++
+      [WInstr.call M.box, WInstr.br 1]) :: exactW M t) := by
+  simp only [wordBlock, eraseI, eraseL, eraseL_ops, Option.isSome]
   rfl
 
-/-- A tree block whose first operand local is missing gets stuck. -/
-theorem tree_missing_a (M : MCtx) (X : LCtx) (op : BinOp) (a b : Nat) (L st : List WVal)
-    (h : L[a]? = none) :
-    wRunF host ar callee [eraseI (treeBlock M X op a b)] L st = none := by
-  rw [eraseI_treeBlock, run_block, run_block]
-  simp [smallReadW, wRunF, h]
-
-/-- So does one whose second operand local is missing. -/
-theorem tree_missing_b (S : CarrierSpec C) (hC : M.carrier = C) (X : LCtx) (op : BinOp)
-    (a b : Nat) (L st : List WVal) (wa : WVal) (x : Int) (ha : L[a]? = some wa)
-    (hx : CanonRepr S x wa) (hb : L[b]? = none) :
-    wRunF host ar callee [eraseI (treeBlock M X op a b)] L st = none := by
-  rw [eraseI_treeBlock, run_block, run_block, hC]
-  rw [show smallReadW C a ++ smallReadW C b ++ treeOpW X op ++ [WInstr.call M.box, WInstr.br 1] =
-    smallReadW C a ++ (smallReadW C b ++ treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]) by
-      simp only [List.append_assoc]]
-  rcases smallReadW_run S host ar callee a x wa L st
-      (smallReadW C b ++ treeOpW X op ++ [WInstr.call M.box, WInstr.br 1]) ha hx with h1 | h1 <;>
-    rw [h1]
-  · simp [wRunF, ha, hb]
-  · simp [smallReadW, wRunF, hb]
+/-- A tree's block: the boxed exact value, the locals changed only in the
+    words. -/
+theorem word_run (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Option WVal)
+    (Ctr : Contracts S box add sub mul cmp eq) (hC : M.carrier = C)
+    (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))
+    (hSub : host M.sub = some (2, sub)) (hMul : host M.mul = some (2, mul))
+    (env : Nat → Option SVal) (t : WTree) (w : Nat) (ht : t.arith = true)
+    (wl st : List WVal) (out : Out) (hh : LeavesHeld S w env wl t)
+    (h : wRunF host ar callee [eraseI (wordBlock M t w)] wl st = some out) :
+    ∃ wl' v wv, out = .ok wl' (wv :: st) ∧ t.val env = some (.i v) ∧ CanonRepr S v wv ∧
+      WordsOnly w wl wl' := by
+  rw [eraseI_wordBlock, run_block, run_block] at h
+  cases hi : wRunF host ar callee (fastW M.carrier w t ++ [WInstr.call M.box, WInstr.br 1]) wl st with
+  | none => simp only [hi] at h; simp at h
+  | some o =>
+    rcases fast_run S box Ctr.hBox host ar callee M hC hBox w env t ht wl st o hh hi with
+        ⟨L, S', hL, rfl⟩ | ⟨L, v, wv, hL, hv, hc, rfl⟩ <;> simp only [hi] at h
+    · simp only [Nat.not_lt_zero, ↓reduceIte, List.take_zero, List.nil_append] at h
+      cases he : wRunF host ar callee (exactW M t) L st with
+      | none => simp only [he] at h; simp at h
+      | some oe =>
+        simp only [he] at h
+        have he' : wRunF host ar callee (exactW M t ++ []) L st = some oe := by simpa using he
+        have hhL := hh.after hL
+        obtain ⟨v, wv, hv, hc, hr⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hAdd
+          hSub hMul env t L st [] oe ht
+          (fun l hl => let ⟨_, x, hx, hcx⟩ := hhL l hl; ⟨x, hx, hcx⟩) he'
+        simp [wRunF] at hr
+        subst hr
+        simp [wRunF] at h
+        exact ⟨L, v, wv, h.symm, hv, hc, hL⟩
+    · simp [wRunF] at h
+      exact ⟨L, v, wv, h.symm, hv, hc, hL⟩
 
 theorem lrel_agree {env : Nat → Option SVal} {wl wl' : List WVal} (hl : LRel S M X env wl)
     (hag : ∀ j, j < X.n → wl'[j]? = wl[j]?) (hlen : wl'.length = wl.length) :
@@ -3476,131 +3516,175 @@ theorem lrel_agree {env : Nat → Option SVal} {wl wl' : List WVal} (hl : LRel S
   obtain ⟨hi, w, hw, hr⟩ := hl.2 i v hv
   exact ⟨hi, w, by rw [hag i hi]; exact hw, hr⟩
 
-theorem intBin_arith {op : BinOp} (h : op.isArith = true) (x y : Int) :
-    intBin op x y = .i (arithZ op x y) := by
-  cases op <;> simp_all [intBin, arithZ, BinOp.isArith]
+theorem distinct_append : ∀ {xs ys : List Nat}, distinct (xs ++ ys) = true →
+    distinct xs = true ∧ distinct ys = true ∧ ∀ x ∈ xs, x ∉ ys
+  | [], ys, h => by simpa [distinct] using h
+  | x :: xs, ys, h => by
+      simp only [List.cons_append, distinct, Bool.and_eq_true, Bool.not_eq_true'] at h
+      obtain ⟨hx, h⟩ := h
+      obtain ⟨h1, h2, h3⟩ := distinct_append h
+      have hx' : x ∉ xs ++ ys := by simpa using hx
+      refine ⟨?_, h2, ?_⟩
+      · simp only [distinct, Bool.and_eq_true, Bool.not_eq_true', h1, and_true]
+        simpa using fun h => hx' (List.mem_append_left _ h)
+      · intro z hz
+        rcases List.mem_cons.mp hz with rfl | hz
+        · exact fun h => hx' (List.mem_append_right _ h)
+        · exact h3 z hz
 
-/-- A tree leaf's slot after both leaves were evaluated ahead: its carrier,
-    or nothing when its tree local is not declared. -/
-theorem leafSlot_after {wl : List WVal} (e : Expr) (p : Nat) (hp : p < 2) (he : treeLeaf e = true)
-    (w : WVal) (hs : ∀ i, slot? e = some i → wl[i]? = some w) (hb : leafBase e < X.n)
-    (hnt : X.n ≤ X.tree) (L : List WVal) (hlen : L.length = wl.length)
-    (hlow : ∀ j, j < X.tree → L[j]? = wl[j]?)
-    (hmine : aheadLeaf e = true → X.tree + p < wl.length → L[X.tree + p]? = some w)
-    (hout : X.tree + p < L.length ∨ L[X.tree + p]? = none) :
-    L[leafSlot X e p]? = some w ∨ L[leafSlot X e p]? = none := by
-  unfold leafSlot
-  cases hsl : slot? e with
-  | some i =>
-      left
-      have hi : i = leafBase e := by
-        cases e <;> simp_all [slot?, leafBase]
-      rw [hlow i (by omega)]
-      exact hs i hsl
-  | none =>
-      have ha : aheadLeaf e = true := by
-        cases e <;> simp_all [slot?, treeLeaf]
-      by_cases hin : X.tree + p < wl.length
-      · exact Or.inl (hmine ha hin)
-      · right
-        rcases hout with h | h
-        · omega
-        · exact h
+/-- A leaf of a tree is a local, or a field whose local is one of the tree's
+    slots. -/
+theorem WTree.leaf_cases : ∀ {t : WTree} {l : WLeaf}, l ∈ t.leaves →
+    (∃ tid k base s, l = .field tid k base s ∧ s ∈ t.slots) ∨ (∃ i, l = .local i)
+  | .leaf (.local i), l, h => by
+      simp [WTree.leaves] at h; exact Or.inr ⟨i, h⟩
+  | .leaf (.field tid k base s), l, h => by
+      simp [WTree.leaves] at h; exact Or.inl ⟨tid, k, base, s, h, by simp [WTree.slots]⟩
+  | .op _ a b, l, h => by
+      simp only [WTree.leaves, List.mem_append] at h
+      rcases h with h | h
+      · rcases WTree.leaf_cases h with ⟨tid, k, base, s, rfl, hs⟩ | ⟨i, rfl⟩
+        · exact Or.inl ⟨tid, k, base, s, rfl, by simp [WTree.slots, hs]⟩
+        · exact Or.inr ⟨i, rfl⟩
+      · rcases WTree.leaf_cases h with ⟨tid, k, base, s, rfl, hs⟩ | ⟨i, rfl⟩
+        · exact Or.inl ⟨tid, k, base, s, rfl, by simp [WTree.slots, hs]⟩
+        · exact Or.inr ⟨i, rfl⟩
 
-/-- The `Int` tree node: its leaves evaluated ahead, then its block, compute
-    the node's value, the locals changed only in tree locals. -/
-theorem tree_step (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Option WVal)
+/-- A typed tree's slots lie past the resolver slots. -/
+theorem WTree.slots_ge {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} :
+    ∀ {t : WTree}, t.ok M n Γ = true → ∀ s ∈ t.slots, n ≤ s
+  | .leaf (.local _), _, s, hs => by simp [WTree.slots] at hs
+  | .leaf (.field _ _ _ s'), h, s, hs => by
+      simp only [WTree.slots, List.mem_singleton] at hs
+      subst hs
+      simp only [WTree.ok, WLeaf.ok, Bool.and_eq_true, decide_eq_true_eq] at h
+      exact h.1
+  | .op _ a b, h, s, hs => by
+      simp only [WTree.ok, Bool.and_eq_true] at h
+      simp only [WTree.slots, List.mem_append] at hs
+      rcases hs with hs | hs
+      · exact WTree.slots_ge h.1.2 s hs
+      · exact WTree.slots_ge h.2 s hs
+
+/-- Reading the field leaves ahead stores each one's carrier in its slot:
+    the locals relation holds, nothing but the slots changes, and every leaf
+    is held. -/
+theorem aheadW_run {Γ : Nat → Option Ty} {env : Nat → Option SVal} (henv : EnvTy M env Γ) :
+    ∀ (t : WTree) (wl st : List WVal) (rest : List WInstr) (out : Out),
+      t.ok M X.n Γ = true → distinct t.slots = true → LRel S M X env wl →
+      wRunF host ar callee (aheadW M t ++ rest) wl st = some out →
+      ∃ wl', LRel S M X env wl' ∧ wl'.length = wl.length ∧
+        (∀ j, j ∉ t.slots → wl'[j]? = wl[j]?) ∧
+        (∀ l ∈ t.leaves, ∃ x, l.val env = some (.i x) ∧
+          ∀ wv, wl'[l.loc]? = some wv → CanonRepr S x wv) ∧
+        wRunF host ar callee rest wl' st = some out
+  | .leaf (.local i), wl, st, rest, out, hok, _, hl, h => by
+      simp only [WTree.ok, WLeaf.ok, beq_iff_eq] at hok
+      obtain ⟨v, hv, hTv⟩ := envTy_get henv hok
+      obtain ⟨x, rfl⟩ := hasTy_int hTv
+      obtain ⟨_, wv, hw, hr⟩ := hl.2 i _ hv
+      refine ⟨wl, hl, rfl, fun _ _ => rfl, ?_, by simpa [aheadW] using h⟩
+      intro l hl'
+      simp only [WTree.leaves, List.mem_singleton] at hl'
+      subst hl'
+      exact ⟨x, by simp [WLeaf.val, hv], fun wv' hw' => by
+        simp only [WLeaf.loc] at hw'; rw [hw] at hw'; cases hw'; exact hr⟩
+  | .leaf (.field tid k base s), wl, st, rest, out, hok, _, hl, h => by
+      simp only [WTree.ok, WLeaf.ok, Bool.and_eq_true, decide_eq_true_eq] at hok
+      obtain ⟨hns, hm⟩ := hok
+      split at hm
+      · rename_i tid' fts hΓ hR
+        simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hm
+        obtain ⟨⟨rfl, h2⟩, hk⟩ := hm
+        obtain ⟨v, hv, hTv⟩ := envTy_get henv hΓ
+        obtain ⟨fs, fts', rfl, hR', hfs⟩ := hasTy_record hTv
+        rw [hR] at hR'
+        cases hR'
+        obtain ⟨sv, hsv, hTsv⟩ := hasTyL_get hfs hk
+        obtain ⟨x, rfl⟩ := hasTy_int hTsv
+        obtain ⟨hb, wr, hwr, hrr⟩ := hl.2 base _ hv
+        obtain ⟨ws, rfl, hws⟩ := (srepr_record hR h2 _ _).mp hrr
+        obtain ⟨wv, hw, hwx⟩ := sreprL_get hws hsv
+        simp [aheadW, wRunF, hwr, hw] at h
+        refine ⟨wl.set s wv, lrel_agree hl (fun j hj => by
+            simp only [List.getElem?_set]; rw [if_neg (by omega)]) (by simp),
+          by simp, fun j hj => ?_, ?_, h⟩
+        · simp only [WTree.slots, List.mem_singleton] at hj
+          simp only [List.getElem?_set]; rw [if_neg (by omega)]
+        · intro l hl'
+          simp only [WTree.leaves, List.mem_singleton] at hl'
+          subst hl'
+          refine ⟨x, by simp [WLeaf.val, hv, hsv], fun wv' hw' => ?_⟩
+          have : wv' = wv := by
+            simp only [WLeaf.loc, List.getElem?_set] at hw'
+            split at hw' <;> (try split at hw') <;> simp_all
+          subst this
+          exact hwx
+      · cases hm
+  | .op _ a b, wl, st, rest, out, hok, hd, hl, h => by
+      simp only [WTree.ok, Bool.and_eq_true] at hok
+      obtain ⟨⟨_, hoka⟩, hokb⟩ := hok
+      simp only [WTree.slots] at hd
+      obtain ⟨hda, hdb, hab⟩ := distinct_append hd
+      simp only [aheadW, List.append_assoc] at h
+      obtain ⟨wl1, hl1, hlen1, hkeep1, hheld1, h⟩ := aheadW_run henv a wl st _ out hoka hda hl h
+      obtain ⟨wl2, hl2, hlen2, hkeep2, hheld2, h⟩ := aheadW_run henv b wl1 st _ out hokb hdb hl1 h
+      refine ⟨wl2, hl2, hlen2.trans hlen1, fun j hj => ?_, ?_, h⟩
+      · simp only [WTree.slots, List.mem_append, not_or] at hj
+        rw [hkeep2 j hj.2, hkeep1 j hj.1]
+      · intro l hl'
+        simp only [WTree.leaves, List.mem_append] at hl'
+        rcases hl' with hl' | hl'
+        · obtain ⟨x, hv, hc⟩ := hheld1 l hl'
+          refine ⟨x, hv, fun wv hw => hc wv ?_⟩
+          have hnot : l.loc ∉ b.slots := by
+            rcases WTree.leaf_cases hl' with ⟨tid, k, base, s, rfl, hs⟩ | ⟨i, rfl⟩
+            · exact hab s hs
+            · intro hin
+              have hge := WTree.slots_ge hokb i hin
+              have hlt := (hl.2 i _ (by simpa [WLeaf.val] using hv)).1
+              omega
+          rw [← hkeep2 _ hnot]; exact hw
+        · exact hheld2 l hl'
+
+/-- The `Int` tree node: its leaves read ahead, then its block, compute the
+    tree's value, the locals relation kept. -/
+theorem word_step (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Option WVal)
     (Ctr : Contracts S box add sub mul cmp eq) (hC : M.carrier = C)
     (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))
     (hSub : host M.sub = some (2, sub)) (hMul : host M.mul = some (2, mul))
     (F : Nat → List SVal → Option SVal) {Γ : Nat → Option Ty} {env : Nat → Option SVal}
-    {wl st : List WVal} {out : Out} (op : BinOp) (l r : Expr) (hA : op.isArith = true)
-    (htree : isTree op l r = true) (hnt : X.n ≤ X.tree)
-    (hnwl : wordLeaf M l = false) (hnwr : wordLeaf M r = false)
-    (htl : tyOf M X.n Γ false l = some .int) (htr : tyOf M X.n Γ false r = some .int)
-    (henv : EnvTy M env Γ) (hl : LRel S M X env wl)
-    (hrun : wRunF host ar callee (eraseL (aheadB X l 0 (lowerB M X Γ false l) ++
-      (aheadB X r 1 (lowerB M X Γ false r) ++
-        [treeBlock M X op (leafSlot X l 0) (leafSlot X r 1)]))) wl st = some out) :
-    ∃ sv, eval F env (.binOp op l r) = some sv ∧ HasTy M sv .int ∧
+    {wl st : List WVal} {out : Out} (t : WTree) (w : Nat)
+    (hok : wordOk M X.n Γ t w = true) (henv : EnvTy M env Γ) (hl : LRel S M X env wl)
+    (hrun : wRunF host ar callee (eraseL ((aheadW M t).map .op ++ [wordBlock M t w])) wl st =
+      some out) :
+    ∃ sv, eval F env (.intWord t w) = some sv ∧ HasTy M sv .int ∧
       Res S M X false env st sv out := by
-  simp only [isTree, Bool.and_eq_true] at htree
-  obtain ⟨⟨⟨_, hlt⟩, hrt⟩, _⟩ := htree
-  obtain ⟨x, wx, hevx, hcx, hbx, hsx, hrx⟩ := leaf_value host ar callee F henv hl l hlt hnwl htl
-  obtain ⟨y, wy, hevy, hcy, hby, hsy, hry⟩ := leaf_value host ar callee F henv hl r hrt hnwr htr
-  rw [eraseL_append, aheadB_run host ar callee l 0 _ _ wx wl st
-    (fun _ => hrx wl st rfl)] at hrun
-  generalize hL1 : (if aheadLeaf l then wl.set (X.tree + 0) wx else wl) = L1 at hrun
-  have hlen1 : L1.length = wl.length := by subst hL1; split <;> simp
-  have hlow1 : ∀ j, j < X.tree → L1[j]? = wl[j]? := by
-    intro j hj; subst hL1; split
-    · simp only [List.getElem?_set]; rw [if_neg (by omega)]
-    · rfl
-  rw [eraseL_append, aheadB_run host ar callee r 1 _ _ wy L1 st
-    (fun _ => hry L1 st (hlow1 _ (by omega)))] at hrun
-  generalize hL2 : (if aheadLeaf r then L1.set (X.tree + 1) wy else L1) = L2 at hrun
-  have hlen2 : L2.length = wl.length := by subst hL2; split <;> simp [hlen1]
-  have hlow2 : ∀ j, j < X.tree → L2[j]? = wl[j]? := by
-    intro j hj; subst hL2; split
-    · simp only [List.getElem?_set]; rw [if_neg (by omega)]; exact hlow1 j hj
-    · exact hlow1 j hj
+  simp only [wordOk, Bool.and_eq_true, decide_eq_true_eq] at hok
+  obtain ⟨⟨htok, hnw⟩, hd⟩ := hok
+  obtain ⟨hds, -, hdis⟩ := distinct_append hd
+  rw [eraseL_append, eraseL_ops] at hrun
   simp only [eraseL] at hrun
-  have hA2 := leafSlot_after (X := X) l 0 (by omega) hlt wx hsx hbx hnt L2 hlen2 hlow2
-    (fun ha hin => by
-      subst hL2 hL1; simp only [ha, ↓reduceIte]
-      split <;> simp [List.getElem?_set] <;> omega)
-    (by
-      by_cases h : X.tree + 0 < L2.length
-      · exact Or.inl h
-      · right; simp only [List.getElem?_eq_none_iff]; omega)
-  have hB2 := leafSlot_after (X := X) r 1 (by omega) hrt wy hsy hby hnt L2 hlen2 hlow2
-    (fun ha hin => by
-      subst hL2; simp only [ha, ↓reduceIte]
-      simp [List.getElem?_set, hlen1]; omega)
-    (by
-      by_cases h : X.tree + 1 < L2.length
-      · exact Or.inl h
-      · right; simp only [List.getElem?_eq_none_iff]; omega)
-  have hsa : leafSlot X l 0 < X.tree + 2 := by
-    unfold leafSlot; split
-    · rename_i i hi; have : i = leafBase l := by cases l <;> simp_all [slot?, leafBase]
+  obtain ⟨wl1, hl1, -, -, hheld, h⟩ := aheadW_run host ar callee henv t wl st _ out htok hds hl hrun
+  have hh : LeavesHeld S w env wl1 t := by
+    intro l hl'
+    obtain ⟨x, hv, hc⟩ := hheld l hl'
+    refine ⟨?_, x, hv, hc⟩
+    rcases WTree.leaf_cases hl' with ⟨tid, k, base, s, rfl, hs⟩ | ⟨i, rfl⟩
+    · have := hdis s hs
+      simp only [List.mem_cons, List.mem_singleton, not_or, List.not_mem_nil] at this
+      simp only [WLeaf.loc]
       omega
-    · omega
-  have hsb : leafSlot X r 1 < X.tree + 2 := by
-    unfold leafSlot; split
-    · rename_i i hi; have : i = leafBase r := by cases r <;> simp_all [slot?, leafBase]
+    · have hlt := (hl1.2 i _ (by simpa [WLeaf.val] using hv)).1
+      simp only [WLeaf.loc]
       omega
-    · omega
-  rcases hA2 with hA2 | hA2
-  rotate_left
-  · rw [tree_missing_a host ar callee M X op _ _ L2 st hA2] at hrun; cases hrun
-  rcases hB2 with hB2 | hB2
-  rotate_left
-  · rw [tree_missing_b host ar callee S hC X op _ _ L2 st wx x hA2 hcx hB2] at hrun; cases hrun
-  have hexact : ∀ L o, L[leafSlot X l 0]? = some wx → L[leafSlot X r 1]? = some wy →
-      wRunF host ar callee [.localGet (leafSlot X l 0), .localGet (leafSlot X r 1),
-        .call (M.arithIdx op)] L st = some o →
-      ∃ w, o = .ok L (w :: st) ∧ CanonRepr S (arithZ op x y) w := by
-    intro L o ha hb h
-    have hp : wRunF host ar callee [.localGet (leafSlot X l 0), .localGet (leafSlot X r 1)] L st =
-        some (.ok L (wy :: wx :: st)) := by simp [wRunF, ha, hb]
-    rw [show [WInstr.localGet (leafSlot X l 0), .localGet (leafSlot X r 1),
-        .call (M.arithIdx op)] = [.localGet (leafSlot X l 0), .localGet (leafSlot X r 1)] ++
-        [.call (M.arithIdx op)] from rfl, wRunF_append, hp] at h
-    simp only [seqOut] at h
-    obtain ⟨w, rfl, hw, _⟩ := arith_step S box add sub mul cmp eq Ctr host ar callee M hAdd hSub
-      hMul op hA x y wx wy hcx hcy L st o h
-    rw [intBin_arith hA] at hw
-    exact ⟨w, rfl, hw⟩
-  rw [eraseI_treeBlock] at hrun
-  obtain ⟨wl', w, rfl, hw, hag, hlen'⟩ := tree_run S box Ctr.hBox host ar callee M hC hBox X op hA
-    _ _ x y wx wy L2 st out hsa hsb hA2 hcx hB2 hcy hexact hrun
-  refine ⟨intBin op x y, by simp [eval, hevx, hevy], by rw [intBin_arith hA]; simp [HasTy],
-    res_ok (by rw [intBin_arith hA]; exact hw) (lrel_agree hl ?_ (by rw [hlen', hlen2]))⟩
-  intro j hj
-  rw [hag j (by omega), hlow2 j (by omega)]
+  obtain ⟨wl2, v, wv, rfl, hv, hc, hwo⟩ := word_run host ar callee S box add sub mul cmp eq Ctr hC
+    hBox hAdd hSub hMul env t w (WTree.arith_of_ok htok) wl1 st out hh h
+  exact ⟨.i v, by simp [eval, hv], by simp [HasTy],
+    res_ok (by simpa [SRepr] using hc)
+      (lrel_agree hl1 (fun j hj => hwo.2 j (Or.inl (by omega))) hwo.1)⟩
 
-end TreeStep
+end WordStep
 
 section Agreement
 variable {C : Nat} (S : CarrierSpec C)
@@ -3928,7 +4012,7 @@ theorem agreement_step :
         simp only [lowerW, lowerB, htl] at hrun
         cases hA : op.isArith
         · -- a comparison
-          simp only [isTree, hA, Bool.false_and, Bool.false_eq_true, ↓reduceIte] at hT hrun
+          simp only [hA, Bool.false_eq_true, ↓reduceIte] at hT hrun
           subst hT
           cases hlk : litInt? l with
           | some kk =>
@@ -4043,17 +4127,6 @@ theorem agreement_step :
         · -- arithmetic
           simp only [hA, ↓reduceIte] at hT hrun
           subst hT
-          by_cases htree :
-              (isTree op l r && decide (X.n ≤ X.tree) && !(wordLeaf M l || wordLeaf M r)) = true
-          · -- the `Int` tree on the machine word
-            simp only [htree, ↓reduceIte, List.append_assoc] at hrun
-            simp only [Bool.and_eq_true, Bool.not_eq_true', Bool.or_eq_false_iff,
-              decide_eq_true_eq] at htree
-            obtain ⟨⟨hit, hnt⟩, hnwl, hnwr⟩ := htree
-            obtain ⟨sv, hev, hTs, hres⟩ := tree_step host ar callee S box add sub mul cmp eq Ctr
-              hCarrier hBox hAdd hSub hMul F op l r hA hit hnt hnwl hnwr htl htr henv hl hrun
-            exact Or.inl ⟨sv, hev, hTs, res_any_tail hres⟩
-          simp only [htree, Bool.false_eq_true, ↓reduceIte] at hrun
           simp only [eraseL_append, eraseL, eraseI, List.append_assoc] at hrun
           obtain ⟨o1, h1, hseq⟩ := run_split hrun
           rcases agreement l Γ env false .int wl st o1 htl henv hl h1 with
@@ -5079,6 +5152,16 @@ theorem agreement_step :
         have hRT : R = T := hall R hR
         subst hRT
         exact Or.inl ⟨x, by simp [eval, hnone, hx], hxR, ⟨rfl, hw⟩⟩
+  | .intWord t w, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+      simp only [tyOf] at hty
+      split at hty
+      · rename_i hok
+        cases hty
+        simp only [lowerW, lowerB] at hrun
+        obtain ⟨sv, hev, hTs, hres⟩ := word_step host ar callee S box add sub mul cmp eq Ctr
+          hCarrier hBox hAdd hSub hMul F t w hok henv hl hrun
+        exact Or.inl ⟨sv, hev, hTs, res_any_tail hres⟩
+      · cases hty
 
 theorem agreementArgs_step :
     ∀ (es : List Expr) (hsz : sizeOf es < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)

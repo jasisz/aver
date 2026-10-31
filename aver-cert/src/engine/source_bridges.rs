@@ -1071,6 +1071,7 @@ fn plan_nodes(e: &PlanExpr) -> usize {
         }
         PlanExpr::If(c, t, el) => plan_nodes(c) + plan_nodes(t) + plan_nodes(el),
         PlanExpr::Match(s, arms) => plan_nodes(s) + arms.iter().map(|(_, b)| plan_nodes(b)).sum::<usize>(),
+        PlanExpr::IntWord(t, _) => 2 * t.leaves().len(),
     }
 }
 
@@ -1081,7 +1082,7 @@ fn string_literals(e: &PlanExpr, out: &mut BTreeSet<Vec<u8>>) {
         PlanExpr::Literal(PlanLit::Str(bytes)) => {
             out.insert(bytes.clone());
         }
-        PlanExpr::Literal(_) | PlanExpr::Local(_) => {}
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::IntWord(..) => {}
         PlanExpr::List(_, items) => items.iter().for_each(|a| string_literals(a, out)),
         PlanExpr::Let(_, v, b) => {
             string_literals(v, out);
@@ -1162,7 +1163,7 @@ fn closure_of(start: u32, fns: &BTreeMap<u32, BridgedFn>) -> Vec<u32> {
 /// The locals a plan matches on directly (`match_ (.local i)`, at any depth).
 fn matched_locals(e: &PlanExpr, out: &mut BTreeSet<u32>) {
     match e {
-        PlanExpr::Literal(_) | PlanExpr::Local(_) => {}
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::IntWord(..) => {}
         PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
             matched_locals(v, out);
             matched_locals(b, out);
@@ -1196,7 +1197,7 @@ fn matched_locals(e: &PlanExpr, out: &mut BTreeSet<u32>) {
 /// split head that its step has to split too.
 fn matched_fields(e: &PlanExpr, out: &mut BTreeSet<u32>) {
     match e {
-        PlanExpr::Literal(_) | PlanExpr::Local(_) => {}
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::IntWord(..) => {}
         PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
             matched_fields(v, out);
             matched_fields(b, out);
@@ -2216,7 +2217,8 @@ end ListDecoders
 /// subject (pre-rewrites, so they win over `eval`'s own equations), the
 /// callee table, and the normal forms the source spells (`==`, `!=`, decided
 /// comparisons, literal indices, String parts folded into one `strBytes`).
-const STEP_EVAL: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, arms_nil, arms_wild, \
+const STEP_EVAL: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, \
+     AverCert.Grammar.WTree.val, AverCert.Grammar.WLeaf.val, arms_nil, arms_wild, \
      arms_bind, arms_litInt, arms_litStr, arms_litBool, arms_ctor, arms_tuple, arms_emptyList_nil, \
      arms_emptyList_cons, arms_cons_nil, arms_cons_cons, ↓eval_ite, \
      ↓eval_optDefault, ↓eval_resDefault, optDefault_ite, resDefault_ite, optDefault_some, \

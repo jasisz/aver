@@ -81,11 +81,6 @@ mutual
     | e :: es => totE mem mulOk calls e && totArgs mem mulOk calls es
 end
 
-/-- The total fragment reads no record field, so it has no `Int` tree. -/
-theorem aheadLeaf_tot {mem : Nat → Bool} {mulOk calls : Bool} {e : Expr}
-    (h : totE mem mulOk calls e = true) : aheadLeaf e = false := by
-  cases e <;> simp_all [aheadLeaf, totE]
-
 mutual
 /-- The total fragment has no `try_`: nothing in it returns early. -/
 theorem totE_bare {mem : Nat → Bool} {mulOk calls : Bool} :
@@ -115,6 +110,7 @@ theorem totE_bare {mem : Nat → Bool} {mulOk calls : Bool} :
   | .list _ _, h => by simp [totE] at h
   | .try_ _ _, h => by simp [totE] at h
   | .scope _, h => by simp [totE] at h
+  | .intWord _ _, h => by simp [totE] at h
 theorem totArgs_bare {mem : Nat → Bool} {mulOk calls : Bool} :
     ∀ es : List Expr, totArgs mem mulOk calls es = true → bareTriesL es = []
   | [], _ => by simp [bareTriesL]
@@ -341,6 +337,7 @@ theorem totE_notStr {M : MCtx} {n : Nat} {mem : Nat → Bool} {mulOk calls : Boo
   | .list _ _, _, _, _, ht, _ => by simp [totE] at ht
   | .try_ _ _, _, _, _, ht, _ => by simp [totE] at ht
   | .scope _, _, _, _, ht, _ => by simp [totE] at ht
+  | .intWord _ _, _, _, _, ht, _ => by simp [totE] at ht
 
 /-- The `n <= 0` guard over a represented Int in a local runs to its
     verdict (the inline sign test: no helper is called). -/
@@ -424,9 +421,7 @@ theorem progress :
         rcases hop with rfl | rfl | ⟨rfl, _⟩ <;> rfl
       rcases tyOf_binOp_inv hty with ⟨htl, htr, _⟩ | ⟨_, _, hq, _⟩ | ⟨_, _, hq, _⟩ |
         ⟨htl, _, _⟩
-      · simp only [lowerW, lowerB, htl, hA, isTree, aheadLeaf_tot htl0, aheadLeaf_tot htr0,
-          Bool.or_false, Bool.and_false, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
-          eraseL_append, eraseL, eraseI]
+      · simp only [lowerW, lowerB, htl, hA, ↓reduceIte, eraseL_append, eraseL, eraseI]
         obtain ⟨o1, h1⟩ := progress l Γ env false .int wl st htl0 hΓ htl henv hl h0
         rcases agreement S box add sub mul cmp eq neg Ctr hNegC host ar
           callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X l Γ env false .int
@@ -537,6 +532,7 @@ theorem progress :
   | .list _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
   | .try_ _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
   | .scope _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
+  | .intWord _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
 
 theorem progressArgs :
     ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
@@ -745,8 +741,7 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
       have hbodyEq : (fnCode M p).body = eraseL (cmpArmB C 0 .lte 0) ++
           [WInstr.ifElse (eraseL (lowerB M p.lctx (paramsΓ p.sig.params) true base))
             (eraseL (lowerB M p.lctx (paramsΓ p.sig.params) true step))] := by
-        simp only [fnCode, hb, lowerW, lowerB, hΓ0, tyOf, BinOp.isArith, Bool.false_eq_true, isTree,
-          Bool.false_and,
+        simp only [fnCode, hb, lowerW, lowerB, hΓ0, tyOf, BinOp.isArith, Bool.false_eq_true,
           ↓reduceIte, litInt?, slot?, eraseL_append, eraseL, eraseI, hCarrier]
       rw [hbodyEq, wRunF_append, guard_run S _ _ _ 0 _ [] n w0 hget hw0]
       simp only [seqOut, b32]

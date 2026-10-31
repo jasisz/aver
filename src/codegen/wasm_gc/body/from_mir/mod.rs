@@ -540,6 +540,7 @@ pub(crate) fn emit_mir_expr(
         return Ok(r);
     }
     match &expr.node {
+        MirExpr::IntWord(word) => int_tree::emit_int_word(func, &word.node, slots, ctx),
         MirExpr::Literal(lit) => match &lit.node {
             Literal::Int(n) => {
                 // bignum slice 1 — under the opt-in flag every Int value

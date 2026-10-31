@@ -98,11 +98,6 @@ impl<'a> MCtx<'a> {
         self.record(tid).map(|r| r.fields.as_slice())
     }
 
-    /// `GrammarLower.wordLeaf`: a field read of a word record.
-    fn word_leaf(&self, e: &PlanExpr) -> bool {
-        matches!(e, PlanExpr::Project(tid, _, _) if self.is_word(*tid))
-    }
-
     /// `MCtx.isWord`: a declared word record, whose fields are `[Int]`.
     fn is_word(&self, tid: u32) -> bool {
         self.tt.words.contains(&tid) && self.rec_fields(tid) == Some(&[PlanTy::Int][..])
@@ -182,6 +177,19 @@ impl<'a> MCtx<'a> {
                 a == b || self.ctor_struct(tid, a as u32) != self.ctor_struct(tid, b as u32)
             })
         })
+    }
+
+    /// `GrammarLower.exactW`.
+    fn exact_w(&self, t: &PlanWTree) -> Vec<WI> {
+        match t {
+            PlanWTree::Leaf(l) => vec![WI::LocalGet(l.loc())],
+            PlanWTree::Op(op, a, b) => {
+                let mut out = self.exact_w(a);
+                out.extend(self.exact_w(b));
+                out.push(WI::Call(self.arith_idx(*op)));
+                out
+            }
+        }
     }
 
     fn arith_idx(&self, op: PlanBinOp) -> u64 {
@@ -435,6 +443,49 @@ impl MCtx<'_> {
         }
     }
 
+    /// `Grammar.WLeaf.ok`.
+    fn word_leaf_ok(&self, n: u32, g: &Gamma, l: &PlanWLeaf) -> bool {
+        match l {
+            PlanWLeaf::Local(i) => g.get(i) == Some(&PlanTy::Int),
+            PlanWLeaf::Field {
+                tid,
+                field,
+                base,
+                slot,
+            } => {
+                n <= *slot
+                    && match (g.get(base), self.rec_fields(*tid)) {
+                        (Some(PlanTy::Record(t2)), Some(fts)) => {
+                            t2 == tid
+                                && fts.len() >= 2
+                                && fts.get(*field as usize) == Some(&PlanTy::Int)
+                        }
+                        _ => false,
+                    }
+            }
+        }
+    }
+
+    /// `Grammar.WTree.ok`.
+    fn word_tree_ok(&self, n: u32, g: &Gamma, t: &PlanWTree) -> bool {
+        match t {
+            PlanWTree::Leaf(l) => self.word_leaf_ok(n, g, l),
+            PlanWTree::Op(op, a, b) => {
+                is_arith(*op) && self.word_tree_ok(n, g, a) && self.word_tree_ok(n, g, b)
+            }
+        }
+    }
+
+    /// `Grammar.wordOk`.
+    fn word_ok(&self, n: u32, g: &Gamma, t: &PlanWTree, w: u32) -> bool {
+        let Some(w2) = w.checked_add(2) else {
+            return false;
+        };
+        let mut written = t.slots();
+        written.extend([w, w + 1, w2]);
+        self.word_tree_ok(n, g, t) && n <= w && distinct(&written)
+    }
+
     fn tys_of(&self, n: u32, g: &Gamma, es: &[PlanExpr]) -> Option<Vec<PlanTy>> {
         es.iter().map(|e| self.ty_of(n, g, false, e)).collect()
     }
@@ -512,6 +563,7 @@ impl MCtx<'_> {
                 }
             }
             PlanExpr::Neg(x) => (self.ty_of(n, g, false, x)? == PlanTy::Int).then_some(PlanTy::Int),
+            PlanExpr::IntWord(t, w) => self.word_ok(n, g, t, *w).then_some(PlanTy::Int),
             PlanExpr::If(c, t, el) => {
                 match (
                     self.ty_of(n, g, false, c)?,
@@ -793,7 +845,7 @@ fn params_gamma(ps: &[PlanTy]) -> Gamma {
 /// `scope`.
 fn bare_tries<'e>(e: &'e PlanExpr, out: &mut Vec<&'e PlanTy>) {
     match e {
-        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::Scope(_) => {}
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::Scope(_) | PlanExpr::IntWord(..) => {}
         PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
             bare_tries(v, out);
             bare_tries(b, out);
@@ -930,26 +982,21 @@ struct LCtx {
     n: u32,
     cmp: u32,
     subj: u32,
-    /// The first of the five `Int` tree locals, reserved last.
-    tree: u32,
 }
 
 fn lctx(p: &FnPlan) -> LCtx {
     let at = (p.nslots as usize).checked_sub(p.params.len());
-    let tree = ((p.params.len() + p.locals.len()) as u32).saturating_sub(5);
     if at.and_then(|i| p.locals.get(i)) == Some(&PlanTy::Eqref) {
         LCtx {
             n: p.nslots,
             cmp: p.nslots + 1,
             subj: p.nslots,
-            tree,
         }
     } else {
         LCtx {
             n: p.nslots,
             cmp: p.nslots,
             subj: p.nslots,
-            tree,
         }
     }
 }
@@ -1021,25 +1068,6 @@ enum BI {
     Block(Option<PlanTy>, Vec<BI>),
 }
 
-/// `GrammarLower.aheadLeaf`: a record field read from a local.
-fn ahead_leaf(e: &PlanExpr) -> bool {
-    matches!(e, PlanExpr::Project(_, _, b) if matches!(**b, PlanExpr::Local(_)))
-}
-
-/// `GrammarLower.isTree`.
-fn is_tree(op: PlanBinOp, l: &PlanExpr, r: &PlanExpr) -> bool {
-    let leaf = |e: &PlanExpr| matches!(e, PlanExpr::Local(_)) || ahead_leaf(e);
-    is_arith(op) && leaf(l) && leaf(r) && (ahead_leaf(l) || ahead_leaf(r))
-}
-
-/// `GrammarLower.leafSlot`.
-fn leaf_slot(x: &LCtx, e: &PlanExpr, p: u32) -> u32 {
-    match e {
-        PlanExpr::Local(i) => *i,
-        _ => x.tree + p,
-    }
-}
-
 /// `GrammarLower.smallReadW`.
 fn small_read(c: u64, i: u32) -> Vec<WI> {
     vec![
@@ -1054,8 +1082,8 @@ fn small_read(c: u64, i: u32) -> Vec<WI> {
 }
 
 /// `GrammarLower.treeOpW`.
-fn tree_op(x: &LCtx, op: PlanBinOp) -> Vec<WI> {
-    let (t0, t1, t2) = (x.tree + 2, x.tree + 3, x.tree + 4);
+fn tree_op(w: u32, op: PlanBinOp) -> Vec<WI> {
+    let (t0, t1, t2) = (w, w + 1, w + 2);
     let general = [
         WI::LocalGet(t0),
         WI::I64Const(1),
@@ -1091,6 +1119,25 @@ fn tree_op(x: &LCtx, op: PlanBinOp) -> Vec<WI> {
         }
     }
     out
+}
+
+/// `GrammarLower.fastW`.
+fn fast_w(c: u64, w: u32, t: &PlanWTree, out: &mut Vec<WI>) {
+    match t {
+        PlanWTree::Leaf(l) => out.extend(small_read(c, l.loc())),
+        PlanWTree::Op(op, a, b) => {
+            fast_w(c, w, a, out);
+            fast_w(c, w, b, out);
+            out.extend(tree_op(w, *op));
+        }
+    }
+}
+
+/// `Grammar.distinct`.
+fn distinct(xs: &[u32]) -> bool {
+    xs.iter()
+        .enumerate()
+        .all(|(i, x)| !xs[i + 1..].contains(x))
 }
 
 fn flip(op: PlanBinOp) -> PlanBinOp {
@@ -1340,33 +1387,6 @@ impl MCtx<'_> {
                         out
                     }
                     _ => {
-                        if is_tree(*op, l, r)
-                            && x.n <= x.tree
-                            && !(self.word_leaf(l) || self.word_leaf(r))
-                        {
-                            let mut out = Vec::new();
-                            for (e, p) in [(&**l, 0), (&**r, 1)] {
-                                if ahead_leaf(e) {
-                                    out.extend(self.lower(x, g, false, e));
-                                    out.push(BI::Op(WI::LocalSet(x.tree + p)));
-                                }
-                            }
-                            let (a, b) = (leaf_slot(x, l, 0), leaf_slot(x, r, 1));
-                            let mut fast = small_read(self.carrier, a);
-                            fast.extend(small_read(self.carrier, b));
-                            fast.extend(tree_op(x, *op));
-                            fast.extend([WI::Call(self.box_), WI::Br(1)]);
-                            out.push(BI::Block(
-                                Some(PlanTy::Int),
-                                vec![
-                                    BI::Block(None, ops(fast)),
-                                    BI::Op(WI::LocalGet(a)),
-                                    BI::Op(WI::LocalGet(b)),
-                                    BI::Op(WI::Call(self.arith_idx(*op))),
-                                ],
-                            ));
-                            return out;
-                        }
                         if is_arith(*op) {
                             let mut out = self.lower(x, g, false, l);
                             out.extend(self.lower(x, g, false, r));
@@ -1686,6 +1706,31 @@ impl MCtx<'_> {
                 _ => vec![],
             },
             PlanExpr::Scope(inner) => self.lower(x, g, tail, inner),
+            PlanExpr::IntWord(t, w) => {
+                let mut out = Vec::new();
+                for l in t.leaves() {
+                    if let PlanWLeaf::Field {
+                        tid,
+                        field,
+                        base,
+                        slot,
+                    } = l
+                    {
+                        out.extend(ops(vec![
+                            WI::LocalGet(*base),
+                            WI::StructGet(self.struct_of(*tid), *field),
+                            WI::LocalSet(*slot),
+                        ]));
+                    }
+                }
+                let mut fast = Vec::new();
+                fast_w(self.carrier, *w, t, &mut fast);
+                fast.extend([WI::Call(self.box_), WI::Br(1)]);
+                let mut body = vec![BI::Block(None, ops(fast))];
+                body.extend(ops(self.exact_w(t)));
+                out.push(BI::Block(Some(PlanTy::Int), body));
+                out
+            }
         }
     }
 
@@ -2248,6 +2293,7 @@ fn call_targets(e: &PlanExpr, out: &mut Vec<u32>) {
         | PlanExpr::Project(_, _, x)
         | PlanExpr::Try(x, _)
         | PlanExpr::Scope(x) => call_targets(x, out),
+        PlanExpr::IntWord(..) => {}
         PlanExpr::If(c, t, el) => {
             call_targets(c, out);
             call_targets(t, out);
@@ -2285,6 +2331,7 @@ fn literal_list_types(e: &PlanExpr, out: &mut Vec<PlanTy>) {
         | PlanExpr::Project(_, _, x)
         | PlanExpr::Try(x, _)
         | PlanExpr::Scope(x) => literal_list_types(x, out),
+        PlanExpr::IntWord(..) => {}
         PlanExpr::If(c, t, el) => {
             literal_list_types(c, out);
             literal_list_types(t, out);
@@ -2336,6 +2383,7 @@ fn string_lits<'e>(e: &'e PlanExpr, out: &mut Vec<&'e [u8]>) {
         | PlanExpr::Project(_, _, x)
         | PlanExpr::Try(x, _)
         | PlanExpr::Scope(x) => string_lits(x, out),
+        PlanExpr::IntWord(..) => {}
         PlanExpr::If(c, t, el) => {
             string_lits(c, out);
             string_lits(t, out);
@@ -2449,6 +2497,7 @@ fn facets_e(e: &PlanExpr, out: &mut BTreeSet<&'static str>) {
             facets_e(r, out);
         }
         PlanExpr::Neg(x) | PlanExpr::Try(x, _) | PlanExpr::Scope(x) => facets_e(x, out),
+        PlanExpr::IntWord(..) => {}
         PlanExpr::If(c, t, el) => {
             facets_e(c, out);
             facets_e(t, out);

@@ -152,6 +152,11 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &Spanned<MirExpr>, indent: &str)
             write_expr(f, inner, indent)?;
             write!(f, ")")
         }
+        MirExpr::IntWord(w) => {
+            write!(f, "word(")?;
+            write_expr(f, &w.node.exact(w.line), indent)?;
+            write!(f, ")")
+        }
     }
 }
 
