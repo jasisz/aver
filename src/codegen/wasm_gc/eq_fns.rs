@@ -921,17 +921,22 @@ pub(super) fn synthesize(
     contains: &BTreeSet<String>,
     lists: &BTreeSet<String>,
 ) -> Result<Option<Synthesized>, String> {
+    // One function per type, by its canonical spelling: the registry can
+    // hold `Tuple<Int, String>` and `Tuple<Int,String>` both.
+    let mut seen = BTreeSet::new();
     let types: Vec<(String, EqKind)> = eq
         .iter()
         .filter(|(_, kind)| !matches!(kind, EqKind::PackedSequence))
         .filter(|(name, _)| registry.newtype_underlying(name).is_none())
-        .map(|(n, k)| (n.to_string(), k))
+        .map(|(n, k)| (canonical(n), k))
+        .filter(|(n, _)| seen.insert(n.clone()))
         .collect();
     let covered: BTreeSet<String> = types.iter().map(|(n, _)| n.clone()).collect();
     let order: Vec<String> = eq.iter().map(|(n, _)| n.to_string()).collect();
     let kinds: HashMap<String, EqKind> = eq.iter().map(|(n, k)| (n.to_string(), k)).collect();
     let walks: HashSet<String> = super::body::eq_helpers::self_reaching(&order, &kinds, registry)
         .into_iter()
+        .map(|n| canonical(&n))
         .filter(|n| covered.contains(n))
         .collect();
     let contains: Vec<String> = contains

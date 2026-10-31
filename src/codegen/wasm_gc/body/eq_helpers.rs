@@ -434,12 +434,23 @@ impl EqHelperRegistry {
         fns: &crate::codegen::wasm_gc::eq_fns::EqFns,
         position: impl Fn(crate::ir::FnId) -> u32,
     ) {
-        self.functions = fns
+        // Under its canonical spelling and every spelling registered here.
+        let by_canonical: HashMap<&String, u32> = fns
             .entry
             .iter()
             .chain(&fns.lists)
-            .map(|(name, id)| (name.clone(), position(*id)))
+            .map(|(name, id)| (name, position(*id)))
             .collect();
+        self.functions = by_canonical
+            .iter()
+            .map(|(name, pos)| ((*name).clone(), *pos))
+            .collect();
+        for name in &self.order {
+            let canonical = super::super::types::normalize_compound(name.trim());
+            if let Some(pos) = by_canonical.get(&canonical) {
+                self.functions.insert(name.clone(), *pos);
+            }
+        }
         self.functions_walk = fns.walks();
     }
 
@@ -486,7 +497,11 @@ impl EqHelperRegistry {
     /// Whether `==` on `name` is reflexive (`reflexive`), for the functions
     /// of the program (`eq_fns`).
     pub(crate) fn reflexive_type(&self, name: &str, registry: &TypeRegistry) -> bool {
-        self.kinds.contains_key(name) && self.reflexive(name, registry)
+        // `name` is a canonical spelling; the registry may hold another.
+        self.order
+            .iter()
+            .find(|k| super::super::types::normalize_compound(k.trim()) == name)
+            .is_some_and(|k| self.reflexive(k, registry))
     }
 
     /// Whether `==` on `name` is reflexive: no `Float` is named in any
