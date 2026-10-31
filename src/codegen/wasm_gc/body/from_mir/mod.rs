@@ -639,7 +639,12 @@ pub(crate) fn emit_mir_expr(
                 } else if ctx.registry.bignum
                     && let Some(global) = int_tree::pooled_literal(*n)
                 {
-                    func.instruction(&Instruction::GlobalGet(global));
+                    let from_i64 = ctx.fn_map.builtins.get("__aint_from_i64").copied().ok_or(
+                        WasmGcError::Validation(
+                            "bignum active but __aint_from_i64 helper not registered".into(),
+                        ),
+                    )?;
+                    int_tree::emit_pooled_literal(func, global, *n, from_i64);
                 } else if ctx.registry.bignum {
                     func.instruction(&Instruction::I64Const(*n));
                     let from_i64 = ctx.fn_map.builtins.get("__aint_from_i64").copied().ok_or(

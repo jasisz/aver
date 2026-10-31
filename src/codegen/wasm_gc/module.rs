@@ -3582,22 +3582,26 @@ pub(super) fn emit_module_with(
         .zip(&word_fn_for)
         .map(|(plain, word)| word.as_ref().or(*plain))
         .collect();
-    // A Small `$AverInt` per literal, as `__aint_from_i64` makes it.
+    // One global per literal, filled with a Small `$AverInt` the first time
+    // a use reads it (`int_tree::emit_pooled_literal`). Not built by the
+    // global's initializer: Wasmtime compiles every initializer that
+    // allocates into one module-init function, and Cranelift's cost on that
+    // function grows faster than linearly with the number of allocations in
+    // it. A module with a few hundred literals (`aver verify` with a few
+    // hundred cases) spent most of its compile time there; a null
+    // initializer costs nothing.
     let mut literal_pool = HashMap::new();
-    if let (Some(aint), Some(mag)) = (registry.aint_struct_idx, registry.aint_mag_array_idx) {
+    if let Some(aint) = registry.aint_struct_idx {
         for n in pooled_literals {
-            let small = wasm_encoder::ConstExpr::extended([
-                Instruction::I64Const(n),
-                Instruction::RefNull(HeapType::Concrete(mag)),
-                Instruction::I32Const(0),
-                Instruction::StructNew(aint),
-            ]);
             let ty = wasm_encoder::GlobalType {
                 val_type: super::types::struct_ref(aint),
-                mutable: false,
+                mutable: true,
                 shared: false,
             };
-            globals.global(ty, &small);
+            globals.global(
+                ty,
+                &wasm_encoder::ConstExpr::ref_null(HeapType::Concrete(aint)),
+            );
             literal_pool.insert(n, next_global_idx);
             next_global_idx += 1;
         }
