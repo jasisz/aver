@@ -3057,7 +3057,7 @@ fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
     let block = export_plan_block(&plans, "validClockValue");
     assert!(
         block.contains(".ifThenElse (.binOp .gte (.local 0) (.literal (.int 0)))")
-            && block.contains("(.binOp .lt (.local 0) (.local 1))"),
+            && block.contains("(.intCmp .lt (.leaf (.local 0)) (.leaf (.local 1))"),
         "the nested comparison shape must be the plan:\n{block}"
     );
 
