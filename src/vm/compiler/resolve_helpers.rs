@@ -70,6 +70,12 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         // Rust only: the representation rewrite of the Rust backend is its
         // one producer.
         BuiltinIntrinsic::StrIndexPosition => None,
+        // wasm-gc only (`codegen::wasm_gc::eq_fns`).
+        BuiltinIntrinsic::EqSameRef
+        | BuiltinIntrinsic::EqScope
+        | BuiltinIntrinsic::EqCount
+        | BuiltinIntrinsic::EqPast
+        | BuiltinIntrinsic::EqMemo => None,
     }
 }
 

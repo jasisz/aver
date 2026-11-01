@@ -520,6 +520,7 @@
    "Bytes_octets": "L1",
    "Bytes_take": "L1",
    "Crypto_Digest32_hasLength32": "L1",
+   "agreesWithVerdict": "L1",
    "flattenBatches": "L1"
   },
   "laws": [
@@ -947,7 +948,9 @@
    "Domain_Rational_times": "L1",
    "Domain_Rational_zeroFraction": "L1",
    "le": "L1",
-   "lt": "L1"
+   "lt": "L1",
+   "signedAbsolute": "L1",
+   "signedAbsoluteReason": "L1"
   },
   "laws": [
    "Domain.IntegerOrder.multiplyLe.nonnegativeFactor",
@@ -1278,6 +1281,9 @@
    "App_Queries_sampleOrFirst": "L1",
    "App_Queries_sampleSettlement": "L1",
    "App_Queries_sampleState": "L1",
+   "App_Queries_settlementOnlyState": "L1",
+   "App_Queries_totalByKind": "L1",
+   "App_Queries_totalByKindFrom": "L1",
    "App_Render_renderAuditItems": "L1",
    "App_Render_renderAuditItemsInto": "L1",
    "App_Render_renderCaseItem": "L1",
@@ -1369,6 +1375,8 @@
    "Domain_Reconcile_settlementsForPaymentInto": "L1",
    "Domain_Reconcile_settlementsForProvider": "L1",
    "Domain_Reconcile_settlementsForProviderInto": "L1",
+   "Domain_Reconcile_totalByKind": "L1",
+   "Domain_Reconcile_totalByKindFrom": "L1",
    "Domain_Views_appendUnique": "L1",
    "Domain_Views_capturedTotal": "L1",
    "Domain_Views_capturedTotalFrom": "L1",

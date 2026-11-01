@@ -1778,6 +1778,28 @@ fn cross_recursive_root_identity_wasm_gc() {
     );
 }
 
+/// The structural equality functions of wasm-gc look pairs up among the ones
+/// they remembered once a comparison is past its budget. A tree of 200 levels
+/// remembers about 20 000 pairs, so the table fills, is emptied and refilled,
+/// and its slots are written over; a difference at the last leaf reached is
+/// still found. Nodes with nothing but other nodes share a key and the slots
+/// that go with it. A recursive value with a `Float` under it gets no answer
+/// from identity or from the table: holding NaN, it is not equal to itself,
+/// as one object, under `Option.Some` and in `List.contains`, while `-0.0`
+/// and `0.0` are equal.
+#[test]
+fn cross_eq_memo_contract_wasm_gc() {
+    let source = include_str!("fixtures/eq_memo_contract.av");
+    let expected =
+        "tree true false true false true\nbare true false true false\nwaves true false false false";
+    assert_eq_with_label("VM", &run_vm("aver-eq-memo-vm", source), expected);
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-eq-memo-wasm", source),
+        expected,
+    );
+}
+
 /// Reordered comparisons keep declaration indices for both eager record
 /// equality and recursive sum walks, including erased carriers and NaN.
 #[test]

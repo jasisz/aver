@@ -1,0 +1,44 @@
+module EqPlainCert
+    intent =
+        "Fixture: == and != on a record, a sum, an Option and a List of a"
+        "type that does not reach itself, and List.contains over it. On"
+        "wasm-gc each runs as a function of the program, which certifies as"
+        "any other function does."
+
+type Color
+    Red
+    Green
+    Other(Int)
+
+record Point
+    x: Int
+    y: Int
+    tag: Color
+
+fn sameColor(a: Color, b: Color) -> Bool
+    ? "Equal colors."
+    a == b
+
+fn samePoint(a: Point, b: Point) -> Bool
+    ? "Equal points."
+    a == b
+
+fn differ(a: Color, b: Color) -> Bool
+    ? "Different colors."
+    a != b
+
+fn hasRed(xs: List<Color>) -> Bool
+    ? "Whether the list holds red."
+    List.contains(xs, Color.Red)
+
+fn sameOpt(a: Option<Color>, b: Option<Color>) -> Bool
+    ? "Equal optional colors."
+    a == b
+
+fn sameList(a: List<Color>, b: List<Color>) -> Bool
+    ? "Equal lists of colors."
+    a == b
+
+fn inc(x: Int) -> Int
+    ? "One more."
+    x + 1

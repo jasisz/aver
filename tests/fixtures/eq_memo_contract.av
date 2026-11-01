@@ -1,0 +1,110 @@
+module EqMemoContract
+    intent =
+        "Fixture: comparisons of recursive values long and wide enough that"
+        "wasm-gc looks pairs up among the ones it remembered, overwrites and"
+        "empties that table, and still answers exactly as the VM: a pair it"
+        "never found equal is never taken as equal, and a value holding NaN"
+        "is not equal to itself even as one object."
+    effects [Console.print, Args.get]
+
+type Tree
+    Leaf(Int)
+    Node(Int, Tree, Tree)
+
+type Bare
+    End(Int)
+    Fork(Bare, Bare)
+
+type Wave
+    Calm(Float)
+    Crest(Wave, Wave)
+
+fn pick(trees: Vector<Tree>, i: Int, w: Int) -> Tree
+    ? "Tree i of a level of w, counted round."
+    Option.withDefault(Vector.get(trees, Result.withDefault(Int.mod(i, w), 0)), Tree.Leaf(0))
+
+fn level(below: Vector<Tree>, n: Int, i: Int, w: Int) -> List<Tree>
+    ? "Trees i to w - 1 of level n, each over two trees of the level below."
+    match i >= w
+        true -> []
+        false -> List.prepend(Tree.Node(n * w + i, pick(below, i, w), pick(below, i + 1, w)), level(below, n, i + 1, w))
+
+fn leaves(i: Int, w: Int, last: Int) -> List<Tree>
+    ? "Leaves i to w - 1, the last one holding last: the root of a tower w - 1 high reaches it last."
+    match i >= w
+        true -> []
+        false -> List.prepend(Tree.Leaf(leafValue(i, w - 1, last)), leaves(i + 1, w, last))
+
+fn leafValue(i: Int, at: Int, last: Int) -> Int
+    ? "Leaf i holds i, leaf at holds last."
+    match i == at
+        true -> last
+        false -> i
+
+fn tower(n: Int, w: Int, last: Int) -> Vector<Tree>
+    ? "The w trees of level n over leaves(0, w, last)."
+    match n <= 0
+        true -> Vector.fromList(leaves(0, w, last))
+        false -> Vector.fromList(level(tower(n - 1, w, last), n, 0, w))
+
+fn bare(t: Tree) -> Bare
+    ? "The tree without the numbers of its nodes; the leaves keep theirs."
+    match t
+        Tree.Leaf(n) -> Bare.End(n)
+        Tree.Node(_, a, b) -> Bare.Fork(bare(a), bare(b))
+
+fn bareLevel(below: Vector<Bare>, i: Int, w: Int) -> List<Bare>
+    ? "Forks i to w - 1, each over two forks of the level below."
+    match i >= w
+        true -> []
+        false -> List.prepend(Bare.Fork(pickBare(below, i, w), pickBare(below, i + 1, w)), bareLevel(below, i + 1, w))
+
+fn pickBare(forks: Vector<Bare>, i: Int, w: Int) -> Bare
+    ? "Fork i of a level of w, counted round."
+    Option.withDefault(Vector.get(forks, Result.withDefault(Int.mod(i, w), 0)), Bare.End(0))
+
+fn bareLeaves(i: Int, w: Int, last: Int) -> List<Bare>
+    ? "Ends i to w - 1, the last one holding last."
+    match i >= w
+        true -> []
+        false -> List.prepend(Bare.End(leafValue(i, w - 1, last)), bareLeaves(i + 1, w, last))
+
+fn bareTower(n: Int, w: Int, last: Int) -> Vector<Bare>
+    ? "The w forks of level n."
+    match n <= 0
+        true -> Vector.fromList(bareLeaves(0, w, last))
+        false -> Vector.fromList(bareLevel(bareTower(n - 1, w, last), 0, w))
+
+fn waves(n: Int, w: Wave) -> Wave
+    ? "n crests, each holding the one below twice."
+    match n <= 0
+        true -> w
+        false -> waves(n - 1, Wave.Crest(w, w))
+
+fn arg(i: Int, dflt: Int) -> Int
+    ? "Argument i as a number."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), i)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), dflt)
+        Option.None -> dflt
+
+fn main() -> Unit
+    ! [Console.print, Args.get]
+    depth = arg(0, 200)
+    width = depth + 1
+    a = pick(tower(depth, width, width), 0, width)
+    b = pick(tower(depth, width, width), 0, width)
+    c = pick(tower(depth, width, width + 1), 0, width)
+    Console.print("tree {a == b} {a == c} {b != c} {List.contains([c, c], a)} {List.contains([c, b], a)}")
+    shallow = arg(1, 24)
+    narrow = shallow + 1
+    x = pickBare(bareTower(shallow, narrow, narrow), 0, narrow)
+    y = pickBare(bareTower(shallow, narrow, narrow), 0, narrow)
+    z = pickBare(bareTower(shallow, narrow, narrow + 1), 0, narrow)
+    Console.print("bare {x == y} {x == z} {[x, z] == [y, z]} {[x, x] == [y, z]}")
+    zero = Float.fromInt(List.len([1]) - 1)
+    nan = Float.sqrt(zero - 1.0)
+    calm = waves(depth, Wave.Calm(zero))
+    negative = waves(depth, Wave.Calm(zero * (0.0 - 1.0)))
+    wild = waves(depth, Wave.Calm(nan))
+    Console.print("waves {calm == negative} {wild == wild} {Option.Some(wild) == Option.Some(wild)} {List.contains([wild], wild)}")

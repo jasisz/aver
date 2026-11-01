@@ -970,9 +970,8 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
             // (Tree.Node holding Tree) and nominal cross-references
             // (Item holding Color) both flow through `field_resolvable`
             // which recurses with a `seen` set so cycles terminate.
-            // The inline emitters (emit_record_eq_inline /
-            // emit_sum_eq_inline) handle these via `eq_helper_fn_idx`
-            // dispatch + `self_fn_idx` for self-recursion since 0.16.3.
+            // Their `==` is a function of the program (`eq_fns`), called
+            // by its index in `eq_helper_fn_idx`.
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             if registry.record_type_idx(other).is_some() {
                 if record_fields_resolvable(other, registry, &mut seen) {
@@ -1077,8 +1076,7 @@ pub(super) fn field_type_resolvable(
     // Generic carriers — `Option<X>`, `Result<X,Y>`, `Tuple<…>` get
     // per-instantiation `__eq_<canonical>` helpers since 0.16.3.
     // Resolvable iff every inner type is itself resolvable.
-    // List/Vector/Map field types still fall through (their dispatch
-    // from `emit_record_eq_inline` is a separate followup).
+    // List/Vector/Map field types fall through.
     if let Some(inner) = field
         .strip_prefix("Option<")
         .and_then(|s| s.strip_suffix('>'))
@@ -1132,9 +1130,7 @@ pub(super) fn field_type_resolvable(
     // List<X> / Vector<X> — list/vec helpers slot a per-instantiation
     // eq+hash fn in `list_helpers` whenever X is itself
     // `list_eq_kind`-able (recursively: primitive, record, sum, or a
-    // resolvable carrier). Record/sum field dispatch then calls
-    // `__eq_List<X>` / `__eq_Vector<X>` via the compound lookup
-    // map threaded into `emit_record_eq_inline`.
+    // resolvable carrier).
     if let Some(inner) = field
         .strip_prefix("List<")
         .and_then(|s| s.strip_suffix('>'))
@@ -2011,24 +2007,8 @@ fn emit_list_contains(
         nullable: true,
         heap_type: HeapType::Concrete(list_idx),
     });
-    let elem = TypeRegistry::list_element_type(canonical).unwrap();
-    let elem_val =
-        super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(WasmGcError::Validation(
-            format!("list element type `{elem}` has no wasm representation"),
-        ))?;
-    // params: 0=in, 1=needle. local 2 = cur. RecordEq adds two
-    // extra scratch locals (3 = head, 4 = needle copy) since field-
-    // by-field eq needs `struct.get` against both refs multiple
-    // times. CarrierEq needs no scratch — the helper takes eqref
-    // params directly so head + needle are forwarded as-is.
-    let mut locals: Vec<(u32, ValType)> = vec![(1, list_ref)];
-    if matches!(&kind, ListEqKind::RecordEq(_) | ListEqKind::SumEq(_)) {
-        // Record / sum eq does multiple struct.get reads against
-        // both head and needle — stash them into scratch locals
-        // (3 = head, 4 = needle).
-        locals.push((1, elem_val));
-        locals.push((1, elem_val));
-    }
+    // params: 0=in, 1=needle. local 2 = cur.
+    let locals: Vec<(u32, ValType)> = vec![(1, list_ref)];
     let mut f = Function::new(locals);
     // cur = in
     f.instruction(&Instruction::LocalGet(0));
@@ -2040,53 +2020,9 @@ fn emit_list_contains(
     f.instruction(&Instruction::BrIf(1));
     // compare cur.head == needle, leaving an i32 (1=eq, 0=ne) on stack
     match &kind {
-        ListEqKind::RecordEq(record_name) => {
-            // Stash head + needle into scratch locals 3, 4 so we
-            // can struct.get fields multiple times.
-            f.instruction(&Instruction::LocalGet(2));
-            f.instruction(&Instruction::StructGet {
-                struct_type_index: list_idx,
-                field_index: 0,
-            });
-            f.instruction(&Instruction::LocalSet(3));
-            f.instruction(&Instruction::LocalGet(1));
-            f.instruction(&Instruction::LocalSet(4));
-            emit_record_eq_inline(
-                &mut f,
-                record_name,
-                registry,
-                3,
-                4,
-                string_eq_fn_idx,
-                eq_helper_fn_idx,
-                None,
-                EqFold::And,
-            )?;
-        }
-        ListEqKind::SumEq(parent_name) => {
-            // Same scratch dance as RecordEq — both ref.test and
-            // ref.cast want repeated access to head + needle.
-            f.instruction(&Instruction::LocalGet(2));
-            f.instruction(&Instruction::StructGet {
-                struct_type_index: list_idx,
-                field_index: 0,
-            });
-            f.instruction(&Instruction::LocalSet(3));
-            f.instruction(&Instruction::LocalGet(1));
-            f.instruction(&Instruction::LocalSet(4));
-            emit_sum_eq_inline(
-                &mut f,
-                parent_name,
-                registry,
-                3,
-                4,
-                string_eq_fn_idx,
-                eq_helper_fn_idx,
-                None,
-                EqFold::And,
-            )?;
-        }
-        ListEqKind::CarrierEq(canonical) => {
+        ListEqKind::RecordEq(canonical)
+        | ListEqKind::SumEq(canonical)
+        | ListEqKind::CarrierEq(canonical) => {
             // `Call(__eq_<canonical>)` — both head and needle pushed
             // as eqref args (head from struct.get, needle from
             // param 1).
@@ -2158,512 +2094,6 @@ fn emit_list_contains(
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::End);
     Ok(f)
-}
-
-/// How a structural `==` emitter folds the answers of a value's fields.
-#[derive(Clone, Copy)]
-pub(super) enum EqFold<'a> {
-    /// Every field is compared and the answers are and-ed.
-    And,
-    /// One step of a comparison with memory (`body::eq_helpers`): the first
-    /// field that differs returns 0 from the function, and a node holding
-    /// the walk looks its pair up first and remembers it once equal.
-    Remember(&'a RememberFold<'a>),
-    /// One step of a comparison against a budget (`body::eq_helpers`).
-    Budget(&'a BudgetFold<'a>),
-}
-
-/// A comparison against the budget held in local `budget`.
-pub(super) struct BudgetFold<'a> {
-    pub(super) budget: u32,
-    /// The helpers that walk. A field of such a type is compared by its
-    /// walk, which takes the budget and returns what is left (at least 1:
-    /// equal), 0 (different) or -1 (out of budget).
-    pub(super) walked: &'a std::collections::HashSet<String>,
-    /// At the start of a comparison, the walk with memory of this value and
-    /// the enter and leave of its table, to start again with when the budget
-    /// ran out. Without it the step passes a 0 or -1 up and answers the
-    /// budget left.
-    pub(super) restart: Option<(u32, u32, u32)>,
-}
-
-/// A step with memory: the lookup and insert of the remembered pairs, the
-/// local the key of a node goes in, and the helpers that walk.
-pub(super) struct RememberFold<'a> {
-    pub(super) lookup: u32,
-    pub(super) insert: u32,
-    pub(super) key: u32,
-    pub(super) walked: &'a std::collections::HashSet<String>,
-}
-
-impl RememberFold<'_> {
-    /// Whether a node with fields of `field_tys` holds the walk: one of them
-    /// is compared by a step.
-    fn holds_walk(&self, field_tys: &[String], owner: &str, registry: &TypeRegistry) -> bool {
-        super::body::node_table::holds_walk(field_tys, owner, self.walked, registry)
-    }
-
-    /// Looks the pair in locals `head` and `needle` up by the key of `head`
-    /// (a node of struct `struct_idx` with fields of `fields`, pushed typed
-    /// by `node`), answering 1 for a remembered one.
-    fn recall(
-        &self,
-        f: &mut Function,
-        (head, needle): (u32, u32),
-        struct_idx: u32,
-        fields: &[ValType],
-        registry: &TypeRegistry,
-        node: &dyn Fn(&mut Function),
-    ) {
-        super::body::node_table::emit_node_key(f, struct_idx, fields, registry, node, self.key);
-        f.instruction(&Instruction::LocalGet(head));
-        f.instruction(&Instruction::LocalGet(needle));
-        f.instruction(&Instruction::LocalGet(self.key));
-        f.instruction(&Instruction::Call(self.lookup));
-        f.instruction(&Instruction::If(BlockType::Empty));
-        f.instruction(&Instruction::I32Const(1));
-        f.instruction(&Instruction::Return);
-        f.instruction(&Instruction::End);
-    }
-
-    /// Remembers the pair in locals `head` and `needle`, found equal.
-    fn remember(&self, f: &mut Function, (head, needle): (u32, u32)) {
-        f.instruction(&Instruction::LocalGet(head));
-        f.instruction(&Instruction::LocalGet(needle));
-        f.instruction(&Instruction::LocalGet(self.key));
-        f.instruction(&Instruction::Call(self.insert));
-    }
-}
-
-impl EqFold<'_> {
-    /// Pushes the budget before the call to the helper of `name` when that
-    /// helper walks; says whether it did.
-    fn walk_call(self, f: &mut Function, name: &str) -> bool {
-        match self {
-            EqFold::Budget(fold) if fold.walked.contains(name) => {
-                f.instruction(&Instruction::LocalGet(fold.budget));
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Folds comparison `position`, the result of a walk when `walked`.
-    /// This is its visit position, not its index in the struct layout.
-    fn field(self, f: &mut Function, position: usize, walked: bool) {
-        match self {
-            EqFold::And => {
-                if position > 0 {
-                    f.instruction(&Instruction::I32And);
-                }
-            }
-            EqFold::Budget(fold) if walked => {
-                f.instruction(&Instruction::LocalTee(fold.budget));
-                f.instruction(&Instruction::I32Const(1));
-                f.instruction(&Instruction::I32LtS);
-                f.instruction(&Instruction::If(BlockType::Empty));
-                f.instruction(&Instruction::LocalGet(fold.budget));
-                if let Some((memory, enter, leave)) = fold.restart {
-                    f.instruction(&Instruction::I32Eqz);
-                    f.instruction(&Instruction::If(BlockType::Empty));
-                    f.instruction(&Instruction::I32Const(0));
-                    f.instruction(&Instruction::Return);
-                    f.instruction(&Instruction::End);
-                    f.instruction(&Instruction::Call(enter));
-                    f.instruction(&Instruction::LocalGet(0));
-                    f.instruction(&Instruction::LocalGet(1));
-                    f.instruction(&Instruction::Call(memory));
-                    f.instruction(&Instruction::Call(leave));
-                }
-                f.instruction(&Instruction::Return);
-                f.instruction(&Instruction::End);
-            }
-            EqFold::Remember(_) | EqFold::Budget(_) => {
-                f.instruction(&Instruction::I32Eqz);
-                f.instruction(&Instruction::If(BlockType::Empty));
-                f.instruction(&Instruction::I32Const(0));
-                f.instruction(&Instruction::Return);
-                f.instruction(&Instruction::End);
-            }
-        }
-    }
-
-    /// Pushes the answer of a value whose fields all matched; with `And`
-    /// that answer is already on the stack unless there were no fields.
-    fn equal(self, f: &mut Function, no_fields: bool) {
-        match self {
-            EqFold::And if !no_fields => {}
-            EqFold::Budget(BudgetFold {
-                budget,
-                restart: None,
-                ..
-            }) => {
-                f.instruction(&Instruction::LocalGet(*budget));
-            }
-            _ => {
-                f.instruction(&Instruction::I32Const(1));
-            }
-        }
-    }
-}
-
-/// Inline field-by-field eq for two records held in scratch locals.
-/// Pushes a single i32 (1=eq, 0=ne) onto the stack. Field type
-/// dispatch covers `{Int, Float, Bool, String}` plus any type with a
-/// registered `__eq_<X>` helper; a newtype-erased field dispatches on
-/// its underlying primitive.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn emit_record_eq_inline(
-    f: &mut Function,
-    record_name: &str,
-    registry: &TypeRegistry,
-    head_local: u32,
-    needle_local: u32,
-    string_eq_fn_idx: Option<u32>,
-    eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
-    self_fn_idx: Option<u32>,
-    fold: EqFold,
-) -> Result<(), WasmGcError> {
-    let record_idx = registry
-        .record_type_idx(record_name)
-        .ok_or(WasmGcError::Validation(format!(
-            "List.contains: record `{record_name}` not registered"
-        )))?;
-    let fields = registry
-        .record_fields
-        .get(record_name)
-        .ok_or(WasmGcError::Validation(format!(
-            "List.contains: record `{record_name}` has no field info"
-        )))?;
-    if fields.is_empty() {
-        // Two empty records always equal.
-        fold.equal(f, true);
-        return Ok(());
-    }
-    let remember = match fold {
-        EqFold::Remember(r)
-            if r.holds_walk(
-                &fields.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(),
-                record_name,
-                registry,
-            ) =>
-        {
-            let tys = fields
-                .iter()
-                .map(|(n, t)| super::types::record_field_val_type(record_name, n, t, registry))
-                .collect::<Result<Vec<_>, _>>()?;
-            let node = |f: &mut Function| {
-                f.instruction(&Instruction::LocalGet(head_local));
-            };
-            r.recall(
-                f,
-                (head_local, needle_local),
-                record_idx,
-                &tys,
-                registry,
-                &node,
-            );
-            Some(r)
-        }
-        _ => None,
-    };
-    let order = super::equality_order::field_order(
-        &fields.iter().map(|(_, ty)| ty.as_str()).collect::<Vec<_>>(),
-        registry,
-    );
-    for (position, i) in order.into_iter().enumerate() {
-        let (field_name, field_ty) = &fields[i];
-        // push head.f
-        f.instruction(&Instruction::LocalGet(head_local));
-        f.instruction(&Instruction::StructGet {
-            struct_type_index: record_idx,
-            field_index: i as u32,
-        });
-        // push needle.f
-        f.instruction(&Instruction::LocalGet(needle_local));
-        f.instruction(&Instruction::StructGet {
-            struct_type_index: record_idx,
-            field_index: i as u32,
-        });
-        // emit per-field eq → i32
-        // ETAP-2 carrier-`i64`: an eligible WHOLE-TYPE carrier field (a
-        // single-field newtype carrier used as this record's field type) is a
-        // native `i64`, so it compares with a raw `i64.eq`, NOT the `__aint_eq`
-        // ref helper (the plain-`Int` arm) nor a per-type `__eq_<Carrier>`
-        // (which a newtype carrier never gets). Check before the type-name
-        // match.
-        if registry.is_eligible_carrier(field_ty.trim()) {
-            f.instruction(&Instruction::I64Eq);
-            fold.field(f, position, false);
-            continue;
-        }
-        // A field whose declared type is newtype-erased is stored as the
-        // underlying primitive, so it dispatches on that primitive — the
-        // same resolution the hash emitters do.
-        let declared = field_ty.trim();
-        let resolved = registry.newtype_underlying(declared).unwrap_or(declared);
-        let mut walked = false;
-        match resolved {
-            "Int" if declared == "Int" => {
-                // ETAP-2 multi-field carrier-`i64`: a bounded Int field erased
-                // to a native `i64` compares with `i64.eq`; every other Int
-                // field stays the boxed `$AverInt` and routes to `__aint_eq`.
-                emit_record_int_field_eq(f, registry, record_name, field_name)?;
-            }
-            // A newtype-resolved Int (`Box(v: Int)` / `Only(Int)` used as a
-            // field) is stored unboxed — the same `__aint_eq` path the hash
-            // side takes.
-            "Int" => {
-                emit_aint_field_eq(f, registry)?;
-            }
-            "Bool" => {
-                f.instruction(&Instruction::I32Eq);
-            }
-            // `Unit` rides an unobservable `i32` placeholder, and any two
-            // `Unit` values are equal, so comparing the placeholders is the
-            // whole of it.
-            "Unit" => {
-                f.instruction(&Instruction::I32Eq);
-            }
-            // jasisz/aver#1329 — two job handles are the same job exactly
-            // when they are the same reference; one job owns one struct.
-            crate::capability::work::WORK_JOB => {
-                f.instruction(&Instruction::RefEq);
-            }
-            "Float" => {
-                f.instruction(&Instruction::F64Eq);
-            }
-            "String" => {
-                let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
-                    "List.contains record field of String type needs \
-                     __wasmgc_string_eq registered"
-                        .into(),
-                ))?;
-                f.instruction(&Instruction::Call(eq_fn));
-            }
-            other if other == record_name && self_fn_idx.is_some() => {
-                // Recursive ref to the same record — call self.
-                walked = fold.walk_call(f, other);
-                f.instruction(&Instruction::Call(self_fn_idx.unwrap()));
-            }
-            other => {
-                // Look up `__eq_<X>` — for compound types (List/
-                // Vector/Map/Option/Result/Tuple) the registry keys
-                // are whitespace-stripped, but a field type from
-                // `record_fields` can carry source-side spacing.
-                // Try both forms before erroring.
-                let normalized = super::types::normalize_compound(other);
-                let key = if eq_helper_fn_idx.contains_key(other) {
-                    Some(other.to_string())
-                } else if eq_helper_fn_idx.contains_key(normalized.as_str()) {
-                    Some(normalized.clone())
-                } else {
-                    None
-                };
-                if let Some(k) = key {
-                    let idx = eq_helper_fn_idx[k.as_str()];
-                    walked = fold.walk_call(f, &k);
-                    f.instruction(&Instruction::Call(idx));
-                } else {
-                    return Err(WasmGcError::Validation(format!(
-                        "record `{record_name}` field type `{other}` has no eq dispatch \
-                         (not in {{Int, Float, Bool, String}}, no `__eq_{other}` helper, \
-                         not self-recursive)"
-                    )));
-                }
-            }
-        }
-        fold.field(f, position, walked);
-    }
-    if let Some(r) = remember {
-        r.remember(f, (head_local, needle_local));
-    }
-    fold.equal(f, false);
-    Ok(())
-}
-
-/// Inline sum-type eq for two values held in scratch locals. For
-/// each constructor variant of `parent_name`, test whether both head
-/// and needle have that concrete type. If both: cast + field-by-
-/// field eq, push result. If only one: push 0 (different variants).
-/// A variant field whose declared type is newtype-erased dispatches
-/// on its underlying primitive. Final i32 on stack: 1 = equal,
-/// 0 = different.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn emit_sum_eq_inline(
-    f: &mut Function,
-    parent_name: &str,
-    registry: &TypeRegistry,
-    head_local: u32,
-    needle_local: u32,
-    string_eq_fn_idx: Option<u32>,
-    eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
-    self_fn_idx: Option<u32>,
-    fold: EqFold,
-) -> Result<(), WasmGcError> {
-    // Collect all variants of this sum (use a stable order — names
-    // sorted ascending — so two compiler runs produce identical wasm).
-    let mut variants: Vec<(String, super::types::VariantInfo)> = registry
-        .variants
-        .iter()
-        .flat_map(|(n, vs)| vs.iter().map(move |v| (n.clone(), v.clone())))
-        .filter(|(_, v)| v.parent == parent_name)
-        .collect();
-    variants.sort_by(|a, b| a.0.cmp(&b.0));
-    if variants.is_empty() {
-        return Err(WasmGcError::Validation(format!(
-            "List.contains: sum type `{parent_name}` has no variants"
-        )));
-    }
-    // The whole cascade lives inside an `(block (result i32))` so
-    // each per-variant arm can `br` out with its own i32 verdict.
-    f.instruction(&Instruction::Block(BlockType::Result(ValType::I32)));
-    for (_v_name, info) in &variants {
-        let v_idx = info.type_idx;
-        let v_heap = wasm_encoder::HeapType::Concrete(v_idx);
-        // if ref.test V head:
-        f.instruction(&Instruction::LocalGet(head_local));
-        f.instruction(&Instruction::RefTestNonNull(v_heap));
-        f.instruction(&Instruction::If(BlockType::Empty));
-        // if ref.test V needle:
-        f.instruction(&Instruction::LocalGet(needle_local));
-        f.instruction(&Instruction::RefTestNonNull(v_heap));
-        f.instruction(&Instruction::If(BlockType::Empty));
-        // both V — compare fields. If no fields, push 1.
-        if info.fields.is_empty() {
-            fold.equal(f, true);
-        } else {
-            let remember = match fold {
-                EqFold::Remember(r) if r.holds_walk(&info.fields, parent_name, registry) => {
-                    let tys = info
-                        .fields
-                        .iter()
-                        .map(|t| {
-                            Ok(super::types::aver_to_wasm(t, Some(registry))?
-                                .unwrap_or(ValType::I32))
-                        })
-                        .collect::<Result<Vec<_>, WasmGcError>>()?;
-                    let node = |f: &mut Function| {
-                        f.instruction(&Instruction::LocalGet(head_local));
-                        f.instruction(&Instruction::RefCastNonNull(v_heap));
-                    };
-                    r.recall(f, (head_local, needle_local), v_idx, &tys, registry, &node);
-                    Some(r)
-                }
-                _ => None,
-            };
-            let order = super::equality_order::field_order(
-                &info.fields.iter().map(String::as_str).collect::<Vec<_>>(),
-                registry,
-            );
-            for (position, i) in order.into_iter().enumerate() {
-                let field_ty = &info.fields[i];
-                f.instruction(&Instruction::LocalGet(head_local));
-                f.instruction(&Instruction::RefCastNonNull(v_heap));
-                f.instruction(&Instruction::StructGet {
-                    struct_type_index: v_idx,
-                    field_index: i as u32,
-                });
-                f.instruction(&Instruction::LocalGet(needle_local));
-                f.instruction(&Instruction::RefCastNonNull(v_heap));
-                f.instruction(&Instruction::StructGet {
-                    struct_type_index: v_idx,
-                    field_index: i as u32,
-                });
-                // ETAP-2 carrier-`i64`: an eligible carrier sum-field is a
-                // native `i64` → raw `i64.eq`.
-                if registry.is_eligible_carrier(field_ty.trim()) {
-                    f.instruction(&Instruction::I64Eq);
-                    fold.field(f, position, false);
-                    continue;
-                }
-                // A field whose declared type is newtype-erased is stored
-                // as the underlying primitive, so it dispatches on that
-                // primitive — the same resolution the hash emitters do.
-                let resolved = registry
-                    .newtype_underlying(field_ty.trim())
-                    .unwrap_or(field_ty.trim());
-                let mut walked = false;
-                match resolved {
-                    "Int" => {
-                        emit_aint_field_eq(f, registry)?;
-                    }
-                    "Bool" => {
-                        f.instruction(&Instruction::I32Eq);
-                    }
-                    // `Unit` rides an unobservable `i32` placeholder, and any
-                    // two `Unit` values are equal.
-                    "Unit" => {
-                        f.instruction(&Instruction::I32Eq);
-                    }
-                    // jasisz/aver#1329 — two job handles are the same job
-                    // exactly when they are the same reference; one job owns
-                    // one struct.
-                    crate::capability::work::WORK_JOB => {
-                        f.instruction(&Instruction::RefEq);
-                    }
-                    "Float" => {
-                        f.instruction(&Instruction::F64Eq);
-                    }
-                    "String" => {
-                        let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
-                            "List.contains sum field of String type needs \
-                             __wasmgc_string_eq registered"
-                                .into(),
-                        ))?;
-                        f.instruction(&Instruction::Call(eq_fn));
-                    }
-                    other if other == parent_name && self_fn_idx.is_some() => {
-                        // Recursive ref to the same sum (Tree.Node carrying
-                        // Tree fields, ditto Cons-cell shapes) — call self.
-                        walked = fold.walk_call(f, other);
-                        f.instruction(&Instruction::Call(self_fn_idx.unwrap()));
-                    }
-                    other => {
-                        // Nested record/sum/compound field — dispatch by
-                        // fn idx. Compound names (List<…>, Map<…,…>,
-                        // Option<…>, …) get whitespace stripped so the
-                        // lookup matches the canonical key the registry
-                        // recorded. Field refs are subtypes of eqref so
-                        // the call's typed args accept implicit upcast.
-                        let normalized = super::types::normalize_compound(other);
-                        let key = if eq_helper_fn_idx.contains_key(other) {
-                            other
-                        } else if eq_helper_fn_idx.contains_key(normalized.as_str()) {
-                            normalized.as_str()
-                        } else {
-                            return Err(WasmGcError::Validation(format!(
-                                "sum `{parent_name}` variant field type `{other}` has no eq \
-                                 dispatch (not primitive, no `__eq_{other}` helper, not \
-                                 self-recursive)"
-                            )));
-                        };
-                        let idx = eq_helper_fn_idx[key];
-                        walked = fold.walk_call(f, key);
-                        f.instruction(&Instruction::Call(idx));
-                    }
-                }
-                fold.field(f, position, walked);
-            }
-            if let Some(r) = remember {
-                r.remember(f, (head_local, needle_local));
-            }
-            fold.equal(f, false);
-        }
-        f.instruction(&Instruction::Br(2)); // out of outer Block(result i32)
-        f.instruction(&Instruction::Else);
-        // head V, needle != V → different variants → false
-        f.instruction(&Instruction::I32Const(0));
-        f.instruction(&Instruction::Br(2));
-        f.instruction(&Instruction::End);
-        f.instruction(&Instruction::End);
-    }
-    // No variant matched head — exhaustiveness should make this
-    // unreachable, but emit a defensive `0` so the block produces a
-    // well-typed i32 either way.
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::End); // outer block result
-    Ok(())
 }
 
 /// `cons : (T, List<T>) -> List<T>`. One `struct.new $list_T`. Used
@@ -3119,10 +2549,9 @@ fn emit_list_hash(
 }
 
 /// Inline DJB2-style hash for a sum element. Stack on entry has the
-/// element eqref; on exit has an `i32` hash. Walks variants in the
-/// same sorted order as `emit_sum_eq_inline` (so two compiler runs
-/// produce identical bytecode + so `eq` and `hash` agree on which
-/// variant to inspect first), and per matched variant mixes its
+/// element eqref; on exit has an `i32` hash. Walks variants sorted by
+/// name (so two compiler runs produce identical bytecode), and per
+/// matched variant mixes its
 /// `type_idx` (as a stable tag) plus DJB2-folds each primitive
 /// field into `elem_hash`. Variants are disjoint subtypes of the
 /// parent, so at most one `ref.test` succeeds per call — non-
@@ -3136,8 +2565,7 @@ fn emit_sum_inline_hash(
     elem_hash_local: u32,
     hash_helper_fn_idx: &std::collections::HashMap<String, u32>,
 ) -> Result<(), WasmGcError> {
-    // Collect variants of this sum. Same ordering as
-    // `emit_sum_eq_inline` for parity.
+    // Collect variants of this sum, sorted by name.
     let mut variants: Vec<(String, super::types::VariantInfo)> = registry
         .variants
         .iter()

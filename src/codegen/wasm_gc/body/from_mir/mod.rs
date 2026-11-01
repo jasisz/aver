@@ -86,6 +86,7 @@ mod collections;
 mod constructors;
 mod control;
 mod coverage;
+mod equality;
 pub(crate) mod int_tree;
 mod pattern_match;
 mod record_views;
@@ -1318,6 +1319,16 @@ pub(crate) fn emit_mir_expr(
                     // mix an i64 helper with ref operands (invalid wasm)
                     // and silently truncate a Big.
                     use crate::ir::hir::BuiltinIntrinsic;
+                    if matches!(
+                        intr,
+                        BuiltinIntrinsic::EqSameRef
+                            | BuiltinIntrinsic::EqScope
+                            | BuiltinIntrinsic::EqCount
+                            | BuiltinIntrinsic::EqPast
+                            | BuiltinIntrinsic::EqMemo
+                    ) {
+                        return equality::emit_eq_intrinsic(func, intr, &call.args, slots, ctx);
+                    }
                     if matches!(intr, BuiltinIntrinsic::BufNew) {
                         if call.args.len() != 1 {
                             return Err(WasmGcError::Validation(format!(

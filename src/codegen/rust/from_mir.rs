@@ -9376,6 +9376,13 @@ fn emit_mir_intrinsic_call(
             let builder = emit_mir_expr(&args[0], ctx)?;
             Some(format!("aver_rt::byte_builder_finalize({})", builder))
         }
+        // wasm-gc only: the structural equality functions that hold these
+        // exist only in that backend's program.
+        BuiltinIntrinsic::EqSameRef
+        | BuiltinIntrinsic::EqScope
+        | BuiltinIntrinsic::EqCount
+        | BuiltinIntrinsic::EqPast
+        | BuiltinIntrinsic::EqMemo => None,
     }
 }
 

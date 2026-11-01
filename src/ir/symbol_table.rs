@@ -962,6 +962,30 @@ impl SymbolTable {
         &self.fns[id.0 as usize]
     }
 
+    /// Reserve the identity of a function a backend writes itself, in the
+    /// entry scope, after every declared one. The name must be one no source
+    /// can spell (a leading `__`), so it never shadows a declaration.
+    pub fn register_synthetic_fn(&mut self, name: &str) -> FnId {
+        debug_assert!(name.starts_with("__"));
+        let key = FnKey::entry(name.to_string());
+        if let Some(id) = self.fn_index.get(&key) {
+            return *id;
+        }
+        let id = FnId(self.fns.len() as u32);
+        let index_in_module = self
+            .fns
+            .iter()
+            .filter(|f| f.module == ModuleId::ENTRY)
+            .count() as u32;
+        self.fn_index.insert(key.clone(), id);
+        self.fns.push(FnEntry {
+            key,
+            module: ModuleId::ENTRY,
+            index_in_module,
+        });
+        id
+    }
+
     /// Borrow a type entry when this table contains the canonical identity.
     /// Foreign table-local vector positions are not interpreted as this
     /// table's declarations.
