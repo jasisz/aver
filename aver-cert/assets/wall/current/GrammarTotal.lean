@@ -145,6 +145,7 @@ theorem totE_bare {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat} :
   | .try_ _ _, h => by simp [totE] at h
   | .scope _, h => by simp [totE] at h
   | .intWord _ _, _ => by simp [bareTries]
+  | .intCmp _ _ _ _, h => by simp [totE] at h
 theorem totArgs_bare {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat} :
     ∀ es : List Expr, totArgs mem mulOk calls lim es = true → bareTriesL es = []
   | [], _ => by simp [bareTriesL]
@@ -395,6 +396,7 @@ theorem totE_notStr {M : MCtx} {n : Nat} {mem : Nat → Bool} {mulOk calls : Boo
   | .intWord _ _, _, _, _, _, h => by
       simp only [tyOf] at h
       split at h <;> cases h
+  | .intCmp _ _ _ _, _, _, _, ht, _ => by simp [totE] at ht
 
 /-- The `n <= 0` guard over a represented Int in a local runs to its
     verdict (the inline sign test: no helper is called). -/
@@ -996,6 +998,7 @@ theorem progress :
   | .list _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
   | .try_ _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
   | .scope _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .intCmp _ _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
   | .intWord t w, Γ, env, tail, T, wl, st, htot, hΓ, hty, henv, hl, h0, hlim => by
       simp only [totE, Bool.and_eq_true, decide_eq_true_eq] at htot
       obtain ⟨htw, hwl⟩ := htot

@@ -379,6 +379,11 @@ mutual
         first, its operations parking words in the locals `w`, `w + 1` and
         `w + 2`. Its value is the tree's as plain `Int` arithmetic. -/
     | intWord (t : WTree) (w : Nat)
+    /-- `MirExpr::IntWord` of the comparison kind: the `Int` trees `a` and `b`
+        compared by `op` on the machine word first (the operations parking
+        words in `w`, `w + 1`, `w + 2`), and by the comparison helper on the
+        exact path. Its value is the comparison of the trees' values. -/
+    | intCmp (op : BinOp) (a b : WTree) (w : Nat)
   /-- The arms of a `Match`, in source order. -/
   inductive Arms where
     | nil
@@ -683,6 +688,7 @@ mutual
     | .try_ e R => R :: bareTries e
     | .scope _ => []
     | .intWord _ _ => []
+    | .intCmp _ _ _ _ => []
   def bareTriesL : List Expr → List Ty
     | [] => []
     | e :: es => bareTries e ++ bareTriesL es
@@ -846,6 +852,12 @@ def WTree.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WTree → Bool
 def wordOk (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (t : WTree) (w : Nat) : Bool :=
   t.ok M n Γ && decide (n ≤ w) && distinct (t.slots ++ [w, w + 1, w + 2])
 
+/-- A typed `Expr.intCmp op a b w`: `op` compares, and the two trees, read
+    as the one tree `a + b`, are typed with their locals as `wordOk` asks. -/
+def cmpWordOk (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (op : BinOp) (a b : WTree)
+    (w : Nat) : Bool :=
+  !op.isArith && wordOk M n Γ (.op .add a b) w
+
 mutual
   def tyOf (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (tail : Bool) :
       Expr → Option Ty
@@ -963,6 +975,7 @@ mutual
           | none => none
         else none
     | .intWord t w => if wordOk M n Γ t w then some .int else none
+    | .intCmp op a b w => if cmpWordOk M n Γ op a b w then some .bool else none
     | .match_ s arms =>
         match tyOf M n Γ false s with
         | some .int => if arms.firstLit then tyIntArms M n Γ tail arms else none
@@ -1491,6 +1504,7 @@ mutual
         | some v => some v
         | none => escv F env e
     | .intWord t _ => t.val env
+    | .intCmp op a b _ => (WTree.op op a b).val env
   def evalArgs (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
       List Expr → Option (List SVal)
     | [] => some []
@@ -1579,6 +1593,7 @@ mutual
             | _, _ => none
     | .scope _ => none
     | .intWord _ _ => none
+    | .intCmp _ _ _ _ => none
   def escvArgs (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
       List Expr → Option SVal
     | [] => none
@@ -1820,6 +1835,7 @@ theorem eval_none_of_escv {F : Nat → List SVal → Option SVal} :
               simp [eval, hv]
   | env, .scope e, x, h => by simp [escv] at h
   | env, .intWord _ _, x, h => by simp [escv] at h
+  | env, .intCmp _ _ _ _, x, h => by simp [escv] at h
 theorem evalArgs_none_of_escv {F : Nat → List SVal → Option SVal} :
     ∀ (env : Nat → Option SVal) (es : List Expr) (x : SVal), escvArgs F env es = some x →
       evalArgs F env es = none

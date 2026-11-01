@@ -556,6 +556,15 @@ def wordBlock (M : MCtx) (t : WTree) (w : Nat) : BI :=
     (.block none ((fastW M.carrier w t ++ [WInstr.call M.box, WInstr.br 1]).map .op) ::
       exactB M t)
 
+/-- `block $done (block $slow <i64 paths> <compare> br $done) <exact paths>
+    <compare helper>`: the comparison of two trees (`emit_int_word`,
+    `IntWordKind::Compare`). -/
+def cmpBlock (M : MCtx) (op : BinOp) (a b : WTree) (w : Nat) : BI :=
+  .block (some .bool)
+    (.block none ((fastW M.carrier w a ++ fastW M.carrier w b ++
+        [smallCmpInstr op, WInstr.br 1]).map .op) ::
+      (exactB M a ++ exactB M b ++ (intCmpTail M op).map .op))
+
 mutual
   def lowerB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool) : Expr → List BI
     | .literal (.int k) => [.op (.i64Const k), .op (.call M.box)]
@@ -710,6 +719,7 @@ mutual
         | _, _ => []
     | .scope e => lowerB M X Γ tail e
     | .intWord t w => (aheadW M t).map .op ++ [wordBlock M t w]
+    | .intCmp op a b w => (aheadW M a ++ aheadW M b).map .op ++ [cmpBlock M op a b w]
   def lowerArgsB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) : List Expr → List BI
     | [] => []
     | e :: es => lowerB M X Γ false e ++ lowerArgsB M X Γ es
@@ -1252,6 +1262,7 @@ mutual
     | .try_ e _ => exprLits e
     | .scope e => exprLits e
     | .intWord _ _ => []
+    | .intCmp _ _ _ _ => []
   def argsLits : List Expr → List (List Nat)
     | [] => []
     | e :: es => exprLits e ++ argsLits es

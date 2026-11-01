@@ -259,6 +259,10 @@ pub enum PlanExpr {
     /// first, its operations parking words in the locals `w`, `w + 1` and
     /// `w + 2`.
     IntWord(PlanWTree, u32),
+    /// `Grammar.Expr.intCmp`: two `Int` trees compared by the operation on
+    /// the machine word first, their operations parking words in the locals
+    /// `w`, `w + 1` and `w + 2`.
+    IntCmp(PlanBinOp, PlanWTree, PlanWTree, u32),
 }
 
 /// `Grammar.WLeaf`.
@@ -320,6 +324,12 @@ impl PlanWLeaf {
 }
 
 impl PlanWTree {
+    /// The tree `a + b`, as `Grammar.cmpWordOk` reads the two sides of a
+    /// comparison.
+    pub fn pair(a: &PlanWTree, b: &PlanWTree) -> PlanWTree {
+        PlanWTree::Op(PlanBinOp::Add, Box::new(a.clone()), Box::new(b.clone()))
+    }
+
     /// `Grammar.WTree.leaves`.
     pub fn leaves(&self) -> Vec<&PlanWLeaf> {
         match self {
@@ -726,6 +736,13 @@ impl PlanExpr {
             PlanExpr::IntWord(t, w) => {
                 out.push_str("(.intWord ");
                 t.write_lean(out);
+                out.push_str(&format!(" {w})"));
+            }
+            PlanExpr::IntCmp(op, a, b, w) => {
+                out.push_str(&format!("(.intCmp {} ", op.lean()));
+                a.write_lean(out);
+                out.push(' ');
+                b.write_lean(out);
                 out.push_str(&format!(" {w})"));
             }
             PlanExpr::Match(s, arms) => {
@@ -1224,7 +1241,7 @@ pub fn call_targets(e: &PlanExpr, out: &mut Vec<u32>) {
         | PlanExpr::Project(_, _, x)
         | PlanExpr::Try(x, _)
         | PlanExpr::Scope(x) => call_targets(x, out),
-        PlanExpr::IntWord(..) => {}
+        PlanExpr::IntWord(..) | PlanExpr::IntCmp(..) => {}
         PlanExpr::If(c, t, el) => {
             call_targets(c, out);
             call_targets(t, out);

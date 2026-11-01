@@ -36,8 +36,8 @@
 //! negations (as `0 - a`) over literals, locals and fields of records held in
 //! locals (a word record's field held as its `i64`), any other leaf bound by a
 //! `let` (the totality grammar, `GrammarTotal.totE`, reads such a tree of locals
-//! and literals as it reads the plain arithmetic); any other node is left as
-//! it is there.
+//! and literals as it reads the plain arithmetic), and comparisons of two such
+//! trees neither of which is a literal; any other node is left as it is there.
 
 use crate::ast::{BinOp, Spanned};
 
@@ -202,9 +202,17 @@ impl Pass<'_> {
         // wall's `let_` and local leaf, no new leaf kind.
         let mut lets = Vec::new();
         let mut root = root;
+        let mut kind = kind;
         if self.target.kept {
             self.bind_leaves(&mut root, line, &mut lets);
+            if let IntWordKind::Compare { rhs, .. } = &mut kind {
+                self.bind_leaves(rhs, line, &mut lets);
+            }
         }
+        let ty = match kind {
+            IntWordKind::Compare { .. } => crate::ast::Type::Bool,
+            _ => crate::ast::Type::Int,
+        };
         let mut ahead = 0;
         let root = self.place(root, &mut ahead);
         let kind = match kind {
@@ -222,7 +230,7 @@ impl Pass<'_> {
         }
         let mut out = Spanned::new(MirExpr::IntWord(Box::new(Spanned::new(word, line))), line);
         for (slot, value) in lets.into_iter().rev() {
-            out.set_ty(crate::ast::Type::Int);
+            out.set_ty(ty.clone());
             out = Spanned::new(
                 MirExpr::Let(Spanned::new(
                     MirLet {
@@ -306,15 +314,24 @@ impl Pass<'_> {
             bop.op,
             BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
         );
-        if self.target.kept || !compare || !is_int(&bop.lhs) || (self.target.binop_is_raw)(bop) {
+        if !compare || !is_int(&bop.lhs) || (self.target.binop_is_raw)(bop) {
             return None;
         }
         let sides = [&*bop.lhs, &*bop.rhs];
         let w = self.weight(sides[0])? + self.weight(sides[1])?;
+        let no_literal = sides.iter().all(|s| int_literal(&s.node).is_none());
         let held = |s: &&Spanned<MirExpr>| matches!(&s.node, MirExpr::Local(l) if (self.target.held)(l.node.slot.0));
-        let leaves = sides.iter().all(|s| int_literal(&s.node).is_none()) || sides.iter().any(held);
+        let leaves = no_literal || sides.iter().any(held);
         let twin = sides.iter().any(|s| self.twin_leaf(s));
-        (w > 0 || leaves || twin).then(|| {
+        // In a kept fn the wall proves a comparison of two trees neither of
+        // which is a literal (`Expr.intCmp`): a literal side compares by the
+        // tag test of the plain form there.
+        let chosen = if self.target.kept {
+            no_literal
+        } else {
+            w > 0 || leaves || twin
+        };
+        chosen.then(|| {
             let kind = IntWordKind::Compare {
                 op: bop.op,
                 rhs: self.tree(sides[1]),

@@ -955,10 +955,10 @@ impl Printer<'_> {
             }),
             MirExpr::Local(local) => PlanExpr::Local(local.node.slot.0),
             MirExpr::IntWord(word) => {
-                // The wall proves a tree's `Int` value; a comparison of two,
-                // or a machine word under an `Unbox`, it does not.
-                if !matches!(word.node.kind, crate::ir::mir::IntWordKind::Value) {
-                    return Err("IntWord comparison or machine word (not in the wall)".into());
+                // The wall proves a tree's `Int` value and a comparison of
+                // two trees; a machine word under an `Unbox` it does not.
+                if matches!(word.node.kind, crate::ir::mir::IntWordKind::Word) {
+                    return Err("IntWord machine word (not in the wall)".into());
                 }
                 let w = self.scratch_local(word.node.words)?;
                 for k in 1..3 {
@@ -966,7 +966,13 @@ impl Printer<'_> {
                         return Err("IntWord words not in a row".into());
                     }
                 }
-                PlanExpr::IntWord(self.word_tree(&word.node.root)?, w)
+                let root = self.word_tree(&word.node.root)?;
+                match &word.node.kind {
+                    crate::ir::mir::IntWordKind::Compare { op, rhs, .. } => {
+                        PlanExpr::IntCmp(bin_op(op)?, root, self.word_tree(rhs)?, w)
+                    }
+                    _ => PlanExpr::IntWord(root, w),
+                }
             }
             MirExpr::Let(l) => {
                 let l = &l.node;
@@ -1971,6 +1977,37 @@ fn capped(i: Int) -> Int
                 Box::new(PlanWTree::Leaf(PlanWLeaf::Local(0))),
             )
         );
+    }
+
+    const CMP_SRC: &str = r#"
+module M
+    intent = "t"
+
+fn below(a: Int, b: Int) -> Bool
+    a + 1 < b
+
+fn atZero(a: Int) -> Bool
+    a + 1 == 0
+"#;
+
+    /// A comparison of two trees, neither a literal, prints as one
+    /// comparison node on the machine word; a literal side keeps the plain
+    /// comparison (its tag test).
+    #[test]
+    fn a_comparison_of_two_trees_prints_as_one_node() {
+        let (map, _) = plans(CMP_SRC);
+        use PlanWTree as T;
+        let local = |i| Box::new(T::Leaf(PlanWLeaf::Local(i)));
+        let PlanExpr::IntCmp(op, a, b, _) = plan(&map, "below").body else {
+            panic!("below: {:?}", plan(&map, "below").body)
+        };
+        assert_eq!(op, PlanBinOp::Lt);
+        assert_eq!(a, T::Op(PlanBinOp::Add, local(0), Box::new(T::Lit(1))));
+        assert_eq!(b, *local(1));
+        assert!(matches!(
+            plan(&map, "atZero").body,
+            PlanExpr::BinOp(PlanBinOp::Eq, ..)
+        ));
     }
 
     #[test]

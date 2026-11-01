@@ -179,6 +179,30 @@ impl<'a> MCtx<'a> {
         })
     }
 
+    /// `GrammarLower.aheadW`: each leaf read ahead stored in its local.
+    fn ahead_w(&self, t: &PlanWTree) -> Vec<BI> {
+        let mut out = Vec::new();
+        for l in t.leaves() {
+            match l {
+                PlanWLeaf::Field {
+                    tid,
+                    field,
+                    base,
+                    slot,
+                } => out.extend(ops(vec![
+                    WI::LocalGet(*base),
+                    WI::StructGet(self.struct_of(*tid), *field),
+                    WI::LocalSet(*slot),
+                ])),
+                PlanWLeaf::Word { base, slot, .. } => {
+                    out.extend(ops(vec![WI::LocalGet(*base), WI::LocalSet(*slot)]));
+                }
+                PlanWLeaf::Local(_) => {}
+            }
+        }
+        out
+    }
+
     /// `GrammarLower.exactB`.
     fn exact_b(&self, t: &PlanWTree) -> Vec<BI> {
         match t {
@@ -620,6 +644,9 @@ impl MCtx<'_> {
             }
             PlanExpr::Neg(x) => (self.ty_of(n, g, false, x)? == PlanTy::Int).then_some(PlanTy::Int),
             PlanExpr::IntWord(t, w) => self.word_ok(n, g, t, *w).then_some(PlanTy::Int),
+            PlanExpr::IntCmp(op, a, b, w) => (!is_arith(*op)
+                && self.word_ok(n, g, &PlanWTree::pair(a, b), *w))
+            .then_some(PlanTy::Bool),
             PlanExpr::If(c, t, el) => {
                 match (
                     self.ty_of(n, g, false, c)?,
@@ -901,7 +928,7 @@ fn params_gamma(ps: &[PlanTy]) -> Gamma {
 /// `scope`.
 fn bare_tries<'e>(e: &'e PlanExpr, out: &mut Vec<&'e PlanTy>) {
     match e {
-        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::Scope(_) | PlanExpr::IntWord(..) => {}
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::Scope(_) | PlanExpr::IntWord(..) | PlanExpr::IntCmp(..) => {}
         PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
             bare_tries(v, out);
             bare_tries(b, out);
@@ -1898,31 +1925,27 @@ impl MCtx<'_> {
             },
             PlanExpr::Scope(inner) => self.lower(x, g, tail, inner),
             PlanExpr::IntWord(t, w) => {
-                let mut out = Vec::new();
-                for l in t.leaves() {
-                    if let PlanWLeaf::Field {
-                        tid,
-                        field,
-                        base,
-                        slot,
-                    } = l
-                    {
-                        out.extend(ops(vec![
-                            WI::LocalGet(*base),
-                            WI::StructGet(self.struct_of(*tid), *field),
-                            WI::LocalSet(*slot),
-                        ]));
-                    }
-                    if let PlanWLeaf::Word { base, slot, .. } = l {
-                        out.extend(ops(vec![WI::LocalGet(*base), WI::LocalSet(*slot)]));
-                    }
-                }
+                let mut out = self.ahead_w(t);
                 let mut fast = Vec::new();
                 fast_w(self.carrier, *w, t, &mut fast);
                 fast.extend([WI::Call(self.box_), WI::Br(1)]);
                 let mut body = vec![BI::Block(None, ops(fast))];
                 body.extend(self.exact_b(t));
                 out.push(BI::Block(Some(PlanTy::Int), body));
+                out
+            }
+            PlanExpr::IntCmp(op, a, b, w) => {
+                let mut out = self.ahead_w(a);
+                out.extend(self.ahead_w(b));
+                let mut fast = Vec::new();
+                fast_w(self.carrier, *w, a, &mut fast);
+                fast_w(self.carrier, *w, b, &mut fast);
+                fast.extend([small_cmp(*op), WI::Br(1)]);
+                let mut body = vec![BI::Block(None, ops(fast))];
+                body.extend(self.exact_b(a));
+                body.extend(self.exact_b(b));
+                body.extend(ops(self.int_cmp_tail(*op)));
+                out.push(BI::Block(Some(PlanTy::Bool), body));
                 out
             }
         }
@@ -2481,7 +2504,7 @@ fn literal_list_types(e: &PlanExpr, out: &mut Vec<PlanTy>) {
         | PlanExpr::Project(_, _, x)
         | PlanExpr::Try(x, _)
         | PlanExpr::Scope(x) => literal_list_types(x, out),
-        PlanExpr::IntWord(..) => {}
+        PlanExpr::IntWord(..) | PlanExpr::IntCmp(..) => {}
         PlanExpr::If(c, t, el) => {
             literal_list_types(c, out);
             literal_list_types(t, out);
@@ -2533,7 +2556,7 @@ fn string_lits<'e>(e: &'e PlanExpr, out: &mut Vec<&'e [u8]>) {
         | PlanExpr::Project(_, _, x)
         | PlanExpr::Try(x, _)
         | PlanExpr::Scope(x) => string_lits(x, out),
-        PlanExpr::IntWord(..) => {}
+        PlanExpr::IntWord(..) | PlanExpr::IntCmp(..) => {}
         PlanExpr::If(c, t, el) => {
             string_lits(c, out);
             string_lits(t, out);
@@ -2606,6 +2629,7 @@ fn tot_e(mem: &BTreeSet<u32>, mul_ok: bool, calls: bool, lim: u64, e: &PlanExpr)
                 && args.iter().all(|a| tot_e(mem, mul_ok, calls, lim, a))
         }
         PlanExpr::IntWord(t, w) => tot_w(mul_ok, t) && u64::from(*w) + 2 < lim,
+        PlanExpr::IntCmp(..) => false,
         PlanExpr::Let(_, v, body) => {
             tot_e(mem, mul_ok, calls, lim, v) && tot_e(mem, mul_ok, calls, lim, body)
         }
@@ -2627,6 +2651,7 @@ fn uses_mul(e: &PlanExpr) -> bool {
         PlanExpr::Call(_, args) | PlanExpr::TailCall(_, args) => args.iter().any(uses_mul),
         PlanExpr::If(c, t, el) => uses_mul(c) || uses_mul(t) || uses_mul(el),
         PlanExpr::IntWord(t, _) => uses_mul_w(t),
+        PlanExpr::IntCmp(..) => false,
         PlanExpr::Let(_, v, body) => uses_mul(v) || uses_mul(body),
         _ => false,
     }
@@ -2687,7 +2712,7 @@ fn facets_e(e: &PlanExpr, out: &mut BTreeSet<&'static str>) {
             facets_e(r, out);
         }
         PlanExpr::Neg(x) | PlanExpr::Try(x, _) | PlanExpr::Scope(x) => facets_e(x, out),
-        PlanExpr::IntWord(..) => {}
+        PlanExpr::IntWord(..) | PlanExpr::IntCmp(..) => {}
         PlanExpr::If(c, t, el) => {
             facets_e(c, out);
             facets_e(t, out);

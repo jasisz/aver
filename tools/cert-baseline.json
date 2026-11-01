@@ -3062,6 +3062,24 @@
   },
   "laws": []
  },
+ "tools/certkit/fixtures/treecompare.av": {
+  "bridges": [
+   "above",
+   "inOrder",
+   "sameSum",
+   "wider",
+   "width"
+  ],
+  "certified": {
+   "above": "L1",
+   "inOrder": "L1",
+   "sameSum": "L1",
+   "walk": "L1",
+   "wider": "L1",
+   "width": "L1"
+  },
+  "laws": []
+ },
  "tools/certkit/fixtures/tupleproj.av": {
   "bridges": [
    "pairFst",

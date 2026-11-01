@@ -292,6 +292,17 @@ impl Cited {
         }
     }
 
+    /// The types an `Int` tree on the machine word cites: `Int`, and the
+    /// record of each field leaf.
+    fn word_tree(&mut self, t: &PlanWTree) {
+        self.ty(&PlanTy::Int);
+        for l in t.leaves() {
+            if let PlanWLeaf::Field { tid, .. } | PlanWLeaf::Word { tid, .. } = l {
+                self.ty(&PlanTy::Record(*tid));
+            }
+        }
+    }
+
     fn expr(&mut self, e: &PlanExpr) {
         match e {
             PlanExpr::Literal(PlanLit::Str(b)) => {
@@ -339,13 +350,10 @@ impl Cited {
                 self.ty(&PlanTy::Record(*tid));
                 self.expr(b);
             }
-            PlanExpr::IntWord(t, _) => {
-                self.ty(&PlanTy::Int);
-                for l in t.leaves() {
-                    if let PlanWLeaf::Field { tid, .. } | PlanWLeaf::Word { tid, .. } = l {
-                        self.ty(&PlanTy::Record(*tid));
-                    }
-                }
+            PlanExpr::IntWord(t, _) => self.word_tree(t),
+            PlanExpr::IntCmp(_, a, b, _) => {
+                self.word_tree(a);
+                self.word_tree(b);
             }
             PlanExpr::Match(s, arms) => {
                 self.expr(s);
