@@ -2374,6 +2374,8 @@ fn termination_check_grants_l3_only_to_descending_groups() {
     let is_even = plan_block(&mutual_plans, "fn1", "isEvenP");
     let is_odd = plan_block(&mutual_plans, "fn2", "isOddP");
     let descent = "(.intWord (.op .sub (.leaf (.local 0)) (.lit (1))) 2)";
+    // `sumFrom` binds its self call by a `let`, so its words come one slot later.
+    let sum_descent = "(.intWord (.op .sub (.leaf (.local 0)) (.lit (1))) 3)";
     assert!(
         is_odd.contains(&format!("(.tailCall 1 [{descent}])")),
         "the mutual plan shape changed; refit the probe:\n{is_odd}"
@@ -2387,7 +2389,7 @@ fn termination_check_grants_l3_only_to_descending_groups() {
         );
     let recgen_plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     let sum_from = plan_block(&recgen_plans, "fn1", "sumFromP");
-    let self_call = format!("(.call (.fn 1) [{descent}])");
+    let self_call = format!("(.call (.fn 1) [{sum_descent}])");
     assert!(
         sum_from.contains(&self_call),
         "sumFrom's plan shape changed; refit the probe:\n{sum_from}"
@@ -2396,14 +2398,14 @@ fn termination_check_grants_l3_only_to_descending_groups() {
         .replacen("def sumFromP :", "def ascendingP :", 1)
         .replacen(
             &self_call,
-            "(.call (.fn 1) [(.intWord (.op .add (.leaf (.local 0)) (.lit (1))) 2)])",
+            "(.call (.fn 1) [(.intWord (.op .add (.leaf (.local 0)) (.lit (1))) 3)])",
             1,
         );
     let step_two = sum_from
         .replacen("def sumFromP :", "def stepTwoP :", 1)
         .replacen(
             &self_call,
-            "(.call (.fn 1) [(.intWord (.op .sub (.leaf (.local 0)) (.lit (2))) 2)])",
+            "(.call (.fn 1) [(.intWord (.op .sub (.leaf (.local 0)) (.lit (2))) 3)])",
             1,
         );
     let lean = format!(

@@ -29,6 +29,8 @@
      an `Int` tree on the machine word (`Expr.intWord`, `WTree.totW`), and
      `n - 1` may be such a tree; the tree's words lie below the function's
      locals count, so its `i64` path has the locals it writes.
+   * either arm may bind a value of the fragment by a `let` (the MIR binds a
+     tree's call leaf so) and use it in the rest of the arm.
 
    Against main this admits more (all of it proved below): other straight-line
    Int arithmetic in either arm, several member calls per arm, non-tail calls
@@ -99,6 +101,7 @@ mutual
     | .tailCall g args =>
         calls && mem g && descentHead args && totArgs mem mulOk calls lim args
     | .intWord t w => t.totW mulOk && decide (w + 2 < lim)
+    | .let_ _ v body => totE mem mulOk calls lim v && totE mem mulOk calls lim body
     | _ => false
   def totArgs (mem : Nat → Bool) (mulOk calls : Bool) (lim : Nat) : List Expr → Bool
     | [] => true
@@ -120,7 +123,9 @@ theorem totE_bare {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat} :
   | .tailCall _ args, h => by
       simp only [totE, Bool.and_eq_true] at h
       simp [bareTries, totArgs_bare args h.2]
-  | .let_ _ _ _, h => by simp [totE] at h
+  | .let_ _ v body, h => by
+      simp only [totE, Bool.and_eq_true] at h
+      simp [bareTries, totE_bare v h.1, totE_bare body h.2]
   | .call (.builtin _) _, h => by simp [totE] at h
   | .call (.lazy _) _, h => by simp [totE] at h
   | .call (.intrinsic _) _, h => by simp [totE] at h
@@ -147,6 +152,7 @@ mutual
   /-- Some member call occurs. -/
   def hasCall : Expr → Bool
     | .binOp _ l r => hasCall l || hasCall r
+    | .let_ _ v body => hasCall v || hasCall body
     | .call (.fn _) _ => true
     | .tailCall _ _ => true
     | _ => false
@@ -160,6 +166,7 @@ mutual
     | .tailCall _ args => usesMulArgs args
     | .ifThenElse c t e => usesMul c || usesMul t || usesMul e
     | .intWord t _ => t.usesMulW
+    | .let_ _ v body => usesMul v || usesMul body
     | _ => false
   def usesMulArgs : List Expr → Bool
     | [] => false
@@ -329,7 +336,7 @@ theorem totE_binOp {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat} {op : B
 theorem totE_notStr {M : MCtx} {n : Nat} {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat}
     (hSig : ∀ g sig, mem g = true → M.sigs g = some sig → sig.ret = .int ∨ sig.ret = .bool) :
     ∀ (e : Expr) (Γ : Nat → Option Ty) (tail : Bool),
-      (∀ i T', Γ i = some T' → T' = .int) →
+      (∀ i T', Γ i = some T' → T' ≠ .string) →
       totE mem mulOk calls lim e = true → tyOf M n Γ tail e ≠ some .string
   | .literal (.int k), Γ, tail, hΓ, _, h => by
       have := (tyOf_litInt_inv h).2; cases this
@@ -337,7 +344,7 @@ theorem totE_notStr {M : MCtx} {n : Nat} {mem : Nat → Bool} {mulOk calls : Boo
       have := tyOf_litBool_inv h; cases this
   | .local i, Γ, tail, hΓ, _, h => by
       simp only [tyOf] at h
-      have := hΓ i _ h; cases this
+      exact hΓ i _ h rfl
   | .binOp op l r, Γ, tail, hΓ, ht, h => by
       obtain ⟨_, hl, _⟩ := totE_binOp ht
       rcases tyOf_binOp_inv h with ⟨_, _, hT⟩ | ⟨_, _, _, hT⟩ | ⟨_, _, _, hT⟩ | ⟨htl, _, _⟩
@@ -355,7 +362,19 @@ theorem totE_notStr {M : MCtx} {n : Nat} {mem : Nat → Bool} {mulOk calls : Boo
       rcases hSig g sig ht.1.1.2 hsig with h2 | h2 <;> rw [h2] at hT <;> cases hT
   | .literal (.float _), _, _, _, ht, _ => by simp [totE] at ht
   | .literal (.str _), _, _, _, ht, _ => by simp [totE] at ht
-  | .let_ _ _ _, _, _, _, ht, _ => by simp [totE] at ht
+  | .let_ b v body, Γ, tail, hΓ, ht, h => by
+      simp only [totE, Bool.and_eq_true] at ht
+      obtain ⟨_, _, Tv, htv, htb⟩ := tyOf_let_inv h
+      have hv := totE_notStr (n := n) hSig v Γ false hΓ ht.1
+      refine totE_notStr hSig body (upd Γ b Tv) tail ?_ ht.2 htb
+      intro i T' hi
+      by_cases hib : i = b
+      · subst hib
+        rw [upd_same] at hi
+        cases hi
+        exact fun hs => hv (hs ▸ htv)
+      · rw [upd_ne _ _ hib] at hi
+        exact hΓ i T' hi
   | .call (.builtin _) _, _, _, _, ht, _ => by simp [totE] at ht
   | .call (.lazy _) _, _, _, _, ht, _ => by simp [totE] at ht
   | .neg _, _, _, _, ht, _ => by simp [totE] at ht
@@ -686,7 +705,7 @@ theorem progress :
     ∀ (e : Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal),
       totE mem mulOk calls lim e = true →
-      (∀ i T', Γ i = some T' → T' = .int) →
+      (∀ i T', Γ i = some T' → T' ≠ .string) →
       tyOf M X.n Γ tail e = some T →
       EnvTy M env Γ →
       LRel S M X env wl →
@@ -809,7 +828,41 @@ theorem progress :
           simp [seqOut, eraseL, eraseI, wRunF, har, hlen, popArgs_rev, hr]
   | .literal (.float _), _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
   | .literal (.str _), _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
-  | .let_ _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .let_ b v body, Γ, env, tail, T, wl, st, htot, hΓ, hty, henv, hl, h0, hlim => by
+      simp only [totE, Bool.and_eq_true] at htot
+      obtain ⟨hbn, hΓb, Tv, htv, htb⟩ := tyOf_let_inv hty
+      simp only [lowerW, lowerB, htv, eraseL_append, List.append_assoc]
+      obtain ⟨o1, h1⟩ := progress v Γ env false Tv wl st htot.1 hΓ htv henv hl h0 hlim
+      rcases agreement S box add sub mul cmp eq neg Ctr hNegC host ar
+        callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X v Γ env false Tv
+        wl st o1 htv henv hl h1 with ⟨sv1, _, hT1, hres1⟩ | hE
+      rotate_left
+      · rw [totE_bare v htot.1] at hE
+        exact (esc_nil hE).elim
+      obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
+      have hlen1 := wRunF_ok_length _ _ _ _ _ _ _ _ h1
+      rw [wRunF_append]
+      simp only [lowerW] at h1
+      rw [h1]
+      simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append, wRunF]
+      have hv := totE_notStr (n := X.n) hSig v Γ false hΓ htot.1
+      have hΓ' : ∀ i T', upd Γ b Tv i = some T' → T' ≠ .string := by
+        intro i T' hi
+        by_cases hib : i = b
+        · subst hib
+          rw [upd_same] at hi
+          cases hi
+          exact fun hs => hv (hs ▸ htv)
+        · rw [upd_ne _ _ hib] at hi
+          exact hΓ i T' hi
+      have hb0 : (0 : Nat) ≠ b := by
+        intro h
+        have := envTy_free henv hΓb
+        rw [← h, h0] at this
+        cases this
+      have h0' : upd env b sv1 0 = some (.i n) := by rw [upd_ne _ _ hb0]; exact h0
+      exact progress body (upd Γ b Tv) (upd env b sv1) tail T (wl1.set b w1) st htot.2 hΓ' htb
+        (envTy_upd henv hT1) (lrel_bind hl1 hbn hw1) h0' (by simp [hlen1]; exact hlim)
   | .call (.builtin _) _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
   | .call (.lazy _) _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
   | .neg _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
@@ -859,7 +912,7 @@ theorem progressArgs :
     ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
       (wl st : List WVal),
       totArgs mem mulOk calls lim es = true →
-      (∀ i T', Γ i = some T' → T' = .int) →
+      (∀ i T', Γ i = some T' → T' ≠ .string) →
       tysOf M X.n Γ es = some Ts →
       EnvTy M env Γ →
       LRel S M X env wl →
@@ -1051,7 +1104,11 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
     obtain ⟨pad, hpad, hfin⟩ := hentry
     have hLR := hLRp pad hpad
     have henv := envTy_args hTs
-    have hΓ := paramsΓ_int hall
+    have hΓ : ∀ i T', paramsΓ p.sig.params i = some T' → T' ≠ .string := by
+      intro i T' hi hs
+      have := paramsΓ_int hall i T' hi
+      rw [hs] at this
+      cases this
     have h0 : argsEnv (.i n :: tl) 0 = some (.i n) := rfl
     obtain ⟨w0, ws', rfl, hw0, _⟩ := sreprL_cons_inv hrep
     have hget : ((w0 :: ws') ++ pad)[0]? = some w0 := by

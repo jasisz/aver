@@ -97,6 +97,7 @@ const S1_FIXTURES: &[&str] = &[
     "verbatimwiden",
     "widenedmatch",
     "wordcarrier",
+    "wordleaves",
 ];
 
 /// Differential-only views stay in the test witness instead of enlarging the

@@ -2467,13 +2467,16 @@ fn tot_e(mem: &BTreeSet<u32>, mul_ok: bool, calls: bool, lim: u64, e: &PlanExpr)
                 && args.iter().all(|a| tot_e(mem, mul_ok, calls, lim, a))
         }
         PlanExpr::IntWord(t, w) => tot_w(mul_ok, t) && u64::from(*w) + 2 < lim,
+        PlanExpr::Let(_, v, body) => {
+            tot_e(mem, mul_ok, calls, lim, v) && tot_e(mem, mul_ok, calls, lim, body)
+        }
         _ => false,
     }
 }
 
 fn has_call(e: &PlanExpr) -> bool {
     match e {
-        PlanExpr::BinOp(_, l, r) => has_call(l) || has_call(r),
+        PlanExpr::BinOp(_, l, r) | PlanExpr::Let(_, l, r) => has_call(l) || has_call(r),
         PlanExpr::Call(PlanCallee::Fn(_), _) | PlanExpr::TailCall(_, _) => true,
         _ => false,
     }
@@ -2485,6 +2488,7 @@ fn uses_mul(e: &PlanExpr) -> bool {
         PlanExpr::Call(_, args) | PlanExpr::TailCall(_, args) => args.iter().any(uses_mul),
         PlanExpr::If(c, t, el) => uses_mul(c) || uses_mul(t) || uses_mul(el),
         PlanExpr::IntWord(t, _) => uses_mul_w(t),
+        PlanExpr::Let(_, v, body) => uses_mul(v) || uses_mul(body),
         _ => false,
     }
 }

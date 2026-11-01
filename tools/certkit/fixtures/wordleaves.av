@@ -1,0 +1,38 @@
+module WordLeaves
+    intent =
+        "Certify fixture for Int trees on the machine word whose leaves are"
+        "calls and other expressions: each such leaf is bound by a let of a"
+        "slot of its own ahead of the tree, which reads the slot as a local."
+    exposes [shift, spread, sumDown, scaledSum]
+    effects []
+
+fn shift(x: Int, lo: Int, hi: Int) -> Int
+    ? "A tree of locals only."
+    x - lo + hi
+
+verify shift
+    shift(5, 1, 2) => 6
+
+fn spread(a: Int, b: Int) -> Int
+    ? "Two call leaves in one tree, bound in source order."
+    shift(a, 1, 2) - shift(b, 3, 4) + a
+
+verify spread
+    spread(10, 20) => 0
+
+fn sumDown(n: Int) -> Int
+    ? "A countdown whose step adds its own call's result: a let and a tree, still total."
+    match n <= 0
+        true -> 0
+        false -> n + sumDown(n - 1)
+
+verify sumDown
+    sumDown(0) => 0
+    sumDown(4) => 10
+
+fn scaledSum(a: Int, b: Int) -> Int
+    ? "A product by a literal is a leaf of its own, bound by a let."
+    a * 3 + b
+
+verify scaledSum
+    scaledSum(2, 5) => 11

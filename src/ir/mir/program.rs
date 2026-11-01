@@ -258,6 +258,10 @@ pub struct MirFnRepr {
     /// (`super::self_tail`). The wasm-gc emitter lowers them so and the
     /// certificate plan states it; neither looks for the calls again.
     pub self_tail_loop: bool,
+    /// The slots a kept fn binds its `Int` trees' leaves by
+    /// (`super::int_word`), each holding an `Int`, numbered past every other
+    /// slot of the fn. Empty everywhere else.
+    pub leaf_slots: Vec<LocalId>,
 }
 
 /// What one scratch local of [`MirFnRepr::scratch`] holds.
