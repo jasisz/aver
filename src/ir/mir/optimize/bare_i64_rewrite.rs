@@ -311,6 +311,7 @@ fn rewrite_fn(
         entry_check: None,
         scratch: Vec::new(),
         self_tail_loop: false,
+        leaf_slots: Vec::new(),
     };
 
     // 2. Insert boundary nodes. The body is in RETURN position: a bare

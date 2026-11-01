@@ -3116,5 +3116,20 @@
    "wordOf": "L1"
   },
   "laws": []
+ },
+ "tools/certkit/fixtures/wordleaves.av": {
+  "bridges": [
+   "scaledSum",
+   "shift",
+   "spread",
+   "sumDown"
+  ],
+  "certified": {
+   "scaledSum": "L1",
+   "shift": "L1",
+   "spread": "L1",
+   "sumDown": "L3"
+  },
+  "laws": []
  }
 }

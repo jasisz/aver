@@ -5018,7 +5018,7 @@ fn cert_verify_declines_tampered_recursion_plan() {
             (
                 "zero locals",
                 "plan:sumFrom",
-                "locals := [.int, .word, .word, .word]",
+                "locals := [.int, .int, .word, .word, .word]",
                 "locals := []",
             ),
             // `sumFrom`'s descent `n - 1` becomes `n + 1`.
@@ -5046,8 +5046,8 @@ fn cert_verify_declines_tampered_recursion_plan() {
             (
                 "multiply relabel",
                 "plan:factorial",
-                "(.binOp .mul (.local 0)",
-                "(.binOp .add (.local 0)",
+                "(.intWord (.op .mul (.leaf (.local 0))",
+                "(.intWord (.op .add (.leaf (.local 0))",
             ),
             // `countDown`'s accumulator threading swapped.
             (

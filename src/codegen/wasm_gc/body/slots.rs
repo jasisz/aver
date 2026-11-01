@@ -271,6 +271,20 @@ impl SlotTable {
                 by_slot.push(v);
             }
         }
+        // The slots a kept fn binds its `Int` trees' leaves by
+        // (`MirFnRepr::leaf_slots`) come past every other slot: each is an
+        // `Int`, any slot between them an `i32` placeholder.
+        if let Some(last) = repr.leaf_slots.iter().map(|s| s.0 as usize).max() {
+            let aint = aver_to_wasm("Int", Some(registry))
+                .unwrap_or(None)
+                .unwrap_or(ValType::I32);
+            while by_slot.len() <= last {
+                let leaf = repr
+                    .leaf_slots
+                    .contains(&crate::ir::mir::LocalId(by_slot.len() as u32));
+                by_slot.push(if leaf { aint } else { ValType::I32 });
+            }
+        }
         // If this fn has any multi-arm Constructor match, reserve a
         // scratch slot at the end for stashing the subject. (ref null eq)
         // is the universal carrier — every wasm-gc struct subtypes it.

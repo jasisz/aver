@@ -1390,7 +1390,21 @@ fn print_fn_inner(
         }
     }
     let resolution = rfd.resolution.as_ref().ok_or("fn has no slot resolution")?;
-    let slot_types = resolution.local_slot_types.as_ref();
+    // The slots a kept fn binds its tree leaves by follow the resolver's
+    // (`MirFnRepr::leaf_slots`), as the emitter lays them out.
+    let mut slot_types: Vec<crate::ast::Type> = resolution.local_slot_types.as_ref().to_vec();
+    if let Some(last) = repr.leaf_slots.iter().map(|s| s.0 as usize).max() {
+        while slot_types.len() <= last {
+            let leaf = repr
+                .leaf_slots
+                .contains(&crate::ir::mir::LocalId(slot_types.len() as u32));
+            slot_types.push(if leaf {
+                crate::ast::Type::Int
+            } else {
+                crate::ast::Type::Invalid
+            });
+        }
+    }
     let nparams = rfd.params.len();
     if nparams != mir_fn.params.len() || slot_types.len() < nparams {
         return Err("parameter count mismatch".into());

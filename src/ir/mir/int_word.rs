@@ -40,11 +40,19 @@
 use crate::ast::{BinOp, Spanned};
 
 use super::expr::{
-    IntWordHold, IntWordKind, IntWordNode, IntWordOp, MirBinOp, MirExpr, MirIntWord,
-    int_word_shell, walk_children_mut,
+    IntWordHold, IntWordKind, IntWordNode, IntWordOp, MirBinOp, MirExpr, MirIntWord, MirLet,
+    MirLocal, int_word_shell, walk_children_mut,
 };
 use super::int_tree::{self, int_literal, is_int};
-use super::program::{MirFn, MirScratch};
+use super::program::{LocalId, MirFn, MirScratch};
+
+/// The name of the `let` a kept fn binds a tree's leaf by.
+pub const LEAF_BINDING: &str = "__leaf";
+
+/// A field of a record held in a local: a leaf the wall reads ahead itself.
+fn is_local_field(e: &Spanned<MirExpr>) -> bool {
+    matches!(&e.node, MirExpr::Project(p) if matches!(p.node.base.node, MirExpr::Local(_)))
+}
 
 /// The facts the choice reads about the target's representation.
 pub struct Target<'a> {
@@ -77,12 +85,15 @@ pub fn mark_fn(f: &MirFn, target: &Target<'_>) -> Option<MirFn> {
         target,
         scratch: Vec::new(),
         found: false,
+        leaf_slots: Vec::new(),
     };
     pass.walk(&mut out.body);
     if !pass.found {
         return None;
     }
     out.repr.scratch = pass.scratch;
+    out.local_count += pass.leaf_slots.len() as u32;
+    out.repr.leaf_slots = pass.leaf_slots;
     Some(out)
 }
 
@@ -91,6 +102,8 @@ struct Pass<'a> {
     target: &'a Target<'a>,
     scratch: Vec<MirScratch>,
     found: bool,
+    /// The slots minted for the leaves a kept fn binds by a `let`.
+    leaf_slots: Vec<LocalId>,
 }
 
 type Ops<'e> = (IntWordOp, Vec<&'e Spanned<MirExpr>>);
@@ -128,6 +141,15 @@ impl Pass<'_> {
     ) -> Spanned<MirExpr> {
         self.found = true;
         let words = self.words();
+        // In a kept fn, a leaf that is neither a local, a literal nor a field
+        // of a record in a local is bound by a `let` of a slot of its own
+        // ahead of the node, and the tree reads that slot as a local: the
+        // wall's `let_` and local leaf, no new leaf kind.
+        let mut lets = Vec::new();
+        let mut root = root;
+        if self.target.kept {
+            self.bind_leaves(&mut root, line, &mut lets);
+        }
         let mut ahead = 0;
         let root = self.place(root, &mut ahead);
         let kind = match kind {
@@ -143,7 +165,62 @@ impl Pass<'_> {
         if let IntWordKind::Compare { rhs, .. } = &mut word.kind {
             self.walk_ahead(rhs);
         }
-        Spanned::new(MirExpr::IntWord(Box::new(Spanned::new(word, line))), line)
+        let mut out = Spanned::new(MirExpr::IntWord(Box::new(Spanned::new(word, line))), line);
+        for (slot, value) in lets.into_iter().rev() {
+            out.set_ty(crate::ast::Type::Int);
+            out = Spanned::new(
+                MirExpr::Let(Spanned::new(
+                    MirLet {
+                        binding: slot,
+                        binding_name: LEAF_BINDING.to_string(),
+                        value: Box::new(value),
+                        body: Box::new(out),
+                    },
+                    line,
+                )),
+                line,
+            );
+        }
+        out
+    }
+
+    /// Replace each leaf of `node` read ahead that is not a field of a
+    /// record in a local by a fresh slot, in source order, and collect the
+    /// `let` binding it (its value walked for its own trees).
+    fn bind_leaves(
+        &mut self,
+        node: &mut IntWordNode,
+        line: crate::ast::SourceLine,
+        lets: &mut Vec<(LocalId, Spanned<MirExpr>)>,
+    ) {
+        match node {
+            IntWordNode::Op { args, .. } => {
+                for a in args {
+                    self.bind_leaves(a, line, lets);
+                }
+            }
+            IntWordNode::Ahead(e, ..) if !is_local_field(e) => {
+                let mut value = (**e).clone();
+                self.walk(&mut value);
+                let slot = LocalId(self.f.local_count + self.leaf_slots.len() as u32);
+                self.leaf_slots.push(slot);
+                let local = Spanned::new(
+                    MirExpr::Local(Spanned::new(
+                        MirLocal {
+                            slot,
+                            last_use: false,
+                            name: LEAF_BINDING.to_string(),
+                        },
+                        line,
+                    )),
+                    line,
+                );
+                local.set_ty(crate::ast::Type::Int);
+                lets.push((slot, value));
+                *node = IntWordNode::Local(Box::new(local));
+            }
+            _ => {}
+        }
     }
 
     /// A leaf read ahead is emitted as any expression: its own trees.
@@ -266,6 +343,15 @@ impl Pass<'_> {
                         IntWordHold::Int,
                     ))
                 }
+                // A field of a word record, a bare slot or a project of a
+                // bare carrier stays out; any other `Int` expression is bound
+                // by a `let` (`bind_leaves`).
+                MirExpr::Local(_) | MirExpr::Project(_) => None,
+                _ if is_int(e) && !(t.renders_raw)(&e.node) => Some(IntWordNode::Ahead(
+                    Box::new(e.clone()),
+                    u32::MAX,
+                    IntWordHold::Int,
+                )),
                 _ => None,
             };
         }
