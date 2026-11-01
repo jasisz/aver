@@ -123,15 +123,27 @@ pub fn rewrite_free_value(
 /// every fn in a call-graph SCC of size > 1 (see
 /// [`mutual_recursion_box_set`]). Fail-closed — over-boxing a signature is
 /// always sound (it just declines an unboxing), under-boxing would desync.
+///
+/// `kept_fns` are the fns a `--certify` build keeps for its certificate,
+/// whose plans the certificate states over `Int`. Each keeps a boxed
+/// signature, as a member of `boxed_signature_fns` does, so a kept caller
+/// calls it on `Int`s; and in its body only a word record's read renders
+/// raw, so the arithmetic over it stays `Int` for the word trees to compute
+/// with the overflow checked ([`FnBareFacts::words_only`]). Empty in a plain
+/// build.
 pub fn rewrite_for_wasm_gc(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
     carrier: &super::bare_i64::CarrierIntervals,
     field_carrier: &super::bare_i64::FieldCarrierIntervals,
+    kept_fns: &std::collections::HashSet<crate::ir::FnId>,
 ) -> MirProgram {
     // No entry check: the wasm-gc emitter has no loop prologue for it.
-    let facts = super::bare_i64::analyze_with_fields(&program, carrier, field_carrier, false);
-    rewrite(program, facts, boxed_signature_fns, carrier, field_carrier).0
+    let mut facts = super::bare_i64::analyze_with_fields(&program, carrier, field_carrier, false);
+    facts.keep_words_only(kept_fns);
+    let boxed: std::collections::HashSet<crate::ir::FnId> =
+        boxed_signature_fns.union(kept_fns).copied().collect();
+    rewrite(program, facts, &boxed, carrier, field_carrier).0
 }
 
 /// The shared rewrite both public entries delegate to. Target-agnostic:
@@ -211,6 +223,7 @@ fn rewrite(
                 rust: analyzed.rust,
                 raw_ops: analyzed.raw_ops.clone(),
                 carrier_ids: analyzed.carrier_ids.clone(),
+                words_only: analyzed.words_only,
                 ..FnBareFacts::default()
             }
         } else {
@@ -1256,6 +1269,61 @@ mod tests {
             _ => super::super::bare_i64::tests_visit_children(e, &mut |child| {
                 count_code_carrier_calls(child, false, out)
             }),
+        }
+    }
+
+    #[test]
+    fn a_kept_fn_stays_on_int() {
+        let src = r#"
+module Kept
+    intent = "t"
+    depends []
+
+fn countdown(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn spread(n: Int) -> Int
+    countdown(20000) * 3 + n
+
+fn main() -> Int
+    spread(1)
+"#;
+        let wasm_gc = |kept: &[&str]| {
+            let program = optimized(src);
+            let kept = program
+                .iter()
+                .filter(|(_, f)| kept.contains(&f.name.as_str()))
+                .map(|(id, _)| *id)
+                .collect();
+            rewrite_for_wasm_gc(
+                program,
+                &std::collections::HashSet::new(),
+                &super::super::bare_i64::CarrierIntervals::new(),
+                &super::super::bare_i64::FieldCarrierIntervals::new(),
+                &kept,
+            )
+        };
+        let plain = wasm_gc(&[]);
+        let countdown = fn_named(&plain, "countdown");
+        assert!(
+            countdown.repr.param_is_bare(0),
+            "a plain build runs the counter raw"
+        );
+        let kept = wasm_gc(&["countdown", "spread"]);
+        for name in ["countdown", "spread"] {
+            let f = fn_named(&kept, name);
+            assert!(
+                !f.repr.bare_return
+                    && f.repr.bare_slots.is_empty()
+                    && !f.repr.bare_params.iter().any(|b| *b)
+            );
+            assert_eq!(
+                count_boundaries(&f.body.node),
+                (0, 0),
+                "`{name}` computes on `Int` with no boundary"
+            );
         }
     }
 

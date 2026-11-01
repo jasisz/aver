@@ -96,6 +96,7 @@ const S1_FIXTURES: &[&str] = &[
     "verbatimgen",
     "verbatimwiden",
     "widenedmatch",
+    "wordarith",
     "wordcarrier",
     "wordleaves",
 ];
