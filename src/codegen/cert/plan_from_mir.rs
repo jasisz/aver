@@ -1875,29 +1875,22 @@ fn notLiteral(a: Int, d: Int) -> Int
     Result.withDefault(Int.div(a, d), a)
 "#;
 
-    /// `Int.div` / `Int.mod` print as the resolver left them: the literal
-    /// divisor as the Euclidean intrinsic, a variable divisor only fused
-    /// under `Result.withDefault` with an Int literal default.
+    /// `Int.div` / `Int.mod` by a literal print as a node of the `Int` tree
+    /// on the machine word; a variable divisor only fused under
+    /// `Result.withDefault` with an Int literal default.
     #[test]
-    fn division_prints_as_intrinsic_or_fused_default() {
+    fn division_prints_as_word_tree_or_fused_default() {
         let (map, _) = plans(DIV_SRC);
         use PlanExpr as E;
         let l = E::Local;
         let int = |k: i64| E::Literal(PlanLit::Int(k));
-        assert_eq!(
-            plan(&map, "halve").body,
-            E::Call(
-                PlanCallee::Intrinsic(PlanIntrinsic::IntDivEuclid),
-                vec![l(0), int(2)]
-            )
-        );
-        assert_eq!(
-            plan(&map, "low").body,
-            E::Call(
-                PlanCallee::Intrinsic(PlanIntrinsic::IntModEuclid),
-                vec![l(0), int(256)]
-            )
-        );
+        let local = || Box::new(PlanWTree::Leaf(PlanWLeaf::Local(0)));
+        let tree = |name: &str| match plan(&map, name).body {
+            E::IntWord(t, _) => t,
+            other => panic!("{name}: {other:?}"),
+        };
+        assert_eq!(tree("halve"), PlanWTree::DivLit(2, local()));
+        assert_eq!(tree("low"), PlanWTree::ModLit(256, local()));
         let fused = |op, d| {
             E::Call(
                 PlanCallee::Lazy(PlanLazy::ResWithDefault),
@@ -1946,10 +1939,27 @@ fn capped(i: Int) -> Int
         );
     }
 
+    /// A negation prints as the difference `0 - x` on the machine word: the
+    /// printer has no negation template.
+    #[test]
+    fn a_negation_prints_as_a_difference_from_zero() {
+        let (map, _) = plans(SRC);
+        let PlanExpr::IntWord(t, _) = plan(&map, "neg").body else {
+            panic!("neg: {:?}", plan(&map, "neg").body)
+        };
+        assert_eq!(
+            t,
+            PlanWTree::Op(
+                PlanBinOp::Sub,
+                Box::new(PlanWTree::Lit(0)),
+                Box::new(PlanWTree::Leaf(PlanWLeaf::Local(0))),
+            )
+        );
+    }
+
     #[test]
     fn unadmitted_nodes_decline_by_name() {
         let (map, _) = plans(SRC);
-        assert_eq!(reason(&map, "neg"), "Neg (no Int negation helper template)");
         assert_eq!(reason(&map, "divide"), "BinOp Div");
         assert_eq!(reason(&map, "effectful"), "fn declares effects");
     }
