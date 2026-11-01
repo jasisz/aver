@@ -1,0 +1,23 @@
+module FloatExponentLiterals
+    intent = "Float literals with an exponent, in both letter cases and with either sign, read as the values they name."
+    effects [Console.print]
+
+fn scale(x: Float) -> Float
+    ? "Multiplies by a literal written with an exponent."
+    x * 1.0e3
+
+verify scale
+    scale(2.5) => 2500.0
+    scale(1.0e-3) => 1.0
+    scale(-4.0E2) => -4.0e5
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{1.0e20 == 100000000000000000000.0}")
+    Console.print("{Float.toBits(3.5e38)}")
+    Console.print("{Float.toBits(2.0e-7)}")
+    Console.print("{Float.toBits(1.5e+3)}")
+    Console.print("{Float.toBits(4.9e-324)}")
+    Console.print("{Float.toBits(1.7976931348623157e308)}")
+    Console.print("{Float.toBits(-2.5E-3)}")
+    Console.print("{scale(1.0e-3)}")

@@ -144,6 +144,8 @@ pub fn emit_builtin_call(
         FloatSin => format!("Float.sin {}", p(&a[0])),
         FloatCos => format!("Float.cos {}", p(&a[0])),
         FloatAtan2 => format!("Float.atan2 {} {}", p(&a[0]), p(&a[1])),
+        FloatToBits => format!("AverFloat.toBits {}", p(&a[0])),
+        FloatFromBits => format!("AverFloat.fromBits {}", p(&a[0])),
 
         // ---- Bits ----
         // A bit-level VIEW of `Int`, never a bit-vector: `AverBits.*` is

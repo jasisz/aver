@@ -84,7 +84,7 @@ function tokenize(line) {
 
         // Number
         if (/\d/.test(line[i])) {
-            const m = line.slice(i).match(/^\d+\.?\d*/);
+            const m = line.slice(i).match(/^\d+\.\d+(?:[eE][+-]?\d+)?|^\d+\.?\d*/);
             if (m) {
                 tokens.push({ type: T_NUMBER, text: m[0] });
                 i += m[0].length;

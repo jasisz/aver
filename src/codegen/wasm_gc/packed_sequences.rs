@@ -24,12 +24,17 @@ pub(super) struct PackedSequenceOps {
     pub(super) concat: u32,
     pub(super) take: u32,
     pub(super) drop: u32,
+    /// `get(packed, index) -> List<Int>`: the one-element list holding the
+    /// element at `index`, or the empty list out of range. Present only
+    /// when a program matches a list pattern on `List.drop` of a carrier.
+    pub(super) get: Option<u32>,
 }
 
 #[derive(Default)]
 pub(super) struct PackedSequenceHelperRegistry {
     ops: HashMap<String, PackedSequenceOps>,
     type_indices: HashMap<String, (u32, u32, u32, u32)>,
+    get_type_indices: HashMap<String, u32>,
     order: Vec<String>,
 }
 
@@ -37,6 +42,7 @@ impl PackedSequenceHelperRegistry {
     pub(super) fn assign_slots(
         &mut self,
         registry: &TypeRegistry,
+        with_get: bool,
         next_fn_idx: &mut u32,
         next_type_idx: &mut u32,
     ) {
@@ -59,6 +65,14 @@ impl PackedSequenceHelperRegistry {
             *next_fn_idx += 1;
             let drop = *next_fn_idx;
             *next_fn_idx += 1;
+            let get = with_get.then(|| {
+                let get_type = *next_type_idx;
+                *next_type_idx += 1;
+                self.get_type_indices.insert(name.clone(), get_type);
+                let get = *next_fn_idx;
+                *next_fn_idx += 1;
+                get
+            });
             self.ops.insert(
                 name.clone(),
                 PackedSequenceOps {
@@ -67,6 +81,7 @@ impl PackedSequenceHelperRegistry {
                     concat,
                     take,
                     drop,
+                    get,
                 },
             );
             self.type_indices.insert(
@@ -126,6 +141,9 @@ impl PackedSequenceHelperRegistry {
             types
                 .ty()
                 .function([packed_ref, ValType::I64], [packed_ref]);
+            if self.get_type_indices.contains_key(name) {
+                types.ty().function([packed_ref, ValType::I64], [list_ref]);
+            }
         }
         Ok(())
     }
@@ -138,6 +156,9 @@ impl PackedSequenceHelperRegistry {
             funcs.function(concat);
             funcs.function(slice);
             funcs.function(slice);
+            if let Some(get) = self.get_type_indices.get(name) {
+                funcs.function(*get);
+            }
         }
     }
 
@@ -152,6 +173,9 @@ impl PackedSequenceHelperRegistry {
             codes.function(&emit_concat(name, registry)?);
             codes.function(&emit_take(name, registry)?);
             codes.function(&emit_drop(name, registry)?);
+            if self.get_type_indices.contains_key(name) {
+                codes.function(&emit_get(name, registry)?);
+            }
         }
         Ok(())
     }
@@ -389,6 +413,77 @@ fn emit_pack(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcErro
     Ok(f)
 }
 
+/// The first element of `List.drop(carrier, index)` as a one-element
+/// `List<Int>`, or the empty list when nothing is left: all a list match
+/// that ignores the tail can tell of that value, read in O(1). A negative
+/// index drops nothing, as `List.drop` does, so it reads element zero.
+fn emit_get(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let packed = registry
+        .packed_sequence(name)
+        .ok_or_else(|| WasmGcError::Validation(format!("packed type `{name}` missing")))?;
+    let list_idx = registry
+        .list_type_idx("List<Int>")
+        .ok_or_else(|| WasmGcError::Validation("packed carrier requires List<Int>".into()))?;
+    // params: 0=input, 1=index. Clamp a negative index to zero, then
+    // compare it against the length.
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64GtS);
+    f.instruction(&Instruction::Select);
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64LtU);
+    f.instruction(&Instruction::If(BlockType::Result(ref_ty(list_idx))));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32WrapI64);
+    emit_read_element(&mut f, packed.type_idx, packed.layout.element);
+    if registry.bignum {
+        let from_i64 = registry.aint_from_i64_fn_idx.ok_or_else(|| {
+            WasmGcError::Validation("packed carrier requires __aint_from_i64".into())
+        })?;
+        f.instruction(&Instruction::Call(from_i64));
+    }
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
+    f.instruction(&Instruction::StructNew(list_idx));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Reads one packed element (array and i32 index on the stack) as an `i64`.
+fn emit_read_element(f: &mut Function, type_idx: u32, element: PackedIntElement) {
+    match element {
+        PackedIntElement::U8 | PackedIntElement::U16 => {
+            f.instruction(&Instruction::ArrayGetU(type_idx));
+            f.instruction(&Instruction::I64ExtendI32U);
+        }
+        PackedIntElement::I8 | PackedIntElement::I16 => {
+            f.instruction(&Instruction::ArrayGetS(type_idx));
+            f.instruction(&Instruction::I64ExtendI32S);
+        }
+        PackedIntElement::U32 => {
+            f.instruction(&Instruction::ArrayGet(type_idx));
+            f.instruction(&Instruction::I64ExtendI32U);
+        }
+        PackedIntElement::I32 => {
+            f.instruction(&Instruction::ArrayGet(type_idx));
+            f.instruction(&Instruction::I64ExtendI32S);
+        }
+        PackedIntElement::I64 => {
+            f.instruction(&Instruction::ArrayGet(type_idx));
+        }
+    }
+}
+
 fn emit_unpack(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let packed = registry
         .packed_sequence(name)
@@ -417,27 +512,7 @@ fn emit_unpack(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcEr
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(2));
-    match packed.layout.element {
-        PackedIntElement::U8 | PackedIntElement::U16 => {
-            f.instruction(&Instruction::ArrayGetU(packed.type_idx));
-            f.instruction(&Instruction::I64ExtendI32U);
-        }
-        PackedIntElement::I8 | PackedIntElement::I16 => {
-            f.instruction(&Instruction::ArrayGetS(packed.type_idx));
-            f.instruction(&Instruction::I64ExtendI32S);
-        }
-        PackedIntElement::U32 => {
-            f.instruction(&Instruction::ArrayGet(packed.type_idx));
-            f.instruction(&Instruction::I64ExtendI32U);
-        }
-        PackedIntElement::I32 => {
-            f.instruction(&Instruction::ArrayGet(packed.type_idx));
-            f.instruction(&Instruction::I64ExtendI32S);
-        }
-        PackedIntElement::I64 => {
-            f.instruction(&Instruction::ArrayGet(packed.type_idx));
-        }
-    }
+    emit_read_element(&mut f, packed.type_idx, packed.layout.element);
     if registry.bignum {
         let from_i64 = registry.aint_from_i64_fn_idx.ok_or_else(|| {
             WasmGcError::Validation("packed carrier requires __aint_from_i64".into())

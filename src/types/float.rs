@@ -15,6 +15,8 @@
 ///   Float.pow(base, exp) → Float                  — exponentiation
 ///   Float.atan2(y, x)    → Float                  — two-argument arctangent
 ///   Float.pi()           → Float                  — π constant
+///   Float.toBits(f)      → Int                    — IEEE-754 binary64 pattern, unsigned
+///   Float.fromBits(b)    → Float                  — the Float whose pattern is `Bits.low(b, 64)`
 ///
 /// No effects required.
 use crate::nan_value::{Arena, NanIntExt, NanValue};
@@ -41,6 +43,8 @@ pub fn call_nv(
         "Float.pow" => Some(pow_nv(args, arena)),
         "Float.atan2" => Some(atan2_nv(args, arena)),
         "Float.pi" => Some(pi_nv(args)),
+        "Float.toBits" => Some(to_bits_nv(args, arena)),
+        "Float.fromBits" => Some(from_bits_nv(args, arena)),
         _ => None,
     }
 }
@@ -96,6 +100,34 @@ fn from_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
         ));
     }
     Ok(NanValue::new_float(v.as_aver_int(arena).to_f64()))
+}
+
+/// The IEEE-754 binary64 bit pattern of `f`, read as an unsigned Int in
+/// `[0, 2^64)`. A NaN reports the payload the VM carries; NaN-boxing may
+/// already have cleared one quiet bit of a payload that collided with a box.
+fn to_bits_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let v = nv_check1("Float.toBits", args)?;
+    if !v.is_float() {
+        return Err(RuntimeError::Error(
+            "Float.toBits: argument must be a Float".to_string(),
+        ));
+    }
+    let bits = aver_rt::AverInt::from_u64(v.as_float().to_bits());
+    Ok(NanValue::from_aver_int(bits, arena))
+}
+
+/// The Float whose binary64 pattern is the lowest 64 bits of `b` under
+/// infinite two's complement (`Bits.low(b, 64)`), so it is total on ℤ.
+fn from_bits_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let v = nv_check1("Float.fromBits", args)?;
+    if !v.is_int() {
+        return Err(RuntimeError::Error(
+            "Float.fromBits: argument must be an Int".to_string(),
+        ));
+    }
+    Ok(NanValue::new_float(f64::from_bits(
+        v.as_aver_int(arena).low_u64(),
+    )))
 }
 
 fn abs_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {

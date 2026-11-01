@@ -766,6 +766,35 @@ impl AverInt {
         }
     }
 
+    /// The non-negative integer `n`, the reading of a 64-bit pattern as
+    /// unsigned.
+    #[inline]
+    pub fn from_u64(n: u64) -> AverInt {
+        match i64::try_from(n) {
+            Ok(n) => AverInt::from_i64(n),
+            Err(_) => AverInt::from_bigint(BigInt::from(n)),
+        }
+    }
+
+    /// The lowest 64 bits of `self` under infinite two's complement, what
+    /// `Bits.low(self, 64)` keeps, as a machine word. Total: `-1` gives
+    /// `u64::MAX` and `2^64 + 5` gives `5`.
+    #[inline]
+    pub fn low_u64(&self) -> u64 {
+        match self.view() {
+            View::Small(n) => n as u64,
+            View::Big(b) => {
+                let digits = b.to_u64_digits().1;
+                let magnitude = digits.first().copied().unwrap_or(0);
+                if b.sign() == Sign::Minus {
+                    magnitude.wrapping_neg()
+                } else {
+                    magnitude
+                }
+            }
+        }
+    }
+
     /// `self` as `f64`, lossily. Huge magnitudes saturate to `±∞` (never
     /// `NaN`), matching the Lean prelude's `Float.ofInt`/IEEE coercion. This
     /// is the only intentionally-lossy conversion.
@@ -1432,6 +1461,33 @@ mod tests {
         assert_eq!(AverInt::from_f64_trunc(f64::NAN), AverInt::zero());
         assert_eq!(AverInt::from_f64_trunc(f64::INFINITY), AverInt::zero());
         assert_eq!(AverInt::from_f64_trunc(f64::NEG_INFINITY), AverInt::zero());
+    }
+
+    #[test]
+    fn from_u64_reads_the_pattern_unsigned() {
+        assert_eq!(AverInt::from_u64(0), AverInt::zero());
+        assert_eq!(
+            AverInt::from_u64(1 << 63).to_string(),
+            "9223372036854775808"
+        );
+        assert_eq!(
+            AverInt::from_u64(u64::MAX).to_string(),
+            "18446744073709551615"
+        );
+    }
+
+    #[test]
+    fn low_u64_keeps_the_lowest_64_bits_in_twos_complement() {
+        let big = |s: &str| AverInt::from_str(s).unwrap();
+        assert_eq!(AverInt::from_i64(-1).low_u64(), u64::MAX);
+        assert_eq!(AverInt::from_i64(5).low_u64(), 5);
+        assert_eq!(big("18446744073709551621").low_u64(), 5);
+        assert_eq!(big("-18446744073709551616").low_u64(), 0);
+        assert_eq!(big("-18446744073709551617").low_u64(), u64::MAX);
+        assert_eq!(big("-9223372036854775809").low_u64(), (1 << 63) - 1);
+        for n in [0u64, 1, 1 << 63, u64::MAX, 4607182418800017408] {
+            assert_eq!(AverInt::from_u64(n).low_u64(), n);
+        }
     }
 
     // -- Bit-level view ----------------------------------------------------

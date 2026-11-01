@@ -360,6 +360,21 @@ pub(crate) fn emit_mir_native_scalar_builtin(
             round_ties_away!(0);
             func.instruction(&Instruction::Call(from_f64));
         }
+        // The binary64 pattern as an unsigned Int, and back from the lowest
+        // 64 bits of any Int. `i64.reinterpret_f64` keeps whatever NaN
+        // payload the engine hands over; engines may canonicalize it.
+        "Float.toBits" if args.len() == 1 && ctx.registry.bignum => {
+            let from_u64 = aint_helper(ctx, "__aint_from_u64")?;
+            arg!(0);
+            func.instruction(&Instruction::I64ReinterpretF64);
+            func.instruction(&Instruction::Call(from_u64));
+        }
+        "Float.fromBits" if args.len() == 1 && ctx.registry.bignum => {
+            let low_u64 = aint_helper(ctx, "__aint_low_u64")?;
+            arg!(0);
+            func.instruction(&Instruction::Call(low_u64));
+            func.instruction(&Instruction::F64ReinterpretI64);
+        }
         "Float.fromInt" if args.len() == 1 => {
             arg!(0);
             func.instruction(&Instruction::F64ConvertI64S);

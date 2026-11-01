@@ -250,6 +250,20 @@ pub fn len(bytes @ _: &Bytes) -> aver_rt::AverInt {
     aver_rt::AverInt::from_i64((bytes.values).to_int_list().len() as i64)
 }
 
+/// The octet at a zero-based index; Option.None below zero or at the length and past it.
+#[inline(always)]
+pub fn get(bytes @ _: &Bytes, index @ _: aver_rt::AverInt) -> Option<aver_rt::AverInt> {
+    crate::cancel_checkpoint();
+    if (index < aver_rt::AverInt::from_i64(0)) {
+        None
+    } else {
+        match ((bytes.values).to_int_list()).get(aver_rt::clamp_list_count(&(index))) {
+            None => None,
+            Some(octet) => Some(octet),
+        }
+    }
+}
+
 /// The octets of left followed by the octets of right.
 pub fn concat(mut left @ _: Bytes, right @ _: &Bytes) -> Bytes {
     crate::cancel_checkpoint();

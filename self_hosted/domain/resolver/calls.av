@@ -251,6 +251,8 @@ fn isBuiltinCallName(name: String) -> Bool
         "Float.round",
         "Float.sin",
         "Float.sqrt",
+        "Float.toBits",
+        "Float.fromBits",
         "String.fromFloat",
         "Http.delete",
         "Http.get",

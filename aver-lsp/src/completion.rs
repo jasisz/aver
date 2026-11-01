@@ -57,6 +57,14 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
                 detail: "fn(Int) -> Float",
             },
             Member {
+                name: "toBits",
+                detail: "fn(Float) -> Int",
+            },
+            Member {
+                name: "fromBits",
+                detail: "fn(Int) -> Float",
+            },
+            Member {
                 name: "toString",
                 detail: "fn(Float) -> String",
             },

@@ -1,0 +1,80 @@
+module FloatBits
+    intent =
+        "Float.toBits and Float.fromBits on zeros of both signs, subnormals,"
+        "the largest finite values, the infinities, the canonical NaN and"
+        "out-of-range patterns, so every backend can be held to one output."
+    effects [Console.print]
+
+fn roundTrip(x: Float) -> Float
+    ? "A Float through its bit pattern and back."
+    Float.fromBits(Float.toBits(x))
+
+verify roundTrip law identity
+    given x: Float = [0.0, -0.0, 1.0, -1.5, 0.1, Float.fromBits(1), Float.fromBits(9223372036854775809), Float.fromBits(4503599627370495), Float.fromBits(4503599627370496), Float.fromBits(9218868437227405311), Float.fromBits(18442240474082181119), 1.0 / 0.0, -1.0 / 0.0]
+    roundTrip(x) => x
+
+fn patternOf(x: Float) -> Int
+    ? "The bit pattern of a Float."
+    Float.toBits(x)
+
+verify patternOf
+    patternOf(1.0) => 4607182418800017408
+    patternOf(-0.0) => 9223372036854775808
+    patternOf(0.0) => 0
+    patternOf(Float.fromBits(1)) => 1
+    patternOf(Float.fromBits(9218868437227405311)) => 9218868437227405311
+    patternOf(Float.fromBits(1) * 2.0) => 2
+    patternOf(1.0 / 0.0) => 9218868437227405312
+    patternOf(-1.0 / 0.0) => 18442240474082181120
+
+fn floatOf(b: Int) -> Float
+    ? "The Float of a bit pattern."
+    Float.fromBits(b)
+
+verify floatOf
+    floatOf(4607182418800017408) => 1.0
+    floatOf(0) => 0.0
+    floatOf(1) > 0.0 => true
+    floatOf(1) / 2.0 => 0.0
+    floatOf(18446744073709551616 + 4607182418800017408) => 1.0
+    floatOf(-4616189618054758400) => -1.0
+    floatOf(9218868437227405312) => 1.0 / 0.0
+
+fn isNan(x: Float) -> Bool
+    ? "NaN by its pattern: all exponent bits set and a nonzero fraction, whatever the payload."
+    bits = Float.toBits(x)
+    exponent = Bits.and(Bits.shiftRight(bits, 52), 2047)
+    fraction = Bits.low(bits, 52)
+    Bool.and(exponent == 2047, fraction != 0)
+
+verify isNan
+    isNan(0.0 / 0.0) => true
+    isNan(Float.fromBits(-1)) => true
+    isNan(Float.fromBits(9221120237041090560)) => true
+    isNan(1.0 / 0.0) => false
+    isNan(1.0) => false
+
+fn line(label: String, x: Float) -> Unit
+    ? "Prints a label and the pattern of a Float."
+    ! [Console.print]
+    Console.print("{label} {Float.toBits(x)}")
+
+fn main() -> Unit
+    ! [Console.print]
+    line("one", 1.0)
+    line("minus-one-and-half", -1.5)
+    line("zero", 0.0)
+    line("minus-zero", -0.0)
+    line("min-subnormal", Float.fromBits(1))
+    line("max-subnormal", Float.fromBits(4503599627370495))
+    line("min-normal", Float.fromBits(4503599627370496))
+    line("max", Float.fromBits(9218868437227405311))
+    line("minus-max", Float.fromBits(18442240474082181119))
+    line("inf", 1.0 / 0.0)
+    line("minus-inf", -1.0 / 0.0)
+    line("wrapped-one", Float.fromBits(18446744073709551616 + 4607182418800017408))
+    line("negative-pattern", Float.fromBits(-4616189618054758400))
+    Console.print("canonical-nan {Float.toBits(Float.fromBits(9221120237041090560))}")
+    Console.print("nan-is-nan {isNan(0.0 / 0.0)} {isNan(Float.fromBits(-1))}")
+    Console.print("values {Float.fromBits(4607182418800017408)} {Float.fromBits(-4616189618054758400)} {Float.fromBits(9218868437227405312)}")
+    Console.print("round-trip {roundTrip(0.1) == 0.1} {roundTrip(-0.0) == 0.0}")

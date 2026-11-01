@@ -91,6 +91,38 @@ impl AverDisplay for String {
     }
 }
 
+/// A string slice displays as the `String` it borrows from. Generated
+/// code reaches it when a `match` on a computed string binds the subject
+/// by name: the arm sees `&str`, and interpolating that name again goes
+/// through the reference impl below.
+impl AverDisplay for str {
+    fn aver_display(&self) -> String {
+        self.to_string()
+    }
+
+    fn push_display(&self, out: &mut String) {
+        out.push_str(self);
+    }
+
+    fn aver_display_inner(&self) -> String {
+        format!("\"{}\"", self)
+    }
+}
+
+impl<T: AverDisplay + ?Sized> AverDisplay for &T {
+    fn aver_display(&self) -> String {
+        (**self).aver_display()
+    }
+
+    fn push_display(&self, out: &mut String) {
+        (**self).push_display(out);
+    }
+
+    fn aver_display_inner(&self) -> String {
+        (**self).aver_display_inner()
+    }
+}
+
 impl AverDisplay for crate::AverStr {
     fn aver_display(&self) -> String {
         self.to_string()

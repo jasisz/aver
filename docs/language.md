@@ -15,6 +15,8 @@ Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>` (`K` 
 
 Each primitive has exactly one spelling. The string type is written `String` and is never abbreviated.
 
+A `Float` literal always has digits on both sides of its `.`: `3.14`, `0.5`, `2.0`. It may end in an exponent, `e` or `E` with an optional sign: `1.0e20`, `3.5E38`, `2.0e-7`. The dot is what makes a literal a `Float`, so `1e10` is not a number, and a literal too large for a 64-bit `Float` (`1.0e400`) is a lexer error. The formatter keeps the literal as you wrote it.
+
 There is no dedicated `Set` type; use `Map<T, Unit>` (see [Sets](#sets) below).
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`

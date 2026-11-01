@@ -1579,6 +1579,115 @@ fn bits_pop_count_wasm_gc() {
     );
 }
 
+// ─── Float.toBits / Float.fromBits ──────────────────────────────────────
+
+/// The binary64 patterns of zeros, subnormals, the largest finite values,
+/// the infinities and the canonical NaN, and patterns outside `[0, 2^64)`.
+/// No line reads a NaN payload other than the canonical one, which no
+/// backend rewrites. `tests/rust_codegen_differential.rs` holds Rust to the
+/// same output.
+const FLOAT_BITS_SRC: &str = include_str!("fixtures/float_bits.av");
+const FLOAT_BITS_OUT: &str = include_str!("fixtures/float_bits.expected");
+
+#[test]
+fn float_bits_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-floatbits-vm", FLOAT_BITS_SRC),
+        FLOAT_BITS_OUT.trim(),
+    );
+}
+
+#[test]
+fn float_bits_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-floatbits-wasmgc", FLOAT_BITS_SRC),
+        FLOAT_BITS_OUT.trim(),
+    );
+}
+
+/// The fixture's round-trip law and pattern cases, on both backends.
+#[test]
+fn float_bits_verify_vm_and_wasm_gc() {
+    for wasm_gc in [false, true] {
+        let (ok, summary) =
+            run_verify_summary("aver-cross-floatbits-verify", FLOAT_BITS_SRC, wasm_gc);
+        assert!(
+            ok,
+            "float bits verify failed (wasm-gc: {wasm_gc}): {summary}"
+        );
+        assert!(
+            summary.contains("33/33 cases passed | 0 failed"),
+            "float bits verify summary (wasm-gc: {wasm_gc}): {summary}"
+        );
+    }
+}
+
+// ─── Float literals with an exponent ────────────────────────────────────
+
+/// `1.0e20`, `3.5e38`, `2.0e-7` and friends read as the values they name.
+/// `tests/rust_codegen_differential.rs` holds Rust to the same output.
+const FLOAT_EXP_SRC: &str = include_str!("fixtures/float_exponent_literals.av");
+const FLOAT_EXP_OUT: &str = include_str!("fixtures/float_exponent_literals.expected");
+
+#[test]
+fn float_exponent_literals_vm_and_wasm_gc() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-floatexp-vm", FLOAT_EXP_SRC),
+        FLOAT_EXP_OUT.trim(),
+    );
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-floatexp-wasmgc", FLOAT_EXP_SRC),
+        FLOAT_EXP_OUT.trim(),
+    );
+}
+
+// ─── Bytes.get ──────────────────────────────────────────────────────────
+
+/// `Bytes.get` at both ends, past both ends, on empty and computed bytes and
+/// on slices of them. On wasm-gc the read goes through the packed carrier's
+/// `get` helper rather than unpacking the array.
+/// `tests/rust_codegen_differential.rs` holds Rust to the same output.
+const BYTES_GET_SRC: &str = include_str!("fixtures/bytes_get.av");
+const BYTES_GET_OUT: &str = include_str!("fixtures/bytes_get.expected");
+
+#[test]
+fn bytes_get_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-bytesget-vm", BYTES_GET_SRC),
+        BYTES_GET_OUT.trim(),
+    );
+}
+
+#[test]
+fn bytes_get_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-bytesget-wasmgc", BYTES_GET_SRC),
+        BYTES_GET_OUT.trim(),
+    );
+}
+
+#[test]
+fn bytes_get_verify_vm_and_wasm_gc() {
+    for wasm_gc in [false, true] {
+        let (ok, summary) =
+            run_verify_summary("aver-cross-bytesget-verify", BYTES_GET_SRC, wasm_gc);
+        assert!(
+            ok,
+            "Bytes.get verify failed (wasm-gc: {wasm_gc}): {summary}"
+        );
+        assert!(
+            summary.contains("5/5 cases passed | 0 failed"),
+            "Bytes.get verify summary (wasm-gc: {wasm_gc}): {summary}"
+        );
+    }
+}
+
 // ─── An empty literal bound to a name, typed by a later read ───────────
 
 /// `e = {}` then `Map.set(e, 1, "a")`: the checker stamps the binding with

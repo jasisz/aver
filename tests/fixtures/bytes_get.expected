@@ -1,0 +1,31 @@
+literal[-1] = none
+literal[0] = 0
+literal[1] = 127
+literal[2] = 255
+literal[3] = none
+literal[18446744073709551616] = none
+literal[-18446744073709551616] = none
+literal done
+empty[0] = none
+empty[-1] = none
+empty[1] = none
+empty done
+big[0] = 0
+big[255] = 255
+big[256] = 0
+big[999] = 231
+big[1000] = none
+big done
+big sum 124716
+dropped[0] = 230
+dropped[1] = 231
+dropped[2] = none
+dropped done
+taken[1] = 1
+taken[2] = none
+taken done
+joined[2] = 255
+joined[3] = 0
+joined[4] = 1
+joined[5] = none
+joined done

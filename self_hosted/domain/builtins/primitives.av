@@ -432,6 +432,8 @@ fn callFloat(name: String, args: List<Val>) -> Result<Val, String>
         "Float.pow" -> builtinFloatPow(args)
         "Float.atan2" -> builtinFloatAtan2(args)
         "Float.pi" -> builtinFloatPi(args)
+        "Float.toBits" -> builtinFloatToBits(args)
+        "Float.fromBits" -> builtinFloatFromBits(args)
         _ -> Result.Err("unknown float builtin: {name}")
 
 verify callFloat
@@ -591,6 +593,28 @@ fn builtinFloatAtan2(args: List<Val>) -> Result<Val, String>
 verify builtinFloatAtan2
     builtinFloatAtan2([Val.ValFloat(0.0), Val.ValFloat(1.0)]) => Result.Ok(Val.ValFloat(0.0))
     builtinFloatAtan2([Val.ValInt(1), Val.ValFloat(1.0)]) => Result.Err("Float.atan2 requires two Floats")
+
+fn builtinFloatToBits(args: List<Val>) -> Result<Val, String>
+    ? "Float.toBits(f) -> Int, the binary64 pattern read as unsigned."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValFloat(f) -> Result.Ok(Val.ValInt(Float.toBits(f)))
+        _ -> Result.Err("Float.toBits requires Float")
+
+verify builtinFloatToBits
+    builtinFloatToBits([Val.ValFloat(1.0)]) => Result.Ok(Val.ValInt(4607182418800017408))
+    builtinFloatToBits([Val.ValInt(1)]) => Result.Err("Float.toBits requires Float")
+
+fn builtinFloatFromBits(args: List<Val>) -> Result<Val, String>
+    ? "Float.fromBits(b) -> Float, from the lowest 64 bits of b."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    match v
+        Val.ValInt(n) -> Result.Ok(Val.ValFloat(Float.fromBits(n)))
+        _ -> Result.Err("Float.fromBits requires Int")
+
+verify builtinFloatFromBits
+    builtinFloatFromBits([Val.ValInt(4607182418800017408)]) => Result.Ok(Val.ValFloat(1.0))
+    builtinFloatFromBits([Val.ValFloat(1.0)]) => Result.Err("Float.fromBits requires Int")
 
 fn builtinFloatPi(args: List<Val>) -> Result<Val, String>
     ? "Float.pi() -> Float."

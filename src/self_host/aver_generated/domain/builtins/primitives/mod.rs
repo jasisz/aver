@@ -817,15 +817,19 @@ pub fn callFloat(
                                                                 {
                                                                     crate::aver_generated::domain::builtins::primitives::builtinFloatPi(args)
                                                                 } else {
-                                                                    Err(aver_rt::AverStr::from({
-                                                                        let mut __b = {
-                                                                            let mut __b = aver_rt::Buffer::with_capacity(39usize);
-                                                                            __b.push_str(&::aver_rt::str_lit!("unknown float builtin: "));
-                                                                            __b
-                                                                        };
-                                                                        __b.push_display(&(name));
-                                                                        __b
-                                                                    }))
+                                                                    if &*__dispatch_subject
+                                                                        == "Float.toBits"
+                                                                    {
+                                                                        crate::aver_generated::domain::builtins::primitives::builtinFloatToBits(args)
+                                                                    } else {
+                                                                        if &*__dispatch_subject
+                                                                            == "Float.fromBits"
+                                                                        {
+                                                                            crate::aver_generated::domain::builtins::primitives::builtinFloatFromBits(args)
+                                                                        } else {
+                                                                            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(39usize); __b.push_str(&::aver_rt::str_lit!("unknown float builtin: ")); __b }; __b.push_display(&(name)); __b }))
+                                                                        }
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -1145,6 +1149,50 @@ pub fn builtinFloatAtan2(
                 ))
             }
             _ => Err(::aver_rt::str_lit!("Float.atan2 requires two Floats")),
+        }
+    }
+}
+
+/// Float.toBits(f) -> Int, the binary64 pattern read as unsigned.
+pub fn builtinFloatToBits(
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
+                let f = __f_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValInt(
+                    crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_u64(
+                        (f).to_bits(),
+                    )),
+                ))
+            }
+            _ => Err(::aver_rt::str_lit!("Float.toBits requires Float")),
+        }
+    }
+}
+
+/// Float.fromBits(b) -> Float, from the lowest 64 bits of b.
+pub fn builtinFloatFromBits(
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    {
+        let __t = v;
+        match __t.view() {
+            crate::aver_generated::domain::value::Val__view::ValInt(__n_fields) => {
+                let n = __n_fields.0.clone();
+                Ok(crate::aver_generated::domain::value::Val::ValFloat(
+                    crate::aver_generated::domain::value::Val__ValFloat(f64::from_bits(
+                        (n).low_u64(),
+                    )),
+                ))
+            }
+            _ => Err(::aver_rt::str_lit!("Float.fromBits requires Int")),
         }
     }
 }

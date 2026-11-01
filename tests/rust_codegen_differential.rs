@@ -1316,6 +1316,19 @@ fn top_level_interpolation_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A name bound by a match on a computed String and interpolated again in
+/// its arm. The Rust walker matches on `&*subject`, so the name is a
+/// `&str`, and the runtime had no `AverDisplay` for it: the generated
+/// crate did not compile while the VM and the checker accepted the program.
+#[test]
+fn match_bound_string_reinterpolated_matches_between_rust_and_vm() {
+    assert_plain_parity(
+        "tests/fixtures/match_bound_string_reinterpolated_app.av",
+        None,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A match on a tuple literal whose arms carry list, literal or Option
 /// patterns in the tuple's elements — `([], 0)`, `([next, ..rest], n)`,
 /// `(true, 0)`, `(Option.Some(task), 0)`, `(Option.None, _)` — and one
@@ -3170,6 +3183,54 @@ fn rust_bits_pop_count_matches_vm() {
         build_run_rust_inline("bits_pop_count", src).expect("rust compile + cargo build + run");
     assert_eq!(vm.trim(), expected, "VM popCount contract changed");
     assert_eq!(rust.trim(), expected, "Rust popCount diverged from the VM");
+}
+
+/// `Float.toBits` / `Float.fromBits` on the Rust backend: the program
+/// `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_float_bits_matches_vm() {
+    let src = include_str!("fixtures/float_bits.av");
+    let expected = include_str!("fixtures/float_bits.expected").trim();
+
+    let vm = run_vm_inline("float_bits", src).expect("vm run");
+    let rust = build_run_rust_inline("float_bits", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM float bits contract changed");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust float bits diverged from the VM"
+    );
+}
+
+/// Float literals with an exponent on the Rust backend: the program
+/// `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_float_exponent_literals_match_vm() {
+    let src = include_str!("fixtures/float_exponent_literals.av");
+    let expected = include_str!("fixtures/float_exponent_literals.expected").trim();
+
+    let vm = run_vm_inline("float_exponent_literals", src).expect("vm run");
+    let rust = build_run_rust_inline("float_exponent_literals", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM exponent literal values changed");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust exponent literals diverged from the VM"
+    );
+}
+
+/// `Bytes.get` on the Rust backend, where a packed `Bytes` answers in place:
+/// the program `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_bytes_get_matches_vm() {
+    let src = include_str!("fixtures/bytes_get.av");
+    let expected = include_str!("fixtures/bytes_get.expected").trim();
+
+    let vm = run_vm_inline("bytes_get", src).expect("vm run");
+    let rust = build_run_rust_inline("bytes_get", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM Bytes.get contract changed");
+    assert_eq!(rust.trim(), expected, "Rust Bytes.get diverged from the VM");
 }
 
 /// The same rule over an `Int` carrier, on the Rust backend: the program

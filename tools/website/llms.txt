@@ -106,6 +106,7 @@ Notes:
 - top-level named functions can be passed where `Fn(...)` is expected
 - there are no lambdas and no closures
 - there is no implicit type promotion; use `Float.fromInt(n)` / `Int.fromFloat(f)`
+- a `Float` literal has digits on both sides of the `.` and may end in an exponent: `2.0`, `1.0e20`, `2.0e-7`; `1e10` is not a number
 
 ### User-defined types
 
@@ -544,6 +545,7 @@ Common pure namespaces:
 `Bytes` and `Crypto.Digest32` are embedded Aver modules. With `depends [Bytes, Crypto.Digest32]`, `Crypto.sha256 : Bytes -> Digest32` is total and pure: the input already guarantees octets, and the result guarantees exactly 32 bytes.
 
 - `Bytes.fromList : List<Int> -> Result<Bytes, String>` (a list literal whose every element is an integer literal in `0..=255` discharges to plain `Bytes`), `Bytes.octets : Bytes -> List<Int>`
+- `Bytes.get : (Bytes, Int) -> Option<Int>` reads the octet at a zero-based index (`Option.None` out of range); constant time on the Rust and wasm-gc backends
 - `Bytes.fromHex : String -> Result<Bytes, String>` (even length, case-insensitive, no `0x` prefix), `Bytes.toHex : Bytes -> String`
 - `Crypto.Digest32.fromBytes : Bytes -> Result<Digest32, String>`, `Crypto.Digest32.bytes : Digest32 -> Bytes`
 - `Crypto.Digest32.fromHex : String -> Result<Digest32, String>`, `Crypto.Digest32.toHex : Digest32 -> String`
@@ -576,6 +578,7 @@ Key `Float` API:
 - `Float.floor`, `Float.ceil`, `Float.round`: `Float -> Int`, so they convert as well as round
 - `Float.pi : () -> Float` is a nullary function, written `Float.pi()`
 - `Float.fromInt : Int -> Float`, `Float.fromString : String -> Result<Float, String>`
+- `Float.toBits : Float -> Int` is the IEEE-754 binary64 pattern as an unsigned Int; `Float.fromBits : Int -> Float` reads the lowest 64 bits back. NaN payloads differ between backends
 
 Key `Result` / `Option` API:
 - `Result.withDefault : (Result<T, E>, T) -> T`, `Option.withDefault : (Option<T>, T) -> T`

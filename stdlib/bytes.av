@@ -1,7 +1,7 @@
 module Bytes
     intent =
         "Defines validated byte sequences as an ordinary Aver refinement."
-    exposes [fromList, octets, empty, len, concat, take, drop, fromHex, toHex]
+    exposes [fromList, octets, empty, len, get, concat, take, drop, fromHex, toHex]
     exposes opaque [Bytes]
     effects []
 
@@ -49,6 +49,14 @@ fn empty() -> Bytes
 fn len(bytes: Bytes) -> Int
     ? "The number of octets in a byte sequence."
     List.len(bytes.values)
+
+fn get(bytes: Bytes, index: Int) -> Option<Int>
+    ? "The octet at a zero-based index; Option.None below zero or at the length and past it."
+    match index < 0
+        true -> Option.None
+        false -> match List.drop(bytes.values, index)
+            [] -> Option.None
+            [octet, .._] -> Option.Some(octet)
 
 fn concat(left: Bytes, right: Bytes) -> Bytes
     ? "The octets of left followed by the octets of right."
@@ -171,6 +179,14 @@ verify empty
 verify len
     len(fromList([])) => 0
     len(fromList([0, 127, 255])) => 3
+
+verify get
+    get(empty(), 0) => Option.None
+    get(fromList([0, 127, 255]), 0) => Option.Some(0)
+    get(fromList([0, 127, 255]), 1) => Option.Some(127)
+    get(fromList([0, 127, 255]), 2) => Option.Some(255)
+    get(fromList([0, 127, 255]), 3) => Option.None
+    get(fromList([0, 127, 255]), -1) => Option.None
 
 verify concat
     octets(concat(fromList([0, 127]), fromList([255]))) => [0, 127, 255]

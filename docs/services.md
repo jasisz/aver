@@ -33,6 +33,7 @@ Anything else keeps `Result<Bytes, String>`: a variable, a computed list, a comp
 | `Bytes.octets` | `Bytes -> List<Int>` | Exposes validated values |
 | `Bytes.empty` | `() -> Bytes` | Empty byte sequence |
 | `Bytes.len` | `Bytes -> Int` | Number of octets |
+| `Bytes.get` | `(Bytes, Int) -> Option<Int>` | The octet at a zero-based index; `Option.None` for a negative index or one at or past the length. Constant time on the Rust and wasm-gc backends, where `Bytes` is a packed array |
 | `Bytes.concat` | `(Bytes, Bytes) -> Bytes` | Concatenates without revalidation |
 | `Bytes.take` | `(Bytes, Int) -> Bytes` | Prefix of at most `count` octets |
 | `Bytes.drop` | `(Bytes, Int) -> Bytes` | Octets after `count` positions |
@@ -193,6 +194,12 @@ Source: `src/types/float.rs`
 | `Float.pow` | `(Float, Float) -> Float` | exponentiation |
 | `Float.atan2` | `(Float, Float) -> Float` | two-argument arctangent |
 | `Float.pi` | `() -> Float` | π constant |
+| `Float.toBits` | `Float -> Int` | IEEE-754 binary64 bit pattern, read as an unsigned `Int` in `[0, 2^64)` |
+| `Float.fromBits` | `Int -> Float` | The `Float` whose bit pattern is `Bits.low(b, 64)` |
+
+`Float.toBits` and `Float.fromBits` reinterpret the 64 bits of a `Float`; neither rounds or converts the value. `Float.toBits(1.0) == 4607182418800017408` and `Float.toBits(-0.0) == 9223372036854775808`, so `0.0` and `-0.0` have different patterns even though `0.0 == -0.0`. `Float.fromBits` is total: it keeps the lowest 64 bits of its argument under the same infinite two's complement reading as `Bits`, so `Float.fromBits(-1)` is the NaN with every bit set and `2^64 + b` reads as `b`. `Float.fromBits(Float.toBits(x)) == x` for every `x` that is not NaN.
+
+NaN payloads are not portable. Every backend returns some NaN pattern for a NaN, but the exact payload and sign bits can differ: the VM clears one bit of a quiet NaN payload that collides with its value boxing, and wasm engines and JavaScript hosts may canonicalize NaNs passing through arithmetic or host boundaries. Compare NaN patterns only to test for NaN as a whole, for example with `Bits.and` against the exponent and fraction masks.
 
 ### `String` namespace
 
