@@ -3120,6 +3120,8 @@
  "tools/certkit/fixtures/wordleaves.av": {
   "bridges": [
    "bucket",
+   "flipped",
+   "halves",
    "scaledSum",
    "shift",
    "spread",
@@ -3128,6 +3130,8 @@
   ],
   "certified": {
    "bucket": "L1",
+   "flipped": "L1",
+   "halves": "L1",
    "scaledSum": "L1",
    "shift": "L1",
    "spread": "L1",

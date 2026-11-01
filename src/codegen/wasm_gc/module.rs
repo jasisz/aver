@@ -3690,7 +3690,8 @@ fn emit_module_pass(
     // outside a word tree is not kept: that form calls the three-way helper
     // and evaluates the picked operand again, where a plain build computes
     // the tree on the word. The certificate declines such a fn instead of
-    // slowing it down.
+    // slowing it down. So is one that would still negate an `Int` there:
+    // the printer prints no negation.
     for i in 0..fn_defs.len() {
         if !kept_for[i] {
             continue;
@@ -6920,6 +6921,8 @@ fn kept_by_printer(
     if !certify {
         return None;
     }
+    // A negation is read as the difference `0 - a` its word tree computes.
+    let mir_fn = &crate::ir::mir::int_word::negations_as_differences(mir_fn);
     let plan = crate::codegen::cert::print_fn(mir_fn, rfd, extra, &[], layout, types).ok()?;
     let mut calls = Vec::new();
     crate::codegen::cert::call_targets(&plan.body, &mut calls);
@@ -12369,12 +12372,13 @@ fn sorted_export_payload(exports: &ExportSection) -> Vec<u8> {
     payload
 }
 
-/// Whether `e` calls `Int.min` or `Int.max` outside an `Int` tree computed
-/// on the machine word.
+/// Whether `e` calls `Int.min` or `Int.max`, or negates an `Int`, outside
+/// an `Int` tree computed on the machine word.
 fn plain_pick(e: &crate::ir::mir::MirExpr, builtins: &[String]) -> bool {
     use crate::ir::mir::{MirCallee, MirExpr};
     match e {
         MirExpr::IntWord(_) => false,
+        MirExpr::Neg(x) if crate::ir::mir::int_tree::is_int(x) => true,
         MirExpr::Call(c)
             if matches!(&c.node.callee, MirCallee::Builtin(b)
                 if builtins.get(b.0 as usize).is_some_and(|n| n == "Int.min" || n == "Int.max")) =>

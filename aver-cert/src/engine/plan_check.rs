@@ -1172,14 +1172,14 @@ fn tree_op(w: u32, op: PlanBinOp) -> Vec<WI> {
     out
 }
 
-/// `Grammar.divLitOk`: not `0`, not `-1`, no positive power of two.
+/// `Grammar.divLitOk`: not `0`, not `-1`.
 pub(crate) fn div_lit_ok(k: i64) -> bool {
-    k != 0 && k != -1 && !(k > 0 && k.unsigned_abs().is_power_of_two())
+    k != 0 && k != -1
 }
 
-/// `Grammar.modLitOk`: not `0`, no magnitude a power of two.
+/// `Grammar.modLitOk`: not `0`.
 pub(crate) fn mod_lit_ok(k: i64) -> bool {
-    k != 0 && !k.unsigned_abs().is_power_of_two()
+    k != 0
 }
 
 /// `GrammarLower.mulRange`: the operands whose product by `k` fits an `i64`.
@@ -1225,6 +1225,11 @@ fn fast_w(c: u64, w: u32, t: &PlanWTree, out: &mut Vec<WI>) {
             out.extend(tree_op(w, *op));
         }
         PlanWTree::Lit(k) => out.push(WI::I64Const(*k)),
+        // `GrammarLower.divOpW`: by a positive power of two a shift.
+        PlanWTree::DivLit(k, a) if *k > 0 && k.unsigned_abs().is_power_of_two() => {
+            fast_w(c, w, a, out);
+            out.extend([WI::I64Const(i64::from(k.trailing_zeros())), WI::I64ShrS]);
+        }
         PlanWTree::DivLit(k, a) => {
             fast_w(c, w, a, out);
             out.extend([
@@ -1237,6 +1242,14 @@ fn fast_w(c: u64, w: u32, t: &PlanWTree, out: &mut Vec<WI>) {
                 WI::I64Const(63),
                 WI::I64ShrS,
                 if *k > 0 { WI::I64Add } else { WI::I64Sub },
+            ]);
+        }
+        // `GrammarLower.modOpW`: by `±2^n` a mask.
+        PlanWTree::ModLit(k, a) if k.unsigned_abs().is_power_of_two() => {
+            fast_w(c, w, a, out);
+            out.extend([
+                WI::I64Const((k.unsigned_abs() - 1) as i64),
+                WI::I64And,
             ]);
         }
         PlanWTree::ModLit(k, a) => {

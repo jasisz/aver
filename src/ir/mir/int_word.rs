@@ -32,7 +32,8 @@
 //! stops the tree. In a function a `--certify` build keeps for its
 //! certificate ([`Target::kept`]) the trees are the ones the wall proves:
 //! values of `+`, `-`, `*` (a product by a literal by its range test),
-//! `Int.min` and `Int.max` over literals, locals and fields of records held in
+//! `Int.min`, `Int.max`, quotients and remainders by a literal, and
+//! negations (as `0 - a`) over literals, locals and fields of records held in
 //! locals, any other leaf bound by a `let`, a field of a word record never a leaf
 //! (the totality grammar, `GrammarTotal.totE`, reads such a tree of locals
 //! and literals as it reads the plain arithmetic); any other node is left as
@@ -42,20 +43,62 @@ use crate::ast::{BinOp, Spanned};
 
 use super::expr::{
     IntWordHold, IntWordKind, IntWordNode, IntWordOp, MirBinOp, MirExpr, MirIntWord, MirLet,
-    MirLocal, int_word_shell, walk_children_mut,
+    MirLocal, int_word_hole, int_word_shell, walk_children_mut,
 };
 use super::int_tree::{self, int_literal, is_int};
 use super::program::{LocalId, MirFn, MirScratch};
 
 /// A quotient or remainder by a literal the wall computes on the machine word
-/// in a kept fn (`Grammar.divLitOk` / `modLitOk`): the emitter's general
-/// sequence, not its negation, shift or mask.
+/// in a kept fn (`Grammar.divLitOk` / `modLitOk`): by a shift, a mask or the
+/// emitter's general sequence.
 fn kept_div_mod(op: IntWordOp) -> bool {
     match op {
-        IntWordOp::Div(k) => k != 0 && k != -1 && !(k > 0 && k.unsigned_abs().is_power_of_two()),
-        IntWordOp::Mod(k) => k != 0 && !k.unsigned_abs().is_power_of_two(),
+        IntWordOp::Div(k) => k != 0 && k != -1,
+        IntWordOp::Mod(k) => k != 0,
         _ => false,
     }
+}
+
+/// A negation in a kept fn (`-a`, `Int.div(a, -1)`): the tree there is the
+/// difference `0 - a`, whose exact path calls the subtraction helper (the
+/// negation helper has no contract in the wall).
+fn kept_negation(op: IntWordOp) -> bool {
+    matches!(op, IntWordOp::Neg | IntWordOp::Div(-1))
+}
+
+/// `0 - a`, an `Int`.
+fn difference(a: Spanned<MirExpr>, line: crate::ast::SourceLine) -> Spanned<MirExpr> {
+    let out = Spanned::new(
+        MirExpr::BinOp(Spanned::new(
+            MirBinOp {
+                op: BinOp::Sub,
+                lhs: Box::new(int_word_hole(line)),
+                rhs: Box::new(a),
+            },
+            line,
+        )),
+        line,
+    );
+    out.set_ty(crate::ast::Type::Int);
+    out
+}
+
+/// `f` with each `Int` negation written as the difference `0 - a`, the form
+/// the word trees of a kept fn give it ([`kept_negation`]): the plan
+/// printer, which prints no negation, reads a fn so when it decides whether
+/// a `--certify` build keeps it.
+pub fn negations_as_differences(f: &MirFn) -> MirFn {
+    fn walk(e: &mut Spanned<MirExpr>) {
+        walk_children_mut(&mut e.node, &mut walk);
+        if let MirExpr::Neg(x) = &e.node
+            && is_int(x)
+        {
+            *e = difference((**x).clone(), e.line);
+        }
+    }
+    let mut out = f.clone();
+    walk(&mut out.body);
+    out
 }
 
 /// The name of the `let` a kept fn binds a tree's leaf by.
@@ -303,10 +346,12 @@ impl Pass<'_> {
             _ => false,
         };
         // In a kept fn the wall proves `+`, `-`, `*` (a product by a
-        // literal by the emitter's range test, `WTree.mulLit`), `Int.min`
-        // and `Int.max`.
+        // literal by the emitter's range test, `WTree.mulLit`), `Int.min`,
+        // `Int.max`, a quotient or remainder by a literal, and a negation
+        // as `0 - a`.
         let picks = matches!(op, IntWordOp::Min | IntWordOp::Max);
-        if raw || (self.target.kept && op.bin_op().is_none() && !picks && !kept_div_mod(op)) {
+        let other = op.bin_op().is_none() && !picks && !kept_div_mod(op) && !kept_negation(op);
+        if raw || (self.target.kept && other) {
             return None;
         }
         Some((op, std::iter::once(a).chain(b).collect()))
@@ -382,6 +427,14 @@ impl Pass<'_> {
     /// The tree at `e` (its weight is known).
     fn tree(&self, e: &Spanned<MirExpr>) -> IntWordNode {
         match self.ops(e) {
+            Some((op, args)) if self.target.kept && kept_negation(op) => IntWordNode::Op {
+                op: IntWordOp::Sub,
+                args: vec![
+                    IntWordNode::Lit(Box::new(int_word_hole(e.line))),
+                    self.tree(args[0]),
+                ],
+                shell: Box::new(difference(int_word_hole(e.line), e.line)),
+            },
             Some((op, args)) => IntWordNode::Op {
                 op,
                 shell: int_word_shell(e, args.len()),

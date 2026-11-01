@@ -601,10 +601,10 @@ fn i64_muls(bytes: &[u8], names: &[&str]) -> Vec<usize> {
     })
 }
 
-/// The `i64.and` count of each named export's body.
-fn i64_ands(bytes: &[u8], names: &[&str]) -> Vec<usize> {
+/// The `global.get` count of each named export's body.
+fn global_gets(bytes: &[u8], names: &[&str]) -> Vec<usize> {
     op_counts(bytes, names, |op| {
-        matches!(op, wasmparser::Operator::I64And)
+        matches!(op, wasmparser::Operator::GlobalGet { .. })
     })
 }
 
@@ -660,10 +660,9 @@ fn op_counts(
 
 /// A function the plan printer prints but that calls one it does not can
 /// never be certified, so a `--certify` build does not keep it in the
-/// ordinary form: `area` (which calls the unprintable `width`) computes its
-/// `Int` tree on machine words as in a plain build, while the certified
-/// `spread` keeps the remainder by a power of two its plan reads in its
-/// ordinary form (the wall does not model the emitter's mask).
+/// ordinary form: `area` (which calls the unprintable `width`) reads its
+/// boxed `Int` literals from the pool a plain build makes, while the
+/// certified `spread` boxes each one where its plan reads it.
 #[test]
 fn a_certified_build_releases_a_function_that_calls_an_unprintable_one() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -673,9 +672,9 @@ fn a_certified_build_releases_a_function_that_calls_an_unprintable_one() {
     };
     let (certified, names) = compile(&repo_root, &entry, &["--certify"], true).unwrap();
     assert_eq!(names, vec!["spread".to_string()]);
-    let ands = i64_ands(&certified, &["area", "spread"]);
-    assert!(ands[0] > 0, "area computes on machine words: {ands:?}");
-    assert_eq!(ands[1], 0, "spread is kept in the ordinary form");
+    let gets = global_gets(&certified, &["area", "spread"]);
+    assert!(gets[0] > 0, "area reads pooled literals: {gets:?}");
+    assert_eq!(gets[1], 0, "spread is kept in the ordinary form");
 }
 
 /// The number of functions a module defines.
