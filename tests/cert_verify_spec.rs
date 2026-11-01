@@ -3557,7 +3557,7 @@ fn cert_plans_authority_declines_zero_locals_expr_fragment_code() {
     tamper_export_plan(
         &dir.join("cert/Plans.lean"),
         "addTwo",
-        "locals := [.int]",
+        "locals := [.int, .word, .word, .word]",
         "locals := []",
     );
     let (ok, report) = aver_check(&dir.join("cert_goals.wasm"), &dir.join("cert"));
@@ -4821,8 +4821,8 @@ fn variant_dispatch_body_mutation_is_declined() {
         ),
         (
             "constructor tags exchanged",
-            "(.cons (.ctor (.user 0 0) [1]) (.binOp .sub (.literal (.int 0)) (.local 1)) (.cons (.ctor (.user 0 1) [2])",
-            "(.cons (.ctor (.user 0 1) [1]) (.binOp .sub (.literal (.int 0)) (.local 1)) (.cons (.ctor (.user 0 0) [2])",
+            "(.cons (.ctor (.user 0 0) [1]) (.intWord (.op .sub (.lit (0)) (.leaf (.local 1))) 6) (.cons (.ctor (.user 0 1) [2])",
+            "(.cons (.ctor (.user 0 1) [1]) (.intWord (.op .sub (.lit (0)) (.leaf (.local 1))) 6) (.cons (.ctor (.user 0 0) [2])",
         ),
     ] {
         let dir = temp_dir("cert-vd-mut-case");
@@ -4880,8 +4880,8 @@ fn composition_callee_mutation_is_declined() {
     tamper_export_plan(
         &out_dir.join("cert").join("Plans.lean"),
         "double",
-        "(.binOp .add (.local 0) (.local 0))",
-        "(.binOp .mul (.local 0) (.literal (.int 2)))",
+        "(.intWord (.op .add (.leaf (.local 0)) (.leaf (.local 0))) 2)",
+        "(.intWord (.op .mul (.leaf (.local 0)) (.lit (2))) 2)",
     );
 
     let (ok, out) = aver_check(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
@@ -5018,15 +5018,15 @@ fn cert_verify_declines_tampered_recursion_plan() {
             (
                 "zero locals",
                 "plan:sumFrom",
-                "locals := [.int]",
+                "locals := [.int, .word, .word, .word]",
                 "locals := []",
             ),
             // `sumFrom`'s descent `n - 1` becomes `n + 1`.
             (
                 "descent operator",
                 "plan:sumFrom",
-                "(.call (.fn 1) [(.binOp .sub (.local 0)",
-                "(.call (.fn 1) [(.binOp .add (.local 0)",
+                "(.call (.fn 1) [(.intWord (.op .sub (.leaf (.local 0))",
+                "(.call (.fn 1) [(.intWord (.op .add (.leaf (.local 0))",
             ),
             // The self-call retargeted at another user function (`backward`).
             (
@@ -5053,7 +5053,7 @@ fn cert_verify_declines_tampered_recursion_plan() {
             (
                 "accumulator threading",
                 "plan:countDown",
-                "(.binOp .add (.local 1) (.local 0))",
+                "(.intWord (.op .add (.leaf (.local 1)) (.leaf (.local 0))) 3)",
                 "(.local 1)",
             ),
         ],
@@ -5145,7 +5145,7 @@ fn cert_verify_declines_tampered_mutual_plan() {
             (
                 "zero locals",
                 "plan:isEven",
-                "locals := [.int]",
+                "locals := [.int, .word, .word, .word]",
                 "locals := []",
             ),
             // (a) the sibling call retargeted OUTSIDE the planned functions.
@@ -5159,8 +5159,8 @@ fn cert_verify_declines_tampered_mutual_plan() {
             (
                 "tail flag flip",
                 "plan:isEven",
-                "(.tailCall 2 [(.binOp .sub (.local 0) (.literal (.int 1)))])",
-                "(.call (.fn 2) [(.binOp .sub (.local 0) (.literal (.int 1)))])",
+                "(.tailCall 2 [(.intWord (.op .sub (.leaf (.local 0)) (.lit (1))) 2)])",
+                "(.call (.fn 2) [(.intWord (.op .sub (.leaf (.local 0)) (.lit (1))) 2)])",
             ),
             // (c) the base literal `1` becomes `5`.
             (
@@ -5526,26 +5526,26 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
             (
                 "swapped dispatch cascade",
                 "plan:gauge",
-                "(.cons (.ctor (.user 1 0) [1]) (.binOp .sub (.literal (.int 0)) (.local 1)) (.cons (.ctor (.user 1 1) [2])",
-                "(.cons (.ctor (.user 1 1) [1]) (.binOp .sub (.literal (.int 0)) (.local 1)) (.cons (.ctor (.user 1 0) [2])",
+                "(.cons (.ctor (.user 1 0) [1]) (.intWord (.op .sub (.lit (0)) (.leaf (.local 1))) 6) (.cons (.ctor (.user 1 1) [2])",
+                "(.cons (.ctor (.user 1 1) [1]) (.intWord (.op .sub (.lit (0)) (.leaf (.local 1))) 6) (.cons (.ctor (.user 1 0) [2])",
             ),
             (
                 "arithmetic role swap",
                 "plan:gauge",
-                "(.binOp .sub (.literal (.int 0)) (.local 1))",
-                "(.binOp .add (.literal (.int 0)) (.local 1))",
+                "(.intWord (.op .sub (.lit (0)) (.leaf (.local 1))) 6)",
+                "(.intWord (.op .add (.lit (0)) (.leaf (.local 1))) 6)",
             ),
             (
                 "arm constant",
                 "plan:gauge",
-                "(.binOp .add (.local 2) (.literal (.int 9)))",
-                "(.binOp .add (.local 2) (.literal (.int 8)))",
+                "(.intWord (.op .add (.leaf (.local 2)) (.lit (9))) 6)",
+                "(.intWord (.op .add (.leaf (.local 2)) (.lit (8))) 6)",
             ),
             (
                 "operand order flip",
                 "plan:gauge",
-                "(.binOp .add (.local 2) (.literal (.int 9)))",
-                "(.binOp .add (.literal (.int 9)) (.local 2))",
+                "(.intWord (.op .add (.leaf (.local 2)) (.lit (9))) 6)",
+                "(.intWord (.op .add (.lit (9)) (.leaf (.local 2))) 6)",
             ),
             (
                 "default constant",

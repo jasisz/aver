@@ -2373,7 +2373,7 @@ fn termination_check_grants_l3_only_to_descending_groups() {
     };
     let is_even = plan_block(&mutual_plans, "fn1", "isEvenP");
     let is_odd = plan_block(&mutual_plans, "fn2", "isOddP");
-    let descent = "(.binOp .sub (.local 0) (.literal (.int 1)))";
+    let descent = "(.intWord (.op .sub (.leaf (.local 0)) (.lit (1))) 2)";
     assert!(
         is_odd.contains(&format!("(.tailCall 1 [{descent}])")),
         "the mutual plan shape changed; refit the probe:\n{is_odd}"
@@ -2382,7 +2382,7 @@ fn termination_check_grants_l3_only_to_descending_groups() {
         .replacen("def isOddP :", "def isOddAscending :", 1)
         .replacen(
             &format!("(.tailCall 1 [{descent}])"),
-            "(.tailCall 1 [(.binOp .add (.local 0) (.literal (.int 1)))])",
+            "(.tailCall 1 [(.intWord (.op .add (.leaf (.local 0)) (.lit (1))) 2)])",
             1,
         );
     let recgen_plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
@@ -2396,14 +2396,14 @@ fn termination_check_grants_l3_only_to_descending_groups() {
         .replacen("def sumFromP :", "def ascendingP :", 1)
         .replacen(
             &self_call,
-            "(.call (.fn 1) [(.binOp .add (.local 0) (.literal (.int 1)))])",
+            "(.call (.fn 1) [(.intWord (.op .add (.leaf (.local 0)) (.lit (1))) 2)])",
             1,
         );
     let step_two = sum_from
         .replacen("def sumFromP :", "def stepTwoP :", 1)
         .replacen(
             &self_call,
-            "(.call (.fn 1) [(.binOp .sub (.local 0) (.literal (.int 2)))])",
+            "(.call (.fn 1) [(.intWord (.op .sub (.leaf (.local 0)) (.lit (2))) 2)])",
             1,
         );
     let lean = format!(
