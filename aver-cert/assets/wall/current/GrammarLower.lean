@@ -414,6 +414,28 @@ def pickOpW (w : Nat) (p : PickBuiltin) : List WInstr :=
   [.localSet (w + 1), .localSet w, .localGet w, .localGet (w + 1), .localGet w,
     .localGet (w + 1), match p with | .intMin => .i64LeS | .intMax => .i64GeS, .select]
 
+/-- The `[lo, hi]` range test of the word on the stack (`int_tree.rs`,
+    `guard`), the bounds clamped to the `i64` range: the word is parked in
+    local `t`, and a word outside the range branches out (`br_if 0`). A full
+    range tests nothing. -/
+def guardW (lo hi : Int) (t : Nat) : List WInstr :=
+  let lo := max lo (-9223372036854775808)
+  let hi := min hi 9223372036854775807
+  if hi < lo then [.localSet t, .br 0]
+  else if hi - lo < 18446744073709551615 then
+    [.localSet t, .localGet t, .i64Const lo, .i64Sub, .i64Const (wrap64 (hi - lo)), .i64GtU,
+      .brIf 0]
+  else [.localSet t]
+
+/-- The operands `x` for which `x * k` fits an `i64` (`int_tree.rs`,
+    `mul_range`): `[ceil(min / k), floor(max / k)]`, the whole range for
+    `k = 0`. -/
+def mulRange (k : Int) : Int × Int :=
+  let lo : Int := if k < 0 then 9223372036854775807 else -9223372036854775808
+  let hi : Int := if k < 0 then -9223372036854775808 else 9223372036854775807
+  let floor := fun (a : Int) => Int.ediv (a * k.sign) (k.natAbs : Int)
+  if k = 0 then (-9223372036854775808, 9223372036854775807) else (-floor (-lo), floor hi)
+
 /-- The `i64` path of a tree: the word of each leaf, and each operation on
     the words. -/
 def fastW (C w : Nat) : WTree → List WInstr
@@ -421,6 +443,8 @@ def fastW (C w : Nat) : WTree → List WInstr
   | .op o a b => fastW C w a ++ fastW C w b ++ treeOpW w o
   | .lit k => [.i64Const k]
   | .pick p a b => fastW C w a ++ fastW C w b ++ pickOpW w p
+  | .mulLit k _ a =>
+      fastW C w a ++ guardW (mulRange k).1 (mulRange k).2 w ++ [.localGet w, .i64Const k, .i64Mul]
 
 /-- The exact path of a tree: each leaf's carrier, each literal boxed, each
     operation's call, and for `Int.min` / `Int.max` the three-way helper and
@@ -432,6 +456,9 @@ def exactB (M : MCtx) : WTree → List BI
   | .pick p a b =>
       exactB M a ++ exactB M b ++ (intCmpTail M p.op).map .op ++
         [.ifElse (some .int) (exactB M a) (exactB M b)]
+  | .mulLit k lf a =>
+      (if lf then [.op (.i64Const k), .op (.call M.box)] ++ exactB M a
+        else exactB M a ++ [.op (.i64Const k), .op (.call M.box)]) ++ [.op (.call M.mul)]
 
 /-- The exact path the interpreter runs. -/
 def exactW (M : MCtx) (t : WTree) : List WInstr := eraseL (exactB M t)
@@ -449,6 +476,12 @@ theorem exactW_pick (M : MCtx) (p : PickBuiltin) (a b : WTree) :
       [.ifElse (exactW M a) (exactW M b)] := by
   simp [exactW, exactB, eraseL_append, eraseL_ops, eraseL, eraseI]
 
+theorem exactW_mulLit (M : MCtx) (k : Int) (lf : Bool) (a : WTree) :
+    exactW M (.mulLit k lf a) =
+      (if lf then [.i64Const k, .call M.box] ++ exactW M a
+        else exactW M a ++ [.i64Const k, .call M.box]) ++ [.call M.mul] := by
+  cases lf <;> simp [exactW, exactB, eraseL_append, eraseL, eraseI]
+
 /-- The field leaves read ahead, in order, each stored in its local. -/
 def aheadW (M : MCtx) : WTree → List WInstr
   | .leaf (.local _) => []
@@ -457,6 +490,7 @@ def aheadW (M : MCtx) : WTree → List WInstr
   | .op _ a b => aheadW M a ++ aheadW M b
   | .lit _ => []
   | .pick _ a b => aheadW M a ++ aheadW M b
+  | .mulLit _ _ a => aheadW M a
 
 /-- `block $done (block $slow <i64 path> box br $done) <exact path>`. -/
 def wordBlock (M : MCtx) (t : WTree) (w : Nat) : BI :=

@@ -3122,13 +3122,15 @@
    "scaledSum",
    "shift",
    "spread",
-   "sumDown"
+   "sumDown",
+   "tripledLess"
   ],
   "certified": {
    "scaledSum": "L1",
    "shift": "L1",
    "spread": "L1",
-   "sumDown": "L3"
+   "sumDown": "L3",
+   "tripledLess": "L1"
   },
   "laws": []
  }

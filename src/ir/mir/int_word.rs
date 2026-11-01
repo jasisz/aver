@@ -31,8 +31,9 @@
 //! A leaf the target renders as a raw `i64` where the tree wants an `Int`
 //! stops the tree. In a function a `--certify` build keeps for its
 //! certificate ([`Target::kept`]) the trees are the ones the wall proves:
-//! values of `+`, `-`, `*`, `Int.min` and `Int.max` over literals, locals and
-//! fields of records held in locals, a field of a word record never a leaf
+//! values of `+`, `-`, `*` (a product by a literal by its range test),
+//! `Int.min` and `Int.max` over literals, locals and fields of records held in
+//! locals, any other leaf bound by a `let`, a field of a word record never a leaf
 //! (the totality grammar, `GrammarTotal.totE`, reads such a tree of locals
 //! and literals as it reads the plain arithmetic); any other node is left as
 //! it is there.
@@ -290,14 +291,11 @@ impl Pass<'_> {
             MirExpr::Neg(x) => (self.target.renders_raw)(&x.node),
             _ => false,
         };
-        // In a kept fn the wall proves `+`, `-`, `*`, `Int.min` and
-        // `Int.max`, and a product by a literal not at all: the emitter
-        // computes that one by a range test.
+        // In a kept fn the wall proves `+`, `-`, `*` (a product by a
+        // literal by the emitter's range test, `WTree.mulLit`), `Int.min`
+        // and `Int.max`.
         let picks = matches!(op, IntWordOp::Min | IntWordOp::Max);
-        let by_literal = op == IntWordOp::Mul
-            && (int_literal(&a.node).is_some()
-                || b.is_some_and(|b| int_literal(&b.node).is_some()));
-        if raw || (self.target.kept && ((op.bin_op().is_none() && !picks) || by_literal)) {
+        if raw || (self.target.kept && op.bin_op().is_none() && !picks) {
             return None;
         }
         Some((op, std::iter::once(a).chain(b).collect()))

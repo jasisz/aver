@@ -202,6 +202,10 @@ inductive WTree where
       the exact path the three-way helper, then the picked operand's exact
       path again. -/
   | pick (p : PickBuiltin) (a b : WTree)
+  /-- A product by the literal `k` (written first when `litFirst`): on the
+      machine path one range test of the operand, then `i64.mul`; on the
+      exact path the boxed literal and the multiplication helper. -/
+  | mulLit (k : Int) (litFirst : Bool) (a : WTree)
 deriving DecidableEq, Repr
 
 /-- `MirCallee::Builtin`, admitted part (by dotted name). -/
@@ -758,6 +762,7 @@ def WTree.leaves : WTree → List WLeaf
   | .op _ a b => a.leaves ++ b.leaves
   | .lit _ => []
   | .pick _ a b => a.leaves ++ b.leaves
+  | .mulLit _ _ a => a.leaves
 
 /-- The locals the tree's leaves read ahead are stored in. -/
 def WTree.slots : WTree → List Nat
@@ -766,6 +771,7 @@ def WTree.slots : WTree → List Nat
   | .op _ a b => a.slots ++ b.slots
   | .lit _ => []
   | .pick _ a b => a.slots ++ b.slots
+  | .mulLit _ _ a => a.slots
 
 /-- No number occurs twice. -/
 def distinct : List Nat → Bool
@@ -798,6 +804,7 @@ def WTree.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WTree → Bool
       o.isArith && !(o == .mul && (a.isLit || b.isLit)) && a.ok M n Γ && b.ok M n Γ
   | .lit k => inI64Band k
   | .pick _ a b => a.ok M n Γ && b.ok M n Γ
+  | .mulLit k _ a => inI64Band k && a.ok M n Γ
 
 /-- A typed `Expr.intWord t w`: its tree is typed, and the locals it writes
     (its leaves stored ahead and its three words) are past the resolver slots
@@ -1340,6 +1347,10 @@ def WTree.val (env : Nat → Option SVal) : WTree → Option SVal
       match a.val env, b.val env with
       | some (.i x), some (.i y) => some (.i (p.z x y))
       | _, _ => none
+  | .mulLit k _ a =>
+      match a.val env with
+      | some (.i x) => some (.i (x * k))
+      | _ => none
 
 mutual
   def eval (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :

@@ -190,6 +190,20 @@ impl<'a> MCtx<'a> {
                 out
             }
             PlanWTree::Lit(k) => ops(vec![WI::I64Const(*k), WI::Call(self.box_)]),
+            PlanWTree::MulLit(k, lit_first, a) => {
+                let lit = ops(vec![WI::I64Const(*k), WI::Call(self.box_)]);
+                let mut out = if *lit_first {
+                    let mut o = lit;
+                    o.extend(self.exact_b(a));
+                    o
+                } else {
+                    let mut o = self.exact_b(a);
+                    o.extend(lit);
+                    o
+                };
+                out.push(BI::Op(WI::Call(self.mul)));
+                out
+            }
             PlanWTree::Pick(p, a, b) => {
                 let mut out = self.exact_b(a);
                 out.extend(self.exact_b(b));
@@ -488,6 +502,7 @@ impl MCtx<'_> {
             }
             PlanWTree::Lit(_) => true,
             PlanWTree::Pick(_, a, b) => self.word_tree_ok(n, g, a) && self.word_tree_ok(n, g, b),
+            PlanWTree::MulLit(_, _, a) => self.word_tree_ok(n, g, a),
         }
     }
 
@@ -1142,6 +1157,39 @@ fn tree_op(w: u32, op: PlanBinOp) -> Vec<WI> {
     out
 }
 
+/// `GrammarLower.mulRange`: the operands whose product by `k` fits an `i64`.
+fn mul_range(k: i128) -> (i128, i128) {
+    let (min, max) = (i128::from(i64::MIN), i128::from(i64::MAX));
+    let (lo, hi) = if k < 0 { (max, min) } else { (min, max) };
+    let floor = |a: i128| (a * k.signum()).div_euclid(k.abs());
+    if k == 0 {
+        (min, max)
+    } else {
+        (-floor(-lo), floor(hi))
+    }
+}
+
+/// `GrammarLower.guardW`: the range test of the word on the stack, parked
+/// in local `t`.
+fn guard_w(lo: i128, hi: i128, t: u32) -> Vec<WI> {
+    let (lo, hi) = (lo.max(i64::MIN.into()), hi.min(i64::MAX.into()));
+    if hi < lo {
+        vec![WI::LocalSet(t), WI::Br(0)]
+    } else if hi - lo < i128::from(u64::MAX) {
+        vec![
+            WI::LocalSet(t),
+            WI::LocalGet(t),
+            WI::I64Const(lo as i64),
+            WI::I64Sub,
+            WI::I64Const((hi - lo) as i64),
+            WI::I64GtU,
+            WI::BrIf(0),
+        ]
+    } else {
+        vec![WI::LocalSet(t)]
+    }
+}
+
 /// `GrammarLower.fastW`.
 fn fast_w(c: u64, w: u32, t: &PlanWTree, out: &mut Vec<WI>) {
     match t {
@@ -1152,6 +1200,12 @@ fn fast_w(c: u64, w: u32, t: &PlanWTree, out: &mut Vec<WI>) {
             out.extend(tree_op(w, *op));
         }
         PlanWTree::Lit(k) => out.push(WI::I64Const(*k)),
+        PlanWTree::MulLit(k, _, a) => {
+            fast_w(c, w, a, out);
+            let (lo, hi) = mul_range(i128::from(*k));
+            out.extend(guard_w(lo, hi, w));
+            out.extend([WI::LocalGet(w), WI::I64Const(*k), WI::I64Mul]);
+        }
         PlanWTree::Pick(p, a, b) => {
             fast_w(c, w, a, out);
             fast_w(c, w, b, out);
@@ -2440,6 +2494,7 @@ fn tot_w(mul_ok: bool, t: &PlanWTree) -> bool {
                 && tot_w(mul_ok, a)
                 && tot_w(mul_ok, b)
         }
+        PlanWTree::MulLit(_, _, a) => mul_ok && tot_w(mul_ok, a),
         PlanWTree::Leaf(PlanWLeaf::Field { .. }) | PlanWTree::Pick(..) => false,
     }
 }
@@ -2448,6 +2503,7 @@ fn tot_w(mul_ok: bool, t: &PlanWTree) -> bool {
 fn uses_mul_w(t: &PlanWTree) -> bool {
     match t {
         PlanWTree::Op(op, a, b) => *op == PlanBinOp::Mul || uses_mul_w(a) || uses_mul_w(b),
+        PlanWTree::MulLit(..) => true,
         _ => false,
     }
 }
