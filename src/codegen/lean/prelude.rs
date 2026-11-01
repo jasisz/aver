@@ -120,7 +120,9 @@ example : AverFloat.round (-0.5) = -1                            := by native_de
 example : AverFloat.round 2.5 = 3                                := by native_decide
 example : AverFloat.round (-2.5) = -3                            := by native_decide
 example : AverFloat.toBits 1.0 = 4607182418800017408             := by native_decide
-example : AverFloat.toBits (AverFloat.fromBits (-1)) = 18446744073709551615 := by native_decide
+-- `fromBits` keeps the lowest 64 bits; a negative pattern wraps. (No NaN
+-- here: compiled Lean may canonicalize a NaN payload, as wasm engines do.)
+example : AverFloat.toBits (AverFloat.fromBits (-4616189618054758400)) = 13830554455654793216 := by native_decide
 end AverFloat"#;
 
 // `DecidableEq Float` via an `unsafeCast`-fabricated proof delegating to
