@@ -342,7 +342,7 @@ impl Cited {
             PlanExpr::IntWord(t, _) => {
                 self.ty(&PlanTy::Int);
                 for l in t.leaves() {
-                    if let PlanWLeaf::Field { tid, .. } = l {
+                    if let PlanWLeaf::Field { tid, .. } | PlanWLeaf::Word { tid, .. } = l {
                         self.ty(&PlanTy::Record(*tid));
                     }
                 }

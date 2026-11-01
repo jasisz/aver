@@ -462,10 +462,22 @@ def modGenW (w : Nat) (k : Int) : List WInstr :=
 def modOpW (w : Nat) (k : Int) : List WInstr :=
   if isPow2 k.natAbs then [.i64Const ((k.natAbs - 1 : Nat) : Int), .i64And] else modGenW w k
 
+/-- The word of a leaf on the `i64` path: a word record's `Int` is its
+    `i64`, any other leaf is the `$small` of its carrier (a Big one branches
+    out). -/
+def WLeaf.fastW (C : Nat) : WLeaf → List WInstr
+  | .word _ _ slot => [.localGet slot]
+  | l => smallReadW C l.loc
+
+/-- A leaf on the exact path: its carrier, or a word record's `i64` boxed. -/
+def WLeaf.exactW (M : MCtx) : WLeaf → List WInstr
+  | .word _ _ slot => [.localGet slot, .call M.box]
+  | l => [.localGet l.loc]
+
 /-- The `i64` path of a tree: the word of each leaf, and each operation on
     the words. -/
 def fastW (C w : Nat) : WTree → List WInstr
-  | .leaf l => smallReadW C l.loc
+  | .leaf l => l.fastW C
   | .op o a b => fastW C w a ++ fastW C w b ++ treeOpW w o
   | .lit k => [.i64Const k]
   | .pick p a b => fastW C w a ++ fastW C w b ++ pickOpW w p
@@ -478,7 +490,7 @@ def fastW (C w : Nat) : WTree → List WInstr
     operation's call, and for `Int.min` / `Int.max` the three-way helper and
     the picked operand's exact path again. -/
 def exactB (M : MCtx) : WTree → List BI
-  | .leaf l => [.op (.localGet l.loc)]
+  | .leaf l => (l.exactW M).map .op
   | .op o a b => exactB M a ++ exactB M b ++ [.op (.call (M.arithIdx o))]
   | .lit k => [.op (.i64Const k), .op (.call M.box)]
   | .pick p a b =>
@@ -495,7 +507,8 @@ def exactB (M : MCtx) : WTree → List BI
 /-- The exact path the interpreter runs. -/
 def exactW (M : MCtx) (t : WTree) : List WInstr := eraseL (exactB M t)
 
-theorem exactW_leaf (M : MCtx) (l : WLeaf) : exactW M (.leaf l) = [.localGet l.loc] := rfl
+theorem exactW_leaf (M : MCtx) (l : WLeaf) : exactW M (.leaf l) = l.exactW M := by
+  simp [exactW, exactB, eraseL_ops]
 
 theorem exactW_op (M : MCtx) (o : BinOp) (a b : WTree) :
     exactW M (.op o a b) = exactW M a ++ exactW M b ++ [.call (M.arithIdx o)] := by
@@ -529,6 +542,7 @@ def aheadW (M : MCtx) : WTree → List WInstr
   | .leaf (.local _) => []
   | .leaf (.field tid k base slot) =>
       [.localGet base, .structGet (M.structOf tid) k, .localSet slot]
+  | .leaf (.word _ base slot) => [.localGet base, .localSet slot]
   | .op _ a b => aheadW M a ++ aheadW M b
   | .lit _ => []
   | .pick _ a b => aheadW M a ++ aheadW M b
