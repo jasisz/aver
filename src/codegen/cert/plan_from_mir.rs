@@ -1364,6 +1364,22 @@ impl Printer<'_> {
                 PlanExpr::Local(i) => PlanWTree::Leaf(PlanWLeaf::Local(i)),
                 _ => return Err("IntWord leaf read in place (not a local)".into()),
             },
+            // A word record's field held as its `i64` (`WLeaf.word`).
+            IntWordNode::Ahead(e, k, crate::ir::mir::IntWordHold::RawField) => {
+                match self.expr(e)? {
+                    PlanExpr::Project(tid, _, base) if self.types.is_word(tid) => {
+                        let PlanExpr::Local(base) = *base else {
+                            return Err("IntWord word leaf (not of a local)".into());
+                        };
+                        PlanWTree::Leaf(PlanWLeaf::Word {
+                            tid,
+                            base,
+                            slot: self.scratch_local(*k)?,
+                        })
+                    }
+                    _ => return Err("IntWord word leaf (not of a word record)".into()),
+                }
+            }
             IntWordNode::Ahead(_, _, hold) if *hold != crate::ir::mir::IntWordHold::Int => {
                 return Err("IntWord leaf held as a raw word (not in the wall)".into());
             }

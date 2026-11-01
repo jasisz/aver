@@ -34,8 +34,8 @@
 //! values of `+`, `-`, `*` (a product by a literal by its range test),
 //! `Int.min`, `Int.max`, quotients and remainders by a literal, and
 //! negations (as `0 - a`) over literals, locals and fields of records held in
-//! locals, any other leaf bound by a `let`, a field of a word record never a leaf
-//! (the totality grammar, `GrammarTotal.totE`, reads such a tree of locals
+//! locals (a word record's field held as its `i64`), any other leaf bound by a
+//! `let` (the totality grammar, `GrammarTotal.totE`, reads such a tree of locals
 //! and literals as it reads the plain arithmetic); any other node is left as
 //! it is there.
 
@@ -388,18 +388,19 @@ impl Pass<'_> {
                 }
                 MirExpr::Project(p)
                     if matches!(&p.node.base.node, MirExpr::Local(l)
-                        if !self.f.repr.slot_is_bare_carrier(l.node.slot))
-                        && !(t.is_word_field)(e) =>
+                        if !self.f.repr.slot_is_bare_carrier(l.node.slot)) =>
                 {
-                    Some(IntWordNode::Ahead(
-                        Box::new(e.clone()),
-                        u32::MAX,
-                        IntWordHold::Int,
-                    ))
+                    // A word record's field is held as its `i64`
+                    // (`WLeaf.word`), any other field as its `Int`.
+                    let hold = if (t.is_word_field)(e) {
+                        IntWordHold::RawField
+                    } else {
+                        IntWordHold::Int
+                    };
+                    Some(IntWordNode::Ahead(Box::new(e.clone()), u32::MAX, hold))
                 }
-                // A field of a word record, a bare slot or a project of a
-                // bare carrier stays out; any other `Int` expression is bound
-                // by a `let` (`bind_leaves`).
+                // A bare slot or a project of a bare carrier stays out; any
+                // other `Int` expression is bound by a `let` (`bind_leaves`).
                 MirExpr::Local(_) | MirExpr::Project(_) => None,
                 _ if is_int(e) && !(t.renders_raw)(&e.node) => Some(IntWordNode::Ahead(
                     Box::new(e.clone()),
@@ -457,7 +458,11 @@ impl Pass<'_> {
             },
             IntWordNode::Ahead(e, _, hold) => {
                 let slot = if self.target.kept {
-                    self.int_scratch(*k)
+                    let kind = match hold {
+                        IntWordHold::Int => MirScratch::Int,
+                        IntWordHold::RawBox | IntWordHold::RawField => MirScratch::Word,
+                    };
+                    self.kept_scratch(kind, *k)
                 } else {
                     self.scratch.push(match hold {
                         IntWordHold::Int => MirScratch::Int,
@@ -480,15 +485,16 @@ impl Pass<'_> {
         0
     }
 
-    /// The scratch index of the `k`-th `Int` scratch local.
-    fn int_scratch(&mut self, k: usize) -> u32 {
-        let ints: Vec<usize> = (0..self.scratch.len())
-            .filter(|i| self.scratch[*i] == MirScratch::Int)
+    /// The scratch index of the `k`-th scratch local of `kind` past the
+    /// three word temporaries.
+    fn kept_scratch(&mut self, kind: MirScratch, k: usize) -> u32 {
+        let found: Vec<usize> = (3..self.scratch.len())
+            .filter(|i| self.scratch[*i] == kind)
             .collect();
-        if let Some(i) = ints.get(k) {
+        if let Some(i) = found.get(k) {
             return *i as u32;
         }
-        self.scratch.push(MirScratch::Int);
+        self.scratch.push(kind);
         (self.scratch.len() - 1) as u32
     }
 }

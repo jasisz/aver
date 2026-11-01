@@ -5,7 +5,7 @@ module WordCarrier
         "holds it as a machine word. The functions that build words, pass"
         "them along, pick between them, take them out of a sum and read their"
         "value are certified."
-    exposes [Node, wordOf, valueOf, pick, labelOf, labelValue, relabel]
+    exposes [Node, wordOf, valueOf, pick, labelOf, labelValue, relabel, spread]
     exposes opaque [Word]
 
 record Word
@@ -53,6 +53,12 @@ fn relabel(n: Node, w: Word) -> Node
         Node.Leaf(_) -> Node.Leaf(w)
         Node.Pair(_, l, r) -> Node.Pair(w, l, r)
 
+fn spread(n: Int) -> Int
+    ? "A word's value as a leaf of Int arithmetic: its machine word, read once ahead."
+    match fromInt(n)
+        Result.Ok(w) -> w.value * 2 + Int.mod(n - w.value, 8)
+        Result.Err(_) -> 0 - n
+
 verify valueOf
     valueOf(wordOf(7)) => 7
     valueOf(wordOf(-1)) => 0
@@ -67,3 +73,7 @@ verify labelValue
 
 verify relabel
     labelValue(relabel(Node.Leaf(wordOf(5)), wordOf(9))) => 9
+
+verify spread
+    spread(4) => 8
+    spread(-3) => 3

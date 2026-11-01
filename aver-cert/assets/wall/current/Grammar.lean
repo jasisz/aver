@@ -189,6 +189,9 @@ inductive WLeaf where
   /-- Field `k` of the record of type `tid` held in local `base`, read once
       ahead of the tree into the local `slot`. -/
   | field (tid k base slot : Nat)
+  /-- The `Int` of the word record of type `tid` held in local `base` (an
+      `i64`), read once ahead of the tree into the `i64` local `slot`. -/
+  | word (tid base slot : Nat)
 deriving DecidableEq, Repr
 
 /-- The operations of an `Int` tree computed on the machine word. -/
@@ -765,6 +768,7 @@ def ctorTy (M : MCtx) : CtorTag → Ty → List Ty → Option Ty
 def WLeaf.loc : WLeaf → Nat
   | .local i => i
   | .field _ _ _ slot => slot
+  | .word _ _ slot => slot
 
 /-- The leaves of a tree, in evaluation order. -/
 def WTree.leaves : WTree → List WLeaf
@@ -779,6 +783,7 @@ def WTree.leaves : WTree → List WLeaf
 /-- The locals the tree's leaves read ahead are stored in. -/
 def WTree.slots : WTree → List Nat
   | .leaf (.field _ _ _ slot) => [slot]
+  | .leaf (.word _ _ slot) => [slot]
   | .leaf (.local _) => []
   | .op _ a b => a.slots ++ b.slots
   | .lit _ => []
@@ -803,6 +808,7 @@ def WLeaf.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WLeaf → Bool
         | some (.record tid'), some fts =>
             decide (tid' = tid) && decide (2 ≤ fts.length) && fts[k]? == some .int
         | _, _ => false
+  | .word tid base slot => decide (n ≤ slot) && Γ base == some (.record tid) && M.isWord tid
 
 /-- A power of two: `m ≠ 0` and `2 ^ log2 m = m`. -/
 def isPow2 (m : Nat) : Bool := m != 0 && 2 ^ m.log2 == m
@@ -1361,6 +1367,10 @@ def WLeaf.val (env : Nat → Option SVal) : WLeaf → Option SVal
   | .field _ k base _ =>
       match env base with
       | some (.record _ fs) => fs[k]?
+      | _ => none
+  | .word _ base _ =>
+      match env base with
+      | some (.record _ fs) => fs[0]?
       | _ => none
 
 /-- A tree's value as plain `Int` arithmetic. -/

@@ -274,6 +274,9 @@ pub enum PlanWLeaf {
         base: u32,
         slot: u32,
     },
+    /// The `Int` of the word record of type `tid` held in local `base` (an
+    /// `i64`), read once ahead into the `i64` local `slot`.
+    Word { tid: u32, base: u32, slot: u32 },
 }
 
 /// `Grammar.WTree`.
@@ -287,9 +290,9 @@ pub enum PlanWTree {
     Pick(PlanPick, Box<PlanWTree>, Box<PlanWTree>),
     /// A product by the literal `k`, written first when the flag is set.
     MulLit(i64, bool, Box<PlanWTree>),
-    /// `Int.div` by the literal (no `0`, `-1` or positive power of two).
+    /// `Int.div` by the literal (not `0` or `-1`).
     DivLit(i64, Box<PlanWTree>),
-    /// `Int.mod` by the literal (no `0`, no magnitude a power of two).
+    /// `Int.mod` by the literal (not `0`).
     ModLit(i64, Box<PlanWTree>),
 }
 
@@ -298,7 +301,7 @@ impl PlanWLeaf {
     pub fn loc(&self) -> u32 {
         match self {
             PlanWLeaf::Local(i) => *i,
-            PlanWLeaf::Field { slot, .. } => *slot,
+            PlanWLeaf::Field { slot, .. } | PlanWLeaf::Word { slot, .. } => *slot,
         }
     }
 
@@ -311,6 +314,7 @@ impl PlanWLeaf {
                 base,
                 slot,
             } => format!("(.field {tid} {field} {base} {slot})"),
+            PlanWLeaf::Word { tid, base, slot } => format!("(.word {tid} {base} {slot})"),
         }
     }
 }
@@ -337,7 +341,7 @@ impl PlanWTree {
         self.leaves()
             .into_iter()
             .filter_map(|l| match l {
-                PlanWLeaf::Field { slot, .. } => Some(*slot),
+                PlanWLeaf::Field { slot, .. } | PlanWLeaf::Word { slot, .. } => Some(*slot),
                 PlanWLeaf::Local(_) => None,
             })
             .collect()

@@ -3112,6 +3112,7 @@
    "labelValue": "L1",
    "pick": "L1",
    "relabel": "L1",
+   "spread": "L1",
    "valueOf": "L1",
    "wordOf": "L1"
   },

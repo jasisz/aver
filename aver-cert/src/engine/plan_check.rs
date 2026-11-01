@@ -182,6 +182,10 @@ impl<'a> MCtx<'a> {
     /// `GrammarLower.exactB`.
     fn exact_b(&self, t: &PlanWTree) -> Vec<BI> {
         match t {
+            // `GrammarLower.WLeaf.exactW`: a word record's `i64` boxed.
+            PlanWTree::Leaf(PlanWLeaf::Word { slot, .. }) => {
+                ops(vec![WI::LocalGet(*slot), WI::Call(self.box_)])
+            }
             PlanWTree::Leaf(l) => ops(vec![WI::LocalGet(l.loc())]),
             PlanWTree::Op(op, a, b) => {
                 let mut out = self.exact_b(a);
@@ -495,6 +499,9 @@ impl MCtx<'_> {
                         }
                         _ => false,
                     }
+            }
+            PlanWLeaf::Word { tid, base, slot } => {
+                n <= *slot && g.get(base) == Some(&PlanTy::Record(*tid)) && self.is_word(*tid)
             }
         }
     }
@@ -1218,6 +1225,8 @@ fn guard_w(lo: i128, hi: i128, t: u32) -> Vec<WI> {
 /// `GrammarLower.fastW`.
 fn fast_w(c: u64, w: u32, t: &PlanWTree, out: &mut Vec<WI>) {
     match t {
+        // `GrammarLower.WLeaf.fastW`: a word record's `Int` is its `i64`.
+        PlanWTree::Leaf(PlanWLeaf::Word { slot, .. }) => out.push(WI::LocalGet(*slot)),
         PlanWTree::Leaf(l) => out.extend(small_read(c, l.loc())),
         PlanWTree::Op(op, a, b) => {
             fast_w(c, w, a, out);
@@ -1904,6 +1913,9 @@ impl MCtx<'_> {
                             WI::LocalSet(*slot),
                         ]));
                     }
+                    if let PlanWLeaf::Word { base, slot, .. } = l {
+                        out.extend(ops(vec![WI::LocalGet(*base), WI::LocalSet(*slot)]));
+                    }
                 }
                 let mut fast = Vec::new();
                 fast_w(self.carrier, *w, t, &mut fast);
@@ -2564,7 +2576,9 @@ fn tot_w(mul_ok: bool, t: &PlanWTree) -> bool {
         }
         PlanWTree::MulLit(_, _, a) => mul_ok && tot_w(mul_ok, a),
         PlanWTree::DivLit(..) | PlanWTree::ModLit(..) => false,
-        PlanWTree::Leaf(PlanWLeaf::Field { .. }) | PlanWTree::Pick(..) => false,
+        PlanWTree::Leaf(PlanWLeaf::Field { .. } | PlanWLeaf::Word { .. }) | PlanWTree::Pick(..) => {
+            false
+        }
     }
 }
 

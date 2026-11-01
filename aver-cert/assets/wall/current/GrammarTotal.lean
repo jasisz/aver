@@ -70,6 +70,7 @@ def isDescent : Expr → Bool
 def WTree.totW (mulOk : Bool) : WTree → Bool
   | .leaf (.local _) => true
   | .leaf (.field _ _ _ _) => false
+  | .leaf (.word _ _ _) => false
   | .op o a b => (o == .add || o == .sub || (o == .mul && mulOk)) && a.totW mulOk && b.totW mulOk
   | .lit _ => true
   | .pick _ _ _ => false
@@ -511,9 +512,10 @@ theorem fastW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat 
       simp only [WLeaf.loc] at hwl
       have hx := hc wv hwl
       rcases S.car x wv hx.1 with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
-      · simp [fastW, smallReadW, WLeaf.loc, wRunF, hwl, b32]
-      · simp [fastW, smallReadW, WLeaf.loc, wRunF, hwl, b32]
+      · simp [fastW, WLeaf.fastW, smallReadW, WLeaf.loc, wRunF, hwl, b32]
+      · simp [fastW, WLeaf.fastW, smallReadW, WLeaf.loc, wRunF, hwl, b32]
   | .leaf (.field _ _ _ _), _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
+  | .leaf (.word _ _ _), _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
   | .pick _ _ _, _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
   | .divLit _ _, _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
   | .modLit _ _, _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
@@ -592,14 +594,15 @@ theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat
     ∀ (t : WTree) (L st : List WVal),
       t.totW mulOk = true → t.arith = true →
       (∀ l ∈ t.leaves, ∃ x, l.val env = some (.i x) ∧
-        ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv) →
+        ∀ wv, L[l.loc]? = some wv → l.holds S x wv) →
       LeavesPresent L t →
       ∃ o, wRunF host ar callee (exactW M t) L st = some o
   | .leaf (.local i), L, st, _, _, _, hp => by
       obtain ⟨wv, hwl⟩ := hp (.local i) (by simp [WTree.leaves])
       simp only [WLeaf.loc] at hwl
-      simp [exactW_leaf, WLeaf.loc, wRunF, hwl]
+      simp [exactW_leaf, WLeaf.exactW, WLeaf.loc, wRunF, hwl]
   | .leaf (.field _ _ _ _), _, _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .leaf (.word _ _ _), _, _, ht, _, _, _ => by simp [WTree.totW] at ht
   | .pick _ _ _, _, _, ht, _, _, _ => by simp [WTree.totW] at ht
   | .divLit _ _, _, _, ht, _, _, _ => by simp [WTree.totW] at ht
   | .modLit _ _, _, _, ht, _, _, _ => by simp [WTree.totW] at ht
@@ -609,7 +612,7 @@ theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat
       have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
         simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using har.1
       have hha : ∀ l ∈ a.leaves, ∃ x, l.val env = some (.i x) ∧
-          ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv :=
+          ∀ wv, L[l.loc]? = some wv → l.holds S x wv :=
         fun l hl => hh l (by simpa [WTree.leaves] using hl)
       have hpa : LeavesPresent L a := fun l hl => hp l (by simpa [WTree.leaves] using hl)
       obtain ⟨wk, hwk⟩ := hBoxT k hk.1 hk.2
@@ -656,10 +659,10 @@ theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat
       simp only [WTree.arith, Bool.and_eq_true] at har'
       obtain ⟨⟨_, ha⟩, hb⟩ := har'
       have hha : ∀ l ∈ a.leaves, ∃ x, l.val env = some (.i x) ∧
-          ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv :=
+          ∀ wv, L[l.loc]? = some wv → l.holds S x wv :=
         fun l hl => hh l (by simp [WTree.leaves, hl])
       have hhb : ∀ l ∈ b.leaves, ∃ x, l.val env = some (.i x) ∧
-          ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv :=
+          ∀ wv, L[l.loc]? = some wv → l.holds S x wv :=
         fun l hl => hh l (by simp [WTree.leaves, hl])
       have hpa : LeavesPresent L a := fun l hl => hp l (by simp [WTree.leaves, hl])
       have hpb : LeavesPresent L b := fun l hl => hp l (by simp [WTree.leaves, hl])
@@ -752,6 +755,7 @@ theorem totW_leaf {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} {mulOk : Bool} :
       simp only [WTree.ok, WLeaf.ok, beq_iff_eq] at hok
       exact ⟨i, rfl, hok⟩
   | .leaf (.field _ _ _ _), ht, _, _, _ => by simp [WTree.totW] at ht
+  | .leaf (.word _ _ _), ht, _, _, _ => by simp [WTree.totW] at ht
   | .pick _ _ _, ht, _, _, _ => by simp [WTree.totW] at ht
   | .divLit _ _, ht, _, _, _ => by simp [WTree.totW] at ht
   | .modLit _ _, ht, _, _, _ => by simp [WTree.totW] at ht
@@ -773,6 +777,7 @@ theorem aheadW_totW (M : MCtx) {mulOk : Bool} :
     ∀ {t : WTree}, t.totW mulOk = true → aheadW M t = []
   | .leaf (.local _), _ => rfl
   | .leaf (.field _ _ _ _), ht => by simp [WTree.totW] at ht
+  | .leaf (.word _ _ _), ht => by simp [WTree.totW] at ht
   | .pick _ _ _, ht => by simp [WTree.totW] at ht
   | .divLit _ _, ht => by simp [WTree.totW] at ht
   | .modLit _ _, ht => by simp [WTree.totW] at ht
@@ -1011,7 +1016,7 @@ theorem progress :
           simp only [WLeaf.loc] at hw'
           rw [hw] at hw'
           cases hw'
-          simpa [SRepr] using hr
+          simpa [SRepr, WLeaf.holds] using hr
         have hp : LeavesPresent wl t := by
           intro l hl'
           obtain ⟨i, rfl, hi⟩ := hleaf l hl'
