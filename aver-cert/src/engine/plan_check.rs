@@ -545,6 +545,12 @@ impl MCtx<'_> {
                 }
                 _ => None,
             },
+            PlanExpr::Call(PlanCallee::Pick(_), args) => match args.as_slice() {
+                [a, b] => (self.ty_of(n, g, false, a)? == PlanTy::Int
+                    && self.ty_of(n, g, false, b)? == PlanTy::Int)
+                    .then_some(PlanTy::Int),
+                _ => None,
+            },
             PlanExpr::BinOp(op, l, r) => {
                 match (self.ty_of(n, g, false, l)?, self.ty_of(n, g, false, r)?) {
                     (PlanTy::Int, PlanTy::Int) => Some(if is_arith(*op) {
@@ -1344,6 +1350,24 @@ impl MCtx<'_> {
                     WI::I32Const(i64::from(*i == PlanIntrinsic::IntModEuclid)),
                     WI::Call(self.divmod),
                 ]));
+                out
+            }
+            PlanExpr::Call(PlanCallee::Pick(p), args) => {
+                let [a, b] = args.as_slice() else {
+                    return vec![];
+                };
+                let op = match p {
+                    PlanPick::IntMin => PlanBinOp::Lte,
+                    PlanPick::IntMax => PlanBinOp::Gte,
+                };
+                let mut out = self.lower(x, g, false, a);
+                out.extend(self.lower(x, g, false, b));
+                out.extend(ops(self.int_cmp_tail(op)));
+                out.push(BI::If(
+                    Some(PlanTy::Int),
+                    self.lower(x, g, false, a),
+                    self.lower(x, g, false, b),
+                ));
                 out
             }
             PlanExpr::TailCall(f, args) => {

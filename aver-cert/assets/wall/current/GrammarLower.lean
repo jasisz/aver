@@ -35,6 +35,9 @@
      (`emit_mir_variant_dispatch`); binders are extracted by
      `ref.cast` + `struct.get` per field;
    * `withDefault` stashes the carrier and runs the default only in `else`;
+   * `Int.min` / `Int.max` evaluate both operands, call `__aint_cmp` and
+     compare its verdict with `0` (`<=` / `>=`), then evaluate the picked
+     operand again in an `if` of the carrier type;
    * `Construct` pushes the tag, the payload and the default filler of the
      other side, then `struct.new` (`constructors.rs`);
    * a Float comparison is one `f64` instruction; a String literal is
@@ -516,6 +519,14 @@ mutual
         | _ => []
     | .call (.intrinsic ie) args =>
         lowerArgsB M X Γ args ++ [.op (.i32Const ie.flag), .op (.call M.divmod)]
+    | .call (.pick pb) args =>
+        -- both operands, `__aint_cmp` against `0`, then the picked operand
+        -- evaluated again inside an `if` of the carrier type
+        match args with
+        | [a, b] =>
+            lowerB M X Γ false a ++ lowerB M X Γ false b ++ (intCmpTail M pb.op).map .op ++
+              [.ifElse (some .int) (lowerB M X Γ false a) (lowerB M X Γ false b)]
+        | _ => []
     | .construct c ty args =>
         match c, ty with
         | .user tid k, _ =>

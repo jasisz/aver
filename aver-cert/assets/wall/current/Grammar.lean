@@ -56,6 +56,9 @@
      `Result.withDefault(Int.div(a, b), <Int literal>)` /
      `Result.withDefault(Int.mod(a, b), <Int literal>)` (the emitter's guarded
      `__aint_divmod` call; `Int.div` / `Int.mod` are admitted only there).
+   * `call (.pick b) [a, b]` — `Call { callee: Builtin(..) }` for `Int.min` /
+     `Int.max` over two `Int` operands: the emitter evaluates both, compares
+     them with `__aint_cmp`, and evaluates the operand it picks once more.
    * `call (.intrinsic i) [a, <nonzero Int literal>]` — `Call { callee:
      Intrinsic(IntDivEuclid | IntModEuclid) }`, the resolver's discharge of
      `Int.div` / `Int.mod` by a syntactic nonzero literal divisor: a bare
@@ -264,12 +267,26 @@ inductive LazyBuiltin where
   | optWithDefault | resWithDefault
 deriving DecidableEq, Repr
 
+/-- Builtins whose emitter evaluates both `Int` arguments, compares them with
+    `__aint_cmp`, and evaluates the argument it picks once more inside the
+    `if` (`Int.min` / `Int.max`, `emit_mir_native_scalar_builtin`). -/
+inductive PickBuiltin where
+  | intMin | intMax
+deriving DecidableEq, Repr
+
+/-- The comparison of the first argument with the second under which the
+    emitter picks the first: `<=` for `Int.min`, `>=` for `Int.max`. -/
+def PickBuiltin.op : PickBuiltin → BinOp
+  | .intMin => .lte
+  | .intMax => .gte
+
 /-- `MirCallee`, admitted part. -/
 inductive MirCallee where
   | fn (idx : Nat)
   | builtin (b : Builtin)
   | lazy (b : LazyBuiltin)
   | intrinsic (i : Intrinsic)
+  | pick (b : PickBuiltin)
 deriving DecidableEq, Repr
 
 /-- `MirCtor`: a user constructor (type id, constructor index in declaration
@@ -841,6 +858,13 @@ mutual
             | some _, some .int => some .int
             | _, _ => none
         | _ => none
+    | .call (.pick _) args =>
+        match args with
+        | [a, b] =>
+            match tyOf M n Γ false a, tyOf M n Γ false b with
+            | some .int, some .int => some .int
+            | _, _ => none
+        | _ => none
     | .construct c ty args =>
         match tysOf M n Γ args with
         | some ts => ctorTy M c ty ts
@@ -1227,6 +1251,13 @@ def intrinsicEval : Intrinsic → List SVal → Option SVal
   | .intModEuclid, [.i x, .i y] => if y = 0 then none else some (.i (x % y))
   | _, _ => none
 
+/-- `Int.min` / `Int.max` (Lean's `min` / `max` on `Int`, as the source model
+    spells them). -/
+def pickEval : PickBuiltin → List SVal → Option SVal
+  | .intMin, [.i x, .i y] => some (.i (min x y))
+  | .intMax, [.i x, .i y] => some (.i (max x y))
+  | _, _ => none
+
 /-- The value a constructor node builds. -/
 def ctorVal : CtorTag → Ty → List SVal → Option SVal
   | .user tid c, _, vs => some (.variant tid c vs)
@@ -1301,6 +1332,10 @@ mutual
     | .call (.intrinsic ie) args =>
         match evalArgs F env args with
         | some vs => intrinsicEval ie vs
+        | none => none
+    | .call (.pick pb) args =>
+        match evalArgs F env args with
+        | some vs => pickEval pb vs
         | none => none
     | .tailCall f args =>
         match evalArgs F env args with
@@ -1405,6 +1440,7 @@ mutual
     | .call (.fn _) args => escvArgs F env args
     | .call (.builtin _) args => escvArgs F env args
     | .call (.intrinsic _) args => escvArgs F env args
+    | .call (.pick _) args => escvArgs F env args
     | .call (.lazy lb) args =>
         match args with
         | [o, d] =>
@@ -1602,6 +1638,9 @@ theorem eval_none_of_escv {F : Nat → List SVal → Option SVal} :
       simp only [escv] at h
       simp [eval, evalArgs_none_of_escv env args x h]
   | env, .call (.intrinsic i) args, x, h => by
+      simp only [escv] at h
+      simp [eval, evalArgs_none_of_escv env args x h]
+  | env, .call (.pick _) args, x, h => by
       simp only [escv] at h
       simp [eval, evalArgs_none_of_escv env args x h]
   | env, .call (.lazy lb) [], x, h => by simp [escv] at h

@@ -18,8 +18,8 @@ use std::collections::HashMap;
 
 use aver_cert::{
     FnPlan, ModulePlans, PLAN_NO_SLOT, PlanBinOp, PlanBuiltin, PlanBytesRole, PlanCallee, PlanCtor,
-    PlanExpr, PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat, PlanRecordDecl, PlanSumDecl,
-    PlanTy, PlanTypeTable, PlanWLeaf, PlanWTree, PlannedFn,
+    PlanExpr, PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat, PlanPick, PlanRecordDecl,
+    PlanSumDecl, PlanTy, PlanTypeTable, PlanWLeaf, PlanWTree, PlannedFn,
 };
 
 use crate::ast::{BinOp, Literal, Spanned};
@@ -1041,6 +1041,10 @@ impl Printer<'_> {
                                 PlanCallee::Builtin(b)
                             }
                             "Option.withDefault" => PlanCallee::Lazy(PlanLazy::OptWithDefault),
+                            // The emitter's three-way compare, then the
+                            // picked operand evaluated again.
+                            "Int.min" => PlanCallee::Pick(PlanPick::IntMin),
+                            "Int.max" => PlanCallee::Pick(PlanPick::IntMax),
                             "Result.withDefault" => {
                                 // `Int.div` / `Int.mod` print only fused here.
                                 if let [o, d] = call.args.as_slice()
@@ -1834,6 +1838,47 @@ fn notLiteral(a: Int, d: Int) -> Int
         assert_eq!(plan(&map, "guardedMod").body, fused(PlanBuiltin::IntMod, 7));
         assert!(reason(&map, "unfused").contains("outside Result.withDefault"));
         assert!(reason(&map, "notLiteral").contains("not an Int literal"));
+    }
+
+    const PICK_SRC: &str = r#"
+module P
+    intent = "Int.min and Int.max printer probes"
+    exposes [smaller, capped]
+
+fn smaller(a: Int, b: Int) -> Int
+    Int.min(a, b)
+
+fn capped(i: Int) -> Int
+    Int.max(i + 1, 0)
+"#;
+
+    /// `Int.min` / `Int.max` print as the pick callee over their two
+    /// operands as written.
+    #[test]
+    fn min_and_max_print_as_pick() {
+        let (map, _) = plans(PICK_SRC);
+        use PlanExpr as E;
+        assert_eq!(
+            plan(&map, "smaller").body,
+            E::Call(
+                PlanCallee::Pick(PlanPick::IntMin),
+                vec![E::Local(0), E::Local(1)]
+            )
+        );
+        assert_eq!(
+            plan(&map, "capped").body,
+            E::Call(
+                PlanCallee::Pick(PlanPick::IntMax),
+                vec![
+                    E::BinOp(
+                        PlanBinOp::Add,
+                        Box::new(E::Local(0)),
+                        Box::new(E::Literal(PlanLit::Int(1)))
+                    ),
+                    E::Literal(PlanLit::Int(0)),
+                ]
+            )
+        );
     }
 
     #[test]

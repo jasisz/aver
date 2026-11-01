@@ -187,6 +187,14 @@ pub enum PlanLazy {
     ResWithDefault,
 }
 
+/// `Grammar.PickBuiltin`: `Int.min` / `Int.max`, whose emitter evaluates the
+/// operand it picks a second time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanPick {
+    IntMin,
+    IntMax,
+}
+
 /// `Grammar.MirCallee`; `Fn` carries the callee's wasm function index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanCallee {
@@ -194,6 +202,7 @@ pub enum PlanCallee {
     Builtin(PlanBuiltin),
     Lazy(PlanLazy),
     Intrinsic(PlanIntrinsic),
+    Pick(PlanPick),
 }
 
 /// `Grammar.CtorTag`.
@@ -555,6 +564,13 @@ impl PlanCallee {
                 match l {
                     PlanLazy::OptWithDefault => ".optWithDefault",
                     PlanLazy::ResWithDefault => ".resWithDefault",
+                }
+            ),
+            PlanCallee::Pick(p) => format!(
+                "(.pick {})",
+                match p {
+                    PlanPick::IntMin => ".intMin",
+                    PlanPick::IntMax => ".intMax",
                 }
             ),
         }

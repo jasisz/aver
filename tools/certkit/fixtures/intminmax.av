@@ -1,0 +1,48 @@
+module IntMinMax
+    intent =
+        "Certify fixture for Int.min and Int.max: the emitter evaluates both"
+        "operands, compares them with the three-way helper and evaluates the"
+        "operand it picks again."
+    exposes [Span, smaller, larger, capped, spanLow, clamp]
+    effects []
+
+record Span
+    low: Int
+    high: Int
+
+fn smaller(a: Int, b: Int) -> Int
+    ? "The smaller of two locals: each is read again in the arm that picks it."
+    Int.min(a, b)
+
+verify smaller
+    smaller(3, 4) => 3
+    smaller(4, 3) => 3
+
+fn larger(a: Int, b: Int) -> Int
+    ? "The larger of two locals."
+    Int.max(a, b)
+
+verify larger
+    larger(3, 4) => 4
+
+fn capped(i: Int) -> Int
+    ? "A computed operand against a literal cap: the sum is computed again when it is picked."
+    Int.min(i + 1, 16383)
+
+verify capped
+    capped(5) => 6
+    capped(20000) => 16383
+
+fn spanLow(s: Span) -> Int
+    ? "The smaller of two fields of a record."
+    Int.min(s.low, s.high)
+
+verify spanLow
+    spanLow(Span(low = 2, high = 1)) => 1
+
+fn clamp(x: Int, lo: Int, hi: Int) -> Int
+    ? "One pick inside another: the inner one runs again when the outer one picks it."
+    Int.max(lo, Int.min(x, hi))
+
+verify clamp
+    clamp(5, 0, 3) => 3

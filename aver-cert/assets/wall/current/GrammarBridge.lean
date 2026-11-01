@@ -260,6 +260,13 @@ theorem eval_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
         rw [evalArgs_mono hle env args vs hvs]
         exact h
       · cases h
+  | env, .call (.pick pb) args, v, h => by
+      simp only [eval] at h ⊢
+      split at h
+      · rename_i vs hvs
+        rw [evalArgs_mono hle env args vs hvs]
+        exact h
+      · cases h
   | env, .call (.lazy b) [o, d], v, h => by
       simp only [eval] at h ⊢
       split at h <;> rename_i heq <;>
@@ -397,6 +404,8 @@ theorem escv_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
   | env, .call (.builtin _) args, x, h => by
       simp only [escv] at h ⊢; exact escvArgs_mono hle env args x h
   | env, .call (.intrinsic _) args, x, h => by
+      simp only [escv] at h ⊢; exact escvArgs_mono hle env args x h
+  | env, .call (.pick _) args, x, h => by
       simp only [escv] at h ⊢; exact escvArgs_mono hle env args x h
   | env, .call (.lazy lb) [], x, h => by simp [escv] at h
   | env, .call (.lazy lb) [_], x, h => by simp [escv] at h

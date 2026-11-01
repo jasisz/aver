@@ -505,6 +505,11 @@ mutual
     | Γ, _, .call (.lazy lb) (_ :: _ :: _ :: _), k => by simp only [lowerB]; esc_simp []
     | Γ, _, .call (.intrinsic ie) args, k => by
         simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
+    | Γ, _, .call (.pick pb) [a, b], k => by
+        simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ a, escFree_lowerB M X _ _ b]
+    | Γ, _, .call (.pick pb) [], k => by simp only [lowerB]; esc_simp []
+    | Γ, _, .call (.pick pb) [_], k => by simp only [lowerB]; esc_simp []
+    | Γ, _, .call (.pick pb) (_ :: _ :: _ :: _), k => by simp only [lowerB]; esc_simp []
     | Γ, _, .construct c ty args, k => by
         simp only [lowerB]
         (repeat' split) <;> esc_simp [escFree_lowerArgsB M X _ args]
@@ -1793,6 +1798,24 @@ theorem tyOf_lazy_inv {lb : LazyBuiltin} {o d : Expr} {T : Ty}
       · rename_i to td ho hd
         exact ⟨to, td, ho, hd, h⟩
       · simp at h
+
+theorem tyOf_pick_inv {pb : PickBuiltin} {args : List Expr} {T : Ty}
+    (h : tyOf M n Γ tail (.call (.pick pb) args) = some T) :
+    ∃ a b, args = [a, b] ∧ tyOf M n Γ false a = some .int ∧
+      tyOf M n Γ false b = some .int ∧ T = .int := by
+  rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨e3, rest⟩⟩⟩
+  · simp [tyOf] at h
+  · simp [tyOf] at h
+  · simp only [tyOf] at h
+    cases ha : tyOf M n Γ false a with
+    | none => simp [ha] at h
+    | some ta =>
+        cases hb : tyOf M n Γ false b with
+        | none => simp [ha, hb] at h
+        | some tb =>
+            cases ta <;> cases tb <;> simp [ha, hb] at h
+            exact ⟨a, b, rfl, ha, hb, h.symm⟩
+  · simp [tyOf] at h
 
 theorem tyOf_intrinsic_inv {ie : Intrinsic} {args : List Expr} {T : Ty}
     (h : tyOf M n Γ tail (.call (.intrinsic ie) args) = some T) :
@@ -3985,6 +4008,59 @@ theorem agreement_step :
         (by simpa [SRepr] using hwa) (by simpa [SRepr] using hwd) wl2 st out hseq2
       refine Or.inl ⟨sv, by simp [eval, evalArgs, heva, hsv], ?_, res_ok hw hl2⟩
       cases ie <;> simp [intrinsicEval, hk0] at hsv <;> subst hsv <;> simp [HasTy]
+  | .call (.pick pb) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+      obtain ⟨a, b, rfl, hta, htb, rfl⟩ := tyOf_pick_inv hty
+      simp only [lowerW, lowerB, eraseL_append, eraseL_ops, List.append_assoc] at hrun
+      obtain ⟨o1, h1, hseq⟩ := run_split hrun
+      rcases agreement a Γ env false .int wl st o1 hta henv hl h1 with
+        ⟨sva, heva, hTa, hresa⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, evalArgs, h])
+          (fun x hx => by simp [escv, escvArgs, hx])
+          (fun R hR => by simp [bareTries, bareTriesL, hR]))
+      obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
+      simp only [seqOut] at hseq
+      obtain ⟨o2, h2, hseq2⟩ := run_split hseq
+      rcases agreement b Γ env false .int wl1 (wa :: st) o2 htb henv hl1 h2 with
+        ⟨svb, hevb, hTb, hresb⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq2 (fun h => by simp [eval, evalArgs, heva, h])
+          (fun x hx => by simp [escv, escvArgs, escv_none_of_eval heva, heva, hx])
+          (fun R hR => by simp [bareTries, bareTriesL, hR]))
+      obtain ⟨wl2, wb, rfl, hwb, hl2⟩ := res_false hresb
+      simp only [seqOut] at hseq2
+      obtain ⟨x, rfl⟩ := hasTy_int hTa
+      obtain ⟨y, rfl⟩ := hasTy_int hTb
+      obtain ⟨o3, h3, hseq3⟩ := run_split hseq2
+      have hop : pb.op.isArith = false := by cases pb <;> rfl
+      have hout := intCmpTail_step S box add sub mul cmp eq Ctr host ar callee M hCmp
+        hEq pb.op hop x y wa wb hwa hwb wl2 st o3 h3
+      subst hout
+      simp only [seqOut, eraseL, eraseI, b32] at hseq3
+      rw_if at hseq3
+      -- the picked operand runs again from the locals the comparison left;
+      -- it evaluated once already, so it cannot return early now
+      cases hc : cmpDen pb.op x y
+      · simp only [hc, ↓reduceIte] at hseq3
+        rcases agreement b Γ env false .int wl2 st out htb henv hl2 hseq3 with
+          ⟨sv, hev', _, hres⟩ | hE
+        · rw [hevb] at hev'
+          cases hev'
+          obtain ⟨wl3, w, rfl, hw, hl3⟩ := res_false hres
+          refine Or.inl ⟨.i y, ?_, by simp [HasTy], res_ok hw hl3⟩
+          cases pb <;> simp [PickBuiltin.op, cmpDen] at hc <;>
+            simp [eval, evalArgs, heva, hevb, pickEval] <;> omega
+        · exact (esc_some hE hevb).elim
+      · simp only [hc, ↓reduceIte] at hseq3
+        rcases agreement a Γ env false .int wl2 st out hta henv hl2 hseq3 with
+          ⟨sv, hev', _, hres⟩ | hE
+        · rw [heva] at hev'
+          cases hev'
+          obtain ⟨wl3, w, rfl, hw, hl3⟩ := res_false hres
+          refine Or.inl ⟨.i x, ?_, by simp [HasTy], res_ok hw hl3⟩
+          cases pb <;> simp [PickBuiltin.op, cmpDen] at hc <;>
+            simp [eval, evalArgs, heva, hevb, pickEval] <;> omega
+        · exact (esc_some hE heva).elim
   | .tailCall f args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨rfl, sig, hsig, hts, rfl⟩ := tyOf_tailCall_inv hty
       obtain ⟨hhost, har, hspec⟩ := hCallees f sig hsig
