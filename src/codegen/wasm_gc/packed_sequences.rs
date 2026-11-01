@@ -28,6 +28,11 @@ pub(super) struct PackedSequenceOps {
     /// element at `index`, or the empty list out of range. Present only
     /// when a program matches a list pattern on `List.drop` of a carrier.
     pub(super) get: Option<u32>,
+    /// `byte_at(packed, position) -> i64`: the element at `position`, or
+    /// `-1` at a negative position and at one at or past the length (the
+    /// `__packed_byte_at` intrinsic, `ir::mir::optimize::packed_index`).
+    /// Present only for a `U8` layout in a program whose MIR reads one.
+    pub(super) byte_at: Option<u32>,
 }
 
 #[derive(Default)]
@@ -35,6 +40,7 @@ pub(super) struct PackedSequenceHelperRegistry {
     ops: HashMap<String, PackedSequenceOps>,
     type_indices: HashMap<String, (u32, u32, u32, u32)>,
     get_type_indices: HashMap<String, u32>,
+    byte_at_type_indices: HashMap<String, u32>,
     order: Vec<String>,
 }
 
@@ -43,6 +49,7 @@ impl PackedSequenceHelperRegistry {
         &mut self,
         registry: &TypeRegistry,
         with_get: bool,
+        with_byte_at: bool,
         next_fn_idx: &mut u32,
         next_type_idx: &mut u32,
     ) {
@@ -73,6 +80,17 @@ impl PackedSequenceHelperRegistry {
                 *next_fn_idx += 1;
                 get
             });
+            let byte_wide = registry
+                .packed_sequence(name)
+                .is_some_and(|packed| matches!(packed.layout.element, PackedIntElement::U8));
+            let byte_at = (with_byte_at && byte_wide).then(|| {
+                let byte_at_type = *next_type_idx;
+                *next_type_idx += 1;
+                self.byte_at_type_indices.insert(name.clone(), byte_at_type);
+                let byte_at = *next_fn_idx;
+                *next_fn_idx += 1;
+                byte_at
+            });
             self.ops.insert(
                 name.clone(),
                 PackedSequenceOps {
@@ -82,6 +100,7 @@ impl PackedSequenceHelperRegistry {
                     take,
                     drop,
                     get,
+                    byte_at,
                 },
             );
             self.type_indices.insert(
@@ -144,6 +163,11 @@ impl PackedSequenceHelperRegistry {
             if self.get_type_indices.contains_key(name) {
                 types.ty().function([packed_ref, ValType::I64], [list_ref]);
             }
+            if self.byte_at_type_indices.contains_key(name) {
+                types
+                    .ty()
+                    .function([packed_ref, ValType::I64], [ValType::I64]);
+            }
         }
         Ok(())
     }
@@ -158,6 +182,9 @@ impl PackedSequenceHelperRegistry {
             funcs.function(slice);
             if let Some(get) = self.get_type_indices.get(name) {
                 funcs.function(*get);
+            }
+            if let Some(byte_at) = self.byte_at_type_indices.get(name) {
+                funcs.function(*byte_at);
             }
         }
     }
@@ -175,6 +202,9 @@ impl PackedSequenceHelperRegistry {
             codes.function(&emit_drop(name, registry)?);
             if self.get_type_indices.contains_key(name) {
                 codes.function(&emit_get(name, registry)?);
+            }
+            if self.byte_at_type_indices.contains_key(name) {
+                codes.function(&emit_byte_at(name, registry)?);
             }
         }
         Ok(())
@@ -454,6 +484,33 @@ fn emit_get(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::Else);
     f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// The element at `position` of a `U8` carrier as an `i64`, or `-1` when
+/// the position is negative or at or past the length: one unsigned compare
+/// covers both, since a negative `i64` read unsigned is past any length.
+/// No list cell and no `Option` is built.
+fn emit_byte_at(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let packed = registry
+        .packed_sequence(name)
+        .ok_or_else(|| WasmGcError::Validation(format!("packed type `{name}` missing")))?;
+    // params: 0=input, 1=position.
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64LtU);
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I64)));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32WrapI64);
+    emit_read_element(&mut f, packed.type_idx, packed.layout.element);
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::I64Const(-1));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     Ok(f)

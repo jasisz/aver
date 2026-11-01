@@ -54,6 +54,17 @@ impl AverPackedU8 {
             .map_or(&[], |bytes| &bytes[self.start..self.end])
     }
 
+    /// The octet at `position`, or `-1` at a negative position and at one at
+    /// or past the length: the answer of the standard library's `Bytes.get`
+    /// with `Option.None` as `-1`, which no octet is.
+    #[inline]
+    pub fn byte_at_i64(&self, position: i64) -> i64 {
+        usize::try_from(position)
+            .ok()
+            .and_then(|position| self.as_slice().get(position))
+            .map_or(-1, |&byte| i64::from(byte))
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.end - self.start

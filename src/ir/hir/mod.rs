@@ -635,6 +635,14 @@ pub enum BuiltinIntrinsic {
     /// keeps every answer of the reads). Only the Rust representation
     /// rewrite inserts it, for a param only read at as a position.
     StrIndexPosition,
+    /// `__packed_byte_at(<carrier>, <i>)` — `(List<Int>, Int) -> Int`, the
+    /// element at position `i` of a carrier the backend stores as a packed
+    /// `U8` array (every element proven in `0..=255`), or `-1` where the
+    /// standard library's `Bytes.get` answers `Option.None` (a negative
+    /// position, or one at or past the length). The MIR pass
+    /// `optimize::packed_index` emits it in place of a match on such a
+    /// reader, for the Rust and wasm-gc backends only; no source spells it.
+    PackedByteAt,
     /// `__lst_new(<capacity>)` — `Int -> List<T>`, a fresh builder for a
     /// loop that collected with `List.prepend` and reversed on the way
     /// out. The list-build pass emits it where the call site wrote `[]`.
@@ -735,6 +743,7 @@ impl BuiltinIntrinsic {
             Self::StrIndexSlice => "__str_index_slice",
             Self::StrIndexLen => "__str_index_len",
             Self::StrIndexPosition => "__str_index_position",
+            Self::PackedByteAt => "__packed_byte_at",
             Self::LstNew => "__lst_new",
             Self::LstPush => "__lst_push",
             Self::LstFinalize => "__lst_finalize",

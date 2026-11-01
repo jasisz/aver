@@ -1688,6 +1688,46 @@ fn bytes_get_verify_vm_and_wasm_gc() {
     }
 }
 
+// ─── Loops that index Bytes ─────────────────────────────────────────────
+
+/// Loops over `Bytes.get` started below zero, at zero, at the last octet, at
+/// the length and outside `i64`, over empty bytes and over take, drop and
+/// concat views. On wasm-gc each match on `Bytes.get` reads the octet in
+/// place (`ir::mir::optimize::packed_index`) with the loop position as an
+/// `i64`. `tests/rust_codegen_differential.rs` holds Rust to the same output.
+const BYTES_GET_LOOPS_SRC: &str = include_str!("fixtures/bytes_get_loops.av");
+const BYTES_GET_LOOPS_OUT: &str = include_str!("fixtures/bytes_get_loops.expected");
+
+#[test]
+fn bytes_get_loops_vm_and_wasm_gc() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-bytesloops-vm", BYTES_GET_LOOPS_SRC),
+        BYTES_GET_LOOPS_OUT.trim(),
+    );
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-bytesloops-wasmgc", BYTES_GET_LOOPS_SRC),
+        BYTES_GET_LOOPS_OUT.trim(),
+    );
+}
+
+#[test]
+fn bytes_get_loops_verify_vm_and_wasm_gc() {
+    for wasm_gc in [false, true] {
+        let (ok, summary) =
+            run_verify_summary("aver-cross-bytesloops-verify", BYTES_GET_LOOPS_SRC, wasm_gc);
+        assert!(
+            ok,
+            "Bytes.get loops verify failed (wasm-gc: {wasm_gc}): {summary}"
+        );
+        assert!(
+            summary.contains("9/9 cases passed | 0 failed"),
+            "Bytes.get loops verify summary (wasm-gc: {wasm_gc}): {summary}"
+        );
+    }
+}
+
 // ─── An empty literal bound to a name, typed by a later read ───────────
 
 /// `e = {}` then `Map.set(e, 1, "a")`: the checker stamps the binding with

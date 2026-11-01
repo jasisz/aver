@@ -74,6 +74,8 @@ fn carrier_call_interval(e: &MirExpr) -> Option<Interval> {
         ) => Some(index_code_interval()),
         MirCallee::Intrinsic(I::StrCursorNext) => Some(cursor_offset_interval()),
         MirCallee::Intrinsic(I::StrIndexPosition) => Some(i64_interval()),
+        // An octet, or `-1` where `Bytes.get` answers `Option.None`.
+        MirCallee::Intrinsic(I::PackedByteAt) => Some(Interval::between(-1, 255)),
         _ => None,
     }
 }
@@ -228,6 +230,7 @@ pub(super) fn intrinsic_accepts_raw_position_arg(callee: &MirCallee, i: usize) -
     match callee {
         MirCallee::Intrinsic(I::StrIndexCharAt | I::StrIndexCodeAt) => i == 2,
         MirCallee::Intrinsic(I::StrIndexSlice) => i == 2 || i == 3,
+        MirCallee::Intrinsic(I::PackedByteAt) => i == 1,
         _ => false,
     }
 }
@@ -1579,6 +1582,22 @@ pub(super) fn local_is_code_carrier_binder(e: &MirExpr, slot: LocalId) -> bool {
     found
 }
 
+/// The slots that bind the answer of a packed byte read
+/// (`__packed_byte_at`, see `packed_index`): an octet, where the read
+/// succeeded.
+fn packed_byte_binders(e: &MirExpr, out: &mut HashSet<LocalId>) {
+    if let MirExpr::Match(m) = e
+        && matches!(&m.node.subject.node, MirExpr::Call(c)
+            if c.node.callee == MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::PackedByteAt))
+    {
+        out.extend(m.node.arms.iter().filter_map(|arm| match arm.pattern {
+            MirPattern::Bind(slot, _) => Some(slot),
+            _ => None,
+        }));
+    }
+    visit_children(e, &mut |child| packed_byte_binders(child, out));
+}
+
 // ── The guard-seeded interval FIXPOINT (the bound producer) ──────────────
 //
 // `compute_bare_param_intervals` replaces the hand-rolled closed-form
@@ -1748,6 +1767,10 @@ fn compute_param_intervals_for_test(program: &MirProgram) -> HashMap<FnId, Vec<O
 // evaluated over the CALLERS' param ranges, solved callers first, so a
 // position handed through an ABI-preserving wrapper keeps the literal it
 // started from.
+//
+// A packed byte read (`__packed_byte_at`, see `packed_index`) past its `-1`
+// is the same guard: a successful read is at a byte of one allocation, so
+// its position is below the same bound.
 //
 // A start that is not bounded (a record field, a call result) is checked
 // once on entry instead (Rust only, see [`checked_position`]): when every
@@ -2105,7 +2128,7 @@ fn collect_position_sites<'a>(
 enum Failure {
     /// `String.charAt` and its indexed form: `Option.None`.
     None,
-    /// The indexed code read: `-1`.
+    /// The indexed code read and the packed byte read: `-1`.
     Code,
     /// A classifier: one of these values.
     Values(Interval),
@@ -2123,7 +2146,10 @@ fn read_failure(
     if reads_position(e, slot, cx.program) {
         return Some(match e {
             MirExpr::Call(c)
-                if matches!(c.node.callee, MirCallee::Intrinsic(I::StrIndexCodeAt)) =>
+                if matches!(
+                    c.node.callee,
+                    MirCallee::Intrinsic(I::StrIndexCodeAt | I::PackedByteAt)
+                ) =>
             {
                 Failure::Code
             }
@@ -2538,6 +2564,7 @@ fn reads_position(e: &MirExpr, slot: LocalId, program: &MirProgram) -> bool {
     };
     let at = match c.node.callee {
         MirCallee::Intrinsic(I::StrIndexCharAt | I::StrIndexCodeAt) => 2,
+        MirCallee::Intrinsic(I::PackedByteAt) => 1,
         MirCallee::Builtin(b) if program.builtin_name(b) == "String.charAt" => 1,
         _ => return false,
     };
@@ -3245,6 +3272,8 @@ fn analyze_fn(
     scan_escapes(&f.body.node, f.fn_id, summary, &mut escaping);
 
     // 4. Combine.
+    let mut octets = HashSet::new();
+    packed_byte_binders(&f.body.node, &mut octets);
     for (slot, iv) in &intervals {
         let op_class = op_classes
             .get(slot)
@@ -3252,11 +3281,13 @@ fn analyze_fn(
             .unwrap_or(OpClass::OverflowFree);
         let trusted_code_param = f.params.iter().enumerate().any(|(i, p)| {
             p.local == *slot && (is_code_carrier_param(f, i) || summary.is_position(f, i))
-        });
+        }) || octets.contains(slot);
         // The explicit MIR rewrite inserts a `Box` at every general-Int sink.
         // Keep this compiler-owned scalar carrier raw and pay that boundary
         // only on an escaping branch; ordinary params retain the older,
-        // conservative whole-param demotion.
+        // conservative whole-param demotion. An octet a packed byte read
+        // bound is such a carrier too: it is compared far more often than it
+        // meets a general `Int`, and boxing a value in `0..=255` is cheap.
         let escapes = escaping.contains(slot) && !trusted_code_param;
         let eligible = raw_i64_eligible(Some(*iv), std::iter::once(&op_class));
         let repr = if eligible && !escapes {

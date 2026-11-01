@@ -1235,6 +1235,31 @@ pub fn build_context(
         &HashMap::new(),
     );
     packed_layouts.retain(|name, _| !demoted.contains(name));
+    // A match on a packed byte reader (`Bytes.get`) reads the octet in place
+    // (`packed_index`), decided on the MIR the Rust backend renders, so the
+    // representation facts are read again off the rewritten program. A
+    // program with no such match keeps the program and facts it had.
+    let u8_carriers: HashSet<String> = packed_layouts
+        .iter()
+        .filter(|(_, layout)| {
+            matches!(
+                layout.element,
+                crate::codegen::proof_lower::PackedIntElement::U8
+            )
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    if let Some(program) = ctx.mir_program.take() {
+        let (program, rewritten) =
+            crate::ir::mir::optimize::packed_index::index_packed_byte_reads(program, &u8_carriers);
+        if rewritten > 0 {
+            ctx.bare_i64 = crate::ir::mir::bare_i64::analyze(
+                &program,
+                &crate::ir::mir::bare_i64::CarrierIntervals::new(),
+            );
+        }
+        ctx.mir_program = Some(program);
+    }
     ctx.packed_sequence_layouts = packed_layouts;
     ctx
 }

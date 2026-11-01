@@ -1,0 +1,113 @@
+module BytesGetLoops
+    intent =
+        "Loops that index Bytes with Bytes.get and match its answer, started"
+        "below zero, at zero, at the last octet, at the length and past i64,"
+        "over empty bytes and over take, drop and concat views, so every"
+        "backend can be held to one output."
+    depends [Bytes]
+    effects [Console.print]
+
+fn sumFrom(b: Bytes, i: Int, acc: Int) -> Int
+    ? "The sum of the octets from index i to the end."
+    match Bytes.get(b, i)
+        Option.None -> acc
+        Option.Some(v) -> sumFrom(b, i + 1, acc + v)
+
+verify sumFrom
+    sumFrom(Bytes.fromList([1, 2, 3]), 0, 0) => 6
+    sumFrom(Bytes.fromList([1, 2, 3]), -1, 0) => 0
+
+fn countFrom(b: Bytes, i: Int, n: Int) -> Int
+    ? "The number of octets from index i to the end, with the Some arm first."
+    match Bytes.get(b, i)
+        Option.Some(_) -> countFrom(b, i + 1, n + 1)
+        _ -> n
+
+verify countFrom
+    countFrom(Bytes.fromList([1, 2, 3]), 1, 0) => 2
+
+fn findFrom(b: Bytes, i: Int, needle: Int) -> Int
+    ? "The first index at or after i holding needle, or -1."
+    match Bytes.get(b, i)
+        Option.None -> -1
+        Option.Some(v) -> match v == needle
+            true -> i
+            false -> findFrom(b, i + 1, needle)
+
+verify findFrom
+    findFrom(Bytes.fromList([1, 10, 3]), 0, 10) => 1
+    findFrom(Bytes.fromList([1, 10, 3]), 2, 10) => -1
+
+fn leb(b: Bytes, i: Int, scale: Int, acc: Int) -> Tuple<Int, Int>
+    ? "One unsigned LEB128 value at i and the index after it."
+    match Bytes.get(b, i)
+        Option.None -> (acc, i)
+        Option.Some(v) -> match v >= 128
+            true -> leb(b, i + 1, scale * 128, acc + (v - 128) * scale)
+            false -> (acc + v * scale, i + 1)
+
+verify leb
+    leb(Bytes.fromList([229, 142, 38]), 0, 1, 0) => (624485, 3)
+
+fn octetAt(b: Bytes, i: Int) -> String
+    ? "One read outside any loop, at any index."
+    match Bytes.get(b, i)
+        Option.None -> "none"
+        Option.Some(v) -> "{v}"
+
+verify octetAt
+    octetAt(Bytes.fromList([7]), 0) => "7"
+    octetAt(Bytes.fromList([7]), 1) => "none"
+
+fn ramp(n: Int, acc: List<Int>) -> List<Int>
+    ? "The octets n - 1 down to 0 mod 256, prepended onto acc."
+    match n
+        0 -> acc
+        _ -> ramp(n - 1, List.prepend(Int.mod(n - 1, 256), acc))
+
+verify ramp
+    ramp(3, []) => [0, 1, 2]
+
+fn starts(label: String, b: Bytes, indices: List<Int>) -> Unit
+    ? "Prints each loop started at each index."
+    ! [Console.print]
+    match indices
+        [] -> Console.print("{label} done")
+        [i, ..rest] -> startsAt(label, b, i, rest)
+
+fn startsAt(label: String, b: Bytes, i: Int, rest: List<Int>) -> Unit
+    ? "Prints the loops started at one index, then the rest."
+    ! [Console.print]
+    Console.print("{label}[{i}] sum {sumFrom(b, i, 0)} count {countFrom(b, i, 0)} find {findFrom(b, i, 255)} at {octetAt(b, i)}")
+    starts(label, b, rest)
+
+fn lebAll(b: Bytes, i: Int, total: Int) -> Int
+    ? "The sum of every LEB128 value from i."
+    match i >= Bytes.len(b)
+        true -> total
+        false -> lebStep(b, leb(b, i, 1, 0), total)
+
+fn lebStep(b: Bytes, r: Tuple<Int, Int>, total: Int) -> Int
+    ? "One decoded value added, then the rest."
+    match r
+        (v, next) -> lebAll(b, next, total + v)
+
+fn main() -> Unit
+    ! [Console.print]
+    literal = Bytes.fromList([0, 127, 255])
+    starts("literal", literal, [-1, 0, 1, 2, 3, 4, 18446744073709551616, -18446744073709551616, 9223372036854775807, -9223372036854775808])
+    starts("empty", Bytes.empty(), [-1, 0, 1])
+    match Bytes.fromList(ramp(1000, []))
+        Result.Ok(big) -> mainBig(big, literal)
+        Result.Err(e) -> Console.print(e)
+
+fn mainBig(big: Bytes, literal: Bytes) -> Unit
+    ? "Loops over computed bytes and their views."
+    ! [Console.print]
+    starts("big", big, [0, 255, 999, 1000])
+    starts("dropped", Bytes.drop(big, 998), [0, 1, 2])
+    starts("taken", Bytes.take(big, 2), [0, 1, 2])
+    starts("middle", Bytes.take(Bytes.drop(big, 250), 10), [0, 5, 9, 10])
+    starts("joined", Bytes.concat(literal, Bytes.take(big, 2)), [0, 2, 4, 5])
+    encoded = Bytes.fromList([229, 142, 38, 127, 128, 1, 0])
+    Console.print("leb {lebAll(encoded, 0, 0)} then {lebAll(Bytes.drop(encoded, 3), 0, 0)}")

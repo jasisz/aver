@@ -9547,6 +9547,30 @@ fn emit_mir_intrinsic_call(
                 format!("aver_rt::AverInt::from_i64({call})")
             })
         }
+        // A packed byte read (`ir::mir::optimize::packed_index`): the carrier
+        // is a field the backend holds as `AverPackedU8`, read in place, and
+        // the position arrives raw where the analysis proved it fits `i64`
+        // and saturated anywhere else, which keeps every answer.
+        BuiltinIntrinsic::PackedByteAt => {
+            let MirExpr::Project(project) = &args[0].node else {
+                return None;
+            };
+            let Some(Type::Named { id, name }) = project.node.base.ty() else {
+                return None;
+            };
+            if packed_u8_carrier(*id, name, ctx) != Some(true) {
+                return None;
+            }
+            let base = emit_mir_expr(&project.node.base, ctx)?;
+            let field = aver_name_to_rust(&project.node.field);
+            let position = emit_string_position(&args[1], ctx)?;
+            let call = format!("({base}).{field}.byte_at_i64({position})");
+            Some(if raw_result {
+                call
+            } else {
+                format!("aver_rt::AverInt::from_i64({call})")
+            })
+        }
         // The index counted the characters when it was built; the String
         // itself is not read.
         BuiltinIntrinsic::StrIndexLen => {

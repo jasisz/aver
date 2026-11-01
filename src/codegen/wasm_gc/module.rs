@@ -602,6 +602,31 @@ fn emit_module_pass(
         // step layered on top, and it does not change the type stamps the
         // instantiation scan consumed.
         let optimized = optimized_mir;
+        // A match on a packed byte reader (`Bytes.get`) reads the octet in
+        // place, as an `Int` in `-1..=255` (`packed_index`). Decided here, on
+        // the MIR the representation rewrite below reads, so a loop over the
+        // bytes keeps its position and octet as raw `i64`s. A `--certify`
+        // build keeps the plain shape the certificate states.
+        let optimized = if certify {
+            optimized
+        } else {
+            let u8_carriers: std::collections::HashSet<String> = registry
+                .packed_sequence_order
+                .iter()
+                .chain(registry.type_name_aliases.keys())
+                .filter(|name| {
+                    registry.packed_sequence(name).is_some_and(|packed| {
+                        matches!(
+                            packed.layout.element,
+                            crate::codegen::proof_lower::PackedIntElement::U8
+                        )
+                    })
+                })
+                .cloned()
+                .collect();
+            crate::ir::mir::optimize::packed_index::index_packed_byte_reads(optimized, &u8_carriers)
+                .0
+        };
         // ETAP-2 SLICE 2b: make Int representation EXPLICIT for the wasm-gc
         // codegen. The rewrite tags each fn's bare slots / params / return on
         // `MirFn::repr` and inserts `Box`/`Unbox` boundary nodes; the body
@@ -1410,9 +1435,13 @@ fn emit_module_pass(
         && resolved_fn_defs
             .iter()
             .any(super::types::fn_uses_dropped_carrier_match);
+    // The byte read a loop over a packed carrier was given in MIR
+    // (`packed_index`); never in a `--certify` build, which does not run it.
+    let packed_byte_at = mir_reads_packed_bytes(&mir_program);
     packed_sequence_helpers.assign_slots(
         &registry,
         packed_get,
+        packed_byte_at,
         &mut next_builtin_fn_idx,
         &mut next_type_idx,
     );
@@ -8474,6 +8503,25 @@ fn discover_builtins_in_expr(
 /// [`crate::codegen::expr_walk`] lock): a new [`BuiltinIntrinsic`]
 /// variant fails this build until someone states whether the wasm-gc
 /// family lowers it.
+/// Whether any function reads a packed carrier through `__packed_byte_at`
+/// (`ir::mir::optimize::packed_index`), so its `byte_at` helper is needed.
+fn mir_reads_packed_bytes(program: &crate::ir::mir::MirProgram) -> bool {
+    fn reads(e: &crate::ir::mir::MirExpr) -> bool {
+        if let crate::ir::mir::MirExpr::Call(c) = e
+            && c.node.callee
+                == crate::ir::mir::MirCallee::Intrinsic(
+                    crate::ir::hir::BuiltinIntrinsic::PackedByteAt,
+                )
+        {
+            return true;
+        }
+        let mut found = false;
+        crate::ir::mir::expr::walk_children(e, &mut |child| found = found || reads(child));
+        found
+    }
+    program.iter().any(|(_, f)| reads(&f.body.node))
+}
+
 fn refuse_fabricated_intrinsics(
     mir_program: &crate::ir::mir::MirProgram,
 ) -> Result<(), WasmGcError> {
@@ -8521,7 +8569,9 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::EqScope
             | BuiltinIntrinsic::EqCount
             | BuiltinIntrinsic::EqPast
-            | BuiltinIntrinsic::EqMemo => true,
+            | BuiltinIntrinsic::EqMemo
+            // The packed carrier's own `byte_at` helper.
+            | BuiltinIntrinsic::PackedByteAt => true,
             // Generic collector fabrications remain VM / Rust only.
             BuiltinIntrinsic::LstNew
             | BuiltinIntrinsic::LstPush

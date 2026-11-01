@@ -33,7 +33,7 @@ Anything else keeps `Result<Bytes, String>`: a variable, a computed list, a comp
 | `Bytes.octets` | `Bytes -> List<Int>` | Exposes validated values |
 | `Bytes.empty` | `() -> Bytes` | Empty byte sequence |
 | `Bytes.len` | `Bytes -> Int` | Number of octets |
-| `Bytes.get` | `(Bytes, Int) -> Option<Int>` | The octet at a zero-based index; `Option.None` for a negative index or one at or past the length. Constant time on the Rust and wasm-gc backends, where `Bytes` is a packed array |
+| `Bytes.get` | `(Bytes, Int) -> Option<Int>` | The octet at a zero-based index; `Option.None` for a negative index or one at or past the length. Constant time on the Rust and wasm-gc backends, where `Bytes` is a packed array. A `match` on it reads the octet in place, without building the `Option`, and a loop that steps its index after a successful read keeps the index and the octet as machine integers |
 | `Bytes.concat` | `(Bytes, Bytes) -> Bytes` | Concatenates without revalidation |
 | `Bytes.take` | `(Bytes, Int) -> Bytes` | Prefix of at most `count` octets |
 | `Bytes.drop` | `(Bytes, Int) -> Bytes` | Octets after `count` positions |
