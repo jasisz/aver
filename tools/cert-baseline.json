@@ -2856,14 +2856,16 @@
    "clamp",
    "larger",
    "smaller",
-   "spanLow"
+   "spanLow",
+   "widened"
   ],
   "certified": {
    "capped": "L1",
    "clamp": "L1",
    "larger": "L1",
    "smaller": "L1",
-   "spanLow": "L1"
+   "spanLow": "L1",
+   "widened": "L1"
   },
   "laws": []
  },

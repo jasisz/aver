@@ -281,6 +281,10 @@ pub enum PlanWLeaf {
 pub enum PlanWTree {
     Leaf(PlanWLeaf),
     Op(PlanBinOp, Box<PlanWTree>, Box<PlanWTree>),
+    /// An `Int` literal: an immediate word on the machine path.
+    Lit(i64),
+    /// `Int.min` / `Int.max` of two trees.
+    Pick(PlanPick, Box<PlanWTree>, Box<PlanWTree>),
 }
 
 impl PlanWLeaf {
@@ -310,11 +314,12 @@ impl PlanWTree {
     pub fn leaves(&self) -> Vec<&PlanWLeaf> {
         match self {
             PlanWTree::Leaf(l) => vec![l],
-            PlanWTree::Op(_, a, b) => {
+            PlanWTree::Op(_, a, b) | PlanWTree::Pick(_, a, b) => {
                 let mut out = a.leaves();
                 out.extend(b.leaves());
                 out
             }
+            PlanWTree::Lit(_) => vec![],
         }
     }
 
@@ -338,6 +343,17 @@ impl PlanWTree {
             }
             PlanWTree::Op(op, a, b) => {
                 out.push_str(&format!("(.op {} ", op.lean()));
+                a.write_lean(out);
+                out.push(' ');
+                b.write_lean(out);
+                out.push(')');
+            }
+            PlanWTree::Lit(k) => out.push_str(&format!("(.lit ({k}))")),
+            PlanWTree::Pick(p, a, b) => {
+                out.push_str(match p {
+                    PlanPick::IntMin => "(.pick .intMin ",
+                    PlanPick::IntMax => "(.pick .intMax ",
+                });
                 a.write_lean(out);
                 out.push(' ');
                 b.write_lean(out);

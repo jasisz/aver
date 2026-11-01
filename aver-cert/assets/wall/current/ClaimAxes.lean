@@ -29,6 +29,7 @@ mutual
     | .call f => [f]
     | .returnCall f => [f]
     | .ifElse t e => wCallsL t ++ wCallsL e
+    | .block _ body => wCallsL body
     | _ => []
   def wCallsL : List WInstr → List Nat
     | [] => []

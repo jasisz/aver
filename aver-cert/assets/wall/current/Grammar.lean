@@ -162,6 +162,25 @@ inductive BinOp where
   | add | sub | mul | eq | neq | lt | gt | lte | gte
 deriving DecidableEq, Repr
 
+/-- Builtins whose emitter evaluates both `Int` arguments, compares them with
+    `__aint_cmp`, and evaluates the argument it picks once more inside the
+    `if` (`Int.min` / `Int.max`, `emit_mir_native_scalar_builtin`). -/
+inductive PickBuiltin where
+  | intMin | intMax
+deriving DecidableEq, Repr
+
+/-- The comparison of the first argument with the second under which the
+    emitter picks the first: `<=` for `Int.min`, `>=` for `Int.max`. -/
+def PickBuiltin.op : PickBuiltin → BinOp
+  | .intMin => .lte
+  | .intMax => .gte
+
+/-- `Int.min` / `Int.max` on `Int` (Lean's `min` / `max`, as the source model
+    spells them). -/
+def PickBuiltin.z : PickBuiltin → Int → Int → Int
+  | .intMin => min
+  | .intMax => max
+
 /-- A leaf of an `Int` tree computed on the machine word (`Expr.intWord`,
     `MirExpr::IntWord`). -/
 inductive WLeaf where
@@ -176,6 +195,13 @@ deriving DecidableEq, Repr
 inductive WTree where
   | leaf (l : WLeaf)
   | op (o : BinOp) (a b : WTree)
+  /-- An `Int` literal: an immediate word on the machine path, the boxed
+      literal on the exact path. -/
+  | lit (k : Int)
+  /-- `Int.min` / `Int.max` of two trees: a `select` of the two words, and on
+      the exact path the three-way helper, then the picked operand's exact
+      path again. -/
+  | pick (p : PickBuiltin) (a b : WTree)
 deriving DecidableEq, Repr
 
 /-- `MirCallee::Builtin`, admitted part (by dotted name). -/
@@ -267,18 +293,6 @@ inductive LazyBuiltin where
   | optWithDefault | resWithDefault
 deriving DecidableEq, Repr
 
-/-- Builtins whose emitter evaluates both `Int` arguments, compares them with
-    `__aint_cmp`, and evaluates the argument it picks once more inside the
-    `if` (`Int.min` / `Int.max`, `emit_mir_native_scalar_builtin`). -/
-inductive PickBuiltin where
-  | intMin | intMax
-deriving DecidableEq, Repr
-
-/-- The comparison of the first argument with the second under which the
-    emitter picks the first: `<=` for `Int.min`, `>=` for `Int.max`. -/
-def PickBuiltin.op : PickBuiltin → BinOp
-  | .intMin => .lte
-  | .intMax => .gte
 
 /-- `MirCallee`, admitted part. -/
 inductive MirCallee where
@@ -742,12 +756,16 @@ def WLeaf.loc : WLeaf → Nat
 def WTree.leaves : WTree → List WLeaf
   | .leaf l => [l]
   | .op _ a b => a.leaves ++ b.leaves
+  | .lit _ => []
+  | .pick _ a b => a.leaves ++ b.leaves
 
 /-- The locals the tree's leaves read ahead are stored in. -/
 def WTree.slots : WTree → List Nat
   | .leaf (.field _ _ _ slot) => [slot]
   | .leaf (.local _) => []
   | .op _ a b => a.slots ++ b.slots
+  | .lit _ => []
+  | .pick _ a b => a.slots ++ b.slots
 
 /-- No number occurs twice. -/
 def distinct : List Nat → Bool
@@ -766,10 +784,20 @@ def WLeaf.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WLeaf → Bool
             decide (tid' = tid) && decide (2 ≤ fts.length) && fts[k]? == some .int
         | _, _ => false
 
-/-- A typed tree: `+`, `-` and `*` over typed leaves. -/
+/-- A literal node. -/
+def WTree.isLit : WTree → Bool
+  | .lit _ => true
+  | _ => false
+
+/-- A typed tree: `+`, `-` and `*`, `Int.min` and `Int.max` over typed leaves
+    and literals in the i64 band. A product with a literal operand is not
+    typed: the emitter computes it by a range test instead. -/
 def WTree.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WTree → Bool
   | .leaf l => l.ok M n Γ
-  | .op o a b => o.isArith && a.ok M n Γ && b.ok M n Γ
+  | .op o a b =>
+      o.isArith && !(o == .mul && (a.isLit || b.isLit)) && a.ok M n Γ && b.ok M n Γ
+  | .lit k => inI64Band k
+  | .pick _ a b => a.ok M n Γ && b.ok M n Γ
 
 /-- A typed `Expr.intWord t w`: its tree is typed, and the locals it writes
     (its leaves stored ahead and its three words) are past the resolver slots
@@ -1254,8 +1282,7 @@ def intrinsicEval : Intrinsic → List SVal → Option SVal
 /-- `Int.min` / `Int.max` (Lean's `min` / `max` on `Int`, as the source model
     spells them). -/
 def pickEval : PickBuiltin → List SVal → Option SVal
-  | .intMin, [.i x, .i y] => some (.i (min x y))
-  | .intMax, [.i x, .i y] => some (.i (max x y))
+  | p, [.i x, .i y] => some (.i (p.z x y))
   | _, _ => none
 
 /-- The value a constructor node builds. -/
@@ -1307,6 +1334,11 @@ def WTree.val (env : Nat → Option SVal) : WTree → Option SVal
   | .op o a b =>
       match a.val env, b.val env with
       | some (.i x), some (.i y) => some (intBin o x y)
+      | _, _ => none
+  | .lit k => some (.i k)
+  | .pick p a b =>
+      match a.val env, b.val env with
+      | some (.i x), some (.i y) => some (.i (p.z x y))
       | _, _ => none
 
 mutual

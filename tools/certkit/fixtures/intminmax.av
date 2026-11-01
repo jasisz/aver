@@ -1,9 +1,9 @@
 module IntMinMax
     intent =
-        "Certify fixture for Int.min and Int.max: the emitter evaluates both"
-        "operands, compares them with the three-way helper and evaluates the"
-        "operand it picks again."
-    exposes [Span, smaller, larger, capped, spanLow, clamp]
+        "Certify fixture for Int.min and Int.max, computed on the machine word"
+        "first: a select of the two words, and on a Big operand the three-way"
+        "helper, which evaluates the operand it picks again."
+    exposes [Span, smaller, larger, capped, spanLow, clamp, widened]
     effects []
 
 record Span
@@ -46,3 +46,11 @@ fn clamp(x: Int, lo: Int, hi: Int) -> Int
 
 verify clamp
     clamp(5, 0, 3) => 3
+
+fn widened(s: Span) -> Int
+    ? "A field plus a literal against another field: one tree on the machine word."
+    Int.max(s.low + 1, s.high)
+
+verify widened
+    widened(Span(low = 4, high = 2)) => 5
+    widened(Span(low = 1, high = 9)) => 9

@@ -407,17 +407,47 @@ def treeOpW (w : Nat) (op : BinOp) : List WInstr :=
         .localGet t1, .i64Const (-9223372036854775808), .i64Eq, .i32And] ++ general ++
       [.select, .brIf 0, .localGet t2]
 
+/-- `Int.min` / `Int.max` of the two words on the stack (`emit_fast`): both
+    parked in the words `w` and `w + 1`, then the first kept by a `select`
+    when it compares `<=` (`>=`) with the second. -/
+def pickOpW (w : Nat) (p : PickBuiltin) : List WInstr :=
+  [.localSet (w + 1), .localSet w, .localGet w, .localGet (w + 1), .localGet w,
+    .localGet (w + 1), match p with | .intMin => .i64LeS | .intMax => .i64GeS, .select]
+
 /-- The `i64` path of a tree: the word of each leaf, and each operation on
     the words. -/
 def fastW (C w : Nat) : WTree → List WInstr
   | .leaf l => smallReadW C l.loc
   | .op o a b => fastW C w a ++ fastW C w b ++ treeOpW w o
+  | .lit k => [.i64Const k]
+  | .pick p a b => fastW C w a ++ fastW C w b ++ pickOpW w p
 
-/-- The exact path of a tree: each leaf's carrier, and each operation's
-    call. -/
-def exactW (M : MCtx) : WTree → List WInstr
-  | .leaf l => [.localGet l.loc]
-  | .op o a b => exactW M a ++ exactW M b ++ [.call (M.arithIdx o)]
+/-- The exact path of a tree: each leaf's carrier, each literal boxed, each
+    operation's call, and for `Int.min` / `Int.max` the three-way helper and
+    the picked operand's exact path again. -/
+def exactB (M : MCtx) : WTree → List BI
+  | .leaf l => [.op (.localGet l.loc)]
+  | .op o a b => exactB M a ++ exactB M b ++ [.op (.call (M.arithIdx o))]
+  | .lit k => [.op (.i64Const k), .op (.call M.box)]
+  | .pick p a b =>
+      exactB M a ++ exactB M b ++ (intCmpTail M p.op).map .op ++
+        [.ifElse (some .int) (exactB M a) (exactB M b)]
+
+/-- The exact path the interpreter runs. -/
+def exactW (M : MCtx) (t : WTree) : List WInstr := eraseL (exactB M t)
+
+theorem exactW_leaf (M : MCtx) (l : WLeaf) : exactW M (.leaf l) = [.localGet l.loc] := rfl
+
+theorem exactW_op (M : MCtx) (o : BinOp) (a b : WTree) :
+    exactW M (.op o a b) = exactW M a ++ exactW M b ++ [.call (M.arithIdx o)] := by
+  simp [exactW, exactB, eraseL_append, eraseL, eraseI]
+
+theorem exactW_lit (M : MCtx) (k : Int) : exactW M (.lit k) = [.i64Const k, .call M.box] := rfl
+
+theorem exactW_pick (M : MCtx) (p : PickBuiltin) (a b : WTree) :
+    exactW M (.pick p a b) = exactW M a ++ exactW M b ++ intCmpTail M p.op ++
+      [.ifElse (exactW M a) (exactW M b)] := by
+  simp [exactW, exactB, eraseL_append, eraseL_ops, eraseL, eraseI]
 
 /-- The field leaves read ahead, in order, each stored in its local. -/
 def aheadW (M : MCtx) : WTree → List WInstr
@@ -425,12 +455,14 @@ def aheadW (M : MCtx) : WTree → List WInstr
   | .leaf (.field tid k base slot) =>
       [.localGet base, .structGet (M.structOf tid) k, .localSet slot]
   | .op _ a b => aheadW M a ++ aheadW M b
+  | .lit _ => []
+  | .pick _ a b => aheadW M a ++ aheadW M b
 
 /-- `block $done (block $slow <i64 path> box br $done) <exact path>`. -/
 def wordBlock (M : MCtx) (t : WTree) (w : Nat) : BI :=
   .block (some .int)
     (.block none ((fastW M.carrier w t ++ [WInstr.call M.box, WInstr.br 1]).map .op) ::
-      (exactW M t).map .op)
+      exactB M t)
 
 mutual
   def lowerB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool) : Expr → List BI
