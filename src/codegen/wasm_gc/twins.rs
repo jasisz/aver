@@ -33,9 +33,13 @@
 //! holds such a param, boxing it only where the body wants it packed.
 //!
 //! A `--certify` build keeps the bytes of every function the certificate plan
-//! printer may print: such a function gets no twin
+//! printer prints: such a function gets no twin and calls none. Which
+//! functions those are is known only once their bodies are emitted, so the
+//! module is emitted twice (`module.rs`): the first time without a twin for
+//! any function the printer may print
 //! ([`crate::ir::cert_shape::printer_may_admit`], the superset the
-//! fabricating passes use), and one it prints calls none.
+//! fabricating passes use), the second time without a twin only for the
+//! functions the first one kept.
 
 use std::collections::{HashMap, HashSet};
 
@@ -275,13 +279,14 @@ pub(crate) fn has_word(e: &MirExpr, int_twin: &dyn Fn(FnId) -> bool) -> bool {
     }
 }
 
-/// The twin each user function gets, by position in `fn_defs`.
+/// The twin each user function gets, by position in `fn_defs`; none for a
+/// function `no_twin` names.
 pub(super) fn plan(
     fn_defs: &[&FnDef],
     resolved: &[ResolvedFnDef],
     mir: &MirProgram,
     registry: &TypeRegistry,
-    certify: bool,
+    no_twin: &dyn Fn(&FnDef) -> bool,
 ) -> Result<Vec<Option<TwinPlan>>, WasmGcError> {
     let mut plans: Vec<Option<TwinPlan>> = vec![None; fn_defs.len()];
     if std::env::var_os("AVER_NO_TWINS").is_some() {
@@ -299,10 +304,7 @@ pub(super) fn plan(
         let Some(mf) = mir.fn_by_id(resolved[i].fn_id) else {
             continue;
         };
-        if fd.name == "main"
-            || mf.repr.bare_return
-            || (certify && crate::ir::cert_shape::printer_may_admit(fd))
-        {
+        if fd.name == "main" || mf.repr.bare_return || no_twin(fd) {
             continue;
         }
         let unpacked: Vec<bool> = fd

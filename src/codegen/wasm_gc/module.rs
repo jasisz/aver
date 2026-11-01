@@ -132,6 +132,30 @@ fn emit_trap_stub_body(func: &mut Function) {
     func.instruction(&Instruction::End);
 }
 
+/// Which functions of a build go without a twin (`super::twins`).
+#[derive(Clone, Copy)]
+enum Certify<'a> {
+    /// A plain build: every function may have one.
+    Off,
+    /// A `--certify` build's first pass: none of the functions the
+    /// certificate plan printer may print.
+    MayPrint,
+    /// A `--certify` build's second pass: none of the functions the first
+    /// pass kept for the certificate.
+    Kept(&'a std::collections::HashSet<String>),
+}
+
+type ModuleOutput = (Vec<u8>, usize, crate::codegen::cert::ModulePlans);
+
+/// Emit the module. A `--certify` build keeps every function the certificate
+/// plan printer prints in its ordinary form, without a twin; which functions
+/// those are is known only once their bodies are emitted, after the twins are
+/// planned. So it emits the module twice: first with no twin for any function
+/// the printer may print, then with no twin only for the functions the first
+/// pass kept. A function the certificate declines thus runs as it runs in a
+/// plain build. The second pass keeps the same functions (their bodies call
+/// no twin, so no other twin changes them); should it not, the first pass's
+/// module is the answer.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_module_with(
     items: &[TopLevel],
@@ -142,7 +166,41 @@ pub(super) fn emit_module_with(
     capability_wasm_gc_plan: Option<&super::CapabilityWasmGcPlan>,
     packed_sequences_enabled: bool,
     certify: bool,
-) -> Result<(Vec<u8>, usize, crate::codegen::cert::ModulePlans), WasmGcError> {
+) -> Result<ModuleOutput, WasmGcError> {
+    let pass = |certify| {
+        emit_module_pass(
+            items,
+            handler_name,
+            target,
+            type_aliases,
+            capability_wit_plan,
+            capability_wasm_gc_plan,
+            packed_sequences_enabled,
+            certify,
+        )
+    };
+    if !certify {
+        return pass(Certify::Off).map(|(out, _)| out);
+    }
+    let (first, kept) = pass(Certify::MayPrint)?;
+    let (second, kept_again) = pass(Certify::Kept(&kept))?;
+    Ok(if kept_again == kept { second } else { first })
+}
+
+/// One emission of the module, with the names of the functions it keeps for
+/// the certificate (empty unless `certify` asks).
+#[allow(clippy::too_many_arguments)]
+fn emit_module_pass(
+    items: &[TopLevel],
+    handler_name: Option<&str>,
+    target: super::TargetMode,
+    type_aliases: &HashMap<String, String>,
+    capability_wit_plan: Option<&crate::codegen::wasip2::CapabilityWitPlan>,
+    capability_wasm_gc_plan: Option<&super::CapabilityWasmGcPlan>,
+    packed_sequences_enabled: bool,
+    twins_for: Certify<'_>,
+) -> Result<(ModuleOutput, std::collections::HashSet<String>), WasmGcError> {
+    let certify = !matches!(twins_for, Certify::Off);
     // A module-level binding read from a fn body has no global to read on
     // wasm-gc; its value is substituted where it is read (`top_level.rs`).
     let inlined_items = super::top_level::inline_module_bindings(items)?;
@@ -1147,7 +1205,11 @@ pub(super) fn emit_module_with(
         &resolved_fn_defs,
         &mir_program,
         &registry,
-        certify,
+        &|fd| match twins_for {
+            Certify::Off => false,
+            Certify::MayPrint => crate::ir::cert_shape::printer_may_admit(fd),
+            Certify::Kept(kept) => kept.contains(&fd.name),
+        },
     )?;
     let mut twin_params: Vec<Vec<ValType>> = vec![Vec::new(); fn_defs.len()];
     let mut twin_results: Vec<Vec<ValType>> = vec![Vec::new(); fn_defs.len()];
@@ -3674,6 +3736,10 @@ pub(super) fn emit_module_with(
             break;
         }
     }
+    let kept_names: std::collections::HashSet<String> = (0..fn_defs.len())
+        .filter(|&i| kept_for[i])
+        .map(|i| fn_defs[i].name.clone())
+        .collect();
     for i in 0..fn_defs.len() {
         if trees_for[i] {
             pooled_literals.extend(std::mem::take(&mut literals_for[i]));
@@ -6807,7 +6873,7 @@ pub(super) fn emit_module_with(
     // MIR printed 1:1 against the registry and function indices of THIS
     // compile. Read-only: printing never changes a byte.
     if !certify {
-        return Ok((bytes, mir_emitted, Default::default()));
+        return Ok(((bytes, mir_emitted, Default::default()), kept_names));
     }
     let planned: Vec<_> = resolved_fn_defs
         .iter()
@@ -6831,7 +6897,7 @@ pub(super) fn emit_module_with(
         &cert_layout,
         registry.aint_eq_fn_idx.filter(|_| registry.bignum),
     );
-    Ok((bytes, mir_emitted, cert_plans))
+    Ok(((bytes, mir_emitted, cert_plans), kept_names))
 }
 
 /// Whether a `--certify` build keeps `mir_fn` in its ordinary lowering, with

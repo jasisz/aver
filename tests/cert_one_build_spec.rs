@@ -649,3 +649,34 @@ fn a_certified_build_releases_a_function_that_calls_an_unprintable_one() {
     assert!(muls[0] > 0, "area computes on machine words: {muls:?}");
     assert_eq!(muls[1], 0, "spread is kept in the ordinary form");
 }
+
+/// The number of functions a module defines.
+fn defined_functions(bytes: &[u8]) -> usize {
+    use wasmparser::{Parser, Payload};
+    Parser::new(0)
+        .parse_all(bytes)
+        .filter(|p| matches!(p, Ok(Payload::CodeSectionEntry(_))))
+        .count()
+}
+
+/// Only the functions a `--certify` build keeps go without a twin: `loop`,
+/// which the plan printer may print but declines for its tuple, gets the
+/// twin a plain build gives it, so the two modules define the same functions.
+#[test]
+fn a_certified_build_gives_a_declined_function_its_twin() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let entry = Entry {
+        file: "tests/fixtures/cert_one_build/declined.av".into(),
+        module_root: None,
+    };
+    let (plain, _) = compile(&repo_root, &entry, &[], true).unwrap();
+    let (certified, names) = compile(&repo_root, &entry, &["--certify"], true).unwrap();
+    assert_eq!(names, vec!["firstOf".to_string()]);
+    let (untwinned, _) =
+        compile_with_env(&repo_root, &entry, &[], true, &[("AVER_NO_TWINS", "1")]).unwrap();
+    assert!(
+        defined_functions(&plain) > defined_functions(&untwinned),
+        "not vacuous: the plain build has a twin"
+    );
+    assert_eq!(defined_functions(&certified), defined_functions(&plain));
+}
