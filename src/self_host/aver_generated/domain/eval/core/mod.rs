@@ -639,10 +639,10 @@ fn __mutual_tco_trampoline_1(
                 crate::cancel_checkpoint();
                 {
                     let __list_subject = argExprs.clone();
-                    match aver_rt::list_uncons_cloned(&__list_subject) {
+                    match aver_rt::list_uncons(&__list_subject) {
                         Some((optionExpr, rest)) => {
                             let __list_subject = rest;
-                            match aver_rt::list_uncons(&__list_subject) { Some((defaultExpr, ignored)) => { __MutualTco1::EvalOptionWithDefaultExprInner(optionExpr, defaultExpr.clone(), env) }, None => { return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &argExprs, &env, &*fns) } }
+                            match aver_rt::list_uncons(&__list_subject) { Some((defaultExpr, ignored)) => { __MutualTco1::EvalOptionWithDefaultExprInner(optionExpr.clone(), defaultExpr.clone(), env) }, None => { return crate::aver_generated::domain::eval::core::evalCallBuiltin(::aver_rt::str_lit!("Option.withDefault"), &argExprs, &env, &*fns) } }
                         }
                         None => {
                             return crate::aver_generated::domain::eval::core::evalCallBuiltin(
@@ -1927,10 +1927,10 @@ fn __mutual_tco_trampoline_3(
                 crate::cancel_checkpoint();
                 {
                     let __list_subject = argExprs.clone();
-                    match aver_rt::list_uncons_cloned(&__list_subject) {
+                    match aver_rt::list_uncons(&__list_subject) {
                         Some((optionExpr, rest)) => {
                             let __list_subject = rest;
-                            match aver_rt::list_uncons(&__list_subject) { Some((defaultExpr, ignored)) => { __MutualTco3::EvalOptionWithDefaultExprSlotInner(optionExpr, defaultExpr.clone(), env) }, None => { return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &argExprs, env, &*slotMap, &*fns) } }
+                            match aver_rt::list_uncons(&__list_subject) { Some((defaultExpr, ignored)) => { __MutualTco3::EvalOptionWithDefaultExprSlotInner(optionExpr.clone(), defaultExpr.clone(), env) }, None => { return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(::aver_rt::str_lit!("Option.withDefault"), &argExprs, env, &*slotMap, &*fns) } }
                         }
                         None => {
                             return crate::aver_generated::domain::eval::core::evalCallBuiltinSlot(
@@ -2648,11 +2648,15 @@ fn __mutual_tco_trampoline_6(
                 mut env @ _,
             ) => {
                 crate::cancel_checkpoint();
-                match bindingSlots.get(&name).cloned() {
+                match (bindingSlots).get(&name) {
                     Some(slot @ _) => {
-                        let __arg6 @ _ =
-                            crate::aver_generated::domain::eval::slots::setSlot(env, slot, &val);
-                        __MutualTco6::MergeBindingsSlot(rest, __arg6)
+                        let slot = slot.clone();
+                        {
+                            let __arg6 @ _ = crate::aver_generated::domain::eval::slots::setSlot(
+                                env, slot, &val,
+                            );
+                            __MutualTco6::MergeBindingsSlot(rest, __arg6)
+                        }
                     }
                     None => __MutualTco6::MergeBindingsSlot(rest, env),
                 }
@@ -4391,11 +4395,13 @@ pub fn evalResolvedSingleExprNamed(
     crate::cancel_checkpoint();
     {
         let __list_subject = body;
-        match aver_rt::list_uncons_cloned(__list_subject) {
+        match aver_rt::list_uncons(__list_subject) {
             Some((stmt, rest)) => {
                 if (rest == aver_rt::AverList::empty()) {
                     crate::aver_generated::domain::eval::core::evalResolvedSingleStmtNamed(
-                        stmt, calleeEnv, fns,
+                        stmt.clone(),
+                        calleeEnv,
+                        fns,
                     )
                 } else {
                     crate::aver_generated::domain::eval::core::evalStmts(body, calleeEnv, fns)
@@ -5386,9 +5392,9 @@ pub fn evalArgsSlot(
     crate::cancel_checkpoint();
     {
         let __list_subject = exprs;
-        match aver_rt::list_uncons_cloned(__list_subject) {
+        match aver_rt::list_uncons(__list_subject) {
             Some((e0, rest)) => {
-                aver_list_match!(rest, [] => crate::aver_generated::domain::eval::core::evalArgsSlot1(e0, env, slotMap, fns), [e1, rest2] => { aver_list_match!(rest2, [] => crate::aver_generated::domain::eval::core::evalArgsSlot2(e0, e1, env, slotMap, fns), [e2, rest3] => { { let __list_subject = rest3; if __list_subject.is_empty() { crate::aver_generated::domain::eval::core::evalArgsSlot3(e0, e1, e2, env, slotMap, fns) } else { { let __arg10 @ _ = <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty(); crate::aver_generated::domain::eval::core::evalArgsSlotRev(exprs, &env, slotMap, fns, __arg10) } } } }) })
+                aver_list_match!(rest, [] => crate::aver_generated::domain::eval::core::evalArgsSlot1(e0.clone(), env, slotMap, fns), [e1, rest2] => { aver_list_match!(rest2, [] => crate::aver_generated::domain::eval::core::evalArgsSlot2(e0.clone(), e1, env, slotMap, fns), [e2, rest3] => { { let __list_subject = rest3; if __list_subject.is_empty() { crate::aver_generated::domain::eval::core::evalArgsSlot3(e0.clone(), e1, e2, env, slotMap, fns) } else { { let __arg10 @ _ = <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty(); crate::aver_generated::domain::eval::core::evalArgsSlotRev(exprs, &env, slotMap, fns, __arg10) } } } }) })
             }
             None => Ok(aver_rt::AverList::empty()),
         }

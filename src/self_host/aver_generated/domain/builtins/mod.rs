@@ -2409,10 +2409,10 @@ pub fn headersToValMap(
         {
             let __list_subject = names;
             match aver_rt::list_uncons_cloned(__list_subject) {
-                Some((name, rest)) => match headers.get(&name).cloned() {
+                Some((name, rest)) => match (headers).get(&name) {
                     Some(values @ _) => {
                         let __tco1 = rest;
-                        let __tco2 = acc.insert_owned(name.clone(), crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(name)), crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new(0usize); crate::aver_generated::domain::builtins::stringsToValStrs__collected(&values, __arg6) }))]))));
+                        let __tco2 = acc.insert_owned(name.clone(), crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(name)), crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new(0usize); crate::aver_generated::domain::builtins::stringsToValStrs__collected(values, __arg6) }))]))));
                         __hold1 = __tco1;
                         names = &__hold1;
                         acc = __tco2;

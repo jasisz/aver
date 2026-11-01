@@ -118,6 +118,16 @@ pub unsafe trait ThinSum: Sized + 'static {
     }
 }
 
+/// The struct of the fields of one constructor of the sum `S`, and that
+/// constructor's tag; [`thin_sum!`] implements it for each, so that
+/// `try_take` knows which constructor a field struct belongs to.
+///
+/// # Safety
+/// `TAG` is the tag of the constructor of `S` whose fields `Self` holds.
+pub unsafe trait ThinCtor<S: ThinSum> {
+    const TAG: u32;
+}
+
 /// One value of the recursive sum `S` (see the module docs).
 pub struct Thin<S: ThinSum> {
     ptr: NonNull<Header>,
@@ -245,6 +255,41 @@ impl<S: ThinSum> Thin<S> {
         // freed without dropping them.
         unsafe { std::ptr::read(&raw const (*node).fields) }.hand_over(pending);
         drop(unsafe { Box::from_raw(node.cast::<ManuallyDrop<Node<P>>>()) });
+    }
+
+    /// The fields of the node, moved out of it when this is its only owner;
+    /// the value back when it is not, or has no node. The node's memory is
+    /// given back without dropping the fields, as [`Thin::free_node`] does.
+    ///
+    /// # Safety
+    /// The node, if any, was made by `new::<P>`: `self.tag()` names the
+    /// constructor whose struct is `P`, and it is not a node a call was
+    /// deferred in (see [`Lazy`]), which is laid out for the largest one.
+    #[inline]
+    pub unsafe fn try_take<P>(self) -> Result<P, Self> {
+        if self.is_empty_ctor() {
+            return Err(self);
+        }
+        // As `Arc::try_unwrap`: no other owner can appear once the count is
+        // 1, as a new owner is made only from an existing one, and the
+        // `Acquire` makes every other owner's use of the fields happen before.
+        // A plain load first: a shared node, the common case where values
+        // are kept in maps, then costs no atomic write.
+        let count = &self.header().count;
+        if count.load(Ordering::Relaxed) != 1
+            || count
+                .compare_exchange(1, 0, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+        {
+            return Err(self);
+        }
+        let this = ManuallyDrop::new(self);
+        let node = this.ptr.cast::<Node<P>>().as_ptr();
+        // SAFETY: the fields are moved out once, and the box is then freed
+        // without dropping them.
+        let fields = unsafe { std::ptr::read(&raw const (*node).fields) };
+        drop(unsafe { Box::from_raw(node.cast::<ManuallyDrop<Node<P>>>()) });
+        Ok(fields)
     }
 
     /// The last owner's part of `drop`, kept out of line as
@@ -994,6 +1039,8 @@ macro_rules! thin_sum {
             }
         }
 
+        $( $crate::thin_sum!(@tag_of $name $tag $( $fields )?); )+
+
         #[allow(non_snake_case, dead_code)]
         impl $name {
             $( $crate::thin_sum!(@ctor $vis $name $tag $ctor $( $fields )?); )+
@@ -1051,6 +1098,24 @@ macro_rules! thin_sum {
                 }
             }
 
+            /// The fields of constructor `P`, moved out of the value when it
+            /// is of that constructor and their only owner; the value back
+            /// otherwise. A sum some `lazy f(…)` returns always gives the
+            /// value back: a node a call was made in is laid out for the
+            /// largest constructor.
+            #[inline]
+            $vis fn try_take<P: $crate::thin::ThinCtor<$name>>(self) -> ::std::result::Result<P, Self> {
+                if $crate::thin_sum!(@is_lazy $( $lazy )?) || self.0.tag() != P::TAG {
+                    return Err(self);
+                }
+                // SAFETY: the tag is `P`'s, and the sum has no deferred
+                // calls, so the node was made by `Thin::new::<P>`.
+                match unsafe { self.0.try_take::<P>() } {
+                    Ok(fields) => Ok(fields),
+                    Err(value) => Err($name(value)),
+                }
+            }
+
             /// Both values' fields when they are of the same constructor.
             #[inline]
             $vis fn view_pair<'a>(a: &'a Self, b: &'a Self) -> ::std::option::Option<$pair<'a>> {
@@ -1099,6 +1164,15 @@ macro_rules! thin_sum {
         }
     };
 
+    (@is_lazy) => { false };
+    (@is_lazy $lazy:literal) => { true };
+    (@tag_of $name:ident $tag:literal $fields:ty) => {
+        // SAFETY: `$fields` is the struct of constructor `$tag`.
+        unsafe impl $crate::thin::ThinCtor<$name> for $fields {
+            const TAG: u32 = $tag;
+        }
+    };
+    (@tag_of $name:ident $tag:literal) => {};
     (@made $value:expr) => {{
         let value = $value;
         (value, value.tag())
@@ -1411,6 +1485,36 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 0);
         drop(u);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn try_take_moves_the_fields_out_of_a_node_it_alone_owns() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let a = leaf(&drops, 3);
+        // Another constructor, or no node: the value comes back.
+        let a = a.try_take::<T__Pair>().err().expect("a leaf is not a pair");
+        assert!(T::Nil.try_take::<T__Leaf>().is_err());
+        // Shared: the value comes back with its count as it was.
+        let b = a.clone();
+        let a = a.try_take::<T__Leaf>().err().expect("shared");
+        assert_eq!(super::Thin::strong_count(&a.0), 2);
+        drop(b);
+        // The only owner: the fields move out, are not dropped with the node,
+        // and are dropped once, when the taker drops them.
+        let T__Leaf(counted) = a.try_take::<T__Leaf>().ok().expect("only owner");
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        assert_eq!(counted.1, 3);
+        drop(counted);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        // A taken pair hands its children on whole.
+        let T__Pair(x, y, n) = pair(leaf(&drops, 4), T::Nil, 7)
+            .try_take::<T__Pair>()
+            .ok()
+            .expect("only owner");
+        assert_eq!((sum(&x), n), (4, 7));
+        assert!(T::ptr_eq(&y, &T::Nil));
+        drop(x);
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
     }
 
     #[test]

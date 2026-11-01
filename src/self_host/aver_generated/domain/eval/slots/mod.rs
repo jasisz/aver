@@ -70,8 +70,11 @@ pub fn lookupSlot(
     slot @ _: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match (slot).to_usize().and_then(|__i| env.get(__i).cloned()) {
-        Some(v @ _) => Ok(v),
+    match {
+        let __i = (slot).to_usize();
+        __i.and_then(|__i| (env).get(__i))
+    } {
+        Some(v @ _) => Ok(v.clone()),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(36usize);

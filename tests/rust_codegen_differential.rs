@@ -566,6 +566,27 @@ fn record_update_values_run_before_the_base_moves() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A thin sum returned by a function that builds every value it returns
+/// is matched by taking the fields an arm owns out of its node
+/// (`try_take`); a result that may be shared (`keep` hands back its
+/// argument) keeps the view. A `Vector.get` whose vector no arm hands on is
+/// matched through a borrow of the element. Fresh results of a step, values
+/// held in a list twice and a value matched twice all read as the VM.
+#[test]
+fn thin_fields_taken_and_elements_lent_match_vm() {
+    let relative = "tests/fixtures/rust_thin_take.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_thin_take", &src);
+    for shape in [
+        "match { let __i = (pc).to_usize(); __i.and_then(|__i| (code).get(__i)) }",
+        "let (s2, extra, pc2,) = match __t.try_take::<Next__Go>() { Ok(__f) => (__f.0, __f.1, __f.2,), Err(__t) =>",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    assert_eq!(emitted.matches("try_take").count(), 1, "{emitted}");
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Pure `Int` trees are computed on `i64` first and exactly when a leaf is
 /// past `i64` or an operation overflows (`codegen/rust/from_mir/int_tree.rs`):
 /// overflow in the middle of a tree, Big leaves, `i64::MIN`, Euclidean
