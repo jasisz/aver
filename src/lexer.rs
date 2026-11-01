@@ -539,7 +539,7 @@ impl Lexer {
                 .parse()
                 .map_err(|_| self.error("Invalid floating-point number"))?;
             if !f.is_finite() {
-                return Err(self.error(&format!(
+                return Err(self.error(format!(
                     "Float literal {num_str} is too large for a 64-bit Float"
                 )));
             }
