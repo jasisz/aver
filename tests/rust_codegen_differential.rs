@@ -1316,6 +1316,19 @@ fn top_level_interpolation_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A name bound by a match on a computed String and interpolated again in
+/// its arm. The Rust walker matches on `&*subject`, so the name is a
+/// `&str`, and the runtime had no `AverDisplay` for it: the generated
+/// crate did not compile while the VM and the checker accepted the program.
+#[test]
+fn match_bound_string_reinterpolated_matches_between_rust_and_vm() {
+    assert_plain_parity(
+        "tests/fixtures/match_bound_string_reinterpolated_app.av",
+        None,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A match on a tuple literal whose arms carry list, literal or Option
 /// patterns in the tuple's elements — `([], 0)`, `([next, ..rest], n)`,
 /// `(true, 0)`, `(Option.Some(task), 0)`, `(Option.None, _)` — and one

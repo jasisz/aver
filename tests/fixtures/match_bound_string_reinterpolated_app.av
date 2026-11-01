@@ -1,0 +1,27 @@
+module MatchBoundStringReinterpolated
+    intent = "A name bound by a match on a computed String, interpolated again inside its arm, as Kompost found it."
+
+fn describe(a: Int, b: Int) -> Result<Int, String>
+    ? "Accepts only 1.2; anything else names itself in the error."
+    match "{a}.{b}"
+        "1.2" -> Result.Ok(12)
+        name -> Result.Err("unsupported {name}")
+
+fn echo(word: String) -> String
+    ? "A bound String parameter, interpolated twice."
+    match word
+        "" -> "empty"
+        other -> "[{other}|{other}]"
+
+fn show(r: Result<Int, String>) -> String
+    ? "Renders a describe result."
+    match r
+        Result.Ok(n) -> "ok {n}"
+        Result.Err(e) -> "err {e}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(show(describe(1, 2)))
+    Console.print(show(describe(3, 4)))
+    Console.print(echo(""))
+    Console.print(echo("x{1 + 1}"))
