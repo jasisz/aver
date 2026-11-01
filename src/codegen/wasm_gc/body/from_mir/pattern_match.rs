@@ -50,7 +50,8 @@ fn fabricated_subject_type(subject: &Spanned<MirExpr>) -> Option<&'static str> {
         | BuiltinIntrinsic::StrFoldLower
         | BuiltinIntrinsic::StrFoldUpper
         | BuiltinIntrinsic::StrIndexCodeAt
-        | BuiltinIntrinsic::StrIndexLen => Some("Int"),
+        | BuiltinIntrinsic::StrIndexLen
+        | BuiltinIntrinsic::PackedByteAt => Some("Int"),
         _ => None,
     }
 }

@@ -1,0 +1,39 @@
+literal[-1] sum 0 count 0 find -1 at none
+literal[0] sum 382 count 3 find 2 at 0
+literal[1] sum 382 count 2 find 2 at 127
+literal[2] sum 255 count 1 find 2 at 255
+literal[3] sum 0 count 0 find -1 at none
+literal[4] sum 0 count 0 find -1 at none
+literal[18446744073709551616] sum 0 count 0 find -1 at none
+literal[-18446744073709551616] sum 0 count 0 find -1 at none
+literal[9223372036854775807] sum 0 count 0 find -1 at none
+literal[-9223372036854775808] sum 0 count 0 find -1 at none
+literal done
+empty[-1] sum 0 count 0 find -1 at none
+empty[0] sum 0 count 0 find -1 at none
+empty[1] sum 0 count 0 find -1 at none
+empty done
+big[0] sum 124716 count 1000 find 255 at 0
+big[255] sum 92331 count 745 find 255 at 255
+big[999] sum 231 count 1 find -1 at 231
+big[1000] sum 0 count 0 find -1 at none
+big done
+dropped[0] sum 461 count 2 find -1 at 230
+dropped[1] sum 231 count 1 find -1 at 231
+dropped[2] sum 0 count 0 find -1 at none
+dropped done
+taken[0] sum 1 count 2 find -1 at 0
+taken[1] sum 1 count 1 find -1 at 1
+taken[2] sum 0 count 0 find -1 at none
+taken done
+middle[0] sum 1521 count 10 find 5 at 250
+middle[5] sum 261 count 5 find 5 at 255
+middle[9] sum 3 count 1 find -1 at 3
+middle[10] sum 0 count 0 find -1 at none
+middle done
+joined[0] sum 383 count 5 find 2 at 0
+joined[2] sum 256 count 3 find 2 at 255
+joined[4] sum 1 count 1 find -1 at 1
+joined[5] sum 0 count 0 find -1 at none
+joined done
+leb 624740 then 255

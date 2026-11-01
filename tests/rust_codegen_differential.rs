@@ -3233,6 +3233,26 @@ fn rust_bytes_get_matches_vm() {
     assert_eq!(rust.trim(), expected, "Rust Bytes.get diverged from the VM");
 }
 
+/// Loops that index `Bytes` on the Rust backend: each match on `Bytes.get`
+/// reads the packed octet in place with the position as an `i64`, checked
+/// once on entry where the start is not bounded. The program
+/// `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_bytes_get_loops_match_vm() {
+    let src = include_str!("fixtures/bytes_get_loops.av");
+    let expected = include_str!("fixtures/bytes_get_loops.expected").trim();
+
+    let vm = run_vm_inline("bytes_get_loops", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("bytes_get_loops", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM Bytes.get loops contract changed");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust Bytes.get loops diverged from the VM"
+    );
+}
+
 /// The same rule over an `Int` carrier, on the Rust backend: the program
 /// `cross_backend_stress` runs on the VM and wasm-gc.
 #[test]

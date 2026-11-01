@@ -55,6 +55,7 @@ pub mod dead_code;
 pub mod inline;
 pub mod list_refinement;
 pub mod own_param;
+pub mod packed_index;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;

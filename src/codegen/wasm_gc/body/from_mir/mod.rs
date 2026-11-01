@@ -321,6 +321,7 @@ fn mir_is_raw_code_call(e: &MirExpr) -> bool {
                         | BuiltinIntrinsic::StrCursorNext
                         | BuiltinIntrinsic::StrFoldLower
                         | BuiltinIntrinsic::StrFoldUpper
+                        | BuiltinIntrinsic::PackedByteAt
                 )
             )
     )
@@ -1489,6 +1490,49 @@ pub(crate) fn emit_mir_expr(
                         func.instruction(&Instruction::End);
                         func.instruction(&Instruction::I64ExtendI32U);
                         lift_i64_result_to_aint(func, ctx)?;
+                        return Ok(Some(true));
+                    }
+                    // A packed byte read (`ir::mir::optimize::packed_index`):
+                    // the carrier's own `byte_at` helper over the packed
+                    // array, with the position raw where the analysis proved
+                    // it fits `i64` and saturated anywhere else, which keeps
+                    // every answer. The helper returns a raw `i64`.
+                    if let (BuiltinIntrinsic::PackedByteAt, [carrier, position]) =
+                        (intr, &call.args[..])
+                    {
+                        let (base, type_name) = records::mir_packed_carrier_projection(
+                            carrier, ctx,
+                        )
+                        .ok_or_else(|| {
+                            WasmGcError::Validation(
+                                "__packed_byte_at reached wasm-gc without a packed carrier".into(),
+                            )
+                        })?;
+                        let helper = ctx
+                            .fn_map
+                            .packed_sequence_ops_lookup(&type_name)
+                            .and_then(|ops| ops.byte_at)
+                            .ok_or_else(|| {
+                                WasmGcError::Validation(format!(
+                                    "__packed_byte_at reached wasm-gc without the `byte_at` helper of `{type_name}`"
+                                ))
+                            })?;
+                        if emit_mir_expr(func, base, slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        let produced =
+                            if ctx.registry.bignum && mir_renders_raw_i64(&position.node, ctx) {
+                                emit_mir_int_raw(func, position, slots, ctx)?.is_some()
+                            } else {
+                                builtins::emit_aint_arg_as_i64_sat(func, position, slots, ctx)?
+                            };
+                        if !produced {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::Call(helper));
+                        if !mir_renders_raw_i64(&expr.node, ctx) {
+                            lift_i64_result_to_aint(func, ctx)?;
+                        }
                         return Ok(Some(true));
                     }
                     // BranchPath is a proof-only opaque `(ref null eq)` on
