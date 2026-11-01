@@ -11,6 +11,13 @@
 //!   next round, or a parameter the function only borrows. A copy made at
 //!   run time because the collection's count is above one without a clone
 //!   in the code (a value stored in two places) is not visible here.
+//! - A value copied to be passed to a function that writes it in place: an
+//!   argument the emitter clones for a parameter the callee owns, where the
+//!   callee (or a function it hands the parameter on to) writes the
+//!   parameter, or a Map or Vector field of it, with `Map.set`,
+//!   `Map.remove` or `Vector.set`. The copy gives the collection a second
+//!   owner, so the write copies it whole; the note names the call and why
+//!   the argument was cloned, as for a write.
 //! - A machine word boxed into an `Int` at a function boundary: every call
 //!   of a function passes a parameter a value held as a raw `i64` (or a
 //!   literal), and the function works on it as an `Int`.
@@ -21,7 +28,7 @@ use crate::ast::Spanned;
 use crate::codegen::{CodegenContext, PerfNote};
 use crate::ir::FnId;
 use crate::ir::mir::expr::walk_children;
-use crate::ir::mir::{LocalId, MirCallee, MirExpr, MirFn};
+use crate::ir::mir::{LocalId, MirCallee, MirExpr, MirFn, MirProgram};
 
 use super::from_mir::MirEmitCtx;
 
@@ -36,11 +43,14 @@ enum Held {
     Lent,
 }
 
-/// A write target the emitter cloned.
+/// A write target, or an argument for a parameter its callee owns, that the
+/// emitter cloned.
 #[derive(Clone, Copy)]
 pub struct CopiedTarget {
-    /// `Map.set`, `Map.remove` or `Vector.set`.
+    /// `Map.set`, `Map.remove` or `Vector.set`; empty for an argument.
     write: &'static str,
+    /// The callee and the parameter, for an argument.
+    pass: Option<(FnId, usize)>,
     held: Held,
     /// The default of the self-keep `Option.withDefault(Vector.set(v, ..),
     /// v)`, by address: the same write reads `v` there.
@@ -61,27 +71,57 @@ pub(super) fn owned_write_target(
     ctx: &MirEmitCtx<'_>,
 ) -> String {
     let owned = super::ownership::materialize_owned(code.clone(), target, ctx);
-    if let Some(codegen) = ctx.codegen
-        && owned != code
-        && let Some(root) = super::ownership::projection_root_local(target)
-    {
-        let held = if super::ownership::root_is_borrowed(root, ctx) {
-            Held::Lent
-        } else if ctx.loop_carried_params.contains(&root.name) {
-            Held::Loop
-        } else {
-            Held::Again
-        };
-        codegen.rust_copied_targets.borrow_mut().insert(
-            addr(target),
-            CopiedTarget {
-                write,
-                held,
-                keep: keep.map(addr),
-            },
-        );
+    if owned != code {
+        record(target, write, None, keep, ctx);
     }
     owned
+}
+
+/// An argument for parameter `index` of `callee`, which the callee owns, as
+/// `rendered` passes it, recorded when that is a clone of `code`.
+pub(super) fn owned_call_arg(
+    code: &str,
+    rendered: &str,
+    arg: &MirExpr,
+    callee: Option<FnId>,
+    index: usize,
+    ctx: &MirEmitCtx<'_>,
+) {
+    if let Some(callee) = callee
+        && code != rendered
+    {
+        record(arg, "", Some((callee, index)), None, ctx);
+    }
+}
+
+fn record(
+    target: &MirExpr,
+    write: &'static str,
+    pass: Option<(FnId, usize)>,
+    keep: Option<&MirExpr>,
+    ctx: &MirEmitCtx<'_>,
+) {
+    let (Some(codegen), Some(root)) =
+        (ctx.codegen, super::ownership::projection_root_local(target))
+    else {
+        return;
+    };
+    let held = if super::ownership::root_is_borrowed(root, ctx) {
+        Held::Lent
+    } else if ctx.loop_carried_params.contains(&root.name) {
+        Held::Loop
+    } else {
+        Held::Again
+    };
+    codegen.rust_copied_targets.borrow_mut().insert(
+        addr(target),
+        CopiedTarget {
+            write,
+            pass,
+            held,
+            keep: keep.map(addr),
+        },
+    );
 }
 
 /// The notes of the transpile that `ctx` has just emitted, with the
@@ -91,10 +131,16 @@ pub(super) fn collect(ctx: &CodegenContext, mut notes: Vec<PerfNote>) -> Vec<Per
         return notes;
     };
     let copied = ctx.rust_copied_targets.borrow();
+    let writes = writes_in_place(program);
     for (id, f) in program.iter() {
         visit(&f.body.node, &mut |target| {
             if let Some(copy) = copied.get(&addr(target))
-                && let Some((line, text)) = copied_note(f, target, *copy)
+                && copy.pass.is_none_or(|(callee, index)| {
+                    writes
+                        .get(&callee)
+                        .is_some_and(|params| params.get(index).copied().unwrap_or(false))
+                })
+                && let Some((line, text)) = copied_note(program, f, target, *copy)
             {
                 notes.push(PerfNote {
                     module: module_of(ctx, *id),
@@ -117,8 +163,73 @@ fn module_of(ctx: &CodegenContext, id: FnId) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Which parameters of each function it writes in place: it is, or a Map
+/// or Vector it holds is, the target of `Map.set`, `Map.remove` or
+/// `Vector.set`, or it is passed on as a parameter the callee writes so.
+fn writes_in_place(program: &MirProgram) -> HashMap<FnId, Vec<bool>> {
+    let mut writes: HashMap<FnId, Vec<bool>> = program
+        .iter()
+        .map(|(id, f)| (*id, vec![false; f.params.len()]))
+        .collect();
+    loop {
+        let mut changed = false;
+        for (id, f) in program.iter() {
+            for (index, param) in f.params.iter().enumerate() {
+                if !writes[id][index] && writes_param(&f.body.node, param.local, &writes, program) {
+                    writes.get_mut(id).expect("every function")[index] = true;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return writes;
+        }
+    }
+}
+
+fn writes_param(
+    e: &MirExpr,
+    slot: LocalId,
+    writes: &HashMap<FnId, Vec<bool>>,
+    program: &MirProgram,
+) -> bool {
+    let rooted = |arg: &Spanned<MirExpr>| read_of(&arg.node).is_some_and(|read| read.slot == slot);
+    let passes = |callee: FnId, args: &[Spanned<MirExpr>]| {
+        args.iter().enumerate().any(|(index, arg)| {
+            rooted(arg)
+                && writes
+                    .get(&callee)
+                    .is_some_and(|params| params.get(index).copied().unwrap_or(false))
+        })
+    };
+    let mut found = false;
+    visit(e, &mut |e| {
+        found = found
+            || match e {
+                MirExpr::Call(call) => match &call.node.callee {
+                    MirCallee::Builtin(id) => {
+                        matches!(
+                            program.builtins.get(id.0 as usize).map(String::as_str),
+                            Some("Vector.set" | "Map.set" | "Map.remove")
+                        ) && call.node.args.first().is_some_and(rooted)
+                    }
+                    MirCallee::Fn(callee) => passes(*callee, &call.node.args),
+                    _ => false,
+                },
+                MirExpr::TailCall(tc) => passes(tc.node.target, &tc.node.args),
+                _ => false,
+            };
+    });
+    found
+}
+
 /// The line of the copy and what the note says about it.
-fn copied_note(f: &MirFn, target: &MirExpr, copy: CopiedTarget) -> Option<(usize, String)> {
+fn copied_note(
+    program: &MirProgram,
+    f: &MirFn,
+    target: &MirExpr,
+    copy: CopiedTarget,
+) -> Option<(usize, String)> {
     let read = read_of(target)?;
     let what = read.spelled();
     let kind = match copy.write {
@@ -147,13 +258,18 @@ fn copied_note(f: &MirFn, target: &MirExpr, copy: CopiedTarget) -> Option<(usize
         },
         (None, Held::Again) => format!("`{what}` is read again later"),
     };
-    Some((
-        search.seen.unwrap_or(read.line),
-        format!(
+    let text = match copy.pass {
+        Some((callee, _)) => format!(
+            "`{}` copies `{what}` to pass it to `{}`, which writes it in place: {why}",
+            f.name,
+            program.fn_by_id(callee)?.name
+        ),
+        None => format!(
             "`{}` copies the whole {kind} `{what}` before `{}`: {why}",
             f.name, copy.write
         ),
-    ))
+    };
+    Some((search.seen.unwrap_or(read.line), text))
 }
 
 /// A read of a named local, of a field path of it (`r.memo`) or of the
@@ -501,6 +617,50 @@ fn mixed(i: Int) -> Int
 fn reads(w: Word) -> Int
     unpack(w.value) + unpack(w.value) + mixed(w.value + 1) + mixed(3)
 "#;
+
+    /// A copy made to pass a value to a function that writes it in place,
+    /// directly or through a function it hands the value on to.
+    #[test]
+    fn a_copy_passed_to_a_writer_is_noted() {
+        let src = r#"module M
+    intent = "perf"
+
+record Frame
+    stack: Vector<Int>
+    sp: Int
+
+fn setAt(xs: Vector<Int>, i: Int, v: Int) -> Vector<Int>
+    Option.withDefault(Vector.set(xs, i, v), xs)
+
+fn writeArr(arr: Option<Vector<Int>>, i: Int) -> Int
+    match arr
+        Option.Some(xs) -> Vector.len(setAt(xs, i, 1))
+        Option.None -> 0
+
+fn push(f: Frame, v: Int) -> Frame
+    Frame.update(f, stack = setAt(f.stack, f.sp, v), sp = f.sp + 1)
+
+fn hot(f: Frame, i: Int) -> Option<Frame>
+    match i > 0
+        true -> Option.Some(push(f, i))
+        false -> Option.None
+
+fn step(f: Frame, i: Int) -> Frame
+    match hot(f, i)
+        Option.Some(g) -> g
+        Option.None -> Frame.update(f, sp = 0)
+
+fn reads(f: Frame, i: Int) -> Int
+    Vector.len(f.stack) + i
+"#;
+        assert_eq!(
+            notes(src),
+            [
+                "13: `writeArr` copies `xs` to pass it to `setAt`, which writes it in place: `writeArr` only borrows `xs`, which its caller keeps",
+                "25: `step` copies `f` to pass it to `hot`, which writes it in place: `f` is read again at line 27",
+            ]
+        );
+    }
 
     #[test]
     fn each_copy_and_boxing_is_noted_with_its_reason() {

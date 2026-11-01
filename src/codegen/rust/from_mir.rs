@@ -8105,7 +8105,9 @@ fn emit_named_call_to(
                 false => borrowed,
             }
         } else {
-            mir_clone_arg(code, &a.node, ctx)
+            let rendered = mir_clone_arg(code.clone(), &a.node, ctx);
+            super::perf_notes::owned_call_arg(&code, &rendered, &a.node, callee, i, ctx);
+            rendered
         };
         arg_strs.push(s);
     }
