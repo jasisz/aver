@@ -1835,13 +1835,19 @@ pub fn unfoldWithin(
                 crate::proof_std::aver_generated::kernel::term::Term__view::TMatch(
                     __subject_fields,
                 ) => {
-                    let subject = __subject_fields.0.clone();
-                    let arms = __subject_fields.1.clone();
+                    let subject = &__subject_fields.0;
+                    let arms = &__subject_fields.1;
                     {
                         let __arg7 @ _ =
                             crate::proof_std::aver_generated::kernel::lib::letBindings(&d, args)?;
                         crate::proof_std::aver_generated::kernel::lib::unfoldAt(
-                            s, &d, args, subject, &arms, &__arg7, depth,
+                            s,
+                            &d,
+                            args,
+                            subject.clone(),
+                            arms,
+                            &__arg7,
+                            depth,
                         )
                     }
                 }
