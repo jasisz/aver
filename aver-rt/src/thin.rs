@@ -1492,25 +1492,30 @@ mod tests {
         let drops = Arc::new(AtomicUsize::new(0));
         let a = leaf(&drops, 3);
         // Another constructor, or no node: the value comes back.
-        let a = a.try_take::<T__Pair>().err().expect("a leaf is not a pair");
+        let Err(a) = a.try_take::<T__Pair>() else {
+            panic!("a leaf is not a pair");
+        };
         assert!(T::Nil.try_take::<T__Leaf>().is_err());
         // Shared: the value comes back with its count as it was.
         let b = a.clone();
-        let a = a.try_take::<T__Leaf>().err().expect("shared");
+        let Err(a) = a.try_take::<T__Leaf>() else {
+            panic!("shared");
+        };
         assert_eq!(super::Thin::strong_count(&a.0), 2);
         drop(b);
         // The only owner: the fields move out, are not dropped with the node,
         // and are dropped once, when the taker drops them.
-        let T__Leaf(counted) = a.try_take::<T__Leaf>().ok().expect("only owner");
+        let Ok(T__Leaf(counted)) = a.try_take::<T__Leaf>() else {
+            panic!("only owner");
+        };
         assert_eq!(drops.load(Ordering::SeqCst), 0);
         assert_eq!(counted.1, 3);
         drop(counted);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         // A taken pair hands its children on whole.
-        let T__Pair(x, y, n) = pair(leaf(&drops, 4), T::Nil, 7)
-            .try_take::<T__Pair>()
-            .ok()
-            .expect("only owner");
+        let Ok(T__Pair(x, y, n)) = pair(leaf(&drops, 4), T::Nil, 7).try_take::<T__Pair>() else {
+            panic!("only owner");
+        };
         assert_eq!((sum(&x), n), (4, 7));
         assert!(T::ptr_eq(&y, &T::Nil));
         drop(x);
