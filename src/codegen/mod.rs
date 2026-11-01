@@ -427,6 +427,21 @@ pub struct RecordedSource {
     pub module_root: String,
 }
 
+/// What the Rust transpile emits for MIR's word-speculation summary
+/// (`codegen::rust::speculation`). Empty everywhere else.
+#[derive(Clone, Debug, Default)]
+pub struct RustWordSpec {
+    /// The summary, as MIR states it.
+    pub summary: crate::ir::mir::word_speculation::WordSpeculation,
+    /// Each twin's code, by function.
+    pub twins: HashMap<crate::ir::FnId, String>,
+    /// Each twin's name.
+    pub names: std::collections::BTreeMap<crate::ir::FnId, String>,
+    /// The entries this backend runs through a restart point: their exact
+    /// body is renamed and their name runs the twin first.
+    pub wrapped: std::collections::BTreeSet<crate::ir::FnId>,
+}
+
 pub struct CodegenContext {
     /// All top-level items (post-TCO transform, post-typecheck).
     ///
@@ -679,6 +694,9 @@ pub struct CodegenContext {
     /// `codegen::rust::lent_option`). Computed with the facts above; empty
     /// everywhere else.
     pub rust_lent_options: HashMap<crate::ir::FnId, Vec<bool>>,
+    /// The machine-word twins and entries of the Rust transpile (see
+    /// [`RustWordSpec`]); empty everywhere else.
+    pub rust_word_spec: RustWordSpec,
     /// The recursive sums some `lazy f(…)` of the program returns, by
     /// backend type key: only these get the hidden constructor that holds a
     /// deferred call (`aver_rt::thin::Lazy`). Computed by the Rust transpile
@@ -1156,6 +1174,7 @@ pub fn build_context(
         rust_owned_record_params: Default::default(),
         rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
+        rust_word_spec: Default::default(),
         rust_lazy_sums: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),
@@ -1691,6 +1710,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         rust_owned_record_params: Default::default(),
         rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
+        rust_word_spec: Default::default(),
         rust_lazy_sums: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),

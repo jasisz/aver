@@ -606,6 +606,60 @@ fn int_trees_on_machine_words_match_vm() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Pure `Int` functions in a cycle run first on machine words and, on the
+/// first overflow, again exactly from their entry
+/// (`codegen/rust/speculation.rs`): a recursion that overflows in the middle
+/// and one that overflows at its last multiplication, a self tail loop whose
+/// sum crosses 2^63, arguments at both ends of the inline range and past it,
+/// `i64::MIN` divided by -1, Euclidean `Int.div` / `Int.mod` by literals of
+/// both signs and by a divisor that may be zero, `Bits` on negative and
+/// large values, `Int.min` / `Int.max` / `Int.abs` at the ends of the word,
+/// an `Option<Int>` taken apart in a loop carrying a `Bool`, mutual
+/// recursion, a `Bool` recursion, both halves of an independent product,
+/// and an entry that overflows on every call from a loop outside the set,
+/// all read as the VM.
+#[test]
+fn word_speculation_matches_vm() {
+    let relative = "tests/fixtures/word_speculation/main.av";
+    let file = repo_root().join(relative);
+    let vm_stdout = run_vm(&file, None).unwrap_or_else(|e| panic!("{e}"));
+    let ws = temp_dir("word_speculation");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&file, &project, "word_speculation", None, &[])?;
+        let emitted = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|e| format!("read emitted module: {e}"))?;
+        // Not vacuous: the cycles have twins and entries.
+        for name in [
+            "pw", "scaled", "sumTo", "halve", "walk", "ping", "pong", "even",
+        ] {
+            if !emitted.contains(&format!("fn __exact_{name}(")) {
+                return Err(format!("`{name}` is not an entry:\n{emitted}"));
+            }
+        }
+        let twins = fs::read_to_string(project.join("src/runtime_support.rs"))
+            .map_err(|e| format!("read emitted runtime support: {e}"))?;
+        if !twins.contains("fn __word_clampOpt(") || twins.contains("fn __word_hot(") {
+            return Err(format!("the twins are not the word set:\n{twins}"));
+        }
+        let bin = cargo_build(&project, "word_speculation")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !out.status.success() || rust_stdout != vm_stdout {
+            return Err(format!(
+                "stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{}",
+                format_output(&out)
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// `lazy f(…)` keeps the call in a node until the value is first looked at:
 /// a value never looked into, one looked at many times and from two threads
 /// at once, compared both ways with the value built at once, a spine a

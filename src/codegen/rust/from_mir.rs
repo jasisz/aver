@@ -7894,9 +7894,39 @@ fn emit_named_call_to(
     }
     Some(format!(
         "{}({})",
-        named_call_head(name, ctx),
+        exact_callee_head(callee).unwrap_or_else(|| named_call_head(name, ctx)),
         arg_strs.join(", ")
     ))
+}
+
+thread_local! {
+    /// While the exact body of a word-speculation entry is emitted: the
+    /// functions it calls by their exact body, with that body's path.
+    static EXACT_CALLEES: std::cell::RefCell<std::collections::BTreeMap<crate::ir::FnId, String>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// The exact callees of the body being emitted, until dropped.
+pub(super) struct ExactCallees;
+
+impl ExactCallees {
+    pub(super) fn set(callees: std::collections::BTreeMap<crate::ir::FnId, String>) -> Self {
+        EXACT_CALLEES.with(|c| *c.borrow_mut() = callees);
+        ExactCallees
+    }
+}
+
+impl Drop for ExactCallees {
+    fn drop(&mut self) {
+        EXACT_CALLEES.with(|c| c.borrow_mut().clear());
+    }
+}
+
+/// The path a call of `callee` is made by in the exact body being emitted,
+/// when it calls that function's exact body.
+fn exact_callee_head(callee: Option<crate::ir::FnId>) -> Option<String> {
+    let id = callee?;
+    EXACT_CALLEES.with(|c| c.borrow().get(&id).cloned())
 }
 
 /// The path a call of the function `name` is made by.

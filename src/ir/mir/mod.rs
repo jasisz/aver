@@ -86,6 +86,7 @@ pub mod program;
 pub mod result_values;
 pub mod self_tail;
 pub mod stats;
+pub mod word_speculation;
 
 pub use crate::ir::hir::BuiltinCtor;
 pub use expr::{
