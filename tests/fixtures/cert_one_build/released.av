@@ -12,14 +12,14 @@ fn width(s: String) -> Int
 
 fn area(s: String, h: Int) -> Int
     ? "Printable itself, but calls width."
-    Int.mod(width(s) * h, 7) + 1
+    Int.mod(width(s) * h, 8)
 
 fn spread(a: Int, b: Int) -> Int
     ? "Printable and calls nothing unprintable."
-    Int.mod(a * b, 7) + 1
+    Int.mod(a * b, 8)
 
 verify area
-    area("abc", 2) => 7
+    area("abc", 2) => 6
 
 verify spread
-    spread(2, 3) => 7
+    spread(2, 3) => 6

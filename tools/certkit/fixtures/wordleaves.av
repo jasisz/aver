@@ -3,7 +3,7 @@ module WordLeaves
         "Certify fixture for Int trees on the machine word whose leaves are"
         "calls and other expressions: each such leaf is bound by a let of a"
         "slot of its own ahead of the tree, which reads the slot as a local."
-    exposes [shift, spread, sumDown, scaledSum, tripledLess]
+    exposes [shift, spread, sumDown, scaledSum, tripledLess, bucket]
     effects []
 
 fn shift(x: Int, lo: Int, hi: Int) -> Int
@@ -43,3 +43,10 @@ fn tripledLess(n: Int) -> Int
 
 verify tripledLess
     tripledLess(4) => 11
+
+fn bucket(n: Int) -> Int
+    ? "A remainder and a quotient by literals on the machine word."
+    Int.mod(n * 7 + 3, 13) + Int.div(n, 10)
+
+verify bucket
+    bucket(25) => 11

@@ -287,6 +287,10 @@ pub enum PlanWTree {
     Pick(PlanPick, Box<PlanWTree>, Box<PlanWTree>),
     /// A product by the literal `k`, written first when the flag is set.
     MulLit(i64, bool, Box<PlanWTree>),
+    /// `Int.div` by the literal (no `0`, `-1` or positive power of two).
+    DivLit(i64, Box<PlanWTree>),
+    /// `Int.mod` by the literal (no `0`, no magnitude a power of two).
+    ModLit(i64, Box<PlanWTree>),
 }
 
 impl PlanWLeaf {
@@ -322,7 +326,9 @@ impl PlanWTree {
                 out
             }
             PlanWTree::Lit(_) => vec![],
-            PlanWTree::MulLit(_, _, a) => a.leaves(),
+            PlanWTree::MulLit(_, _, a) | PlanWTree::DivLit(_, a) | PlanWTree::ModLit(_, a) => {
+                a.leaves()
+            }
         }
     }
 
@@ -354,6 +360,16 @@ impl PlanWTree {
             PlanWTree::Lit(k) => out.push_str(&format!("(.lit ({k}))")),
             PlanWTree::MulLit(k, lit_first, a) => {
                 out.push_str(&format!("(.mulLit ({k}) {lit_first} "));
+                a.write_lean(out);
+                out.push(')');
+            }
+            PlanWTree::DivLit(k, a) => {
+                out.push_str(&format!("(.divLit ({k}) "));
+                a.write_lean(out);
+                out.push(')');
+            }
+            PlanWTree::ModLit(k, a) => {
+                out.push_str(&format!("(.modLit ({k}) "));
                 a.write_lean(out);
                 out.push(')');
             }

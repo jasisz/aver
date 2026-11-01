@@ -206,6 +206,15 @@ inductive WTree where
       machine path one range test of the operand, then `i64.mul`; on the
       exact path the boxed literal and the multiplication helper. -/
   | mulLit (k : Int) (litFirst : Bool) (a : WTree)
+  /-- `Int.div(a, k)` by a literal that is neither `0`, `-1` nor a positive
+      power of two: the truncated quotient corrected by the sign of the
+      truncated remainder on the machine path, `__aint_divmod` on the exact
+      path. -/
+  | divLit (k : Int) (a : WTree)
+  /-- `Int.mod(a, k)` by a literal whose magnitude is no power of two: the
+      truncated remainder plus `|k|` when it is negative on the machine path,
+      `__aint_divmod` on the exact path. -/
+  | modLit (k : Int) (a : WTree)
 deriving DecidableEq, Repr
 
 /-- `MirCallee::Builtin`, admitted part (by dotted name). -/
@@ -763,6 +772,8 @@ def WTree.leaves : WTree → List WLeaf
   | .lit _ => []
   | .pick _ a b => a.leaves ++ b.leaves
   | .mulLit _ _ a => a.leaves
+  | .divLit _ a => a.leaves
+  | .modLit _ a => a.leaves
 
 /-- The locals the tree's leaves read ahead are stored in. -/
 def WTree.slots : WTree → List Nat
@@ -772,6 +783,8 @@ def WTree.slots : WTree → List Nat
   | .lit _ => []
   | .pick _ a b => a.slots ++ b.slots
   | .mulLit _ _ a => a.slots
+  | .divLit _ a => a.slots
+  | .modLit _ a => a.slots
 
 /-- No number occurs twice. -/
 def distinct : List Nat → Bool
@@ -790,6 +803,20 @@ def WLeaf.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WLeaf → Bool
             decide (tid' = tid) && decide (2 ≤ fts.length) && fts[k]? == some .int
         | _, _ => false
 
+/-- A power of two (`m & (m - 1) = 0`, `m ≠ 0`). -/
+def isPow2 (m : Nat) : Bool := m != 0 && (m &&& (m - 1)) == 0
+
+/-- The divisors a quotient node admits (`int_tree.rs`, `Op::Div`): in the
+    `i64` band, not `0`, not `-1` (computed as a negation) and no positive
+    power of two (computed as a shift). -/
+def divLitOk (k : Int) : Bool :=
+  inI64Band k && k != 0 && k != -1 && !(decide (0 < k) && isPow2 k.natAbs)
+
+/-- The divisors a remainder node admits (`Op::Mod`): in the `i64` band and
+    not `0`, and of a magnitude that is no power of two (computed as a
+    mask). -/
+def modLitOk (k : Int) : Bool := inI64Band k && k != 0 && !isPow2 k.natAbs
+
 /-- A literal node. -/
 def WTree.isLit : WTree → Bool
   | .lit _ => true
@@ -805,6 +832,8 @@ def WTree.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WTree → Bool
   | .lit k => inI64Band k
   | .pick _ a b => a.ok M n Γ && b.ok M n Γ
   | .mulLit k _ a => inI64Band k && a.ok M n Γ
+  | .divLit k a => divLitOk k && a.ok M n Γ
+  | .modLit k a => modLitOk k && a.ok M n Γ
 
 /-- A typed `Expr.intWord t w`: its tree is typed, and the locals it writes
     (its leaves stored ahead and its three words) are past the resolver slots
@@ -1350,6 +1379,14 @@ def WTree.val (env : Nat → Option SVal) : WTree → Option SVal
   | .mulLit k _ a =>
       match a.val env with
       | some (.i x) => some (.i (x * k))
+      | _ => none
+  | .divLit k a =>
+      match a.val env with
+      | some (.i x) => some (.i (x / k))
+      | _ => none
+  | .modLit k a =>
+      match a.val env with
+      | some (.i x) => some (.i (x % k))
       | _ => none
 
 mutual

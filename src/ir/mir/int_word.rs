@@ -47,6 +47,17 @@ use super::expr::{
 use super::int_tree::{self, int_literal, is_int};
 use super::program::{LocalId, MirFn, MirScratch};
 
+/// A quotient or remainder by a literal the wall computes on the machine word
+/// in a kept fn (`Grammar.divLitOk` / `modLitOk`): the emitter's general
+/// sequence, not its negation, shift or mask.
+fn kept_div_mod(op: IntWordOp) -> bool {
+    match op {
+        IntWordOp::Div(k) => k != 0 && k != -1 && !(k > 0 && k.unsigned_abs().is_power_of_two()),
+        IntWordOp::Mod(k) => k != 0 && !k.unsigned_abs().is_power_of_two(),
+        _ => false,
+    }
+}
+
 /// The name of the `let` a kept fn binds a tree's leaf by.
 pub const LEAF_BINDING: &str = "__leaf";
 
@@ -295,7 +306,7 @@ impl Pass<'_> {
         // literal by the emitter's range test, `WTree.mulLit`), `Int.min`
         // and `Int.max`.
         let picks = matches!(op, IntWordOp::Min | IntWordOp::Max);
-        if raw || (self.target.kept && op.bin_op().is_none() && !picks) {
+        if raw || (self.target.kept && op.bin_op().is_none() && !picks && !kept_div_mod(op)) {
             return None;
         }
         Some((op, std::iter::once(a).chain(b).collect()))
