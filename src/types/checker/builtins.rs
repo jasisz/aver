@@ -189,6 +189,8 @@ impl TypeChecker {
             ("Float.pow", &[Type::Float, Type::Float], Type::Float, &[]),
             ("Float.atan2", &[Type::Float, Type::Float], Type::Float, &[]),
             ("Float.pi", &[], Type::Float, &[]),
+            ("Float.toBits", &[Type::Float], Type::Int, &[]),
+            ("Float.fromBits", &[Type::Int], Type::Float, &[]),
         ];
         for (name, params, ret, effects) in float_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

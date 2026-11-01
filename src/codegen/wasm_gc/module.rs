@@ -96,8 +96,8 @@ use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
 use super::types::{
-    TypeRegistry, fn_uses_bits, fn_uses_pop_count, param_types_with_repr, record_struct_type,
-    return_results_with_repr,
+    TypeRegistry, fn_uses_bits, fn_uses_float_bits, fn_uses_pop_count, param_types_with_repr,
+    record_struct_type, return_results_with_repr,
 };
 use super::wasip2_disk_bytes::{
     DiskReadBytesIndices, DiskSizeIndices, DiskWriteBytesIndices, emit_disk_read_bytes,
@@ -774,6 +774,12 @@ fn emit_module_pass(
     if registry.bignum && resolved_fn_defs.iter().any(fn_uses_pop_count) {
         builtin_registry.register(BuiltinName::AintPopCount);
     }
+    // `Float.toBits` / `Float.fromBits` carry their pattern through these
+    // two, registered only when a program calls one of them.
+    if registry.bignum && resolved_fn_defs.iter().any(fn_uses_float_bits) {
+        builtin_registry.register(BuiltinName::AintFromU64);
+        builtin_registry.register(BuiltinName::AintLowU64);
+    }
     if registry.bignum
         && effect_registry
             .iter()
@@ -1383,7 +1389,19 @@ fn emit_module_pass(
     // list helpers because their signatures name `List<Int>` directly.
     let mut packed_sequence_helpers =
         super::packed_sequences::PackedSequenceHelperRegistry::default();
-    packed_sequence_helpers.assign_slots(&registry, &mut next_builtin_fn_idx, &mut next_type_idx);
+    // The O(1) indexed read through a packed carrier (`Bytes.get`). A
+    // `--certify` build keeps the plain unpack-and-walk shape the wall reads,
+    // and its helper indices, unchanged.
+    let packed_get = !certify
+        && resolved_fn_defs
+            .iter()
+            .any(super::types::fn_uses_dropped_carrier_match);
+    packed_sequence_helpers.assign_slots(
+        &registry,
+        packed_get,
+        &mut next_builtin_fn_idx,
+        &mut next_type_idx,
+    );
     packed_sequence_helpers.emit_helper_types(&mut types, &registry)?;
 
     // Per-(record/sum) `__eq_<TypeName>` helpers — slot allocation +

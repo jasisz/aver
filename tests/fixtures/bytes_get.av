@@ -1,0 +1,67 @@
+module BytesGet
+    intent =
+        "Bytes.get at the first and last octet, past both ends, on empty bytes,"
+        "on literal and computed bytes and after take, drop and concat, so every"
+        "backend can be held to one output."
+    depends [Bytes]
+    effects [Console.print]
+
+fn show(r: Option<Int>) -> String
+    ? "Renders one read."
+    match r
+        Option.Some(v) -> "{v}"
+        Option.None -> "none"
+
+verify show
+    show(Option.Some(7)) => "7"
+    show(Option.None) => "none"
+
+fn ramp(n: Int, acc: List<Int>) -> List<Int>
+    ? "The octets n - 1 down to 0 mod 256, prepended onto acc."
+    match n
+        0 -> acc
+        _ -> ramp(n - 1, List.prepend(Int.mod(n - 1, 256), acc))
+
+verify ramp
+    ramp(3, []) => [0, 1, 2]
+
+fn sumFrom(b: Bytes, i: Int, acc: Int) -> Int
+    ? "The sum of the octets from index i to the end, read one index at a time."
+    match Bytes.get(b, i)
+        Option.None -> acc
+        Option.Some(v) -> sumFrom(b, i + 1, acc + v)
+
+verify sumFrom
+    sumFrom(Bytes.fromList([1, 2, 3]), 0, 0) => 6
+    sumFrom(Bytes.fromList([1, 2, 3]), 3, 0) => 0
+
+fn reads(label: String, b: Bytes, indices: List<Int>) -> Unit
+    ? "Prints the reads of b at each index."
+    ! [Console.print]
+    match indices
+        [] -> Console.print("{label} done")
+        [i, ..rest] -> reads2(label, b, i, rest)
+
+fn reads2(label: String, b: Bytes, i: Int, rest: List<Int>) -> Unit
+    ? "Prints one read, then the rest."
+    ! [Console.print]
+    Console.print("{label}[{i}] = {show(Bytes.get(b, i))}")
+    reads(label, b, rest)
+
+fn main() -> Unit
+    ! [Console.print]
+    literal = Bytes.fromList([0, 127, 255])
+    reads("literal", literal, [-1, 0, 1, 2, 3, 18446744073709551616, -18446744073709551616])
+    reads("empty", Bytes.empty(), [0, -1, 1])
+    match Bytes.fromList(ramp(1000, []))
+        Result.Ok(big) -> mainBig(big, literal)
+        Result.Err(e) -> Console.print(e)
+
+fn mainBig(big: Bytes, literal: Bytes) -> Unit
+    ? "Reads through computed bytes and their slices."
+    ! [Console.print]
+    reads("big", big, [0, 255, 256, 999, 1000])
+    Console.print("big sum {sumFrom(big, 0, 0)}")
+    reads("dropped", Bytes.drop(big, 998), [0, 1, 2])
+    reads("taken", Bytes.take(big, 2), [1, 2])
+    reads("joined", Bytes.concat(literal, Bytes.take(big, 2)), [2, 3, 4, 5])

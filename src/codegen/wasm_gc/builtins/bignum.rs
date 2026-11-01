@@ -714,6 +714,22 @@ pub(super) fn emit_aint_popcount(registry: &TypeRegistry) -> Result<Function, Wa
     wat_helper::compile_wat_helper(&wat)
 }
 
+/// `__aint_from_u64(u) -> $AverInt` — `Float.toBits`' unsigned reading of
+/// the pattern: a Small below `2^63`, otherwise a two-limb Big.
+pub(super) fn emit_aint_from_u64(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/from_u64.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__aint_low_u64(a) -> i64` — `Float.fromBits`' `Bits.low(a, 64)` as a
+/// machine word, read from the two low limbs of a Big.
+pub(super) fn emit_aint_low_u64(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/low_u64.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
 /// `__aint_cmp(a, b) -> i32` (-1/0/1). Sign first, then unsigned
 /// magnitude (flipped for two negatives). Mirrors `AverInt::cmp`.
 pub(super) fn emit_aint_cmp(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
@@ -1184,6 +1200,14 @@ mod validation_guard {
             (
                 "__aint_popcount",
                 render_simple(&registry, include_str!("wat/popcount.wat")),
+            ),
+            (
+                "__aint_from_u64",
+                render_simple(&registry, include_str!("wat/from_u64.wat")),
+            ),
+            (
+                "__aint_low_u64",
+                render_simple(&registry, include_str!("wat/low_u64.wat")),
             ),
             (
                 "__aint_abs",

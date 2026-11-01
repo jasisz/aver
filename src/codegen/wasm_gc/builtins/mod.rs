@@ -243,6 +243,12 @@ pub(super) enum BuiltinName {
     /// (saturated, non-negative) bits of `x`, or of `-x - 1` when `x < 0`.
     /// `Bits.popCount` subtracts the second from `w`.
     AintPopCount,
+    /// `__aint_from_u64(u) -> $AverInt` — the unsigned reading of a 64-bit
+    /// pattern, `Float.toBits`' result.
+    AintFromU64,
+    /// `__aint_low_u64(a) -> i64` — the lowest 64 bits of `a` under infinite
+    /// two's complement (`Bits.low(a, 64)`), `Float.fromBits`' argument.
+    AintLowU64,
     /// `__aint_cmp(a, b) -> i32` (-1/0/1) — total order over ℤ.
     AintCmp,
     /// `__aint_eq(a, b) -> i32` (1/0) — equality leaning on canonical form.
@@ -410,6 +416,8 @@ impl BuiltinName {
             Self::AintBitwise => "__aint_bitwise",
             Self::AintPow2 => "__aint_pow2",
             Self::AintPopCount => "__aint_popcount",
+            Self::AintFromU64 => "__aint_from_u64",
+            Self::AintLowU64 => "__aint_low_u64",
             Self::AintCmp => "__aint_cmp",
             Self::AintEq => "__aint_eq",
             Self::AintHash => "__aint_hash",
@@ -519,7 +527,7 @@ impl BuiltinName {
                 })?,
             ]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64, ValType::I64]),
-            Self::AintFromI64 => Ok(vec![ValType::I64]),
+            Self::AintFromI64 | Self::AintFromU64 => Ok(vec![ValType::I64]),
             Self::AintAdd | Self::AintSub | Self::AintMul | Self::AintCmp | Self::AintEq => {
                 Ok(vec![aint_ref_ty(registry)?, aint_ref_ty(registry)?])
             }
@@ -533,6 +541,7 @@ impl BuiltinName {
                 ValType::I32,
             ]),
             Self::AintPopCount => Ok(vec![aint_ref_ty(registry)?, ValType::I64]),
+            Self::AintLowU64 => Ok(vec![aint_ref_ty(registry)?]),
             // `want_mod` selects modulo (≠0) vs division (0).
             Self::AintDivmod => Ok(vec![
                 aint_ref_ty(registry)?,
@@ -613,6 +622,7 @@ impl BuiltinName {
             Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Digest32")?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
             Self::AintFromI64
+            | Self::AintFromU64
             | Self::AintAdd
             | Self::AintSub
             | Self::AintMul
@@ -626,7 +636,7 @@ impl BuiltinName {
                 Ok(vec![ValType::I32])
             }
             Self::AintToF64 => Ok(vec![ValType::F64]),
-            Self::AintToI64Sat | Self::AintToI64Checked | Self::AintPopCount => {
+            Self::AintToI64Sat | Self::AintToI64Checked | Self::AintPopCount | Self::AintLowU64 => {
                 Ok(vec![ValType::I64])
             }
             // Shared bignum sub-routines.
@@ -716,6 +726,8 @@ impl BuiltinName {
             Self::AintBitwise => bignum::emit_aint_bitwise(registry),
             Self::AintPow2 => bignum::emit_aint_pow2(registry),
             Self::AintPopCount => bignum::emit_aint_popcount(registry),
+            Self::AintFromU64 => bignum::emit_aint_from_u64(registry),
+            Self::AintLowU64 => bignum::emit_aint_low_u64(registry),
             Self::AintCmp => bignum::emit_aint_cmp(registry),
             Self::AintEq => bignum::emit_aint_eq(registry),
             Self::AintHash => bignum::emit_aint_hash(registry),

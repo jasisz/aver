@@ -749,6 +749,8 @@ pub fn isBuiltinCallName(name @ _: AverStr) -> bool {
         ::aver_rt::str_lit!("Float.round"),
         ::aver_rt::str_lit!("Float.sin"),
         ::aver_rt::str_lit!("Float.sqrt"),
+        ::aver_rt::str_lit!("Float.toBits"),
+        ::aver_rt::str_lit!("Float.fromBits"),
         ::aver_rt::str_lit!("String.fromFloat"),
         ::aver_rt::str_lit!("Http.delete"),
         ::aver_rt::str_lit!("Http.get"),

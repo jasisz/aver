@@ -95,6 +95,8 @@ codegen_builtins! {
     FloatSin => "Float.sin",
     FloatCos => "Float.cos",
     FloatAtan2 => "Float.atan2",
+    FloatToBits => "Float.toBits",
+    FloatFromBits => "Float.fromBits",
 
     // --- String ---
     StringLen => "String.len",

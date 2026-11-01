@@ -3185,6 +3185,36 @@ fn rust_bits_pop_count_matches_vm() {
     assert_eq!(rust.trim(), expected, "Rust popCount diverged from the VM");
 }
 
+/// `Float.toBits` / `Float.fromBits` on the Rust backend: the program
+/// `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_float_bits_matches_vm() {
+    let src = include_str!("fixtures/float_bits.av");
+    let expected = include_str!("fixtures/float_bits.expected").trim();
+
+    let vm = run_vm_inline("float_bits", src).expect("vm run");
+    let rust = build_run_rust_inline("float_bits", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM float bits contract changed");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust float bits diverged from the VM"
+    );
+}
+
+/// `Bytes.get` on the Rust backend, where a packed `Bytes` answers in place:
+/// the program `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_bytes_get_matches_vm() {
+    let src = include_str!("fixtures/bytes_get.av");
+    let expected = include_str!("fixtures/bytes_get.expected").trim();
+
+    let vm = run_vm_inline("bytes_get", src).expect("vm run");
+    let rust = build_run_rust_inline("bytes_get", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM Bytes.get contract changed");
+    assert_eq!(rust.trim(), expected, "Rust Bytes.get diverged from the VM");
+}
+
 /// The same rule over an `Int` carrier, on the Rust backend: the program
 /// `cross_backend_stress` runs on the VM and wasm-gc.
 #[test]

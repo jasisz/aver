@@ -1906,8 +1906,24 @@ pub(crate) fn emit_mir_list_match(
         return unsupported(format!("a match on `{subject_ty}` without both its arms"));
     };
 
-    if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
-        return Ok(None);
+    let tail_ignored = match &cons_arm.pattern {
+        MirPattern::Cons { tail, .. } => tail.0 == u32::from(u16::MAX),
+        _ => false,
+    };
+    let whole_bound = |arm: &MirMatchArm| matches!(&arm.pattern, MirPattern::Bind(slot, _) if slot.0 != u32::from(u16::MAX));
+    let indexed_read = if tail_ignored && !whole_bound(empty_arm) {
+        emit_dropped_carrier_read(func, &m.subject, slots, ctx)?
+    } else {
+        None
+    };
+    match indexed_read {
+        Some(false) => return Ok(None),
+        Some(true) => {}
+        None => {
+            if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        }
     }
     func.instruction(&Instruction::LocalSet(scratch));
 
@@ -1953,6 +1969,54 @@ pub(crate) fn emit_mir_list_match(
     }
     func.instruction(&Instruction::End);
     Ok(Some(()))
+}
+
+/// `List.drop(x.carrier, n)` as the subject of a list match that never reads
+/// the tail: only whether an element is left and which one it is matter, so
+/// the packed carrier's `get` helper answers with at most one cons cell in
+/// O(1) instead of unpacking the array and walking `n` cells. Generic over
+/// every proof-packed structural refinement (`Bytes.get` is written this
+/// way). `None` when the shape or the helper is absent, so the caller emits
+/// the subject as usual; otherwise whether the subject was produced.
+fn emit_dropped_carrier_read(
+    func: &mut Function,
+    subject: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<bool>, WasmGcError> {
+    let MirExpr::Call(call) = &subject.node else {
+        return Ok(None);
+    };
+    let MirCallee::Builtin(id) = call.node.callee else {
+        return Ok(None);
+    };
+    let is_drop = ctx
+        .mir_builtins
+        .and_then(|names| names.get(id.0 as usize))
+        .is_some_and(|name| name == "List.drop");
+    if !is_drop || call.node.args.len() != 2 {
+        return Ok(None);
+    }
+    let Some((base, type_name)) =
+        super::records::mir_packed_carrier_projection(&call.node.args[0], ctx)
+    else {
+        return Ok(None);
+    };
+    let Some(get) = ctx
+        .fn_map
+        .packed_sequence_ops_lookup(&type_name)
+        .and_then(|ops| ops.get)
+    else {
+        return Ok(None);
+    };
+    if emit_mir_expr(func, base, slots, ctx)?.is_none() {
+        return Ok(Some(false));
+    }
+    if !super::builtins::emit_aint_arg_as_i64_sat(func, &call.node.args[1], slots, ctx)? {
+        return Ok(Some(false));
+    }
+    func.instruction(&Instruction::Call(get));
+    Ok(Some(true))
 }
 
 /// A named catch-all (`other -> …`) after arms that test the subject

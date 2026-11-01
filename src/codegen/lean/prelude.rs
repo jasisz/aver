@@ -95,6 +95,13 @@ def round (x : Float) : Int := toInt x.round
 
 def pow (x y : Float) : Float := x ^ y
 
+-- `Float.toBits` / `Float.fromBits`: Lean core's own IEEE-754 binary64
+-- reinterpretation through `UInt64`. The pattern reads as an unsigned
+-- `Int`, and `fromBits` keeps the lowest 64 bits of any `Int` (`b % 2^64`
+-- is the Euclidean remainder, so `-1` reads as all ones), as the VM does.
+def toBits (x : Float) : Int := Int.ofNat x.toBits.toNat
+def fromBits (b : Int) : Float := Float.ofBits (UInt64.ofNat (b % 18446744073709551616).toNat)
+
 -- Edge-case smoke checks: each `example` is discharged by reduction,
 -- so any drift from these documented values fails Lake build.
 example : AverFloat.toInt 0.0 = 0                                := by native_decide
@@ -112,6 +119,8 @@ example : AverFloat.round 0.5 = 1                                := by native_de
 example : AverFloat.round (-0.5) = -1                            := by native_decide
 example : AverFloat.round 2.5 = 3                                := by native_decide
 example : AverFloat.round (-2.5) = -3                            := by native_decide
+example : AverFloat.toBits 1.0 = 4607182418800017408             := by native_decide
+example : AverFloat.toBits (AverFloat.fromBits (-1)) = 18446744073709551615 := by native_decide
 end AverFloat"#;
 
 // `DecidableEq Float` via an `unsafeCast`-fabricated proof delegating to

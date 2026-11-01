@@ -2497,11 +2497,27 @@ fn fn_body_reaches(
     fd: &crate::ir::hir::ResolvedFnDef,
     hits: &dyn Fn(&crate::ir::hir::ResolvedCallee) -> bool,
 ) -> bool {
+    use crate::ir::hir::ResolvedExpr;
+    fn_body_has(
+        fd,
+        &|e| matches!(e, ResolvedExpr::Call(callee, _) if hits(callee)),
+    )
+}
+
+/// Whether any expression node in `fd`'s body satisfies `hits`, by the same
+/// exhaustive walk [`fn_body_reaches`] uses for callees.
+fn fn_body_has(
+    fd: &crate::ir::hir::ResolvedFnDef,
+    hits: &dyn Fn(&crate::ir::hir::ResolvedExpr) -> bool,
+) -> bool {
     use crate::ir::hir::{ResolvedExpr, ResolvedFnBody, ResolvedStmt, ResolvedStrPart};
-    fn walk(e: &ResolvedExpr, hits: &dyn Fn(&crate::ir::hir::ResolvedCallee) -> bool) -> bool {
+    fn walk(e: &ResolvedExpr, hits: &dyn Fn(&ResolvedExpr) -> bool) -> bool {
+        if hits(e) {
+            return true;
+        }
         let any = |xs: &[crate::ast::Spanned<ResolvedExpr>]| xs.iter().any(|x| walk(&x.node, hits));
         match e {
-            ResolvedExpr::Call(callee, args) => hits(callee) || any(args),
+            ResolvedExpr::Call(_, args) => any(args),
             ResolvedExpr::Match { subject, arms } => {
                 walk(&subject.node, hits) || arms.iter().any(|a| walk(&a.body.node, hits))
             }
@@ -2577,6 +2593,38 @@ pub(super) fn fn_uses_pop_count(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     })
 }
 
+/// Whether `Float.toBits` or `Float.fromBits` is reachable, the gate of
+/// their `__aint_from_u64` / `__aint_low_u64` helpers.
+pub(super) fn fn_uses_float_bits(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    use crate::ir::hir::ResolvedCallee;
+    fn_body_reaches(
+        fd,
+        &|callee| matches!(callee, ResolvedCallee::Builtin(name) if name == "Float.toBits" || name == "Float.fromBits"),
+    )
+}
+
+/// Whether `fd` matches a list pattern on `List.drop(x.field, n)`, the shape
+/// of an indexed read through a structural refinement's carrier (as
+/// `Bytes.get` is written). It gates the per-packed-type `get` helper the
+/// list match then reads from in O(1); a stray hit only costs that helper.
+pub(super) fn fn_uses_dropped_carrier_match(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedPattern};
+    fn_body_has(fd, &|e| {
+        let ResolvedExpr::Match { subject, arms } = e else {
+            return false;
+        };
+        matches!(
+            &subject.node,
+            ResolvedExpr::Call(ResolvedCallee::Builtin(name), args)
+                if name == "List.drop"
+                    && args.len() == 2
+                    && matches!(args[0].node, ResolvedExpr::Attr(..))
+        ) && arms
+            .iter()
+            .any(|a| matches!(a.pattern, ResolvedPattern::Cons(..)))
+    })
+}
+
 fn fn_body_calls_int_mod(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     fn_body_calls_builtin(fd, "Int.mod")
 }
@@ -2633,6 +2681,8 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Float.floor"
             | "Float.ceil"
             | "Float.round"
+            | "Float.toBits"
+            | "Float.fromBits"
             // String <-> Int.
             | "String.fromInt"
             | "String.len"

@@ -806,9 +806,8 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         // All are declined by the kernel table below regardless: Lean has no
         // kernel-reducible `DecidableEq Float`.
         FloatAbs | FloatSqrt | FloatPow | FloatRound | FloatFloor | FloatCeil | FloatFromInt
-        | FloatFromString | FloatPi | FloatMin | FloatMax | FloatSin | FloatCos | FloatAtan2 => {
-            Total
-        }
+        | FloatFromString | FloatPi | FloatMin | FloatMax | FloatSin | FloatCos | FloatAtan2
+        | FloatToBits | FloatFromBits => Total,
 
         // Lean-core string operations and the total prelude helpers
         // (`String.charsAv`, `AverString.split`, `String.fromInt` over
@@ -869,9 +868,8 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
         // constant, and Float literals are `OfScientific` applications the
         // kernel does not evaluate. No Float goal reduces.
         FloatAbs | FloatSqrt | FloatPow | FloatRound | FloatFloor | FloatCeil | FloatFromInt
-        | FloatFromString | FloatPi | FloatMin | FloatMax | FloatSin | FloatCos | FloatAtan2 => {
-            false
-        }
+        | FloatFromString | FloatPi | FloatMin | FloatMax | FloatSin | FloatCos | FloatAtan2
+        | FloatToBits | FloatFromBits => false,
 
         // String — prelude helpers plus Lean core operations that unfold on
         // concrete strings.

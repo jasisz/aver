@@ -66,6 +66,8 @@ vm_builtins! {
     FloatPow => "Float.pow",
     FloatAtan2 => "Float.atan2",
     FloatPi => "Float.pi",
+    FloatToBits => "Float.toBits",
+    FloatFromBits => "Float.fromBits",
 
     StringLen => "String.len",
     StringByteLength => "String.byteLength",
@@ -158,6 +160,7 @@ impl VmBuiltin {
             | Self::FloatPow
             | Self::FloatAtan2
             | Self::FloatPi
+            | Self::FloatFromBits
             | Self::StringLen
             | Self::StringByteLength
             | Self::StringStartsWith
@@ -215,7 +218,9 @@ impl VmBuiltin {
             | Self::FloatSqrt
             | Self::FloatPow
             | Self::FloatAtan2
-            | Self::FloatPi => float::call_nv(self.name(), args, arena),
+            | Self::FloatPi
+            | Self::FloatToBits
+            | Self::FloatFromBits => float::call_nv(self.name(), args, arena),
 
             Self::StringLen
             | Self::StringByteLength

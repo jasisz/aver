@@ -8647,6 +8647,10 @@ fn emit_mir_builtin_call(
         // The arg is now `AverInt`; `to_f64` saturates huge magnitudes to
         // `±∞` (never `NaN`), mirroring the VM's `AverInt::to_f64`.
         "Float.fromInt" => format!("{}.to_f64()", arg!(0)),
+        // The binary64 pattern read as an unsigned Int, and back from the
+        // lowest 64 bits of any Int (`Bits.low(b, 64)`), as the VM does.
+        "Float.toBits" => format!("aver_rt::AverInt::from_u64(({}).to_bits())", arg!(0)),
+        "Float.fromBits" => format!("f64::from_bits(({}).low_u64())", arg!(0)),
 
         // ---- String ----
         // `AverInt: Display` renders Small and Big byte-identically to the
