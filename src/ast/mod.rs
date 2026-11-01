@@ -261,7 +261,7 @@ pub fn is_literal_total_int_endian_call(value: &Spanned<Expr>, width: &Spanned<E
     let Expr::Literal(Literal::Int(width)) = &width.node else {
         return false;
     };
-    if *width < 0 || (*width as u64) > aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS as u64 {
+    if *width < 0 || (*width as u64) > aver_rt::MAX_FIXED_WIDTH_INT_OCTETS as u64 {
         return false;
     }
     let available_bits = (*width as u64) * 8;

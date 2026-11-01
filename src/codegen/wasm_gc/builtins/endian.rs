@@ -174,7 +174,7 @@ pub(super) fn emit_to_endian(
     };
     let width_error = string_literal(&aver_rt::int_endian_width_error_message(operation));
     let value_error = string_literal(&aver_rt::int_endian_value_error_message(operation));
-    let limit = aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS;
+    let limit = aver_rt::MAX_FIXED_WIDTH_INT_OCTETS;
     let position = if big_endian {
         "local.get $width32 i32.const 1 i32.sub local.get $i i32.sub"
     } else {

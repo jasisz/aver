@@ -80,14 +80,14 @@ Vector is a persistent indexed sequence. Use it for grids, buffers, lookup table
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Vector.new` | `(Int, T) -> Result<Vector<T>, String>` | Rejects sizes outside `0..=1_048_576`; a syntactic literal in that range discharges to plain `Vector<T>` |
+| `Vector.new` | `(Int, T) -> Result<Vector<T>, String>` | Rejects sizes outside `0..=16_777_216`; a syntactic literal in that range discharges to plain `Vector<T>` |
 | `Vector.get` | `(Vector<T>, Int) -> Option<T>` | O(1) indexed access |
 | `Vector.set` | `(Vector<T>, Int, T) -> Option<Vector<T>>` | O(1) COW update; `None` if out of bounds |
 | `Vector.len` | `Vector<T> -> Int` | |
 | `Vector.fromList` | `List<T> -> Vector<T>` | Convert list to vector |
 | `List.fromVector` | `Vector<T> -> List<T>` | Convert vector to list |
 
-The `Vector.new` ceiling is one mebielement on every backend. It counts elements, not bytes. Aver has no portable storage layout for an arbitrary `T`, but the operation has the same observable cost shape everywhere: one slot and one clone per element. This lower limit also sits safely below the `u32` array-addressability ceiling of wasm GC, so that representation detail is no longer mistaken for a safe allocation policy.
+The `Vector.new` ceiling is 2^24 (16,777,216) elements on every backend, the same number and the same error text everywhere. It guards against one call turning a small Int into a huge allocation, so it applies only to `Vector.new`. `Vector.fromList` has no limit, and neither has `List.fromVector`: their result is never larger than an input that already exists. The ceiling counts elements, not bytes. Aver has no portable storage layout for an arbitrary `T`, but the operation has the same observable cost shape everywhere: one slot and one clone per element. 2^24 elements hold a 16 MiB buffer one octet per element; on the VM that is about 128 MiB of slots. The limit sits far below the array length ceilings of wasm GC engines, so that representation detail is not mistaken for an allocation policy.
 
 ### `Result` namespace
 

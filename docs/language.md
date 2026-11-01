@@ -501,7 +501,7 @@ updated = Vector.set(grid, 42, 1)  // Option<Vector<Int>>
 value = Vector.get(grid, 42)       // Option<Int>
 ```
 
-`Vector.new(size, fill)` is fallible when the size is dynamic. A syntactic literal inside the portable `0..=1_048_576` element budget, as above, discharges directly to `Vector<T>`. Negative, oversized or computed sizes keep `Result<Vector<T>, String>`. The budget counts elements because Aver has no backend-independent byte size for an arbitrary `T`.
+`Vector.new(size, fill)` is fallible when the size is dynamic. A syntactic literal inside the portable `0..=16_777_216` element budget, as above, discharges directly to `Vector<T>`. Negative, oversized or computed sizes keep `Result<Vector<T>, String>`. The budget counts elements because Aver has no backend-independent byte size for an arbitrary `T`. It guards only `Vector.new`, which turns one Int into a whole sequence; `Vector.fromList` takes a list of any length.
 
 ## Tail-call optimization
 

@@ -2766,8 +2766,8 @@ fn vector_new_honours_the_shared_materialization_boundary() {
     intent = "vector materialization boundary"
     depends []
 
-fn allocate(size: Int) -> Result<Vector<Int>, String>
-    Vector.new(size, 0)
+fn allocate(size: Int) -> Result<Vector<Bool>, String>
+    Vector.new(size, true)
 
 fn rejected() -> Int
     match allocate({})
@@ -2777,13 +2777,37 @@ fn rejected() -> Int
             false -> -2
 
 fn main() -> Int
-    Vector.len(Vector.new({limit}, 0)) + rejected()
+    Vector.len(Vector.new({limit}, true)) + rejected()
 "#,
         limit + 1
     );
     assert_eq!(run_int(&source), limit as i64);
     #[cfg(feature = "runtime")]
     assert_eq!(run_int_on_vm(&source), limit as i64);
+}
+
+/// The `Vector.new` limit guards only an expansion of one Int into a
+/// sequence. `Vector.fromList` copies a list that already exists, so a list
+/// longer than 2^20 becomes a vector of the same length.
+#[test]
+fn vector_from_list_has_no_materialization_limit() {
+    let source = r#"module Tmp
+    intent = "vector fromList past 2^20"
+    depends []
+
+fn countdown(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> acc
+        false -> countdown(n - 1, List.prepend(n - 1, acc))
+
+fn main() -> Int
+    v = Vector.fromList(countdown(1048579, []))
+    Vector.len(v) + Option.withDefault(Vector.get(v, 1048578), -1)
+"#;
+    let expected = 1048579 + 1048578;
+    assert_eq!(run_int(source), expected);
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), expected);
 }
 
 #[test]

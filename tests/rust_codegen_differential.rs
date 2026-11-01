@@ -5634,6 +5634,27 @@ fn a_loop_moves_a_param_it_passes_on_out_on_exit() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// `Vector.new` accepts exactly `aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS`
+/// (2^24) elements and refuses one more with the shared message, and
+/// `Vector.fromList` takes a list longer than 2^20 with no limit, in the
+/// compiled binary as on the VM.
+#[test]
+fn vector_new_limit_and_unbounded_from_list_match_vm() {
+    let relative = "tests/fixtures/vector_sizes_app.av";
+    assert_plain_parity_then(relative, None, |_, stdout| {
+        let expected = format!(
+            "fromList 1048579 last 1048578\nat limit len {}\nover limit {}",
+            aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS,
+            aver_rt::vector_size_error_message()
+        );
+        match stdout == expected {
+            true => Ok(()),
+            false => Err(format!("expected:\n{expected}\ngot:\n{stdout}")),
+        }
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A record whose fields take more than 128 bytes is one pointer to them,
 /// so handing it on copies the pointer: a `Box` when the program never
 /// copies it (`Big`), a counted pointer when it may (`St`, kept beside a
