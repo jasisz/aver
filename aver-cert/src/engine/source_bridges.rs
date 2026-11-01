@@ -1072,6 +1072,7 @@ fn plan_nodes(e: &PlanExpr) -> usize {
         PlanExpr::If(c, t, el) => plan_nodes(c) + plan_nodes(t) + plan_nodes(el),
         PlanExpr::Match(s, arms) => plan_nodes(s) + arms.iter().map(|(_, b)| plan_nodes(b)).sum::<usize>(),
         PlanExpr::IntWord(t, _) => 2 * t.leaves().len(),
+        PlanExpr::IntCmp(_, a, b, _) => 2 * (a.leaves().len() + b.leaves().len()),
     }
 }
 
@@ -1082,7 +1083,7 @@ fn string_literals(e: &PlanExpr, out: &mut BTreeSet<Vec<u8>>) {
         PlanExpr::Literal(PlanLit::Str(bytes)) => {
             out.insert(bytes.clone());
         }
-        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::IntWord(..) => {}
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::IntWord(..) | PlanExpr::IntCmp(..) => {}
         PlanExpr::List(_, items) => items.iter().for_each(|a| string_literals(a, out)),
         PlanExpr::Let(_, v, b) => {
             string_literals(v, out);
@@ -1163,7 +1164,7 @@ fn closure_of(start: u32, fns: &BTreeMap<u32, BridgedFn>) -> Vec<u32> {
 /// The locals a plan matches on directly (`match_ (.local i)`, at any depth).
 fn matched_locals(e: &PlanExpr, out: &mut BTreeSet<u32>) {
     match e {
-        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::IntWord(..) => {}
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::IntWord(..) | PlanExpr::IntCmp(..) => {}
         PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
             matched_locals(v, out);
             matched_locals(b, out);
@@ -1197,7 +1198,7 @@ fn matched_locals(e: &PlanExpr, out: &mut BTreeSet<u32>) {
 /// split head that its step has to split too.
 fn matched_fields(e: &PlanExpr, out: &mut BTreeSet<u32>) {
     match e {
-        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::IntWord(..) => {}
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::IntWord(..) | PlanExpr::IntCmp(..) => {}
         PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
             matched_fields(v, out);
             matched_fields(b, out);

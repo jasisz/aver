@@ -354,6 +354,7 @@ theorem eval_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
           have hG := escv_mono hle env e v h
           simp [eval_none_of_escv env e v hG, hG]
   | env, .intWord t w, v, h => by simpa [eval] using h
+  | env, .intCmp op a b w, v, h => by simpa [eval] using h
 theorem evalArgs_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
     ∀ (env : Nat → Option SVal) (es : List Expr) (vs : List SVal),
       evalArgs F env es = some vs → evalArgs G env es = some vs
@@ -510,6 +511,7 @@ theorem escv_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
               exact h
   | env, .scope _, x, h => by simp [escv] at h
   | env, .intWord _ _, x, h => by simp [escv] at h
+  | env, .intCmp _ _ _ _, x, h => by simp [escv] at h
 theorem escvArgs_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
     ∀ (env : Nat → Option SVal) (es : List Expr) (x : SVal),
       escvArgs F env es = some x → escvArgs G env es = some x

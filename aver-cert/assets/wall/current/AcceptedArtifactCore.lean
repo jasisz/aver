@@ -150,6 +150,7 @@ def consPinned (tt : TypeTable) (fns : List FnEntry) : Bool :=
     | .try_ e _ => callTargets e
     | .scope e => callTargets e
     | .intWord _ _ => []
+    | .intCmp _ _ _ _ => []
   def argsTargets : List Expr → List Nat
     | [] => []
     | e :: es => callTargets e ++ argsTargets es

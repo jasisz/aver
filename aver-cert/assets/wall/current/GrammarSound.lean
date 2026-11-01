@@ -499,6 +499,16 @@ theorem escFree_wordBlock (k : Nat) (M : MCtx) (t : WTree) (w : Nat) :
   simp only [exactW] at he
   simp [escFreeI, he]
 
+theorem escFree_cmpBlock (k : Nat) (M : MCtx) (op : BinOp) (a b : WTree) (w : Nat) :
+    escFreeI k (eraseI (cmpBlock M op a b w)) = true := by
+  simp only [cmpBlock, eraseI, eraseL, eraseL_ops, eraseL_append, escFreeI, escFreeL_cons,
+    escFreeL_append, escFree_fastW (k + 1 + 1) M.carrier w (by omega) a,
+    escFree_fastW (k + 1 + 1) M.carrier w (by omega) b]
+  have ha := escFree_exactW M a (k + 1)
+  have hb := escFree_exactW M b (k + 1)
+  simp only [exactW] at ha hb
+  simp [escFreeI, ha, hb, escFree_intCmpTail, escFree_smallCmp]
+
 /-- The lemmas that decide the escape-freedom of the templates. -/
 macro "esc_simp" "[" ls:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
   `(tactic| simp only [escFree_eraseL_append, escFree_ops, eraseL, eraseI, escFreeL_cons,
@@ -572,6 +582,9 @@ mutual
     | Γ, _, .intWord t w, k => by
         simp only [lowerB, escFree_eraseL_append, escFree_ops, escFree_aheadW, eraseL,
           escFreeL_cons, escFree_wordBlock, escFreeL_nil, Bool.and_self]
+    | Γ, _, .intCmp op a b w, k => by
+        simp only [lowerB, escFree_eraseL_append, escFree_ops, escFreeL_append, escFree_aheadW,
+          eraseL, escFreeL_cons, escFree_cmpBlock, escFreeL_nil, Bool.and_self]
   theorem escFree_lowerArgsB (M : MCtx) (X : LCtx) : ∀ (Γ : Nat → Option Ty) (es : List Expr)
       (k : Nat), escFreeL k (eraseL (lowerArgsB M X Γ es)) = true
     | _, [], k => by simp only [lowerArgsB]; esc_simp []
@@ -4296,6 +4309,83 @@ theorem word_run (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Opt
     · simp [wRunF] at h
       exact ⟨L, v, wv, h.symm, hv, hc, hL⟩
 
+theorem eraseI_cmpBlock (M : MCtx) (op : BinOp) (a b : WTree) (w : Nat) :
+    eraseI (cmpBlock M op a b w) = .block 1 (.block 0 (fastW M.carrier w a ++
+      fastW M.carrier w b ++ [smallCmpInstr op, WInstr.br 1]) ::
+        (exactW M a ++ exactW M b ++ intCmpTail M op)) := by
+  simp only [cmpBlock, eraseI, eraseL, eraseL_append, eraseL_ops, exactW, Option.isSome,
+    ↓reduceIte, Bool.false_eq_true]
+
+/-- The two words on the stack compared, then out to `$done`. -/
+theorem smallCmp_br (op : BinOp) (hop : op.isArith = false) (x y : Int) (L st : List WVal) :
+    wRunF host ar callee [smallCmpInstr op, .br 1] L (.i64v y :: .i64v x :: st) =
+      some (.br 1 L (b32 (cmpDen op x y) :: st)) := by
+  cases op <;> simp [BinOp.isArith] at hop <;> simp [smallCmpInstr, wRunF, cmpDen]
+
+/-- A comparison's block: the comparison of the two trees' exact values, the
+    locals changed only in the words. -/
+theorem cmp_run (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Option WVal)
+    (Ctr : Contracts S box add sub mul cmp eq) (hC : M.carrier = C)
+    (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))
+    (hSub : host M.sub = some (2, sub)) (hMul : host M.mul = some (2, mul))
+    (hCmp : host M.cmp = some (2, cmp)) (hEq : host M.eq = some (2, eq))
+    (hDiv : DivmodSpec S M host)
+    (env : Nat → Option SVal) (op : BinOp) (hop : op.isArith = false) (a b : WTree) (w : Nat)
+    (ha : a.arith = true) (hb : b.arith = true)
+    (wl st : List WVal) (out : Out) (hh : LeavesHeld S w env wl (.op .add a b))
+    (h : wRunF host ar callee [eraseI (cmpBlock M op a b w)] wl st = some out) :
+    ∃ wl' x y, out = .ok wl' (b32 (cmpDen op x y) :: st) ∧ a.val env = some (.i x) ∧
+      b.val env = some (.i y) ∧ WordsOnly w wl wl' := by
+  have hha : LeavesHeld S w env wl a := fun l hl => hh l (by simp [WTree.leaves, hl])
+  have hhb : LeavesHeld S w env wl b := fun l hl => hh l (by simp [WTree.leaves, hl])
+  -- The exact path, from the locals the `i64` path left.
+  have hex : ∀ L, WordsOnly w wl L → ∀ oe,
+      wRunF host ar callee (exactW M a ++ exactW M b ++ intCmpTail M op) L st = some oe →
+      ∃ x y, oe = .ok L (b32 (cmpDen op x y) :: st) ∧ a.val env = some (.i x) ∧
+        b.val env = some (.i y) := by
+    intro L hL oe he
+    have hhL := hh.after hL
+    rw [List.append_assoc] at he
+    obtain ⟨x, wa, hx, hca, he⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
+      hAdd hSub hMul hCmp hEq hDiv env a L st _ oe ha
+      (fun l hl => let ⟨_, x, hx, hcx⟩ := hhL l (by simp [WTree.leaves, hl]); ⟨x, hx, hcx⟩) he
+    obtain ⟨y, wb, hy, hcb, he⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
+      hAdd hSub hMul hCmp hEq hDiv env b L (wa :: st) _ oe hb
+      (fun l hl => let ⟨_, x, hx, hcx⟩ := hhL l (by simp [WTree.leaves, hl]); ⟨x, hx, hcx⟩) he
+    exact ⟨x, y, intCmpTail_step S box add sub mul cmp eq Ctr host ar callee M hCmp hEq op hop
+      x y wa wb hca hcb L st oe he, hx, hy⟩
+  rw [eraseI_cmpBlock, run_block, run_block] at h
+  cases hi : wRunF host ar callee (fastW M.carrier w a ++ fastW M.carrier w b ++
+      [smallCmpInstr op, WInstr.br 1]) wl st with
+  | none => simp only [hi] at h; simp at h
+  | some o =>
+    simp only [hi] at h
+    rw [hC, List.append_assoc] at hi
+    have hbr : ∀ L S', WordsOnly w wl L → o = .br 0 L S' →
+        ∃ wl' x y, out = .ok wl' (b32 (cmpDen op x y) :: st) ∧ a.val env = some (.i x) ∧
+          b.val env = some (.i y) ∧ WordsOnly w wl wl' := by
+      intro L S' hL ho
+      subst ho
+      simp only [Nat.not_lt_zero, ↓reduceIte, List.take_zero, List.nil_append] at h
+      cases he : wRunF host ar callee (exactW M a ++ exactW M b ++ intCmpTail M op) L st with
+      | none => simp only [he] at h; simp at h
+      | some oe =>
+        simp only [he] at h
+        obtain ⟨x, y, rfl, hx, hy⟩ := hex L hL oe he
+        simp [wRunF] at h
+        exact ⟨L, x, y, h.symm, hx, hy, hL⟩
+    obtain ⟨L1, hL1, hr1⟩ := fastW_run S host ar callee w env a wl st _ o ha hha hi
+    rcases hr1 with ⟨S', rfl⟩ | ⟨x, hx, -, -, hi2⟩
+    · exact hbr L1 S' hL1 rfl
+    · obtain ⟨L2, hL2, hr2⟩ := fastW_run S host ar callee w env b L1 (.i64v x :: st) _ o hb
+        (hhb.after hL1) hi2
+      rcases hr2 with ⟨S', rfl⟩ | ⟨y, hy, -, -, hi3⟩
+      · exact hbr L2 S' (hL1.trans hL2) rfl
+      · rw [smallCmp_br host ar callee op hop] at hi3
+        cases hi3
+        simp [wRunF] at h
+        exact ⟨L2, x, y, h.symm, hx, hy, hL1.trans hL2⟩
+
 theorem lrel_agree {env : Nat → Option SVal} {wl wl' : List WVal} (hl : LRel S M X env wl)
     (hag : ∀ j, j < X.n → wl'[j]? = wl[j]?) (hlen : wl'.length = wl.length) :
     LRel S M X env wl' := by
@@ -4563,6 +4653,52 @@ theorem word_step (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Op
     hBox hAdd hSub hMul hCmp hEq hDiv env t w (WTree.arith_of_ok htok) wl1 st out hh h
   exact ⟨.i v, by simp [eval, hv], by simp [HasTy],
     res_ok (by simpa [SRepr] using hc)
+      (lrel_agree hl1 (fun j hj => hwo.2 j (Or.inl (by omega))) hwo.1)⟩
+
+/-- The comparison node: the leaves of both trees read ahead, then its block,
+    compute the comparison of the trees' values, the locals relation kept. -/
+theorem cmp_step (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Option WVal)
+    (Ctr : Contracts S box add sub mul cmp eq) (hC : M.carrier = C)
+    (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))
+    (hSub : host M.sub = some (2, sub)) (hMul : host M.mul = some (2, mul))
+    (hCmp : host M.cmp = some (2, cmp)) (hEq : host M.eq = some (2, eq))
+    (hDiv : DivmodSpec S M host)
+    (F : Nat → List SVal → Option SVal) {Γ : Nat → Option Ty} {env : Nat → Option SVal}
+    {wl st : List WVal} {out : Out} (op : BinOp) (a b : WTree) (w : Nat)
+    (hok : cmpWordOk M X.n Γ op a b w = true) (henv : EnvTy M env Γ) (hl : LRel S M X env wl)
+    (hrun : wRunF host ar callee
+      (eraseL ((aheadW M a ++ aheadW M b).map .op ++ [cmpBlock M op a b w])) wl st =
+      some out) :
+    ∃ sv, eval F env (.intCmp op a b w) = some sv ∧ HasTy M sv .bool ∧
+      Res S M X false env st sv out := by
+  simp only [cmpWordOk, Bool.and_eq_true, Bool.not_eq_true'] at hok
+  obtain ⟨hop, hok⟩ := hok
+  simp only [wordOk, Bool.and_eq_true, decide_eq_true_eq] at hok
+  obtain ⟨⟨htok, hnw⟩, hd⟩ := hok
+  obtain ⟨hds, -, hdis⟩ := distinct_append hd
+  rw [eraseL_append, eraseL_ops] at hrun
+  simp only [eraseL] at hrun
+  have hrun' : wRunF host ar callee (aheadW M (.op .add a b) ++ [eraseI (cmpBlock M op a b w)])
+      wl st = some out := by simpa [aheadW] using hrun
+  obtain ⟨wl1, hl1, -, -, hheld, h⟩ :=
+    aheadW_run host ar callee henv (.op .add a b) wl st _ out htok hds hl hrun'
+  have hh : LeavesHeld S w env wl1 (.op .add a b) := by
+    intro l hl'
+    obtain ⟨x, hv, hc⟩ := hheld l hl'
+    refine ⟨?_, x, hv, hc⟩
+    rcases WTree.leaf_cases hl' with hs | ⟨i, rfl⟩
+    · have := hdis _ hs
+      simp only [List.mem_cons, List.mem_singleton, not_or, List.not_mem_nil] at this
+      omega
+    · have hlt := (hl1.2 i _ (by simpa [WLeaf.val] using hv)).1
+      simp only [WLeaf.loc]
+      omega
+  have harith := WTree.arith_of_ok htok
+  simp only [WTree.arith, BinOp.isArith, Bool.true_and, Bool.and_eq_true] at harith
+  obtain ⟨wl2, x, y, rfl, hx, hy, hwo⟩ := cmp_run host ar callee S box add sub mul cmp eq Ctr hC
+    hBox hAdd hSub hMul hCmp hEq hDiv env op hop a b w harith.1 harith.2 wl1 st out hh h
+  exact ⟨.b (cmpDen op x y), by simp [eval, WTree.val, hx, hy, intBin_cmp hop], by simp [HasTy],
+    res_ok (by simp [SRepr])
       (lrel_agree hl1 (fun j hj => hwo.2 j (Or.inl (by omega))) hwo.1)⟩
 
 end WordStep
@@ -6094,6 +6230,16 @@ theorem agreement_step :
         simp only [lowerW, lowerB] at hrun
         obtain ⟨sv, hev, hTs, hres⟩ := word_step host ar callee S box add sub mul cmp eq Ctr
           hCarrier hBox hAdd hSub hMul hCmp hEq R.divmod F t w hok henv hl hrun
+        exact Or.inl ⟨sv, hev, hTs, res_any_tail hres⟩
+      · cases hty
+  | .intCmp op a b w, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+      simp only [tyOf] at hty
+      split at hty
+      · rename_i hok
+        cases hty
+        simp only [lowerW, lowerB] at hrun
+        obtain ⟨sv, hev, hTs, hres⟩ := cmp_step host ar callee S box add sub mul cmp eq Ctr
+          hCarrier hBox hAdd hSub hMul hCmp hEq R.divmod F op a b w hok henv hl hrun
         exact Or.inl ⟨sv, hev, hTs, res_any_tail hres⟩
       · cases hty
 

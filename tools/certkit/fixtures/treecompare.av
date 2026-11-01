@@ -1,0 +1,62 @@
+module TreeCompare
+    intent =
+        "Certify fixture for comparisons of two Int trees on the machine word:"
+        "neither side a literal, both words compared by one i64 comparison,"
+        "and the comparison helper on the exact path when a word does not fit."
+    exposes [inOrder, sameSum, above, walk, width, wider]
+    effects []
+
+record Span
+    lo: Int
+    hi: Int
+
+fn inOrder(a: Int, b: Int) -> Bool
+    ? "Two locals compared."
+    a < b
+
+verify inOrder
+    inOrder(1, 2) => true
+    inOrder(2, 2) => false
+
+fn sameSum(a: Int, b: Int, c: Int) -> Bool
+    ? "A sum against a difference."
+    a + b == c - 1
+
+verify sameSum
+    sameSum(1, 2, 4) => true
+    sameSum(1, 2, 3) => false
+
+fn above(s: Span, x: Int) -> Bool
+    ? "A product by a literal against a field read ahead."
+    x * 3 >= s.hi - s.lo
+
+verify above
+    above(Span(lo = 1, hi = 10), 3) => true
+    above(Span(lo = 1, hi = 11), 3) => false
+
+fn walk(i: Int, n: Int, lo: Int, acc: Int) -> Int
+    ? "Counts the steps whose sum lies below a moving bound."
+    match i >= n
+        true -> acc
+        false -> match i * 3 + acc < n + lo
+            true -> walk(i + 1, n, lo + 1, acc + 2)
+            false -> walk(i + 1, n, lo, acc)
+
+verify walk
+    walk(0, 10, 0, 0) => 6
+
+fn width(s: Span) -> Int
+    ? "The width of a span."
+    s.hi - s.lo
+
+verify width
+    width(Span(lo = 2, hi = 7)) => 5
+
+fn wider(s: Span, x: Int) -> Bool
+    ? "A call's result against a sum: the call bound by a let ahead."
+    width(s) > x + 1
+
+verify wider
+    wider(Span(lo = 2, hi = 7), 3) => true
+    wider(Span(lo = 2, hi = 7), 4) => false
+    wider(Span(lo = -9223372036854775807, hi = 9223372036854775807), 9223372036854775807) => true

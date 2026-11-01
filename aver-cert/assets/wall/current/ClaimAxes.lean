@@ -158,6 +158,7 @@ mutual
     | .try_ e _ => facetsE e
     | .scope e => facetsE e
     | .intWord _ _ => []
+    | .intCmp _ _ _ _ => []
   def facetsL : List Expr → List String
     | [] => []
     | e :: es => facetsE e ++ facetsL es
