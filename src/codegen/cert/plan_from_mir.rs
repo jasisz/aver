@@ -1690,7 +1690,11 @@ fn lst(xs: List<Int>) -> Int
         assert_eq!(plan(&map, "lit").body, int(7));
         let add = plan(&map, "add");
         assert_eq!(add.params, [PlanTy::Int, PlanTy::Int]);
-        assert_eq!(add.body, bin(PlanBinOp::Add, l(0), l(1)));
+        // A tree of locals is computed on the machine word in a kept fn.
+        assert!(matches!(
+            add.body,
+            E::IntWord(PlanWTree::Op(PlanBinOp::Add, _, _), _)
+        ));
         assert_eq!(plan(&map, "cmpLit").body, bin(PlanBinOp::Gt, l(0), int(5)));
         assert!(matches!(
             plan(&map, "andOr").body,
@@ -1796,7 +1800,7 @@ fn swapped(b: Box3, a: Int) -> Box3
         };
         assert!(matches!(
             fs.as_slice(),
-            [E::Local(1), E::Project(_, 1, _), E::BinOp(..)]
+            [E::Local(1), E::Project(_, 1, _), E::IntWord(..)]
         ));
         // Out of declared order the emitter parks the overrides in scratch
         // locals first; the function is refused.
