@@ -433,6 +433,8 @@ Safety:
 
 Project-level config (deployment guardrails + check tweaks):
 
+Every command reads `aver.toml` from the module root and nowhere else: the directory given by `--module-root`, or the working directory when there is none. There is no fallback to a parent directory. When the module root has no `aver.toml` but the working directory or a directory above the module root (up to the top of its repository) has one, the command warns once with `warning[config-outside-module-root]` and names the file it does not read. Settings such as `[rust] allocator` change no output, so without the warning the file would be ignored silently.
+
 ```toml
 [effects.Http]
 hosts = ["api.example.com", "*.internal.corp"]

@@ -18,10 +18,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 mod providers;
+mod unread;
 pub use providers::{
     MarkedCapabilities, PROVIDER_MANIFEST_SCHEMA, ProviderAnswerBinding, ProviderPackageBinding,
     ProviderPackageManifest, ProviderPackageSource, ProviderWorkBinding, RunPlan,
 };
+pub use unread::unread_config_near;
 
 /// Runtime policy for a single effect namespace.
 #[derive(Debug, Clone)]
@@ -372,13 +374,18 @@ pub struct ProjectConfig {
 
 impl ProjectConfig {
     /// Try to load `aver.toml` from the given directory.
-    /// Returns `Ok(None)` if the file does not exist.
+    /// Returns `Ok(None)` if the file does not exist, after warning once
+    /// when an `aver.toml` the user probably meant sits outside it (see
+    /// [`unread_config_near`]).
     /// Returns `Err` if the file exists but is malformed (parse errors, bad types).
     pub fn load_from_dir(dir: &Path) -> Result<Option<Self>, String> {
         let path = dir.join("aver.toml");
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                unread::warn_unread_config(dir);
+                return Ok(None);
+            }
             Err(e) => return Err(format!("Failed to read {}: {}", path.display(), e)),
         };
         let mut config = Self::parse(&content)?;
