@@ -1,0 +1,95 @@
+module ThinTake
+    intent = "Fields taken out of a thin sum's node, and elements of a vector read through a borrow."
+    effects [Console.print]
+
+type Instr
+    Add(Int)
+    Wide(Int, Int, Int, Int, Int)
+    Push(List<Int>)
+    Halt
+
+record St
+    stack: Vector<Int>
+    log: List<Int>
+    sp: Int
+    acc: Int
+
+type Next
+    Go(St, List<Int>, Int)
+    Stop(Int)
+
+fn step(i: Instr, s: St, pc: Int) -> Next
+    ? "One instruction; a pushed list is logged."
+    match i
+        Instr.Add(k) -> Next.Go(St.update(s, acc = s.acc + k), [], pc + 1)
+        Instr.Wide(a, b, _, _, e) -> Next.Go(St.update(s, acc = s.acc + a * b - e), [a], pc + 1)
+        Instr.Push(xs) -> Next.Go(St.update(s, stack = Option.withDefault(Vector.set(s.stack, Int.mod(s.sp, 4), List.len(xs)), s.stack), sp = s.sp + 1, log = List.concat(xs, s.log)), xs, pc + 1)
+        Instr.Halt -> Next.Stop(s.acc)
+
+verify step
+    step(Instr.Halt, St(stack = Vector.new(4, 0), log = [], sp = 0, acc = 7), 0) => Next.Stop(7)
+
+fn run(code: Vector<Instr>, s: St, pc: Int, n: Int) -> St
+    ? "Runs n steps: the step's result is matched owned and its fields move on."
+    match n <= 0
+        true -> s
+        false -> match Vector.get(code, pc)
+            Option.None -> s
+            Option.Some(i) -> match step(i, s, pc)
+                Next.Go(s2, extra, pc2) -> run(code, St.update(s2, log = List.concat(extra, s2.log)), pc2, n - 1)
+                Next.Stop(_) -> s
+
+verify run
+    run(Vector.fromList([Instr.Add(1)]), St(stack = Vector.new(4, 0), log = [], sp = 0, acc = 0), 0, 3) => St(stack = Vector.new(4, 0), log = [], sp = 0, acc = 1)
+
+fn twice(n: Next) -> Int
+    ? "A value matched twice through a borrow: no match takes its fields."
+    first(n) + first(n)
+
+verify twice
+    twice(Next.Stop(2)) => 4
+
+fn first(n: Next) -> Int
+    ? "The pc of a Go, or the stop value."
+    match n
+        Next.Go(s, _, pc) -> pc + s.acc
+        Next.Stop(a) -> a
+
+verify first
+    first(Next.Stop(3)) => 3
+
+fn held(ns: List<Next>, acc: Int) -> Int
+    ? "Values held in a list are shared: a match reads them through the view."
+    match ns
+        [] -> acc
+        [n, ..rest] -> held(rest, acc + takeOwned(n))
+
+verify held
+    held([Next.Stop(1), Next.Stop(2)], 0) => 3
+
+fn takeOwned(n: Next) -> Int
+    ? "Matches the result of a call that may hand back a shared value."
+    match keep(n)
+        Next.Go(s, log, pc) -> pc + s.acc + List.len(log) + List.len(s.log)
+        Next.Stop(a) -> a
+
+verify takeOwned
+    takeOwned(Next.Stop(4)) => 4
+
+fn keep(n: Next) -> Next
+    ? "n itself."
+    n
+
+verify keep
+    keep(Next.Stop(1)) => Next.Stop(1)
+
+fn main() -> Unit
+    ! [Console.print]
+    code = Vector.fromList([Instr.Add(3), Instr.Wide(2, 5, 0, 0, 1), Instr.Push([1, 2, 3]), Instr.Add(1), Instr.Halt])
+    st = St(stack = Vector.new(4, 0), log = [], sp = 0, acc = 1)
+    done = run(code, st, 0, 100)
+    Console.print("acc {done.acc} sp {done.sp} log {List.len(done.log)} stack {List.len(List.fromVector(done.stack))} {Option.withDefault(Vector.get(done.stack, 0), 0)}")
+    g = Next.Go(done, [9], 4)
+    Console.print("twice {twice(g)} {twice(Next.Stop(5))}")
+    Console.print("held {held([g, Next.Stop(1), g, Next.Go(st, [], 2)], 0)}")
+    Console.print("after {first(g)}")

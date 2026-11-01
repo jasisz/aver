@@ -164,6 +164,35 @@ fn emit_constructor_pattern(
     }
 }
 
+/// The view variant (`T__view::C`) and the field struct (`T__C`) of a
+/// constructor of a thin sum (see `representation::is_thin_sum`), with the
+/// module path a call from the current module needs.
+pub(super) fn thin_ctor_paths(
+    ctor: &ResolvedCtor,
+    ctx: &CodegenContext,
+) -> Option<(String, String)> {
+    if !thin_ctor(ctor, ctx) {
+        return None;
+    }
+    let SemanticConstructor::TypeConstructor {
+        qualified_type_name,
+        variant_name,
+    } = semantic_constructor_from_resolved_ctor(ctor, &ctx.symbol_table)
+    else {
+        return None;
+    };
+    let head = match resolve_module_call(&qualified_type_name, ctx) {
+        Some((prefix, bare_type_name)) => {
+            format!("{}::{bare_type_name}", module_prefix_to_rust_path(prefix))
+        }
+        None => qualified_type_name,
+    };
+    Some((
+        format!("{head}__view::{variant_name}"),
+        format!("{head}__{variant_name}"),
+    ))
+}
+
 /// Whether `ctor` is a constructor of a thin sum (see
 /// `representation::is_thin_sum`).
 pub(super) fn thin_ctor(ctor: &ResolvedCtor, ctx: &CodegenContext) -> bool {

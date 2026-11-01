@@ -75,6 +75,7 @@ fn empty_ctx() -> CodegenContext {
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
         rust_copied_targets: Default::default(),
         rust_thin_sums: Default::default(),
+        rust_fresh_returns: Default::default(),
         universal_law_claims: std::cell::RefCell::new(Vec::new()),
         resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
         program_shape: None,

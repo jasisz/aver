@@ -478,8 +478,11 @@ pub fn fastVectorGetOrIntSlotInner(
                     match __t.view() {
                         crate::aver_generated::domain::value::Val__view::ValInt(__idx_fields) => {
                             let idx = __idx_fields.0.clone();
-                            match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
-                                Some(v @ _) => Ok(v),
+                            match {
+                                let __i = (idx).to_usize();
+                                __i.and_then(|__i| (vec).get(__i))
+                            } {
+                                Some(v @ _) => Ok(v.clone()),
                                 None => Ok(crate::aver_generated::domain::value::Val::ValInt(
                                     crate::aver_generated::domain::value::Val__ValInt(defaultValue),
                                 )),

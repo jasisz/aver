@@ -98,9 +98,12 @@ pub fn builtinVectorGet(
             ) => {
                 let vec = &__vec_fields.0;
                 let idx = __idx_fields.0.clone();
-                match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
+                match {
+                    let __i = (idx).to_usize();
+                    __i.and_then(|__i| (vec).get(__i))
+                } {
                     Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-                        crate::aver_generated::domain::value::Val__ValSome(v),
+                        crate::aver_generated::domain::value::Val__ValSome(v.clone()),
                     )),
                     None => Ok(crate::aver_generated::domain::value::Val::ValNone),
                 }

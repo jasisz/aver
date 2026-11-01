@@ -53,7 +53,7 @@ enum BorrowShape {
 pub(super) struct RustValueFacts {
     pub mode: RustValueMode,
     borrow_shape: BorrowShape,
-    can_move: bool,
+    pub(super) can_move: bool,
     pub(super) provider_resource: bool,
 }
 

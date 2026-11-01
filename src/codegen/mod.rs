@@ -629,6 +629,10 @@ pub struct CodegenContext {
     /// Whether each sum, by backend type key, is laid out thin (see
     /// `rust::representation::is_thin_sum`), kept as it is first asked.
     pub rust_thin_sums: std::cell::RefCell<HashMap<String, bool>>,
+    /// The functions whose every result is a value built where it returns,
+    /// owned by no one else (see `rust::from_mir::fresh_returns`), worked
+    /// out once per program.
+    pub rust_fresh_returns: std::sync::OnceLock<std::collections::HashSet<crate::ir::FnId>>,
     /// Universal law-claims of a certificate-model Lean emission, in emit
     /// order — see [`UniversalLawClaim`].
     ///
@@ -1195,6 +1199,7 @@ pub fn build_context(
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
         rust_copied_targets: Default::default(),
         rust_thin_sums: Default::default(),
+        rust_fresh_returns: Default::default(),
         universal_law_claims: std::cell::RefCell::new(Vec::new()),
         program_shape,
         resolved_program,
@@ -1702,6 +1707,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
         rust_copied_targets: Default::default(),
         rust_thin_sums: Default::default(),
+        rust_fresh_returns: Default::default(),
         universal_law_claims: std::cell::RefCell::new(Vec::new()),
         resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
         program_shape: None,

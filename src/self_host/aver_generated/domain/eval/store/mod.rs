@@ -141,8 +141,11 @@ pub fn lookupFnById(
     id @ _: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::ast::FnDef, AverStr> {
     crate::cancel_checkpoint();
-    match (id).to_usize().and_then(|__i| fns.byId.get(__i).cloned()) {
-        Some(fd @ _) => Ok(fd),
+    match {
+        let __i = (id).to_usize();
+        __i.and_then(|__i| (fns.byId).get(__i))
+    } {
+        Some(fd @ _) => Ok(fd.clone()),
         None => Err(aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(39usize);
