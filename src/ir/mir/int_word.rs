@@ -31,10 +31,11 @@
 //! A leaf the target renders as a raw `i64` where the tree wants an `Int`
 //! stops the tree. In a function a `--certify` build keeps for its
 //! certificate ([`Target::kept`]) the trees are the ones the wall proves:
-//! values of `+`, `-` and `*` over locals and fields of records held in
-//! locals, with a field among the leaves (a tree of locals only would cost a
-//! countdown its termination claim, `GrammarTotal`), a field of a word
-//! record never a leaf; any other node is left as it is there.
+//! values of `+`, `-`, `*`, `Int.min` and `Int.max` over literals, locals and
+//! fields of records held in locals, a field of a word record never a leaf
+//! (the totality grammar, `GrammarTotal.totE`, reads such a tree of locals
+//! and literals as it reads the plain arithmetic); any other node is left as
+//! it is there.
 
 use crate::ast::{BinOp, Spanned};
 
@@ -163,20 +164,6 @@ impl Pass<'_> {
     fn choose(&self, e: &Spanned<MirExpr>) -> Option<(IntWordNode, IntWordKind)> {
         if self.ops(e).is_some() {
             let tree = (self.weight(e)? > 0).then(|| self.tree(e))?;
-            // In a kept fn, a tree of `+`, `-` and `*` over locals and
-            // literals only is left as it is: the wall's termination grammar
-            // (`GrammarTotal.totE`) reads plain arithmetic, so a countdown
-            // would lose its totality claim, and the tree saves no field
-            // read. A tree with `Int.min` or `Int.max` is kept on the word:
-            // its plain form calls the three-way helper and evaluates the
-            // picked operand again.
-            let field = tree
-                .leaves()
-                .iter()
-                .any(|l| matches!(l.node, MirExpr::Project(_)));
-            if self.target.kept && !field && !tree.picks() {
-                return None;
-            }
             return Some((tree, IntWordKind::Value));
         }
         let MirExpr::BinOp(b) = &e.node else {

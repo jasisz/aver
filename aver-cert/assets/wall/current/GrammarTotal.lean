@@ -24,7 +24,11 @@
      `+`, `-`, `*` on Int; `step` may also
      call a member of the group, by `call` or `tailCall`, and every such call
      passes `n - 1` as its first argument; `step` makes at least one such
-     call (a plan without recursion stays at L1, as on main).
+     call (a plan without recursion stays at L1, as on main);
+   * either arm may compute its `+`, `-`, `*` over parameters and literals as
+     an `Int` tree on the machine word (`Expr.intWord`, `WTree.totW`), and
+     `n - 1` may be such a tree; the tree's words lie below the function's
+     locals count, so its `i64` path has the locals it writes.
 
    Against main this admits more (all of it proved below): other straight-line
    Int arithmetic in either arm, several member calls per arm, non-tail calls
@@ -50,9 +54,27 @@ open CertPrelude AverCert.Schema InterpreterSequencing
 
 /-! ## The termination check -/
 
-/-- The recursive argument `n - 1` over parameter 0. -/
+/-- The recursive argument `n - 1` over parameter 0: plain arithmetic, or
+    the same difference computed on the machine word. -/
 def isDescent : Expr → Bool
   | .binOp .sub (.local i) (.literal (.int k)) => i == 0 && k == 1
+  | .intWord (.op .sub (.leaf (.local i)) (.lit k)) _ => i == 0 && k == 1
+  | _ => false
+
+/-- The `Int` trees on the machine word the total fragment admits: `+`, `-`
+    and, under the `.mul` role, `*` over `Int` locals and literals. Their
+    `i64` path calls nothing, and their exact path calls only box, add, sub
+    and mul. -/
+def WTree.totW (mulOk : Bool) : WTree → Bool
+  | .leaf (.local _) => true
+  | .leaf (.field _ _ _ _) => false
+  | .op o a b => (o == .add || o == .sub || (o == .mul && mulOk)) && a.totW mulOk && b.totW mulOk
+  | .lit _ => true
+  | .pick _ _ _ => false
+
+/-- Some `*` occurs in the tree. -/
+def WTree.usesMulW : WTree → Bool
+  | .op o a b => o == .mul || a.usesMulW || b.usesMulW
   | _ => false
 
 /-- The first argument of a member call is the descent. -/
@@ -62,29 +84,31 @@ def descentHead : List Expr → Bool
 
 mutual
   /-- The straight-line total fragment. `mem` is the group's member set,
-      `mulOk` says the group's role admits `*`, and `calls` says member
-      calls are admitted here (only in the step arm). -/
-  def totE (mem : Nat → Bool) (mulOk calls : Bool) : Expr → Bool
+      `mulOk` says the group's role admits `*`, `calls` says member calls
+      are admitted here (only in the step arm), and `lim` is the number of
+      locals the function has (the words of a tree lie below it). -/
+  def totE (mem : Nat → Bool) (mulOk calls : Bool) (lim : Nat) : Expr → Bool
     | .literal (.int _) => true
     | .literal (.bool _) => true
     | .local _ => true
     | .binOp op l r =>
         (op == .add || op == .sub || (op == .mul && mulOk)) &&
-        totE mem mulOk calls l && totE mem mulOk calls r
+        totE mem mulOk calls lim l && totE mem mulOk calls lim r
     | .call (.fn g) args =>
-        calls && mem g && descentHead args && totArgs mem mulOk calls args
+        calls && mem g && descentHead args && totArgs mem mulOk calls lim args
     | .tailCall g args =>
-        calls && mem g && descentHead args && totArgs mem mulOk calls args
+        calls && mem g && descentHead args && totArgs mem mulOk calls lim args
+    | .intWord t w => t.totW mulOk && decide (w + 2 < lim)
     | _ => false
-  def totArgs (mem : Nat → Bool) (mulOk calls : Bool) : List Expr → Bool
+  def totArgs (mem : Nat → Bool) (mulOk calls : Bool) (lim : Nat) : List Expr → Bool
     | [] => true
-    | e :: es => totE mem mulOk calls e && totArgs mem mulOk calls es
+    | e :: es => totE mem mulOk calls lim e && totArgs mem mulOk calls lim es
 end
 
 mutual
 /-- The total fragment has no `try_`: nothing in it returns early. -/
-theorem totE_bare {mem : Nat → Bool} {mulOk calls : Bool} :
-    ∀ e : Expr, totE mem mulOk calls e = true → bareTries e = []
+theorem totE_bare {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat} :
+    ∀ e : Expr, totE mem mulOk calls lim e = true → bareTries e = []
   | .literal _, _ => by simp [bareTries]
   | .local _, _ => by simp [bareTries]
   | .binOp _ l r, h => by
@@ -110,9 +134,9 @@ theorem totE_bare {mem : Nat → Bool} {mulOk calls : Bool} :
   | .list _ _, h => by simp [totE] at h
   | .try_ _ _, h => by simp [totE] at h
   | .scope _, h => by simp [totE] at h
-  | .intWord _ _, h => by simp [totE] at h
-theorem totArgs_bare {mem : Nat → Bool} {mulOk calls : Bool} :
-    ∀ es : List Expr, totArgs mem mulOk calls es = true → bareTriesL es = []
+  | .intWord _ _, _ => by simp [bareTries]
+theorem totArgs_bare {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat} :
+    ∀ es : List Expr, totArgs mem mulOk calls lim es = true → bareTriesL es = []
   | [], _ => by simp [bareTriesL]
   | e :: es, h => by
       simp only [totArgs, Bool.and_eq_true] at h
@@ -135,6 +159,7 @@ mutual
     | .call _ args => usesMulArgs args
     | .tailCall _ args => usesMulArgs args
     | .ifThenElse c t e => usesMul c || usesMul t || usesMul e
+    | .intWord t _ => t.usesMulW
     | _ => false
   def usesMulArgs : List Expr → Bool
     | [] => false
@@ -142,9 +167,9 @@ mutual
 end
 
 /-- The body: `if n <= 0 then base else step` over parameter 0. -/
-def totBody (mem : Nat → Bool) (mulOk : Bool) : Expr → Bool
+def totBody (mem : Nat → Bool) (mulOk : Bool) (lim : Nat) : Expr → Bool
   | .ifThenElse (.binOp .lte (.local i) (.literal (.int k))) base step =>
-      i == 0 && k == 0 && totE mem mulOk false base && totE mem mulOk true step &&
+      i == 0 && k == 0 && totE mem mulOk false lim base && totE mem mulOk true lim step &&
         hasCall step
   | _ => false
 
@@ -155,7 +180,7 @@ def isIntTy (t : Ty) : Bool := decide (t = .int)
 def totPlan (mem : Nat → Bool) (mulOk : Bool) (p : FnPlan) : Bool :=
   !p.sig.params.isEmpty && p.sig.params.all isIntTy &&
     (decide (p.sig.ret = .int) || decide (p.sig.ret = .bool)) &&
-    totBody mem mulOk p.body
+    totBody mem mulOk (p.sig.params.length + p.locals.length) p.body
 
 /-- The member set of a group given as `(function index, plan)` pairs. -/
 def memOf (ms : List (Nat × FnPlan)) (g : Nat) : Bool := ms.any (·.1 == g)
@@ -191,25 +216,30 @@ def groupOf (ms : List (Nat × FnPlan)) (f : Nat) : Option FnPlan :=
 
 /-! ## Check facts -/
 
-theorem isDescent_eq {a : Expr} (h : isDescent a = true) :
-    a = .binOp .sub (.local 0) (.literal (.int 1)) := by
+/-- The recursive argument evaluates to `n - 1`. -/
+theorem isDescent_eval {a : Expr} (h : isDescent a = true) (F : Nat → List SVal → Option SVal)
+    {env : Nat → Option SVal} {n : Int} (h0 : env 0 = some (.i n)) :
+    eval F env a = some (.i (n - 1)) := by
   unfold isDescent at h
   split at h
   · simp only [Bool.and_eq_true, beq_iff_eq] at h
     obtain ⟨rfl, rfl⟩ := h
-    rfl
+    simp [eval, h0, intBin]
+  · simp only [Bool.and_eq_true, beq_iff_eq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    simp [eval, WTree.val, WLeaf.val, h0, intBin]
   · cases h
 
 theorem descentHead_eq {args : List Expr} (h : descentHead args = true) :
-    ∃ rest, args = .binOp .sub (.local 0) (.literal (.int 1)) :: rest := by
+    ∃ a rest, args = a :: rest ∧ isDescent a = true := by
   cases args with
   | nil => simp [descentHead] at h
-  | cons a rest => exact ⟨rest, by rw [isDescent_eq h]⟩
+  | cons a rest => exact ⟨a, rest, rfl, h⟩
 
-theorem totBody_eq {mem : Nat → Bool} {mulOk : Bool} {b : Expr}
-    (h : totBody mem mulOk b = true) :
+theorem totBody_eq {mem : Nat → Bool} {mulOk : Bool} {lim : Nat} {b : Expr}
+    (h : totBody mem mulOk lim b = true) :
     ∃ base step, b = .ifThenElse (.binOp .lte (.local 0) (.literal (.int 0))) base step ∧
-      totE mem mulOk false base = true ∧ totE mem mulOk true step = true := by
+      totE mem mulOk false lim base = true ∧ totE mem mulOk true lim step = true := by
   unfold totBody at h
   split at h
   · simp only [Bool.and_eq_true, beq_iff_eq] at h
@@ -220,7 +250,8 @@ theorem totBody_eq {mem : Nat → Bool} {mulOk : Bool} {b : Expr}
 theorem totPlan_spec {mem : Nat → Bool} {mulOk : Bool} {p : FnPlan}
     (h : totPlan mem mulOk p = true) :
     (∃ ps, p.sig.params = .int :: ps) ∧ (∀ t ∈ p.sig.params, t = .int) ∧
-      (p.sig.ret = .int ∨ p.sig.ret = .bool) ∧ totBody mem mulOk p.body = true := by
+      (p.sig.ret = .int ∨ p.sig.ret = .bool) ∧
+        totBody mem mulOk (p.sig.params.length + p.locals.length) p.body = true := by
   simp only [totPlan, Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff,
     List.all_eq_true, Bool.or_eq_true, decide_eq_true_eq, isIntTy] at h
   obtain ⟨⟨⟨hne, hall⟩, hret⟩, hb⟩ := h
@@ -281,10 +312,10 @@ theorem boxRef_total (C : Nat) (k : Int) : ∃ w, boxRef C [.i64v k] = some w :=
 succeeds. Each composite case runs its parts in order, taking the shape of
 each intermediate frame from `agreement`. -/
 
-theorem totE_binOp {mem : Nat → Bool} {mulOk calls : Bool} {op : BinOp} {l r : Expr}
-    (h : totE mem mulOk calls (.binOp op l r) = true) :
+theorem totE_binOp {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat} {op : BinOp} {l r : Expr}
+    (h : totE mem mulOk calls lim (.binOp op l r) = true) :
     (op = .add ∨ op = .sub ∨ (op = .mul ∧ mulOk = true)) ∧
-      totE mem mulOk calls l = true ∧ totE mem mulOk calls r = true := by
+      totE mem mulOk calls lim l = true ∧ totE mem mulOk calls lim r = true := by
   simp only [totE, Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at h
   obtain ⟨⟨hop, hl⟩, hr⟩ := h
   refine ⟨?_, hl, hr⟩
@@ -295,11 +326,11 @@ theorem totE_binOp {mem : Nat → Bool} {mulOk calls : Bool} {op : BinOp} {l r :
 
 /-- A total-fragment node never has type `String` (so `+` is Int addition):
     parameters are Int and member results are Int or Bool. -/
-theorem totE_notStr {M : MCtx} {n : Nat} {mem : Nat → Bool} {mulOk calls : Bool}
+theorem totE_notStr {M : MCtx} {n : Nat} {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat}
     (hSig : ∀ g sig, mem g = true → M.sigs g = some sig → sig.ret = .int ∨ sig.ret = .bool) :
     ∀ (e : Expr) (Γ : Nat → Option Ty) (tail : Bool),
       (∀ i T', Γ i = some T' → T' = .int) →
-      totE mem mulOk calls e = true → tyOf M n Γ tail e ≠ some .string
+      totE mem mulOk calls lim e = true → tyOf M n Γ tail e ≠ some .string
   | .literal (.int k), Γ, tail, hΓ, _, h => by
       have := (tyOf_litInt_inv h).2; cases this
   | .literal (.bool v), Γ, tail, hΓ, _, h => by
@@ -337,7 +368,9 @@ theorem totE_notStr {M : MCtx} {n : Nat} {mem : Nat → Bool} {mulOk calls : Boo
   | .list _ _, _, _, _, ht, _ => by simp [totE] at ht
   | .try_ _ _, _, _, _, ht, _ => by simp [totE] at ht
   | .scope _, _, _, _, ht, _ => by simp [totE] at ht
-  | .intWord _ _, _, _, _, ht, _ => by simp [totE] at ht
+  | .intWord _ _, _, _, _, _, h => by
+      simp only [tyOf] at h
+      split at h <;> cases h
 
 /-- The `n <= 0` guard over a represented Int in a local runs to its
     verdict (the inline sign test: no helper is called). -/
@@ -358,6 +391,263 @@ theorem guard_run {C : Nat} (S : CarrierSpec C)
       · intro h; have := hsign.mp h; omega
       · intro h; exact hsign.mpr (by omega)
     simp [cmpArmB, eraseL, eraseI, bigCmpArm, smallCmpInstr, wRunF, hget, b32, hiff]
+
+/-! ## Progress: an `Int` tree on the machine word runs to completion
+
+A tree of the total fragment (`WTree.totW`) has `Int` locals and literals for
+leaves and `+`, `-` and, under the `.mul` role, `*` for operations. Its block
+runs: the `i64` path reads each leaf's `$small` or branches to the exact path,
+each machine operation finishes or branches there, and the exact path calls
+only box, add, sub and mul, which the role makes total. The shape of each
+intermediate frame comes from the partial lemmas (`fastW_run`, `exactW_run`)
+run with nothing after them; the words the tree writes lie below the
+function's locals count (`totE`). -/
+
+theorem in64_wrap64 (v : Int) : in64 (wrap64 v) = true := by
+  rw [in64_iff]; unfold wrap64; omega
+
+theorem in64_xor64 (a b : Int) (ha : in64 a = true) (hb : in64 b = true) :
+    in64 (xor64 a b) = true := by
+  cases a <;> cases b <;> simp only [in64, xor64, Nat.blt_eq] at ha hb ⊢ <;>
+    exact Nat.xor_lt_two_pow (n := 63) ha hb
+
+theorem treeOp_progress (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat)
+    (op : BinOp) (hop : op.isArith = true) (x y : Int) (hx : in64 x = true) (hy : in64 y = true)
+    (wl st : List WVal) (hlen : w + 2 < wl.length) :
+    ∃ o, wRunF host ar callee (treeOpW w op) wl (.i64v y :: .i64v x :: st) = some o := by
+  have h2 : w < wl.length := by omega
+  have h3 : w + 1 < wl.length := by omega
+  cases op <;> simp [BinOp.isArith] at hop
+  · simp [treeOpW, wRunF, h2, h3, hlen, b32, hx, hy, in64_wrap64, in64_xor64]
+    split <;> simp
+  · simp [treeOpW, wRunF, h2, h3, hlen, b32, hx, hy, in64_wrap64, in64_xor64]
+    split <;> simp
+  · simp [treeOpW, wRunF, h2, h3, b32, hx, hy, in64_wrap64]
+    refine ⟨by decide, ?_⟩
+    by_cases hg : gtU64 (wrap64 (x + 1)) 1 = false
+    · have hd : (wrap64 (x * y)).tdiv 1 = wrap64 (x * y) := Int.tdiv_one _
+      simp [hg, wRunF, hlen, h2, h3, b32, in64_wrap64, hd, hx, List.getElem?_set]
+      exact ⟨by decide, by split <;> simp⟩
+    · have hne := (gtU64_one x hx).mp (by simpa using hg)
+      have hm : ¬ (wrap64 (x * y) = -9223372036854775808 ∧ x = -1) := fun h => hne.1 h.2
+      simp [hg, wRunF, hlen, h2, h3, b32, in64_wrap64, hx, hne.2, hm, List.getElem?_set]
+      exact ⟨by omega, by decide, by split <;> simp⟩
+
+/-- Every leaf's local is there. -/
+def LeavesPresent (wl : List WVal) (t : WTree) : Prop :=
+  ∀ l ∈ t.leaves, ∃ wv, wl[l.loc]? = some wv
+
+theorem LeavesPresent.after {C : Nat} {S : CarrierSpec C} {w : Nat} {env : Nat → Option SVal}
+    {wl wl' : List WVal} {t : WTree} (hh : LeavesHeld S w env wl t) (h : LeavesPresent wl t)
+    (hw : WordsOnly w wl wl') : LeavesPresent wl' t := by
+  intro l hl
+  obtain ⟨wv, hwv⟩ := h l hl
+  exact ⟨wv, by rw [hw.2 _ (hh l hl).1]; exact hwv⟩
+
+theorem fastW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat → Option Nat)
+    (callee : Callee) (w : Nat) (env : Nat → Option SVal) (mulOk : Bool) :
+    ∀ (t : WTree) (wl st : List WVal),
+      t.totW mulOk = true → t.arith = true → LeavesHeld S w env wl t → LeavesPresent wl t →
+      w + 2 < wl.length →
+      ∃ o, wRunF host ar callee (fastW C w t) wl st = some o
+  | .leaf (.local i), wl, st, _, _, hh, hp, _ => by
+      obtain ⟨_, x, _, hc⟩ := hh (.local i) (by simp [WTree.leaves])
+      obtain ⟨wv, hwl⟩ := hp (.local i) (by simp [WTree.leaves])
+      simp only [WLeaf.loc] at hwl
+      have hx := hc wv hwl
+      rcases S.car x wv hx.1 with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+      · simp [fastW, smallReadW, WLeaf.loc, wRunF, hwl, b32]
+      · simp [fastW, smallReadW, WLeaf.loc, wRunF, hwl, b32]
+  | .leaf (.field _ _ _ _), _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
+  | .pick _ _ _, _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
+  | .lit k, wl, st, _, _, _, _, _ => by simp [fastW, wRunF]
+  | .op o a b, wl, st, ht, har, hh, hp, hlen => by
+      simp only [WTree.totW, Bool.and_eq_true] at ht
+      have har' := har
+      simp only [WTree.arith, Bool.and_eq_true] at har'
+      obtain ⟨⟨ho, ha⟩, hb⟩ := har'
+      have hha : LeavesHeld S w env wl a := fun l hl => hh l (by simp [WTree.leaves, hl])
+      have hhb : LeavesHeld S w env wl b := fun l hl => hh l (by simp [WTree.leaves, hl])
+      have hpa : LeavesPresent wl a := fun l hl => hp l (by simp [WTree.leaves, hl])
+      have hpb : LeavesPresent wl b := fun l hl => hp l (by simp [WTree.leaves, hl])
+      simp only [fastW, List.append_assoc]
+      rw [wRunF_append]
+      obtain ⟨oa, hoa⟩ := fastW_progress S host ar callee w env mulOk a wl st ht.1.2 ha hha hpa hlen
+      have hoa' : wRunF host ar callee (fastW C w a ++ []) wl st = some oa := by simpa using hoa
+      obtain ⟨L1, hL1, hr1⟩ := fastW_run S host ar callee w env a wl st [] oa ha hha hoa'
+      rw [hoa]
+      rcases hr1 with ⟨S', rfl⟩ | ⟨va, -, va1, va2, h1⟩
+      · exact ⟨_, rfl⟩
+      simp only [wRunF] at h1
+      cases h1
+      simp only [seqOut]
+      rw [wRunF_append]
+      have hlen1 : w + 2 < L1.length := by rw [hL1.1]; exact hlen
+      obtain ⟨ob, hob⟩ := fastW_progress S host ar callee w env mulOk b L1 _ ht.2 hb
+        (hhb.after hL1) (LeavesPresent.after hhb hpb hL1) hlen1
+      have hob' : wRunF host ar callee (fastW C w b ++ []) L1 (.i64v va :: st) = some ob := by
+        simpa using hob
+      obtain ⟨L2, hL2, hr2⟩ := fastW_run S host ar callee w env b L1 _ [] ob hb (hhb.after hL1) hob'
+      rw [hob]
+      rcases hr2 with ⟨S', rfl⟩ | ⟨vb, -, vb1, vb2, h2⟩
+      · exact ⟨_, rfl⟩
+      simp only [wRunF] at h2
+      cases h2
+      simp only [seqOut]
+      have hlen2 : w + 2 < L2.length := by rw [hL2.1]; exact hlen1
+      exact treeOp_progress host ar callee w o ho va vb ((in64_iff va).mpr ⟨va1, va2⟩)
+        ((in64_iff vb).mpr ⟨vb1, vb2⟩) L2 st hlen2
+
+theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat → Option Nat)
+    (callee : Callee) (M : MCtx) (box add sub mul cmp eq : List WVal → Option WVal)
+    (Ctr : Contracts S box add sub mul cmp eq)
+    (hBox : host M.box = some (1, box))
+    (hAdd : host M.add = some (2, add)) (hSub : host M.sub = some (2, sub))
+    (hMul : host M.mul = some (2, mul))
+    (hCmp : host M.cmp = some (2, cmp)) (hEq : host M.eq = some (2, eq))
+    (hBoxT : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → ∃ w, box [.i64v k] = some w)
+    (hAddT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
+    (hSubT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
+    (mulOk : Bool)
+    (hMulT : mulOk = true → ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, mul [va, vb] = some w)
+    (env : Nat → Option SVal) :
+    ∀ (t : WTree) (L st : List WVal),
+      t.totW mulOk = true → t.arith = true →
+      (∀ l ∈ t.leaves, ∃ x, l.val env = some (.i x) ∧
+        ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv) →
+      LeavesPresent L t →
+      ∃ o, wRunF host ar callee (exactW M t) L st = some o
+  | .leaf (.local i), L, st, _, _, _, hp => by
+      obtain ⟨wv, hwl⟩ := hp (.local i) (by simp [WTree.leaves])
+      simp only [WLeaf.loc] at hwl
+      simp [exactW_leaf, WLeaf.loc, wRunF, hwl]
+  | .leaf (.field _ _ _ _), _, _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .pick _ _ _, _, _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .lit k, L, st, _, har, _, _ => by
+      have hb : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
+        simpa [WTree.arith, inI64Band, Bool.and_eq_true, decide_eq_true_eq] using har
+      obtain ⟨wv, hwv⟩ := hBoxT k hb.1 hb.2
+      simp [exactW_lit, wRunF, hBox, popArgs, hwv]
+  | .op o a b, L, st, ht, har, hh, hp => by
+      simp only [WTree.totW, Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at ht
+      have har' := har
+      simp only [WTree.arith, Bool.and_eq_true] at har'
+      obtain ⟨⟨_, ha⟩, hb⟩ := har'
+      have hha : ∀ l ∈ a.leaves, ∃ x, l.val env = some (.i x) ∧
+          ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv :=
+        fun l hl => hh l (by simp [WTree.leaves, hl])
+      have hhb : ∀ l ∈ b.leaves, ∃ x, l.val env = some (.i x) ∧
+          ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv :=
+        fun l hl => hh l (by simp [WTree.leaves, hl])
+      have hpa : LeavesPresent L a := fun l hl => hp l (by simp [WTree.leaves, hl])
+      have hpb : LeavesPresent L b := fun l hl => hp l (by simp [WTree.leaves, hl])
+      rw [exactW_op, List.append_assoc, wRunF_append]
+      obtain ⟨oa, hoa⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd
+        hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env a L st ht.1.2 ha hha hpa
+      have hoa' : wRunF host ar callee (exactW M a ++ []) L st = some oa := by simpa using hoa
+      obtain ⟨va, wa, -, hca, h1⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
+        hAdd hSub hMul hCmp hEq env a L st [] oa ha hha hoa'
+      simp only [wRunF] at h1
+      cases h1
+      rw [hoa]
+      simp only [seqOut]
+      rw [wRunF_append]
+      obtain ⟨ob, hob⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd
+        hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env b L (wa :: st) ht.2 hb hhb hpb
+      have hob' : wRunF host ar callee (exactW M b ++ []) L (wa :: st) = some ob := by
+        simpa using hob
+      obtain ⟨vb, wb, -, hcb, h2⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
+        hAdd hSub hMul hCmp hEq env b L (wa :: st) [] ob hb hhb hob'
+      simp only [wRunF] at h2
+      cases h2
+      rw [hob]
+      simp only [seqOut]
+      rcases ht.1.1 with (rfl | rfl) | ⟨rfl, hm⟩
+      · obtain ⟨r, hr⟩ := hAddT va vb wa wb hca.1 hcb.1
+        simp [MCtx.arithIdx, wRunF, hAdd, popArgs_two, hr]
+      · obtain ⟨r, hr⟩ := hSubT va vb wa wb hca.1 hcb.1
+        simp [MCtx.arithIdx, wRunF, hSub, popArgs_two, hr]
+      · obtain ⟨r, hr⟩ := hMulT hm va vb wa wb hca.1 hcb.1
+        simp [MCtx.arithIdx, wRunF, hMul, popArgs_two, hr]
+
+theorem wordBlock_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat → Option Nat)
+    (callee : Callee) (M : MCtx) (hC : M.carrier = C)
+    (box add sub mul cmp eq : List WVal → Option WVal)
+    (Ctr : Contracts S box add sub mul cmp eq)
+    (hBox : host M.box = some (1, box))
+    (hAdd : host M.add = some (2, add)) (hSub : host M.sub = some (2, sub))
+    (hMul : host M.mul = some (2, mul))
+    (hCmp : host M.cmp = some (2, cmp)) (hEq : host M.eq = some (2, eq))
+    (hBoxT : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → ∃ w, box [.i64v k] = some w)
+    (hAddT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
+    (hSubT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
+    (mulOk : Bool)
+    (hMulT : mulOk = true → ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, mul [va, vb] = some w)
+    (env : Nat → Option SVal) (t : WTree) (w : Nat) (wl st : List WVal)
+    (ht : t.totW mulOk = true) (har : t.arith = true) (hh : LeavesHeld S w env wl t)
+    (hp : LeavesPresent wl t) (hlen : w + 2 < wl.length) :
+    ∃ out, wRunF host ar callee [eraseI (wordBlock M t w)] wl st = some out := by
+  have hin : ∃ o, wRunF host ar callee (fastW M.carrier w t ++ [WInstr.call M.box, WInstr.br 1])
+      wl st = some o := by
+    rw [wRunF_append, hC]
+    obtain ⟨o0, ho0⟩ := fastW_progress S host ar callee w env mulOk t wl st ht har hh hp hlen
+    have ho0' : wRunF host ar callee (fastW C w t ++ []) wl st = some o0 := by simpa using ho0
+    obtain ⟨L, _, hr⟩ := fastW_run S host ar callee w env t wl st [] o0 har hh ho0'
+    rw [ho0]
+    rcases hr with ⟨S', rfl⟩ | ⟨v, -, v1, v2, h1⟩
+    · exact ⟨_, rfl⟩
+    simp only [wRunF] at h1
+    cases h1
+    obtain ⟨r, hr⟩ := hBoxT v v1 v2
+    simp [seqOut, wRunF, hBox, popArgs, hr]
+  obtain ⟨o, hi⟩ := hin
+  rw [eraseI_wordBlock, run_block, run_block, hi]
+  rcases fast_run S box Ctr.hBox host ar callee M hC hBox w env t har wl st o hh hi with
+      ⟨L, S', hL, rfl⟩ | ⟨L, v, wv, hL, hv, hc, rfl⟩
+  · simp only [Nat.not_lt_zero, ↓reduceIte, List.take_zero, List.nil_append]
+    have hhL := hh.after hL
+    obtain ⟨oe, he⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd hSub
+      hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env t L st ht har
+      (fun l hl => let ⟨_, x, hx, hcx⟩ := hhL l hl; ⟨x, hx, hcx⟩) (LeavesPresent.after hh hp hL)
+    have he' : wRunF host ar callee (exactW M t ++ []) L st = some oe := by simpa using he
+    obtain ⟨_, wv, _, _, hr⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
+      hAdd hSub hMul hCmp hEq env t L st [] oe har
+      (fun l hl => let ⟨_, x, hx, hcx⟩ := hhL l hl; ⟨x, hx, hcx⟩) he'
+    simp only [wRunF] at hr
+    cases hr
+    rw [he]
+    simp [wRunF]
+  · simp [wRunF]
+
+
+theorem totW_leaf {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} {mulOk : Bool} :
+    ∀ {t : WTree}, t.totW mulOk = true → t.ok M n Γ = true →
+      ∀ l ∈ t.leaves, ∃ i, l = .local i ∧ Γ i = some .int
+  | .leaf (.local i), _, hok, l, hl => by
+      simp only [WTree.leaves, List.mem_singleton] at hl
+      subst hl
+      simp only [WTree.ok, WLeaf.ok, beq_iff_eq] at hok
+      exact ⟨i, rfl, hok⟩
+  | .leaf (.field _ _ _ _), ht, _, _, _ => by simp [WTree.totW] at ht
+  | .pick _ _ _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .lit _, _, _, l, hl => by simp [WTree.leaves] at hl
+  | .op _ a b, ht, hok, l, hl => by
+      simp only [WTree.totW, Bool.and_eq_true] at ht
+      simp only [WTree.ok, Bool.and_eq_true] at hok
+      simp only [WTree.leaves, List.mem_append] at hl
+      rcases hl with hl | hl
+      · exact totW_leaf ht.1.2 hok.1.2 l hl
+      · exact totW_leaf ht.2 hok.2 l hl
+
+theorem aheadW_totW (M : MCtx) {mulOk : Bool} :
+    ∀ {t : WTree}, t.totW mulOk = true → aheadW M t = []
+  | .leaf (.local _), _ => rfl
+  | .leaf (.field _ _ _ _), ht => by simp [WTree.totW] at ht
+  | .pick _ _ _, ht => by simp [WTree.totW] at ht
+  | .lit _, _ => rfl
+  | .op _ a b, ht => by
+      simp only [WTree.totW, Bool.and_eq_true] at ht
+      simp [aheadW, aheadW_totW M ht.1.2, aheadW_totW M ht.2]
 
 section Progress
 variable {C : Nat} (S : CarrierSpec C)
@@ -383,7 +673,7 @@ variable {C : Nat} (S : CarrierSpec C)
   (hSubT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
   (mulOk : Bool)
   (hMulT : mulOk = true → ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, mul [va, vb] = some w)
-  (mem : Nat → Bool) (calls : Bool) (n : Int)
+  (mem : Nat → Bool) (calls : Bool) (n : Int) (lim : Nat)
   (hSig : ∀ g sig, mem g = true → M.sigs g = some sig → sig.ret = .int ∨ sig.ret = .bool)
   (hCallP : calls = true → ∀ g sig, mem g = true → M.sigs g = some sig →
     ∀ svs ws, HasTyL M (.i (n - 1) :: svs) sig.params →
@@ -395,34 +685,35 @@ mutual
 theorem progress :
     ∀ (e : Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal),
-      totE mem mulOk calls e = true →
+      totE mem mulOk calls lim e = true →
       (∀ i T', Γ i = some T' → T' = .int) →
       tyOf M X.n Γ tail e = some T →
       EnvTy M env Γ →
       LRel S M X env wl →
       env 0 = some (.i n) →
+      lim ≤ wl.length →
       ∃ out, wRunF host ar callee (lowerW M X Γ tail e) wl st = some out
-  | .literal (.int k), Γ, env, tail, T, wl, st, _, _, hty, _, _, _ => by
+  | .literal (.int k), Γ, env, tail, T, wl, st, _, _, hty, _, _, _, hlim => by
       obtain ⟨hband, _⟩ := tyOf_litInt_inv hty
       have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
         simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hband
       obtain ⟨w, hw⟩ := hBoxT k hk.1 hk.2
       simp [lowerW, lowerB, eraseL, eraseI, wRunF, hBox, popArgs, hw]
-  | .literal (.bool v), Γ, env, tail, T, wl, st, _, _, _, _, _, _ => by
+  | .literal (.bool v), Γ, env, tail, T, wl, st, _, _, _, _, _, _, hlim => by
       simp [lowerW, lowerB, eraseL, eraseI, wRunF]
-  | .local i, Γ, env, tail, T, wl, st, _, _, hty, henv, hl, _ => by
+  | .local i, Γ, env, tail, T, wl, st, _, _, hty, henv, hl, _, hlim => by
       simp only [tyOf] at hty
       obtain ⟨sv, hsv, _⟩ := envTy_get henv hty
       obtain ⟨_, w, hw, _⟩ := hl.2 i sv hsv
       simp [lowerW, lowerB, eraseL, eraseI, wRunF, hw]
-  | .binOp op l r, Γ, env, tail, T, wl, st, htot, hΓ, hty, henv, hl, h0 => by
+  | .binOp op l r, Γ, env, tail, T, wl, st, htot, hΓ, hty, henv, hl, h0, hlim => by
       obtain ⟨hop, htl0, htr0⟩ := totE_binOp htot
       have hA : op.isArith = true := by
         rcases hop with rfl | rfl | ⟨rfl, _⟩ <;> rfl
       rcases tyOf_binOp_inv hty with ⟨htl, htr, _⟩ | ⟨_, _, hq, _⟩ | ⟨_, _, hq, _⟩ |
         ⟨htl, _, _⟩
       · simp only [lowerW, lowerB, htl, hA, ↓reduceIte, eraseL_append, eraseL, eraseI]
-        obtain ⟨o1, h1⟩ := progress l Γ env false .int wl st htl0 hΓ htl henv hl h0
+        obtain ⟨o1, h1⟩ := progress l Γ env false .int wl st htl0 hΓ htl henv hl h0 hlim
         rcases agreement S box add sub mul cmp eq neg Ctr hNegC host ar
           callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X l Γ env false .int
           wl st o1 htl henv hl h1 with ⟨sv1, _, hT1, hres1⟩ | hE
@@ -432,6 +723,7 @@ theorem progress :
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         obtain ⟨a, rfl⟩ := hasTy_int hT1
         obtain ⟨o2, h2⟩ := progress r Γ env false .int wl1 (w1 :: st) htr0 hΓ htr henv hl1 h0
+          (by rw [wRunF_ok_length _ _ _ _ _ _ _ _ h1]; exact hlim)
         rcases agreement S box add sub mul cmp eq neg Ctr hNegC host ar
           callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X r Γ env false .int
           wl1 (w1 :: st) o2 htr henv hl1 h2 with ⟨sv2, _, hT2, hres2⟩ | hE
@@ -457,22 +749,21 @@ theorem progress :
       · rcases hop with rfl | rfl | ⟨rfl, _⟩ <;> cases hq
       · rcases hop with rfl | rfl | ⟨rfl, _⟩ <;> cases hq
       · exact absurd htl (totE_notStr hSig l Γ false hΓ htl0)
-  | .call (.fn g) args, Γ, env, tail, T, wl, st, htot, hΓ, hty, henv, hl, h0 => by
+  | .call (.fn g) args, Γ, env, tail, T, wl, st, htot, hΓ, hty, henv, hl, h0, hlim => by
       simp only [totE, Bool.and_eq_true] at htot
       obtain ⟨⟨⟨hc, hmem⟩, hdh⟩, hargs⟩ := htot
       obtain ⟨sig, hsig, hts, rfl⟩ := tyOf_callFn_inv hty
       obtain ⟨hhost, har, _⟩ := hCallees g sig hsig
       simp only [lowerW, lowerB, eraseL_append]
-      obtain ⟨o1, h1⟩ := progressArgs args Γ env sig.params wl st hargs hΓ hts henv hl h0
+      obtain ⟨o1, h1⟩ := progressArgs args Γ env sig.params wl st hargs hΓ hts henv hl h0 hlim
       rcases agreementArgs S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd
           hSub hMul hNeg hCmp hEq R F hCallees hConsF X args Γ env sig.params wl st o1 hts henv hl h1
         with ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, _⟩ | hE
       rotate_left
       · rw [totArgs_bare args hargs] at hE
         exact (esc_nil hE).elim
-      obtain ⟨rest, rfl⟩ := descentHead_eq hdh
-      have hd : eval F env (.binOp .sub (.local 0) (.literal (.int 1))) = some (.i (n - 1)) := by
-        simp [eval, h0, intBin]
+      obtain ⟨a, rest, rfl, hda⟩ := descentHead_eq hdh
+      have hd := isDescent_eval hda F h0
       simp only [evalArgs, hd] at hevs
       cases hrs : evalArgs F env rest with
       | none => rw [hrs] at hevs; cases hevs
@@ -487,22 +778,21 @@ theorem progress :
           simp only [lowerArgsW] at h1
           rw [h1]
           simp [seqOut, eraseL, eraseI, wRunF, hhost, har, hlen, popArgs_rev, hr]
-  | .tailCall g args, Γ, env, tail, T, wl, st, htot, hΓ, hty, henv, hl, h0 => by
+  | .tailCall g args, Γ, env, tail, T, wl, st, htot, hΓ, hty, henv, hl, h0, hlim => by
       simp only [totE, Bool.and_eq_true] at htot
       obtain ⟨⟨⟨hc, hmem⟩, hdh⟩, hargs⟩ := htot
       obtain ⟨_, sig, hsig, hts, rfl⟩ := tyOf_tailCall_inv hty
       obtain ⟨_, har, _⟩ := hCallees g sig hsig
       simp only [lowerW, lowerB, eraseL_append]
-      obtain ⟨o1, h1⟩ := progressArgs args Γ env sig.params wl st hargs hΓ hts henv hl h0
+      obtain ⟨o1, h1⟩ := progressArgs args Γ env sig.params wl st hargs hΓ hts henv hl h0 hlim
       rcases agreementArgs S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd
           hSub hMul hNeg hCmp hEq R F hCallees hConsF X args Γ env sig.params wl st o1 hts henv hl h1
         with ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, _⟩ | hE
       rotate_left
       · rw [totArgs_bare args hargs] at hE
         exact (esc_nil hE).elim
-      obtain ⟨rest, rfl⟩ := descentHead_eq hdh
-      have hd : eval F env (.binOp .sub (.local 0) (.literal (.int 1))) = some (.i (n - 1)) := by
-        simp [eval, h0, intBin]
+      obtain ⟨a, rest, rfl, hda⟩ := descentHead_eq hdh
+      have hd := isDescent_eval hda F h0
       simp only [evalArgs, hd] at hevs
       cases hrs : evalArgs F env rest with
       | none => rw [hrs] at hevs; cases hevs
@@ -517,40 +807,72 @@ theorem progress :
           simp only [lowerArgsW] at h1
           rw [h1]
           simp [seqOut, eraseL, eraseI, wRunF, har, hlen, popArgs_rev, hr]
-  | .literal (.float _), _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .literal (.str _), _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .let_ _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .call (.builtin _) _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .call (.lazy _) _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .neg _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .ifThenElse _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .recordCreate _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .project _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .match_ _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .construct _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .interp _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .list _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .try_ _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .scope _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
-  | .intWord _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
+  | .literal (.float _), _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .literal (.str _), _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .let_ _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .call (.builtin _) _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .call (.lazy _) _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .neg _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .ifThenElse _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .recordCreate _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .project _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .match_ _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .construct _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .interp _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .list _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .try_ _ _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .scope _, _, _, _, _, _, _, ht, _, _, _, _, _, _ => by simp [totE] at ht
+  | .intWord t w, Γ, env, tail, T, wl, st, htot, hΓ, hty, henv, hl, h0, hlim => by
+      simp only [totE, Bool.and_eq_true, decide_eq_true_eq] at htot
+      obtain ⟨htw, hwl⟩ := htot
+      simp only [tyOf] at hty
+      split at hty
+      · rename_i hok
+        simp only [wordOk, Bool.and_eq_true, decide_eq_true_eq] at hok
+        obtain ⟨⟨htok, hnw⟩, _⟩ := hok
+        have hleaf := totW_leaf htw htok
+        have hh : LeavesHeld S w env wl t := by
+          intro l hl'
+          obtain ⟨i, rfl, hi⟩ := hleaf l hl'
+          obtain ⟨v, hv, hTv⟩ := envTy_get henv hi
+          obtain ⟨x, rfl⟩ := hasTy_int hTv
+          obtain ⟨hin, wv, hw, hr⟩ := hl.2 i _ hv
+          refine ⟨Or.inl (by simp only [WLeaf.loc]; omega), x, by simp [WLeaf.val, hv],
+            fun wv' hw' => ?_⟩
+          simp only [WLeaf.loc] at hw'
+          rw [hw] at hw'
+          cases hw'
+          simpa [SRepr] using hr
+        have hp : LeavesPresent wl t := by
+          intro l hl'
+          obtain ⟨i, rfl, hi⟩ := hleaf l hl'
+          obtain ⟨v, hv, _⟩ := envTy_get henv hi
+          obtain ⟨_, wv, hw, _⟩ := hl.2 i _ hv
+          exact ⟨wv, hw⟩
+        simp only [lowerW, lowerB, aheadW_totW M htw, List.map_nil, List.nil_append, eraseL]
+        exact wordBlock_progress S host ar callee M hCarrier box add sub mul cmp eq Ctr hBox hAdd
+          hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env t w wl st htw
+          (WTree.arith_of_ok htok) hh hp (by omega)
+      · cases hty
 
 theorem progressArgs :
     ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
       (wl st : List WVal),
-      totArgs mem mulOk calls es = true →
+      totArgs mem mulOk calls lim es = true →
       (∀ i T', Γ i = some T' → T' = .int) →
       tysOf M X.n Γ es = some Ts →
       EnvTy M env Γ →
       LRel S M X env wl →
       env 0 = some (.i n) →
+      lim ≤ wl.length →
       ∃ out, wRunF host ar callee (lowerArgsW M X Γ es) wl st = some out
-  | [], Γ, env, Ts, wl, st, _, _, _, _, _, _ => by
+  | [], Γ, env, Ts, wl, st, _, _, _, _, _, _, hlim => by
       simp [lowerArgsW, lowerArgsB, eraseL, wRunF]
-  | e :: es, Γ, env, Ts, wl, st, htot, hΓ, hty, henv, hl, h0 => by
+  | e :: es, Γ, env, Ts, wl, st, htot, hΓ, hty, henv, hl, h0, hlim => by
       simp only [totArgs, Bool.and_eq_true] at htot
       obtain ⟨t, ts, hte, htes, rfl⟩ := tysOf_cons_inv hty
       simp only [lowerArgsW, lowerArgsB, eraseL_append]
-      obtain ⟨o1, h1⟩ := progress e Γ env false t wl st htot.1 hΓ hte henv hl h0
+      obtain ⟨o1, h1⟩ := progress e Γ env false t wl st htot.1 hΓ hte henv hl h0 hlim
       rcases agreement S box add sub mul cmp eq neg Ctr hNegC host ar
         callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X e Γ env false t
         wl st o1 hte henv hl h1 with ⟨sv, _, _, hres⟩ | hE
@@ -559,6 +881,7 @@ theorem progressArgs :
         exact (esc_nil hE).elim
       obtain ⟨wl1, w, rfl, _, hl1⟩ := res_false hres
       obtain ⟨o2, h2⟩ := progressArgs es Γ env ts wl1 (w :: st) htot.2 hΓ htes henv hl1 h0
+        (by rw [wRunF_ok_length _ _ _ _ _ _ _ _ h1]; exact hlim)
       rw [wRunF_append]
       simp only [lowerW] at h1
       rw [h1]
@@ -734,6 +1057,9 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
     have hget : ((w0 :: ws') ++ pad)[0]? = some w0 := by
       simp
     have hΓ0 : paramsΓ p.sig.params 0 = some .int := by simp [paramsΓ, hps]
+    have hlimw : p.sig.params.length + p.locals.length ≤ ((w0 :: ws') ++ pad).length := by
+      simp only [List.length_append, hpad]
+      omega
     -- the body runs to some outcome
     have hrun : ∃ out, wRunF host (fun g => (code g).map (·.arity))
         (fun g as => wFuncN code host m g as) (fnCode M p).body
@@ -757,8 +1083,8 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
           (F := groupModel outer G m) (hCallees := hCallees)
           (hConsF := fun t g hg h tl sv htl hm => hCons t g hg m h tl sv htl hm) (X := p.lctx) (hBoxT := hBoxT)
           (hAddT := hAddT) (hSubT := hSubT) (mulOk := mulOk) (hMulT := hMulT) (mem := mem)
-          (calls := false) (n := n) (hSig := hSig) (hCallP := fun h => by cases h)
-          base _ _ true p.sig.ret _ [] hbase hΓ hbty henv hLR h0
+          (calls := false) (n := n) (lim := p.sig.params.length + p.locals.length) (hSig := hSig) (hCallP := fun h => by cases h)
+          base _ _ true p.sig.ret _ [] hbase hΓ hbty henv hLR h0 hlimw
       · simp only [hn, decide_false, Bool.false_eq_true, ↓reduceIte]
         have hsty := (tyOf_ite_inv (hb ▸ hty)).2.2
         have hCallP : true = true → ∀ g sig, mem g = true → M.sigs g = some sig →
@@ -779,8 +1105,8 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
           (F := groupModel outer G m) (hCallees := hCallees)
           (hConsF := fun t g hg h tl sv htl hm => hCons t g hg m h tl sv htl hm) (X := p.lctx) (hBoxT := hBoxT)
           (hAddT := hAddT) (hSubT := hSubT) (mulOk := mulOk) (hMulT := hMulT) (mem := mem)
-          (calls := true) (n := n) (hSig := hSig) (hCallP := hCallP)
-          step _ _ true p.sig.ret _ [] hstep hΓ hsty henv hLR h0
+          (calls := true) (n := n) (lim := p.sig.params.length + p.locals.length) (hSig := hSig) (hCallP := hCallP)
+          step _ _ true p.sig.ret _ [] hstep hΓ hsty henv hLR h0 hlimw
     obtain ⟨out, hout⟩ := hrun
     rcases agreement S box add sub mul cmp eq neg Ctr hNegC host
       (fun g => (code g).map (·.arity)) (fun g as => wFuncN code host m g as) M

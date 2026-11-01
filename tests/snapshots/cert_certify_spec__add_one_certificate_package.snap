@@ -5,9 +5,9 @@ expression: golden
 == cert-manifest.json ==
 {
   "schema_version": 9,
-  "format": {"version": 1, "wall_id": "sha256:43040aff966a66b6fad3359269cdbfa729fbf4cbcafe272324406cb9c719b36f"},
+  "format": {"version": 1, "wall_id": "sha256:eafeb5b75897f34d00e73f49490ae8c0a4707a66a77178423982b76fe376599f"},
   "wasm": "add_one.wasm",
-  "wasm_sha256": "966e5596733d7600050f2a7cdcbb3f023f33a3855e2a0d73ee422f5f8c8e7c89",
+  "wasm_sha256": "fec1011ea9502dba8815c68cb8ee138e9178e6be3f0d9470e6c553c8aa475445",
   "target": "wasm-gc",
   "level": "L1",
   "profile": "AverUserProfile/v1",
@@ -72,7 +72,7 @@ def Plans.subject_declaredUncertified_0 : List (String × String) :=
    ("__rt_aint_to_i64_checked", "module export is outside the claimed certification obligations")]
 
 def subject : Subject :=
-  { artifactHash := "966e5596733d7600050f2a7cdcbb3f023f33a3855e2a0d73ee422f5f8c8e7c89"
+  { artifactHash := "fec1011ea9502dba8815c68cb8ee138e9178e6be3f0d9470e6c553c8aa475445"
     target := "wasm-gc", profile := "AverUserProfile/v1", abi := "aver-wasm-gc/0"
     artifactRoot := "AverCert.Artifact.certificate"
     exports := ["addOne"]
@@ -110,8 +110,8 @@ def types : TypeTable :=
 
 /-- `addOne` (function 1). -/
 def fn1 : FnPlan :=
-  { sig := ⟨[.int], .int⟩, nslots := 1, locals := [.int],
-    body := (.binOp .add (.local 0) (.literal (.int 1))) }
+  { sig := ⟨[.int], .int⟩, nslots := 1, locals := [.int, .word, .word, .word],
+    body := (.intWord (.op .add (.leaf (.local 0)) (.lit (1))) 2) }
 
 def fnPlans : List FnEntry :=
   [⟨"addOne", true, 1, 0, fn1⟩]

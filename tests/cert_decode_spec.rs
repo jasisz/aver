@@ -252,10 +252,13 @@ fn build_prelude() -> ScratchDir {
     dst
 }
 
-/// The module a `--certify` build writes: the bytes a certificate decodes.
+/// The module a `--certify` build writes without `Int` trees on the machine
+/// word (`AVER_NO_INT_TREE`): the bytes the mutation test flips stay inside
+/// the instruction fragment the kernel decoder and the byte-level oracle read.
 fn compile_wasm_at(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Vec<u8> {
     let c = aver_command()
         .current_dir(repo)
+        .env("AVER_NO_INT_TREE", "1")
         .arg("compile")
         .arg(av_path)
         .arg("--target")

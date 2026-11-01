@@ -16,10 +16,10 @@ fn area(s: String, h: Int) -> Int
 
 fn spread(a: Int, b: Int) -> Int
     ? "Printable and calls nothing unprintable."
-    a * b + a * a + 1
+    a * 3 + b * 5 + 1
 
 verify area
     area("abc", 2) => 11
 
 verify spread
-    spread(2, 3) => 11
+    spread(2, 3) => 22

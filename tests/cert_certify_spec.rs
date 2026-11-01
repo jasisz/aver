@@ -1031,8 +1031,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     }
     for (shape, what) in [
         (
-            "(.binOp .add (.local 0) (.literal (.int 2)))",
-            "addTwo adds two",
+            "(.intWord (.op .add (.leaf (.local 0)) (.lit (2))) 2)",
+            "addTwo adds two on the machine word",
         ),
         (
             "(.binOp .gte (.local 0) (.literal (.int 48))) (.binOp .lte (.local 0) (.literal (.int 57)))",
