@@ -23,6 +23,7 @@ mod replay;
 mod representation;
 mod runtime;
 mod self_host;
+mod speculation;
 mod syntax;
 mod toplevel;
 mod types;
@@ -191,6 +192,10 @@ fn transpile_project(
         // representation rewrite. Arena backends deliberately never run this
         // pass: a logically-unwrapped aggregate remains a live holder there.
         let prog = crate::ir::mir::optimize::own_param_refine_for_rust(prog);
+        // The functions that run first on machine words, read off the MIR
+        // the other targets share, before this backend's own rewrites.
+        ctx.rust_word_spec =
+            speculation::plan(&prog, ctx, rust.panic == crate::config::RustPanic::Unwind);
         // Mutual-TCO members are emitted with an unconditionally boxed
         // (`AverInt`) trampoline signature regardless of the unboxing
         // analysis, so the rewrite must not tag them bare (it would desync
@@ -219,6 +224,7 @@ fn transpile_project(
         ctx.rust_lent_options = lent_option::compute(ctx);
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
         ctx.rust_knowing = knowing::compute(ctx);
+        speculation::choose_wrapped(ctx);
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
@@ -318,6 +324,7 @@ fn transpile_project(
                 needs_branch_path,
                 ctx.emit_replay_runtime,
                 embedded_independence_cancel,
+                (!ctx.rust_word_spec.twins.is_empty()).then(|| speculation::twin_items(ctx)),
             ),
         ),
     ];
@@ -693,6 +700,7 @@ fn render_runtime_support(
     needs_branch_path: bool,
     has_replay: bool,
     embedded_independence_cancel: bool,
+    word_twins: Option<String>,
 ) -> String {
     let mut sections = vec![runtime::generate_runtime(
         has_replay,
@@ -706,6 +714,9 @@ fn render_runtime_support(
     }
     if needs_branch_path {
         sections.push(runtime::generate_branch_path_types());
+    }
+    if let Some(twins) = word_twins {
+        sections.push(twins);
     }
     format!("{}\n", sections.join("\n\n"))
 }

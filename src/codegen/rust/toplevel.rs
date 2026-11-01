@@ -1330,7 +1330,15 @@ fn emit_fn_def_with_visibility(
         type_annotation_to_rust_scoped(&fd.return_type, ctx, scope)
     };
 
-    let fn_name = aver_name_to_rust(&fd.name);
+    // An entry of the machine-word twins keeps its name for the restart
+    // point; its exact body is renamed (`speculation`).
+    let fn_id = resolved_fd.fn_id;
+    let wrapped = ctx.rust_word_spec.wrapped.contains(&fn_id);
+    let fn_name = if wrapped {
+        super::speculation::exact_name(&fd.name)
+    } else {
+        aver_name_to_rust(&fd.name)
+    };
     let visibility = visibility_prefix(public);
 
     let is_guest_entry = ctx.guest_entry.as_deref() == Some(fd.name.as_str());
@@ -1479,6 +1487,9 @@ fn emit_fn_def_with_visibility(
         .mir_program
         .as_ref()
         .and_then(|p| p.fn_by_id(resolved_fd.fn_id));
+    // The exact body of an entry calls the exact bodies of its cycle.
+    let _exact_callees =
+        super::from_mir::ExactCallees::set(super::speculation::exact_callees(fn_id, ctx));
     if has_tco {
         let code = mir_fn
             .and_then(|mir_fn| {
@@ -1542,7 +1553,9 @@ fn emit_fn_def_with_visibility(
         lines.push("}".to_string());
     }
 
-    lines.join("\n")
+    let mut code = lines.join("\n");
+    code.push_str(&super::speculation::items_after(fn_id, visibility, ctx));
+    code
 }
 
 /// Emit the Rust-only O(1) arm of a full-octet refinement constructor.
@@ -2613,6 +2626,7 @@ mod tests {
             rust_owned_record_params: Default::default(),
             rust_counted_records: Default::default(),
             rust_lent_options: Default::default(),
+            rust_word_spec: Default::default(),
             rust_lazy_sums: Default::default(),
             knowing_trusted: Default::default(),
             rust_knowing: Default::default(),

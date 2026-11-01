@@ -1,0 +1,186 @@
+module WordSpeculation
+    intent = "Pure Int functions run first on machine words and again exactly on an overflow: every result reads as the VM."
+    effects [Console.print]
+
+fn pw(x: Int, k: Int) -> Int
+    ? "x to the power k; overflows the word in the middle of the recursion for large x."
+    match k == 0
+        true -> 1
+        false -> x * pw(x, k - 1)
+
+fn fib(n: Int) -> Int
+    ? "Naive fib."
+    match n < 2
+        true -> n
+        false -> fib(n - 1) + fib(n - 2)
+
+fn scaled(n: Int) -> Int
+    ? "Fits the word until the last multiplication."
+    fib(n) * 1000000000000000000
+
+fn sumTo(i: Int, n: Int, acc: Int) -> Int
+    ? "A self tail loop whose sum crosses 2^63 for large steps."
+    match i > n
+        true -> acc
+        false -> sumTo(i + 1, n, acc + i * 1000000000000000)
+
+fn divs(a: Int, b: Int) -> Int
+    ? "Euclidean division and remainder by literals of both signs and by a divisor that may be zero."
+    Int.div(a, 7) + Int.mod(a, -7) * 3 + Int.div(a, -1) + Result.withDefault(Int.mod(a, b), 99) + Result.withDefault(Int.div(a, b), -99)
+
+fn halve(a: Int, n: Int) -> Int
+    ? "Doubles a n times, then divides by -1: past the word only at i64::MIN."
+    match n == 0
+        true -> Int.div(a, -1)
+        false -> halve(a * 2, n - 1)
+
+fn bitsOf(a: Int, b: Int) -> Int
+    ? "Bit operations on negative and large values, shifts and low bits by literals."
+    Bits.xor(Bits.and(a, b), Bits.or(a, Bits.not(b))) + Bits.shiftRight(a, 3) + Bits.shiftRight(a, 70) + Bits.low(a, 13) + Bits.low(a, 63) + Bits.shiftLeft(Bits.low(b, 8), 40)
+
+fn picks(a: Int, b: Int) -> Int
+    ? "Minimum, maximum, absolute value and negation at the ends of the word."
+    Int.min(a, b) - Int.max(a, b) + Int.abs(a) - b
+
+fn clampOpt(x: Int, lo: Int, hi: Int) -> Option<Int>
+    ? "None outside the range, else the distance from lo."
+    match x < lo
+        true -> Option.None
+        false -> match x > hi
+            true -> Option.None
+            false -> Option.Some(x - lo)
+
+fn walk(i: Int, n: Int, x: Int, acc: Int, odd: Bool) -> Int
+    ? "A loop taking an Option apart and carrying a Bool."
+    match i == n
+        true -> match odd
+            true -> acc + 1
+            false -> acc
+        false -> match clampOpt(x, 10, 1000)
+            Option.Some(d) -> walk(i + 1, n, Int.mod(x * 37 + 11, 2000), acc + d * d * d * d * d * d, Bool.not(odd))
+            Option.None -> walk(i + 1, n, Int.mod(x * 37 + 11, 2000), acc - 1, Bool.and(odd, i > 3))
+
+fn ping(n: Int, a: Int) -> Int
+    ? "Mutual recursion with ping and pong, not in tail position."
+    match n <= 0
+        true -> a
+        false -> pong(n - 1, a * 3) + 1
+
+fn pong(n: Int, a: Int) -> Int
+    ? "Mutual recursion with ping."
+    match Bool.or(n <= 0, a == 0)
+        true -> a
+        false -> ping(n - 1, a + 5) * 2
+
+fn even(n: Int) -> Bool
+    ? "A Bool result from a recursion."
+    match n == 0
+        true -> true
+        false -> Bool.not(even(n - 1))
+
+fn show(label: String, v: Int) -> Unit
+    ? "Prints one result."
+    ! [Console.print]
+    Console.print("{label} {v}")
+
+fn hot(i: Int, n: Int, acc: List<Int>) -> List<Int>
+    ? "A loop outside the word set calling an entry that overflows on every call."
+    match i == n
+        true -> acc
+        false -> hot(i + 1, n, List.prepend(pw(i + 4000000000, 3), acc))
+
+fn tryDivs(n: Int, a: Int, b: Int) -> Int
+    ? "A loop around divs, so divs runs on words."
+    match n == 0
+        true -> divs(a, b)
+        false -> tryDivs(n - 1, a, b)
+
+fn tryBits(n: Int, a: Int, b: Int) -> Int
+    ? "A loop around bitsOf, so bitsOf runs on words."
+    match n == 0
+        true -> bitsOf(a, b)
+        false -> tryBits(n - 1, a, b)
+
+fn tryPicks(n: Int, a: Int, b: Int) -> Int
+    ? "A loop around picks, so picks runs on words."
+    match n == 0
+        true -> picks(a, b)
+        false -> tryPicks(n - 1, a, b)
+
+fn row(a: Int, ys: List<Int>) -> Unit
+    ? "Prints the three functions on a against every y."
+    ! [Console.print]
+    match ys
+        [] -> Unit
+        [b, ..rest] -> rowNext(a, b, rest)
+
+fn rowNext(a: Int, b: Int, rest: List<Int>) -> Unit
+    ? "One cell of the grid, then the rest of the row."
+    ! [Console.print]
+    Console.print("{a} {b}: {tryDivs(1, a, b)} {tryBits(1, a, b)} {tryPicks(1, a, b)}")
+    row(a, rest)
+
+fn grid(xs: List<Int>, ys: List<Int>) -> Unit
+    ? "Every pair of boundary values."
+    ! [Console.print]
+    match xs
+        [] -> Unit
+        [a, ..rest] -> gridNext(a, rest, ys)
+
+fn gridNext(a: Int, rest: List<Int>, ys: List<Int>) -> Unit
+    ? "One row, then the others."
+    ! [Console.print]
+    row(a, ys)
+    grid(rest, ys)
+
+fn boolInt(b: Bool) -> Int
+    ? "One for true."
+    match b
+        true -> 1
+        false -> 0
+
+fn headOr(xs: List<Int>) -> Int
+    ? "The first element, or zero."
+    match xs
+        [] -> 0
+        [h, ..rest] -> h
+
+fn pairSum(p: Tuple<Int, Int>) -> Int
+    ? "Both halves of an independent product."
+    match p
+        (a, b) -> a - b
+
+fn main() -> Unit
+    ? "Entry."
+    ! [Console.print]
+    show("pw small", pw(3, 20))
+    show("pw mid", pw(3, 40))
+    show("pw neg", pw(-3, 39))
+    show("pw big arg", pw(4611686018427387904, 2))
+    show("pw edge", pw(4611686018427387903, 1))
+    show("pw edge neg", pw(-4611686018427387904, 1))
+    show("pw past edge neg", pw(-4611686018427387905, 1))
+    show("fib", fib(25))
+    show("scaled", scaled(30))
+    show("scaled small", scaled(5))
+    show("sum small", sumTo(0, 100, 0))
+    show("sum crosses", sumTo(0, 10000, 0))
+    show("divs", divs(100, 0))
+    show("divs neg", divs(-100, -7))
+    show("divs edge", divs(-4611686018427387904, 3))
+    show("halve", halve(-1, 62))
+    show("halve min", halve(-1, 63))
+    show("halve past", halve(-1, 64))
+    show("bits", bitsOf(-123456789, 987654321))
+    show("bits big", bitsOf(4611686018427387903, -4611686018427387904))
+    show("picks", picks(-4611686018427387904, 4611686018427387903))
+    show("picks swap", picks(4611686018427387903, -4611686018427387904))
+    show("walk", walk(0, 5000, 7, 0, false))
+    show("ping", ping(30, 1))
+    show("ping wide", ping(80, 7))
+    show("even", boolInt(even(1001)))
+    pair = (pw(7, 30), sumTo(0, 20000, 0))!
+    show("product", pairSum(pair))
+    grid([0, 1, -1, 7, -7, 3037000499, -3037000500, 4611686018427387903, -4611686018427387904, 4611686018427387904, -4611686018427387905, 9223372036854775807, -9223372036854775807], [0, 3, -3, -1, 1000000007, -4611686018427387904, 4611686018427387903, 4611686018427387904])
+    show("hot", List.len(hot(0, 40, [])))
+    show("hot head", headOr(hot(0, 40, [])))
