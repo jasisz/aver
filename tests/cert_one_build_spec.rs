@@ -197,9 +197,11 @@ fn a_plain_build_runs_the_corpus_examples_on_wasm_gc() {
     });
 }
 
-/// A plain build computes an `Int` tree on machine words and matches a single
-/// character on its codepoint in a function the printer prints; a `--certify`
-/// build does neither there, and certifies the function.
+/// A plain build computes every `Int` tree on machine words and matches a
+/// single character on its codepoint in a function the printer prints; a
+/// `--certify` build computes there only the trees the wall models (`a * b`
+/// in `poly`, not its product by a literal) and matches the character by
+/// value, and certifies the function.
 #[test]
 fn a_plain_build_takes_the_shapes_a_certified_build_leaves_out() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -210,8 +212,15 @@ fn a_plain_build_takes_the_shapes_a_certified_build_leaves_out() {
     let (plain, _) = compile(&repo_root, &tree, &[], true).unwrap();
     let (no_trees, _) = compile(&repo_root, &tree, &[], false).unwrap();
     let (certified, names) = compile(&repo_root, &tree, &["--certify"], true).unwrap();
-    assert_ne!(plain, certified, "the plain build computes `poly` on i64");
-    assert_eq!(no_trees, certified, "the --certify build has no Int tree");
+    assert_ne!(
+        plain, certified,
+        "the plain build computes `c * 3` on i64 too"
+    );
+    assert_ne!(
+        no_trees, certified,
+        "the --certify build computes `a * b` on i64"
+    );
+    assert!(i64_muls(&certified, &["poly"])[0] > 0, "`a * b` on i64");
     assert!(names.iter().any(|n| n == "poly"), "{names:?}");
 
     // Without trees, so that only the string passes can tell the builds apart.
@@ -635,7 +644,7 @@ fn i64_muls(bytes: &[u8], names: &[&str]) -> Vec<usize> {
 /// never be certified, so a `--certify` build does not keep it in the
 /// ordinary form: `area` (which calls the unprintable `width`) computes its
 /// `Int` tree on machine words as in a plain build, while the certified
-/// `spread` keeps the boxed arithmetic its plan reads.
+/// `spread` keeps the boxed products by a literal its plan reads.
 #[test]
 fn a_certified_build_releases_a_function_that_calls_an_unprintable_one() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

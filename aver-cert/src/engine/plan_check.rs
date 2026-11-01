@@ -2420,24 +2420,53 @@ fn string_lits<'e>(e: &'e PlanExpr, out: &mut Vec<&'e [u8]>) {
 // ---- totality (`GrammarTotal`) ----
 
 fn is_descent(e: &PlanExpr) -> bool {
-    matches!(e, PlanExpr::BinOp(PlanBinOp::Sub, l, r)
-        if **l == PlanExpr::Local(0) && **r == PlanExpr::Literal(PlanLit::Int(1)))
+    match e {
+        PlanExpr::BinOp(PlanBinOp::Sub, l, r) => {
+            **l == PlanExpr::Local(0) && **r == PlanExpr::Literal(PlanLit::Int(1))
+        }
+        PlanExpr::IntWord(PlanWTree::Op(PlanBinOp::Sub, l, r), _) => {
+            **l == PlanWTree::Leaf(PlanWLeaf::Local(0)) && **r == PlanWTree::Lit(1)
+        }
+        _ => false,
+    }
 }
 
-fn tot_e(mem: &BTreeSet<u32>, mul_ok: bool, calls: bool, e: &PlanExpr) -> bool {
+/// `GrammarTotal.WTree.totW`.
+fn tot_w(mul_ok: bool, t: &PlanWTree) -> bool {
+    match t {
+        PlanWTree::Leaf(PlanWLeaf::Local(_)) | PlanWTree::Lit(_) => true,
+        PlanWTree::Op(op, a, b) => {
+            (matches!(op, PlanBinOp::Add | PlanBinOp::Sub) || (*op == PlanBinOp::Mul && mul_ok))
+                && tot_w(mul_ok, a)
+                && tot_w(mul_ok, b)
+        }
+        PlanWTree::Leaf(PlanWLeaf::Field { .. }) | PlanWTree::Pick(..) => false,
+    }
+}
+
+/// `GrammarTotal.WTree.usesMulW`.
+fn uses_mul_w(t: &PlanWTree) -> bool {
+    match t {
+        PlanWTree::Op(op, a, b) => *op == PlanBinOp::Mul || uses_mul_w(a) || uses_mul_w(b),
+        _ => false,
+    }
+}
+
+fn tot_e(mem: &BTreeSet<u32>, mul_ok: bool, calls: bool, lim: u64, e: &PlanExpr) -> bool {
     match e {
         PlanExpr::Literal(PlanLit::Int(_) | PlanLit::Bool(_)) | PlanExpr::Local(_) => true,
         PlanExpr::BinOp(op, l, r) => {
             (matches!(op, PlanBinOp::Add | PlanBinOp::Sub) || (*op == PlanBinOp::Mul && mul_ok))
-                && tot_e(mem, mul_ok, calls, l)
-                && tot_e(mem, mul_ok, calls, r)
+                && tot_e(mem, mul_ok, calls, lim, l)
+                && tot_e(mem, mul_ok, calls, lim, r)
         }
         PlanExpr::Call(PlanCallee::Fn(g), args) | PlanExpr::TailCall(g, args) => {
             calls
                 && mem.contains(g)
                 && args.first().is_some_and(is_descent)
-                && args.iter().all(|a| tot_e(mem, mul_ok, calls, a))
+                && args.iter().all(|a| tot_e(mem, mul_ok, calls, lim, a))
         }
+        PlanExpr::IntWord(t, w) => tot_w(mul_ok, t) && u64::from(*w) + 2 < lim,
         _ => false,
     }
 }
@@ -2455,17 +2484,18 @@ fn uses_mul(e: &PlanExpr) -> bool {
         PlanExpr::BinOp(op, l, r) => *op == PlanBinOp::Mul || uses_mul(l) || uses_mul(r),
         PlanExpr::Call(_, args) | PlanExpr::TailCall(_, args) => args.iter().any(uses_mul),
         PlanExpr::If(c, t, el) => uses_mul(c) || uses_mul(t) || uses_mul(el),
+        PlanExpr::IntWord(t, _) => uses_mul_w(t),
         _ => false,
     }
 }
 
-fn tot_body(mem: &BTreeSet<u32>, mul_ok: bool, e: &PlanExpr) -> bool {
+fn tot_body(mem: &BTreeSet<u32>, mul_ok: bool, lim: u64, e: &PlanExpr) -> bool {
     match e {
         PlanExpr::If(c, base, step) => {
             matches!(c.as_ref(), PlanExpr::BinOp(PlanBinOp::Lte, l, r)
                 if **l == PlanExpr::Local(0) && **r == PlanExpr::Literal(PlanLit::Int(0)))
-                && tot_e(mem, mul_ok, false, base)
-                && tot_e(mem, mul_ok, true, step)
+                && tot_e(mem, mul_ok, false, lim, base)
+                && tot_e(mem, mul_ok, true, lim, step)
                 && has_call(step)
         }
         _ => false,
@@ -2478,10 +2508,11 @@ fn check_term_group(members: &[(u32, &FnPlan)]) -> Option<bool> {
     let mul = members.iter().any(|m| uses_mul(&m.1.body));
     let ok = !members.is_empty()
         && members.iter().all(|(_, p)| {
+            let lim = (p.params.len() + p.locals.len()) as u64;
             !p.params.is_empty()
                 && p.params.iter().all(|t| *t == PlanTy::Int)
                 && matches!(p.ret, PlanTy::Int | PlanTy::Bool)
-                && tot_body(&mem, mul, &p.body)
+                && tot_body(&mem, mul, lim, &p.body)
         });
     ok.then_some(mul)
 }
