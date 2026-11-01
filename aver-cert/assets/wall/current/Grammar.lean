@@ -206,14 +206,15 @@ inductive WTree where
       machine path one range test of the operand, then `i64.mul`; on the
       exact path the boxed literal and the multiplication helper. -/
   | mulLit (k : Int) (litFirst : Bool) (a : WTree)
-  /-- `Int.div(a, k)` by a literal that is neither `0`, `-1` nor a positive
-      power of two: the truncated quotient corrected by the sign of the
-      truncated remainder on the machine path, `__aint_divmod` on the exact
-      path. -/
-  | divLit (k : Int) (a : WTree)
-  /-- `Int.mod(a, k)` by a literal whose magnitude is no power of two: the
-      truncated remainder plus `|k|` when it is negative on the machine path,
+  /-- `Int.div(a, k)` by a literal that is neither `0` nor `-1`: on the
+      machine path an arithmetic shift for a positive power of two, else the
+      truncated quotient corrected by the sign of the truncated remainder;
       `__aint_divmod` on the exact path. -/
+  | divLit (k : Int) (a : WTree)
+  /-- `Int.mod(a, k)` by a literal other than `0`: on the machine path the
+      low bits (a mask) for a magnitude that is a power of two, else the
+      truncated remainder plus `|k|` when it is negative; `__aint_divmod` on
+      the exact path. -/
   | modLit (k : Int) (a : WTree)
 deriving DecidableEq, Repr
 
@@ -803,19 +804,17 @@ def WLeaf.ok (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : WLeaf → Bool
             decide (tid' = tid) && decide (2 ≤ fts.length) && fts[k]? == some .int
         | _, _ => false
 
-/-- A power of two (`m & (m - 1) = 0`, `m ≠ 0`). -/
-def isPow2 (m : Nat) : Bool := m != 0 && (m &&& (m - 1)) == 0
+/-- A power of two: `m ≠ 0` and `2 ^ log2 m = m`. -/
+def isPow2 (m : Nat) : Bool := m != 0 && 2 ^ m.log2 == m
 
 /-- The divisors a quotient node admits (`int_tree.rs`, `Op::Div`): in the
-    `i64` band, not `0`, not `-1` (computed as a negation) and no positive
-    power of two (computed as a shift). -/
-def divLitOk (k : Int) : Bool :=
-  inI64Band k && k != 0 && k != -1 && !(decide (0 < k) && isPow2 k.natAbs)
+    `i64` band, not `0` and not `-1` (a kept fn's MIR writes that quotient
+    as the difference `0 - a`). -/
+def divLitOk (k : Int) : Bool := inI64Band k && k != 0 && k != -1
 
 /-- The divisors a remainder node admits (`Op::Mod`): in the `i64` band and
-    not `0`, and of a magnitude that is no power of two (computed as a
-    mask). -/
-def modLitOk (k : Int) : Bool := inI64Band k && k != 0 && !isPow2 k.natAbs
+    not `0`. -/
+def modLitOk (k : Int) : Bool := inI64Band k && k != 0
 
 /-- A literal node. -/
 def WTree.isLit : WTree → Bool

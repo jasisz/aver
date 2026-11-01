@@ -436,19 +436,31 @@ def mulRange (k : Int) : Int × Int :=
   let floor := fun (a : Int) => Int.ediv (a * k.sign) (k.natAbs : Int)
   if k = 0 then (-9223372036854775808, 9223372036854775807) else (-floor (-lo), floor hi)
 
-/-- `Int.div(x, k)` of the word on the stack (`int_tree.rs`, `Op::Div`): the
-    truncated quotient, one further from zero when the truncated remainder
-    is negative; the operand is parked in the word `w`. -/
-def divOpW (w : Nat) (k : Int) : List WInstr :=
+/-- `Int.div(x, k)` of the word on the stack by the general sequence
+    (`int_tree.rs`, `Op::Div`): the truncated quotient, one further from
+    zero when the truncated remainder is negative; the operand is parked in
+    the word `w`. -/
+def divGenW (w : Nat) (k : Int) : List WInstr :=
   [.localTee w, .i64Const k, .i64DivS, .localGet w, .i64Const k, .i64RemS, .i64Const 63, .i64ShrS,
     if 0 < k then .i64Add else .i64Sub]
 
-/-- `Int.mod(x, k)` of the word on the stack (`Op::Mod`): the truncated
-    remainder `r`, plus `|k|` when `r` is negative; `r` is parked in the word
-    `w`. -/
-def modOpW (w : Nat) (k : Int) : List WInstr :=
+/-- `Int.div(x, k)` of the word on the stack (`Op::Div`): by a positive
+    power of two `2^s` the arithmetic shift by `s` (a floor), else the
+    general sequence. -/
+def divOpW (w : Nat) (k : Int) : List WInstr :=
+  if 0 < k && isPow2 k.natAbs then [.i64Const (k.natAbs.log2 : Int), .i64ShrS] else divGenW w k
+
+/-- `Int.mod(x, k)` of the word on the stack by the general sequence
+    (`Op::Mod`): the truncated remainder `r`, plus `|k|` when `r` is
+    negative; `r` is parked in the word `w`. -/
+def modGenW (w : Nat) (k : Int) : List WInstr :=
   [.i64Const k, .i64RemS, .localTee w, .localGet w, .i64Const 63, .i64ShrS, .i64Const k.natAbs,
     .i64And, .i64Add]
+
+/-- `Int.mod(x, k)` of the word on the stack (`Op::Mod`): by `±2^n` the low
+    `n` bits (`i64.and` with `2^n - 1`), else the general sequence. -/
+def modOpW (w : Nat) (k : Int) : List WInstr :=
+  if isPow2 k.natAbs then [.i64Const ((k.natAbs - 1 : Nat) : Int), .i64And] else modGenW w k
 
 /-- The `i64` path of a tree: the word of each leaf, and each operation on
     the words. -/

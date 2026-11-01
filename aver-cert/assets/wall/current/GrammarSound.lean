@@ -461,10 +461,12 @@ theorem escFree_fastW (k C w : Nat) (hk : 0 < k) :
       simp only [fastW, escFreeL_append, escFree_fastW k C w hk a, Bool.true_and, guardW]
       split <;> (try split) <;> simp [escFreeI, hk]
   | .divLit _ a => by
-      simp only [fastW, escFreeL_append, escFree_fastW k C w hk a, Bool.true_and, divOpW]
-      split <;> simp [escFreeI, hk]
+      simp only [fastW, escFreeL_append, escFree_fastW k C w hk a, Bool.true_and, divOpW, divGenW]
+      repeat' split
+      all_goals simp [escFreeI, hk]
   | .modLit _ a => by
-      simp [fastW, escFreeL_append, escFree_fastW k C w hk a, modOpW, escFreeI, hk]
+      simp only [fastW, escFreeL_append, escFree_fastW k C w hk a, Bool.true_and, modOpW, modGenW]
+      split <;> simp [escFreeI, hk]
 
 theorem escFree_exactW (M : MCtx) : ∀ (t : WTree) (k : Nat), escFreeL k (exactW M t) = true
   | .leaf _, k => by simp [exactW_leaf, escFreeI]
@@ -3612,12 +3614,12 @@ theorem tmod_abs_bounds (x k : Int) (hk : k ≠ 0) :
   · have h := tmod_bounds x k hp
     omega
 
-theorem modOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat) (k x : Int)
+theorem modGen_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat) (k x : Int)
     (hk : -9223372036854775808 ≤ k ∧ k < 9223372036854775808) (hk0 : k ≠ 0)
     (habs : (k.natAbs : Int) < 9223372036854775808)
     (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
     (wl st : List WVal) (rest : List WInstr) (out : Out)
-    (h : wRunF host ar callee (modOpW w k ++ rest) wl (.i64v x :: st) = some out) :
+    (h : wRunF host ar callee (modGenW w k ++ rest) wl (.i64v x :: st) = some out) :
     ∃ L, WordsOnly w wl L ∧ -9223372036854775808 ≤ x % k ∧ x % k < 9223372036854775808 ∧
       wRunF host ar callee rest L (.i64v (x % k) :: st) = some out := by
   have hb := tmod_abs_bounds x k hk0
@@ -3650,10 +3652,10 @@ theorem modOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (
   by_cases hw : w < wl.length
   rotate_left
   · have hn : (wl.set w (WVal.i64v r))[w]? = none := List.getElem?_eq_none (by simp; omega)
-    simp [modOpW, wRunF, hx', hk', hk0, hr, hn] at h
+    simp [modGenW, wRunF, hx', hk', hk0, hr, hn] at h
   have hset : (wl.set w (.i64v r))[w]? = some (.i64v r) := by simp [hw]
   have hkne : (k != 0) = true := by simpa using hk0
-  simp only [modOpW, hkne, List.cons_append, List.nil_append, wRunF, hx', hk', hk0, hr, hset, hr', h63,
+  simp only [modGenW, hkne, List.cons_append, List.nil_append, wRunF, hx', hk', hk0, hr, hset, hr', h63,
     hs, ha', hand, hsg, hadj, Bool.and_self, bne_iff_ne, ne_eq, not_false_eq_true,
     decide_true, ↓reduceIte] at h
   rw [hsum, ← wrap64_id (r + (if r < 0 then (k.natAbs : Int) else 0)) (by rw [← hsum]; exact hband.1)
@@ -3668,11 +3670,11 @@ theorem tdiv_band (x k : Int) (hx : -9223372036854775808 ≤ x ∧ x < 922337203
     rw [h1]; exact Nat.le_trans h2 (by omega)
   omega
 
-theorem divOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat) (k x : Int)
+theorem divGen_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat) (k x : Int)
     (hk : -9223372036854775808 ≤ k ∧ k < 9223372036854775808) (hk0 : k ≠ 0) (hkm : k ≠ -1)
     (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
     (wl st : List WVal) (rest : List WInstr) (out : Out)
-    (h : wRunF host ar callee (divOpW w k ++ rest) wl (.i64v x :: st) = some out) :
+    (h : wRunF host ar callee (divGenW w k ++ rest) wl (.i64v x :: st) = some out) :
     ∃ L, WordsOnly w wl L ∧ -9223372036854775808 ≤ x / k ∧ x / k < 9223372036854775808 ∧
       wRunF host ar callee rest L (.i64v (x / k) :: st) = some out := by
   have hb := tmod_abs_bounds x k hk0
@@ -3708,11 +3710,11 @@ theorem divOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (
   by_cases hw : w < wl.length
   rotate_left
   · have hn : (wl.set w (WVal.i64v x))[w]? = none := List.getElem?_eq_none (by simp; omega)
-    simp [divOpW, wRunF, hx', hk', hn] at h
+    simp [divGenW, wRunF, hx', hk', hn] at h
   have hset : (wl.set w (.i64v x))[w]? = some (.i64v x) := by simp [hw]
   have hkne : (k != 0) = true := by simpa using hk0
   have hnm : ¬ (x == -9223372036854775808 && k == -1) = true := by simp [hkm]
-  simp only [divOpW, hkne, List.cons_append, List.nil_append, wRunF, hx', hk', hq, hr, hset, hr',
+  simp only [divGenW, hkne, List.cons_append, List.nil_append, wRunF, hx', hk', hq, hr, hset, hr',
     h63, hs, hsg, hq', Bool.and_self, Bool.true_and, hnm, Bool.not_eq_true', ↓reduceIte] at h
   rw [hres]
   by_cases hkp : 0 < k
@@ -3722,6 +3724,136 @@ theorem divOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (
   · simp only [hkp, ↓reduceIte, wRunF, hq', hsg, Bool.and_self] at h ⊢
     rwa [wrap64_id _ (by rw [hres] at hband; simpa [hkp] using hband.1)
       (by rw [hres] at hband; simpa [hkp] using hband.2)] at h
+
+/-! ### Quotient and remainder by a power of two
+
+By a positive `2^s` the Euclidean quotient is the arithmetic shift by `s`;
+by `±2^n` the Euclidean remainder is the low `n` bits. -/
+
+theorem xor_mask (n r : Nat) (h : r < 2 ^ n) : (2 ^ n - 1) ^^^ r = 2 ^ n - (r + 1) := by
+  apply Nat.eq_of_testBit_eq; intro i
+  rw [Nat.testBit_xor, Nat.testBit_two_pow_sub_one, Nat.testBit_two_pow_sub_succ h]
+  by_cases hi : i < n
+  · simp [hi]
+  · have : r.testBit i = false :=
+      Nat.testBit_lt_two_pow (Nat.lt_of_lt_of_le h (Nat.pow_le_pow_right (by decide) (by omega)))
+    simp [hi, this]
+
+theorem and64_mask (x : Int) (n : Nat) :
+    and64 x ((2 ^ n - 1 : Nat) : Int) = x % ((2 ^ n : Nat) : Int) := by
+  have hp : 0 < 2 ^ n := Nat.two_pow_pos n
+  cases x with
+  | ofNat a =>
+      show Int.ofNat (a &&& (2 ^ n - 1)) = _
+      rw [Nat.and_two_pow_sub_one_eq_mod]; rfl
+  | negSucc a =>
+      show Int.ofNat ((2 ^ n - 1) ^^^ (a &&& (2 ^ n - 1))) = _
+      rw [Nat.and_two_pow_sub_one_eq_mod, xor_mask n _ (Nat.mod_lt _ hp)]
+      have hm := Nat.mod_lt a hp
+      show _ = Int.subNatNat (2 ^ n) (a % 2 ^ n).succ
+      rw [Int.subNatNat_of_le (by omega)]
+      rfl
+
+theorem pow2_natAbs {k : Int} (hp : isPow2 k.natAbs = true) :
+    (k.natAbs : Int) = ((2 ^ k.natAbs.log2 : Nat) : Int) := by
+  simp only [isPow2, Bool.and_eq_true, bne_iff_ne, ne_eq, beq_iff_eq] at hp
+  rw [hp.2]
+
+theorem log2_lt63 {k : Int} (hp : isPow2 k.natAbs = true)
+    (hk : (k.natAbs : Int) < 9223372036854775808) : k.natAbs.log2 < 63 := by
+  have h := pow2_natAbs hp
+  have h2 : 2 ^ k.natAbs.log2 < 2 ^ 63 := by
+    have : ((2 ^ k.natAbs.log2 : Nat) : Int) < ((2 ^ 63 : Nat) : Int) := by
+      rw [← h]; simpa using hk
+    exact_mod_cast this
+  exact (Nat.pow_lt_pow_iff_right (by decide)).mp h2
+
+theorem divPow2_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (k x : Int)
+    (hk : 0 < k) (hp : isPow2 k.natAbs = true) (hkb : k < 9223372036854775808)
+    (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
+    (wl st : List WVal) (rest : List WInstr) (out : Out)
+    (h : wRunF host ar callee ([.i64Const (k.natAbs.log2 : Int), .i64ShrS] ++ rest) wl
+      (.i64v x :: st) = some out) :
+    -9223372036854775808 ≤ x / k ∧ x / k < 9223372036854775808 ∧
+      wRunF host ar callee rest wl (.i64v (x / k) :: st) = some out := by
+  have hn := log2_lt63 hp (by omega)
+  have hkk : k = ((2 ^ k.natAbs.log2 : Nat) : Int) := by
+    rw [← pow2_natAbs hp]; omega
+  have hx' : in64 x = true := (in64_iff x).mpr hx
+  have hn' : in64 (k.natAbs.log2 : Int) = true := (in64_iff _).mpr (by omega)
+  have hmod : ((k.natAbs.log2 : Int) % 64).toNat = k.natAbs.log2 := by omega
+  have hsh : x >>> ((k.natAbs.log2 : Int) % 64).toNat = x / k := by
+    rw [hmod, Int.shiftRight_eq_div_pow, hkk]; simp
+  have hlo : -9223372036854775808 ≤ x / k :=
+    Int.le_ediv_of_mul_le hk (by omega)
+  have hhi : x / k < 9223372036854775808 := by
+    by_cases h0 : 0 ≤ x
+    · have := Int.ediv_le_self k h0; omega
+    · have := Int.ediv_le_ediv hk (show x ≤ 0 by omega); simp at this; omega
+  refine ⟨hlo, hhi, ?_⟩
+  simpa [wRunF, hx', hn', hsh] using h
+
+theorem modPow2_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (k x : Int)
+    (hk0 : k ≠ 0) (hp : isPow2 k.natAbs = true)
+    (hkb : -9223372036854775808 ≤ k ∧ k < 9223372036854775808)
+    (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
+    (wl st : List WVal) (rest : List WInstr) (out : Out)
+    (h : wRunF host ar callee ([.i64Const ((k.natAbs - 1 : Nat) : Int), .i64And] ++ rest) wl
+      (.i64v x :: st) = some out) :
+    -9223372036854775808 ≤ x % k ∧ x % k < 9223372036854775808 ∧
+      wRunF host ar callee rest wl (.i64v (x % k) :: st) = some out := by
+  have hpk := pow2_natAbs hp
+  have hnk : 2 ^ k.natAbs.log2 = k.natAbs := by exact_mod_cast hpk.symm
+  have hx' : in64 x = true := (in64_iff x).mpr hx
+  have hm' : in64 ((k.natAbs - 1 : Nat) : Int) = true := (in64_iff _).mpr (by omega)
+  have hand : and64 x ((k.natAbs - 1 : Nat) : Int) = x % k := by
+    have := and64_mask x k.natAbs.log2
+    rw [hnk] at this
+    rw [this]
+    rcases Int.lt_or_gt_of_ne hk0 with hn | hpos
+    · rw [Int.ofNat_natAbs_of_nonpos (by omega), Int.emod_neg]
+    · rw [Int.natAbs_of_nonneg (by omega)]
+  have hb1 : 0 ≤ x % k := Int.emod_nonneg x hk0
+  have hb2 : x % k < (k.natAbs : Int) := by
+    have := Int.emod_lt x hk0; omega
+  refine ⟨by omega, by omega, ?_⟩
+  simpa [wRunF, hx', hm', hand] using h
+
+theorem divOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat) (k x : Int)
+    (hk : -9223372036854775808 ≤ k ∧ k < 9223372036854775808) (hk0 : k ≠ 0) (hkm : k ≠ -1)
+    (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
+    (wl st : List WVal) (rest : List WInstr) (out : Out)
+    (h : wRunF host ar callee (divOpW w k ++ rest) wl (.i64v x :: st) = some out) :
+    ∃ L, WordsOnly w wl L ∧ -9223372036854775808 ≤ x / k ∧ x / k < 9223372036854775808 ∧
+      wRunF host ar callee rest L (.i64v (x / k) :: st) = some out := by
+  unfold divOpW at h
+  split at h
+  · rename_i hp
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hp
+    obtain ⟨b1, b2, h⟩ := divPow2_run host ar callee k x hp.1 hp.2 hk.2 hx wl st rest out h
+    exact ⟨wl, WordsOnly.refl w wl, b1, b2, h⟩
+  · exact divGen_run host ar callee w k x hk hk0 hkm hx wl st rest out h
+
+theorem modOp_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat) (k x : Int)
+    (hk : -9223372036854775808 ≤ k ∧ k < 9223372036854775808) (hk0 : k ≠ 0)
+    (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
+    (wl st : List WVal) (rest : List WInstr) (out : Out)
+    (h : wRunF host ar callee (modOpW w k ++ rest) wl (.i64v x :: st) = some out) :
+    ∃ L, WordsOnly w wl L ∧ -9223372036854775808 ≤ x % k ∧ x % k < 9223372036854775808 ∧
+      wRunF host ar callee rest L (.i64v (x % k) :: st) = some out := by
+  unfold modOpW at h
+  split at h
+  · rename_i hp
+    obtain ⟨b1, b2, h⟩ := modPow2_run host ar callee k x hk0 hp hk hx wl st rest out h
+    exact ⟨wl, WordsOnly.refl w wl, b1, b2, h⟩
+  · rename_i hp
+    have habs : (k.natAbs : Int) < 9223372036854775808 := by
+      rcases Nat.lt_or_ge k.natAbs 9223372036854775808 with hl | hl
+      · omega
+      · exfalso
+        have : k.natAbs = 9223372036854775808 := by omega
+        rw [this] at hp; exact hp (by decide)
+    exact modGen_run host ar callee w k x hk hk0 habs hx wl st rest out h
 
 /-- The `i64` path of a tree: it branches out (`br 0`) with only the words
     changed, or pushes the tree's exact value, in the `i64` range. One
@@ -3817,27 +3949,21 @@ theorem fastW_run {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat → O
       obtain ⟨L1, h1, hr1⟩ := fastW_run S host ar callee w env a wl st _ out ha hha h
       rcases hr1 with ⟨S', rfl⟩ | ⟨va, hva, va1, va2, h⟩
       · exact ⟨L1, h1, Or.inl ⟨S', rfl⟩⟩
-      obtain ⟨L2, h2, b1, b2, h⟩ := divOp_run host ar callee w k va ⟨hkb.1.1.1.1, hkb.1.1.1.2⟩
-        hkb.1.1.2 hkb.1.2 ⟨va1, va2⟩ L1 st rest out h
+      obtain ⟨L2, h2, b1, b2, h⟩ := divOp_run host ar callee w k va ⟨hkb.1.1.1, hkb.1.1.2⟩
+        hkb.1.2 hkb.2 ⟨va1, va2⟩ L1 st rest out h
       exact ⟨L2, h1.trans h2, Or.inr ⟨va / k, by simp [WTree.val, hva], b1, b2, h⟩⟩
   | .modLit k a, wl, st, rest, out, ht, hh, h => by
       simp only [WTree.arith, Bool.and_eq_true] at ht
       obtain ⟨hkb, ha⟩ := ht
       simp only [modLitOk, inI64Band, Bool.and_eq_true, decide_eq_true_eq, bne_iff_ne, ne_eq,
         Bool.not_eq_true'] at hkb
-      have hk0 : k ≠ 0 := hkb.1.2
-      have habs : (k.natAbs : Int) < 9223372036854775808 := by
-        rcases Nat.lt_or_ge k.natAbs 9223372036854775808 with hl | hl
-        · omega
-        · exfalso
-          have : k.natAbs = 9223372036854775808 := by omega
-          rw [this] at hkb; simp [isPow2] at hkb
+      have hk0 : k ≠ 0 := hkb.2
       have hha : LeavesHeld S w env wl a := fun l hl => hh l (by simpa [WTree.leaves] using hl)
       simp only [fastW, List.append_assoc] at h
       obtain ⟨L1, h1, hr1⟩ := fastW_run S host ar callee w env a wl st _ out ha hha h
       rcases hr1 with ⟨S', rfl⟩ | ⟨va, hva, va1, va2, h⟩
       · exact ⟨L1, h1, Or.inl ⟨S', rfl⟩⟩
-      obtain ⟨L2, h2, b1, b2, h⟩ := modOp_run host ar callee w k va ⟨hkb.1.1.1, hkb.1.1.2⟩ hk0 habs
+      obtain ⟨L2, h2, b1, b2, h⟩ := modOp_run host ar callee w k va ⟨hkb.1.1, hkb.1.2⟩ hk0
         ⟨va1, va2⟩ L1 st rest out h
       exact ⟨L2, h1.trans h2, Or.inr ⟨va % k, by simp [WTree.val, hva], b1, b2, h⟩⟩
 
@@ -4021,9 +4147,9 @@ theorem exactW_run (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → O
       obtain ⟨hkb, ha⟩ := ht
       simp only [divLitOk, inI64Band, Bool.and_eq_true, decide_eq_true_eq, bne_iff_ne, ne_eq,
         Bool.not_eq_true'] at hkb
-      have hk1 : -(2 ^ 63 : Int) ≤ k := hkb.1.1.1.1
-      have hk2 : k < 2 ^ 63 := hkb.1.1.1.2
-      have hk0 : k ≠ 0 := hkb.1.1.2
+      have hk1 : -(2 ^ 63 : Int) ≤ k := hkb.1.1.1
+      have hk2 : k < 2 ^ 63 := hkb.1.1.2
+      have hk0 : k ≠ 0 := hkb.1.2
       have hha : ∀ l ∈ a.leaves, ∃ x, l.val env = some (.i x) ∧
           ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv :=
         fun l hl => hh l (by simpa [WTree.leaves] using hl)
@@ -4049,9 +4175,9 @@ theorem exactW_run (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → O
       obtain ⟨hkb, ha⟩ := ht
       simp only [modLitOk, inI64Band, Bool.and_eq_true, decide_eq_true_eq, bne_iff_ne, ne_eq,
         Bool.not_eq_true'] at hkb
-      have hk1 : -(2 ^ 63 : Int) ≤ k := hkb.1.1.1
-      have hk2 : k < 2 ^ 63 := hkb.1.1.2
-      have hk0 : k ≠ 0 := hkb.1.2
+      have hk1 : -(2 ^ 63 : Int) ≤ k := hkb.1.1
+      have hk2 : k < 2 ^ 63 := hkb.1.2
+      have hk0 : k ≠ 0 := hkb.2
       have hha : ∀ l ∈ a.leaves, ∃ x, l.val env = some (.i x) ∧
           ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv :=
         fun l hl => hh l (by simpa [WTree.leaves] using hl)
