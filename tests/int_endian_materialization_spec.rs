@@ -2,7 +2,7 @@
 
 #[test]
 fn endian_emitters_derive_the_shared_sequence_limit() {
-    let decimal = aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS.to_string();
+    let decimal = aver_rt::MAX_FIXED_WIDTH_INT_OCTETS.to_string();
     let sources = [
         ("src/ast/mod.rs", include_str!("../src/ast/mod.rs")),
         (
@@ -36,7 +36,7 @@ fn endian_errors_are_built_once_for_every_backend() {
         aver_rt::int_endian_width_error_message("Int.toBigEndian"),
         format!(
             "Int.toBigEndian: width must be between 0 and {}",
-            aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS
+            aver_rt::MAX_FIXED_WIDTH_INT_OCTETS
         )
     );
     assert_eq!(

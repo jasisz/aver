@@ -1,0 +1,23 @@
+module VectorSizes
+    intent =
+        "Fixture: Vector.new accepts exactly 2^24 elements and refuses one more with the shared message; Vector.fromList takes a list longer than 2^20 with no limit."
+    effects [Console.print]
+
+fn countdown(n: Int, acc: List<Int>) -> List<Int>
+    ? "The list n - 1, n - 2, ..., 0 prepended to acc."
+    match n <= 0
+        true -> acc
+        false -> countdown(n - 1, List.prepend(n - 1, acc))
+
+fn made(size: Int) -> String
+    ? "The length Vector.new gives for size, or its error message."
+    match Vector.new(size, true)
+        Result.Ok(v) -> "len {Vector.len(v)}"
+        Result.Err(message) -> message
+
+fn main()
+    ! [Console.print]
+    long = Vector.fromList(countdown(1048579, []))
+    Console.print("fromList {Vector.len(long)} last {Option.withDefault(Vector.get(long, 1048578), -1)}")
+    Console.print("at limit {made(16777216)}")
+    Console.print("over limit {made(16777217)}")

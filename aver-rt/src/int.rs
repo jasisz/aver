@@ -54,11 +54,11 @@ pub enum ShiftCountError {
 pub const MAX_MATERIALIZED_BITS: usize = 16 * 1024 * 1024;
 
 /// Public fixed-width Int encoder refusal text, derived from the shared
-/// portable sequence budget rather than repeated in compiler backends.
+/// encoder budget rather than repeated in compiler backends.
 pub fn int_endian_width_error_message(operation: &str) -> String {
     format!(
         "{operation}: width must be between 0 and {}",
-        crate::MAX_MATERIALIZED_SEQUENCE_ELEMENTS
+        crate::MAX_FIXED_WIDTH_INT_OCTETS
     )
 }
 
@@ -82,7 +82,7 @@ fn fixed_width_octets(
     let Some(width) = width.to_usize() else {
         return Err(int_endian_width_error_message(operation));
     };
-    if width > crate::MAX_MATERIALIZED_SEQUENCE_ELEMENTS {
+    if width > crate::MAX_FIXED_WIDTH_INT_OCTETS {
         return Err(int_endian_width_error_message(operation));
     }
     if value < &AverInt::zero() {
@@ -1184,7 +1184,7 @@ mod tests {
             int_to_little_endian(&AverInt::zero(), &AverInt::from_i64(-1)).unwrap_err(),
             format!(
                 "Int.toLittleEndian: width must be between 0 and {}",
-                crate::MAX_MATERIALIZED_SEQUENCE_ELEMENTS
+                crate::MAX_FIXED_WIDTH_INT_OCTETS
             )
         );
     }

@@ -866,20 +866,32 @@ where
 
 // ── AverVector: COW indexed sequence ─────────────────────────────────────────
 
-/// Maximum number of elements one `Vector.new` call may materialize.
+/// Maximum number of elements one `Vector.new` call may materialize: 2^24.
+///
+/// The limit guards against one operation expanding a compact input (the Int
+/// `n`) into a huge sequence. It applies only to such expanding operations.
+/// A sequence whose size is bounded by data that already exists
+/// (`Vector.fromList`, `List.fromVector`, `Vector.set`) has no limit: it
+/// costs no more than its input already does.
 ///
 /// This is an element budget, not a guessed byte estimate: Aver has no
 /// portable `sizeof(T)`, and the VM, generated Rust, wasm GC, and Lean
 /// intentionally use different representations for the same element type.
-/// One mebielement still gives every backend one exact semantic boundary and
-/// caps the operation at a finite number of clones/slots. On the VM it is
-/// roughly 8 MiB of `NanValue` slots before arena overhead.
-/// Portable element budget for a single operation that can expand a compact
-/// input into a sequence. `Vector.new` and the fixed-width Int encoders share
-/// the number, while retaining operation-specific diagnostics.
-pub const MAX_MATERIALIZED_SEQUENCE_ELEMENTS: usize = 1024 * 1024;
+/// One shared number still gives every backend one exact semantic boundary
+/// and caps the operation at a finite number of clones/slots. 2^24 holds a
+/// 16 MiB buffer one element per octet; on the VM it is roughly 128 MiB of
+/// `NanValue` slots before arena overhead, and it sits far below the wasm GC
+/// array length ceilings of Wasmtime and V8.
+pub const MAX_MATERIALIZED_VECTOR_ELEMENTS: usize = 1 << 24;
 
-pub const MAX_MATERIALIZED_VECTOR_ELEMENTS: usize = MAX_MATERIALIZED_SEQUENCE_ELEMENTS;
+/// Maximum `width` of one fixed-width Int encoder call
+/// (`Int.toBigEndian`, `Int.toLittleEndian`): one mebioctet.
+///
+/// Like [`MAX_MATERIALIZED_VECTOR_ELEMENTS`], it bounds an operation that
+/// expands a compact input (the Int `width`) into a sequence of that many
+/// octets. It is a separate number: an encoder's output is padding beyond the
+/// value's own magnitude, so it keeps the lower budget.
+pub const MAX_FIXED_WIDTH_INT_OCTETS: usize = 1024 * 1024;
 
 /// Convert an Aver integer to a materializable vector length.
 ///

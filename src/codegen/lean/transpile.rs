@@ -699,7 +699,7 @@ def stringFromUtf8 (bytes : Bytes) : Except String String :=
 /// forward references). Keeping this postlude in the owning namespace also
 /// leaves every emitted builtin spelling as `Bytes.int…`.
 fn emit_bytes_endian_builtins() -> String {
-    let limit = aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS;
+    let limit = aver_rt::MAX_FIXED_WIDTH_INT_OCTETS;
     let big_width = aver_rt::int_endian_width_error_message("Int.toBigEndian");
     let little_width = aver_rt::int_endian_width_error_message("Int.toLittleEndian");
     let big_value = aver_rt::int_endian_value_error_message("Int.toBigEndian");

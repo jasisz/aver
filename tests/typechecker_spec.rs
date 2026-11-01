@@ -2546,7 +2546,7 @@ fn literal_int_endian_discharge_requires_value_and_width_to_prove_totality() {
         "fn f() -> Bytes",
         &format!(
             "    Int.toBigEndian(0, {})",
-            aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS
+            aver_rt::MAX_FIXED_WIDTH_INT_OCTETS
         ),
     );
 
@@ -2562,7 +2562,7 @@ fn literal_int_endian_discharge_requires_value_and_width_to_prove_totality() {
         "fn f() -> Result<Bytes, String>",
         &format!(
             "    Int.toBigEndian(0, {})",
-            aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS + 1
+            aver_rt::MAX_FIXED_WIDTH_INT_OCTETS + 1
         ),
     );
 }
