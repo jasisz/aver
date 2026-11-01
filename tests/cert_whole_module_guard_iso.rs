@@ -243,15 +243,22 @@ fn section_offset_after_export(bytes: &[u8]) -> usize {
 }
 
 /// The declared closure of the emitted certificate, read back out of the
-/// `Artifact.lean` the producer just wrote
-/// (`closureClaim := ⟨roots, helpers, admitted⟩`). The whole-module guard-iso
+/// package the producer just wrote in `cert` (`closureClaim := ⟨roots,
+/// helpers, admitted⟩`, in `ArtifactData.lean` when the package splits its
+/// artifact modules, else in `Artifact.lean`). The whole-module guard-iso
 /// needs it to keep its escaped-call control non-vacuous: an admitted index is
 /// not a mutation that leaves the closure.
-fn admitted_closure_indices(artifact_lean: &Path) -> BTreeSet<u32> {
-    let text = std::fs::read_to_string(artifact_lean).expect("Artifact.lean exists");
+fn admitted_closure_indices(cert: &Path) -> BTreeSet<u32> {
+    let split = cert.join("ArtifactData.lean");
+    let artifact_lean = if split.exists() {
+        split
+    } else {
+        cert.join("Artifact.lean")
+    };
+    let text = std::fs::read_to_string(&artifact_lean).expect("the artifact data module exists");
     let start = text
         .find("closureClaim := ⟨")
-        .expect("Artifact.lean declares the closure claim")
+        .expect("the artifact data declares the closure claim")
         + "closureClaim := ⟨".len();
     let end = start + text[start..].find('⟩').expect("the closure claim closes");
     let lists: Vec<&str> = text[start..end]
@@ -701,7 +708,7 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
     // delta to the LOW LEB byte of its target. The delta is derived from the
     // closure the producer just declared, so the mutated call provably leaves
     // it.
-    let admitted = admitted_closure_indices(&cert.join("Artifact.lean"));
+    let admitted = admitted_closure_indices(&cert);
     assert!(
         admitted.contains(&call_target),
         "jsonInt's first callee must be inside the declared closure: \
