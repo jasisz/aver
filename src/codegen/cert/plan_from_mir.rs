@@ -1333,6 +1333,19 @@ impl Printer<'_> {
                     (None, None) => unreachable!("guarded: a literal operand"),
                 }
             }
+            // A quotient or remainder by a literal (`WTree.divLit` /
+            // `modLit`): the MIR forms one only for a divisor the wall
+            // computes that way.
+            IntWordNode::Op {
+                op: IntWordOp::Div(k),
+                args,
+                ..
+            } if args.len() == 1 => PlanWTree::DivLit(*k, Box::new(self.word_tree(&args[0])?)),
+            IntWordNode::Op {
+                op: IntWordOp::Mod(k),
+                args,
+                ..
+            } if args.len() == 1 => PlanWTree::ModLit(*k, Box::new(self.word_tree(&args[0])?)),
             IntWordNode::Op { op, args, .. } => {
                 let (Some(bop), [a, b]) = (op.bin_op(), args.as_slice()) else {
                     return Err(format!("IntWord operation {op:?} (not in the wall)"));

@@ -436,6 +436,20 @@ def mulRange (k : Int) : Int × Int :=
   let floor := fun (a : Int) => Int.ediv (a * k.sign) (k.natAbs : Int)
   if k = 0 then (-9223372036854775808, 9223372036854775807) else (-floor (-lo), floor hi)
 
+/-- `Int.div(x, k)` of the word on the stack (`int_tree.rs`, `Op::Div`): the
+    truncated quotient, one further from zero when the truncated remainder
+    is negative; the operand is parked in the word `w`. -/
+def divOpW (w : Nat) (k : Int) : List WInstr :=
+  [.localTee w, .i64Const k, .i64DivS, .localGet w, .i64Const k, .i64RemS, .i64Const 63, .i64ShrS,
+    if 0 < k then .i64Add else .i64Sub]
+
+/-- `Int.mod(x, k)` of the word on the stack (`Op::Mod`): the truncated
+    remainder `r`, plus `|k|` when `r` is negative; `r` is parked in the word
+    `w`. -/
+def modOpW (w : Nat) (k : Int) : List WInstr :=
+  [.i64Const k, .i64RemS, .localTee w, .localGet w, .i64Const 63, .i64ShrS, .i64Const k.natAbs,
+    .i64And, .i64Add]
+
 /-- The `i64` path of a tree: the word of each leaf, and each operation on
     the words. -/
 def fastW (C w : Nat) : WTree → List WInstr
@@ -445,6 +459,8 @@ def fastW (C w : Nat) : WTree → List WInstr
   | .pick p a b => fastW C w a ++ fastW C w b ++ pickOpW w p
   | .mulLit k _ a =>
       fastW C w a ++ guardW (mulRange k).1 (mulRange k).2 w ++ [.localGet w, .i64Const k, .i64Mul]
+  | .divLit k a => fastW C w a ++ divOpW w k
+  | .modLit k a => fastW C w a ++ modOpW w k
 
 /-- The exact path of a tree: each leaf's carrier, each literal boxed, each
     operation's call, and for `Int.min` / `Int.max` the three-way helper and
@@ -459,6 +475,10 @@ def exactB (M : MCtx) : WTree → List BI
   | .mulLit k lf a =>
       (if lf then [.op (.i64Const k), .op (.call M.box)] ++ exactB M a
         else exactB M a ++ [.op (.i64Const k), .op (.call M.box)]) ++ [.op (.call M.mul)]
+  | .divLit k a =>
+      exactB M a ++ [.op (.i64Const k), .op (.call M.box), .op (.i32Const 0), .op (.call M.divmod)]
+  | .modLit k a =>
+      exactB M a ++ [.op (.i64Const k), .op (.call M.box), .op (.i32Const 1), .op (.call M.divmod)]
 
 /-- The exact path the interpreter runs. -/
 def exactW (M : MCtx) (t : WTree) : List WInstr := eraseL (exactB M t)
@@ -482,6 +502,16 @@ theorem exactW_mulLit (M : MCtx) (k : Int) (lf : Bool) (a : WTree) :
         else exactW M a ++ [.i64Const k, .call M.box]) ++ [.call M.mul] := by
   cases lf <;> simp [exactW, exactB, eraseL_append, eraseL, eraseI]
 
+theorem exactW_divLit (M : MCtx) (k : Int) (a : WTree) :
+    exactW M (.divLit k a) =
+      exactW M a ++ [.i64Const k, .call M.box, .i32Const 0, .call M.divmod] := by
+  simp [exactW, exactB, eraseL_append, eraseL, eraseI]
+
+theorem exactW_modLit (M : MCtx) (k : Int) (a : WTree) :
+    exactW M (.modLit k a) =
+      exactW M a ++ [.i64Const k, .call M.box, .i32Const 1, .call M.divmod] := by
+  simp [exactW, exactB, eraseL_append, eraseL, eraseI]
+
 /-- The field leaves read ahead, in order, each stored in its local. -/
 def aheadW (M : MCtx) : WTree → List WInstr
   | .leaf (.local _) => []
@@ -491,6 +521,8 @@ def aheadW (M : MCtx) : WTree → List WInstr
   | .lit _ => []
   | .pick _ a b => aheadW M a ++ aheadW M b
   | .mulLit _ _ a => aheadW M a
+  | .divLit _ a => aheadW M a
+  | .modLit _ a => aheadW M a
 
 /-- `block $done (block $slow <i64 path> box br $done) <exact path>`. -/
 def wordBlock (M : MCtx) (t : WTree) (w : Nat) : BI :=
@@ -852,6 +884,8 @@ def encW : WInstr → Option (List Nat)
   | .select => some [0x1b]
   | .i64GtU => some [0x56]
   | .i64Add => some [0x7c]
+  | .i64RemS => some [0x81]
+  | .i64ShrS => some [0x87]
   | .i64Sub => some [0x7d]
   | .i64Mul => some [0x7e]
   | .i64DivS => some [0x7f]

@@ -132,6 +132,9 @@ inductive WInstr where
   | localTee (i : Nat)
   | select
   | i64Add | i64Sub | i64Mul | i64And | i64Xor | i64DivS | i64GtU
+  -- `i64.rem_s` and `i64.shr_s`: the machine path of `Int.div` / `Int.mod`
+  -- by a literal (`int_tree.rs`).
+  | i64RemS | i64ShrS
 deriving Repr
 
 /-- Function-body control around the straight-line fragment: an
@@ -559,6 +562,22 @@ def wRunF (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
       match st with
       | .i64v b :: .i64v a :: st' =>
           if in64 a && in64 b then wRunF host ar callee rest locals (b32 (gtU64 a b) :: st')
+          else none
+      | _ => none
+  | .i64RemS :: rest, locals, st =>
+      -- Truncating remainder; a zero divisor traps (`i64::MIN rem -1` is 0).
+      match st with
+      | .i64v b :: .i64v a :: st' =>
+          if in64 a && in64 b && b != 0 then
+            wRunF host ar callee rest locals (.i64v (a.tmod b) :: st')
+          else none
+      | _ => none
+  | .i64ShrS :: rest, locals, st =>
+      -- Arithmetic shift right by the count modulo 64.
+      match st with
+      | .i64v b :: .i64v a :: st' =>
+          if in64 a && in64 b then
+            wRunF host ar callee rest locals (.i64v (a >>> (b % 64).toNat) :: st')
           else none
       | _ => none
   termination_by instrs _ _ => sizeOf instrs

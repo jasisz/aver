@@ -204,6 +204,17 @@ impl<'a> MCtx<'a> {
                 out.push(BI::Op(WI::Call(self.mul)));
                 out
             }
+            PlanWTree::DivLit(k, a) | PlanWTree::ModLit(k, a) => {
+                let flag = i64::from(matches!(t, PlanWTree::ModLit(..)));
+                let mut out = self.exact_b(a);
+                out.extend(ops(vec![
+                    WI::I64Const(*k),
+                    WI::Call(self.box_),
+                    WI::I32Const(flag),
+                    WI::Call(self.divmod),
+                ]));
+                out
+            }
             PlanWTree::Pick(p, a, b) => {
                 let mut out = self.exact_b(a);
                 out.extend(self.exact_b(b));
@@ -503,6 +514,8 @@ impl MCtx<'_> {
             PlanWTree::Lit(_) => true,
             PlanWTree::Pick(_, a, b) => self.word_tree_ok(n, g, a) && self.word_tree_ok(n, g, b),
             PlanWTree::MulLit(_, _, a) => self.word_tree_ok(n, g, a),
+            PlanWTree::DivLit(k, a) => div_lit_ok(*k) && self.word_tree_ok(n, g, a),
+            PlanWTree::ModLit(k, a) => mod_lit_ok(*k) && self.word_tree_ok(n, g, a),
         }
     }
 
@@ -1090,6 +1103,8 @@ enum WI {
     I64DivS,
     I64And,
     I64Xor,
+    I64RemS,
+    I64ShrS,
 }
 
 /// `GrammarLower.BI`.
@@ -1157,6 +1172,16 @@ fn tree_op(w: u32, op: PlanBinOp) -> Vec<WI> {
     out
 }
 
+/// `Grammar.divLitOk`: not `0`, not `-1`, no positive power of two.
+pub(crate) fn div_lit_ok(k: i64) -> bool {
+    k != 0 && k != -1 && !(k > 0 && k.unsigned_abs().is_power_of_two())
+}
+
+/// `Grammar.modLitOk`: not `0`, no magnitude a power of two.
+pub(crate) fn mod_lit_ok(k: i64) -> bool {
+    k != 0 && !k.unsigned_abs().is_power_of_two()
+}
+
 /// `GrammarLower.mulRange`: the operands whose product by `k` fits an `i64`.
 fn mul_range(k: i128) -> (i128, i128) {
     let (min, max) = (i128::from(i64::MIN), i128::from(i64::MAX));
@@ -1200,6 +1225,34 @@ fn fast_w(c: u64, w: u32, t: &PlanWTree, out: &mut Vec<WI>) {
             out.extend(tree_op(w, *op));
         }
         PlanWTree::Lit(k) => out.push(WI::I64Const(*k)),
+        PlanWTree::DivLit(k, a) => {
+            fast_w(c, w, a, out);
+            out.extend([
+                WI::LocalTee(w),
+                WI::I64Const(*k),
+                WI::I64DivS,
+                WI::LocalGet(w),
+                WI::I64Const(*k),
+                WI::I64RemS,
+                WI::I64Const(63),
+                WI::I64ShrS,
+                if *k > 0 { WI::I64Add } else { WI::I64Sub },
+            ]);
+        }
+        PlanWTree::ModLit(k, a) => {
+            fast_w(c, w, a, out);
+            out.extend([
+                WI::I64Const(*k),
+                WI::I64RemS,
+                WI::LocalTee(w),
+                WI::LocalGet(w),
+                WI::I64Const(63),
+                WI::I64ShrS,
+                WI::I64Const(k.unsigned_abs() as i64),
+                WI::I64And,
+                WI::I64Add,
+            ]);
+        }
         PlanWTree::MulLit(k, _, a) => {
             fast_w(c, w, a, out);
             let (lo, hi) = mul_range(i128::from(*k));
@@ -2196,6 +2249,8 @@ impl MCtx<'_> {
             }
             WI::Select => out.push(0x1b),
             WI::I64GtU => out.push(0x56),
+            WI::I64RemS => out.push(0x81),
+            WI::I64ShrS => out.push(0x87),
             WI::I64Add => out.push(0x7c),
             WI::I64Sub => out.push(0x7d),
             WI::I64Mul => out.push(0x7e),
@@ -2495,6 +2550,7 @@ fn tot_w(mul_ok: bool, t: &PlanWTree) -> bool {
                 && tot_w(mul_ok, b)
         }
         PlanWTree::MulLit(_, _, a) => mul_ok && tot_w(mul_ok, a),
+        PlanWTree::DivLit(..) | PlanWTree::ModLit(..) => false,
         PlanWTree::Leaf(PlanWLeaf::Field { .. }) | PlanWTree::Pick(..) => false,
     }
 }

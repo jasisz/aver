@@ -74,6 +74,8 @@ def WTree.totW (mulOk : Bool) : WTree → Bool
   | .lit _ => true
   | .pick _ _ _ => false
   | .mulLit _ _ a => mulOk && a.totW mulOk
+  | .divLit _ _ => false
+  | .modLit _ _ => false
 
 /-- Some `*` occurs in the tree. -/
 def WTree.usesMulW : WTree → Bool
@@ -513,6 +515,8 @@ theorem fastW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat 
       · simp [fastW, smallReadW, WLeaf.loc, wRunF, hwl, b32]
   | .leaf (.field _ _ _ _), _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
   | .pick _ _ _, _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
+  | .divLit _ _, _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
+  | .modLit _ _, _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
   | .mulLit k lf a, wl, st, ht, har, hh, hp, hlen => by
       simp only [WTree.totW, Bool.and_eq_true] at ht
       simp only [WTree.arith, Bool.and_eq_true] at har
@@ -578,6 +582,7 @@ theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat
     (hAdd : host M.add = some (2, add)) (hSub : host M.sub = some (2, sub))
     (hMul : host M.mul = some (2, mul))
     (hCmp : host M.cmp = some (2, cmp)) (hEq : host M.eq = some (2, eq))
+    (hDiv : DivmodSpec S M host)
     (hBoxT : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → ∃ w, box [.i64v k] = some w)
     (hAddT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
     (hSubT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
@@ -596,6 +601,8 @@ theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat
       simp [exactW_leaf, WLeaf.loc, wRunF, hwl]
   | .leaf (.field _ _ _ _), _, _, ht, _, _, _ => by simp [WTree.totW] at ht
   | .pick _ _ _, _, _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .divLit _ _, _, _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .modLit _ _, _, _, ht, _, _, _ => by simp [WTree.totW] at ht
   | .mulLit k lf a, L, st, ht, har, hh, hp => by
       simp only [WTree.totW, Bool.and_eq_true] at ht
       simp only [WTree.arith, Bool.and_eq_true] at har
@@ -612,10 +619,10 @@ theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat
       · simp only [Bool.false_eq_true, ↓reduceIte, List.append_assoc]
         rw [wRunF_append]
         obtain ⟨oa, hoa⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd
-          hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env a L st ht.2 har.2 hha hpa
+          hSub hMul hCmp hEq hDiv hBoxT hAddT hSubT mulOk hMulT env a L st ht.2 har.2 hha hpa
         have hoa' : wRunF host ar callee (exactW M a ++ []) L st = some oa := by simpa using hoa
         obtain ⟨va, wa, -, hca, h1⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
-          hAdd hSub hMul hCmp hEq env a L st [] oa har.2 hha hoa'
+          hAdd hSub hMul hCmp hEq hDiv env a L st [] oa har.2 hha hoa'
         simp only [wRunF] at h1
         cases h1
         rw [hoa]
@@ -628,11 +635,11 @@ theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat
           simp [wRunF, hBox, popArgs, hwk]
         rw [h1, wRunF_append]
         obtain ⟨oa, hoa⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd
-          hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env a L (wk :: st) ht.2 har.2 hha hpa
+          hSub hMul hCmp hEq hDiv hBoxT hAddT hSubT mulOk hMulT env a L (wk :: st) ht.2 har.2 hha hpa
         have hoa' : wRunF host ar callee (exactW M a ++ []) L (wk :: st) = some oa := by
           simpa using hoa
         obtain ⟨va, wa, -, hca, h1⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
-          hAdd hSub hMul hCmp hEq env a L (wk :: st) [] oa har.2 hha hoa'
+          hAdd hSub hMul hCmp hEq hDiv env a L (wk :: st) [] oa har.2 hha hoa'
         simp only [wRunF] at h1
         cases h1
         rw [hoa]
@@ -658,21 +665,21 @@ theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat
       have hpb : LeavesPresent L b := fun l hl => hp l (by simp [WTree.leaves, hl])
       rw [exactW_op, List.append_assoc, wRunF_append]
       obtain ⟨oa, hoa⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd
-        hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env a L st ht.1.2 ha hha hpa
+        hSub hMul hCmp hEq hDiv hBoxT hAddT hSubT mulOk hMulT env a L st ht.1.2 ha hha hpa
       have hoa' : wRunF host ar callee (exactW M a ++ []) L st = some oa := by simpa using hoa
       obtain ⟨va, wa, -, hca, h1⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
-        hAdd hSub hMul hCmp hEq env a L st [] oa ha hha hoa'
+        hAdd hSub hMul hCmp hEq hDiv env a L st [] oa ha hha hoa'
       simp only [wRunF] at h1
       cases h1
       rw [hoa]
       simp only [seqOut]
       rw [wRunF_append]
       obtain ⟨ob, hob⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd
-        hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env b L (wa :: st) ht.2 hb hhb hpb
+        hSub hMul hCmp hEq hDiv hBoxT hAddT hSubT mulOk hMulT env b L (wa :: st) ht.2 hb hhb hpb
       have hob' : wRunF host ar callee (exactW M b ++ []) L (wa :: st) = some ob := by
         simpa using hob
       obtain ⟨vb, wb, -, hcb, h2⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
-        hAdd hSub hMul hCmp hEq env b L (wa :: st) [] ob hb hhb hob'
+        hAdd hSub hMul hCmp hEq hDiv env b L (wa :: st) [] ob hb hhb hob'
       simp only [wRunF] at h2
       cases h2
       rw [hob]
@@ -693,6 +700,7 @@ theorem wordBlock_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : 
     (hAdd : host M.add = some (2, add)) (hSub : host M.sub = some (2, sub))
     (hMul : host M.mul = some (2, mul))
     (hCmp : host M.cmp = some (2, cmp)) (hEq : host M.eq = some (2, eq))
+    (hDiv : DivmodSpec S M host)
     (hBoxT : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → ∃ w, box [.i64v k] = some w)
     (hAddT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
     (hSubT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
@@ -722,11 +730,11 @@ theorem wordBlock_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : 
   · simp only [Nat.not_lt_zero, ↓reduceIte, List.take_zero, List.nil_append]
     have hhL := hh.after hL
     obtain ⟨oe, he⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd hSub
-      hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env t L st ht har
+      hMul hCmp hEq hDiv hBoxT hAddT hSubT mulOk hMulT env t L st ht har
       (fun l hl => let ⟨_, x, hx, hcx⟩ := hhL l hl; ⟨x, hx, hcx⟩) (LeavesPresent.after hh hp hL)
     have he' : wRunF host ar callee (exactW M t ++ []) L st = some oe := by simpa using he
     obtain ⟨_, wv, _, _, hr⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
-      hAdd hSub hMul hCmp hEq env t L st [] oe har
+      hAdd hSub hMul hCmp hEq hDiv env t L st [] oe har
       (fun l hl => let ⟨_, x, hx, hcx⟩ := hhL l hl; ⟨x, hx, hcx⟩) he'
     simp only [wRunF] at hr
     cases hr
@@ -745,6 +753,8 @@ theorem totW_leaf {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} {mulOk : Bool} :
       exact ⟨i, rfl, hok⟩
   | .leaf (.field _ _ _ _), ht, _, _, _ => by simp [WTree.totW] at ht
   | .pick _ _ _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .divLit _ _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .modLit _ _, ht, _, _, _ => by simp [WTree.totW] at ht
   | .mulLit _ _ a, ht, hok, l, hl => by
       simp only [WTree.totW, Bool.and_eq_true] at ht
       simp only [WTree.ok, Bool.and_eq_true] at hok
@@ -764,6 +774,8 @@ theorem aheadW_totW (M : MCtx) {mulOk : Bool} :
   | .leaf (.local _), _ => rfl
   | .leaf (.field _ _ _ _), ht => by simp [WTree.totW] at ht
   | .pick _ _ _, ht => by simp [WTree.totW] at ht
+  | .divLit _ _, ht => by simp [WTree.totW] at ht
+  | .modLit _ _, ht => by simp [WTree.totW] at ht
   | .mulLit _ _ a, ht => by
       simp only [WTree.totW, Bool.and_eq_true] at ht
       simp [aheadW, aheadW_totW M ht.2]
@@ -1008,7 +1020,7 @@ theorem progress :
           exact ⟨wv, hw⟩
         simp only [lowerW, lowerB, aheadW_totW M htw, List.map_nil, List.nil_append, eraseL]
         exact wordBlock_progress S host ar callee M hCarrier box add sub mul cmp eq Ctr hBox hAdd
-          hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env t w wl st htw
+          hSub hMul hCmp hEq R.divmod hBoxT hAddT hSubT mulOk hMulT env t w wl st htw
           (WTree.arith_of_ok htok) hh hp (by omega)
       · cases hty
 

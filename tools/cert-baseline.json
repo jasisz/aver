@@ -3119,6 +3119,7 @@
  },
  "tools/certkit/fixtures/wordleaves.av": {
   "bridges": [
+   "bucket",
    "scaledSum",
    "shift",
    "spread",
@@ -3126,6 +3127,7 @@
    "tripledLess"
   ],
   "certified": {
+   "bucket": "L1",
    "scaledSum": "L1",
    "shift": "L1",
    "spread": "L1",
