@@ -1,0 +1,28 @@
+module Declined
+    intent =
+        "A tail loop the plan printer may print but declines (a tuple on a"
+        "branch it rarely takes): a --certify build gives it the twin a plain"
+        "build gives it, and keeps only the certified firstOf."
+    exposes [firstOf, loop]
+    effects [Console.print]
+
+fn firstOf(p: Tuple<Int, Int>) -> Int
+    ? "First of a pair; certified."
+    match p
+        (a, _) -> a
+
+fn loop(n: Int, x: Int, acc: Int) -> Int
+    ? "Declined for its tuple; runs on its twin."
+    match n <= 0
+        true -> acc
+        false -> match x == 0 - 1
+            true -> firstOf((acc, n))
+            false -> loop(n - 1, Int.mod(x * 1103515245 + 12345, 2147483648), acc + x - 1000)
+
+fn main() -> Unit
+    ? "Runs the loop; its sum is taken apart, so the loop's twin is called."
+    ! [Console.print]
+    Console.print(String.fromInt(loop(1000, 7, 0) + 1))
+
+verify loop
+    loop(3, 7, 0) => 1924831456
