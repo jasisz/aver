@@ -3,11 +3,12 @@
   certificate profile. Given a wasm-gc module as a little-endian big-`Nat`
   plus a byte length, it decodes the profile-relevant sections into PURE DATA
   (`rfl`-comparable): a typed type-section IR, raw import/export indices, the
-  Int carrier type index, exact data/code locations, and per-function `WCode`
-  (arity from the type section, nlocals from the locals declaration, body as
-  `List CertPrelude.WInstr` — the full 39-opcode fragment, if/else/end folded
-  into `WInstr.ifElse`; a self tail loop's body, `loop … end unreachable`,
-  as `WCode.loopBody`).
+  Int carrier type index, and exact data/code locations. It decodes no
+  instruction of a user function: the acceptance path binds each planned
+  function's code entry by re-encoding its plan's lowering
+  (`GrammarLower.codeEntryBytes`) and comparing the bytes for equality
+  (`AcceptedArtifactCore.boundFunction`), so the code section is located and
+  isolated here, never decoded.
 
   Differential fixtures pin this decoder against the producer decoder and the
   standalone certkit reference implementation.
@@ -737,178 +738,6 @@ def skipBlockType (n len : Nat) : Option (Nat × Nat) :=
       | none => none
       | some (_, n1, len1) => some (n1, len1)
 
-/-- Decode one non-structured instruction. `pending` holds i32 const values
-    most-recent-first, so `array.new_data` resolves its (offset, length). -/
-def decInstr (nfields : List Nat) (segs : List (List Nat)) (pending : List Int)
-    (op n len : Nat) : Option (WInstr × List Int × Nat × Nat) :=
-  if op == 0x20 then (readU n len).map (fun p => (WInstr.localGet p.1, pending, p.2.1, p.2.2))
-  else if op == 0x21 then (readU n len).map (fun p => (WInstr.localSet p.1, pending, p.2.1, p.2.2))
-  else if op == 0x42 then (readS n len).map (fun p => (WInstr.i64Const p.1, pending, p.2.1, p.2.2))
-  else if op == 0x41 then (readS n len).map (fun p => (WInstr.i32Const p.1, p.1 :: pending, p.2.1, p.2.2))
-  else if op == 0x44 then
-    if len < 8 then none
-    else some (WInstr.f64Const (UInt64.ofNat (n &&& 0xffffffffffffffff)), pending, n >>> 64, len - 8)
-  else if op == 0xd0 then (readS n len).map (fun p => (WInstr.refNull, pending, p.2.1, p.2.2))
-  else if op == 0xd1 then some (WInstr.refIsNull, pending, n, len)
-  else if op == 0x10 then (readU n len).map (fun p => (WInstr.call p.1, pending, p.2.1, p.2.2))
-  else if op == 0x12 then (readU n len).map (fun p => (WInstr.returnCall p.1, pending, p.2.1, p.2.2))
-  else if op == 0x0f then some (WInstr.ret, pending, n, len)
-  -- integer / float scalar ops (single byte, no immediate)
-  else if op == 0x50 then some (WInstr.i64Eqz, pending, n, len)
-  else if op == 0x51 then some (WInstr.i64Eq, pending, n, len)
-  else if op == 0x57 then some (WInstr.i64LeS, pending, n, len)
-  else if op == 0x53 then some (WInstr.i64LtS, pending, n, len)
-  else if op == 0x59 then some (WInstr.i64GeS, pending, n, len)
-  else if op == 0x55 then some (WInstr.i64GtS, pending, n, len)
-  else if op == 0x46 then some (WInstr.i32Eq, pending, n, len)
-  else if op == 0x71 then some (WInstr.i32And, pending, n, len)
-  else if op == 0x48 then some (WInstr.i32LtS, pending, n, len)
-  else if op == 0x4c then some (WInstr.i32LeS, pending, n, len)
-  else if op == 0x4a then some (WInstr.i32GtS, pending, n, len)
-  else if op == 0x4e then some (WInstr.i32GeS, pending, n, len)
-  else if op == 0xa0 then some (WInstr.f64Add, pending, n, len)
-  else if op == 0xa1 then some (WInstr.f64Sub, pending, n, len)
-  else if op == 0xa2 then some (WInstr.f64Mul, pending, n, len)
-  else if op == 0xa3 then some (WInstr.f64Div, pending, n, len)
-  else if op == 0x61 then some (WInstr.f64Eq, pending, n, len)
-  else if op == 0x63 then some (WInstr.f64Lt, pending, n, len)
-  else if op == 0x65 then some (WInstr.f64Le, pending, n, len)
-  else if op == 0x66 then some (WInstr.f64Ge, pending, n, len)
-  else if op == 0x64 then some (WInstr.f64Gt, pending, n, len)
-  -- wasm-gc prefixed opcodes (0xfb sub)
-  else if op == 0xfb then
-    match readU n len with
-    | none => none
-    | some (sub, n1, len1) =>
-        if sub == 0x00 then                          -- struct.new
-          (readU n1 len1).map (fun q =>
-            (WInstr.structNew q.1 ((nfields[q.1]?).getD 0), pending, q.2.1, q.2.2))
-        else if sub == 0x02 then                     -- struct.get
-          match readU n1 len1 with
-          | none => none
-          | some (ty, n2, len2) =>
-              (readU n2 len2).map (fun f => (WInstr.structGet ty f.1, pending, f.2.1, f.2.2))
-        else if sub == 0x08 then                     -- array.new_fixed
-          match readU n1 len1 with
-          | none => none
-          | some (ty, n2, len2) =>
-              (readU n2 len2).map (fun m => (WInstr.arrayNewFixed ty m.1, pending, m.2.1, m.2.2))
-        else if sub == 0x09 then                     -- array.new_data
-          match readU n1 len1 with
-          | none => none
-          | some (ty, n2, len2) =>
-              match readU n2 len2 with
-              | none => none
-              | some (seg, n3, len3) =>
-                  let length := (pending.headD 0).toNat
-                  let offset := ((pending.drop 1).headD 0).toNat
-                  let payload := (segs[seg]?).getD []
-                  let chunk := (payload.drop offset).take length
-                  some (WInstr.arrayNewData ty chunk, pending, n3, len3)
-        else if sub == 0x14 || sub == 0x15 then      -- ref.test
-          (readS n1 len1).map (fun h => (WInstr.refTest h.1.toNat, pending, h.2.1, h.2.2))
-        else if sub == 0x16 || sub == 0x17 then      -- ref.cast
-          (readS n1 len1).map (fun h => (WInstr.refCast h.1.toNat, pending, h.2.1, h.2.2))
-        else none
-  else none
-
-/-- Decode a block of instructions. Returns the folded instructions, the
-    threaded `pending` list, the new `(n, len)`, and a terminator tag
-    (0 = `end` 0x0b, 1 = `else` 0x05), both consumed. Fuel bounds the number of
-    instructions (body byte size is a safe bound). -/
-def decBlock (nfields : List Nat) (segs : List (List Nat)) :
-    Nat → List Int → Nat → Nat → Option (List WInstr × List Int × Nat × Nat × Nat)
-  | 0,      _,       _, _   => none
-  | fuel+1, pending, n, len =>
-      if len == 0 then none else
-        let op := n &&& 0xff
-        let n1 := n >>> 8
-        let len1 := len - 1
-        if op == 0x0b then some ([], pending, n1, len1, 0)
-        else if op == 0x05 then some ([], pending, n1, len1, 1)
-        else if op == 0x04 then
-          match skipBlockType n1 len1 with
-          | none => none
-          | some (n2, len2) =>
-              match decBlock nfields segs fuel pending n2 len2 with
-              | none => none
-              | some (thenB, pend1, n3, len3, t1) =>
-                  if t1 == 1 then
-                    match decBlock nfields segs fuel pend1 n3 len3 with
-                    | none => none
-                    | some (elseB, pend2, n4, len4, t2) =>
-                        if t2 == 0 then
-                          match decBlock nfields segs fuel pend2 n4 len4 with
-                          | none => none
-                          | some (rest, pend3, n5, len5, t3) =>
-                              some (WInstr.ifElse thenB elseB :: rest, pend3, n5, len5, t3)
-                        else none
-                  else if t1 == 0 then
-                    match decBlock nfields segs fuel pend1 n3 len3 with
-                    | none => none
-                    | some (rest, pend3, n5, len5, t3) =>
-                        some (WInstr.ifElse thenB [] :: rest, pend3, n5, len5, t3)
-                  else none
-        else
-          match decInstr nfields segs pending op n1 len1 with
-          | none => none
-          | some (ins, pending', n2, len2) =>
-              match decBlock nfields segs fuel pending' n2 len2 with
-              | none => none
-              | some (rest, pend3, n3, len3, t3) => some (ins :: rest, pend3, n3, len3, t3)
-
-/-- Decode the body of a function's top-level `loop` into `CI`: as
-    `decBlock`, except that every `if` is a `CI.ifElse` (its arms may branch)
-    and `br d` (0x0c) is read. Any other control instruction, a nested `loop`
-    included, is not decoded (`none`). -/
-def decLoopBlock (nfields : List Nat) (segs : List (List Nat)) :
-    Nat → List Int → Nat → Nat → Option (List CI × List Int × Nat × Nat × Nat)
-  | 0,      _,       _, _   => none
-  | fuel+1, pending, n, len =>
-      if len == 0 then none else
-        let op := n &&& 0xff
-        let n1 := n >>> 8
-        let len1 := len - 1
-        if op == 0x0b then some ([], pending, n1, len1, 0)
-        else if op == 0x05 then some ([], pending, n1, len1, 1)
-        else if op == 0x04 then
-          match skipBlockType n1 len1 with
-          | none => none
-          | some (n2, len2) =>
-              match decLoopBlock nfields segs fuel pending n2 len2 with
-              | none => none
-              | some (thenB, pend1, n3, len3, t1) =>
-                  if t1 == 1 then
-                    match decLoopBlock nfields segs fuel pend1 n3 len3 with
-                    | none => none
-                    | some (elseB, pend2, n4, len4, t2) =>
-                        if t2 == 0 then
-                          match decLoopBlock nfields segs fuel pend2 n4 len4 with
-                          | none => none
-                          | some (rest, pend3, n5, len5, t3) =>
-                              some (CI.ifElse thenB elseB :: rest, pend3, n5, len5, t3)
-                        else none
-                  else if t1 == 0 then
-                    match decLoopBlock nfields segs fuel pend1 n3 len3 with
-                    | none => none
-                    | some (rest, pend3, n5, len5, t3) =>
-                        some (CI.ifElse thenB [] :: rest, pend3, n5, len5, t3)
-                  else none
-        else if op == 0x0c then
-          match readU n1 len1 with
-          | none => none
-          | some (d, n2, len2) =>
-              match decLoopBlock nfields segs fuel pending n2 len2 with
-              | none => none
-              | some (rest, pend3, n3, len3, t3) => some (CI.br d :: rest, pend3, n3, len3, t3)
-        else
-          match decInstr nfields segs pending op n1 len1 with
-          | none => none
-          | some (ins, pending', n2, len2) =>
-              match decLoopBlock nfields segs fuel pending' n2 len2 with
-              | none => none
-              | some (rest, pend3, n3, len3, t3) => some (CI.w ins :: rest, pend3, n3, len3, t3)
-
 /- ===================================================================== -/
 /-  Per-function obligation decode                                        -/
 /- ===================================================================== -/
@@ -955,52 +784,6 @@ def codeLocs (n len : Nat) : Option (Array CodeLoc) :=
       match readU codeN codeLen with
       | none => none
       | some (nf, r0, l0) => (decCodeLocs nf r0 l0).map List.toArray
-
-/-- Full `WCode` (arity from the type section, nlocals from the locals decl,
-    body from the code section) for the module function `funcidx`. -/
-def decodeCode (n len funcidx : Nat) : Option WCode :=
-  match decodeTypes n len with
-  | none => none
-  | some ti =>
-    match decodeData n len with
-    | none => none
-    | some segs =>
-      match funcImportBase n len with
-      | none => none
-      | some nimp =>
-        match decodeFuncTypes n len with
-        | none => none
-        | some ftys =>
-          match ftys[funcidx - nimp]? with
-          | none => none
-          | some tyidx =>
-            match ti.arityIndex[tyidx]? with
-            | none => none
-            | some ar =>
-              match codeLocs n len with
-              | none => none
-              | some locs =>
-                match locs[funcidx - nimp]? with
-                | none => none
-                | some loc =>
-                  -- A self tail loop: `loop` (empty block type), its body,
-                  -- `end`, `unreachable`, then the function's `end`. The bytes
-                  -- hold only the loop, so `body` is empty.
-                  if loc.bodyN &&& 0xffff == 0x4003 then
-                    match decLoopBlock ti.nfields segs loc.bodyLen []
-                        (loc.bodyN >>> 16) (loc.bodyLen - 2) with
-                    | none => none
-                    | some (lb, _, restN, restLen, term) =>
-                        if term == 0 && restLen == 2 && restN == 0x0b00 then
-                          some ⟨ar, loc.nlocals, [], some lb⟩
-                        else none
-                  else
-                    match decBlock ti.nfields segs loc.bodyLen [] loc.bodyN loc.bodyLen with
-                    | none => none
-                    | some (instrs, _, _, restLen, term) =>
-                        if term == 0 && restLen == 0 then
-                          some ⟨ar, loc.nlocals, instrs, none⟩
-                        else none
 
 /- ===================================================================== -/
 /-  Plan-first add/mul/sub/box host-role table                           -/

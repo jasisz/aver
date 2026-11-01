@@ -4,18 +4,17 @@
 //! The main test is a decoder differential: for every certkit fixture the Lean
 //! kernel decoder (`CertDecode.decode…`, checked by `rfl`) agrees, TERM FOR
 //! TERM, with the Python byte-level oracle (`tools/certkit/decode_ref.py`) on
-//! every user-function body, the section walk, exports, imports and carrier —
-//! and, for every function the producer planned, additionally with the export
-//! index and carrier the producer declared in `Plans.lean` and the manifest.
-//! It compiles each fixture, emits a Lean witness pinning a test-only whole-file
-//! section walk built from `CertDecode.readU`,
-//! `decodeExports`, `decodeImports`, `decodeCarrier`, and per-function
-//! `decodeCode` to the oracle values, and lets `lake env lean` be the verdict —
-//! a divergence is a kernel `rfl` failure with a full repro, never a string
-//! compare (the lesson from the v1 substring checker). It also drives the
-//! 42-opcode coverage matrix (opcodes exercised by fixture bodies, a self tail
-//! loop's `loop`, `br` and `unreachable` among them, plus 7 covered by a
-//! synthetic single-body probe) fail-closed.
+//! the section walk, exports, imports and carrier — and, for every function the
+//! producer planned, additionally with the export index and carrier the
+//! producer declared in `Plans.lean` and the manifest. It compiles each
+//! fixture, emits a Lean witness pinning a test-only whole-file section walk
+//! built from `CertDecode.readU`, `decodeExports`, `decodeImports` and
+//! `decodeCarrier` to the oracle values, and lets `lake env lean` be the
+//! verdict — a divergence is a kernel `rfl` failure with a full repro, never a
+//! string compare (the lesson from the v1 substring checker). No instruction
+//! is decoded: the checker binds a planned function's code entry by
+//! re-encoding its plan and comparing the bytes
+//! (`AcceptedArtifactCore.boundFunction`).
 //!
 //! The certkit fixtures are all pure (no import section), so the import-section
 //! decode path (`decImportVec`, a non-zero function-index base) is exercised by
@@ -23,12 +22,11 @@
 //! `Console.print` lowers to a real import, and the test asserts the decoded
 //! import list is non-empty so this coverage cannot silently regress.
 //!
-//! A second test performs the mutation suite M1–M8 on real bytes: a flip in a
-//! certified body changes the decode, a flip in a decoder-skipped section does
-//! not, an export relabel changes the export map, and overlong LEB / truncation
-//! / out-of-function-space indices all decode to `none` (never a garbage
-//! success), and so does a self tail loop whose block type or closing
-//! `unreachable` differs from the one the emitter writes.
+//! A second test performs a mutation suite on real bytes: a flip in a
+//! decoder-skipped section leaves the decode unchanged, an export relabel
+//! changes the export map, and an overlong LEB, a truncated code section and a
+//! declared section size that disagrees with its content all decode to `none`
+//! (never a garbage success).
 //!
 //! Gated behind `wasm` (the wasm-gc backend) and skipped when `lake` or
 //! `python3` is unavailable, mirroring `cert_verify_spec.rs`.
@@ -101,74 +99,6 @@ const S1_FIXTURES: &[&str] = &[
     "wordcarrier",
 ];
 
-/// The 42 measured user-code opcode mnemonics (mirrors `decode_ref.py`).
-const ALL_OPCODES: &[&str] = &[
-    "array.new_data",
-    "array.new_fixed",
-    "br",
-    "call",
-    "else",
-    "end",
-    "f64.add",
-    "f64.const",
-    "f64.div",
-    "f64.eq",
-    "f64.ge",
-    "f64.gt",
-    "f64.le",
-    "f64.lt",
-    "f64.mul",
-    "f64.sub",
-    "i32.and",
-    "i32.const",
-    "i32.eq",
-    "i32.gt_s",
-    "i32.le_s",
-    "i32.lt_s",
-    "i64.const",
-    "i64.eq",
-    "i64.eqz",
-    "i64.ge_s",
-    "i64.gt_s",
-    "i64.le_s",
-    "i64.lt_s",
-    "if",
-    "local.get",
-    "local.set",
-    "loop",
-    "ref.cast",
-    "ref.is_null",
-    "ref.null",
-    "ref.test",
-    "return",
-    "return_call",
-    "struct.get",
-    "struct.new",
-    "unreachable",
-];
-
-/// The opcodes never surfaced by a certkit user-function body; the decoder's
-/// arm for each is exercised by a synthetic single-body probe instead.
-/// `return_call` is here because every self tail call is now a loop.
-const SYNTH_OPCODES: &[&str] = &[
-    "i32.and",
-    "i32.eq",
-    "i64.eqz",
-    "return",
-    "ref.null",
-    "array.new_fixed",
-    "return_call",
-];
-
-/// Raw bytes of the synthetic probe body and the term it must decode to. Covers
-/// exactly the seven opcodes above (i32.and, i32.eq, i64.eqz, return, ref.null +
-/// heaptype, array.new_fixed, return_call) followed by the function `end`.
-const SYNTH_BYTES: &[u8] = &[
-    0x71, 0x46, 0x50, 0x0f, 0xd0, 0x70, 0xfb, 0x08, 0x02, 0x03, 0x12, 0x05, 0x0b,
-];
-const SYNTH_TERM: &str =
-    "[.i32And, .i32Eq, .i64Eqz, .ret, .refNull, .arrayNewFixed 2 3, .returnCall 5]";
-
 /// Differential-only views stay in the test witness instead of enlarging the
 /// checker-owned decoder API. They still reduce in Lean's kernel against the
 /// production primitives, so an oracle mismatch remains an `rfl` failure.
@@ -187,12 +117,6 @@ def walkIds : Nat → Nat → Nat → Option (List Nat)
             match walkIds fuel (n2 >>> (8 * size)) (len2 - size) with
             | none => none
             | some tail => some (id :: tail)
-
-def decodeBodyBytes (nfields : List Nat) (segs : List (List Nat))
-    (fuel n len : Nat) : Option (List WInstr) :=
-  match CertDecode.decBlock nfields segs fuel [] n len with
-  | none => none
-  | some (instrs, _, _, _, term) => if term == 0 then some instrs else none
 
 def scanDefined (n len defIdx : Nat) : Option (List CertDecode.StringHost.Op) :=
   match CertDecode.StringHost.bodyLocs n len with
@@ -252,13 +176,10 @@ fn build_prelude() -> ScratchDir {
     dst
 }
 
-/// The module a `--certify` build writes without `Int` trees on the machine
-/// word (`AVER_NO_INT_TREE`): the bytes the mutation test flips stay inside
-/// the instruction fragment the kernel decoder and the byte-level oracle read.
+/// The module a `--certify` build writes: the bytes a certificate decodes.
 fn compile_wasm_at(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Vec<u8> {
     let c = aver_command()
         .current_dir(repo)
-        .env("AVER_NO_INT_TREE", "1")
         .arg("compile")
         .arg(av_path)
         .arg("--target")
@@ -290,12 +211,8 @@ struct Produced {
 /// bytes, the manifest and `Plans.lean` the producer emitted for it.
 fn compile_certified(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Produced {
     let dir = out.join(format!("{name}-certified"));
-    // The decoder reads the certificate profile's fragment, which is the
-    // ordinary lowering. A fixture's uncertified fn (`certkit_zoo.faccum`)
-    // would otherwise compute its `Int` arithmetic on `i64` first, outside it.
     let c = aver_command()
         .current_dir(repo)
-        .env("AVER_NO_INT_TREE", "1")
         .arg("compile")
         .arg(av_path)
         .arg("--target")
@@ -918,7 +835,7 @@ fn f5_two_eq_helpers_are_both_classified_without_uniqueness_decline() {
 // ---- main differential + coverage ---------------------------------------
 
 #[test]
-fn cert_decode_three_way_differential_and_coverage() {
+fn cert_decode_three_way_differential() {
     if !lake_available() {
         eprintln!("skipping cert decode test: `lake` not available");
         return;
@@ -932,8 +849,6 @@ fn cert_decode_three_way_differential_and_coverage() {
     let prelude = build_prelude();
     let out = temp_dir("cdec-wasm");
     std::fs::create_dir_all(&out).unwrap();
-
-    let mut covered: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Repo fixtures plus the test-authored effectful module (real emitter
     // round-trip either way; the extra module is the import-section witness).
@@ -1015,19 +930,6 @@ fn cert_decode_three_way_differential_and_coverage() {
             }
         }
 
-        // Per-function code bindings for EVERY user function (oracle: Python).
-        for f in oracle["funcs"].as_array().unwrap() {
-            let idx = f["idx"].as_u64().unwrap();
-            let arity = f["arity"].as_u64().unwrap();
-            let nlocals = f["nlocals"].as_u64().unwrap();
-            let body = f["body"].as_str().unwrap();
-            let loop_body = f["loop"].as_str().unwrap();
-            src.push_str(&format!(
-                "example : CertDecode.decodeCode bytesN bytesLen {idx} = some ⟨{arity}, {nlocals}, {body}, {loop_body}⟩ := rfl\n"
-            ));
-            // opcode census for the coverage matrix.
-        }
-
         // Producer oracle: every exported entry of `Plans.lean` names the
         // function index the Python oracle's export map and the kernel's
         // `decodeExports` both give its export name, and the producer's
@@ -1060,53 +962,24 @@ fn cert_decode_three_way_differential_and_coverage() {
             ok,
             "decoder differential DIVERGED on `{fixture}` (kernel rejected a binding):\n{report}"
         );
-
-        for op in oracle["opcodes"].as_array().unwrap() {
-            covered.insert(op.as_str().unwrap().to_string());
-        }
-    }
-
-    // Synthetic single-body probe for the opcodes no fixture body surfaces.
-    {
-        let mut src = String::new();
-        src.push_str("import CertDecode\nopen CertPrelude\n\n");
-        src.push_str(TEST_HELPERS);
-        src.push('\n');
-        src.push_str(&format!("def synthN : Nat := 0x{}\n", hex_le(SYNTH_BYTES)));
-        src.push_str(&format!("def synthLen : Nat := {}\n\n", SYNTH_BYTES.len()));
-        src.push_str(&format!(
-            "example : CertDecodeTest.decodeBodyBytes [] [] {} synthN synthLen = some {} := rfl\n",
-            SYNTH_BYTES.len(),
-            SYNTH_TERM
-        ));
-        let (ok, report) = run_lean(&prelude, &src);
-        assert!(ok, "synthetic opcode probe failed to decode:\n{report}");
-        for op in SYNTH_OPCODES {
-            covered.insert((*op).to_string());
-        }
     }
 
     // Axiom footprint: the verdict path must stay on `[propext]` — no `sorryAx`,
     // no `native_decide` / `ofReduceBool` escape hatch (brief constraint). Pin
-    // it as a regression on the richest fixture (certprobe2's nested body).
+    // it as a regression on the richest fixture's export map (certprobe2).
     {
         let certprobe2 = out.join("certprobe2-certified").join("certprobe2.wasm");
         let bytes = std::fs::read(&certprobe2).unwrap();
         let oracle = oracle_json(&repo, &certprobe2);
-        let sumto = &oracle["funcs"].as_array().unwrap()[1];
         let mut src = String::new();
         src.push_str("import CertDecode\nopen CertPrelude\n\n");
         src.push_str(&format!("def bytesN : Nat := 0x{}\n", hex_le(&bytes)));
         src.push_str(&format!("def bytesLen : Nat := {}\n\n", bytes.len()));
         src.push_str(&format!(
-            "theorem tCode : CertDecode.decodeCode bytesN bytesLen {} = some ⟨{}, {}, {}, {}⟩ := rfl\n",
-            sumto["idx"].as_u64().unwrap(),
-            sumto["arity"].as_u64().unwrap(),
-            sumto["nlocals"].as_u64().unwrap(),
-            sumto["body"].as_str().unwrap(),
-            sumto["loop"].as_str().unwrap()
+            "theorem tExports : CertDecode.decodeExports bytesN bytesLen = some {} := rfl\n",
+            exports_lit(&oracle["exports"])
         ));
-        src.push_str("#print axioms tCode\n");
+        src.push_str("#print axioms tExports\n");
         let (ok, report) = run_lean(&prelude, &src);
         assert!(ok, "axiom-footprint witness failed to build:\n{report}");
         assert!(
@@ -1126,25 +999,9 @@ fn cert_decode_three_way_differential_and_coverage() {
             );
         }
     }
-
-    // Coverage matrix, fail-closed: every one of the 42 must be exercised.
-    let missing: Vec<&str> = ALL_OPCODES
-        .iter()
-        .copied()
-        .filter(|op| !covered.contains(*op))
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "opcode coverage FAIL — {} of 42 exercised, missing: {:?}",
-        covered
-            .iter()
-            .filter(|c| ALL_OPCODES.contains(&c.as_str()))
-            .count(),
-        missing
-    );
 }
 
-// ---- mutation suite M1–M8 ------------------------------------------------
+// ---- mutation suite ----------------------------------------------------
 
 /// Minimal section walk: returns (id, body_start, size) for each section.
 fn walk_sections(b: &[u8]) -> Vec<(u8, usize, usize)> {
@@ -1229,33 +1086,7 @@ fn cert_decode_mutations_fail_closed() {
         "certprobe2",
         &out,
     );
-    // The honest decode of `sumTo`, from the Python byte-level oracle.
     let oracle = oracle_json(&repo, &out.join("certprobe2.wasm"));
-    let self_idx = oracle["exports"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e[0].as_str() == Some("sumTo"))
-        .and_then(|e| e[1].as_u64())
-        .expect("sumTo export in the oracle export map");
-    let sumto = oracle["funcs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|f| f["idx"].as_u64() == Some(self_idx))
-        .expect("sumTo body in the oracle decode");
-    let orig_wcode = format!(
-        "⟨{}, {}, {}, {}⟩",
-        sumto["arity"].as_u64().unwrap(),
-        sumto["nlocals"].as_u64().unwrap(),
-        sumto["body"].as_str().unwrap(),
-        sumto["loop"].as_str().unwrap()
-    );
-    assert_eq!(
-        sumto["loop"].as_str(),
-        Some("none"),
-        "sumTo became a self tail loop"
-    );
     let carrier = oracle["carrier"]
         .as_u64()
         .expect("certprobe2 carries the Int carrier");
@@ -1270,61 +1101,6 @@ fn cert_decode_mutations_fail_closed() {
         )
     };
 
-    // M1: flip a byte inside the certified body → the original decode no longer
-    // holds. Locate sumTo's body via the code section and flip its first opcode.
-    {
-        let secs = walk_sections(&bytes);
-        let (_, cstart, _) = *secs.iter().find(|s| s.0 == 10).unwrap();
-        let (_nf, mut i) = read_uleb(&bytes, cstart);
-        // skip entry 0 (defined idx 0), reach entry 1 (sumTo, defined idx 1).
-        let (sz0, ni) = read_uleb(&bytes, i);
-        i = ni + sz0;
-        let (_sz1, ni2) = read_uleb(&bytes, i);
-        i = ni2; // start of sumTo entry body: nloc groups ...
-        let (ng, ni3) = read_uleb(&bytes, i);
-        assert_eq!(ng, 1, "sumTo locals shape changed");
-        // one local group: count + ref valtype (0x63 + heaptype sleb)
-        let (_c, ni4) = read_uleb(&bytes, ni3);
-        let mut j = ni4;
-        assert!(bytes[j] == 0x63 || bytes[j] == 0x64);
-        j += 1;
-        let (_ht, jb) = read_uleb(&bytes, j); // heaptype (small, uleb == sleb)
-        let body0 = jb; // first opcode byte of the body (local.get)
-        assert_eq!(
-            bytes[body0], 0x20,
-            "sumTo body does not start with local.get"
-        );
-        let example = format!(
-            "example : CertDecode.decodeCode bytesN bytesLen {self_idx} = some {orig_wcode} := rfl"
-        );
-        // positive control: the binding holds on the un-mutated bytes …
-        let (ok0, r0) = run_lean(&prelude, &witness(&bytes, &example));
-        assert!(
-            ok0,
-            "M1 positive control: original binding must hold:\n{r0}"
-        );
-        let mut m = bytes.clone();
-        m[body0 + 1] ^= 0x04; // flip the local index operand
-        // … and fails only because of the body-byte flip.
-        let (ok, report) = run_lean(&prelude, &witness(&m, &example));
-        assert!(
-            !ok,
-            "M1: a body-byte flip must break the original decode:\n{report}"
-        );
-
-        // M1b: an early top-level `end` cannot hide residual bytes inside the
-        // same declared code entry.
-        let mut m = bytes.clone();
-        m[body0] = 0x0b;
-        let example =
-            format!("example : CertDecode.decodeCode bytesN bytesLen {self_idx} = none := rfl");
-        let (ok, report) = run_lean(&prelude, &witness(&m, &example));
-        assert!(
-            ok,
-            "M1b: trailing bytes after a top-level end must fail closed:\n{report}"
-        );
-    }
-
     // M2: flip a byte in a decoder-skipped section (memory, id 5) → the decoded
     // obligations are unchanged.
     {
@@ -1335,8 +1111,8 @@ fn cert_decode_mutations_fail_closed() {
         m[off] ^= 0x01;
         assert_ne!(m, bytes);
         let example = format!(
-            "example : CertDecode.decodeCode bytesN bytesLen {self_idx} = some {orig_wcode} := rfl\n\
-             example : CertDecode.decodeCarrier bytesN bytesLen = some {carrier} := rfl"
+            "example : CertDecode.decodeCarrier bytesN bytesLen = some {carrier} := rfl\n\
+             example : (CertDecode.decodeExports bytesN bytesLen).isSome = true := rfl"
         );
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
         assert!(
@@ -1392,7 +1168,7 @@ fn cert_decode_mutations_fail_closed() {
         );
     }
 
-    // M5: truncation inside the code section → the body decodes to none, while
+    // M5: truncation inside the code section → the code locations decode to none, while
     // the (earlier) export section still decodes.
     {
         let secs = walk_sections(&bytes);
@@ -1402,27 +1178,14 @@ fn cert_decode_mutations_fail_closed() {
         let (_sz1, ni2) = read_uleb(&bytes, ni + sz0);
         let cut = ni2 + 3; // 3 bytes into sumTo's entry, mid-body
         let m = bytes[..cut].to_vec();
-        let example = format!(
-            "example : CertDecode.decodeCode bytesN bytesLen {self_idx} = none := rfl\n\
+        let example = "example : CertDecode.codeLocs bytesN bytesLen = none := rfl\n\
              example : (CertDecode.decodeExports bytesN bytesLen).isSome = true := rfl\n\
              example : CertDecode.moduleFramingValid bytesN bytesLen = false := rfl"
-        );
+            .to_string();
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
         assert!(
             ok,
             "M5: a truncated code section must decode to none, exports intact:\n{report}"
-        );
-    }
-
-    // M6: a function index beyond the module's function space decodes to none
-    // (an export relabelled past the end never yields a garbage body).
-    {
-        let example =
-            "example : CertDecode.decodeCode bytesN bytesLen 100000 = none := rfl".to_string();
-        let (ok, report) = run_lean(&prelude, &witness(&bytes, &example));
-        assert!(
-            ok,
-            "M6: an out-of-function-space index must decode to none:\n{report}"
         );
     }
 
@@ -1465,91 +1228,4 @@ fn cert_decode_mutations_fail_closed() {
             "M7: a declared-size/content mismatch must decline at the bounded section wall:\n{report}"
         );
     }
-
-    // M8 (self tail loop): `countDown` tail-calls itself, so its body is
-    // `loop (empty) … end unreachable`, decoded to `WCode.loopBody`. Any other
-    // block type, or a missing `unreachable`, decodes to `none`.
-    {
-        let loop_idx = oracle["exports"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|e| e[0].as_str() == Some("countDown"))
-            .and_then(|e| e[1].as_u64())
-            .expect("countDown export in the oracle export map");
-        let count_down = oracle["funcs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|f| f["idx"].as_u64() == Some(loop_idx))
-            .expect("countDown body in the oracle decode");
-        let loop_body = count_down["loop"].as_str().unwrap();
-        assert!(
-            loop_body.starts_with("some ") && loop_body.contains(".br "),
-            "countDown is no longer a self tail loop: {loop_body}"
-        );
-        let loop_wcode = format!(
-            "⟨{}, {}, {}, {loop_body}⟩",
-            count_down["arity"].as_u64().unwrap(),
-            count_down["nlocals"].as_u64().unwrap(),
-            count_down["body"].as_str().unwrap(),
-        );
-        let nimp = oracle["imports"].as_array().unwrap().len();
-        let (body, end) = code_body(&bytes, loop_idx as usize - nimp);
-        assert_eq!(
-            &bytes[body..body + 2],
-            &[0x03, 0x40],
-            "countDown loop header"
-        );
-        assert_eq!(
-            &bytes[end - 3..end],
-            &[0x0b, 0x00, 0x0b],
-            "countDown loop tail"
-        );
-
-        let example = format!(
-            "example : CertDecode.decodeCode bytesN bytesLen {loop_idx} = some {loop_wcode} := rfl"
-        );
-        let (ok0, r0) = run_lean(&prelude, &witness(&bytes, &example));
-        assert!(ok0, "M8 positive control: the loop decode must hold:\n{r0}");
-
-        let none =
-            format!("example : CertDecode.decodeCode bytesN bytesLen {loop_idx} = none := rfl");
-        for (what, off, byte) in [
-            ("a loop with a result type", body + 1, 0x7e),
-            ("a loop not followed by unreachable", end - 2, 0x01),
-        ] {
-            let mut m = bytes.clone();
-            m[off] = byte;
-            let (ok, report) = run_lean(&prelude, &witness(&m, &none));
-            assert!(ok, "M8: {what} must decode to none:\n{report}");
-        }
-    }
-}
-
-/// `(body start, entry end)` of the defined function `def_idx` in the code
-/// section, past its locals declaration.
-fn code_body(b: &[u8], def_idx: usize) -> (usize, usize) {
-    let secs = walk_sections(b);
-    let (_, cstart, _) = *secs.iter().find(|s| s.0 == 10).unwrap();
-    let (_nf, mut i) = read_uleb(b, cstart);
-    for _ in 0..def_idx {
-        let (sz, ni) = read_uleb(b, i);
-        i = ni + sz;
-    }
-    let (sz, ni) = read_uleb(b, i);
-    let end = ni + sz;
-    let (ng, mut j) = read_uleb(b, ni);
-    for _ in 0..ng {
-        let (_count, nj) = read_uleb(b, j);
-        j = nj;
-        let t = b[j];
-        j += 1;
-        if t == 0x63 || t == 0x64 {
-            // heap type: an s33 whose byte length a uleb read measures too
-            let (_ht, nj) = read_uleb(b, j);
-            j = nj;
-        }
-    }
-    (j, end)
 }
