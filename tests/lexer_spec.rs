@@ -62,6 +62,62 @@ fn float_zero() {
 }
 
 #[test]
+fn float_exponent_forms() {
+    assert_eq!(lex("1.0e20"), vec![TokenKind::Float(1.0e20)]);
+    assert_eq!(lex("3.5E38"), vec![TokenKind::Float(3.5e38)]);
+    assert_eq!(lex("2.0e-7"), vec![TokenKind::Float(2.0e-7)]);
+    assert_eq!(lex("1.5e+3"), vec![TokenKind::Float(1500.0)]);
+    assert_eq!(lex("4.9e-324"), vec![TokenKind::Float(4.9e-324)]);
+    assert_eq!(
+        lex("1.7976931348623157e308"),
+        vec![TokenKind::Float(f64::MAX)]
+    );
+}
+
+#[test]
+fn float_exponent_needs_the_dotted_form_and_digits() {
+    // No dot: an Int followed by an identifier, never a Float.
+    assert_eq!(
+        lex("1e10"),
+        vec![TokenKind::Int(1), TokenKind::Ident("e10".to_string())]
+    );
+    // An `e` without digits after it is not an exponent.
+    assert_eq!(
+        lex("1.0e"),
+        vec![TokenKind::Float(1.0), TokenKind::Ident("e".to_string())]
+    );
+    assert_eq!(
+        lex("1.0e-"),
+        vec![
+            TokenKind::Float(1.0),
+            TokenKind::Ident("e".to_string()),
+            TokenKind::Minus
+        ]
+    );
+    assert_eq!(
+        lex("1.0ex"),
+        vec![TokenKind::Float(1.0), TokenKind::Ident("ex".to_string())]
+    );
+}
+
+#[test]
+fn float_exponent_leaves_field_access_alone() {
+    assert_eq!(
+        lex("x.e1"),
+        vec![
+            TokenKind::Ident("x".to_string()),
+            TokenKind::Dot,
+            TokenKind::Ident("e1".to_string())
+        ]
+    );
+}
+
+#[test]
+fn float_exponent_out_of_range_is_an_error() {
+    assert!(lex_err("1.0e400"));
+}
+
+#[test]
 fn string_empty() {
     assert_eq!(lex("\"\""), vec![TokenKind::Str("".to_string())]);
 }

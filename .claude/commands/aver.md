@@ -48,6 +48,7 @@ Notes:
 - top-level named functions can be passed where `Fn(...)` is expected
 - there are no lambdas and no closures
 - there is no implicit type promotion; use `Float.fromInt(n)` / `Int.fromFloat(f)`
+- a `Float` literal has digits on both sides of the `.` and may end in an exponent: `2.0`, `1.0e20`, `2.0e-7`; `1e10` is not a number
 
 ### User-defined types
 

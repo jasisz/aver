@@ -116,7 +116,7 @@
       "patterns": [
         {
           "name": "constant.numeric.float.aver",
-          "match": "\\b\\d+\\.\\d+\\b"
+          "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
         },
         {
           "name": "constant.numeric.integer.aver",

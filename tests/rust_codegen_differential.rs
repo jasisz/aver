@@ -3202,6 +3202,24 @@ fn rust_float_bits_matches_vm() {
     );
 }
 
+/// Float literals with an exponent on the Rust backend: the program
+/// `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_float_exponent_literals_match_vm() {
+    let src = include_str!("fixtures/float_exponent_literals.av");
+    let expected = include_str!("fixtures/float_exponent_literals.expected").trim();
+
+    let vm = run_vm_inline("float_exponent_literals", src).expect("vm run");
+    let rust = build_run_rust_inline("float_exponent_literals", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM exponent literal values changed");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust exponent literals diverged from the VM"
+    );
+}
+
 /// `Bytes.get` on the Rust backend, where a packed `Bytes` answers in place:
 /// the program `cross_backend_stress` runs on the VM and wasm-gc.
 #[test]

@@ -1624,6 +1624,27 @@ fn float_bits_verify_vm_and_wasm_gc() {
     }
 }
 
+// ─── Float literals with an exponent ────────────────────────────────────
+
+/// `1.0e20`, `3.5e38`, `2.0e-7` and friends read as the values they name.
+/// `tests/rust_codegen_differential.rs` holds Rust to the same output.
+const FLOAT_EXP_SRC: &str = include_str!("fixtures/float_exponent_literals.av");
+const FLOAT_EXP_OUT: &str = include_str!("fixtures/float_exponent_literals.expected");
+
+#[test]
+fn float_exponent_literals_vm_and_wasm_gc() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-floatexp-vm", FLOAT_EXP_SRC),
+        FLOAT_EXP_OUT.trim(),
+    );
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-floatexp-wasmgc", FLOAT_EXP_SRC),
+        FLOAT_EXP_OUT.trim(),
+    );
+}
+
 // ─── Bytes.get ──────────────────────────────────────────────────────────
 
 /// `Bytes.get` at both ends, past both ends, on empty and computed bytes and

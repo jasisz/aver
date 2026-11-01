@@ -508,12 +508,41 @@ impl Lexer {
                     break;
                 }
             }
+            // An exponent belongs to a Float literal only: `1.5e3`,
+            // `2.0E-7`, `1.0e+20`. It needs the dotted form before it, so a
+            // literal without a `.` stays an Int and `1e10` is not a number.
+            // `e` with no digit after it (and its sign) is left alone.
+            if matches!(self.current(), Some('e' | 'E')) {
+                let sign = matches!(self.peek(1), Some('+' | '-'));
+                let digit_at = if sign { 2 } else { 1 };
+                if self.peek(digit_at).is_some_and(|c| c.is_ascii_digit()) {
+                    num_str.push('e');
+                    self.advance();
+                    if sign {
+                        num_str.push(self.current().expect("sign was peeked"));
+                        self.advance();
+                    }
+                    while let Some(c) = self.current() {
+                        if c.is_ascii_digit() {
+                            num_str.push(c);
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         if is_float {
             let f: f64 = num_str
                 .parse()
                 .map_err(|_| self.error("Invalid floating-point number"))?;
+            if !f.is_finite() {
+                return Err(self.error(&format!(
+                    "Float literal {num_str} is too large for a 64-bit Float"
+                )));
+            }
             Ok(Token {
                 kind: TokenKind::Float(f),
                 line,
