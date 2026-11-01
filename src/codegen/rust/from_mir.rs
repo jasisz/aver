@@ -6179,7 +6179,7 @@ fn try_emit_int_literal_match(
                 } else {
                     subject_name.to_string()
                 };
-                let cond = format!("{} == {:?}.parse::<aver_rt::AverInt>().unwrap()", lhs, s);
+                let cond = format!("{} == *aver_rt::int_lit!({:?})", lhs, s);
                 plans.push((
                     ArmPlan::Guard {
                         cond,
@@ -6356,10 +6356,7 @@ fn lower_int_literal_subpatterns(
         ResolvedPattern::Literal(crate::ast::Literal::BigInt(s)) => {
             // Nested tuple elements are always boxed `AverInt`s; compare against
             // the exact value parsed from the digits.
-            conds.push(format!(
-                "&{} == &{:?}.parse::<aver_rt::AverInt>().unwrap()",
-                place, s
-            ));
+            conds.push(format!("&{} == aver_rt::int_lit!({:?})", place, s));
             true
         }
         // `place` is an `AverStr` value place; `&{place}` derefs to `&str`.

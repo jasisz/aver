@@ -104,7 +104,12 @@ pub(super) fn value_facts(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> RustValueFact
     RustValueFacts {
         mode: RustValueMode::Owned,
         borrow_shape: BorrowShape::Direct,
-        can_move: true,
+        // A literal past `i64` is the place of a static (see
+        // `expr::emit_literal`): an owning consumer clones it.
+        can_move: !matches!(
+            expr,
+            MirExpr::Literal(lit) if matches!(lit.node, crate::ast::Literal::BigInt(_))
+        ),
         provider_resource: false,
     }
 }

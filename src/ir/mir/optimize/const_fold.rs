@@ -612,6 +612,13 @@ fn wrap_in_lets(
 fn fold_neg(lit: &Literal) -> Option<Literal> {
     match lit {
         Literal::Int(i) => i.checked_neg().map(Literal::Int),
+        // `-9223372036854775808`: the digits are past `i64`, their negation
+        // is `i64::MIN`.
+        Literal::BigInt(digits) => digits
+            .parse::<i128>()
+            .ok()
+            .and_then(|n| i64::try_from(-n).ok())
+            .map(Literal::Int),
         Literal::Float(f) => Some(Literal::Float(-f)),
         _ => None,
     }
@@ -699,6 +706,21 @@ mod tests {
         assert!(
             matches!(body_of(&folded), MirExpr::Literal(s) if matches!(s.node, Literal::Int(9)))
         );
+    }
+
+    #[test]
+    fn folds_neg_on_the_one_big_literal_that_fits() {
+        let neg = |digits: &str| {
+            MirExpr::Neg(Box::new(span(MirExpr::Literal(span(Literal::BigInt(
+                digits.to_string(),
+            ))))))
+        };
+        let folded = const_fold(one_fn_program(neg("9223372036854775808")));
+        assert!(
+            matches!(body_of(&folded), MirExpr::Literal(s) if matches!(s.node, Literal::Int(i64::MIN)))
+        );
+        let kept = const_fold(one_fn_program(neg("9223372036854775809")));
+        assert!(matches!(body_of(&kept), MirExpr::Neg(_)));
     }
 
     #[test]

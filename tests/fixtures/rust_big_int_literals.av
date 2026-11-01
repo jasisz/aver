@@ -1,0 +1,47 @@
+module BigPos
+    intent = "A literal past i64 in every kind of position, read from a static."
+    effects [Console.print]
+
+record R
+    a: Int
+    b: List<Int>
+
+type T
+    One(Int)
+    Two(Int, Int)
+
+fn id(x: Int) -> Int
+    ? "x."
+    x
+
+fn same(x: Int) -> Bool
+    ? "Whether x is the big literal."
+    x == 18446744073709551616
+
+fn big() -> Int
+    ? "Returned."
+    18446744073709551616
+
+fn inRange(x: Int) -> Bool
+    ? "Whether x fits an i64: the negated literal is i64::MIN."
+    Bool.and(x >= -9223372036854775808, x <= 9223372036854775807)
+
+fn pair() -> Tuple<Int, Int>
+    ? "A tuple."
+    (18446744073709551616, 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    r = R(a = 18446744073709551616, b = [18446744073709551616, 2])
+    t = T.Two(18446744073709551616, -18446744073709551616)
+    m = Map.fromList([(18446744073709551616, 1)])
+    v = 18446744073709551616
+    w = id(18446744073709551616) + v
+    Console.print("{r.a} {List.len(r.b)} {w} {big()} {same(18446744073709551616)} {same(v - 1)} {Option.withDefault(Map.get(m, 18446744073709551616), 0)}")
+    Console.print("{18446744073709551616} {-9223372036854775808} {Int.abs(-9223372036854775808)}")
+    match t
+        T.Two(a, b) -> Console.print("{a + b}")
+        T.One(a) -> Console.print("{a}")
+    Console.print("{inRange(-9223372036854775808)} {inRange(-9223372036854775809)} {inRange(w)}")
+    match pair()
+        (x, _) -> Console.print("{x == 18446744073709551616}")
