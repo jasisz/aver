@@ -179,14 +179,22 @@ impl<'a> MCtx<'a> {
         })
     }
 
-    /// `GrammarLower.exactW`.
-    fn exact_w(&self, t: &PlanWTree) -> Vec<WI> {
+    /// `GrammarLower.exactB`.
+    fn exact_b(&self, t: &PlanWTree) -> Vec<BI> {
         match t {
-            PlanWTree::Leaf(l) => vec![WI::LocalGet(l.loc())],
+            PlanWTree::Leaf(l) => ops(vec![WI::LocalGet(l.loc())]),
             PlanWTree::Op(op, a, b) => {
-                let mut out = self.exact_w(a);
-                out.extend(self.exact_w(b));
-                out.push(WI::Call(self.arith_idx(*op)));
+                let mut out = self.exact_b(a);
+                out.extend(self.exact_b(b));
+                out.push(BI::Op(WI::Call(self.arith_idx(*op))));
+                out
+            }
+            PlanWTree::Lit(k) => ops(vec![WI::I64Const(*k), WI::Call(self.box_)]),
+            PlanWTree::Pick(p, a, b) => {
+                let mut out = self.exact_b(a);
+                out.extend(self.exact_b(b));
+                out.extend(ops(self.int_cmp_tail(pick_op(*p))));
+                out.push(BI::If(Some(PlanTy::Int), self.exact_b(a), self.exact_b(b)));
                 out
             }
         }
@@ -471,8 +479,15 @@ impl MCtx<'_> {
         match t {
             PlanWTree::Leaf(l) => self.word_leaf_ok(n, g, l),
             PlanWTree::Op(op, a, b) => {
-                is_arith(*op) && self.word_tree_ok(n, g, a) && self.word_tree_ok(n, g, b)
+                is_arith(*op)
+                    && !(*op == PlanBinOp::Mul
+                        && (matches!(**a, PlanWTree::Lit(_))
+                            || matches!(**b, PlanWTree::Lit(_))))
+                    && self.word_tree_ok(n, g, a)
+                    && self.word_tree_ok(n, g, b)
             }
+            PlanWTree::Lit(_) => true,
+            PlanWTree::Pick(_, a, b) => self.word_tree_ok(n, g, a) && self.word_tree_ok(n, g, b),
         }
     }
 
@@ -543,6 +558,12 @@ impl MCtx<'_> {
                 [a, PlanExpr::Literal(PlanLit::Int(k))] if *k != 0 => {
                     (self.ty_of(n, g, false, a)? == PlanTy::Int).then_some(PlanTy::Int)
                 }
+                _ => None,
+            },
+            PlanExpr::Call(PlanCallee::Pick(_), args) => match args.as_slice() {
+                [a, b] => (self.ty_of(n, g, false, a)? == PlanTy::Int
+                    && self.ty_of(n, g, false, b)? == PlanTy::Int)
+                    .then_some(PlanTy::Int),
                 _ => None,
             },
             PlanExpr::BinOp(op, l, r) => {
@@ -1130,6 +1151,32 @@ fn fast_w(c: u64, w: u32, t: &PlanWTree, out: &mut Vec<WI>) {
             fast_w(c, w, b, out);
             out.extend(tree_op(w, *op));
         }
+        PlanWTree::Lit(k) => out.push(WI::I64Const(*k)),
+        PlanWTree::Pick(p, a, b) => {
+            fast_w(c, w, a, out);
+            fast_w(c, w, b, out);
+            out.extend([
+                WI::LocalSet(w + 1),
+                WI::LocalSet(w),
+                WI::LocalGet(w),
+                WI::LocalGet(w + 1),
+                WI::LocalGet(w),
+                WI::LocalGet(w + 1),
+                match p {
+                    PlanPick::IntMin => WI::I64LeS,
+                    PlanPick::IntMax => WI::I64GeS,
+                },
+                WI::Select,
+            ]);
+        }
+    }
+}
+
+/// `Grammar.PickBuiltin.op`.
+fn pick_op(p: PlanPick) -> PlanBinOp {
+    match p {
+        PlanPick::IntMin => PlanBinOp::Lte,
+        PlanPick::IntMax => PlanBinOp::Gte,
     }
 }
 
@@ -1344,6 +1391,21 @@ impl MCtx<'_> {
                     WI::I32Const(i64::from(*i == PlanIntrinsic::IntModEuclid)),
                     WI::Call(self.divmod),
                 ]));
+                out
+            }
+            PlanExpr::Call(PlanCallee::Pick(p), args) => {
+                let [a, b] = args.as_slice() else {
+                    return vec![];
+                };
+                let op = pick_op(*p);
+                let mut out = self.lower(x, g, false, a);
+                out.extend(self.lower(x, g, false, b));
+                out.extend(ops(self.int_cmp_tail(op)));
+                out.push(BI::If(
+                    Some(PlanTy::Int),
+                    self.lower(x, g, false, a),
+                    self.lower(x, g, false, b),
+                ));
                 out
             }
             PlanExpr::TailCall(f, args) => {
@@ -1727,7 +1789,7 @@ impl MCtx<'_> {
                 fast_w(self.carrier, *w, t, &mut fast);
                 fast.extend([WI::Call(self.box_), WI::Br(1)]);
                 let mut body = vec![BI::Block(None, ops(fast))];
-                body.extend(ops(self.exact_w(t)));
+                body.extend(self.exact_b(t));
                 out.push(BI::Block(Some(PlanTy::Int), body));
                 out
             }
@@ -2254,6 +2316,7 @@ fn lowered_calls(bs: &[BI], out: &mut Vec<u64>) {
                 lowered_calls(t, out);
                 lowered_calls(e, out);
             }
+            BI::Block(_, body) => lowered_calls(body, out),
             _ => {}
         }
     }

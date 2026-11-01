@@ -3624,6 +3624,27 @@ pub(super) fn emit_module_with(
             }));
         }
     }
+    // A kept fn whose emitted form would still call `Int.min` or `Int.max`
+    // outside a word tree is not kept: that form calls the three-way helper
+    // and evaluates the picked operand again, where a plain build computes
+    // the tree on the word. The certificate declines such a fn instead of
+    // slowing it down.
+    for i in 0..fn_defs.len() {
+        if !kept_for[i] {
+            continue;
+        }
+        let body = word_fn_for[i]
+            .as_ref()
+            .or(mir_fn_for[i])
+            .map(|f| &f.body.node);
+        if body.is_some_and(|b| plain_pick(b, &mir_program.builtins)) {
+            kept_for[i] = false;
+            word_fn_for[i] = None;
+            trees_for[i] = plain_locals_for[i].is_some()
+                && registry.bignum
+                && std::env::var_os("AVER_NO_INT_TREE").is_none();
+        }
+    }
     // A kept fn whose plan calls a user fn that is not kept can never be
     // certified: that call has no plan, and the producer declines every
     // caller of a declined fn. It is emitted as a plain build emits it, with
@@ -12280,4 +12301,26 @@ fn sorted_export_payload(exports: &ExportSection) -> Vec<u8> {
         payload.extend_from_slice(entry);
     }
     payload
+}
+
+/// Whether `e` calls `Int.min` or `Int.max` outside an `Int` tree computed
+/// on the machine word.
+fn plain_pick(e: &crate::ir::mir::MirExpr, builtins: &[String]) -> bool {
+    use crate::ir::mir::{MirCallee, MirExpr};
+    match e {
+        MirExpr::IntWord(_) => false,
+        MirExpr::Call(c)
+            if matches!(&c.node.callee, MirCallee::Builtin(b)
+                if builtins.get(b.0 as usize).is_some_and(|n| n == "Int.min" || n == "Int.max")) =>
+        {
+            true
+        }
+        _ => {
+            let mut found = false;
+            crate::ir::mir::expr::walk_children(e, &mut |c| {
+                found = found || plain_pick(c, builtins)
+            });
+            found
+        }
+    }
 }

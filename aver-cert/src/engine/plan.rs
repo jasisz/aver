@@ -187,6 +187,14 @@ pub enum PlanLazy {
     ResWithDefault,
 }
 
+/// `Grammar.PickBuiltin`: `Int.min` / `Int.max`, whose emitter evaluates the
+/// operand it picks a second time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanPick {
+    IntMin,
+    IntMax,
+}
+
 /// `Grammar.MirCallee`; `Fn` carries the callee's wasm function index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanCallee {
@@ -194,6 +202,7 @@ pub enum PlanCallee {
     Builtin(PlanBuiltin),
     Lazy(PlanLazy),
     Intrinsic(PlanIntrinsic),
+    Pick(PlanPick),
 }
 
 /// `Grammar.CtorTag`.
@@ -272,6 +281,10 @@ pub enum PlanWLeaf {
 pub enum PlanWTree {
     Leaf(PlanWLeaf),
     Op(PlanBinOp, Box<PlanWTree>, Box<PlanWTree>),
+    /// An `Int` literal: an immediate word on the machine path.
+    Lit(i64),
+    /// `Int.min` / `Int.max` of two trees.
+    Pick(PlanPick, Box<PlanWTree>, Box<PlanWTree>),
 }
 
 impl PlanWLeaf {
@@ -301,11 +314,12 @@ impl PlanWTree {
     pub fn leaves(&self) -> Vec<&PlanWLeaf> {
         match self {
             PlanWTree::Leaf(l) => vec![l],
-            PlanWTree::Op(_, a, b) => {
+            PlanWTree::Op(_, a, b) | PlanWTree::Pick(_, a, b) => {
                 let mut out = a.leaves();
                 out.extend(b.leaves());
                 out
             }
+            PlanWTree::Lit(_) => vec![],
         }
     }
 
@@ -329,6 +343,17 @@ impl PlanWTree {
             }
             PlanWTree::Op(op, a, b) => {
                 out.push_str(&format!("(.op {} ", op.lean()));
+                a.write_lean(out);
+                out.push(' ');
+                b.write_lean(out);
+                out.push(')');
+            }
+            PlanWTree::Lit(k) => out.push_str(&format!("(.lit ({k}))")),
+            PlanWTree::Pick(p, a, b) => {
+                out.push_str(match p {
+                    PlanPick::IntMin => "(.pick .intMin ",
+                    PlanPick::IntMax => "(.pick .intMax ",
+                });
                 a.write_lean(out);
                 out.push(' ');
                 b.write_lean(out);
@@ -555,6 +580,13 @@ impl PlanCallee {
                 match l {
                     PlanLazy::OptWithDefault => ".optWithDefault",
                     PlanLazy::ResWithDefault => ".resWithDefault",
+                }
+            ),
+            PlanCallee::Pick(p) => format!(
+                "(.pick {})",
+                match p {
+                    PlanPick::IntMin => ".intMin",
+                    PlanPick::IntMax => ".intMax",
                 }
             ),
         }

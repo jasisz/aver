@@ -18,13 +18,15 @@ use std::collections::HashMap;
 
 use aver_cert::{
     FnPlan, ModulePlans, PLAN_NO_SLOT, PlanBinOp, PlanBuiltin, PlanBytesRole, PlanCallee, PlanCtor,
-    PlanExpr, PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat, PlanRecordDecl, PlanSumDecl,
-    PlanTy, PlanTypeTable, PlanWLeaf, PlanWTree, PlannedFn,
+    PlanExpr, PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat, PlanPick, PlanRecordDecl,
+    PlanSumDecl, PlanTy, PlanTypeTable, PlanWLeaf, PlanWTree, PlannedFn,
 };
 
 use crate::ast::{BinOp, Literal, Spanned};
 use crate::ir::hir::{BuiltinCtor, BuiltinIntrinsic, ResolvedFnDef};
-use crate::ir::mir::{IntWordNode, MirCallee, MirCtor, MirExpr, MirFn, MirPattern, MirStrPart};
+use crate::ir::mir::{
+    IntWordNode, IntWordOp, MirCallee, MirCtor, MirExpr, MirFn, MirPattern, MirStrPart,
+};
 use crate::ir::{BuiltinId, CtorId, FnId};
 
 /// A user sum as the emitter laid it out: its root struct and, per
@@ -1041,6 +1043,10 @@ impl Printer<'_> {
                                 PlanCallee::Builtin(b)
                             }
                             "Option.withDefault" => PlanCallee::Lazy(PlanLazy::OptWithDefault),
+                            // The emitter's three-way compare, then the
+                            // picked operand evaluated again.
+                            "Int.min" => PlanCallee::Pick(PlanPick::IntMin),
+                            "Int.max" => PlanCallee::Pick(PlanPick::IntMax),
                             "Result.withDefault" => {
                                 // `Int.div` / `Int.mod` print only fused here.
                                 if let [o, d] = call.args.as_slice()
@@ -1289,9 +1295,28 @@ impl Printer<'_> {
     /// local, a leaf read ahead a field of a record held in a local.
     fn word_tree(&mut self, node: &IntWordNode) -> Result<PlanWTree, String> {
         Ok(match node {
+            // The wall proves `+`, `-`, `*`, `Int.min` and `Int.max`; any
+            // other operation is refused.
+            IntWordNode::Op {
+                op: op @ (IntWordOp::Min | IntWordOp::Max),
+                args,
+                ..
+            } => {
+                let [a, b] = args.as_slice() else {
+                    return Err(format!("IntWord operation {op:?} (not in the wall)"));
+                };
+                let pick = if *op == IntWordOp::Min {
+                    PlanPick::IntMin
+                } else {
+                    PlanPick::IntMax
+                };
+                PlanWTree::Pick(
+                    pick,
+                    Box::new(self.word_tree(a)?),
+                    Box::new(self.word_tree(b)?),
+                )
+            }
             IntWordNode::Op { op, args, .. } => {
-                // The wall proves `+`, `-` and `*`; any other operation is
-                // refused.
                 let (Some(bop), [a, b]) = (op.bin_op(), args.as_slice()) else {
                     return Err(format!("IntWord operation {op:?} (not in the wall)"));
                 };
@@ -1301,9 +1326,10 @@ impl Printer<'_> {
                     Box::new(self.word_tree(b)?),
                 )
             }
-            IntWordNode::Lit(_) => {
-                return Err("IntWord literal leaf (not in the wall)".into());
-            }
+            IntWordNode::Lit(_) => match node.literal() {
+                Some(k) => PlanWTree::Lit(k),
+                None => return Err("IntWord literal leaf that is no Int literal".into()),
+            },
             IntWordNode::Local(e) => match self.expr(e)? {
                 PlanExpr::Local(i) => PlanWTree::Leaf(PlanWLeaf::Local(i)),
                 _ => return Err("IntWord leaf read in place (not a local)".into()),
@@ -1834,6 +1860,42 @@ fn notLiteral(a: Int, d: Int) -> Int
         assert_eq!(plan(&map, "guardedMod").body, fused(PlanBuiltin::IntMod, 7));
         assert!(reason(&map, "unfused").contains("outside Result.withDefault"));
         assert!(reason(&map, "notLiteral").contains("not an Int literal"));
+    }
+
+    const PICK_SRC: &str = r#"
+module P
+    intent = "Int.min and Int.max printer probes"
+    exposes [smaller, capped]
+
+fn smaller(a: Int, b: Int) -> Int
+    Int.min(a, b)
+
+fn capped(i: Int) -> Int
+    Int.max(i + 1, 0)
+"#;
+
+    /// `Int.min` / `Int.max` print as an operation of the `Int` tree the
+    /// MIR marks for the machine word, literals as immediate leaves.
+    #[test]
+    fn min_and_max_print_in_the_word_tree() {
+        let (map, _) = plans(PICK_SRC);
+        use PlanWTree as T;
+        let local = |i| Box::new(T::Leaf(PlanWLeaf::Local(i)));
+        let PlanExpr::IntWord(t, _) = plan(&map, "smaller").body else {
+            panic!("smaller: {:?}", plan(&map, "smaller").body)
+        };
+        assert_eq!(t, T::Pick(PlanPick::IntMin, local(0), local(1)));
+        let PlanExpr::IntWord(t, _) = plan(&map, "capped").body else {
+            panic!("capped: {:?}", plan(&map, "capped").body)
+        };
+        assert_eq!(
+            t,
+            T::Pick(
+                PlanPick::IntMax,
+                Box::new(T::Op(PlanBinOp::Add, local(0), Box::new(T::Lit(1)))),
+                Box::new(T::Lit(0)),
+            )
+        );
     }
 
     #[test]

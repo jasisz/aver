@@ -350,6 +350,16 @@ impl IntWordNode {
         out
     }
 
+    /// Whether the tree has an `Int.min` or `Int.max`.
+    pub fn picks(&self) -> bool {
+        match self {
+            IntWordNode::Op { op, args, .. } => {
+                matches!(op, IntWordOp::Min | IntWordOp::Max) || args.iter().any(Self::picks)
+            }
+            _ => false,
+        }
+    }
+
     fn visit_leaves<'a>(&'a self, f: &mut dyn FnMut(&'a Spanned<MirExpr>)) {
         match self {
             IntWordNode::Op { args, .. } => {

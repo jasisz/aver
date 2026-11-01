@@ -163,15 +163,18 @@ impl Pass<'_> {
     fn choose(&self, e: &Spanned<MirExpr>) -> Option<(IntWordNode, IntWordKind)> {
         if self.ops(e).is_some() {
             let tree = (self.weight(e)? > 0).then(|| self.tree(e))?;
-            // In a kept fn, a tree of locals only is left as it is: the
-            // wall's termination grammar (`GrammarTotal.totE`) reads plain
-            // arithmetic, so a countdown would lose its totality claim, and
-            // the tree saves no field read.
+            // In a kept fn, a tree of `+`, `-` and `*` over locals and
+            // literals only is left as it is: the wall's termination grammar
+            // (`GrammarTotal.totE`) reads plain arithmetic, so a countdown
+            // would lose its totality claim, and the tree saves no field
+            // read. A tree with `Int.min` or `Int.max` is kept on the word:
+            // its plain form calls the three-way helper and evaluates the
+            // picked operand again.
             let field = tree
                 .leaves()
                 .iter()
                 .any(|l| matches!(l.node, MirExpr::Project(_)));
-            if self.target.kept && !field {
+            if self.target.kept && !field && !tree.picks() {
                 return None;
             }
             return Some((tree, IntWordKind::Value));
@@ -223,7 +226,14 @@ impl Pass<'_> {
             MirExpr::Neg(x) => (self.target.renders_raw)(&x.node),
             _ => false,
         };
-        if raw || (self.target.kept && op.bin_op().is_none()) {
+        // In a kept fn the wall proves `+`, `-`, `*`, `Int.min` and
+        // `Int.max`, and a product by a literal not at all: the emitter
+        // computes that one by a range test.
+        let picks = matches!(op, IntWordOp::Min | IntWordOp::Max);
+        let by_literal = op == IntWordOp::Mul
+            && (int_literal(&a.node).is_some()
+                || b.is_some_and(|b| int_literal(&b.node).is_some()));
+        if raw || (self.target.kept && ((op.bin_op().is_none() && !picks) || by_literal)) {
             return None;
         }
         Some((op, std::iter::once(a).chain(b).collect()))
@@ -254,6 +264,7 @@ impl Pass<'_> {
         let t = self.target;
         if t.kept {
             return match &e.node {
+                _ if int_literal(&e.node).is_some() => Some(IntWordNode::Lit(Box::new(e.clone()))),
                 MirExpr::Local(l) if !self.f.repr.slot_is_bare(l.node.slot) => {
                     Some(IntWordNode::Local(Box::new(e.clone())))
                 }

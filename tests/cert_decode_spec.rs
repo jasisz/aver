@@ -75,6 +75,7 @@ const S1_FIXTURES: &[&str] = &[
     "f64verbatim",
     "intcompare",
     "intdispatchgen",
+    "intminmax",
     "letnamed",
     "manytypes",
     "meter",
