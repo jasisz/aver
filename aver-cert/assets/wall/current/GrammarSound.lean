@@ -451,6 +451,9 @@ theorem escFree_fastW (k C w : Nat) (hk : 0 < k) :
       simp only [fastW, escFreeL_append, escFree_fastW k C w hk a, escFree_fastW k C w hk b,
         Bool.and_self, Bool.true_and]
       cases p <;> simp [pickOpW, escFreeI]
+  | .mulLit _ _ a => by
+      simp only [fastW, escFreeL_append, escFree_fastW k C w hk a, Bool.true_and, guardW]
+      split <;> (try split) <;> simp [escFreeI, hk]
 
 theorem escFree_exactW (M : MCtx) : ∀ (t : WTree) (k : Nat), escFreeL k (exactW M t) = true
   | .leaf _, k => by simp [exactW_leaf, escFreeI]
@@ -459,6 +462,8 @@ theorem escFree_exactW (M : MCtx) : ∀ (t : WTree) (k : Nat), escFreeL k (exact
   | .lit _, k => by simp [exactW_lit, escFreeI]
   | .pick _ a b, k => by
       simp [exactW_pick, escFree_exactW M a, escFree_exactW M b, escFreeI, escFree_intCmpTail]
+  | .mulLit _ lf a, k => by
+      cases lf <;> simp [exactW_mulLit, escFree_exactW M a, escFreeI]
 
 theorem escFree_aheadW (k : Nat) (M : MCtx) : ∀ t : WTree, escFreeL k (aheadW M t) = true
   | .leaf (.local _) => by simp [aheadW]
@@ -466,6 +471,7 @@ theorem escFree_aheadW (k : Nat) (M : MCtx) : ∀ t : WTree, escFreeL k (aheadW 
   | .op _ a b => by simp [aheadW, escFree_aheadW k M a, escFree_aheadW k M b]
   | .lit _ => by simp [aheadW]
   | .pick _ a b => by simp [aheadW, escFree_aheadW k M a, escFree_aheadW k M b]
+  | .mulLit _ _ a => by simp [aheadW, escFree_aheadW k M a]
 
 theorem escFree_wordBlock (k : Nat) (M : MCtx) (t : WTree) (w : Nat) :
     escFreeI k (eraseI (wordBlock M t w)) = true := by
@@ -3358,6 +3364,7 @@ def WTree.arith : WTree → Bool
   | .op o a b => o.isArith && a.arith && b.arith
   | .lit k => inI64Band k
   | .pick _ a b => a.arith && b.arith
+  | .mulLit k _ a => inI64Band k && a.arith
 
 theorem WTree.arith_of_ok {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} :
     ∀ {t : WTree}, t.ok M n Γ = true → t.arith = true
@@ -3370,6 +3377,9 @@ theorem WTree.arith_of_ok {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} :
   | .pick _ a b, h => by
       simp only [WTree.ok, Bool.and_eq_true] at h
       simp only [WTree.arith, WTree.arith_of_ok h.1, WTree.arith_of_ok h.2, Bool.and_self]
+  | .mulLit _ _ a, h => by
+      simp only [WTree.ok, Bool.and_eq_true] at h
+      simp only [WTree.arith, h.1, WTree.arith_of_ok h.2, Bool.and_self]
 
 /-- `Int.min` / `Int.max` of two words: the words changed, the picked one
     pushed. -/
@@ -3409,6 +3419,112 @@ theorem LeavesHeld.after {C : Nat} {S : CarrierSpec C} {w : Nat} {env : Nat → 
   intro l hl
   obtain ⟨hout, x, hv, hc⟩ := h l hl
   exact ⟨hout, x, hv, fun wv hwv => hc wv (by rw [← hw.2 _ hout]; exact hwv)⟩
+
+/-! ### A product by a literal on the machine word
+
+The emitter tests the operand against the range in which the product fits
+(`guardW` over `mulRange`) and multiplies only then; outside it the `i64`
+path branches to the exact path. -/
+
+theorem gtU64_iff (x y : Int) (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
+    (hy : -9223372036854775808 ≤ y ∧ y < 9223372036854775808) :
+    gtU64 x y = true ↔ (if 0 ≤ x then x else x + 18446744073709551616) >
+      (if 0 ≤ y then y else y + 18446744073709551616) := by
+  cases x <;> cases y <;> simp only [gtU64, Nat.blt_eq, Int.ofNat_eq_natCast, Int.negSucc_eq] at * <;>
+    split <;> split <;> simp only [Bool.false_eq_true, false_iff, true_iff, Int.not_lt, gt_iff_lt] at * <;> omega
+
+theorem gtU64_wrap (a b : Int) :
+    gtU64 (wrap64 a) (wrap64 b) = true ↔ a % 18446744073709551616 > b % 18446744073709551616 := by
+  rw [gtU64_iff _ _ (by unfold wrap64; omega) (by unfold wrap64; omega)]
+  unfold wrap64
+  omega
+
+theorem mulRange_sound (k x : Int) (h1 : (mulRange k).1 ≤ x) (h2 : x ≤ (mulRange k).2) :
+    -9223372036854775808 ≤ x * k ∧ x * k < 9223372036854775808 := by
+  unfold mulRange at h1 h2
+  by_cases hk0 : k = 0
+  · subst hk0; simp
+  simp only [hk0, ↓reduceIte] at h1 h2
+  by_cases hkp : 0 < k
+  · have hs : k.sign = 1 := Int.sign_eq_one_of_pos hkp
+    have hn : ((k.natAbs : Nat) : Int) = k := Int.natAbs_of_nonneg (by omega)
+    simp only [show ¬ k < 0 by omega, ↓reduceIte, hs, Int.mul_one, hn] at h1 h2
+    have a2 := (Int.le_ediv_iff_mul_le hkp).mp h2
+    have a1 := (Int.le_ediv_iff_mul_le hkp).mp (show -x ≤ Int.ediv (- -9223372036854775808) k by omega)
+    rw [Int.neg_mul] at a1
+    constructor <;> omega
+  · have hkn : k < 0 := by omega
+    have hs : k.sign = -1 := Int.sign_eq_neg_one_of_neg hkn
+    have hn : ((k.natAbs : Nat) : Int) = -k := by omega
+    have hm : 0 < -k := by omega
+    simp only [hkn, ↓reduceIte, hs, hn] at h1 h2
+    simp only [Int.mul_neg, Int.mul_one] at h1 h2
+    have a2 := (Int.le_ediv_iff_mul_le hm).mp (show x ≤ Int.ediv 9223372036854775808 (-k) by simpa using h2)
+    have a1 := (Int.le_ediv_iff_mul_le hm).mp (show -x ≤ Int.ediv 9223372036854775807 (-k) by
+      simp at h1; omega)
+    rw [Int.mul_neg] at a2
+    rw [Int.neg_mul, Int.mul_neg, Int.neg_neg] at a1
+    constructor <;> omega
+
+theorem mulLit_tail (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat) (k x : Int)
+    (hk : -9223372036854775808 ≤ k ∧ k < 9223372036854775808)
+    (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
+    (hr : (mulRange k).1 ≤ x ∧ x ≤ (mulRange k).2)
+    (L st : List WVal) (rest : List WInstr) (out : Out)
+    (h : wRunF host ar callee (.localGet w :: .i64Const k :: .i64Mul :: rest) L st = some out)
+    (hL : L[w]? = some (.i64v x)) :
+    -9223372036854775808 ≤ x * k ∧ x * k < 9223372036854775808 ∧
+      wRunF host ar callee rest L (.i64v (x * k) :: st) = some out := by
+  have hb := mulRange_sound k x hr.1 hr.2
+  have hx' : in64 x = true := (in64_iff x).mpr hx
+  have hk' : in64 k = true := (in64_iff k).mpr hk
+  simp [wRunF, hL, hx', hk', wrap64_id _ hb.1 hb.2] at h
+  exact ⟨hb.1, hb.2, h⟩
+
+theorem in64_wrap64' (v : Int) : in64 (wrap64 v) = true := by
+  rw [in64_iff]; unfold wrap64; omega
+
+theorem guardMul_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat) (k x : Int)
+    (hk : -9223372036854775808 ≤ k ∧ k < 9223372036854775808)
+    (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
+    (wl st : List WVal) (rest : List WInstr) (out : Out)
+    (h : wRunF host ar callee (guardW (mulRange k).1 (mulRange k).2 w ++
+      (.localGet w :: .i64Const k :: .i64Mul :: rest)) wl (.i64v x :: st) = some out) :
+    ∃ L, WordsOnly w wl L ∧ (out = .br 0 L st ∨
+      (-9223372036854775808 ≤ x * k ∧ x * k < 9223372036854775808 ∧
+        wRunF host ar callee rest L (.i64v (x * k) :: st) = some out)) := by
+  refine ⟨wl.set w (.i64v x), ⟨by simp, fun j hj => by
+    rw [List.getElem?_set_ne (by omega)]⟩, ?_⟩
+  have hx' : in64 x = true := (in64_iff x).mpr hx
+  generalize hlo0 : (mulRange k).1 = lo0 at h
+  generalize hhi0 : (mulRange k).2 = hi0 at h
+  unfold guardW at h
+  simp only at h
+  split at h
+  · simp [wRunF] at h; exact Or.inl h.symm
+  by_cases hw : w < wl.length
+  rotate_left
+  · exfalso
+    have hn : (wl.set w (WVal.i64v x))[w]? = none := List.getElem?_eq_none (by simp; omega)
+    split at h <;> simp [wRunF, hn] at h
+  have hset : (wl.set w (.i64v x))[w]? = some (.i64v x) := by simp [hw]
+  split at h
+  · have hlo : in64 (max lo0 (-9223372036854775808)) = true := by
+      rw [in64_iff]; omega
+    simp only [List.cons_append, wRunF, hset, hx', hlo, in64_wrap64', Bool.and_self, ↓reduceIte,
+      b32] at h
+    split at h
+    · simp at h; exact Or.inl h.symm
+    · rename_i hg
+      have hg' := (not_congr (gtU64_wrap _ _)).mp (by simpa using hg)
+      have hin : lo0 ≤ x ∧ x ≤ hi0 := by omega
+      right
+      exact mulLit_tail host ar callee w k x hk hx (by rw [hlo0, hhi0]; exact hin) _ st rest out
+        (by simpa [wRunF, hset] using h) hset
+  · simp only [List.cons_append, List.nil_append, wRunF] at h
+    right
+    exact mulLit_tail host ar callee w k x hk hx (by rw [hlo0, hhi0]; omega) _ st rest out
+      (by simpa [wRunF, hset] using h) hset
 
 /-- The `i64` path of a tree: it branches out (`br 0`) with only the words
     changed, or pushes the tree's exact value, in the `i64` range. One
@@ -3480,6 +3596,21 @@ theorem fastW_run {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat → O
       refine ⟨L3, (h1.trans h2).trans h3, Or.inr ⟨p.z va vb, by simp [WTree.val, hva, hvb], ?_, ?_, hr⟩⟩ <;>
         cases p <;> simp only [PickBuiltin.z] <;> omega
 
+  | .mulLit k lf a, wl, st, rest, out, ht, hh, h => by
+      simp only [WTree.arith, Bool.and_eq_true] at ht
+      obtain ⟨hkb, ha⟩ := ht
+      have hk : -9223372036854775808 ≤ k ∧ k < 9223372036854775808 := by
+        simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hkb
+      have hha : LeavesHeld S w env wl a := fun l hl => hh l (by simpa [WTree.leaves] using hl)
+      simp only [fastW, List.append_assoc, List.cons_append, List.nil_append] at h
+      obtain ⟨L1, h1, hr1⟩ := fastW_run S host ar callee w env a wl st _ out ha hha h
+      rcases hr1 with ⟨S', rfl⟩ | ⟨va, hva, va1, va2, h⟩
+      · exact ⟨L1, h1, Or.inl ⟨S', rfl⟩⟩
+      obtain ⟨L2, h2, hr2⟩ := guardMul_run host ar callee w k va hk ⟨va1, va2⟩ L1 st rest out h
+      rcases hr2 with rfl | ⟨b1, b2, h⟩
+      · exact ⟨L2, h1.trans h2, Or.inl ⟨st, rfl⟩⟩
+      · exact ⟨L2, h1.trans h2, Or.inr ⟨va * k, by simp [WTree.val, hva], b1, b2, h⟩⟩
+
 /-- The `i64` path of a tree's block: it leaves for the exact path (`br 0`),
     with only the words changed, or ends at `$done` with the boxed value. -/
 theorem fast_run {C : Nat} (S : CarrierSpec C) (box : List WVal → Option WVal)
@@ -3519,7 +3650,6 @@ theorem run_block (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (
 section WordStep
 variable {C : Nat} {S : CarrierSpec C} {M : MCtx} {X : LCtx}
   (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-
 /-- The exact path of a tree: the calls on its leaves' carriers push the
     canonical carrier of the tree's value, the locals unchanged. -/
 theorem exactW_run (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → Option WVal)
@@ -3613,6 +3743,49 @@ theorem exactW_run (S : CarrierSpec C) (box add sub mul cmp eq : List WVal → O
       rw [intBin_arith ho] at hr
       exact ⟨arithZ o va vb, r, by simp [WTree.val, hva, hvb, intBin_arith ho], hr,
         by simpa [seqOut] using hseq⟩
+  | .mulLit k lf a, L, st, rest, out, ht, hh, h => by
+      simp only [WTree.arith, Bool.and_eq_true] at ht
+      obtain ⟨hkb, ha⟩ := ht
+      have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
+        simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hkb
+      have hha : ∀ l ∈ a.leaves, ∃ x, l.val env = some (.i x) ∧
+          ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv :=
+        fun l hl => hh l (by simpa [WTree.leaves] using hl)
+      rw [exactW_mulLit] at h
+      cases lf
+      · simp only [Bool.false_eq_true, ↓reduceIte, List.append_assoc, List.cons_append,
+          List.nil_append] at h
+        obtain ⟨va, wa, hva, hca, h⟩ := exactW_run S box add sub mul cmp eq Ctr hBox hAdd hSub hMul
+          hCmp hEq env a L st _ out ha hha h
+        cases hbx : box [.i64v k] with
+        | none => simp [wRunF, hBox, popArgs, hbx] at h
+        | some wk =>
+            have hck := Ctr.hBox k wk hk.1 hk.2 hbx
+            have h' : wRunF host ar callee (.call M.mul :: rest) L (wk :: wa :: st) = some out := by
+              simpa [wRunF, hBox, popArgs, hbx] using h
+            cases hm : mul [wa, wk] with
+            | none => simp [wRunF, hMul, popArgs_two, hm] at h'
+            | some r =>
+                simp only [wRunF, hMul, popArgs_two, hm] at h'
+                exact ⟨va * k, r, by simp [WTree.val, hva], Ctr.hMul va k wa wk r hca.1 hck.1 hm, h'⟩
+      · simp only [↓reduceIte, List.append_assoc, List.cons_append, List.nil_append] at h
+        cases hbx : box [.i64v k] with
+        | none => simp [wRunF, hBox, popArgs, hbx] at h
+        | some wk =>
+            have hck := Ctr.hBox k wk hk.1 hk.2 hbx
+            have h' : wRunF host ar callee (exactW M a ++ WInstr.call M.mul :: rest) L (wk :: st) =
+                some out := by
+              simpa [wRunF, hBox, popArgs, hbx] using h
+            obtain ⟨va, wa, hva, hca, h⟩ := exactW_run S box add sub mul cmp eq Ctr hBox hAdd hSub
+              hMul hCmp hEq env a L (wk :: st) _ out ha hha h'
+            cases hm : mul [wk, wa] with
+            | none => simp [wRunF, hMul, popArgs_two, hm] at h
+            | some r =>
+                simp only [wRunF, hMul, popArgs_two, hm] at h
+                refine ⟨va * k, r, by simp [WTree.val, hva], ?_, h⟩
+                rw [Int.mul_comm]
+                exact Ctr.hMul k va wk wa r hck.1 hca.1 hm
+
 
 theorem eraseI_wordBlock (M : MCtx) (t : WTree) (w : Nat) :
     eraseI (wordBlock M t w) = .block 1 (.block 0 (fastW M.carrier w t ++
@@ -3697,6 +3870,11 @@ theorem WTree.leaf_cases : ∀ {t : WTree} {l : WLeaf}, l ∈ t.leaves →
         · exact Or.inl ⟨tid, k, base, s, rfl, by simp [WTree.slots, hs]⟩
         · exact Or.inr ⟨i, rfl⟩
   | .lit _, l, h => by simp [WTree.leaves] at h
+  | .mulLit _ _ a, l, h => by
+      simp only [WTree.leaves] at h
+      rcases WTree.leaf_cases h with ⟨tid, k, base, s, rfl, hs⟩ | ⟨i, rfl⟩
+      · exact Or.inl ⟨tid, k, base, s, rfl, by simpa [WTree.slots] using hs⟩
+      · exact Or.inr ⟨i, rfl⟩
   | .pick _ a b, l, h => by
       simp only [WTree.leaves, List.mem_append] at h
       rcases h with h | h
@@ -3723,6 +3901,10 @@ theorem WTree.slots_ge {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} :
       · exact WTree.slots_ge h.1.2 s hs
       · exact WTree.slots_ge h.2 s hs
   | .lit _, _, s, hs => by simp [WTree.slots] at hs
+  | .mulLit _ _ a, h, s, hs => by
+      simp only [WTree.ok, Bool.and_eq_true] at h
+      simp only [WTree.slots] at hs
+      exact WTree.slots_ge h.2 s hs
   | .pick _ a b, h, s, hs => by
       simp only [WTree.ok, Bool.and_eq_true] at h
       simp only [WTree.slots, List.mem_append] at hs
@@ -3812,6 +3994,13 @@ theorem aheadW_run {Γ : Nat → Option Ty} {env : Nat → Option SVal} (henv : 
         · exact hheld2 l hl'
   | .lit _, wl, st, rest, out, _, _, hl, h => by
       exact ⟨wl, hl, rfl, fun _ _ => rfl, by simp [WTree.leaves], by simpa [aheadW] using h⟩
+  | .mulLit _ _ a, wl, st, rest, out, hok, hd, hl, h => by
+      simp only [WTree.ok, Bool.and_eq_true] at hok
+      simp only [WTree.slots] at hd
+      simp only [aheadW] at h
+      obtain ⟨wl1, hl1, hlen1, hkeep1, hheld1, h⟩ := aheadW_run henv a wl st _ out hok.2 hd hl h
+      exact ⟨wl1, hl1, hlen1, fun j hj => hkeep1 j (by simpa [WTree.slots] using hj),
+        fun l hl' => hheld1 l (by simpa [WTree.leaves] using hl'), h⟩
   | .pick _ a b, wl, st, rest, out, hok, hd, hl, h => by
       simp only [WTree.ok, Bool.and_eq_true] at hok
       obtain ⟨hoka, hokb⟩ := hok

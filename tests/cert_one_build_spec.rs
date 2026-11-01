@@ -596,6 +596,24 @@ fn a_certified_build_passes_vectors_along_as_opaque_values() {
 
 /// The `i64.mul` count of each named export's body.
 fn i64_muls(bytes: &[u8], names: &[&str]) -> Vec<usize> {
+    op_counts(bytes, names, |op| {
+        matches!(op, wasmparser::Operator::I64Mul)
+    })
+}
+
+/// The `i64.rem_s` count of each named export's body.
+fn i64_rems(bytes: &[u8], names: &[&str]) -> Vec<usize> {
+    op_counts(bytes, names, |op| {
+        matches!(op, wasmparser::Operator::I64RemS)
+    })
+}
+
+/// The count of the operators `pick` selects in each named export's body.
+fn op_counts(
+    bytes: &[u8],
+    names: &[&str],
+    pick: impl Fn(&wasmparser::Operator) -> bool,
+) -> Vec<usize> {
     use wasmparser::{Operator, Parser, Payload, TypeRef};
     let mut imported = 0;
     let mut index = vec![None; names.len()];
@@ -631,7 +649,7 @@ fn i64_muls(bytes: &[u8], names: &[&str]) -> Vec<usize> {
                 .unwrap();
             let mut muls = 0;
             while !ops.eof() {
-                if matches!(ops.read().unwrap(), Operator::I64Mul) {
+                if pick(&ops.read().unwrap()) {
                     muls += 1;
                 }
             }
@@ -644,7 +662,7 @@ fn i64_muls(bytes: &[u8], names: &[&str]) -> Vec<usize> {
 /// never be certified, so a `--certify` build does not keep it in the
 /// ordinary form: `area` (which calls the unprintable `width`) computes its
 /// `Int` tree on machine words as in a plain build, while the certified
-/// `spread` keeps the boxed products by a literal its plan reads.
+/// `spread` keeps the remainder by a literal its plan reads in its ordinary form.
 #[test]
 fn a_certified_build_releases_a_function_that_calls_an_unprintable_one() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -654,9 +672,9 @@ fn a_certified_build_releases_a_function_that_calls_an_unprintable_one() {
     };
     let (certified, names) = compile(&repo_root, &entry, &["--certify"], true).unwrap();
     assert_eq!(names, vec!["spread".to_string()]);
-    let muls = i64_muls(&certified, &["area", "spread"]);
-    assert!(muls[0] > 0, "area computes on machine words: {muls:?}");
-    assert_eq!(muls[1], 0, "spread is kept in the ordinary form");
+    let rems = i64_rems(&certified, &["area", "spread"]);
+    assert!(rems[0] > 0, "area computes on machine words: {rems:?}");
+    assert_eq!(rems[1], 0, "spread is kept in the ordinary form");
 }
 
 /// The number of functions a module defines.

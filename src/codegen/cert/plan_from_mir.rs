@@ -1316,6 +1316,23 @@ impl Printer<'_> {
                     Box::new(self.word_tree(b)?),
                 )
             }
+            // A product by a literal (the emitter's range test): the
+            // literal second unless only the first operand is one.
+            IntWordNode::Op {
+                op: IntWordOp::Mul,
+                args,
+                ..
+            } if matches!(args.as_slice(), [a, b] if a.literal().is_some() || b.literal().is_some()) =>
+            {
+                let [a, b] = args.as_slice() else {
+                    unreachable!("guarded: two operands")
+                };
+                match (a.literal(), b.literal()) {
+                    (_, Some(k)) => PlanWTree::MulLit(k, false, Box::new(self.word_tree(a)?)),
+                    (Some(k), None) => PlanWTree::MulLit(k, true, Box::new(self.word_tree(b)?)),
+                    (None, None) => unreachable!("guarded: a literal operand"),
+                }
+            }
             IntWordNode::Op { op, args, .. } => {
                 let (Some(bop), [a, b]) = (op.bin_op(), args.as_slice()) else {
                     return Err(format!("IntWord operation {op:?} (not in the wall)"));

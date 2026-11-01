@@ -73,10 +73,12 @@ def WTree.totW (mulOk : Bool) : WTree → Bool
   | .op o a b => (o == .add || o == .sub || (o == .mul && mulOk)) && a.totW mulOk && b.totW mulOk
   | .lit _ => true
   | .pick _ _ _ => false
+  | .mulLit _ _ a => mulOk && a.totW mulOk
 
 /-- Some `*` occurs in the tree. -/
 def WTree.usesMulW : WTree → Bool
   | .op o a b => o == .mul || a.usesMulW || b.usesMulW
+  | .mulLit _ _ _ => true
   | _ => false
 
 /-- The first argument of a member call is the descent. -/
@@ -463,6 +465,38 @@ theorem LeavesPresent.after {C : Nat} {S : CarrierSpec C} {w : Nat} {env : Nat �
   obtain ⟨wv, hwv⟩ := h l hl
   exact ⟨wv, by rw [hw.2 _ (hh l hl).1]; exact hwv⟩
 
+/-- The range test and the product by the literal run to completion: the
+    test branches out or falls through, and the multiplication of two words
+    in the `i64` range always runs. -/
+theorem guardMul_progress (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (w : Nat)
+    (k x : Int) (hk : -9223372036854775808 ≤ k ∧ k < 9223372036854775808)
+    (hx : -9223372036854775808 ≤ x ∧ x < 9223372036854775808)
+    (wl st : List WVal) (hw : w < wl.length) :
+    ∃ o, wRunF host ar callee (guardW (mulRange k).1 (mulRange k).2 w ++
+      [.localGet w, .i64Const k, .i64Mul]) wl (.i64v x :: st) = some o := by
+  have hx' : in64 x = true := (in64_iff x).mpr hx
+  have hk' : in64 k = true := (in64_iff k).mpr hk
+  have hset : (wl.set w (.i64v x))[w]? = some (.i64v x) := by simp [hw]
+  generalize (mulRange k).1 = lo0
+  generalize (mulRange k).2 = hi0
+  unfold guardW
+  simp only
+  split
+  · simp [wRunF]
+  split
+  · have hlo : in64 (max lo0 (-9223372036854775808)) = true := by
+      rw [in64_iff]; omega
+    simp only [List.cons_append, wRunF, hset, hx', hlo, hk', in64_wrap64, Bool.and_self,
+      ↓reduceIte, b32]
+    split
+    · simp
+    · simp only [↓reduceIte, List.nil_append, List.cons_append, wRunF]
+      rw [hset]
+      simp [wRunF, hx', hk']
+  · simp only [List.cons_append, List.nil_append, wRunF]
+    rw [hset]
+    simp [wRunF, hx', hk']
+
 theorem fastW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat → Option Nat)
     (callee : Callee) (w : Nat) (env : Nat → Option SVal) (mulOk : Bool) :
     ∀ (t : WTree) (wl st : List WVal),
@@ -479,6 +513,26 @@ theorem fastW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat 
       · simp [fastW, smallReadW, WLeaf.loc, wRunF, hwl, b32]
   | .leaf (.field _ _ _ _), _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
   | .pick _ _ _, _, _, ht, _, _, _, _ => by simp [WTree.totW] at ht
+  | .mulLit k lf a, wl, st, ht, har, hh, hp, hlen => by
+      simp only [WTree.totW, Bool.and_eq_true] at ht
+      simp only [WTree.arith, Bool.and_eq_true] at har
+      have hk : -9223372036854775808 ≤ k ∧ k < 9223372036854775808 := by
+        simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using har.1
+      have hha : LeavesHeld S w env wl a := fun l hl => hh l (by simpa [WTree.leaves] using hl)
+      have hpa : LeavesPresent wl a := fun l hl => hp l (by simpa [WTree.leaves] using hl)
+      simp only [fastW, List.append_assoc]
+      rw [wRunF_append]
+      obtain ⟨oa, hoa⟩ := fastW_progress S host ar callee w env mulOk a wl st ht.2 har.2 hha hpa hlen
+      have hoa' : wRunF host ar callee (fastW C w a ++ []) wl st = some oa := by simpa using hoa
+      obtain ⟨L1, hL1, hr1⟩ := fastW_run S host ar callee w env a wl st [] oa har.2 hha hoa'
+      rw [hoa]
+      rcases hr1 with ⟨S', rfl⟩ | ⟨va, -, va1, va2, h1⟩
+      · exact ⟨_, rfl⟩
+      simp only [wRunF] at h1
+      cases h1
+      simp only [seqOut]
+      exact guardMul_progress host ar callee w k va hk ⟨va1, va2⟩ L1 st
+        (by rw [hL1.1]; omega)
   | .lit k, wl, st, _, _, _, _, _ => by simp [fastW, wRunF]
   | .op o a b, wl, st, ht, har, hh, hp, hlen => by
       simp only [WTree.totW, Bool.and_eq_true] at ht
@@ -542,6 +596,48 @@ theorem exactW_progress {C : Nat} (S : CarrierSpec C) (host : HostTbl) (ar : Nat
       simp [exactW_leaf, WLeaf.loc, wRunF, hwl]
   | .leaf (.field _ _ _ _), _, _, ht, _, _, _ => by simp [WTree.totW] at ht
   | .pick _ _ _, _, _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .mulLit k lf a, L, st, ht, har, hh, hp => by
+      simp only [WTree.totW, Bool.and_eq_true] at ht
+      simp only [WTree.arith, Bool.and_eq_true] at har
+      have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
+        simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using har.1
+      have hha : ∀ l ∈ a.leaves, ∃ x, l.val env = some (.i x) ∧
+          ∀ wv, L[l.loc]? = some wv → CanonRepr S x wv :=
+        fun l hl => hh l (by simpa [WTree.leaves] using hl)
+      have hpa : LeavesPresent L a := fun l hl => hp l (by simpa [WTree.leaves] using hl)
+      obtain ⟨wk, hwk⟩ := hBoxT k hk.1 hk.2
+      have hck := Ctr.hBox k wk hk.1 hk.2 hwk
+      rw [exactW_mulLit]
+      cases lf
+      · simp only [Bool.false_eq_true, ↓reduceIte, List.append_assoc]
+        rw [wRunF_append]
+        obtain ⟨oa, hoa⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd
+          hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env a L st ht.2 har.2 hha hpa
+        have hoa' : wRunF host ar callee (exactW M a ++ []) L st = some oa := by simpa using hoa
+        obtain ⟨va, wa, -, hca, h1⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
+          hAdd hSub hMul hCmp hEq env a L st [] oa har.2 hha hoa'
+        simp only [wRunF] at h1
+        cases h1
+        rw [hoa]
+        obtain ⟨r, hr⟩ := hMulT ht.1 va k wa wk hca.1 hck.1
+        have h2 : ¬ (st.length + 1 + 1 < 2) := by omega
+        simp [seqOut, wRunF, hBox, popArgs, hwk, hMul, hr, h2]
+      · simp only [↓reduceIte, List.append_assoc, List.cons_append, List.nil_append]
+        have h1 : wRunF host ar callee (.i64Const k :: .call M.box :: (exactW M a ++ [.call M.mul])) L st
+            = wRunF host ar callee (exactW M a ++ [.call M.mul]) L (wk :: st) := by
+          simp [wRunF, hBox, popArgs, hwk]
+        rw [h1, wRunF_append]
+        obtain ⟨oa, hoa⟩ := exactW_progress S host ar callee M box add sub mul cmp eq Ctr hBox hAdd
+          hSub hMul hCmp hEq hBoxT hAddT hSubT mulOk hMulT env a L (wk :: st) ht.2 har.2 hha hpa
+        have hoa' : wRunF host ar callee (exactW M a ++ []) L (wk :: st) = some oa := by
+          simpa using hoa
+        obtain ⟨va, wa, -, hca, h1⟩ := exactW_run host ar callee S box add sub mul cmp eq Ctr hBox
+          hAdd hSub hMul hCmp hEq env a L (wk :: st) [] oa har.2 hha hoa'
+        simp only [wRunF] at h1
+        cases h1
+        rw [hoa]
+        obtain ⟨r, hr⟩ := hMulT ht.1 k va wk wa hck.1 hca.1
+        simp [seqOut, wRunF, hMul, popArgs_two, hr]
   | .lit k, L, st, _, har, _, _ => by
       have hb : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
         simpa [WTree.arith, inI64Band, Bool.and_eq_true, decide_eq_true_eq] using har
@@ -649,6 +745,11 @@ theorem totW_leaf {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} {mulOk : Bool} :
       exact ⟨i, rfl, hok⟩
   | .leaf (.field _ _ _ _), ht, _, _, _ => by simp [WTree.totW] at ht
   | .pick _ _ _, ht, _, _, _ => by simp [WTree.totW] at ht
+  | .mulLit _ _ a, ht, hok, l, hl => by
+      simp only [WTree.totW, Bool.and_eq_true] at ht
+      simp only [WTree.ok, Bool.and_eq_true] at hok
+      simp only [WTree.leaves] at hl
+      exact totW_leaf ht.2 hok.2 l hl
   | .lit _, _, _, l, hl => by simp [WTree.leaves] at hl
   | .op _ a b, ht, hok, l, hl => by
       simp only [WTree.totW, Bool.and_eq_true] at ht
@@ -663,6 +764,9 @@ theorem aheadW_totW (M : MCtx) {mulOk : Bool} :
   | .leaf (.local _), _ => rfl
   | .leaf (.field _ _ _ _), ht => by simp [WTree.totW] at ht
   | .pick _ _ _, ht => by simp [WTree.totW] at ht
+  | .mulLit _ _ a, ht => by
+      simp only [WTree.totW, Bool.and_eq_true] at ht
+      simp [aheadW, aheadW_totW M ht.2]
   | .lit _, _ => rfl
   | .op _ a b, ht => by
       simp only [WTree.totW, Bool.and_eq_true] at ht
