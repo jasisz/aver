@@ -201,6 +201,13 @@ fn emit_module_pass(
     twins_for: Certify<'_>,
 ) -> Result<(ModuleOutput, std::collections::HashSet<String>), WasmGcError> {
     let certify = !matches!(twins_for, Certify::Off);
+    // The fns the build keeps for the certificate: none in a plain build, the
+    // printer's superset on a first pass, the kept ones on the second.
+    let for_certificate = |fd: &FnDef| match twins_for {
+        Certify::Off => false,
+        Certify::MayPrint => crate::ir::cert_shape::printer_may_admit(fd),
+        Certify::Kept(kept) => kept.contains(&fd.name),
+    };
     // A module-level binding read from a fn body has no global to read on
     // wasm-gc; its value is substituted where it is read (`top_level.rs`).
     let inlined_items = super::top_level::inline_module_bindings(items)?;
@@ -615,11 +622,22 @@ fn emit_module_pass(
         // over it runs as `i64.add/sub/mul` where the interval fixpoint proves
         // the result fits i64. Restricted to the registry's eligible set above,
         // so the analysis never goes raw for a carrier the storage kept boxed.
+        // The fns kept for the certificate stay on `Int`: a boxed signature,
+        // and arithmetic their word trees compute with the overflow checked,
+        // as the certificate proves. The others compute raw where the range
+        // is proven.
+        let kept: std::collections::HashSet<crate::ir::FnId> = fn_defs
+            .iter()
+            .zip(&resolved_fn_defs)
+            .filter(|(fd, _)| for_certificate(fd))
+            .map(|(_, rfd)| rfd.fn_id)
+            .collect();
         crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_wasm_gc(
             optimized,
             &boxed,
             &bare_carrier_intervals,
             &field_carrier_intervals,
+            &kept,
         )
     };
 
@@ -1211,11 +1229,7 @@ fn emit_module_pass(
         &resolved_fn_defs,
         &mir_program,
         &registry,
-        &|fd| match twins_for {
-            Certify::Off => false,
-            Certify::MayPrint => crate::ir::cert_shape::printer_may_admit(fd),
-            Certify::Kept(kept) => kept.contains(&fd.name),
-        },
+        &for_certificate,
     )?;
     let mut twin_params: Vec<Vec<ValType>> = vec![Vec::new(); fn_defs.len()];
     let mut twin_results: Vec<Vec<ValType>> = vec![Vec::new(); fn_defs.len()];

@@ -47,8 +47,11 @@
    "Bytes_octets": "L1",
    "Bytes_take": "L1",
    "combineSurrogates": "L1",
+   "digitVal__code": "L1",
    "escapeSeq": "L1",
    "hexAlpha": "L1",
+   "hexVal__code": "L1",
+   "isDigit__code": "L1",
    "isHighSurrogate": "L1",
    "isLowSurrogate": "L1",
    "jsonEntryKey": "L1",
@@ -346,6 +349,7 @@
    "Rules_forwardDir",
    "Rules_sameSign",
    "abInit",
+   "abNoMoves",
    "centerBonus",
    "isCenterSquare",
    "pieceValue",
@@ -379,6 +383,7 @@
    "Rules_forwardDir": "L1",
    "Rules_sameSign": "L1",
    "abInit": "L1",
+   "abNoMoves": "L1",
    "centerBonus": "L1",
    "isCenterSquare": "L1",
    "pieceValue": "L1",
@@ -3106,6 +3111,17 @@
   ],
   "certified": {
    "boxInt": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/wordarith.av": {
+  "bridges": [],
+  "certified": {
+   "fromInt": "L1",
+   "joined": "L1",
+   "scaled": "L1",
+   "widened": "L1",
+   "word": "L1"
   },
   "laws": []
  },

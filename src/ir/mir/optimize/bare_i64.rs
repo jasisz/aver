@@ -450,6 +450,12 @@ pub struct FnBareFacts {
     pub carrier_ids: std::sync::Arc<CarrierIds>,
     /// Rust: the calls of the program computed on raw `i64` operands.
     pub raw_ops: std::sync::Arc<RawOps>,
+    /// wasm-gc: the fn is kept in its ordinary form for a `--certify`
+    /// build's certificate. Only the reads of a word record's machine word
+    /// render raw; arithmetic over them stays `Int`, so the word trees
+    /// (`ir::mir::int_word`) compute it on the machine word with the
+    /// overflow checked, as the certificate proves.
+    pub words_only: bool,
 }
 
 /// A position param checked once on entry: a start in `[lo, hi]` enters
@@ -664,7 +670,9 @@ impl FnBareFacts {
             // scalar, and the cursor step a byte offset, directly as the
             // backend's native i64 carrier; a builtin computed raw over raw
             // operands gives its own bound.
+            MirExpr::Call(_) if self.words_only => carrier_call_interval(e),
             MirExpr::Call(_) => carrier_call_interval(e).or_else(|| self.raw_op_interval(e)),
+            MirExpr::Neg(_) | MirExpr::BinOp(_) if self.words_only => None,
             MirExpr::Neg(inner) => {
                 let r = Interval::point(0).sub(self.bare_expr_interval(&inner.node)?);
                 r.fits_i64().then_some(r)
@@ -704,6 +712,7 @@ impl FnBareFacts {
             MirExpr::Local(local) => self.is_bare(local.node.slot),
             // ETAP-2 carrier-`i64`: a bare carrier's `.value` reads raw i64.
             MirExpr::Project(_) => self.is_carrier_project(e),
+            MirExpr::Call(_) if self.words_only => is_code_carrier_call(e),
             MirExpr::Call(_) => is_code_carrier_call(e) || self.raw_op_interval(e).is_some(),
             // A compound: require the WHOLE-TREE result interval to fit i64.
             MirExpr::Neg(_) | MirExpr::BinOp(_) => self.bare_expr_interval(e).is_some_and(|iv| {
@@ -727,6 +736,16 @@ impl BareI64Facts {
     /// caller then treats every value as `Boxed`).
     pub fn for_fn(&self, id: FnId) -> Option<&FnBareFacts> {
         self.fns.get(&id)
+    }
+
+    /// Mark the fns in `kept` as kept for a certificate: their arithmetic
+    /// stays `Int` ([`FnBareFacts::words_only`]).
+    pub fn keep_words_only(&mut self, kept: &std::collections::HashSet<FnId>) {
+        for (id, f) in &mut self.fns {
+            if kept.contains(id) {
+                f.words_only = true;
+            }
+        }
     }
 
     /// Total values proven `Bare` across the whole program — a diagnostic

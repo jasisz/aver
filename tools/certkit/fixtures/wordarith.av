@@ -1,0 +1,52 @@
+module WordArith
+    intent =
+        "Certify fixture for arithmetic over word records (records of one"
+        "bounded Int the target keeps as a machine word): in a certified"
+        "function the arithmetic stays an Int tree whose leaves are the"
+        "words, computed on the machine word with its overflow checked."
+    exposes [word, joined, scaled, widened]
+    exposes opaque [Word]
+    effects []
+
+record Word
+    value: Int
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "A word below 2^40."
+    match Bool.and(n >= 0, n <= 1099511627775)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+verify fromInt
+    fromInt(-1) => Result.Err("word out of range")
+    fromInt(1099511627776) => Result.Err("word out of range")
+
+fn word(n: Int) -> Word
+    ? "A word, or the largest one when out of range."
+    match fromInt(n)
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 1099511627775)
+
+verify word
+    word(7) => Word(value = 7)
+
+fn joined(a: Word, b: Word) -> Int
+    ? "Two words mixed: products, a quotient and a remainder by literals."
+    Int.mod(a.value * 1000003 + Int.div(b.value, 1024) * 1000033, 2147483647) + Int.max(a.value, b.value)
+
+verify joined
+    joined(word(3), word(2048)) => 5002123
+
+fn scaled(a: Word) -> Word
+    ? "A word from arithmetic over a word."
+    word(a.value * 3 + 1)
+
+verify scaled
+    scaled(word(4)) => Word(value = 13)
+
+fn widened(a: Word, b: Word) -> Int
+    ? "A sum and a difference of two words."
+    a.value + b.value - 1
+
+verify widened
+    widened(word(4), word(5)) => 8
