@@ -805,7 +805,7 @@ fn __mutual_tco_trampoline_1(
             ) => {
                 crate::cancel_checkpoint();
                 match crate::aver_generated::domain::eval::ops::evalVectorSetMaybeDefault(
-                    &vecV, &idxV, &valueV,
+                    &vecV, &idxV, valueV,
                 ) {
                     Ok(maybeV @ _) => match maybeV {
                         Some(v @ _) => return Ok(v),
@@ -2099,7 +2099,7 @@ fn __mutual_tco_trampoline_3(
             ) => {
                 crate::cancel_checkpoint();
                 match crate::aver_generated::domain::eval::ops::evalVectorSetMaybeDefault(
-                    &vecV, &idxV, &valueV,
+                    &vecV, &idxV, valueV,
                 ) {
                     Ok(maybeV @ _) => match maybeV {
                         Some(v @ _) => return Ok(v),
@@ -2652,9 +2652,8 @@ fn __mutual_tco_trampoline_6(
                     Some(slot @ _) => {
                         let slot = slot.clone();
                         {
-                            let __arg6 @ _ = crate::aver_generated::domain::eval::slots::setSlot(
-                                env, slot, &val,
-                            );
+                            let __arg6 @ _ =
+                                crate::aver_generated::domain::eval::slots::setSlot(env, slot, val);
                             __MutualTco6::MergeBindingsSlot(rest, __arg6)
                         }
                     }
@@ -2737,7 +2736,7 @@ fn __mutual_tco_trampoline_7(
                     &*fns,
                 )?;
                 let nextEnv @ _ =
-                    crate::aver_generated::domain::eval::slots::setSlot(env, slot, &v);
+                    crate::aver_generated::domain::eval::slots::setSlot(env, slot, v.clone());
                 {
                     let __list_subject = rest.clone();
                     if __list_subject.is_empty() {
@@ -2944,7 +2943,7 @@ fn __mutual_tco_trampoline_8(
                     &*slotMap,
                     &*fns,
                 )?;
-                let __arg9 @ _ = crate::aver_generated::domain::eval::slots::setSlot(env, slot, &v);
+                let __arg9 @ _ = crate::aver_generated::domain::eval::slots::setSlot(env, slot, v);
                 __MutualTco8::EvalStmtsSlotTail(selfId, rest, slotCount, __arg9)
             }
             __MutualTco8::EvalStmtsSlotTailExpr(
@@ -5521,7 +5520,7 @@ pub fn evalArgsMapToSlotEnv(
                             let __tco3 = crate::aver_generated::domain::eval::slots::setSlot(
                                 acc,
                                 idx.clone(),
-                                &v,
+                                v,
                             );
                             let __tco4 = idx.add(&aver_rt::AverInt::from_i64(1));
                             __hold0 = __tco0;
@@ -5571,7 +5570,7 @@ pub fn evalArgsSlotToSlotEnv(
                             let __tco4 = crate::aver_generated::domain::eval::slots::setSlot(
                                 acc,
                                 idx.clone(),
-                                &v,
+                                v,
                             );
                             let __tco5 = idx.add(&aver_rt::AverInt::from_i64(1));
                             __hold0 = __tco0;

@@ -1780,7 +1780,7 @@ pub fn holeInList(
                             &rest, target,
                         );
                         crate::proof_std::aver_generated::kernel::std::prependTo(
-                            x,
+                            x.clone(),
                             (&__arg5).as_ref(),
                         )
                     }
@@ -1794,12 +1794,12 @@ pub fn holeInList(
 /// x in front of a list holding the hole.
 #[inline(always)]
 pub fn prependTo(
-    x @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    mut x @ _: crate::proof_std::aver_generated::kernel::term::Term,
     xs @ _: Option<&aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>>,
 ) -> Option<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>> {
     crate::proof_std::cancel_checkpoint();
     match xs {
-        Some(ys @ _) => Some(aver_rt::AverList::prepend(x.clone(), ys)),
+        Some(ys @ _) => Some(aver_rt::AverList::prepend(x, ys)),
         None => None,
     }
 }

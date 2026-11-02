@@ -277,14 +277,16 @@ pub fn fastListSlotBranchItems(
             Some((head, tail)) => {
                 let __arg10 @ _ = {
                     let __arg8 @ _ = crate::aver_generated::domain::eval::slots::setSlot(
-                        calleeEnv, headSlot, head,
+                        calleeEnv,
+                        headSlot,
+                        head.clone(),
                     );
                     {
                         let __arg9 @ _ = crate::aver_generated::domain::value::Val::ValList(
                             crate::aver_generated::domain::value::Val__ValList(tail),
                         );
                         crate::aver_generated::domain::eval::slots::setSlot(
-                            __arg8, tailSlot, &__arg9,
+                            __arg8, tailSlot, __arg9,
                         )
                     }
                 };
