@@ -512,6 +512,7 @@ fn render_root_library(has_policy: bool, has_replay: bool) -> String {
     sections.join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_root_main(
     main_fn: Option<&crate::ir::hir::ResolvedFnDef>,
     has_policy: bool,

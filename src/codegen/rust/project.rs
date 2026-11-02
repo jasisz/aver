@@ -30,6 +30,7 @@ fn runtime_dependency_line(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_cargo_toml(
     name: &str,
     services: &HashSet<String>,
