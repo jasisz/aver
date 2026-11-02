@@ -1,0 +1,106 @@
+module LentElement
+    intent = "An interpreter loop matches the instruction in the frame's code through a borrow while every arm hands the frame on."
+    effects [Console.print]
+
+record Sig
+    params: List<Int>
+    results: Int
+
+type Instr
+    Add(Int)
+    Mul(Int, Int)
+    Block(Int, Sig)
+    Peek(Sig)
+    Wide(Int, Int, Int, Int, Int)
+    Jump(Int)
+    Halt
+
+record Frame
+    code: Vector<Instr>
+    pc: Int
+    acc: Int
+    seen: List<Instr>
+
+fn adv(f: Frame, d: Int) -> Frame
+    ? "Advance and add d."
+    Frame.update(f, pc = f.pc + 1, acc = f.acc + d)
+
+verify adv
+    adv(Frame(code = Vector.fromList([]), pc = 0, acc = 0, seen = []), 2).acc => 2
+
+fn slow(i: Instr, f: Frame) -> Frame
+    ? "A path that needs the instruction and the frame; it keeps the instruction."
+    Frame.update(f, pc = f.pc + 1, acc = f.acc + weight(i), seen = List.prepend(i, f.seen))
+
+verify slow
+    slow(Instr.Add(1), Frame(code = Vector.fromList([]), pc = 0, acc = 0, seen = [])).acc => 1
+
+fn weight(i: Instr) -> Int
+    ? "A number for an instruction."
+    match i
+        Instr.Add(k) -> k
+        Instr.Mul(a, b) -> a * b
+        Instr.Block(k, s) -> k + List.len(s.params)
+        Instr.Peek(s) -> s.results
+        Instr.Wide(a, _, _, _, e) -> a + e
+        Instr.Jump(t) -> t
+        Instr.Halt -> 0
+
+verify weight
+    weight(Instr.Mul(2, 3)) => 6
+
+fn sigWeight(s: Sig) -> Int
+    ? "Reads a signature through a borrow."
+    List.len(s.params) + s.results
+
+verify sigWeight
+    sigWeight(Sig(params = [1], results = 2)) => 3
+
+fn run(f: Frame, n: Int) -> Frame
+    ? "Interpreter loop: every arm hands the frame on; some read the instruction again."
+    match n
+        0 -> f
+        _ -> match Vector.get(f.code, f.pc)
+            Option.None -> run(Frame.update(f, pc = 0), n - 1)
+            Option.Some(i) -> match i
+                Instr.Add(k) -> run(adv(f, k), n - 1)
+                Instr.Mul(a, b) -> run(adv(f, a * b), n - 1)
+                Instr.Block(k, s) -> run(adv(f, k + sigWeight(s)), n - 1)
+                Instr.Peek(s) -> peekOrGo(s, f, n)
+                Instr.Jump(t) -> run(Frame.update(f, pc = t), n - 1)
+                Instr.Halt -> f
+                _ -> run(slow(i, f), n - 1)
+
+verify run
+    run(Frame(code = Vector.fromList([Instr.Add(1)]), pc = 0, acc = 0, seen = []), 3).acc => 2
+
+fn peekOrGo(s: Sig, f: Frame, n: Int) -> Frame
+    ? "Stops when the signature says so, else goes on."
+    match s.results
+        0 -> f
+        _ -> run(adv(f, s.results), n - 1)
+
+verify peekOrGo
+    peekOrGo(Sig(params = [], results = 0), Frame(code = Vector.fromList([]), pc = 0, acc = 0, seen = []), 1).acc => 0
+
+fn drain(f: Frame, n: Int) -> Frame
+    ? "Hands the instruction and the frame on together: the element is copied out."
+    match n
+        0 -> f
+        _ -> match Vector.get(f.code, f.pc)
+            Option.None -> f
+            Option.Some(i) -> drain(slow(i, f), n - 1)
+
+verify drain
+    drain(Frame(code = Vector.fromList([Instr.Add(1)]), pc = 0, acc = 0, seen = []), 3).acc => 1
+
+fn main() -> Unit
+    ! [Console.print]
+    sig = Sig(params = [1, 2], results = 3)
+    code = Vector.fromList([Instr.Add(1), Instr.Mul(2, 3), Instr.Block(4, sig), Instr.Wide(1, 2, 3, 4, 5), Instr.Peek(sig), Instr.Jump(0)])
+    f = run(Frame(code = code, pc = 0, acc = 0, seen = []), 40)
+    Console.print("acc {f.acc} pc {f.pc} seen {List.len(f.seen)} first {weight(Option.withDefault(Vector.get(f.code, 3), Instr.Halt))}")
+    g = run(Frame.update(f, code = Vector.fromList([Instr.Add(2), Instr.Halt]), pc = 0), 10)
+    Console.print("acc {g.acc} pc {g.pc} seen {List.len(g.seen)}")
+    h = drain(Frame.update(g, pc = 0), 5)
+    Console.print("acc {h.acc} pc {h.pc} seen {List.len(h.seen)}")
