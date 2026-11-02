@@ -1096,7 +1096,7 @@ pub fn caseCount(
 }
 
 /// Split the first given into its values and the rest inside each case; with none left, close the case.
-#[inline(always)]
+#[inline]
 pub fn splitAll(
     goal @ _: &crate::proof_std::aver_generated::kernel::proof::Goal,
     gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given>,
@@ -1130,7 +1130,7 @@ pub fn splitAll(
 }
 
 /// One case per value, in the kernel's order: the goal with v replaced by the value.
-#[inline(always)]
+#[inline]
 pub fn eachValue(
     goal @ _: &crate::proof_std::aver_generated::kernel::proof::Goal,
     v @ _: AverStr,
@@ -2066,7 +2066,7 @@ pub fn first(
 }
 
 /// One case per value, in the kernel's order, its path naming the value.
-#[inline(always)]
+#[inline]
 pub fn eachCase(
     n @ _: &Node,
     v @ _: AverStr,
