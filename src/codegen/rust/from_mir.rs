@@ -4248,7 +4248,10 @@ pub(super) fn emit_module_binding_getters(scope: Option<&str>, ctx: &CodegenCont
                     &ctx.mutual_tco_members,
                 );
                 let emit_ctx = MirEmitCtx::program_level(ctx, &policy, &prog.builtins);
+                // The `OnceLock` initialiser owns the value it returns: a
+                // bare `>i64` literal is the place of a static and is cloned.
                 emit_mir_expr(&lowered, &emit_ctx)
+                    .map(|code| super::ownership::materialize_owned(code, &lowered.node, &emit_ctx))
             });
             (super::types::type_to_rust_scoped(&ty, ctx, scope), value)
         });

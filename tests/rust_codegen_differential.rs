@@ -589,8 +589,8 @@ fn thin_fields_taken_and_elements_lent_match_vm() {
 
 /// An integer literal past `i64` is parsed once into a static
 /// (`aver_rt::int_lit!`) and read through it, cloned only where a value is
-/// owned: an argument, a field, a list or map element, a tuple, a result. A
-/// negated literal that fits `i64` (`-9223372036854775808`) is folded into a
+/// owned: an argument, a field, a list or map element, a tuple, a result, a
+/// module binding's value. A negated literal that fits `i64` (`-9223372036854775808`) is folded into a
 /// machine word and compared without a big integer.
 #[test]
 fn big_int_literals_read_from_statics_match_vm() {
