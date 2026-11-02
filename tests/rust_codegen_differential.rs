@@ -587,6 +587,29 @@ fn thin_fields_taken_and_elements_lent_match_vm() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// An integer literal past `i64` is parsed once into a static
+/// (`aver_rt::int_lit!`) and read through it, cloned only where a value is
+/// owned: an argument, a field, a list or map element, a tuple, a result. A
+/// negated literal that fits `i64` (`-9223372036854775808`) is folded into a
+/// machine word and compared without a big integer.
+#[test]
+fn big_int_literals_read_from_statics_match_vm() {
+    let relative = "tests/fixtures/rust_big_int_literals.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_big_int_literals", &src);
+    for shape in [
+        "(*aver_rt::int_lit!(\"18446744073709551616\")).clone()",
+        "(x).cmp_i64(-9223372036854775808i64).is_ge()",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    assert!(
+        !emitted.contains(".parse::<aver_rt::AverInt>()"),
+        "{emitted}"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Pure `Int` trees are computed on `i64` first and exactly when a leaf is
 /// past `i64` or an operation overflows (`codegen/rust/from_mir/int_tree.rs`):
 /// overflow in the middle of a tree, Big leaves, `i64::MIN`, Euclidean

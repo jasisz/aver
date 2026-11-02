@@ -164,6 +164,20 @@ macro_rules! str_lit {
     }};
 }
 
+/// The `AverInt` of an integer literal past the machine word, parsed once
+/// into a static and read through a reference from then on: a literal in a
+/// hot comparison or sum allocates no big integer each time it runs. A
+/// position that needs the value owned clones it.
+#[macro_export]
+macro_rules! int_lit {
+    ($digits:literal) => {{
+        static VALUE: ::std::sync::OnceLock<$crate::AverInt> = ::std::sync::OnceLock::new();
+        VALUE.get_or_init(|| {
+            <$crate::AverInt as ::std::str::FromStr>::from_str($digits).expect("an integer literal")
+        })
+    }};
+}
+
 /// One string is equal to itself without reading it, as `Arc<str>`'s `==`.
 impl PartialEq for AverStr {
     #[inline]
