@@ -281,8 +281,9 @@ pub fn take(mut bytes @ _: Bytes, count @ _: aver_rt::AverInt) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8({
+            let __xs = &(aver_rt::AverIntList::from_packed(bytes.values));
             let __n = aver_rt::clamp_list_count(&(count));
-            (aver_rt::AverIntList::from_packed(bytes.values)).take_first(__n)
+            __xs.take_first(__n)
         })
         .expect("proof-packed U8 construction escaped its refinement gate"),
     }
@@ -293,8 +294,9 @@ pub fn drop(mut bytes @ _: Bytes, count @ _: aver_rt::AverInt) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8({
+            let __xs = &(aver_rt::AverIntList::from_packed(bytes.values));
             let __n = aver_rt::clamp_list_count(&(count));
-            (aver_rt::AverIntList::from_packed(bytes.values)).drop_first(__n)
+            __xs.drop_first(__n)
         })
         .expect("proof-packed U8 construction escaped its refinement gate"),
     }

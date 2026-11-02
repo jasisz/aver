@@ -1,0 +1,31 @@
+module TakeCountOrder
+    intent = "List.take and List.drop whose list and count both read the same Int."
+    effects [Console.print]
+
+fn width(op: Int) -> Int
+    ? "A count computed from op; op may be past i64."
+    Int.mod(op, 5) + 1
+
+fn lanes(op: Int, n: Int) -> List<Int>
+    ? "A list built from op."
+    match n <= 0
+        true -> []
+        false -> List.prepend(op + n, lanes(op, n - 1))
+
+fn taken(op: Int) -> List<Int>
+    ? "The list reads op first; the count makes its last read."
+    List.take(lanes(op, 8), width(op))
+
+fn dropped(op: Int) -> List<Int>
+    ? "The same for List.drop."
+    List.drop(lanes(op, 8), width(op))
+
+fn total(xs: List<Int>) -> Int
+    ? "The sum of xs."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + total(t)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{total(taken(3))} {total(dropped(3))} {total(taken(18446744073709551616))} {total(dropped(18446744073709551617))}")

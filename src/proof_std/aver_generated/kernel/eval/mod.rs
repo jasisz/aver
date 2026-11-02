@@ -267,8 +267,9 @@ pub fn typeOf(c @ _: &AverStr) -> AverStr {
     crate::proof_std::cancel_checkpoint();
     aver_rt::string_join(
         &({
+            let __xs = &((aver_rt::string_split_byte(&c, 46u8)).reverse_owned());
             let __n = 1usize;
-            ((aver_rt::string_split_byte(&c, 46u8)).reverse_owned()).drop_first(__n)
+            __xs.drop_first(__n)
         })
         .reverse_owned(),
         &::aver_rt::str_lit!("."),
@@ -1036,9 +1037,9 @@ pub fn sliced(l @ _: &Option<Val>, n @ _: &Option<Val>, front @ _: bool) -> Opti
                             Some(__pat3) => match __pat3 {
                                 crate::proof_std::aver_generated::kernel::eval::Val::VInt(k) => {
                                     if front {
-                                        Some(crate::proof_std::aver_generated::kernel::eval::Val::VList({ let __n = aver_rt::clamp_list_count(&(k)); aver_rt::AverList::from_vec((vs).iter().take(__n).cloned().collect::<Vec<_>>()) }))
+                                        Some(crate::proof_std::aver_generated::kernel::eval::Val::VList({ let __xs = &(vs); let __n = aver_rt::clamp_list_count(&(k)); aver_rt::AverList::from_vec(__xs.iter().take(__n).cloned().collect::<Vec<_>>()) }))
                                     } else {
-                                        Some(crate::proof_std::aver_generated::kernel::eval::Val::VList({ let __n = aver_rt::clamp_list_count(&(k)); (vs).drop_first(__n) }))
+                                        Some(crate::proof_std::aver_generated::kernel::eval::Val::VList({ let __xs = &(vs); let __n = aver_rt::clamp_list_count(&(k)); __xs.drop_first(__n) }))
                                     }
                                 }
                                 _ => None,

@@ -9161,16 +9161,21 @@ fn emit_mir_builtin_call(
             let list = arg!(0);
             let count = emit_list_count(&args[1], arg!(1));
             let count_temp = generated_ident("n");
+            let list_temp = generated_ident("xs");
             // `clamp_list_count` is the same clamp the VM and the interpreter
             // apply: a negative count takes nothing, a count past `usize`
             // takes everything. Reading `to_usize().unwrap_or(usize::MAX)`
             // straight had those two backwards, so a negative count took the
-            // whole list here and nothing everywhere else.
+            // whole list here and nothing everywhere else. The list is read
+            // before the count, in source order: ownership decided which of
+            // them makes the last read of a variable both use.
             if type_is_int_list(args[0].ty()) {
-                format!("{{ let {count_temp} = {count}; ({list}).take_first({count_temp}) }}")
+                format!(
+                    "{{ let {list_temp} = &({list}); let {count_temp} = {count}; {list_temp}.take_first({count_temp}) }}"
+                )
             } else {
                 format!(
-                    "{{ let {count_temp} = {count}; aver_rt::AverList::from_vec(({list}).iter().take({count_temp}).cloned().collect::<Vec<_>>()) }}"
+                    "{{ let {list_temp} = &({list}); let {count_temp} = {count}; aver_rt::AverList::from_vec({list_temp}.iter().take({count_temp}).cloned().collect::<Vec<_>>()) }}"
                 )
             }
         }
@@ -9178,9 +9183,13 @@ fn emit_mir_builtin_call(
             let list = arg!(0);
             let count = emit_list_count(&args[1], arg!(1));
             let count_temp = generated_ident("n");
+            let list_temp = generated_ident("xs");
             // `drop_first` shares the body and advances the offset, so the
             // step costs what it steps over rather than what is left behind.
-            format!("{{ let {count_temp} = {count}; ({list}).drop_first({count_temp}) }}")
+            // The list is read before the count, as in `List.take`.
+            format!(
+                "{{ let {list_temp} = &({list}); let {count_temp} = {count}; {list_temp}.drop_first({count_temp}) }}"
+            )
         }
         "List.concat" => {
             // A `List<Int>` handed over (its last read, or a computed one)
