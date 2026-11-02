@@ -648,6 +648,43 @@ fn record_update_values_run_before_the_base_moves() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A list pattern nested in a constructor or tuple pattern of a computed
+/// value, beside an arm that reads the value whole (`other -> ..`): the
+/// switch takes the value apart by moving its fields out, and where the
+/// list test fails the whole value is built again from those fields. The
+/// value used to stay whole for the arm and the store was copied before
+/// every write.
+#[test]
+fn nested_list_pattern_moves_the_other_fields() {
+    let relative = "tests/fixtures/rust_nested_list_moves_fields.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_nested_list_moves_fields", &src);
+    for shape in [
+        "let __pat0 = step(s, i.clone()); match __pat0 {",
+        "let __tco0 = put(__pat2, a, b.add(&c));",
+        "let other = Step::Vals(__pat1, __pat2);",
+        "let __tco0 = put(__pat7, aver_rt::AverInt::from_i64(0), i.clone());",
+        "let __pat0 = split(s, n.clone()); { let (__pat1, __pat2) = __pat0;",
+        "put(__pat2, n, x.add(&y))",
+        "let whole = (__pat1, __pat2);",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    for copy in [
+        "match &__pat0",
+        "__pat2.clone()",
+        "__pat7.clone()",
+        "s0.clone()",
+        "s1.clone()",
+    ] {
+        assert!(
+            !emitted.contains(copy),
+            "the store is copied (`{copy}`):\n{emitted}"
+        );
+    }
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A thin sum returned by a function that builds every value it returns
 /// is matched by taking the fields an arm owns out of its node
 /// (`try_take`); a result that may be shared (`keep` hands back its

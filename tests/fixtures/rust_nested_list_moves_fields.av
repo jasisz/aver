@@ -1,0 +1,97 @@
+module NestedListMovesFields
+    intent = "A list pattern nested in a constructor pattern, with an arm that reads the value whole: the other fields move out of the matched value."
+    effects [Console.print]
+
+record Store
+    mem: Vector<Int>
+    writes: Int
+
+type Step
+    Vals(List<Int>, Store)
+    Trap(String, Store)
+    Done(Store)
+
+fn step(s: Store, i: Int) -> Step
+    ? "Three values, two values, a trap or the end, with the store."
+    match Int.mod(i, 7)
+        3 -> Step.Vals([i, 1], s)
+        5 -> Step.Trap("odd", s)
+        6 -> Step.Done(s)
+        _ -> Step.Vals([i, i + 1, Int.mod(i, 5)], s)
+
+verify step
+    step(Store(mem = Vector.new(1, 0), writes = 0), 6) => Step.Done(Store(mem = Vector.new(1, 0), writes = 0))
+
+fn put(s: Store, i: Int, v: Int) -> Store
+    ? "Writes one cell in place."
+    Store.update(s, mem = Option.withDefault(Vector.set(s.mem, i, v), s.mem), writes = s.writes + 1)
+
+verify put
+    put(Store(mem = Vector.new(1, 0), writes = 0), 0, 5) => Store(mem = Vector.fromList([5]), writes = 1)
+
+fn storeOf(r: Step) -> Store
+    ? "The store a step carries."
+    match r
+        Step.Vals(_, s) -> s
+        Step.Trap(_, s) -> s
+        Step.Done(s) -> s
+
+verify storeOf
+    storeOf(Step.Done(Store(mem = Vector.new(1, 0), writes = 0))) => Store(mem = Vector.new(1, 0), writes = 0)
+
+fn tag(r: Step) -> Int
+    ? "Which step it is, and how many values."
+    match r
+        Step.Vals(xs, _) -> List.len(xs)
+        Step.Trap(_, _) -> 10
+        Step.Done(_) -> 20
+
+verify tag
+    tag(Step.Done(Store(mem = Vector.new(1, 0), writes = 0))) => 20
+
+fn run(s: Store, i: Int, k: Int, seen: Int) -> Store
+    ? "Steps k times; three values write the store, anything else reads the step whole."
+    match i >= k
+        true -> Store.update(s, writes = s.writes + seen)
+        false -> match step(s, i)
+            Step.Vals([a, b, c], s0) -> run(put(s0, a, b + c), i + 1, k, seen)
+            Step.Trap("odd", s0) -> run(put(s0, 0, i), i + 1, k, seen + 1000)
+            other -> run(storeOf(other), i + 1, k, seen + tag(other))
+
+verify run
+    run(Store(mem = Vector.new(2, 0), writes = 0), 0, 0, 0) => Store(mem = Vector.new(2, 0), writes = 0)
+
+fn split(s: Store, n: Int) -> Tuple<List<Int>, Store>
+    ? "Two values when n is even, three when it is odd, with the store."
+    match Int.mod(n, 2)
+        0 -> ([n, 5], s)
+        _ -> ([n, 5, 6], s)
+
+verify split
+    split(Store(mem = Vector.new(1, 0), writes = 0), 0) => ([0, 5], Store(mem = Vector.new(1, 0), writes = 0))
+
+fn pairs(s: Store, n: Int) -> Store
+    ? "A computed tuple with a list in it, read whole when the list is not two long."
+    match split(s, n)
+        ([x, y], s1) -> put(s1, n, x + y)
+        whole -> keep(whole, n)
+
+verify pairs
+    pairs(Store(mem = Vector.new(1, 0), writes = 0), 0) => Store(mem = Vector.fromList([5]), writes = 1)
+
+fn keep(p: Tuple<List<Int>, Store>, n: Int) -> Store
+    ? "The store of a tuple, written once."
+    match p
+        (xs, s) -> put(s, n, List.len(xs))
+
+verify keep
+    keep(([1], Store(mem = Vector.new(1, 0), writes = 0)), 0) => Store(mem = Vector.fromList([1]), writes = 1)
+
+fn main() -> Unit
+    ? "Runs the loop over a large store and reads a few cells back."
+    ! [Console.print]
+    s = run(Store(mem = Vector.new(30000, 0), writes = 0), 0, 30000, 0)
+    Console.print("{s.writes} {Option.withDefault(Vector.get(s.mem, 0), 0)} {Option.withDefault(Vector.get(s.mem, 7), 0)} {Option.withDefault(Vector.get(s.mem, 29999), 0)}")
+    t = pairs(s, 1)
+    u = pairs(t, 2)
+    Console.print("{u.writes} {Option.withDefault(Vector.get(u.mem, 1), 0)} {Option.withDefault(Vector.get(u.mem, 2), 0)}")

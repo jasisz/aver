@@ -126,3 +126,24 @@ fn flat_matches_are_left_alone() {
     let items = parse(source);
     assert!(!has_nested_patterns(&items));
 }
+
+#[test]
+fn a_value_bound_whole_is_rebuilt_from_the_fields_its_switch_took() {
+    // `other` reads the whole value under the `Pair.Of` case, where the
+    // list test fails, and under the default: the first rebuilds it from
+    // the fields, the second binds it in the default arm, so the switch is
+    // the last read of the value and may take it apart by moving.
+    let (program, errors) = lower(
+        "type Pair\n    Of(List<Int>, String)\n    No\n\nfn size(p: Pair) -> Int\n    0\n\nfn f(n: Int) -> Pair\n    Pair.No\n\nfn g(n: Int) -> Int\n    match f(n)\n        Pair.Of([a, b], s) -> a + b\n        other -> size(other)\n",
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    let body = fn_source(&program, "g");
+    assert!(
+        body.contains(".Of(__pat1, __pat2)\n") && body.contains("other -> size(other)"),
+        "the fields rebuild the value:\n{body}"
+    );
+    assert!(
+        body.contains("__pat") && !body.contains("size(__pat0)") && body.contains("size(__pat5)"),
+        "the tested variable is not read again:\n{body}"
+    );
+}
