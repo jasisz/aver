@@ -633,6 +633,30 @@ fn stored_element_params_taken_by_value_match_vm() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// `match Vector.get(f.code, f.pc)` whose arms hand the frame `f` on reads
+/// the instruction through a borrow when the `Some` arm matches it as its
+/// whole body: an inner arm copies the fields it binds out before the frame
+/// moves (a record field too, which an arm that keeps the frame would borrow),
+/// and an inner arm that moves the frame and reads the instruction again owns
+/// a copy first. A `Some` arm that hands the instruction on beside the frame
+/// keeps cloning it out of the vector.
+#[test]
+fn element_lent_while_its_vector_is_handed_on_matches_vm() {
+    let relative = "tests/fixtures/rust_lent_element.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_lent_element", &src);
+    for shape in [
+        "match { let __i = (f.pc).to_usize(); __i.and_then(|__i| (f.code).get(__i)) }",
+        "let s = __k_fields.1.clone();",
+        "let s = __s_fields.0.clone();",
+        "{ let i = i.clone(); { let __arg16 @ _ = slow(i, f);",
+        "match (f.pc).to_usize().and_then(|__i| f.code.get(__i).cloned())",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Pure `Int` trees are computed on `i64` first and exactly when a leaf is
 /// past `i64` or an operation overflows (`codegen/rust/from_mir/int_tree.rs`):
 /// overflow in the middle of a tree, Big leaves, `i64::MIN`, Euclidean

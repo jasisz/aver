@@ -183,6 +183,11 @@ pub struct MirEmitCtx<'a> {
     /// The boxed records whose new field values are being emitted, each
     /// already bound under its own name (see [`emit_boxed_record_update`]).
     pub record_alias: Option<&'a RecordAlias<'a>>,
+    /// Elements a `match Vector.get(v, i)` lends out of a vector whose root
+    /// local some arm hands on: the element's slot and name, and the root's
+    /// slot (see [`lent_vector_get_in_wrapper`]). An arm that moves the root
+    /// owns such an element first and borrows nothing out of it.
+    pub lent_elements: &'a [(LocalId, String, LocalId)],
 }
 
 /// A record place (`s`, `r.st`) an update of a boxed record has moved into
@@ -230,6 +235,7 @@ impl<'a> MirEmitCtx<'a> {
             moved_paths: &[],
             list_slot: None,
             record_alias: None,
+            lent_elements: &[],
         }
     }
 
@@ -281,6 +287,7 @@ impl<'a> MirEmitCtx<'a> {
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            lent_elements: &[],
         }
     }
 
@@ -319,6 +326,7 @@ impl<'a> MirEmitCtx<'a> {
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            lent_elements: &[],
         }
     }
 
@@ -4821,6 +4829,15 @@ fn emit_mir_match_with(
     let mut lent: Vec<HashSet<String>> = Vec::with_capacity(m.arms.len());
     let mut taken: Vec<bool> = Vec::with_capacity(m.arms.len());
     let mut arm_bodies: Vec<String> = Vec::with_capacity(m.arms.len());
+    // The root of the vector a `match Vector.get(v, i)` lends its element
+    // out of; an arm that hands the root on records its element in
+    // `lent_elements` (see [`lent_vector_get_in_wrapper`]).
+    let element_root = match path {
+        MatchPath::LentWrapper => lent_vector_get_in_wrapper(m, emit_ctx)
+            .and_then(|(vector, _)| projection_root_local(&vector.node))
+            .map(|root| root.slot),
+        _ => None,
+    };
     for (arm, resolved) in m.arms.iter().zip(&arms) {
         let slot_ctx;
         let emit_ctx = match (reuse, &arm.pattern) {
@@ -4840,8 +4857,22 @@ fn emit_mir_match_with(
         // An arm that owns every field it binds takes them out of the
         // subject's node (see [`takes_from_subject`]) and borrows nothing.
         let take = takes_subject && owns_every_binding(&arm.pattern, &arm.body, emit_ctx);
+        // Elements lent out of a vector whose root this arm moves: the arm
+        // borrows nothing out of them, and owns a copy of one it reads.
+        let moved_elements: Vec<&(LocalId, String, LocalId)> = emit_ctx
+            .lent_elements
+            .iter()
+            .filter(|(_, _, root)| !reads_only_borrow(&arm.body.node, *root, emit_ctx))
+            .collect();
+        let subject_of_moved = projection_root_local(&m.subject.node)
+            .is_some_and(|root| moved_elements.iter().any(|(slot, _, _)| *slot == root.slot));
+        let owned_elements: Vec<&String> = moved_elements
+            .iter()
+            .filter(|(slot, _, _)| reads_local(&arm.body.node, *slot))
+            .map(|(_, name, _)| name)
+            .collect();
         let parts = match (path, emit_ctx.codegen) {
-            _ if take => HashSet::new(),
+            _ if take || subject_of_moved => HashSet::new(),
             // `lends_wrapper` has checked that nothing moves what the
             // payload borrows from.
             (MatchPath::LentWrapper, Some(_)) => lent_payload(&arm.pattern, &arm.body),
@@ -4855,9 +4886,30 @@ fn emit_mir_match_with(
             (MatchPath::LentTuple, Some(_)) => lent_tuple_parts(&arm.pattern, &arm.body),
             _ => HashSet::new(),
         };
+        // The element payloads this arm lends while it hands their vector's
+        // root on.
+        let new_elements: Vec<(LocalId, String, LocalId)> = match (element_root, &arm.pattern) {
+            (
+                Some(root),
+                MirPattern::Ctor {
+                    bindings,
+                    binding_names,
+                    ..
+                },
+            ) if !reads_only_borrow(&arm.body.node, root, emit_ctx) => bindings
+                .iter()
+                .zip(binding_names)
+                .filter(|(_, name)| parts.contains(*name))
+                .map(|(slot, name)| (*slot, name.clone(), root))
+                .collect(),
+            _ => Vec::new(),
+        };
         let mut binders = Vec::new();
         pattern_binder_names(&arm.pattern, &mut binders);
-        let arm_body = if parts.is_empty() && !binders.iter().any(|b| emit_ctx.is_borrowed_param(b))
+        let arm_body = if parts.is_empty()
+            && owned_elements.is_empty()
+            && new_elements.is_empty()
+            && !binders.iter().any(|b| emit_ctx.is_borrowed_param(b))
         {
             render_arm(&arm.body, emit_ctx)?
         } else {
@@ -4865,10 +4917,25 @@ fn emit_mir_match_with(
             for binder in &binders {
                 borrowed.remove(binder);
             }
+            for name in &owned_elements {
+                borrowed.remove(*name);
+            }
             borrowed.extend(parts.iter().cloned());
+            let elements: Vec<(LocalId, String, LocalId)> = emit_ctx
+                .lent_elements
+                .iter()
+                .filter(|(_, name, _)| !owned_elements.contains(&name))
+                .cloned()
+                .chain(new_elements)
+                .collect();
             let mut arm_ctx = *emit_ctx;
             arm_ctx.borrowed_params = &borrowed;
-            render_arm(&arm.body, &arm_ctx)?
+            arm_ctx.lent_elements = &elements;
+            let body = render_arm(&arm.body, &arm_ctx)?;
+            owned_elements.iter().fold(body, |body, name| {
+                let name = aver_name_to_rust(name);
+                format!("{{ let {name} = {name}.clone(); {body} }}")
+            })
         };
         // A payload of a matched borrow that is not lent is a borrow too; the
         // arm owns its copy.
@@ -5042,9 +5109,13 @@ fn emit_mir_match_with(
     let lent_get = (lent_wrapper || matches!(path, MatchPath::Generic { .. }))
         .then(|| lent_map_get(m, emit_ctx))
         .flatten();
-    let lent_element = (lent_wrapper || matches!(path, MatchPath::Generic { .. }))
-        .then(|| lent_vector_get(m, emit_ctx))
-        .flatten();
+    let lent_element = if lent_wrapper {
+        lent_vector_get_in_wrapper(m, emit_ctx)
+    } else if matches!(path, MatchPath::Generic { .. }) {
+        lent_vector_get(m, emit_ctx)
+    } else {
+        None
+    };
     let match_on_ref = borrowed_subject
         || kept_subject
         || lent_wrapper
@@ -5645,7 +5716,7 @@ fn lends_wrapper(
         .is_none_or(|arm| arm.binding_name.is_none())
         && (mir_expr_is_borrowed_param_read(&m.subject.node, ctx)
             || lent_map_get(m, ctx).is_some()
-            || lent_vector_get(m, ctx).is_some())
+            || lent_vector_get_in_wrapper(m, ctx).is_some())
 }
 
 /// The map and key of a `match Map.get(m, k)` that can borrow the value in
@@ -5685,6 +5756,47 @@ fn lent_vector_get<'a>(
             .iter()
             .all(|arm| reads_only_borrow(&arm.body.node, root.slot, ctx)))
     .then_some((vector, index))
+}
+
+/// [`lent_vector_get`] for a match of only `Option` tags, which may also
+/// borrow the element when an arm hands the vector on (an interpreter loop
+/// passes the frame that holds its code to the next round): every arm that
+/// does either binds no element it reads, or matches the element as its whole
+/// body, `Option.Some(i) -> match i ...`. The fields such an inner arm binds
+/// are copied out before its body runs, and an inner arm that moves the root
+/// and reads `i` again clones `i` first (see [`MirEmitCtx::lent_elements`]),
+/// so no borrow of the vector outlives the move.
+fn lent_vector_get_in_wrapper<'a>(
+    m: &'a MirMatch,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<(&'a Spanned<MirExpr>, &'a Spanned<MirExpr>)> {
+    if let Some(found) = lent_vector_get(m, ctx) {
+        return Some(found);
+    }
+    let (name, [vector, index]) = mir_builtin_call_parts(&m.subject.node, ctx)? else {
+        return None;
+    };
+    let root = projection_root_local(&vector.node)?;
+    (name == "Vector.get"
+        && m.arms.iter().all(|arm| {
+            reads_only_borrow(&arm.body.node, root.slot, ctx)
+                || element_matched_whole(&arm.pattern, &arm.body.node)
+        }))
+    .then_some((vector, index))
+}
+
+/// Whether a wrapper arm reads the payload it binds only as the subject of
+/// the match that is its whole body (or binds none it reads).
+fn element_matched_whole(pattern: &MirPattern, body: &MirExpr) -> bool {
+    match pattern {
+        MirPattern::Wildcard => true,
+        MirPattern::Ctor { bindings, .. } => bindings.iter().all(|slot| {
+            !reads_local(body, *slot)
+                || matches!(body, MirExpr::Match(inner)
+                    if local_of(&inner.node.subject.node).is_some_and(|l| l.slot == *slot))
+        }),
+        _ => false,
+    }
 }
 
 /// The payload of a wrapper arm, lent when it has a type a borrow serves.
@@ -9817,6 +9929,7 @@ mod tests {
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            lent_elements: &[],
         };
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         assert_eq!(
@@ -10947,6 +11060,7 @@ mod tests {
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            lent_elements: &[],
         }
     }
 
