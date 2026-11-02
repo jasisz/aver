@@ -3320,6 +3320,47 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         assert!(cargo_toml.contains("edition = \"2024\""));
     }
 
+    /// A thin function is forced into its callers only when its body is no
+    /// bigger than the call it replaces; a larger thin body is left to LLVM.
+    #[test]
+    fn only_tiny_thin_functions_are_always_inlined() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn first(a: Int, b: Int) -> Int
+    a + b * 2
+
+fn swap(a: Int, b: Int) -> Int
+    first(b, a)
+
+fn pick(x: Int) -> Int
+    match x
+        0 -> swap(x + 1, x + 2) + swap(x + 3, x)
+        1 -> swap(x - 1, x) * 2
+        _ -> swap(x, x - 3) + first(x + 5, x)
+
+fn main() -> Int
+    pick(3)
+"#,
+            "demo",
+        );
+        let out = transpile(&mut ctx);
+        let entry = generated_file(&out, "src/aver_generated/entry/mod.rs");
+        let line_before = |name: &str| {
+            let at = entry.find(&format!("pub fn {name}(")).unwrap();
+            entry[..at]
+                .trim_end()
+                .lines()
+                .last()
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert_eq!(line_before("first"), "#[inline(always)]", "{entry}");
+        assert_eq!(line_before("swap"), "#[inline(always)]", "{entry}");
+        assert_eq!(line_before("pick"), "#[inline]", "{entry}");
+    }
+
     #[cfg(feature = "runtime")]
     #[test]
     fn rust_allocator_option_adds_mimalloc_only_when_chosen() {

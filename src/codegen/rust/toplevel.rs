@@ -1242,6 +1242,49 @@ pub fn emit_public_fn_def(
     emit_fn_def_with_visibility(fd, resolved_fd, ctx, scope, true)
 }
 
+/// The largest emitted body, in MIR nodes, a thin function may have and still
+/// be forced into every caller. A forwarding wrapper or a one-operator leaf is
+/// a call node plus its arguments; anything bigger is left to LLVM's cost
+/// model, which sees how often it is called.
+const ALWAYS_INLINE_MAX_NODES: usize = 8;
+
+/// The inline hint for an effect-free thin function. `#[inline(always)]`
+/// overrides LLVM's cost model, so it is kept for bodies no bigger than the
+/// call they replace; a larger thin body (a dispatch `match` with arbitrary
+/// arms, a direct call with arbitrary arguments) gets `#[inline]`, which still
+/// lets LLVM inline it where that pays. Forcing such bodies into every caller
+/// cascades through chains of thin functions and can grow a module past what
+/// LLVM can compile.
+fn thin_fn_inline_attribute(fn_id: crate::ir::FnId, ctx: &CodegenContext) -> &'static str {
+    let tiny = ctx
+        .mir_program
+        .as_ref()
+        .and_then(|program| program.fn_by_id(fn_id))
+        .is_some_and(|mir_fn| {
+            mir_node_count(&mir_fn.body.node, ALWAYS_INLINE_MAX_NODES + 1)
+                <= ALWAYS_INLINE_MAX_NODES
+        });
+    if tiny {
+        "#[inline(always)]"
+    } else {
+        "#[inline]"
+    }
+}
+
+/// The number of MIR nodes in `expr`, counting stops once it passes `limit`.
+fn mir_node_count(expr: &crate::ir::mir::MirExpr, limit: usize) -> usize {
+    let mut count = 0;
+    let mut stack = vec![expr];
+    while let Some(node) = stack.pop() {
+        count += 1;
+        if count > limit {
+            break;
+        }
+        crate::ir::mir::expr::walk_children(node, &mut |child| stack.push(child));
+    }
+    count
+}
+
 /// Emit a Rust fn def from a paired (`&FnDef`, `&ResolvedFnDef`)
 /// input.
 ///
@@ -1372,7 +1415,7 @@ fn emit_fn_def_with_visibility(
             .as_ref()
             .is_some_and(|plan| thin_kind_is_parent_thin_candidate(plan.kind))
     {
-        lines.push("#[inline(always)]".to_string());
+        lines.push(thin_fn_inline_attribute(resolved_fd.fn_id, ctx).to_string());
     }
 
     if is_guest_entry && (ctx.emit_replay_runtime || self_host_state.is_some()) {
