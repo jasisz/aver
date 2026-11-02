@@ -2629,6 +2629,23 @@
   },
   "laws": []
  },
+ "tools/certkit/fixtures/bitwise.av": {
+  "bridges": [
+   "low8",
+   "merged",
+   "mixed",
+   "packed",
+   "toggled"
+  ],
+  "certified": {
+   "low8": "L1",
+   "merged": "L1",
+   "mixed": "L1",
+   "packed": "L1",
+   "toggled": "L1"
+  },
+  "laws": []
+ },
  "tools/certkit/fixtures/bool_window.av": {
   "bridges": [
    "inWindow"

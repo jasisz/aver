@@ -60,7 +60,7 @@ module IntCmpDiff
     intent =
         "Differential fixture for the two Int value-comparison host contracts"
         "and the three faces built on them."
-    exposes [compose, addI, subI, mulI, divBy7, modBy7, shiftUp, andWith, atLeast, sameKey, minInt, productNonNeg, productNonPos, crossOf]
+    exposes [compose, addI, subI, mulI, divBy7, modBy7, shiftUp, andWith, orWith, xorWith, atLeast, sameKey, minInt, productNonNeg, productNonPos, crossOf]
     effects []
 
 record Pair
@@ -120,6 +120,14 @@ fn shiftUp(a: Int) -> Int
 fn andWith(a: Int, b: Int) -> Int
     ? "Drives the bitwise producer under infinite two's complement."
     Bits.and(a, b)
+
+fn orWith(a: Int, b: Int) -> Int
+    ? "Drives the bitwise producer's or (selector 1)."
+    Bits.or(a, b)
+
+fn xorWith(a: Int, b: Int) -> Int
+    ? "Drives the bitwise producer's xor (selector 2)."
+    Bits.xor(a, b)
 
 fn productNonNeg(a: Int, b: Int) -> Bool
     ? "The inline sign template on a COMPUTED operand: the product is compared against the literal zero without calling the three-way helper."
@@ -212,6 +220,8 @@ struct Harness {
     mod_by_7: wasmtime::Func,
     shift_up: wasmtime::Func,
     and_with: wasmtime::Func,
+    or_with: wasmtime::Func,
+    xor_with: wasmtime::Func,
     at_least: wasmtime::Func,
     same_key: wasmtime::Func,
     min_int: wasmtime::Func,
@@ -256,6 +266,8 @@ fn harness() -> Harness {
     let mod_by_7 = func(&mut store, "modBy7");
     let shift_up = func(&mut store, "shiftUp");
     let and_with = func(&mut store, "andWith");
+    let or_with = func(&mut store, "orWith");
+    let xor_with = func(&mut store, "xorWith");
     let at_least = func(&mut store, "atLeast");
     let same_key = func(&mut store, "sameKey");
     let min_int = func(&mut store, "minInt");
@@ -276,6 +288,8 @@ fn harness() -> Harness {
         mod_by_7,
         shift_up,
         and_with,
+        or_with,
+        xor_with,
         at_least,
         same_key,
         min_int,
@@ -596,14 +610,22 @@ fn the_other_carrier_producers_are_canonical_too() {
         }
     }
 
-    // The bitwise reader is infinite two's complement, which is exactly what
-    // `i128::bitand` computes on values that fit.
+    // The bitwise helper is infinite two's complement, which is exactly what
+    // `i128`'s `&`, `|` and `^` compute on values that fit: the
+    // `__aint_bitwise` contract (`HostContracts.bitAnd` / `bitOr` / `bitXor`)
+    // at selectors 0, 1 and 2.
     for &a in VALUES {
         for &b in VALUES {
-            let ca = carrier_of(&mut h, a);
-            let cb = carrier_of(&mut h, b);
-            let got = call_one(&mut h.store, &h.and_with.clone(), &[ca, cb]);
-            assert_canonical(&mut h.store, &got, a & b, &format!("andWith({a}, {b})"));
+            for (name, f, want) in [
+                ("andWith", h.and_with.clone(), a & b),
+                ("orWith", h.or_with.clone(), a | b),
+                ("xorWith", h.xor_with.clone(), a ^ b),
+            ] {
+                let ca = carrier_of(&mut h, a);
+                let cb = carrier_of(&mut h, b);
+                let got = call_one(&mut h.store, &f, &[ca, cb]);
+                assert_canonical(&mut h.store, &got, want, &format!("{name}({a}, {b})"));
+            }
         }
     }
 }

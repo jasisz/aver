@@ -227,8 +227,9 @@ enum StringHostRole {
 }
 
 /// The declared role indices in fixed
-/// `(box, add, mul, sub, toIndex, cmp, eq, divmod)` order.
+/// `(box, add, mul, sub, toIndex, cmp, eq, divmod, bitwise)` order.
 type HostRoleTable = (
+    Option<u32>,
     Option<u32>,
     Option<u32>,
     Option<u32>,
@@ -1088,10 +1089,11 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             cmp_role,
             eq_role,
             divmod_role,
+            bitwise_role,
         )) => {
             format!(
                 "_root_.Option.some ({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, \
-             cmp := {}, eq := {}, divmod := {} }} : \
+             cmp := {}, eq := {}, divmod := {}, bitwise := {} }} : \
              _root_.CertDecode.AddSub.Roles)",
                 lean_option_nat(box_role),
                 lean_option_nat(add_role),
@@ -1101,6 +1103,7 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
                 lean_option_nat(cmp_role),
                 lean_option_nat(eq_role),
                 lean_option_nat(divmod_role),
+                lean_option_nat(bitwise_role),
             )
         }
         None => "(_root_.Option.none : _root_.Option _root_.CertDecode.AddSub.Roles)".to_string(),
@@ -2139,7 +2142,9 @@ fn read_candidates(
         exact_object_fields(
             host_roles,
             "hostRoleTable",
-            &["box", "add", "mul", "sub", "toIndex", "cmp", "eq", "divmod"],
+            &[
+                "box", "add", "mul", "sub", "toIndex", "cmp", "eq", "divmod", "bitwise",
+            ],
         )?;
         let optional_index = |key: &str| -> Result<Option<u32>, String> {
             match &host_roles[key] {
@@ -2156,6 +2161,7 @@ fn read_candidates(
             optional_index("cmp")?,
             optional_index("eq")?,
             optional_index("divmod")?,
+            optional_index("bitwise")?,
         ))
     };
 

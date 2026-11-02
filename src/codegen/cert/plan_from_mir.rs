@@ -17,9 +17,9 @@
 use std::collections::HashMap;
 
 use aver_cert::{
-    FnPlan, ModulePlans, PLAN_NO_SLOT, PlanBinOp, PlanBuiltin, PlanBytesRole, PlanCallee, PlanCtor,
-    PlanExpr, PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat, PlanPick, PlanRecordDecl,
-    PlanSumDecl, PlanTy, PlanTypeTable, PlanWLeaf, PlanWTree, PlannedFn,
+    FnPlan, ModulePlans, PLAN_NO_SLOT, PlanBinOp, PlanBitwise, PlanBuiltin, PlanBytesRole,
+    PlanCallee, PlanCtor, PlanExpr, PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat,
+    PlanPick, PlanRecordDecl, PlanSumDecl, PlanTy, PlanTypeTable, PlanWLeaf, PlanWTree, PlannedFn,
 };
 
 use crate::ast::{BinOp, Literal, Spanned};
@@ -1053,6 +1053,10 @@ impl Printer<'_> {
                             // picked operand evaluated again.
                             "Int.min" => PlanCallee::Pick(PlanPick::IntMin),
                             "Int.max" => PlanCallee::Pick(PlanPick::IntMax),
+                            // Both operands, the selector, `__aint_bitwise`.
+                            "Bits.and" => PlanCallee::Bitwise(PlanBitwise::And),
+                            "Bits.or" => PlanCallee::Bitwise(PlanBitwise::Or),
+                            "Bits.xor" => PlanCallee::Bitwise(PlanBitwise::Xor),
                             "Result.withDefault" => {
                                 // `Int.div` / `Int.mod` print only fused here.
                                 if let [o, d] = call.args.as_slice()

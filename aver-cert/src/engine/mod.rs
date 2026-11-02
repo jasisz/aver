@@ -71,6 +71,9 @@ pub const EQ_CONTRACT: &str =
 /// The Euclidean division helper contract; byte-identical twin of
 /// `ClaimAxes.divmodContract`.
 pub const DIVMOD_CONTRACT: &str = "__aint_divmod (canonical carrier pair, nonzero divisor, want_mod 0 or 1 -> canonical Euclidean quotient (0) or remainder in [0, |b|) (1))";
+/// The `Bits.and` / `Bits.or` / `Bits.xor` helper contract; byte-identical
+/// twin of `ClaimAxes.bitwiseContract`.
+pub const BITWISE_CONTRACT: &str = "__aint_bitwise (canonical carrier pair, op 0, 1 or 2 -> canonical infinite two's-complement and (0), or (1) or xor (2))";
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.

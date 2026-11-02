@@ -193,7 +193,7 @@ fn roles_lit(roles: &serde_json::Value, overrides: &[(&str, Option<u32>)]) -> St
             )
     };
     format!(
-        "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, cmp := {}, eq := {}, divmod := {} }} : CertDecode.AddSub.Roles)",
+        "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, cmp := {}, eq := {}, divmod := {}, bitwise := {} }} : CertDecode.AddSub.Roles)",
         pick("box"),
         pick("add"),
         pick("mul"),
@@ -202,6 +202,7 @@ fn roles_lit(roles: &serde_json::Value, overrides: &[(&str, Option<u32>)]) -> St
         pick("cmp"),
         pick("eq"),
         pick("divmod"),
+        pick("bitwise"),
     )
 }
 

@@ -875,6 +875,7 @@ pub fn analyze(
         lowered_calls(&m.lower_plan(&e.plan), &mut own);
         let roles = [
             m.box_, m.add, m.sub, m.mul, m.streq, m.concat, m.to_index, m.cmp, m.eq, m.divmod,
+            m.bitwise,
         ];
         role_bits.push(
             roles
@@ -990,6 +991,7 @@ pub fn analyze(
         (has(m.cmp), CMP_CONTRACT),
         (has(m.eq), EQ_CONTRACT),
         (has(m.divmod), DIVMOD_CONTRACT),
+        (has(m.bitwise), BITWISE_CONTRACT),
         (any_total, INT_ADD_TOTAL_CONTRACT),
         (any_total, INT_SUB_TOTAL_CONTRACT),
         (any_total_mul, INT_MUL_TOTAL_CONTRACT),

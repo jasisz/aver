@@ -526,6 +526,11 @@ fn tripwire_lake_available() -> bool {
 ///
 /// Returns `None` when `lake` is unavailable; the caller then skips, as before.
 fn tripwire_baseline(prefix: &str) -> Option<ScratchDir> {
+    tripwire_baseline_of(prefix, "tools/certkit/fixtures/certprobe2.av")
+}
+
+/// [`tripwire_baseline`] over another certkit fixture.
+fn tripwire_baseline_of(prefix: &str, fixture: &str) -> Option<ScratchDir> {
     if !tripwire_lake_available() {
         return None;
     }
@@ -537,7 +542,7 @@ fn tripwire_baseline(prefix: &str) -> Option<ScratchDir> {
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
-        .arg("tools/certkit/fixtures/certprobe2.av")
+        .arg(fixture)
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
@@ -2888,6 +2893,37 @@ fn cert_tripwire_declines_flipped_divmod_helper_byte() {
     assert_eq!(hits.len(), 1, "the divmod template carries one i64.div_s");
     assert_rebound_byte_tamper_declines(&out_dir, "certprobe2.wasm", "divmod body", &|bytes| {
         bytes[hits[0]] = 0x80;
+    });
+}
+
+/// The bitwise helper is pinned by its template: one byte of the
+/// `__aint_bitwise` body changed (the Small path's `i64.or` -> `i64.xor`, a
+/// valid module with every export, index and type unchanged) declines the
+/// package.
+#[test]
+fn cert_tripwire_declines_flipped_bitwise_helper_byte() {
+    let Some(out_dir) = tripwire_baseline_of(
+        "certverify-bitwise-template",
+        "tools/certkit/fixtures/bitwise.av",
+    ) else {
+        return;
+    };
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert/cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let bitwise_idx = manifest["hostRoleTable"]["bitwise"]
+        .as_u64()
+        .expect("the bitwise fixture declares the bitwise helper") as u32;
+    let wasm = std::fs::read(out_dir.join("bitwise.wasm")).unwrap();
+    let hits = function_opcode_offsets(&wasm, bitwise_idx, 0x84);
+    assert_eq!(
+        hits.len(),
+        2,
+        "the bitwise template carries two i64.or: the Small path and the limb loop"
+    );
+    assert_rebound_byte_tamper_declines(&out_dir, "bitwise.wasm", "bitwise body", &|bytes| {
+        bytes[hits[0]] = 0x85;
     });
 }
 

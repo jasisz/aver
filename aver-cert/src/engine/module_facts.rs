@@ -792,8 +792,9 @@ impl ModuleFacts {
         // `__aint_divmod` and `__aint_bitwise` are not exported: declare each
         // only at the one function whose body is the template the wall pins it
         // by.
+        let params = roles.arith_params(carrier);
         let sole_template_hit = |template: &str| -> Option<u32> {
-            let tmpl = template_body(template, roles.arith_params(carrier)?)?;
+            let tmpl = template_body(template, params?)?;
             let hits: Vec<u32> = self
                 .code
                 .iter()

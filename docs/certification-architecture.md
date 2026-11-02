@@ -159,7 +159,7 @@ A verdict depends on:
 - the embedded Lean wall and the Lean 4.35 elaborator, kernel and tools;
 - the canonical local Elan home that resolves the pinned toolchain;
 - SHA-256 collision resistance;
-- the named runtime contracts, and their totality where L3 needs it. They cover code the certificate does not pin (the bignum sub-routines behind add, sub, mul, cmp and divmod), and they model every helper as a pure function of its argument values;
+- the named runtime contracts, and their totality where L3 needs it. They cover code the certificate does not pin (the bignum sub-routines behind add, sub, mul, cmp, divmod and bitwise), and they model every helper as a pure function of its argument values;
 - two facts of the wasm GC specification behind the exact `ref.test` of a variant match, carried as the explicit hypothesis `GrammarSound.GcTestSpec`;
 - for L3, the wall's interpreter as the meaning of "returns": fuel counts nested calls only, so stack exhaustion and allocation failure in a real engine are not covered;
 - for `check` only, any explicitly configured build-cache directory.

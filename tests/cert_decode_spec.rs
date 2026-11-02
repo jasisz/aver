@@ -58,6 +58,7 @@ const FIXTURES: &[&str] = &[
 /// requires consciously extending the Rust-splice ↔ kernel-decode regression.
 const S1_FIXTURES: &[&str] = &[
     "arity3",
+    "bitwise",
     "bool_window",
     "bridge_body_calls",
     "cell_at",
