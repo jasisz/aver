@@ -4511,7 +4511,7 @@ fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
             serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
         m["hostRoleTable"] = serde_json::json!({
             "box": null, "add": null, "mul": null, "sub": null,
-            "toIndex": null, "cmp": null, "eq": null, "divmod": null
+            "toIndex": null, "cmp": null, "eq": null, "divmod": null, "bitwise": null
         });
         std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_check(&dir.join("hello.wasm"), &dir.join("cert"));

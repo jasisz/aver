@@ -39,7 +39,7 @@ expression: golden
   ],
   "capabilities": [],
   "start": {"present": false, "function_index": null},
-  "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18, "cmp": null, "eq": null, "divmod": 12},
+  "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18, "cmp": null, "eq": null, "divmod": 12, "bitwise": null},
   "stringHostRoles": [],
   "certified": [
     {"name": "addOne", "class": "source-plan-v1", "facets": [], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"}
@@ -79,7 +79,7 @@ def subject : Subject :=
     declaredUncertified := Plans.subject_declaredUncertified_0
     capabilities := []
     start := none
-    hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18, cmp := none, eq := none, divmod := some 12 } : CertDecode.AddSub.Roles)
+    hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18, cmp := none, eq := none, divmod := some 12, bitwise := none } : CertDecode.AddSub.Roles)
     arithParams := some ({ carrier := 2, limb := 1, decompose := 2, normalize := 3, strip := 4, umagCmp := 5 } : ArithTemplateDerisk.ArithHostParams)
     stringHostRoles := []
     contracts := ["__rt_aint_from_i64 (box i64 -> carrier)", "Int.add (carrier add = exact integer addition on represented values; result canonical)"] }

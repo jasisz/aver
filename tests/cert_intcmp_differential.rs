@@ -617,9 +617,9 @@ fn the_other_carrier_producers_are_canonical_too() {
     for &a in VALUES {
         for &b in VALUES {
             for (name, f, want) in [
-                ("andWith", h.and_with.clone(), a & b),
-                ("orWith", h.or_with.clone(), a | b),
-                ("xorWith", h.xor_with.clone(), a ^ b),
+                ("andWith", h.and_with, a & b),
+                ("orWith", h.or_with, a | b),
+                ("xorWith", h.xor_with, a ^ b),
             ] {
                 let ca = carrier_of(&mut h, a);
                 let cb = carrier_of(&mut h, b);
