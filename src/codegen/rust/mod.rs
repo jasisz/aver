@@ -3360,6 +3360,46 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         }
     }
 
+    /// A program that reaches a capability is a library plus a binary. Only
+    /// the library may declare the generated modules: a binary declaring them
+    /// too compiles the whole program a second time as an unrelated crate.
+    #[test]
+    fn a_program_with_a_capability_is_compiled_into_one_crate() {
+        let mut ctx = ctx_from_source(
+            "module Demo\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"hi\")\n",
+            "demo-app",
+        );
+        ctx.emit_replay_runtime = true;
+        let out = transpile(&mut ctx);
+        let library = generated_file(&out, "src/lib.rs");
+        let binary = generated_file(&out, "src/main.rs");
+        for module in [
+            "aver_generated",
+            "runtime_support",
+            "provider_support",
+            "replay_support",
+        ] {
+            assert!(library.contains(&format!("mod {module};")), "{library}");
+            assert!(!binary.contains(&format!("mod {module};")), "{binary}");
+        }
+        assert!(binary.contains("pub use demo_app::*;"), "{binary}");
+        assert!(binary.contains("fn bootstrap_provider_bindings()"));
+        let manifest = generated_file(&out, "Cargo.toml");
+        assert!(manifest.contains("[lib]\ntest = false\ndoctest = false\n"));
+
+        // The self-host is built as a binary target of the compiler's own
+        // package, so it keeps one self-contained binary crate.
+        let mut ctx = ctx_from_source(
+            "module Demo\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"hi\")\n",
+            "demo",
+        );
+        ctx.emit_self_host_support = true;
+        let out = transpile(&mut ctx);
+        assert!(!out.files.iter().any(|(path, _)| path == "src/lib.rs"));
+        assert!(generated_file(&out, "src/main.rs").contains("pub mod aver_generated;"));
+        assert!(!generated_file(&out, "Cargo.toml").contains("[lib]"));
+    }
+
     #[test]
     fn replay_codegen_wraps_root_main_when_no_guest_entry_is_set() {
         let mut ctx = ctx_from_source(
@@ -3445,11 +3485,11 @@ fn main() -> Result<String, String>
         ctx.runtime_policy_from_env = true;
 
         let out = transpile(&mut ctx);
-        let root_main = generated_file(&out, "src/main.rs");
+        let library = generated_file(&out, "src/lib.rs");
         let replay_support = generated_file(&out, "src/replay_support.rs");
         let cargo_toml = generated_file(&out, "Cargo.toml");
 
-        assert!(!root_main.contains("mod policy_support;"));
+        assert!(!library.contains("mod policy_support;"));
         assert!(replay_support.contains("load_runtime_policy_from_env"));
         assert!(cargo_toml.contains("url = \"2\""));
         assert!(cargo_toml.contains("toml = \"0.8\""));
@@ -3534,10 +3574,10 @@ fn main() -> Result<String, String>
         });
 
         let out = transpile(&mut ctx);
-        let root_main = generated_file(&out, "src/main.rs");
+        let library = generated_file(&out, "src/lib.rs");
         let replay_support = generated_file(&out, "src/replay_support.rs");
 
-        assert!(root_main.contains("mod policy_support;"));
+        assert!(library.contains("mod policy_support;"));
         assert!(replay_support.contains("aver_policy::check_disk"));
         assert!(!replay_support.contains("RuntimeEffectPolicy"));
     }
