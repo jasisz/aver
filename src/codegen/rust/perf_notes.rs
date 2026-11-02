@@ -18,6 +18,13 @@
 //!   `Map.remove` or `Vector.set`. The copy gives the collection a second
 //!   owner, so the write copies it whole; the note names the call and why
 //!   the argument was cloned, as for a write.
+//! - A Map or Vector matched out of a value copied out of a map or a vector
+//!   (`match Map.get(heap, a)` / `Obj.Array(t, vs)`) and then written in
+//!   place, directly or by a function it is passed to, with no clone at the
+//!   write: the copy of the value took a second count on it, and the map or
+//!   vector it came from still holds the original, so the write copies it
+//!   whole ([`matched_part_writes`]). Where the write clones it instead, the
+//!   note of the write names that value as what keeps it.
 //! - A machine word boxed into an `Int` at a function boundary: every call
 //!   of a function passes a parameter a value held as a raw `i64` (or a
 //!   literal), and the function works on it as an `Int`.
@@ -28,7 +35,7 @@ use crate::ast::Spanned;
 use crate::codegen::{CodegenContext, PerfNote};
 use crate::ir::FnId;
 use crate::ir::mir::expr::walk_children;
-use crate::ir::mir::{LocalId, MirCallee, MirExpr, MirFn, MirProgram};
+use crate::ir::mir::{LocalId, MirCallee, MirExpr, MirFn, MirPattern, MirProgram};
 
 use super::from_mir::MirEmitCtx;
 
@@ -149,6 +156,13 @@ pub(super) fn collect(ctx: &CodegenContext, mut notes: Vec<PerfNote>) -> Vec<Per
                 });
             }
         });
+        for (line, text) in matched_part_writes(program, f, &writes, &copied) {
+            notes.push(PerfNote {
+                module: module_of(ctx, *id),
+                line,
+                text,
+            });
+        }
     }
     notes.sort();
     notes.dedup();
@@ -245,10 +259,13 @@ fn copied_note(
     };
     let why = match (search.walk(&f.body.node), copy.held) {
         (Some(line), _) => format!("`{what}` is read again at line {line}"),
-        (None, Held::Lent) => format!(
-            "`{}` only borrows `{}`, which its caller keeps",
-            f.name, read.name
-        ),
+        (None, Held::Lent) => match matched_from(program, f, read.slot) {
+            Some(held) => held,
+            None => format!(
+                "`{}` only borrows `{}`, which its caller keeps",
+                f.name, read.name
+            ),
+        },
         (None, Held::Loop) => match passed_on(f, read.slot) {
             Some(line) => format!(
                 "the loop passes `{}` on unchanged to its next round at line {line}",
@@ -270,6 +287,235 @@ fn copied_note(
         ),
     };
     Some((search.seen.unwrap_or(read.line), text))
+}
+
+/// Map and Vector parts of a value a match copies out of a map or a vector
+/// (`match Map.get(heap, a)`, also through `Option.withDefault` and through
+/// a match on a part it binds) that the function then writes in place, or
+/// passes to a function that does, without a clone at the write: the
+/// collection still holds the value, so the part has a second owner and the
+/// write copies it whole. A write that clones the part has its note already.
+fn matched_part_writes(
+    program: &MirProgram,
+    f: &MirFn,
+    writes: &HashMap<FnId, Vec<bool>>,
+    copied: &HashMap<usize, CopiedTarget>,
+) -> Vec<(usize, String)> {
+    let builtin = |callee: &MirCallee| match callee {
+        MirCallee::Builtin(id) => program.builtins.get(id.0 as usize).map(String::as_str),
+        _ => None,
+    };
+    // `Map.get(m, k)` or `Vector.get(v, i)`, maybe under `Option.withDefault`:
+    // the getter and the read of the collection.
+    let read_out = |subject: &MirExpr| -> Option<(&'static str, String)> {
+        let MirExpr::Call(call) = subject else {
+            return None;
+        };
+        match builtin(&call.node.callee)? {
+            "Option.withDefault" => {
+                let MirExpr::Call(inner) = &call.node.args.first()?.node else {
+                    return None;
+                };
+                let getter = match builtin(&inner.node.callee)? {
+                    "Map.get" => "Map.get",
+                    "Vector.get" => "Vector.get",
+                    _ => return None,
+                };
+                Some((getter, read_of(&inner.node.args.first()?.node)?.spelled()))
+            }
+            "Map.get" => Some(("Map.get", read_of(&call.node.args.first()?.node)?.spelled())),
+            "Vector.get" => Some((
+                "Vector.get",
+                read_of(&call.node.args.first()?.node)?.spelled(),
+            )),
+            _ => None,
+        }
+    };
+    let mut out = Vec::new();
+    visit(&f.body.node, &mut |e| {
+        let MirExpr::Match(m) = e else {
+            return;
+        };
+        let Some((getter, holder)) = read_out(&m.node.subject.node) else {
+            return;
+        };
+        // The locals the arms bind, and those a match on one of them binds.
+        let mut parts: HashSet<LocalId> = HashSet::new();
+        for arm in &m.node.arms {
+            pattern_slots(&arm.pattern, &mut parts);
+        }
+        for _ in 0..4 {
+            let before = parts.len();
+            for arm in &m.node.arms {
+                visit(&arm.body.node, &mut |inner| {
+                    if let MirExpr::Match(inner) = inner
+                        && read_of(&inner.node.subject.node)
+                            .is_some_and(|read| parts.contains(&read.slot))
+                    {
+                        let mut bound = HashSet::new();
+                        for arm in &inner.node.arms {
+                            pattern_slots(&arm.pattern, &mut bound);
+                        }
+                        parts.extend(bound);
+                    }
+                });
+            }
+            if parts.len() == before {
+                break;
+            }
+        }
+        let written = |arg: &Spanned<MirExpr>| {
+            (matches!(
+                arg.ty(),
+                Some(crate::ast::Type::Map(..) | crate::ast::Type::Vector(_))
+            ) && !copied.contains_key(&addr(&arg.node)))
+            .then(|| read_of(&arg.node))
+            .flatten()
+            .filter(|read| parts.contains(&read.slot))
+            .map(|read| (read.spelled(), read.line))
+        };
+        // A user function that writes the argument at `index` in place.
+        let passed = |callee: FnId, args: &[Spanned<MirExpr>]| {
+            args.iter().enumerate().find_map(|(index, arg)| {
+                let (what, line) = written(arg)?;
+                writes.get(&callee)?.get(index).copied().filter(|w| *w)?;
+                let name = &program.fn_by_id(callee)?.name;
+                let how = format!("passes `{what}` to `{name}`, which writes it in place");
+                Some((what, line, how))
+            })
+        };
+        for arm in &m.node.arms {
+            visit(&arm.body.node, &mut |e| {
+                let found = match e {
+                    MirExpr::Call(call) => match (&call.node.callee, builtin(&call.node.callee)) {
+                        (MirCallee::Fn(callee), _) => passed(*callee, &call.node.args),
+                        (_, Some(write @ ("Vector.set" | "Map.set" | "Map.remove"))) => call
+                            .node
+                            .args
+                            .first()
+                            .and_then(written)
+                            .map(|(what, line)| {
+                                let how = format!("writes `{what}` in place with `{write}`");
+                                (what, line, how)
+                            }),
+                        _ => None,
+                    },
+                    MirExpr::TailCall(tc) => passed(tc.node.target, &tc.node.args),
+                    _ => None,
+                };
+                if let Some((what, line, how)) = found {
+                    out.push((
+                        line,
+                        format!(
+                            "`{}` {how}, but `{what}` is part of a value matched out of `{holder}` by `{getter}` at line {}, which `{holder}` still holds, so the write copies it whole",
+                            f.name, m.line
+                        ),
+                    ));
+                }
+            });
+        }
+    });
+    out
+}
+
+fn pattern_slots(pattern: &MirPattern, out: &mut HashSet<LocalId>) {
+    match pattern {
+        MirPattern::Bind(slot, _) => {
+            out.insert(*slot);
+        }
+        MirPattern::Cons { head, tail, .. } => {
+            out.insert(*head);
+            out.insert(*tail);
+        }
+        MirPattern::Tuple(items) => items.iter().for_each(|item| pattern_slots(item, out)),
+        MirPattern::Ctor { bindings, .. } => out.extend(bindings.iter().copied()),
+        MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => {}
+    }
+}
+
+/// Why a local bound by a match pattern is a borrow: it is a part of the
+/// value the match looks at, which still holds it. Follows a part of a part
+/// (`Option.Some(o) -> match o` / `Obj.Array(t, vs)`) back to where the
+/// value came from: a local or field, an element read out of a map or a
+/// vector, or the result of a call. `None` for a parameter or a part of
+/// one, which its caller keeps.
+fn matched_from(program: &MirProgram, f: &MirFn, slot: LocalId) -> Option<String> {
+    let mut slot = slot;
+    let mut found = None;
+    for _ in 0..8 {
+        let Some((subject, line)) = binding_match(&f.body.node, slot) else {
+            break;
+        };
+        found = Some((subject, line));
+        match subject {
+            MirExpr::Local(local) if !local.node.name.is_empty() => slot = local.node.slot,
+            _ => break,
+        }
+    }
+    let (subject, line) = found?;
+    // A part of a parameter is what the caller keeps.
+    if read_of(subject).is_some_and(|read| f.params.iter().any(|p| p.local == read.slot)) {
+        return None;
+    }
+    let builtin = |callee: &MirCallee| match callee {
+        MirCallee::Builtin(id) => program.builtins.get(id.0 as usize).map(String::as_str),
+        _ => None,
+    };
+    Some(match subject {
+        MirExpr::Call(call) => match (builtin(&call.node.callee), &call.node.callee) {
+            (Some(name @ ("Map.get" | "Vector.get")), _) => {
+                let holder = call
+                    .node
+                    .args
+                    .first()
+                    .and_then(|arg| read_of(&arg.node))
+                    .map(|read| format!("`{}`", read.spelled()))
+                    .unwrap_or_else(|| "the collection".to_string());
+                format!(
+                    "it is part of a value matched out of {holder} by `{name}` at line {line}, which {holder} still holds"
+                )
+            }
+            (_, MirCallee::Fn(callee)) => format!(
+                "it is part of the value `{}` returns, matched at line {line}, which may still be held where it came from",
+                program.fn_by_id(*callee)?.name
+            ),
+            _ => format!("it is part of a value matched at line {line}, which still holds it"),
+        },
+        other => match read_of(other) {
+            Some(read) => format!(
+                "it is part of `{}`, matched at line {line}, which still holds it",
+                read.spelled()
+            ),
+            None => format!("it is part of a value matched at line {line}, which still holds it"),
+        },
+    })
+}
+
+/// The subject and line of the match one of whose arms binds `slot`.
+fn binding_match(e: &MirExpr, slot: LocalId) -> Option<(&MirExpr, usize)> {
+    let mut found = None;
+    visit(e, &mut |e| {
+        if found.is_none()
+            && let MirExpr::Match(m) = e
+            && m.node
+                .arms
+                .iter()
+                .any(|arm| pattern_binds(&arm.pattern, slot))
+        {
+            found = Some((&m.node.subject.node, m.line));
+        }
+    });
+    found
+}
+
+fn pattern_binds(pattern: &MirPattern, slot: LocalId) -> bool {
+    match pattern {
+        MirPattern::Bind(bound, _) => *bound == slot,
+        MirPattern::Cons { head, tail, .. } => *head == slot || *tail == slot,
+        MirPattern::Tuple(items) => items.iter().any(|item| pattern_binds(item, slot)),
+        MirPattern::Ctor { bindings, .. } => bindings.contains(&slot),
+        MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => false,
+    }
 }
 
 /// A read of a named local, of a field path of it (`r.memo`) or of the
