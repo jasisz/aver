@@ -3210,7 +3210,7 @@ pub fn armsType(
 }
 
 /// The one check of a substitution: each bound term's type fits the declared type of its name, the declaration's type variables bound in order; a variable marked as needing equality takes only a type that has one.
-#[inline(always)]
+#[inline]
 pub fn bindTyped(
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     declared @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,

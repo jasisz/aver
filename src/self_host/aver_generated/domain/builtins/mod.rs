@@ -78,7 +78,7 @@ pub fn callBuiltinFast(
 }
 
 /// Dispatch pre-evaluated args by integer builtin ID. IDs assigned in Ast.builtinNameToId.
-#[inline(always)]
+#[inline]
 pub fn callBuiltinByIdValues(
     id @ _: aver_rt::AverInt,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
@@ -3520,7 +3520,7 @@ pub fn callBuiltin__indexed(
 }
 
 /// Synthesized indexed worker of `callBuiltinFast`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
-#[inline(always)]
+#[inline]
 pub fn callBuiltinFast__indexed(
     name @ _: AverStr,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,

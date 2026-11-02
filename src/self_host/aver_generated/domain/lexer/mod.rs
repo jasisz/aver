@@ -1182,7 +1182,7 @@ pub fn tokenizeStringChar(
 }
 
 /// Check for interpolation start, { escape, or continue string.
-#[inline(always)]
+#[inline]
 pub fn tokenizeStringCharInner(
     src @ _: AverStr,
     pos @ _: aver_rt::AverInt,
@@ -1339,7 +1339,7 @@ pub fn tokenizeInterpDigit(
 }
 
 /// After integer part inside interpolation, check for a decimal point.
-#[inline(always)]
+#[inline]
 pub fn tokenizeInterpAfterInt(
     src @ _: AverStr,
     pos @ _: aver_rt::AverInt,
@@ -1859,7 +1859,7 @@ pub fn tokenizeDigit__indexed(
 }
 
 /// Synthesized indexed worker of `tokenizeAfterInt`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
-#[inline(always)]
+#[inline]
 pub fn tokenizeAfterInt__indexed(
     src @ _: AverStr,
     pos @ _: aver_rt::AverInt,

@@ -172,7 +172,7 @@ pub fn readPoly(
 }
 
 /// The left polynomial joined with b's: added (0), subtracted (1) or multiplied (2).
-#[inline(always)]
+#[inline]
 pub fn combine(
     mut left @ _: Read,
     mut b @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -472,7 +472,7 @@ pub fn scalePoly(
 }
 
 /// The product of two polynomials.
-#[inline(always)]
+#[inline]
 pub fn mulPoly(
     a @ _: &aver_rt::AverList<Mono>,
     b @ _: &aver_rt::AverList<Mono>,
@@ -557,7 +557,7 @@ pub fn mergeSorted(
 }
 
 /// Whether Int comparisons with the truth values given, read as p >= 0, then rows rounded from them (cuts), weighted by nonnegative numbers, sum to a negative constant.
-#[inline(always)]
+#[inline]
 pub fn linearContradiction(
     facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
     cuts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,

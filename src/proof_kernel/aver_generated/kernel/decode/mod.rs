@@ -2182,7 +2182,7 @@ pub fn carried(
 }
 
 /// (case (NAME…) (IH…) ((K IH (TERM…) (PROOF…))…) PROOF)…, each IH a NAME or (NAME PROOF…) with the proofs of the carried hypotheses; each (K …) a hypothesis at the part recursive call K recurses on and other values of the varied givens.
-#[inline(always)]
+#[inline]
 pub fn cases(
     ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>, AverStr> {
@@ -3085,7 +3085,7 @@ pub fn consts(
 }
 
 /// (sum NAME (CTOR TYPE…)…)…: the sum types the program declares, each constructor in order with the types of its fields; `eq` after the name where == between two values of the type is equality.
-#[inline(always)]
+#[inline]
 pub fn sums(
     ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Sum>, AverStr> {
@@ -3177,7 +3177,7 @@ pub fn variants(
 }
 
 /// (rec NAME (FIELD TYPE)…)…: the record types the program declares; `eq` after the name where == between two values of the type is equality.
-#[inline(always)]
+#[inline]
 pub fn recs(
     ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Rec>, AverStr> {

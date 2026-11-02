@@ -2805,7 +2805,7 @@ pub fn boolStep(
 }
 
 /// The goal at a node, as the compiler reads a question about it: (sub ((NAME TYPE)…) (from (NAME head|tail LIST)…) (hyps (NAME TERM TERM)…) PREMISE TERM TERM). The givens are typed as in an obligation; from says which list each split variable came from, oldest first; the definitions, constants and laws are the goal's own and are not repeated.
-#[inline(always)]
+#[inline]
 pub fn subText(n @ _: &Node) -> AverStr {
     crate::proof_std::cancel_checkpoint();
     let g @ _ = n.goal.clone();

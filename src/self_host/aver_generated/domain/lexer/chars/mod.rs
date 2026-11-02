@@ -433,7 +433,7 @@ pub fn readIdentLoopPlain__indexed(
 }
 
 /// Synthesized indexed worker of `readIdent`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
-#[inline(always)]
+#[inline]
 pub fn readIdent__indexed(
     src @ _: AverStr,
     pos @ _: aver_rt::AverInt,

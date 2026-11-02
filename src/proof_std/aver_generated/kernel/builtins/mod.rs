@@ -39,7 +39,7 @@ impl aver_rt::AverDisplay for Sig {
 }
 
 /// The signature of a builtin, by its dotted name.
-#[inline(always)]
+#[inline]
 pub fn sig(name @ _: AverStr) -> Option<Sig> {
     crate::proof_std::cancel_checkpoint();
     {

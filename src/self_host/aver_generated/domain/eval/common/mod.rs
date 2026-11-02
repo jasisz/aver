@@ -15,7 +15,7 @@ pub fn evalVarFallback(
 }
 
 /// Resolve a name that is neither a local nor a top-level binding: function reference, then nullary variant.
-#[inline(always)]
+#[inline]
 pub fn evalVarFallbackNamed(
     name @ _: AverStr,
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,

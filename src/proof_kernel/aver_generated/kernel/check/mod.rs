@@ -1699,7 +1699,7 @@ pub fn typeNames(
 }
 
 /// No module-level binding depends on itself through any mixture of bindings and definitions.
-#[inline(always)]
+#[inline]
 pub fn declarationsAcyclic(
     todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
@@ -1954,7 +1954,7 @@ pub fn definitionDeps(
 }
 
 /// Dependencies of local bindings in scope order, then of the body under all their names.
-#[inline(always)]
+#[inline]
 pub fn letDeclarationDeps(
     lets @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     body @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -2587,7 +2587,7 @@ pub fn joinRest(
 }
 
 /// From a = b, c[a] = c[b]; the context holds exactly one hole.
-#[inline(always)]
+#[inline]
 pub fn congr(
     mut c @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut q @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
@@ -3107,7 +3107,7 @@ pub fn split(
 }
 
 /// A split along literals of the term's type: one case per literal under h : on = k, then one naming one hypothesis per literal, (on == k) = false.
-#[inline(always)]
+#[inline]
 pub fn splitLiterals(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
     lits @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
@@ -4183,7 +4183,7 @@ pub fn zipBind(
 }
 
 /// Equation k of a definition at explicit arguments: 0 is the whole body, k is arm k of its match.
-#[inline(always)]
+#[inline]
 pub fn unfold(
     f @ _: AverStr,
     k @ _: aver_rt::AverInt,
@@ -5476,7 +5476,7 @@ pub fn findLaw(
 }
 
 /// An earlier law at an explicit substitution of all its givens, its when proved.
-#[inline(always)]
+#[inline]
 pub fn lawStep(
     key @ _: AverStr,
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
@@ -5973,7 +5973,7 @@ pub fn inductChecked(
 }
 
 /// A match on the value itself needs exactly one well-shaped arm per constructor of v's type; a count toward zero needs v to be a given of type Int.
-#[inline(always)]
+#[inline]
 pub fn measured(
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
     v @ _: AverStr,
@@ -6957,7 +6957,7 @@ pub fn ihHyps(
 }
 
 /// One hypothesis per entry, later ones in front: the claim at the part recursive call K recurses on and at the entry's values of the varied givens, once each carried hypothesis is proved there.
-#[inline(always)]
+#[inline]
 pub fn moreHyps(
     ms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::More>,
     calls @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::Call>,
@@ -7281,7 +7281,7 @@ pub fn ihHolds(
 }
 
 /// The varied givens bound to the call's arguments.
-#[inline(always)]
+#[inline]
 pub fn ihAt(
     c @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
     rename @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,

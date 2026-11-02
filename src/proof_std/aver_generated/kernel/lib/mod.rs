@@ -1828,7 +1828,7 @@ pub fn unfold(
 }
 
 /// unfold, nested at most depth deep.
-#[inline(always)]
+#[inline]
 pub fn unfoldWithin(
     s @ _: &Scope,
     f @ _: AverStr,

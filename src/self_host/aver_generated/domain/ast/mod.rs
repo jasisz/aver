@@ -4132,7 +4132,7 @@ pub fn userCtorTagOffsetLoop__indexed(
 }
 
 /// Synthesized indexed worker of `canonicalCtorName`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
-#[inline(always)]
+#[inline]
 pub fn canonicalCtorName__indexed(
     name @ _: AverStr,
     __str_index @ _: &aver_rt::StringIndex,
