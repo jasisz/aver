@@ -706,6 +706,10 @@ pub struct CodegenContext {
     /// deferred call (`aver_rt::thin::Lazy`). Computed by the Rust transpile
     /// from the MIR it emits; empty everywhere else.
     pub rust_lazy_sums: HashSet<String>,
+    /// The thin functions the Rust backend marks `#[inline(always)]`: those
+    /// whose body, with the forced functions it calls pasted in, stays small
+    /// (see `codegen::rust::forced_inline`). Empty everywhere else.
+    pub rust_forced_inline: HashSet<crate::ir::FnId>,
     /// The laws a `knowing` stands on that `--trust-laws` let through
     /// unproved, by name (`Module.fn.law`): the Rust backend checks each at
     /// every deferred call that knows a value from it.
@@ -1180,6 +1184,7 @@ pub fn build_context(
         rust_lent_options: Default::default(),
         rust_word_spec: Default::default(),
         rust_lazy_sums: Default::default(),
+        rust_forced_inline: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),
         #[cfg(feature = "runtime")]
@@ -1743,6 +1748,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         rust_lent_options: Default::default(),
         rust_word_spec: Default::default(),
         rust_lazy_sums: Default::default(),
+        rust_forced_inline: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),
         discovered_lemmas: Vec::new(),

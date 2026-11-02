@@ -86,6 +86,7 @@ fn empty_ctx() -> CodegenContext {
         rust_lent_options: Default::default(),
         rust_word_spec: Default::default(),
         rust_lazy_sums: Default::default(),
+        rust_forced_inline: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),
         discovered_lemmas: Vec::new(),
