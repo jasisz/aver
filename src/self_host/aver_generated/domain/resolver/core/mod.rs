@@ -723,7 +723,7 @@ pub fn resolveStmts(
 
 /// Resolve a single statement and continue.
 pub fn resolveOneStmt(
-    s @ _: &crate::aver_generated::domain::ast::Stmt,
+    mut s @ _: crate::aver_generated::domain::ast::Stmt,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     next @ _: aver_rt::AverInt,
@@ -734,7 +734,7 @@ pub fn resolveOneStmt(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
     crate::cancel_checkpoint();
-    match s {
+    match &s {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
             let name = name.clone();
             crate::aver_generated::domain::resolver::core::resolveStmtBind(
@@ -756,7 +756,7 @@ pub fn resolveOneStmt(
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
-            let __arg8 @ _ = aver_rt::AverList::prepend(s.clone(), acc);
+            let __arg8 @ _ = aver_rt::AverList::prepend(s, acc);
             crate::aver_generated::domain::resolver::core::resolveStmts(rest, slots, next, __arg8)
         }
     }

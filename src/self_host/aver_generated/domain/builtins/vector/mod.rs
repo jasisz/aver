@@ -126,7 +126,7 @@ pub fn builtinVectorSet(
                 match aver_rt::list_uncons(&__list_subject) {
                     Some((idxV, rest2)) => {
                         let __list_subject = rest2;
-                        match aver_rt::list_uncons(&__list_subject) { Some((valV, ignored)) => { crate::aver_generated::domain::builtins::vector::builtinVectorSetInner(vecV, idxV, valV) }, None => { Err(::aver_rt::str_lit!("Vector.set: expected 3 args")) } }
+                        match aver_rt::list_uncons(&__list_subject) { Some((valV, ignored)) => { crate::aver_generated::domain::builtins::vector::builtinVectorSetInner(vecV, idxV, valV.clone()) }, None => { Err(::aver_rt::str_lit!("Vector.set: expected 3 args")) } }
                     }
                     None => Err(::aver_rt::str_lit!("Vector.set: expected 3 args")),
                 }
@@ -140,7 +140,7 @@ pub fn builtinVectorSet(
 pub fn builtinVectorSetInner(
     vecV @ _: &crate::aver_generated::domain::value::Val,
     idxV @ _: &crate::aver_generated::domain::value::Val,
-    valV @ _: &crate::aver_generated::domain::value::Val,
+    mut valV @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -177,12 +177,12 @@ pub fn builtinVectorSetInner(
 pub fn builtinVectorSetInBounds(
     mut vec @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     idx @ _: aver_rt::AverInt,
-    valV @ _: &crate::aver_generated::domain::value::Val,
+    mut valV @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __idx = (idx).to_usize();
-        let __value = valV.clone();
+        let __value = valV;
         match __idx.filter(|__idx| *__idx < vec.len()) {
             Some(__idx) => {
                 let newVec = vec.set_unchecked(__idx, __value);

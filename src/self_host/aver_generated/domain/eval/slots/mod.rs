@@ -92,13 +92,13 @@ pub fn lookupSlot(
 pub fn setSlot(
     mut env @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     slot @ _: aver_rt::AverInt,
-    v @ _: &crate::aver_generated::domain::value::Val,
+    mut v @ _: crate::aver_generated::domain::value::Val,
 ) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     {
         let __vec = env;
         match (slot).to_usize() {
-            Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, v.clone()),
+            Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, v),
             _ => __vec,
         }
     }

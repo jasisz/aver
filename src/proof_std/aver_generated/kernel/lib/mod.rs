@@ -1011,7 +1011,14 @@ pub fn evalArgs(
                     depth.clone(),
                 )?;
                 crate::proof_std::aver_generated::kernel::lib::evalArg(
-                    s, kind, name, done, x, &rest, __arg9, depth,
+                    s,
+                    kind,
+                    name,
+                    done,
+                    x.clone(),
+                    &rest,
+                    __arg9,
+                    depth,
                 )
             }
             None => Ok({
@@ -1029,7 +1036,7 @@ pub fn evalArg(
     kind @ _: AverStr,
     name @ _: AverStr,
     done @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
-    x @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    mut x @ _: crate::proof_std::aver_generated::kernel::term::Term,
     rest @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     mut r @ _: Rw,
     depth @ _: aver_rt::AverInt,
@@ -1037,7 +1044,7 @@ pub fn evalArg(
     crate::proof_std::cancel_checkpoint();
     let here @ _ = {
         let __arg10 @ _ =
-            aver_rt::AverList::concat(&done.clone(), &aver_rt::AverList::prepend(x.clone(), rest));
+            aver_rt::AverList::concat(&done.clone(), &aver_rt::AverList::prepend(x, rest));
         crate::proof_std::aver_generated::kernel::lib::rebuild(&kind, name.clone(), &__arg10)
     };
     let step @ _ = if crate::proof_std::aver_generated::kernel::lib::isRefl(&r.proof) {

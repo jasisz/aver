@@ -75,21 +75,20 @@ pub fn builtinListPrepend(
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (v, lstV) = pair;
-        crate::aver_generated::domain::builtins::list::builtinListPrependInner(&v, &lstV)
+        crate::aver_generated::domain::builtins::list::builtinListPrependInner(v, &lstV)
     }
 }
 
 /// Inner impl of List.prepend.
 pub fn builtinListPrependInner(
-    v @ _: &crate::aver_generated::domain::value::Val,
+    mut v @ _: crate::aver_generated::domain::value::Val,
     lstV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
         crate::aver_generated::domain::value::Val__ValList(aver_rt::AverList::prepend_owned(
-            v.clone(),
-            items,
+            v, items,
         )),
     ))
 }

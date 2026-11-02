@@ -299,7 +299,7 @@ pub fn listOf(mut vs @ _: aver_rt::AverList<Option<Val>>) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
     aver_list_match!(vs, [] => Some(crate::proof_std::aver_generated::kernel::eval::Val::VList(aver_rt::AverList::empty())), [__pat0, rest] => { match __pat0 {
         Some(v) => {
-            { let __arg4 @ _ = crate::proof_std::aver_generated::kernel::eval::listOf(rest); crate::proof_std::aver_generated::kernel::eval::consOnto(&v, (&__arg4).as_ref()) }
+            { let __arg4 @ _ = crate::proof_std::aver_generated::kernel::eval::listOf(rest); crate::proof_std::aver_generated::kernel::eval::consOnto(v, (&__arg4).as_ref()) }
         },
         _ => {
             None
@@ -308,13 +308,13 @@ pub fn listOf(mut vs @ _: aver_rt::AverList<Option<Val>>) -> Option<Val> {
 }
 
 /// v in front of a list value.
-pub fn consOnto(v @ _: &Val, rest @ _: Option<&Val>) -> Option<Val> {
+pub fn consOnto(mut v @ _: Val, rest @ _: Option<&Val>) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
     match rest {
         Some(__pat0) => match __pat0 {
             crate::proof_std::aver_generated::kernel::eval::Val::VList(vs) => {
                 Some(crate::proof_std::aver_generated::kernel::eval::Val::VList(
-                    aver_rt::AverList::prepend(v.clone(), vs),
+                    aver_rt::AverList::prepend(v, vs),
                 ))
             }
             _ => None,

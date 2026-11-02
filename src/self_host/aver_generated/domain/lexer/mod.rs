@@ -1570,7 +1570,7 @@ pub fn processIndentation(
         let __list_subject = tokens;
         match aver_rt::list_uncons(__list_subject) {
             Some((t, rest)) => {
-                crate::aver_generated::domain::lexer::processIndentToken(t, &rest, stack)
+                crate::aver_generated::domain::lexer::processIndentToken(t.clone(), &rest, stack)
             }
             None => crate::aver_generated::domain::lexer::emitFinalDedents(stack),
         }
@@ -1579,12 +1579,12 @@ pub fn processIndentation(
 
 /// Process one token in the indentation pass.
 pub fn processIndentToken(
-    t @ _: &crate::aver_generated::domain::token::Token,
+    mut t @ _: crate::aver_generated::domain::token::Token,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     stack @ _: &aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    match t {
+    match &t {
         crate::aver_generated::domain::token::Token::TkNewline => {
             crate::aver_generated::domain::lexer::processAfterNewline(rest, stack)
         }
@@ -1596,7 +1596,7 @@ pub fn processIndentToken(
             ),
         ),
         _ => aver_rt::AverList::prepend_owned(
-            t.clone(),
+            t,
             crate::aver_generated::domain::lexer::processIndentation(rest, stack),
         ),
     }
@@ -1612,9 +1612,11 @@ pub fn processAfterNewline(
     {
         let __list_subject = tokens;
         match aver_rt::list_uncons(__list_subject) {
-            Some((t, rest)) => {
-                crate::aver_generated::domain::lexer::processAfterNewlineToken(t, &rest, stack)
-            }
+            Some((t, rest)) => crate::aver_generated::domain::lexer::processAfterNewlineToken(
+                t.clone(),
+                &rest,
+                stack,
+            ),
             None => aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkNewline,
                 crate::aver_generated::domain::lexer::emitFinalDedents(stack),
@@ -1625,12 +1627,12 @@ pub fn processAfterNewline(
 
 /// Check if token after newline is a raw indent marker.
 pub fn processAfterNewlineToken(
-    t @ _: &crate::aver_generated::domain::token::Token,
+    mut t @ _: crate::aver_generated::domain::token::Token,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     stack @ _: &aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    match t {
+    match &t {
         crate::aver_generated::domain::token::Token::TkInt(n) => {
             let n = n.clone();
             if (n < aver_rt::AverInt::from_i64(0)) {
@@ -1656,7 +1658,7 @@ pub fn processAfterNewlineToken(
                 aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::token::Token::TkNewline,
                     aver_rt::AverList::prepend_owned(
-                        t.clone(),
+                        t,
                         crate::aver_generated::domain::lexer::processIndentation(rest, stack),
                     ),
                 )
@@ -1665,7 +1667,7 @@ pub fn processAfterNewlineToken(
         _ => aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkNewline,
             aver_rt::AverList::prepend_owned(
-                t.clone(),
+                t,
                 crate::aver_generated::domain::lexer::processIndentation(rest, stack),
             ),
         ),

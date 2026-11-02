@@ -530,7 +530,7 @@ pub fn evalIntModOrIntVals(
 pub fn evalVectorSetMaybeDefault(
     vecV @ _: &crate::aver_generated::domain::value::Val,
     idxV @ _: &crate::aver_generated::domain::value::Val,
-    valueV @ _: &crate::aver_generated::domain::value::Val,
+    mut valueV @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<Option<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -552,7 +552,7 @@ pub fn evalVectorSetMaybeDefault(
                                             let __vec = vec.clone();
                                             match (idx).to_usize() {
                                                 Some(__idx) if __idx < __vec.len() => {
-                                                    __vec.set_unchecked(__idx, valueV.clone())
+                                                    __vec.set_unchecked(__idx, valueV)
                                                 }
                                                 _ => __vec,
                                             }
