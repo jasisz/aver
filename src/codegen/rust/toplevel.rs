@@ -1243,46 +1243,60 @@ pub fn emit_public_fn_def(
 }
 
 /// The largest emitted body, in MIR nodes, a thin function may have and still
-/// be forced into every caller. A forwarding wrapper or a one-operator leaf is
-/// a call node plus its arguments; anything bigger is left to LLVM's cost
-/// model, which sees how often it is called.
-const ALWAYS_INLINE_MAX_NODES: usize = 8;
+/// be forced into every caller: a forwarding call with a dozen plain
+/// arguments, or a two-arm `match` on one comparison with a call in an arm.
+const ALWAYS_INLINE_MAX_NODES: usize = 16;
 
-/// The inline hint for an effect-free thin function. `#[inline(always)]`
-/// overrides LLVM's cost model, so it is kept for bodies no bigger than the
-/// call they replace; a larger thin body (a dispatch `match` with arbitrary
-/// arms, a direct call with arbitrary arguments) gets `#[inline]`, which still
-/// lets LLVM inline it where that pays. Forcing such bodies into every caller
-/// cascades through chains of thin functions and can grow a module past what
-/// LLVM can compile.
+/// The inline hint for an effect-free thin function.
+///
+/// `#[inline(always)]` overrides LLVM's cost model, so it is kept only where
+/// forcing cannot multiply code: a small body that calls at most one Aver
+/// function. Inlining such a body replaces one call with at most one call, so
+/// a chain of them collapses instead of growing. A body that calls two or more
+/// Aver functions would be copied into every caller with each of its callees
+/// pasted in again, which doubles per level of a chain; it gets `#[inline]`,
+/// as does a large body, and LLVM inlines them where its cost model finds it
+/// pays.
 fn thin_fn_inline_attribute(fn_id: crate::ir::FnId, ctx: &CodegenContext) -> &'static str {
-    let tiny = ctx
+    let forced = ctx
         .mir_program
         .as_ref()
         .and_then(|program| program.fn_by_id(fn_id))
         .is_some_and(|mir_fn| {
-            mir_node_count(&mir_fn.body.node, ALWAYS_INLINE_MAX_NODES + 1)
-                <= ALWAYS_INLINE_MAX_NODES
+            let size = mir_body_size(&mir_fn.body.node, ALWAYS_INLINE_MAX_NODES + 1);
+            size.nodes <= ALWAYS_INLINE_MAX_NODES && size.calls <= 1
         });
-    if tiny {
+    if forced {
         "#[inline(always)]"
     } else {
         "#[inline]"
     }
 }
 
-/// The number of MIR nodes in `expr`, counting stops once it passes `limit`.
-fn mir_node_count(expr: &crate::ir::mir::MirExpr, limit: usize) -> usize {
-    let mut count = 0;
+/// The size of a MIR body: its nodes and its calls to Aver functions.
+struct MirBodySize {
+    nodes: usize,
+    calls: usize,
+}
+
+/// Measure `expr`; counting stops once the nodes pass `limit`.
+fn mir_body_size(expr: &crate::ir::mir::MirExpr, limit: usize) -> MirBodySize {
+    use crate::ir::mir::{MirCallee, MirExpr};
+    let mut size = MirBodySize { nodes: 0, calls: 0 };
     let mut stack = vec![expr];
     while let Some(node) = stack.pop() {
-        count += 1;
-        if count > limit {
+        size.nodes += 1;
+        if size.nodes > limit {
             break;
+        }
+        match node {
+            MirExpr::Call(call) if matches!(call.node.callee, MirCallee::Fn(_)) => size.calls += 1,
+            MirExpr::TailCall(_) => size.calls += 1,
+            _ => {}
         }
         crate::ir::mir::expr::walk_children(node, &mut |child| stack.push(child));
     }
-    count
+    size
 }
 
 /// Emit a Rust fn def from a paired (`&FnDef`, `&ResolvedFnDef`)

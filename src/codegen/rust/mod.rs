@@ -3320,10 +3320,11 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         assert!(cargo_toml.contains("edition = \"2024\""));
     }
 
-    /// A thin function is forced into its callers only when its body is no
-    /// bigger than the call it replaces; a larger thin body is left to LLVM.
+    /// A thin function is forced into its callers only when that cannot
+    /// multiply code: a small body calling at most one Aver function. A body
+    /// calling two, however small, and a large body are left to LLVM.
     #[test]
-    fn only_tiny_thin_functions_are_always_inlined() {
+    fn only_small_single_call_thin_functions_are_always_inlined() {
         let mut ctx = ctx_from_source(
             r#"
 module Demo
@@ -3334,9 +3335,12 @@ fn first(a: Int, b: Int) -> Int
 fn swap(a: Int, b: Int) -> Int
     first(b, a)
 
+fn both(x: Int) -> Int
+    swap(x, 1) + swap(1, x)
+
 fn pick(x: Int) -> Int
     match x
-        0 -> swap(x + 1, x + 2) + swap(x + 3, x)
+        0 -> swap(x + 1, x + 2) + both(x + 3)
         1 -> swap(x - 1, x) * 2
         _ -> swap(x, x - 3) + first(x + 5, x)
 
@@ -3347,8 +3351,10 @@ fn main() -> Int
         );
         let out = transpile(&mut ctx);
         let entry = generated_file(&out, "src/aver_generated/entry/mod.rs");
-        let line_before = |name: &str| {
-            let at = entry.find(&format!("pub fn {name}(")).unwrap();
+        let hint = |name: &str| {
+            let at = entry
+                .find(&format!("pub fn {name}("))
+                .unwrap_or_else(|| panic!("{name} emitted:\n{entry}"));
             entry[..at]
                 .trim_end()
                 .lines()
@@ -3356,9 +3362,10 @@ fn main() -> Int
                 .unwrap_or_default()
                 .to_string()
         };
-        assert_eq!(line_before("first"), "#[inline(always)]", "{entry}");
-        assert_eq!(line_before("swap"), "#[inline(always)]", "{entry}");
-        assert_eq!(line_before("pick"), "#[inline]", "{entry}");
+        assert_eq!(hint("first"), "#[inline(always)]", "{entry}");
+        assert_eq!(hint("swap"), "#[inline(always)]", "{entry}");
+        assert_eq!(hint("both"), "#[inline]", "{entry}");
+        assert_eq!(hint("pick"), "#[inline]", "{entry}");
     }
 
     #[cfg(feature = "runtime")]
