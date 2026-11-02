@@ -649,7 +649,7 @@ fn element_lent_while_its_vector_is_handed_on_matches_vm() {
         "match { let __i = (f.pc).to_usize(); __i.and_then(|__i| (f.code).get(__i)) }",
         "let s = __k_fields.1.clone();",
         "let s = __s_fields.0.clone();",
-        "{ let i = i.clone(); { let __arg16 @ _ = slow(&i, f);",
+        "{ let i = i.clone(); { let __arg16 @ _ = slow(i, f);",
         "match (f.pc).to_usize().and_then(|__i| f.code.get(__i).cloned())",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
