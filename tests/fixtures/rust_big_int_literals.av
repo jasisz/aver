@@ -6,6 +6,9 @@ record R
     a: Int
     b: List<Int>
 
+bigBinding: Int = 18446744073709551616
+negBinding: Int = -18446744073709551617
+
 type T
     One(Int)
     Two(Int, Int)
@@ -45,3 +48,4 @@ fn main() -> Unit
     Console.print("{inRange(-9223372036854775808)} {inRange(-9223372036854775809)} {inRange(w)}")
     match pair()
         (x, _) -> Console.print("{x == 18446744073709551616}")
+    Console.print("{bigBinding + negBinding} {bigBinding}")
