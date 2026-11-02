@@ -1621,8 +1621,9 @@ struct Consumption<'a> {
 /// updates in place), or moves a field out of it into a by-value record
 /// param, a Map/Vector param updated in place, or the target of `Map.set`,
 /// `Map.remove` or `Vector.set`, or stores it at its last use, or moves a
-/// record, Map or Vector field out of it, into a record, constructor, tuple
-/// or list. A param returned bare is taken by value before this runs (see
+/// record, Map or Vector field out of it, into a record, constructor, tuple,
+/// list or a built-in that keeps it (the element of `Vector.set`, the key or
+/// value of `Map.set`, the head of `List.prepend`). A param returned bare is taken by value before this runs (see
 /// [`result_hands_on`]).
 fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
     let slot = cx.slot;
@@ -1671,16 +1672,32 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
         MirCallee::Builtin(id) => cx.builtins.get(id.0 as usize).map(String::as_str),
         _ => None,
     };
+    // A built-in that keeps a value it is given (the element `Vector.set`
+    // stores, the key and value of `Map.set`, the head `List.prepend` puts in
+    // a node) owns it: the local at its last use, which a borrowed param
+    // would have to clone, or a record field moved out of it.
+    let stores = |arg: &Spanned<MirExpr>| {
+        last_use_of(&arg.node)
+            || (moves_field(arg)
+                && matches!(
+                    arg.ty(),
+                    Some(Type::Named { .. } | Type::Map(..) | Type::Vector(_))
+                ))
+    };
     match expr {
         MirExpr::Call(call) => {
             let handed = match call.node.callee {
                 MirCallee::Fn(callee) => hands_over(callee, &call.node.args),
                 MirCallee::Builtin(_) => match builtin(&call.node.callee) {
-                    Some("Map.set" | "Map.remove" | "Vector.set") => call
-                        .node
-                        .args
-                        .first()
-                        .is_some_and(|target| moves_field(target) || last_use_of(&target.node)),
+                    Some(name @ ("Map.set" | "Map.remove" | "Vector.set")) => {
+                        call.node
+                            .args
+                            .first()
+                            .is_some_and(|target| moves_field(target) || last_use_of(&target.node))
+                            || (name != "Map.remove" && call.node.args.iter().skip(1).any(stores))
+                    }
+                    // `List.prepend(x, rest)` keeps `x` in the new node.
+                    Some("List.prepend") => call.node.args.first().is_some_and(stores),
                     // The self-keep fusion `Option.withDefault(Vector.set(v,
                     // ..), v)` updates `v` in place and reads it last in the
                     // default, so the update's own read is not the last one.

@@ -1,0 +1,83 @@
+module StoredElement
+    intent = "Values a function stores into a vector, a map or a list are taken by value."
+    effects [Console.print]
+
+type Val
+    I(Int)
+    P(Int, Int)
+    R(Option<Val>)
+
+fn vset(v: Vector<Val>, k: Int, a: Val) -> Vector<Val>
+    ? "Store a at k, or keep v."
+    Option.withDefault(Vector.set(v, k, a), v)
+
+verify vset
+    vset(Vector.new(1, Val.I(0)), 0, Val.I(1)) => Vector.new(1, Val.I(1))
+
+fn push(v: Vector<Val>, k: Int, a: Val) -> Vector<Val>
+    ? "Hands a on to vset."
+    vset(v, k, a)
+
+verify push
+    push(Vector.new(1, Val.I(0)), 5, Val.I(1)) => Vector.new(1, Val.I(0))
+
+fn remember(m: Map<Int, Val>, k: Int, a: Val) -> Map<Int, Val>
+    ? "Store a under k."
+    Map.set(m, k, a)
+
+verify remember
+    Map.len(remember({}, 1, Val.I(1))) => 1
+
+fn cons(a: Val, rest: List<Val>) -> List<Val>
+    ? "Put a in front of rest."
+    List.prepend(a, rest)
+
+verify cons
+    List.len(cons(Val.I(1), [])) => 1
+
+fn weight(v: Val) -> Int
+    ? "Weight of a value."
+    match v
+        Val.I(n) -> n
+        Val.P(a, b) -> a + b
+        Val.R(Option.Some(inner)) -> 1 + weight(inner)
+        Val.R(Option.None) -> 1
+
+verify weight
+    weight(Val.R(Option.Some(Val.P(1, 2)))) => 4
+
+fn fetch(v: Vector<Val>, k: Int) -> Val
+    ? "Slot k, or I(0)."
+    Option.withDefault(Vector.get(v, k), Val.I(0))
+
+verify fetch
+    fetch(Vector.new(1, Val.I(3)), 0) => Val.I(3)
+
+fn shuffle(v: Vector<Val>, n: Int) -> Vector<Val>
+    ? "Copies slot n mod 4 to slot (n + 1) mod 4, n times."
+    match n
+        0 -> v
+        _ -> shuffle(push(v, Int.mod(n + 1, 4), fetch(v, Int.mod(n, 4))), n - 1)
+
+verify shuffle
+    shuffle(Vector.new(4, Val.I(1)), 3) => Vector.new(4, Val.I(1))
+
+fn sumAll(xs: List<Val>, acc: Int) -> Int
+    ? "Sum of weights."
+    match xs
+        [] -> acc
+        [x, ..rest] -> sumAll(rest, acc + weight(x))
+
+verify sumAll
+    sumAll([Val.I(2), Val.I(3)], 0) => 5
+
+fn main() -> Unit
+    ! [Console.print]
+    shared = Val.R(Option.Some(Val.P(1, 2)))
+    v0 = Vector.fromList([Val.I(1), Val.P(2, 3), shared, Val.I(4)])
+    v1 = shuffle(v0, 9)
+    v2 = push(v1, 0, shared)
+    m = remember(remember({}, 1, shared), 2, fetch(v2, 3))
+    xs = cons(shared, cons(fetch(v2, 1), []))
+    Console.print("v0 {sumAll(List.fromVector(v0), 0)} v1 {sumAll(List.fromVector(v1), 0)} v2 {sumAll(List.fromVector(v2), 0)}")
+    Console.print("m {sumAll(Map.values(m), 0)} xs {sumAll(xs, 0)} shared {weight(shared)}")

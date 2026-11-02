@@ -610,6 +610,29 @@ fn big_int_literals_read_from_statics_match_vm() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A value a function stores (the element of `Vector.set`, the value of
+/// `Map.set`, the head of `List.prepend`) is taken by value and moved in, and
+/// so is it by a function that only hands it on to one that stores it. A
+/// caller that keeps the value clones it at the call; a value shared by
+/// several collections reads as the VM.
+#[test]
+fn stored_element_params_taken_by_value_match_vm() {
+    let relative = "tests/fixtures/rust_stored_element.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_stored_element", &src);
+    for shape in [
+        "k @ _: aver_rt::AverInt, mut a @ _: Val) -> aver_rt::AverVector<Val>",
+        "__vec.set_unchecked(__idx, a)",
+        "m.insert_owned(k, a)",
+        "pub fn cons(mut a @ _: Val,",
+        "aver_rt::AverList::prepend(a, rest)",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    assert_eq!(emitted.matches("mut a @ _: Val").count(), 4, "{emitted}");
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Pure `Int` trees are computed on `i64` first and exactly when a leaf is
 /// past `i64` or an operation overflows (`codegen/rust/from_mir/int_tree.rs`):
 /// overflow in the middle of a tree, Big leaves, `i64::MIN`, Euclidean
