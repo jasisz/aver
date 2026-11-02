@@ -86,88 +86,79 @@ pub fn callBuiltinByIdValues(
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = id.clone();
-        if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-            crate::aver_generated::domain::builtins::builtinMapSet(args)
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
-                crate::aver_generated::domain::builtins::builtinMapGet(args)
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
-                    crate::aver_generated::domain::builtins::builtinMapHas(args)
-                } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(4) {
-                        crate::aver_generated::domain::builtins::builtinMapFromList(args)
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(5) {
-                            crate::aver_generated::domain::builtins::builtinMapEntries(args)
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(6) {
-                                crate::aver_generated::domain::builtins::builtinMapRemove(args)
-                            } else {
-                                if __dispatch_subject == aver_rt::AverInt::from_i64(7) {
-                                    crate::aver_generated::domain::builtins::vector::call(
-                                        ::aver_rt::str_lit!("Vector.new"),
-                                        args,
-                                    )
-                                } else {
-                                    if __dispatch_subject == aver_rt::AverInt::from_i64(8) {
-                                        crate::aver_generated::domain::builtins::vector::call(
-                                            ::aver_rt::str_lit!("Vector.get"),
-                                            args,
-                                        )
-                                    } else {
-                                        if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
-                                            crate::aver_generated::domain::builtins::vector::call(
-                                                ::aver_rt::str_lit!("Vector.set"),
-                                                args,
-                                            )
-                                        } else {
-                                            if __dispatch_subject == aver_rt::AverInt::from_i64(10)
-                                            {
-                                                crate::aver_generated::domain::builtins::vector::call(::aver_rt::str_lit!("Vector.len"), args)
-                                            } else {
-                                                if __dispatch_subject
-                                                    == aver_rt::AverInt::from_i64(11)
-                                                {
-                                                    crate::aver_generated::domain::builtins::vector::call(::aver_rt::str_lit!("Vector.fromList"), args)
-                                                } else {
-                                                    if __dispatch_subject
-                                                        == aver_rt::AverInt::from_i64(12)
-                                                    {
-                                                        crate::aver_generated::domain::builtins::vector::call(::aver_rt::str_lit!("List.fromVector"), args)
-                                                    } else {
-                                                        if __dispatch_subject
-                                                            == aver_rt::AverInt::from_i64(13)
-                                                        {
-                                                            Ok(crate::aver_generated::domain::value::Val::ValNone)
-                                                        } else {
-                                                            if __dispatch_subject
-                                                                == aver_rt::AverInt::from_i64(14)
-                                                            {
-                                                                crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Option.Some"), args)
-                                                            } else {
-                                                                if __dispatch_subject
-                                                                    == aver_rt::AverInt::from_i64(
-                                                                        15,
-                                                                    )
-                                                                {
-                                                                    crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Option.withDefault"), args)
-                                                                } else {
-                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(16) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Ok"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(17) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.Err"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(18) { crate::aver_generated::domain::builtins::wrappers::call(::aver_rt::str_lit!("Result.withDefault"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(19) { crate::aver_generated::domain::builtins::primitives::callInt(::aver_rt::str_lit!("String.fromInt"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(20) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.take"), args) } else { if __dispatch_subject == aver_rt::AverInt::from_i64(21) { crate::aver_generated::domain::builtins::list::call(::aver_rt::str_lit!("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(36usize); __b.push_str(&::aver_rt::str_lit!("Unknown builtin ID: ")); __b }; __b.push_display(&(aver_rt::display_str(&(id)))); __b })) } } } } } }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        match __dispatch_subject.to_i64() {
+            Some(1i64) => crate::aver_generated::domain::builtins::builtinMapSet(args),
+            Some(2i64) => crate::aver_generated::domain::builtins::builtinMapGet(args),
+            Some(3i64) => crate::aver_generated::domain::builtins::builtinMapHas(args),
+            Some(4i64) => crate::aver_generated::domain::builtins::builtinMapFromList(args),
+            Some(5i64) => crate::aver_generated::domain::builtins::builtinMapEntries(args),
+            Some(6i64) => crate::aver_generated::domain::builtins::builtinMapRemove(args),
+            Some(7i64) => crate::aver_generated::domain::builtins::vector::call(
+                ::aver_rt::str_lit!("Vector.new"),
+                args,
+            ),
+            Some(8i64) => crate::aver_generated::domain::builtins::vector::call(
+                ::aver_rt::str_lit!("Vector.get"),
+                args,
+            ),
+            Some(9i64) => crate::aver_generated::domain::builtins::vector::call(
+                ::aver_rt::str_lit!("Vector.set"),
+                args,
+            ),
+            Some(10i64) => crate::aver_generated::domain::builtins::vector::call(
+                ::aver_rt::str_lit!("Vector.len"),
+                args,
+            ),
+            Some(11i64) => crate::aver_generated::domain::builtins::vector::call(
+                ::aver_rt::str_lit!("Vector.fromList"),
+                args,
+            ),
+            Some(12i64) => crate::aver_generated::domain::builtins::vector::call(
+                ::aver_rt::str_lit!("List.fromVector"),
+                args,
+            ),
+            Some(13i64) => Ok(crate::aver_generated::domain::value::Val::ValNone),
+            Some(14i64) => crate::aver_generated::domain::builtins::wrappers::call(
+                ::aver_rt::str_lit!("Option.Some"),
+                args,
+            ),
+            Some(15i64) => crate::aver_generated::domain::builtins::wrappers::call(
+                ::aver_rt::str_lit!("Option.withDefault"),
+                args,
+            ),
+            Some(16i64) => crate::aver_generated::domain::builtins::wrappers::call(
+                ::aver_rt::str_lit!("Result.Ok"),
+                args,
+            ),
+            Some(17i64) => crate::aver_generated::domain::builtins::wrappers::call(
+                ::aver_rt::str_lit!("Result.Err"),
+                args,
+            ),
+            Some(18i64) => crate::aver_generated::domain::builtins::wrappers::call(
+                ::aver_rt::str_lit!("Result.withDefault"),
+                args,
+            ),
+            Some(19i64) => crate::aver_generated::domain::builtins::primitives::callInt(
+                ::aver_rt::str_lit!("String.fromInt"),
+                args,
+            ),
+            Some(20i64) => crate::aver_generated::domain::builtins::list::call(
+                ::aver_rt::str_lit!("List.take"),
+                args,
+            ),
+            Some(21i64) => crate::aver_generated::domain::builtins::list::call(
+                ::aver_rt::str_lit!("List.drop"),
+                args,
+            ),
+            _ => Err(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity(36usize);
+                    __b.push_str(&::aver_rt::str_lit!("Unknown builtin ID: "));
+                    __b
+                };
+                __b.push_display(&(aver_rt::display_str(&(id))));
+                __b
+            })),
         }
     }
 }

@@ -491,6 +491,88 @@ fn raw_int_match_subjects_and_free_values_match_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A match whose arms are `Int` literals is one flat Rust `match` on a
+/// machine integer, on a raw `i64` subject (negative too) and on an `Int`:
+/// a default binds the subject, and an `Int` past `i64` falls to it.
+#[test]
+fn int_literal_matches_are_flat_and_match_vm() {
+    assert_plain_parity("tests/fixtures/rust_int_match_flat.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A match with thousands of `Int` literal arms nests no deeper than one with
+/// three: each arm used to sit in the `else` of the one before, and a
+/// generated program with 16 000 of them overflowed `rustc`'s stack. The VM
+/// takes at most 255 arms in one table, so the output is checked against the
+/// values the arms give.
+#[test]
+fn a_match_with_thousands_of_int_arms_stays_flat_and_runs() {
+    const ARMS: i64 = 5000;
+    let mut source = String::from(
+        "module Main\n    intent = \"one match with thousands of Int arms\"\n    effects [Console.print]\n\nfn pick(n: Int) -> Int\n    ? \"A number for each arm, minus one past them.\"\n    match n\n",
+    );
+    for k in 0..ARMS {
+        source.push_str(&format!("        {k} -> {}\n", k * 7 + 3));
+    }
+    source.push_str("        _ -> -1\n\nfn total(i: Int, acc: Int) -> Int\n    ? \"pick summed over i up to past the arms.\"\n    match i > 5010\n        true -> acc\n        false -> total(i + 1, acc + pick(i))\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"{pick(0)} {pick(2500)} {pick(4999)} {pick(5000)} {pick(0 - 1)} {total(0 - 10, 0)}\")\n");
+    let ws = temp_dir("int_match_wide");
+    let result = (|| {
+        let file = ws.join("wide.av");
+        fs::write(&file, &source).expect("write program");
+        let pick = |n: i64| {
+            if (0..ARMS).contains(&n) {
+                n * 7 + 3
+            } else {
+                -1
+            }
+        };
+        let expected = format!(
+            "{} {} {} {} {} {}",
+            pick(0),
+            pick(2500),
+            pick(4999),
+            pick(5000),
+            pick(-1),
+            (-10..=5010).map(pick).sum::<i64>()
+        );
+        let project = ws.join("project");
+        fs::create_dir_all(&project).expect("create project dir");
+        let name = "p_int_match_wide";
+        compile_rust(&file, &project, name, Some(&ws), &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .expect("read generated entry module");
+        let deepest = entry
+            .chars()
+            .scan(0i64, |depth, c| {
+                *depth += match c {
+                    '{' => 1,
+                    '}' => -1,
+                    _ => 0,
+                };
+                Some(*depth)
+            })
+            .max()
+            .unwrap_or(0);
+        if deepest > 64 {
+            return Err(format!("the generated match nests {deepest} blocks deep"));
+        }
+        let bin = cargo_build(&project, name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !out.status.success() || rust_stdout != expected {
+            return Err(format!(
+                "--- expected ---\n{expected}\n--- Rust ---\n{}",
+                format_output(&out)
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A large record the program copies sits behind one counted pointer:
 /// copied into a list, updated in a loop, shared and then updated (the kept
 /// copy keeps its fields), kept as snapshots while later calls update it,

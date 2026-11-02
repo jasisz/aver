@@ -7,47 +7,18 @@ pub fn isDigit(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-        if __dispatch_subject == aver_rt::AverInt::from_i64(48) {
-            true
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(49) {
-                true
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(50) {
-                    true
-                } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(51) {
-                        true
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(52) {
-                            true
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(53) {
-                                true
-                            } else {
-                                if __dispatch_subject == aver_rt::AverInt::from_i64(54) {
-                                    true
-                                } else {
-                                    if __dispatch_subject == aver_rt::AverInt::from_i64(55) {
-                                        true
-                                    } else {
-                                        if __dispatch_subject == aver_rt::AverInt::from_i64(56) {
-                                            true
-                                        } else {
-                                            if __dispatch_subject == aver_rt::AverInt::from_i64(57)
-                                            {
-                                                true
-                                            } else {
-                                                false
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        match __dispatch_subject.to_i64() {
+            Some(48i64) => true,
+            Some(49i64) => true,
+            Some(50i64) => true,
+            Some(51i64) => true,
+            Some(52i64) => true,
+            Some(53i64) => true,
+            Some(54i64) => true,
+            Some(55i64) => true,
+            Some(56i64) => true,
+            Some(57i64) => true,
+            _ => false,
         }
     }
 }
@@ -117,47 +88,18 @@ pub fn digitVal(c @ _: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-        if __dispatch_subject == aver_rt::AverInt::from_i64(48) {
-            aver_rt::AverInt::from_i64(0)
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(49) {
-                aver_rt::AverInt::from_i64(1)
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(50) {
-                    aver_rt::AverInt::from_i64(2)
-                } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(51) {
-                        aver_rt::AverInt::from_i64(3)
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(52) {
-                            aver_rt::AverInt::from_i64(4)
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(53) {
-                                aver_rt::AverInt::from_i64(5)
-                            } else {
-                                if __dispatch_subject == aver_rt::AverInt::from_i64(54) {
-                                    aver_rt::AverInt::from_i64(6)
-                                } else {
-                                    if __dispatch_subject == aver_rt::AverInt::from_i64(55) {
-                                        aver_rt::AverInt::from_i64(7)
-                                    } else {
-                                        if __dispatch_subject == aver_rt::AverInt::from_i64(56) {
-                                            aver_rt::AverInt::from_i64(8)
-                                        } else {
-                                            if __dispatch_subject == aver_rt::AverInt::from_i64(57)
-                                            {
-                                                aver_rt::AverInt::from_i64(9)
-                                            } else {
-                                                aver_rt::AverInt::from_i64(0)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        match __dispatch_subject.to_i64() {
+            Some(48i64) => aver_rt::AverInt::from_i64(0),
+            Some(49i64) => aver_rt::AverInt::from_i64(1),
+            Some(50i64) => aver_rt::AverInt::from_i64(2),
+            Some(51i64) => aver_rt::AverInt::from_i64(3),
+            Some(52i64) => aver_rt::AverInt::from_i64(4),
+            Some(53i64) => aver_rt::AverInt::from_i64(5),
+            Some(54i64) => aver_rt::AverInt::from_i64(6),
+            Some(55i64) => aver_rt::AverInt::from_i64(7),
+            Some(56i64) => aver_rt::AverInt::from_i64(8),
+            Some(57i64) => aver_rt::AverInt::from_i64(9),
+            _ => aver_rt::AverInt::from_i64(0),
         }
     }
 }
@@ -523,46 +465,18 @@ pub fn digitVal__code(__str_index_code @ _: i64) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = __str_index_code;
-        if __dispatch_subject == 48i64 {
-            aver_rt::AverInt::from_i64(0)
-        } else {
-            if __dispatch_subject == 49i64 {
-                aver_rt::AverInt::from_i64(1)
-            } else {
-                if __dispatch_subject == 50i64 {
-                    aver_rt::AverInt::from_i64(2)
-                } else {
-                    if __dispatch_subject == 51i64 {
-                        aver_rt::AverInt::from_i64(3)
-                    } else {
-                        if __dispatch_subject == 52i64 {
-                            aver_rt::AverInt::from_i64(4)
-                        } else {
-                            if __dispatch_subject == 53i64 {
-                                aver_rt::AverInt::from_i64(5)
-                            } else {
-                                if __dispatch_subject == 54i64 {
-                                    aver_rt::AverInt::from_i64(6)
-                                } else {
-                                    if __dispatch_subject == 55i64 {
-                                        aver_rt::AverInt::from_i64(7)
-                                    } else {
-                                        if __dispatch_subject == 56i64 {
-                                            aver_rt::AverInt::from_i64(8)
-                                        } else {
-                                            if __dispatch_subject == 57i64 {
-                                                aver_rt::AverInt::from_i64(9)
-                                            } else {
-                                                aver_rt::AverInt::from_i64(0)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        match __dispatch_subject {
+            48i64 => aver_rt::AverInt::from_i64(0),
+            49i64 => aver_rt::AverInt::from_i64(1),
+            50i64 => aver_rt::AverInt::from_i64(2),
+            51i64 => aver_rt::AverInt::from_i64(3),
+            52i64 => aver_rt::AverInt::from_i64(4),
+            53i64 => aver_rt::AverInt::from_i64(5),
+            54i64 => aver_rt::AverInt::from_i64(6),
+            55i64 => aver_rt::AverInt::from_i64(7),
+            56i64 => aver_rt::AverInt::from_i64(8),
+            57i64 => aver_rt::AverInt::from_i64(9),
+            _ => aver_rt::AverInt::from_i64(0),
         }
     }
 }
@@ -573,46 +487,18 @@ pub fn isDigit__code(__str_index_code @ _: i64) -> bool {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = __str_index_code;
-        if __dispatch_subject == 48i64 {
-            true
-        } else {
-            if __dispatch_subject == 49i64 {
-                true
-            } else {
-                if __dispatch_subject == 50i64 {
-                    true
-                } else {
-                    if __dispatch_subject == 51i64 {
-                        true
-                    } else {
-                        if __dispatch_subject == 52i64 {
-                            true
-                        } else {
-                            if __dispatch_subject == 53i64 {
-                                true
-                            } else {
-                                if __dispatch_subject == 54i64 {
-                                    true
-                                } else {
-                                    if __dispatch_subject == 55i64 {
-                                        true
-                                    } else {
-                                        if __dispatch_subject == 56i64 {
-                                            true
-                                        } else {
-                                            if __dispatch_subject == 57i64 {
-                                                true
-                                            } else {
-                                                false
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        match __dispatch_subject {
+            48i64 => true,
+            49i64 => true,
+            50i64 => true,
+            51i64 => true,
+            52i64 => true,
+            53i64 => true,
+            54i64 => true,
+            55i64 => true,
+            56i64 => true,
+            57i64 => true,
+            _ => false,
         }
     }
 }

@@ -1,0 +1,70 @@
+module Main
+    intent =
+        "Int matches with literal arms, which the Rust backend emits as one flat"
+        "match: on a raw i64 subject (one of them negative) and on an Int that"
+        "may be negative, a default that binds the subject, literals past the"
+        "ints AverInt holds in one word, and Ints past i64 that equal none of"
+        "the literals."
+    exposes opaque [Word]
+    effects [Console.print]
+
+record Word
+    value: Int
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "Smart constructor: a word is below 2^62."
+    match Bool.and(n >= 0, n < 4611686018427387904)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+fn word(n: Int) -> Word
+    ? "A word from an Int in range, zero otherwise."
+    match fromInt(n)
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 0)
+
+fn rawDigit(w: Word) -> Int
+    ? "Literal arms over a raw subject, a carrier's low bits, and a default that binds it."
+    match Bits.and(w.value, 7)
+        0 -> 100
+        1 -> 101
+        3 -> 103
+        k -> k * 1000
+
+fn rawNegative(w: Word) -> Int
+    ? "Literal arms over a raw subject that is negative, a carrier's low bits flipped by -4."
+    match Bits.xor(Bits.and(w.value, 7), -4)
+        0 -> 100
+        3 -> 103
+        k -> k * 1000
+
+fn named(n: Int) -> String
+    ? "Literal arms over an Int, up to the largest i64, and a default that binds it."
+    match n
+        0 -> "zero"
+        1 -> "one"
+        2 -> "two"
+        4611686018427387904 -> "two to the 62"
+        9223372036854775807 -> "max"
+        other -> "other {other}"
+
+fn row(i: Int) -> String
+    ? "Every match for i."
+    w = word(i + 9)
+    "{rawDigit(w)}/{rawNegative(w)}/{named(i)}"
+
+fn sweep(i: Int, n: Int, acc: String) -> String
+    ? "Every row for i from -n to n."
+    match i > n
+        true -> acc
+        false -> sweep(i + 1, n, "{acc} {row(i)}")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(sweep(0 - 9, 9, ""))
+    Console.print(named(9223372036854775807))
+    Console.print(named(9223372036854775807 + 1))
+    Console.print(named(0 - 9223372036854775807 - 1))
+    Console.print(named(0 - 9223372036854775807 - 2))
+    Console.print(named(4611686018427387903 + 1))
+    Console.print(named(0 - 4611686018427387904 - 1))

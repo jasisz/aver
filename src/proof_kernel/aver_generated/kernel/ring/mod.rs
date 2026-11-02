@@ -118,8 +118,8 @@ pub fn readPoly(
                 {
                     let __dispatch_subject =
                         aver_rt::AverInt::from_i64(aver_rt::str_code1(&__pat0));
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(43) {
-                        {
+                    match __dispatch_subject.to_i64() {
+                        Some(43i64) => {
                             let __arg7 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::ring::readPoly(
                                     a, atoms,
@@ -130,36 +130,29 @@ pub fn readPoly(
                                 aver_rt::AverInt::from_i64(0),
                             )
                         }
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(45) {
-                            {
-                                let __arg8 @ _ =
-                                    crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                                        a, atoms,
-                                    );
-                                crate::proof_kernel::aver_generated::kernel::ring::combine(
-                                    __arg8,
-                                    b,
-                                    aver_rt::AverInt::from_i64(1),
-                                )
-                            }
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(42) {
-                                {
-                                    let __arg9 @ _ =
-                                        crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                                            a, atoms,
-                                        );
-                                    crate::proof_kernel::aver_generated::kernel::ring::combine(
-                                        __arg9,
-                                        b,
-                                        aver_rt::AverInt::from_i64(2),
-                                    )
-                                }
-                            } else {
-                                crate::proof_kernel::aver_generated::kernel::ring::atom(t, atoms)
-                            }
+                        Some(45i64) => {
+                            let __arg8 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::ring::readPoly(
+                                    a, atoms,
+                                );
+                            crate::proof_kernel::aver_generated::kernel::ring::combine(
+                                __arg8,
+                                b,
+                                aver_rt::AverInt::from_i64(1),
+                            )
                         }
+                        Some(42i64) => {
+                            let __arg9 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::ring::readPoly(
+                                    a, atoms,
+                                );
+                            crate::proof_kernel::aver_generated::kernel::ring::combine(
+                                __arg9,
+                                b,
+                                aver_rt::AverInt::from_i64(2),
+                            )
+                        }
+                        _ => crate::proof_kernel::aver_generated::kernel::ring::atom(t, atoms),
                     }
                 }
             }
@@ -189,38 +182,31 @@ pub fn combine(
     let right @ _ = crate::proof_kernel::aver_generated::kernel::ring::readPoly(b, &left.atoms);
     {
         let __dispatch_subject = how;
-        if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
-            crate::proof_kernel::aver_generated::kernel::ring::Read {
+        match __dispatch_subject.to_i64() {
+            Some(0i64) => crate::proof_kernel::aver_generated::kernel::ring::Read {
                 poly: crate::proof_kernel::aver_generated::kernel::ring::addPoly(
                     left.poly,
                     &right.poly,
                 ),
                 atoms: right.atoms,
-            }
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-                crate::proof_kernel::aver_generated::kernel::ring::Read {
-                    poly: {
-                        let __arg4 @ _ =
-                            crate::proof_kernel::aver_generated::kernel::ring::scalePoly(
-                                &right.poly,
-                                aver_rt::AverInt::from_i64(-1),
-                            );
-                        crate::proof_kernel::aver_generated::kernel::ring::addPoly(
-                            left.poly, &__arg4,
-                        )
-                    },
-                    atoms: right.atoms,
-                }
-            } else {
-                crate::proof_kernel::aver_generated::kernel::ring::Read {
-                    poly: crate::proof_kernel::aver_generated::kernel::ring::mulPoly(
-                        &left.poly,
+            },
+            Some(1i64) => crate::proof_kernel::aver_generated::kernel::ring::Read {
+                poly: {
+                    let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::ring::scalePoly(
                         &right.poly,
-                    ),
-                    atoms: right.atoms,
-                }
-            }
+                        aver_rt::AverInt::from_i64(-1),
+                    );
+                    crate::proof_kernel::aver_generated::kernel::ring::addPoly(left.poly, &__arg4)
+                },
+                atoms: right.atoms,
+            },
+            _ => crate::proof_kernel::aver_generated::kernel::ring::Read {
+                poly: crate::proof_kernel::aver_generated::kernel::ring::mulPoly(
+                    &left.poly,
+                    &right.poly,
+                ),
+                atoms: right.atoms,
+            },
         }
     }
 }
@@ -379,8 +365,8 @@ pub fn insertMono(mut m @ _: Mono, p @ _: &aver_rt::AverList<Mono>) -> aver_rt::
                 );
                 {
                     let __dispatch_subject = __subject;
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
-                        aver_rt::AverList::concat(
+                    match __dispatch_subject.to_i64() {
+                        Some(0i64) => aver_rt::AverList::concat(
                             &{
                                 let __arg4 @ _ =
                                     crate::proof_kernel::aver_generated::kernel::ring::Mono {
@@ -390,21 +376,15 @@ pub fn insertMono(mut m @ _: Mono, p @ _: &aver_rt::AverList<Mono>) -> aver_rt::
                                 crate::proof_kernel::aver_generated::kernel::ring::nonzero(__arg4)
                             },
                             &rest,
-                        )
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-                            aver_rt::AverList::prepend_owned(
-                                x,
-                                crate::proof_kernel::aver_generated::kernel::ring::insertMono(
-                                    m, &rest,
-                                ),
-                            )
-                        } else {
-                            aver_rt::AverList::concat(
-                                &crate::proof_kernel::aver_generated::kernel::ring::nonzero(m),
-                                &p.clone(),
-                            )
-                        }
+                        ),
+                        Some(1i64) => aver_rt::AverList::prepend_owned(
+                            x,
+                            crate::proof_kernel::aver_generated::kernel::ring::insertMono(m, &rest),
+                        ),
+                        _ => aver_rt::AverList::concat(
+                            &crate::proof_kernel::aver_generated::kernel::ring::nonzero(m),
+                            &p.clone(),
+                        ),
                     }
                 }
             }

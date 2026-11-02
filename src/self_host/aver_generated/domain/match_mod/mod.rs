@@ -394,36 +394,26 @@ pub fn matchPatConstructorById(
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = tag.clone();
-        if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-            crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
+        match __dispatch_subject.to_i64() {
+            Some(1i64) => crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
                 v,
                 aver_rt::AverInt::from_i64(1),
                 bindings,
-            )
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
-                crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
-                    v,
-                    aver_rt::AverInt::from_i64(2),
-                    bindings,
-                )
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
-                    crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
-                        v,
-                        aver_rt::AverInt::from_i64(3),
-                        bindings,
-                    )
-                } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(4) {
-                        crate::aver_generated::domain::match_mod::matchNonePat(v)
-                    } else {
-                        crate::aver_generated::domain::match_mod::matchGenericCtorById(
-                            tag, &ctorName, bindings, v,
-                        )
-                    }
-                }
-            }
+            ),
+            Some(2i64) => crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
+                v,
+                aver_rt::AverInt::from_i64(2),
+                bindings,
+            ),
+            Some(3i64) => crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
+                v,
+                aver_rt::AverInt::from_i64(3),
+                bindings,
+            ),
+            Some(4i64) => crate::aver_generated::domain::match_mod::matchNonePat(v),
+            _ => crate::aver_generated::domain::match_mod::matchGenericCtorById(
+                tag, &ctorName, bindings, v,
+            ),
         }
     }
 }
@@ -438,8 +428,8 @@ pub fn matchWrapperPatDirect(
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = tag;
-        if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-            {
+        match __dispatch_subject.to_i64() {
+            Some(1i64) => {
                 let __t = v;
                 match __t.view() {
                     crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
@@ -455,52 +445,39 @@ pub fn matchWrapperPatDirect(
                     _ => Err(::aver_rt::str_lit!("no match")),
                 }
             }
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
-                {
-                    let __t = v;
-                    match __t.view() {
-                        crate::aver_generated::domain::value::Val__view::ValErr(__inner_fields) => {
-                            let inner = &__inner_fields.0;
-                            Ok({
-                                let __arg7 @ _ = aver_rt::AverList::prepend_owned(
-                                    inner.clone(),
-                                    aver_rt::AverList::empty(),
-                                );
-                                crate::aver_generated::domain::match_mod::zipBindings(
-                                    bindings, &__arg7,
-                                )
-                            })
-                        }
-                        _ => Err(::aver_rt::str_lit!("no match")),
+            Some(2i64) => {
+                let __t = v;
+                match __t.view() {
+                    crate::aver_generated::domain::value::Val__view::ValErr(__inner_fields) => {
+                        let inner = &__inner_fields.0;
+                        Ok({
+                            let __arg7 @ _ = aver_rt::AverList::prepend_owned(
+                                inner.clone(),
+                                aver_rt::AverList::empty(),
+                            );
+                            crate::aver_generated::domain::match_mod::zipBindings(bindings, &__arg7)
+                        })
                     }
-                }
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
-                    {
-                        let __t = v;
-                        match __t.view() {
-                            crate::aver_generated::domain::value::Val__view::ValSome(
-                                __inner_fields,
-                            ) => {
-                                let inner = &__inner_fields.0;
-                                Ok({
-                                    let __arg8 @ _ = aver_rt::AverList::prepend_owned(
-                                        inner.clone(),
-                                        aver_rt::AverList::empty(),
-                                    );
-                                    crate::aver_generated::domain::match_mod::zipBindings(
-                                        bindings, &__arg8,
-                                    )
-                                })
-                            }
-                            _ => Err(::aver_rt::str_lit!("no match")),
-                        }
-                    }
-                } else {
-                    Err(::aver_rt::str_lit!("no match"))
+                    _ => Err(::aver_rt::str_lit!("no match")),
                 }
             }
+            Some(3i64) => {
+                let __t = v;
+                match __t.view() {
+                    crate::aver_generated::domain::value::Val__view::ValSome(__inner_fields) => {
+                        let inner = &__inner_fields.0;
+                        Ok({
+                            let __arg8 @ _ = aver_rt::AverList::prepend_owned(
+                                inner.clone(),
+                                aver_rt::AverList::empty(),
+                            );
+                            crate::aver_generated::domain::match_mod::zipBindings(bindings, &__arg8)
+                        })
+                    }
+                    _ => Err(::aver_rt::str_lit!("no match")),
+                }
+            }
+            _ => Err(::aver_rt::str_lit!("no match")),
         }
     }
 }

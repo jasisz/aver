@@ -372,18 +372,80 @@ where
         None => "panic!(\"Aver Rust codegen: non-exhaustive dispatch match\")".to_string(),
     };
 
+    if let Some(body) = emit_flat_int_match(
+        &subject_name,
+        arms,
+        shape,
+        subject_is_bare,
+        &fallback,
+        &body_for_arm,
+    ) {
+        return format!("{{ let {} = {}; {} }}", subject_name, subject, body);
+    }
+
     let body = shape
         .entries
         .iter()
         .rev()
         .fold(fallback, |else_branch, entry| {
             let arm = &arms[entry.arm_index];
-            let cond = emit_dispatch_condition(&subject_name, &entry.pattern, subject_is_bare);
+            let cond = emit_dispatch_condition(&subject_name, &entry.pattern);
             let body = emit_dispatch_arm_body(&subject_name, arm, entry, &body_for_arm);
             format!("if {} {{ {} }} else {{ {} }}", cond, body, else_branch)
         });
 
     format!("{{ let {} = {}; {} }}", subject_name, subject, body)
+}
+
+/// A dispatch table whose entries are all `Int` literals, as one flat Rust
+/// `match` on a machine integer: `match s { 0i64 => …, _ => … }` for a bare
+/// `i64` subject, `match s.to_i64() { Some(0i64) => …, _ => … }` for an
+/// `AverInt` (`to_i64` is `Some` exactly when the value fits `i64`, so an
+/// integer past it falls to the default, as it equals none of the literals).
+/// The arms sit side by side instead of one `if` inside the `else` of the
+/// one before, so a match with thousands of arms does not nest thousands of
+/// blocks deep, and `rustc` can lower it to a jump table. The checker
+/// rejects a literal repeated in a later arm; one that got here anyway would
+/// be left out, so the first arm with it wins, as on the VM. `None` when an
+/// entry is anything else.
+fn emit_flat_int_match<F>(
+    subject_name: &str,
+    arms: &[ResolvedMatchArm],
+    shape: &DispatchTableShape,
+    subject_is_bare: bool,
+    fallback: &str,
+    body_for_arm: &F,
+) -> Option<String>
+where
+    F: Fn(&ResolvedMatchArm) -> String,
+{
+    let literals = shape
+        .entries
+        .iter()
+        .map(|entry| match entry.pattern {
+            SemanticDispatchPattern::Literal(DispatchLiteral::Int(k)) => Some(k),
+            _ => None,
+        })
+        .collect::<Option<Vec<i64>>>()?;
+    let mut seen = HashSet::new();
+    let mut match_arms = Vec::with_capacity(literals.len() + 1);
+    for (entry, k) in shape.entries.iter().zip(literals) {
+        if !seen.insert(k) {
+            continue;
+        }
+        let pattern = match subject_is_bare {
+            true => format!("{k}i64"),
+            false => format!("Some({k}i64)"),
+        };
+        let body = body_for_arm(&arms[entry.arm_index]);
+        match_arms.push(format!("{pattern} => {{ {body} }}"));
+    }
+    match_arms.push(format!("_ => {{ {fallback} }}"));
+    let scrutinee = match subject_is_bare {
+        true => subject_name.to_string(),
+        false => format!("{subject_name}.to_i64()"),
+    };
+    Some(format!("match {scrutinee} {{ {} }}", match_arms.join(", ")))
 }
 
 /// Emit `match subject { Ok(v) => ..., Err(e) => ... }` when ALL dispatch entries are
@@ -455,30 +517,12 @@ where
     Some(format!("match {} {{ {} }}", subject, match_arms.join(", ")))
 }
 
-fn emit_dispatch_condition(
-    subject_name: &str,
-    pattern: &SemanticDispatchPattern,
-    subject_is_bare: bool,
-) -> String {
+fn emit_dispatch_condition(subject_name: &str, pattern: &SemanticDispatchPattern) -> String {
     match pattern {
         SemanticDispatchPattern::Literal(lit) => match lit {
-            // `AverInt: PartialEq`, so an equality guard works directly;
-            // `AverInt` cannot be a `match` pattern literal, hence the
-            // dispatch path lowers Int-literal arms to guards. A bare-`i64`
-            // subject (a proven-bare counter, `Copy`) compares against a raw
-            // `{K}i64` literal — comparing it against `AverInt::from_i64(K)`
-            // would be `i64 == AverInt` (`rustc` E0308). This mirrors the
-            // single-arm `try_emit_int_literal_match` `subject_is_bare` path
-            // so the ≥2-literal-arm dispatch table stays in the fast loop.
-            DispatchLiteral::Int(i) if subject_is_bare => {
-                format!("{subject_name} == {i}i64")
-            }
-            // A literal past `AverInt`'s inline range is never built.
-            DispatchLiteral::Int(i) if !super::from_mir::AVERINT_INLINE.contains(i) => {
-                format!("{subject_name}.cmp_i64({i}i64).is_eq()")
-            }
-            DispatchLiteral::Int(i) => {
-                format!("{subject_name} == aver_rt::AverInt::from_i64({i})")
+            // A table of `Int` literals is one flat `match` (`emit_flat_int_match`).
+            DispatchLiteral::Int(_) => {
+                unreachable!("Aver Rust codegen: Int dispatch tables are flat matches")
             }
             DispatchLiteral::Float(f) => format!("{subject_name} == {f}f64"),
             DispatchLiteral::Bool(b) => format!("{subject_name} == {b}"),

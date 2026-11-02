@@ -460,18 +460,17 @@ pub fn escapeOne(c @ _: AverStr) -> AverStr {
     crate::proof_std::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-        if __dispatch_subject == aver_rt::AverInt::from_i64(34) {
-            ::aver_rt::str_lit!("\\\"")
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(92) {
-                ::aver_rt::str_lit!("\\\\")
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
-                    ::aver_rt::str_lit!("\\n")
-                } else {
-                    c
-                }
+        match __dispatch_subject.to_i64() {
+            Some(34i64) => {
+                ::aver_rt::str_lit!("\\\"")
             }
+            Some(92i64) => {
+                ::aver_rt::str_lit!("\\\\")
+            }
+            Some(10i64) => {
+                ::aver_rt::str_lit!("\\n")
+            }
+            _ => c,
         }
     }
 }
