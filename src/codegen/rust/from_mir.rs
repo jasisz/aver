@@ -1398,7 +1398,7 @@ fn owned_params_with(
     }
     // A mutual invariant some member already consumes is taken by value
     // across its group (see [`mutual_tco_invariants`]).
-    let mut take_invariant =
+    let take_invariant =
         |k: usize,
          owned: &mut HashMap<crate::ir::FnId, Vec<bool>>,
          consuming: &mut HashMap<crate::ir::FnId, Vec<bool>>| {
