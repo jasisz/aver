@@ -985,13 +985,14 @@ pub(super) fn compute_owned_record_params(
     let Some(program) = ctx.mir_program.as_ref() else {
         return HashMap::new();
     };
-    let built = built_list_params(program);
+    let calls = ProgramCalls::new(program);
+    let built = built_list_params(program, &calls);
     let mut lists = handed_list_candidates(ctx, program);
     lists.retain(|param| built.contains(param));
     loop {
-        let owned = owned_params_with(ctx, program, &lists);
+        let owned = owned_params_with(ctx, program, &calls, &lists);
         let before = lists.len();
-        lists.retain(|&(id, index)| list_param_fed_owned(program, &owned, id, index));
+        lists.retain(|&(id, index)| list_param_fed_owned(program, &calls, &owned, id, index));
         if lists.len() == before {
             return owned;
         }
@@ -1040,7 +1041,10 @@ fn handed_list_candidates(
 /// every result is built, such a param, a `let` of a built value, or the rest
 /// of a built list taken apart. A greatest fixpoint: a param or a result
 /// drops out when one call or one result is not built.
-fn built_list_params(program: &crate::ir::mir::MirProgram) -> HashSet<(crate::ir::FnId, usize)> {
+fn built_list_params(
+    program: &crate::ir::mir::MirProgram,
+    calls: &ProgramCalls<'_>,
+) -> HashSet<(crate::ir::FnId, usize)> {
     struct Facts<'p> {
         params: HashSet<(crate::ir::FnId, usize)>,
         results: HashSet<crate::ir::FnId>,
@@ -1130,9 +1134,7 @@ fn built_list_params(program: &crate::ir::mir::MirProgram) -> HashSet<(crate::ir
             if built(&mir_fn.body.node, *caller, slots, &facts, 0) {
                 results.insert(*caller);
             }
-            let mut calls = Vec::new();
-            collect_fn_calls(&mir_fn.body.node, &mut calls);
-            for (callee, args) in calls {
+            for &(callee, args) in calls.of(*caller) {
                 for (i, arg) in args.iter().enumerate() {
                     if !built(&arg.node, *caller, slots, &facts, 0) {
                         params.insert((callee, i));
@@ -1146,6 +1148,54 @@ fn built_list_params(program: &crate::ir::mir::MirProgram) -> HashSet<(crate::ir
         if (facts.params.len(), facts.results.len()) == before {
             return facts.params;
         }
+    }
+}
+
+/// A direct call: its callee and its arguments.
+type FnCall<'p> = (crate::ir::FnId, &'p [Spanned<MirExpr>]);
+
+/// The direct calls of a program, collected in one walk so that the facts
+/// above and [`list_param_fed_owned`] look only at the calls they ask about
+/// instead of walking every body once per function or param.
+struct ProgramCalls<'p> {
+    /// Per caller, every direct call in its body.
+    by_caller: HashMap<crate::ir::FnId, Vec<FnCall<'p>>>,
+    /// Per callee, every direct call of it: the caller and the arguments.
+    by_callee: HashMap<crate::ir::FnId, Vec<FnCall<'p>>>,
+    /// Per function that makes a direct call, the locals it binds to a
+    /// computed value (see [`computed_locals`]).
+    computed: HashMap<crate::ir::FnId, HashSet<LocalId>>,
+}
+
+impl<'p> ProgramCalls<'p> {
+    fn new(program: &'p crate::ir::mir::MirProgram) -> Self {
+        let mut by_caller = HashMap::new();
+        let mut by_callee: HashMap<crate::ir::FnId, Vec<FnCall<'p>>> = HashMap::new();
+        let mut computed = HashMap::new();
+        for (caller, mir_fn) in program.iter() {
+            let mut calls = Vec::new();
+            collect_fn_calls(&mir_fn.body.node, &mut calls);
+            if calls.is_empty() {
+                continue;
+            }
+            for &(callee, args) in &calls {
+                by_callee.entry(callee).or_default().push((*caller, args));
+            }
+            let mut fresh = HashSet::new();
+            computed_locals(&mir_fn.body.node, &mut fresh);
+            computed.insert(*caller, fresh);
+            by_caller.insert(*caller, calls);
+        }
+        ProgramCalls {
+            by_caller,
+            by_callee,
+            computed,
+        }
+    }
+
+    /// Every direct call `caller` makes.
+    fn of(&self, caller: crate::ir::FnId) -> &[FnCall<'p>] {
+        self.by_caller.get(&caller).map_or(&[], Vec::as_slice)
     }
 }
 
@@ -1181,69 +1231,58 @@ fn collect_fn_values(expr: &MirExpr, out: &mut HashSet<String>) {
 /// function no code here calls keeps the borrowed ABI.
 fn list_param_fed_owned(
     program: &crate::ir::mir::MirProgram,
+    calls: &ProgramCalls<'_>,
     owned: &HashMap<crate::ir::FnId, Vec<bool>>,
     id: crate::ir::FnId,
     index: usize,
 ) -> bool {
-    fn sites<'e>(expr: &'e MirExpr, id: crate::ir::FnId, out: &mut Vec<&'e [Spanned<MirExpr>]>) {
-        match expr {
-            MirExpr::Call(call) if call.node.callee == MirCallee::Fn(id) => {
-                out.push(&call.node.args)
+    let Some(sites) = calls.by_callee.get(&id) else {
+        return false;
+    };
+    sites.iter().all(|&(caller, args)| {
+        let Some(mir_fn) = program.fn_by_id(caller) else {
+            return false;
+        };
+        match args.get(index).map(|arg| &arg.node) {
+            Some(MirExpr::Project(_)) | None => false,
+            Some(MirExpr::Local(local)) => {
+                local.node.last_use
+                    && match mir_fn
+                        .params
+                        .iter()
+                        .position(|p| p.local == local.node.slot)
+                    {
+                        Some(j) => owned.get(&caller).and_then(|abi| abi.get(j)) == Some(&true),
+                        None => calls
+                            .computed
+                            .get(&caller)
+                            .is_some_and(|fresh| fresh.contains(&local.node.slot)),
+                    }
             }
-            MirExpr::TailCall(call) if call.node.target == id => out.push(&call.node.args),
-            _ => {}
+            Some(_) => true,
         }
-        crate::ir::mir::expr::walk_children(expr, &mut |child| sites(child, id, out));
+    })
+}
+
+/// The locals `expr` binds to a computed value: a `let` of anything but a
+/// local or a field read, and a list's rest bound by `[h, ..t]`.
+fn computed_locals(expr: &MirExpr, out: &mut HashSet<LocalId>) {
+    match expr {
+        MirExpr::Let(binding)
+            if !matches!(
+                binding.node.value.node,
+                MirExpr::Local(_) | MirExpr::Project(_)
+            ) =>
+        {
+            out.insert(binding.node.binding);
+        }
+        MirExpr::Match(m) => out.extend(m.node.arms.iter().filter_map(|arm| match arm.pattern {
+            MirPattern::Cons { tail, .. } => Some(tail),
+            _ => None,
+        })),
+        _ => {}
     }
-    fn computed(expr: &MirExpr, out: &mut HashSet<LocalId>) {
-        match expr {
-            MirExpr::Let(binding)
-                if !matches!(
-                    binding.node.value.node,
-                    MirExpr::Local(_) | MirExpr::Project(_)
-                ) =>
-            {
-                out.insert(binding.node.binding);
-            }
-            MirExpr::Match(m) => {
-                out.extend(m.node.arms.iter().filter_map(|arm| match arm.pattern {
-                    MirPattern::Cons { tail, .. } => Some(tail),
-                    _ => None,
-                }))
-            }
-            _ => {}
-        }
-        crate::ir::mir::expr::walk_children(expr, &mut |child| computed(child, out));
-    }
-    let mut called = false;
-    let fed = program.iter().all(|(caller, mir_fn)| {
-        let mut calls = Vec::new();
-        sites(&mir_fn.body.node, id, &mut calls);
-        if calls.is_empty() {
-            return true;
-        }
-        called = true;
-        let mut fresh = HashSet::new();
-        computed(&mir_fn.body.node, &mut fresh);
-        calls
-            .iter()
-            .all(|args| match args.get(index).map(|arg| &arg.node) {
-                Some(MirExpr::Project(_)) | None => false,
-                Some(MirExpr::Local(local)) => {
-                    local.node.last_use
-                        && match mir_fn
-                            .params
-                            .iter()
-                            .position(|p| p.local == local.node.slot)
-                        {
-                            Some(j) => owned.get(caller).and_then(|abi| abi.get(j)) == Some(&true),
-                            None => fresh.contains(&local.node.slot),
-                        }
-                }
-                Some(_) => true,
-            })
-    });
-    called && fed
+    crate::ir::mir::expr::walk_children(expr, &mut |child| computed_locals(child, out));
 }
 
 /// [`compute_owned_record_params`] for one set of `List` params allowed to be
@@ -1251,6 +1290,7 @@ fn list_param_fed_owned(
 fn owned_params_with(
     ctx: &CodegenContext,
     program: &crate::ir::mir::MirProgram,
+    calls: &ProgramCalls<'_>,
     lists: &HashSet<(crate::ir::FnId, usize)>,
 ) -> HashMap<crate::ir::FnId, Vec<bool>> {
     let mut owned: HashMap<crate::ir::FnId, Vec<bool>> = HashMap::new();
@@ -1348,9 +1388,19 @@ fn owned_params_with(
         };
         consuming.insert(*id, (0..*len).map(returns).collect());
     }
+    // Whether a param consumes its value reads only the facts of the
+    // functions its body calls, so after the first round only the callers of
+    // a function that just graduated a param are looked at again.
+    let candidate_of: HashMap<crate::ir::FnId, usize> = candidates
+        .iter()
+        .enumerate()
+        .map(|(k, (id, _))| (*id, k))
+        .collect();
+    let mut pending: Vec<usize> = (0..candidates.len()).collect();
     loop {
         let mut graduated = Vec::new();
-        for (id, open) in &candidates {
+        for &k in &pending {
+            let (id, open) = &candidates[k];
             let Some(mir_fn) = program.fn_by_id(*id) else {
                 continue;
             };
@@ -1376,6 +1426,13 @@ fn owned_params_with(
         if graduated.is_empty() {
             break;
         }
+        pending = graduated
+            .iter()
+            .flat_map(|(id, _)| calls.by_callee.get(id).into_iter().flatten())
+            .filter_map(|(caller, _)| candidate_of.get(caller).copied())
+            .collect();
+        pending.sort_unstable();
+        pending.dedup();
         for (id, i) in graduated {
             if let Some(facts) = consuming.get_mut(&id) {
                 facts[i] = true;

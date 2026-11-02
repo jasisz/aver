@@ -1154,22 +1154,26 @@ fn compute_summary(
         // (C) The return is bare only when the body's tail value is itself
         //     bare-eligible. Recompute the body facts against the current
         //     seed and demote when the body says the return cannot be bare.
+        //     One snapshot serves the whole step: nothing here changes the
+        //     params, and a demoted return is written to the snapshot too,
+        //     so each fn sees every demotion made before it.
+        let mut tmp = Summary {
+            bare_params: bare_params.clone(),
+            bare_return: bare_return.clone(),
+            bare_param_intervals: bare_param_intervals.clone(),
+            positions: ranges.positions.clone(),
+            checked: checked.clone(),
+            read_only: read_only.clone(),
+            raw_ops: raw_ops.clone(),
+            carrier_ids: carrier_ids.clone(),
+        };
         for (id, f) in program.iter() {
             if !bare_return.get(id).copied().unwrap_or(false) {
                 continue;
             }
-            let tmp = Summary {
-                bare_params: bare_params.clone(),
-                bare_return: bare_return.clone(),
-                bare_param_intervals: bare_param_intervals.clone(),
-                positions: ranges.positions.clone(),
-                checked: checked.clone(),
-                read_only: read_only.clone(),
-                raw_ops: raw_ops.clone(),
-                carrier_ids: carrier_ids.clone(),
-            };
             let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
             if !facts.bare_return && bare_return.insert(*id, false) != Some(false) {
+                tmp.bare_return.insert(*id, false);
                 changed = true;
             }
         }
