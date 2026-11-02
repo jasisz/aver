@@ -1592,62 +1592,44 @@ pub fn buildCmpExpr(
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = op;
-        if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
-            Ok((
+        match __dispatch_subject.to_i64() {
+            Some(0i64) => Ok((
                 crate::aver_generated::domain::ast::Expr::ExprEq(
                     crate::aver_generated::domain::ast::Expr__ExprEq(left, right),
                 ),
                 pos,
-            ))
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
-                Ok((
-                    crate::aver_generated::domain::ast::Expr::ExprNeq(
-                        crate::aver_generated::domain::ast::Expr__ExprNeq(left, right),
-                    ),
-                    pos,
-                ))
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
-                    Ok((
-                        crate::aver_generated::domain::ast::Expr::ExprLt(
-                            crate::aver_generated::domain::ast::Expr__ExprLt(left, right),
-                        ),
-                        pos,
-                    ))
-                } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
-                        Ok((
-                            crate::aver_generated::domain::ast::Expr::ExprGt(
-                                crate::aver_generated::domain::ast::Expr__ExprGt(left, right),
-                            ),
-                            pos,
-                        ))
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(4) {
-                            Ok((
-                                crate::aver_generated::domain::ast::Expr::ExprLte(
-                                    crate::aver_generated::domain::ast::Expr__ExprLte(left, right),
-                                ),
-                                pos,
-                            ))
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(5) {
-                                Ok((
-                                    crate::aver_generated::domain::ast::Expr::ExprGte(
-                                        crate::aver_generated::domain::ast::Expr__ExprGte(
-                                            left, right,
-                                        ),
-                                    ),
-                                    pos,
-                                ))
-                            } else {
-                                Err(::aver_rt::str_lit!("unknown cmp operator"))
-                            }
-                        }
-                    }
-                }
-            }
+            )),
+            Some(1i64) => Ok((
+                crate::aver_generated::domain::ast::Expr::ExprNeq(
+                    crate::aver_generated::domain::ast::Expr__ExprNeq(left, right),
+                ),
+                pos,
+            )),
+            Some(2i64) => Ok((
+                crate::aver_generated::domain::ast::Expr::ExprLt(
+                    crate::aver_generated::domain::ast::Expr__ExprLt(left, right),
+                ),
+                pos,
+            )),
+            Some(3i64) => Ok((
+                crate::aver_generated::domain::ast::Expr::ExprGt(
+                    crate::aver_generated::domain::ast::Expr__ExprGt(left, right),
+                ),
+                pos,
+            )),
+            Some(4i64) => Ok((
+                crate::aver_generated::domain::ast::Expr::ExprLte(
+                    crate::aver_generated::domain::ast::Expr__ExprLte(left, right),
+                ),
+                pos,
+            )),
+            Some(5i64) => Ok((
+                crate::aver_generated::domain::ast::Expr::ExprGte(
+                    crate::aver_generated::domain::ast::Expr__ExprGte(left, right),
+                ),
+                pos,
+            )),
+            _ => Err(::aver_rt::str_lit!("unknown cmp operator")),
         }
     }
 }

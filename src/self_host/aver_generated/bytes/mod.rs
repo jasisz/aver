@@ -326,83 +326,24 @@ pub fn hexDigitValue(digit @ _: AverStr) -> Option<aver_rt::AverInt> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1_lower(&digit));
-        if __dispatch_subject == aver_rt::AverInt::from_i64(48) {
-            Some(aver_rt::AverInt::from_i64(0))
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(49) {
-                Some(aver_rt::AverInt::from_i64(1))
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(50) {
-                    Some(aver_rt::AverInt::from_i64(2))
-                } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(51) {
-                        Some(aver_rt::AverInt::from_i64(3))
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(52) {
-                            Some(aver_rt::AverInt::from_i64(4))
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(53) {
-                                Some(aver_rt::AverInt::from_i64(5))
-                            } else {
-                                if __dispatch_subject == aver_rt::AverInt::from_i64(54) {
-                                    Some(aver_rt::AverInt::from_i64(6))
-                                } else {
-                                    if __dispatch_subject == aver_rt::AverInt::from_i64(55) {
-                                        Some(aver_rt::AverInt::from_i64(7))
-                                    } else {
-                                        if __dispatch_subject == aver_rt::AverInt::from_i64(56) {
-                                            Some(aver_rt::AverInt::from_i64(8))
-                                        } else {
-                                            if __dispatch_subject == aver_rt::AverInt::from_i64(57)
-                                            {
-                                                Some(aver_rt::AverInt::from_i64(9))
-                                            } else {
-                                                if __dispatch_subject
-                                                    == aver_rt::AverInt::from_i64(97)
-                                                {
-                                                    Some(aver_rt::AverInt::from_i64(10))
-                                                } else {
-                                                    if __dispatch_subject
-                                                        == aver_rt::AverInt::from_i64(98)
-                                                    {
-                                                        Some(aver_rt::AverInt::from_i64(11))
-                                                    } else {
-                                                        if __dispatch_subject
-                                                            == aver_rt::AverInt::from_i64(99)
-                                                        {
-                                                            Some(aver_rt::AverInt::from_i64(12))
-                                                        } else {
-                                                            if __dispatch_subject
-                                                                == aver_rt::AverInt::from_i64(100)
-                                                            {
-                                                                Some(aver_rt::AverInt::from_i64(13))
-                                                            } else {
-                                                                if __dispatch_subject
-                                                                    == aver_rt::AverInt::from_i64(
-                                                                        101,
-                                                                    )
-                                                                {
-                                                                    Some(
-                                                                        aver_rt::AverInt::from_i64(
-                                                                            14,
-                                                                        ),
-                                                                    )
-                                                                } else {
-                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(102) { Some(aver_rt::AverInt::from_i64(15)) } else { None }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        match __dispatch_subject.to_i64() {
+            Some(48i64) => Some(aver_rt::AverInt::from_i64(0)),
+            Some(49i64) => Some(aver_rt::AverInt::from_i64(1)),
+            Some(50i64) => Some(aver_rt::AverInt::from_i64(2)),
+            Some(51i64) => Some(aver_rt::AverInt::from_i64(3)),
+            Some(52i64) => Some(aver_rt::AverInt::from_i64(4)),
+            Some(53i64) => Some(aver_rt::AverInt::from_i64(5)),
+            Some(54i64) => Some(aver_rt::AverInt::from_i64(6)),
+            Some(55i64) => Some(aver_rt::AverInt::from_i64(7)),
+            Some(56i64) => Some(aver_rt::AverInt::from_i64(8)),
+            Some(57i64) => Some(aver_rt::AverInt::from_i64(9)),
+            Some(97i64) => Some(aver_rt::AverInt::from_i64(10)),
+            Some(98i64) => Some(aver_rt::AverInt::from_i64(11)),
+            Some(99i64) => Some(aver_rt::AverInt::from_i64(12)),
+            Some(100i64) => Some(aver_rt::AverInt::from_i64(13)),
+            Some(101i64) => Some(aver_rt::AverInt::from_i64(14)),
+            Some(102i64) => Some(aver_rt::AverInt::from_i64(15)),
+            _ => None,
         }
     }
 }
@@ -421,77 +362,57 @@ pub fn hexDigit(value @ _: aver_rt::AverInt) -> AverStr {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = value;
-        if __dispatch_subject == aver_rt::AverInt::from_i64(0) {
-            ::aver_rt::str_lit!("0")
-        } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(1) {
+        match __dispatch_subject.to_i64() {
+            Some(0i64) => {
+                ::aver_rt::str_lit!("0")
+            }
+            Some(1i64) => {
                 ::aver_rt::str_lit!("1")
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(2) {
-                    ::aver_rt::str_lit!("2")
-                } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(3) {
-                        ::aver_rt::str_lit!("3")
-                    } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(4) {
-                            ::aver_rt::str_lit!("4")
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(5) {
-                                ::aver_rt::str_lit!("5")
-                            } else {
-                                if __dispatch_subject == aver_rt::AverInt::from_i64(6) {
-                                    ::aver_rt::str_lit!("6")
-                                } else {
-                                    if __dispatch_subject == aver_rt::AverInt::from_i64(7) {
-                                        ::aver_rt::str_lit!("7")
-                                    } else {
-                                        if __dispatch_subject == aver_rt::AverInt::from_i64(8) {
-                                            ::aver_rt::str_lit!("8")
-                                        } else {
-                                            if __dispatch_subject == aver_rt::AverInt::from_i64(9) {
-                                                ::aver_rt::str_lit!("9")
-                                            } else {
-                                                if __dispatch_subject
-                                                    == aver_rt::AverInt::from_i64(10)
-                                                {
-                                                    ::aver_rt::str_lit!("a")
-                                                } else {
-                                                    if __dispatch_subject
-                                                        == aver_rt::AverInt::from_i64(11)
-                                                    {
-                                                        ::aver_rt::str_lit!("b")
-                                                    } else {
-                                                        if __dispatch_subject
-                                                            == aver_rt::AverInt::from_i64(12)
-                                                        {
-                                                            ::aver_rt::str_lit!("c")
-                                                        } else {
-                                                            if __dispatch_subject
-                                                                == aver_rt::AverInt::from_i64(13)
-                                                            {
-                                                                ::aver_rt::str_lit!("d")
-                                                            } else {
-                                                                if __dispatch_subject
-                                                                    == aver_rt::AverInt::from_i64(
-                                                                        14,
-                                                                    )
-                                                                {
-                                                                    ::aver_rt::str_lit!("e")
-                                                                } else {
-                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(15) { ::aver_rt::str_lit!("f") } else { ::aver_rt::str_lit!("") }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            }
+            Some(2i64) => {
+                ::aver_rt::str_lit!("2")
+            }
+            Some(3i64) => {
+                ::aver_rt::str_lit!("3")
+            }
+            Some(4i64) => {
+                ::aver_rt::str_lit!("4")
+            }
+            Some(5i64) => {
+                ::aver_rt::str_lit!("5")
+            }
+            Some(6i64) => {
+                ::aver_rt::str_lit!("6")
+            }
+            Some(7i64) => {
+                ::aver_rt::str_lit!("7")
+            }
+            Some(8i64) => {
+                ::aver_rt::str_lit!("8")
+            }
+            Some(9i64) => {
+                ::aver_rt::str_lit!("9")
+            }
+            Some(10i64) => {
+                ::aver_rt::str_lit!("a")
+            }
+            Some(11i64) => {
+                ::aver_rt::str_lit!("b")
+            }
+            Some(12i64) => {
+                ::aver_rt::str_lit!("c")
+            }
+            Some(13i64) => {
+                ::aver_rt::str_lit!("d")
+            }
+            Some(14i64) => {
+                ::aver_rt::str_lit!("e")
+            }
+            Some(15i64) => {
+                ::aver_rt::str_lit!("f")
+            }
+            _ => {
+                ::aver_rt::str_lit!("")
             }
         }
     }
@@ -734,75 +655,24 @@ pub fn hexDigitValue__code(__str_code @ _: i64) -> Option<aver_rt::AverInt> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::str_fold_lower(__str_code);
-        if __dispatch_subject == 48i64 {
-            Some(aver_rt::AverInt::from_i64(0))
-        } else {
-            if __dispatch_subject == 49i64 {
-                Some(aver_rt::AverInt::from_i64(1))
-            } else {
-                if __dispatch_subject == 50i64 {
-                    Some(aver_rt::AverInt::from_i64(2))
-                } else {
-                    if __dispatch_subject == 51i64 {
-                        Some(aver_rt::AverInt::from_i64(3))
-                    } else {
-                        if __dispatch_subject == 52i64 {
-                            Some(aver_rt::AverInt::from_i64(4))
-                        } else {
-                            if __dispatch_subject == 53i64 {
-                                Some(aver_rt::AverInt::from_i64(5))
-                            } else {
-                                if __dispatch_subject == 54i64 {
-                                    Some(aver_rt::AverInt::from_i64(6))
-                                } else {
-                                    if __dispatch_subject == 55i64 {
-                                        Some(aver_rt::AverInt::from_i64(7))
-                                    } else {
-                                        if __dispatch_subject == 56i64 {
-                                            Some(aver_rt::AverInt::from_i64(8))
-                                        } else {
-                                            if __dispatch_subject == 57i64 {
-                                                Some(aver_rt::AverInt::from_i64(9))
-                                            } else {
-                                                if __dispatch_subject == 97i64 {
-                                                    Some(aver_rt::AverInt::from_i64(10))
-                                                } else {
-                                                    if __dispatch_subject == 98i64 {
-                                                        Some(aver_rt::AverInt::from_i64(11))
-                                                    } else {
-                                                        if __dispatch_subject == 99i64 {
-                                                            Some(aver_rt::AverInt::from_i64(12))
-                                                        } else {
-                                                            if __dispatch_subject == 100i64 {
-                                                                Some(aver_rt::AverInt::from_i64(13))
-                                                            } else {
-                                                                if __dispatch_subject == 101i64 {
-                                                                    Some(
-                                                                        aver_rt::AverInt::from_i64(
-                                                                            14,
-                                                                        ),
-                                                                    )
-                                                                } else {
-                                                                    if __dispatch_subject == 102i64
-                                                                    {
-                                                                        Some(aver_rt::AverInt::from_i64(15))
-                                                                    } else {
-                                                                        None
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        match __dispatch_subject {
+            48i64 => Some(aver_rt::AverInt::from_i64(0)),
+            49i64 => Some(aver_rt::AverInt::from_i64(1)),
+            50i64 => Some(aver_rt::AverInt::from_i64(2)),
+            51i64 => Some(aver_rt::AverInt::from_i64(3)),
+            52i64 => Some(aver_rt::AverInt::from_i64(4)),
+            53i64 => Some(aver_rt::AverInt::from_i64(5)),
+            54i64 => Some(aver_rt::AverInt::from_i64(6)),
+            55i64 => Some(aver_rt::AverInt::from_i64(7)),
+            56i64 => Some(aver_rt::AverInt::from_i64(8)),
+            57i64 => Some(aver_rt::AverInt::from_i64(9)),
+            97i64 => Some(aver_rt::AverInt::from_i64(10)),
+            98i64 => Some(aver_rt::AverInt::from_i64(11)),
+            99i64 => Some(aver_rt::AverInt::from_i64(12)),
+            100i64 => Some(aver_rt::AverInt::from_i64(13)),
+            101i64 => Some(aver_rt::AverInt::from_i64(14)),
+            102i64 => Some(aver_rt::AverInt::from_i64(15)),
+            _ => None,
         }
     }
 }
