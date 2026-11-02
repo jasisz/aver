@@ -1050,8 +1050,9 @@ pub fn typeName(c @ _: &AverStr) -> AverStr {
     crate::proof_kernel::cancel_checkpoint();
     aver_rt::string_join(
         &({
+            let __xs = &((aver_rt::string_split_byte(&c, 46u8)).reverse_owned());
             let __n = 1usize;
-            ((aver_rt::string_split_byte(&c, 46u8)).reverse_owned()).drop_first(__n)
+            __xs.drop_first(__n)
         })
         .reverse_owned(),
         &::aver_rt::str_lit!("."),
