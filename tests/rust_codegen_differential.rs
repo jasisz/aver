@@ -3771,6 +3771,43 @@ fn main() -> Unit
     assert_eq!(rust, expected, "Rust diverged from the VM");
 }
 
+/// A param every member of a mutual tail-call group hands on unchanged (an
+/// invariant) that some member consumes on an exit, by writing it in place
+/// or handing it back, is taken by value by the whole group and moves from
+/// bounce to bounce in the trampoline's state; it used to be read through
+/// `&T` and copied whole at that exit. A record and a vector, the vector at
+/// another place in each member. An invariant a bounce still reads after
+/// handing it on (`peekA`), and one no member consumes (`readA`), stay
+/// borrowed. A caller that keeps the value copies it at the call.
+#[test]
+fn mutual_tail_group_invariant_consumed_on_an_exit_moves() {
+    let relative = "tests/fixtures/rust_mutual_invariant_consumed.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_mutual_invariant_consumed", &src);
+    for shape in [
+        "pub fn evenSteps(s @ _: Store, cfg @ _: &Cfg,",
+        "pub fn oddSteps(s @ _: Store, cfg @ _: &Cfg,",
+        "__MutualTco1::OddSteps(s, k.sub(",
+        "return put(s, aver_rt::AverInt::from_i64(0), acc)",
+        "pub fn fill(v @ _: aver_rt::AverVector<aver_rt::AverInt>,",
+        "pub fn drain(k @ _: aver_rt::AverInt, v @ _: aver_rt::AverVector<aver_rt::AverInt>,",
+        "__MutualTco3::Fill(v, k.sub(",
+        "pub fn peekA(s @ _: &Store,",
+        "pub fn readA(cfg @ _: &Cfg,",
+        "let __tco0 = evenSteps(s, cfg,",
+        "let kept @ _ = evenSteps(s.clone(), &cfg,",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    assert_eq!(
+        emitted.matches("(*s).clone()").count(),
+        2,
+        "only the two exits of the group that reads the store after a bounce copy it:\n{emitted}"
+    );
+    assert!(!emitted.contains("(*v).clone()"), "{emitted}");
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A member of a mutual tail-call group whose state is large and that the
 /// group's loop does not hand over to directly keeps its params on the
 /// group's side instead of in the trampoline's enum: `wide` and `wider`

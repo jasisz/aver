@@ -1198,14 +1198,17 @@ pub fn parseNamedArgsTail(
 enum __MutualTco11 {
     ParseMatchArms(
         aver_rt::AverInt,
+        crate::aver_generated::domain::ast::Expr,
         aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     ),
     ParseOneArm(
         aver_rt::AverInt,
+        crate::aver_generated::domain::ast::Expr,
         aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     ),
     ParseOneArmBody(
         aver_rt::AverInt,
+        crate::aver_generated::domain::ast::Expr,
         aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
         crate::aver_generated::domain::ast::Pattern,
     ),
@@ -1214,11 +1217,10 @@ enum __MutualTco11 {
 fn __mutual_tco_trampoline_11(
     mut __state: __MutualTco11,
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
-    subject @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     loop {
         __state = match __state {
-            __MutualTco11::ParseMatchArms(mut pos @ _, mut acc @ _) => {
+            __MutualTco11::ParseMatchArms(mut pos @ _, mut subject @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 let pos2 @ _ =
                     crate::aver_generated::domain::parser_match::skipNewlines(&*tokens, pos);
@@ -1231,7 +1233,7 @@ fn __mutual_tco_trampoline_11(
                             return Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                                     crate::aver_generated::domain::ast::Expr__ExprMatch(
-                                        (*subject).clone(),
+                                        subject,
                                         (acc).reverse_owned(),
                                     ),
                                 ),
@@ -1247,7 +1249,7 @@ fn __mutual_tco_trampoline_11(
                             return Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                                     crate::aver_generated::domain::ast::Expr__ExprMatch(
-                                        (*subject).clone(),
+                                        subject,
                                         (acc).reverse_owned(),
                                     ),
                                 ),
@@ -1255,19 +1257,24 @@ fn __mutual_tco_trampoline_11(
                             ));
                         }
                     }
-                    _ => __MutualTco11::ParseOneArm(pos2, acc),
+                    _ => __MutualTco11::ParseOneArm(pos2, subject, acc),
                 }
             }
-            __MutualTco11::ParseOneArm(mut pos @ _, mut acc @ _) => {
+            __MutualTco11::ParseOneArm(mut pos @ _, mut subject @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 let pr @ _ =
                     crate::aver_generated::domain::parser_match::parsePattern(&*tokens, pos)?;
                 {
                     let (pat, pos2) = pr;
-                    __MutualTco11::ParseOneArmBody(pos2, acc, pat)
+                    __MutualTco11::ParseOneArmBody(pos2, subject, acc, pat)
                 }
             }
-            __MutualTco11::ParseOneArmBody(mut pos @ _, mut acc @ _, mut pat @ _) => {
+            __MutualTco11::ParseOneArmBody(
+                mut pos @ _,
+                mut subject @ _,
+                mut acc @ _,
+                mut pat @ _,
+            ) => {
                 crate::cancel_checkpoint();
                 let pos2 @ _ = {
                     let __arg9 @ _ = crate::aver_generated::domain::token::Token::TkArrow;
@@ -1290,7 +1297,7 @@ fn __mutual_tco_trampoline_11(
                                 },
                                 acc,
                             );
-                            __MutualTco11::ParseMatchArms(__arg10, __arg11)
+                            __MutualTco11::ParseMatchArms(__arg10, subject, __arg11)
                         }
                     }
                 }
@@ -1303,34 +1310,33 @@ fn __mutual_tco_trampoline_11(
 pub fn parseMatchArms(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    subject @ _: &crate::aver_generated::domain::ast::Expr,
+    subject @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_11(__MutualTco11::ParseMatchArms(pos, acc), &tokens, &subject)
+    __mutual_tco_trampoline_11(__MutualTco11::ParseMatchArms(pos, subject, acc), &tokens)
 }
 
 /// Parse one match arm: pattern '->' expr NEWLINE
 pub fn parseOneArm(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    subject @ _: &crate::aver_generated::domain::ast::Expr,
+    subject @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_11(__MutualTco11::ParseOneArm(pos, acc), &tokens, &subject)
+    __mutual_tco_trampoline_11(__MutualTco11::ParseOneArm(pos, subject, acc), &tokens)
 }
 
 /// Parse arrow and body of a match arm.
 pub fn parseOneArmBody(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    subject @ _: &crate::aver_generated::domain::ast::Expr,
+    subject @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     pat @ _: crate::aver_generated::domain::ast::Pattern,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_11(
-        __MutualTco11::ParseOneArmBody(pos, acc, pat),
+        __MutualTco11::ParseOneArmBody(pos, subject, acc, pat),
         &tokens,
-        &subject,
     )
 }
 
@@ -1338,14 +1344,17 @@ pub fn parseOneArmBody(
 enum __MutualTco12 {
     ParseMatchArmsFlat(
         aver_rt::AverInt,
+        crate::aver_generated::domain::ast::Expr,
         aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     ),
     ParseOneArmFlat(
         aver_rt::AverInt,
+        crate::aver_generated::domain::ast::Expr,
         aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     ),
     ParseOneArmFlatBody(
         aver_rt::AverInt,
+        crate::aver_generated::domain::ast::Expr,
         aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
         crate::aver_generated::domain::ast::Pattern,
     ),
@@ -1354,14 +1363,13 @@ enum __MutualTco12 {
 fn __mutual_tco_trampoline_12(
     mut __state: __MutualTco12,
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
-    subject @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     loop {
         __state = match __state {
-            __MutualTco12::ParseMatchArmsFlat(mut pos @ _, mut acc @ _) => {
+            __MutualTco12::ParseMatchArmsFlat(mut pos @ _, mut subject @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 if crate::aver_generated::domain::parser_match::isArmStart(&*tokens, pos.clone()) {
-                    __MutualTco12::ParseOneArmFlat(pos, acc)
+                    __MutualTco12::ParseOneArmFlat(pos, subject, acc)
                 } else {
                     {
                         let __list_subject = acc.clone();
@@ -1371,7 +1379,7 @@ fn __mutual_tco_trampoline_12(
                             return Ok((
                                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                                     crate::aver_generated::domain::ast::Expr__ExprMatch(
-                                        (*subject).clone(),
+                                        subject,
                                         (acc).reverse_owned(),
                                     ),
                                 ),
@@ -1381,16 +1389,21 @@ fn __mutual_tco_trampoline_12(
                     }
                 }
             }
-            __MutualTco12::ParseOneArmFlat(mut pos @ _, mut acc @ _) => {
+            __MutualTco12::ParseOneArmFlat(mut pos @ _, mut subject @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 let pr @ _ =
                     crate::aver_generated::domain::parser_match::parsePattern(&*tokens, pos)?;
                 {
                     let (pat, pos2) = pr;
-                    __MutualTco12::ParseOneArmFlatBody(pos2, acc, pat)
+                    __MutualTco12::ParseOneArmFlatBody(pos2, subject, acc, pat)
                 }
             }
-            __MutualTco12::ParseOneArmFlatBody(mut pos @ _, mut acc @ _, mut pat @ _) => {
+            __MutualTco12::ParseOneArmFlatBody(
+                mut pos @ _,
+                mut subject @ _,
+                mut acc @ _,
+                mut pat @ _,
+            ) => {
                 crate::cancel_checkpoint();
                 let pos2 @ _ = {
                     let __arg9 @ _ = crate::aver_generated::domain::token::Token::TkArrow;
@@ -1413,7 +1426,7 @@ fn __mutual_tco_trampoline_12(
                                 },
                                 acc,
                             );
-                            __MutualTco12::ParseMatchArmsFlat(__arg10, __arg11)
+                            __MutualTco12::ParseMatchArmsFlat(__arg10, subject, __arg11)
                         }
                     }
                 }
@@ -1426,13 +1439,12 @@ fn __mutual_tco_trampoline_12(
 pub fn parseMatchArmsFlat(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    subject @ _: &crate::aver_generated::domain::ast::Expr,
+    subject @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_12(
-        __MutualTco12::ParseMatchArmsFlat(pos, acc),
+        __MutualTco12::ParseMatchArmsFlat(pos, subject, acc),
         &tokens,
-        &subject,
     )
 }
 
@@ -1440,24 +1452,23 @@ pub fn parseMatchArmsFlat(
 pub fn parseOneArmFlat(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    subject @ _: &crate::aver_generated::domain::ast::Expr,
+    subject @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_12(__MutualTco12::ParseOneArmFlat(pos, acc), &tokens, &subject)
+    __mutual_tco_trampoline_12(__MutualTco12::ParseOneArmFlat(pos, subject, acc), &tokens)
 }
 
 /// Parse arrow and body, then continue flat.
 pub fn parseOneArmFlatBody(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    subject @ _: &crate::aver_generated::domain::ast::Expr,
+    subject @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     pat @ _: crate::aver_generated::domain::ast::Pattern,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_12(
-        __MutualTco12::ParseOneArmFlatBody(pos, acc, pat),
+        __MutualTco12::ParseOneArmFlatBody(pos, subject, acc, pat),
         &tokens,
-        &subject,
     )
 }
 
@@ -2175,7 +2186,7 @@ pub fn parseMatchExpr(
     let r @ _ = crate::aver_generated::domain::parser::expr::parseExpr(tokens, pos)?;
     {
         let (subject, pos2) = r;
-        crate::aver_generated::domain::parser::expr::parseMatchAfterSubject(tokens, pos2, &subject)
+        crate::aver_generated::domain::parser::expr::parseMatchAfterSubject(tokens, pos2, subject)
     }
 }
 
@@ -2183,7 +2194,7 @@ pub fn parseMatchExpr(
 pub fn parseMatchAfterSubject(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    subject @ _: &crate::aver_generated::domain::ast::Expr,
+    mut subject @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 @ _ = crate::aver_generated::domain::parser_match::skipNewlines(tokens, pos);

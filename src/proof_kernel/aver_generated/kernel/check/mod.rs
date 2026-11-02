@@ -200,7 +200,7 @@ fn __mutual_tco_trampoline_1(
             let r = &__f_fields.3;
             let carry = &__f_fields.4;
             let cs = &__f_fields.5;
-            { let __arg92 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: l.clone(), rhs: r.clone() }; return crate::proof_kernel::aver_generated::kernel::check::induct(f, xs, &__arg92, carry, cs, &env, path) }
+            { let __arg92 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: l.clone(), rhs: r.clone() }; return crate::proof_kernel::aver_generated::kernel::check::induct(f, xs, __arg92, carry, cs, &env, path) }
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PListInduct(__v_fields) => {
             let v = __v_fields.0.clone();
@@ -510,6 +510,7 @@ pub fn splitNext(
 enum __MutualTco3 {
     EnumCases(
         AverStr,
+        crate::proof_kernel::aver_generated::kernel::term::Eqn,
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
         AverStr,
@@ -517,6 +518,7 @@ enum __MutualTco3 {
     ),
     EnumCase(
         AverStr,
+        crate::proof_kernel::aver_generated::kernel::term::Eqn,
         crate::proof_kernel::aver_generated::kernel::term::Term,
         crate::proof_kernel::aver_generated::kernel::proof::Proof,
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
@@ -528,13 +530,13 @@ enum __MutualTco3 {
 
 fn __mutual_tco_trampoline_3(
     mut __state: __MutualTco3,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
     env @ _: &Env,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     loop {
         __state = match __state {
             __MutualTco3::EnumCases(
                 mut v @ _,
+                mut claim @ _,
                 mut vals @ _,
                 mut cs @ _,
                 mut path @ _,
@@ -545,7 +547,7 @@ fn __mutual_tco_trampoline_3(
                     let __int_match_subject = (vals, cs);
                     let (__lit0, __lit1) = &__int_match_subject;
                     if (*__lit0).is_empty() && (*__lit1).is_empty() {
-                        return Ok((*claim).clone());
+                        return Ok(claim);
                     } else if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
                         let Some((x, xs)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
                             unreachable!("Aver Rust codegen: tuple element list mismatch")
@@ -553,7 +555,7 @@ fn __mutual_tco_trampoline_3(
                         let Some((c, rest)) = aver_rt::list_uncons_cloned(&(*__lit1)) else {
                             unreachable!("Aver Rust codegen: tuple element list mismatch")
                         };
-                        __MutualTco3::EnumCase(v, x, c, xs, rest, path, i)
+                        __MutualTco3::EnumCase(v, claim, x, c, xs, rest, path, i)
                     } else {
                         {
                             let __arg11 @ _ = aver_rt::AverStr::from({
@@ -576,6 +578,7 @@ fn __mutual_tco_trampoline_3(
             }
             __MutualTco3::EnumCase(
                 mut v @ _,
+                mut claim @ _,
                 mut x @ _,
                 mut c @ _,
                 mut xs @ _,
@@ -620,13 +623,14 @@ fn __mutual_tco_trampoline_3(
                     )
                 }?;
                 let want @ _ = crate::proof_kernel::aver_generated::kernel::check::instantiate(
-                    (*claim).clone(),
+                    claim.clone(),
                     &at,
                     path.clone(),
                 )?;
                 if (got == want) {
                     __MutualTco3::EnumCases(
                         v,
+                        claim,
                         xs,
                         rest,
                         path,
@@ -646,20 +650,20 @@ fn __mutual_tco_trampoline_3(
 /// One case per value, in order, and nothing else.
 pub fn enumCases(
     v @ _: AverStr,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vals @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
     path @ _: AverStr,
     i @ _: aver_rt::AverInt,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    __mutual_tco_trampoline_3(__MutualTco3::EnumCases(v, vals, cs, path, i), &claim, &env)
+    __mutual_tco_trampoline_3(__MutualTco3::EnumCases(v, claim, vals, cs, path, i), &env)
 }
 
 /// The claim at one value, under the hypotheses at that value.
 pub fn enumCase(
     v @ _: AverStr,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     x @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     c @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
@@ -669,8 +673,7 @@ pub fn enumCase(
     i @ _: aver_rt::AverInt,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     __mutual_tco_trampoline_3(
-        __MutualTco3::EnumCase(v, x, c, xs, rest, path, i),
-        &claim,
+        __MutualTco3::EnumCase(v, claim, x, c, xs, rest, path, i),
         &env,
     )
 }
@@ -836,6 +839,7 @@ enum __MutualTco5 {
     InductCases(
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::ArmCalls>,
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
+        crate::proof_kernel::aver_generated::kernel::term::Eqn,
         AverStr,
         aver_rt::AverInt,
     ),
@@ -843,6 +847,7 @@ enum __MutualTco5 {
         Result<(), AverStr>,
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::ArmCalls>,
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
+        crate::proof_kernel::aver_generated::kernel::term::Eqn,
         AverStr,
         aver_rt::AverInt,
     ),
@@ -853,7 +858,6 @@ fn __mutual_tco_trampoline_5(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
     at @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
     taken @ _: &aver_rt::AverList<AverStr>,
     carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
@@ -861,7 +865,13 @@ fn __mutual_tco_trampoline_5(
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     loop {
         __state = match __state {
-            __MutualTco5::InductCases(mut acs @ _, mut cs @ _, mut path @ _, mut i @ _) => {
+            __MutualTco5::InductCases(
+                mut acs @ _,
+                mut cs @ _,
+                mut claim @ _,
+                mut path @ _,
+                mut i @ _,
+            ) => {
                 crate::proof_kernel::cancel_checkpoint();
                 {
                     let __int_match_subject = (acs, cs);
@@ -894,7 +904,7 @@ fn __mutual_tco_trampoline_5(
                                     a,
                                     c,
                                     &*at,
-                                    (*claim).clone(),
+                                    claim.clone(),
                                     &*vr,
                                     &*taken,
                                     &*carried,
@@ -906,12 +916,13 @@ fn __mutual_tco_trampoline_5(
                                 __arg17,
                                 moreArms,
                                 moreCases,
+                                claim,
                                 path,
                                 i.add(&aver_rt::AverInt::from_i64(1)),
                             )
                         }
                     } else {
-                        return Ok((*claim).clone());
+                        return Ok(claim);
                     }
                 }
             }
@@ -919,12 +930,13 @@ fn __mutual_tco_trampoline_5(
                 mut done @ _,
                 mut acs @ _,
                 mut cs @ _,
+                mut claim @ _,
                 mut path @ _,
                 mut i @ _,
             ) => {
                 crate::proof_kernel::cancel_checkpoint();
                 done?;
-                __MutualTco5::InductCases(acs, cs, path, i)
+                __MutualTco5::InductCases(acs, cs, claim, path, i)
             }
         };
     }
@@ -937,7 +949,7 @@ pub fn inductCases(
     acs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::ArmCalls>,
     cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     at @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
     taken @ _: &aver_rt::AverList<AverStr>,
     carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
@@ -946,11 +958,10 @@ pub fn inductCases(
     i @ _: aver_rt::AverInt,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     __mutual_tco_trampoline_5(
-        __MutualTco5::InductCases(acs, cs, path, i),
+        __MutualTco5::InductCases(acs, cs, claim, path, i),
         &d,
         &r,
         &at,
-        &claim,
         &vr,
         &taken,
         &carried,
@@ -966,7 +977,7 @@ pub fn inductNext(
     acs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::ArmCalls>,
     cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     at @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
     taken @ _: &aver_rt::AverList<AverStr>,
     carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
@@ -975,11 +986,10 @@ pub fn inductNext(
     i @ _: aver_rt::AverInt,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     __mutual_tco_trampoline_5(
-        __MutualTco5::InductNext(done, acs, cs, path, i),
+        __MutualTco5::InductNext(done, acs, cs, claim, path, i),
         &d,
         &r,
         &at,
-        &claim,
         &vr,
         &taken,
         &carried,
@@ -3975,7 +3985,7 @@ pub fn enumStep(
                 let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::finite::values(&f);
                 crate::proof_kernel::aver_generated::kernel::check::enumCases(
                     v,
-                    &__arg8,
+                    __arg8,
                     __arg9,
                     cs.clone(),
                     env,
@@ -5788,7 +5798,7 @@ pub fn commaJoined(ns @ _: &aver_rt::AverList<AverStr>) -> AverStr {
 pub fn induct(
     f @ _: AverStr,
     xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     carry @ _: &aver_rt::AverList<AverStr>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     env @ _: &Env,
@@ -5840,7 +5850,7 @@ pub fn inductOn(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
     xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     carry @ _: &aver_rt::AverList<AverStr>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     env @ _: &Env,
@@ -5882,7 +5892,7 @@ pub fn inductChecked(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
     xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
+    mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
@@ -5932,7 +5942,7 @@ pub fn inductChecked(
                 {
                     let __arg14 @ _ =
                         crate::proof_kernel::aver_generated::kernel::check::takenNames(
-                            claim, &env.hyps,
+                            &claim, &env.hyps,
                         );
                     {
                         let __arg15 @ _ = {

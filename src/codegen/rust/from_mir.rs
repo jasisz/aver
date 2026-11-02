@@ -1295,6 +1295,12 @@ fn owned_params_with(
 ) -> HashMap<crate::ir::FnId, Vec<bool>> {
     let mut owned: HashMap<crate::ir::FnId, Vec<bool>> = HashMap::new();
     owned.extend(mutual_tco_value_params(ctx));
+    let invariants = mutual_tco_invariants(ctx);
+    let invariant_of: HashMap<(crate::ir::FnId, usize), usize> = invariants
+        .iter()
+        .enumerate()
+        .flat_map(|(k, at)| at.iter().map(move |&position| (position, k)))
+        .collect();
     let mut candidates: Vec<(crate::ir::FnId, Vec<usize>)> = Vec::new();
     // A tail-call loop takes its params by value whether or not it consumes
     // them, so for these functions `consuming` starts empty and the fixpoint
@@ -1332,7 +1338,9 @@ fn owned_params_with(
             loops.push((*id, resolved.params.len()));
             let open: Vec<usize> = (0..resolved.params.len())
                 .filter(|&i| {
-                    (lends(i) || matches!(resolved.params[i].1, Type::Named { .. }))
+                    (lends(i)
+                        || matches!(resolved.params[i].1, Type::Named { .. })
+                        || (mutual && invariant_of.contains_key(&(*id, i))))
                         && mir_fn.params.get(i).is_some()
                 })
                 .collect();
@@ -1388,6 +1396,31 @@ fn owned_params_with(
         };
         consuming.insert(*id, (0..*len).map(returns).collect());
     }
+    // A mutual invariant some member already consumes is taken by value
+    // across its group (see [`mutual_tco_invariants`]).
+    let take_invariant =
+        |k: usize,
+         owned: &mut HashMap<crate::ir::FnId, Vec<bool>>,
+         consuming: &mut HashMap<crate::ir::FnId, Vec<bool>>| {
+            for &(member, index) in &invariants[k] {
+                for facts in [owned.get_mut(&member), consuming.get_mut(&member)]
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(fact) = facts.get_mut(index) {
+                        *fact = true;
+                    }
+                }
+            }
+        };
+    for (k, at) in invariants.iter().enumerate() {
+        if at
+            .iter()
+            .any(|(member, index)| consuming.get(member).and_then(|f| f.get(*index)) == Some(&true))
+        {
+            take_invariant(k, &mut owned, &mut consuming);
+        }
+    }
     // Whether a param consumes its value reads only the facts of the
     // functions its body calls, so after the first round only the callers of
     // a function that just graduated a param are looked at again.
@@ -1426,9 +1459,17 @@ fn owned_params_with(
         if graduated.is_empty() {
             break;
         }
-        pending = graduated
+        // A mutual invariant one member consumes is taken by value by the
+        // whole group, so the callers of every member look again.
+        let mut changed: Vec<crate::ir::FnId> = graduated.iter().map(|(id, _)| *id).collect();
+        for &(id, i) in &graduated {
+            if let Some(&k) = invariant_of.get(&(id, i)) {
+                changed.extend(invariants[k].iter().map(|(member, _)| *member));
+            }
+        }
+        pending = changed
             .iter()
-            .flat_map(|(id, _)| calls.by_callee.get(id).into_iter().flatten())
+            .flat_map(|id| calls.by_callee.get(id).into_iter().flatten())
             .filter_map(|(caller, _)| candidate_of.get(caller).copied())
             .collect();
         pending.sort_unstable();
@@ -1437,7 +1478,11 @@ fn owned_params_with(
             if let Some(facts) = consuming.get_mut(&id) {
                 facts[i] = true;
             }
-            // A mutual tail-call group keeps the wrapper ABI it was given.
+            if let Some(&k) = invariant_of.get(&(id, i)) {
+                take_invariant(k, &mut owned, &mut consuming);
+            }
+            // A mutual tail-call group otherwise keeps the wrapper ABI it
+            // was given.
             if !ctx.mutual_tco_members.contains(&id)
                 && let Some(abi) = owned.get_mut(&id)
             {
@@ -1613,8 +1658,10 @@ pub(super) fn self_loop_lends(ctx: &CodegenContext, fn_id: crate::ir::FnId, inde
 /// in it copies the Map. Taken by value, a caller at its last use moves the
 /// value in and nothing is cloned; a caller that keeps it clones at the call
 /// instead of in the wrapper, which costs the same. The group's invariants
-/// (params every member hands on unchanged) stay borrowed: the trampoline
+/// (params every member hands on unchanged) start borrowed: the trampoline
 /// reads them through `&T` for the whole run and never needs its own copy.
+/// One that some member consumes (see [`mutual_tco_invariants`]) is taken
+/// by value by every member instead, once the ownership fixpoint finds it.
 fn mutual_tco_value_params(ctx: &CodegenContext) -> HashMap<crate::ir::FnId, Vec<bool>> {
     let members: Vec<&crate::ir::hir::ResolvedFnDef> = ctx
         .mutual_tco_members
@@ -1637,6 +1684,63 @@ fn mutual_tco_value_params(ctx: &CodegenContext) -> HashMap<crate::ir::FnId, Vec
                 })
                 .collect();
             out.insert(fd.fn_id, by_value);
+        }
+    }
+    out
+}
+
+/// The invariants of every mutual tail-call group that are not Copy, one
+/// entry each: where every member of the group holds it, by position.
+///
+/// Such an invariant is read through `&T` for the whole run, so a member
+/// that consumes it (writes it in place, hands it to a by-value callee or
+/// returns it) has to copy it. The ownership fixpoint takes one that some
+/// member consumes by value in every member instead: it then travels in the
+/// trampoline's state and moves from bounce to bounce like any other param,
+/// and the member that consumes it owns it. An invariant some bounce still
+/// reads after handing it on (`b(s, n - 1, s.size)`) is left out: carried by
+/// value, every such bounce would copy it, where the borrow copies it once,
+/// at the exit that consumes it.
+fn mutual_tco_invariants(ctx: &CodegenContext) -> Vec<Vec<(crate::ir::FnId, usize)>> {
+    let Some(program) = ctx.mir_program.as_ref() else {
+        return Vec::new();
+    };
+    let members: Vec<&crate::ir::hir::ResolvedFnDef> = ctx
+        .mutual_tco_members
+        .iter()
+        .filter_map(|id| ctx.resolved_program.fn_by_id(*id))
+        .collect();
+    let mut out = Vec::new();
+    for group in crate::call_graph::tailcall_scc_components_resolved(&members) {
+        for index in super::toplevel::compute_resolved_rc_params(&group) {
+            let Some((name, _)) = group[0].params.get(index) else {
+                continue;
+            };
+            let at: Vec<(crate::ir::FnId, usize)> = group
+                .iter()
+                .filter_map(|fd| {
+                    let position = fd.params.iter().position(|(other, _)| other == name)?;
+                    Some((fd.fn_id, position))
+                })
+                .collect();
+            let position: HashMap<crate::ir::FnId, usize> = at.iter().copied().collect();
+            let moves = |mir_fn: &crate::ir::mir::MirFn| {
+                let mut calls = Vec::new();
+                collect_fn_calls(&mir_fn.body.node, &mut calls);
+                calls.iter().all(|&(target, args)| {
+                    position.get(&target).is_none_or(|&index| {
+                        matches!(args.get(index).map(|arg| &arg.node),
+                            Some(MirExpr::Local(local)) if local.node.last_use)
+                    })
+                })
+            };
+            if at.len() == group.len()
+                && group
+                    .iter()
+                    .all(|fd| program.fn_by_id(fd.fn_id).is_some_and(moves))
+            {
+                out.push(at);
+            }
         }
     }
     out
@@ -7642,7 +7746,14 @@ pub(super) fn emit_mir_mutual_tco_block(
     };
     // Invariants read through `&T`, and invariants of a Copy type taken by
     // value; neither is in the state, and every member calls each the same.
-    let rc_names = names_at(compute_resolved_rc_params(group_fns));
+    // An invariant some member consumes is taken by value (see
+    // [`mutual_tco_invariants`]) and travels in the state instead.
+    let rc_names = names_at(
+        compute_resolved_rc_params(group_fns)
+            .into_iter()
+            .filter(|&i| !mutual_param_by_value(ctx, group_fns[0].fn_id, i))
+            .collect(),
+    );
     let copy_names = names_at(compute_resolved_copy_invariants(group_fns));
     let invariant_names: HashSet<String> = rc_names.union(&copy_names).cloned().collect();
     // Which params of each member are the group's invariants, by position,

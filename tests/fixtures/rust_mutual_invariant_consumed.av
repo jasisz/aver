@@ -1,0 +1,98 @@
+module MutualInvariantConsumed
+    intent = "Mutual tail-call groups that hand a param on unchanged and consume it on an exit."
+    effects [Console.print]
+
+record Store
+    mem: Vector<Int>
+    writes: Int
+
+record Cfg
+    step: Int
+    name: String
+
+fn put(s: Store, i: Int, v: Int) -> Store
+    ? "Writes one cell in place."
+    Store.update(s, mem = Option.withDefault(Vector.set(s.mem, i, v), s.mem), writes = s.writes + 1)
+
+verify put
+    put(Store(mem = Vector.new(1, 0), writes = 0), 0, 5) => Store(mem = Vector.fromList([5]), writes = 1)
+
+fn evenSteps(s: Store, cfg: Cfg, k: Int, acc: Int) -> Store
+    ? "Even step: the store goes on unchanged, and is written at the end."
+    match k <= 0
+        true -> put(s, 0, acc)
+        false -> oddSteps(s, cfg, k - 1, acc + cfg.step)
+
+fn oddSteps(s: Store, cfg: Cfg, k: Int, acc: Int) -> Store
+    ? "Odd step: the end hands the store back unwritten."
+    match k <= 0
+        true -> s
+        false -> evenSteps(s, cfg, k - 1, acc + 2)
+
+fn peekA(s: Store, k: Int, acc: Int) -> Store
+    ? "Reads the store after handing it on, so the group keeps borrowing it."
+    match k <= 0
+        true -> put(s, 1, acc)
+        false -> peekB(s, k - 1, acc + s.writes)
+
+fn peekB(s: Store, k: Int, acc: Int) -> Store
+    ? "Hands the store back."
+    match k <= 0
+        true -> s
+        false -> peekA(s, k - 1, acc + 1)
+
+fn fill(v: Vector<Int>, k: Int) -> Vector<Int>
+    ? "Counts down; the vector is written once at the end."
+    match k <= 0
+        true -> Option.withDefault(Vector.set(v, 2, k + 7), v)
+        false -> drain(k - 1, v, k)
+
+fn drain(k: Int, v: Vector<Int>, last: Int) -> Vector<Int>
+    ? "The same vector in another place, and one param more."
+    match k <= 0
+        true -> Option.withDefault(Vector.set(v, 3, last), v)
+        false -> fill(v, k - 1)
+
+fn readA(cfg: Cfg, k: Int, acc: Int) -> Int
+    ? "Only reads the config."
+    match k <= 0
+        true -> acc + String.len(cfg.name)
+        false -> readB(cfg, k - 1, acc + cfg.step)
+
+fn readB(cfg: Cfg, k: Int, acc: Int) -> Int
+    ? "Only reads the config too."
+    match k <= 0
+        true -> acc
+        false -> readA(cfg, k - 1, acc + 1)
+
+fn loop(s: Store, cfg: Cfg, i: Int, n: Int) -> Store
+    ? "Runs the group n times over the same store."
+    match i >= n
+        true -> s
+        false -> loop(evenSteps(s, cfg, Int.mod(i, 5), i), cfg, i + 1, n)
+
+verify loop
+    loop(Store(mem = Vector.new(2, 0), writes = 0), Cfg(step = 1, name = "c"), 0, 0) => Store(mem = Vector.new(2, 0), writes = 0)
+
+fn cells(v: Vector<Int>) -> String
+    ? "Cells 2 and 3."
+    "{Option.withDefault(Vector.get(v, 2), 0)},{Option.withDefault(Vector.get(v, 3), 0)}"
+
+verify cells
+    cells(Vector.new(4, 1)) => "1,1"
+
+fn main() -> Unit
+    ? "Runs every group; one caller keeps the store it hands in."
+    ! [Console.print]
+    cfg = Cfg(step = 3, name = "cfg")
+    s = loop(Store(mem = Vector.new(30000, 0), writes = 0), cfg, 0, 30000)
+    Console.print("{s.writes} {Option.withDefault(Vector.get(s.mem, 0), 0)}")
+    kept = evenSteps(s, cfg, 0, 41)
+    peeked = peekA(s, 100001, 0)
+    Console.print("{kept.writes} {Option.withDefault(Vector.get(kept.mem, 0), 0)} {s.writes} {Option.withDefault(Vector.get(s.mem, 0), 0)}")
+    Console.print("{peeked.writes} {Option.withDefault(Vector.get(peeked.mem, 1), 0)}")
+    v = Vector.new(5, 0)
+    w = fill(v, 100001)
+    x = drain(100000, v, 0)
+    Console.print("{cells(w)} {cells(x)} {cells(v)}")
+    Console.print("{readA(cfg, 1000001, 0)} {readB(cfg, 10, 0)}")
