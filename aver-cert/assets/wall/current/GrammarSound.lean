@@ -143,6 +143,14 @@ def DivmodSpec {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop 
     ∀ a b wa wb m r, CanonRepr S a wa → CanonRepr S b wb → b ≠ 0 → (m = 0 ∨ m = 1) →
       g [wa, wb, .i32v m] = some r → CanonRepr S (if m = 1 then a % b else a / b) r
 
+/-- `__aint_bitwise(a, b, op)`: pointwise and (`op = 0`), or (`op = 1`) or xor
+    (`op = 2`) under infinite two's complement on a canonical pair, with a
+    canonical result. -/
+def BitwiseSpec {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop :=
+  ∃ g, host M.bitwise = some (3, g) ∧
+    ∀ (bb : BitwiseBuiltin) a b wa wb r, CanonRepr S a wa → CanonRepr S b wb →
+      g [wa, wb, .i32v bb.flag] = some r → CanonRepr S (bb.z a b) r
+
 /-- The runtime helpers the String and Vector nodes call, at their indices,
     each with the contract `Schema.Obligation.holds` already assumes of it:
     `__wasmgc_concat_n` concatenates the byte arrays of its `Vector<String>`
@@ -159,6 +167,8 @@ structure XHost {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop
   toIndex : ∃ g, host M.toIndex = some (1, g) ∧
     ∀ n v r, S.Repr n v → g [v] = some r → r = .i32v (toIndexW n)
   divmod : DivmodSpec S M host
+  /-- `__aint_bitwise(a, b, op)`, the `Bits.and` / `or` / `xor` helper. -/
+  bitwise : BitwiseSpec S M host
   /-- `__aint_to_i64_sat`, the wall's run of its pinned template. -/
   toI64Sat : ∃ g, host M.toI64Sat = some (1, g) ∧
     ∀ n w v, CanonRepr S n w → g [w] = some v →
@@ -553,6 +563,8 @@ mutual
         simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
     | Γ, _, .call (.pick pb) [a, b], k => by
         simp only [lowerB]; esc_simp [escFree_lowerB M X _ _ a, escFree_lowerB M X _ _ b]
+    | Γ, _, .call (.bitwise bb) args, k => by
+        simp only [lowerB]; esc_simp [escFree_lowerArgsB M X _ args]
     | Γ, _, .call (.pick pb) [], k => by simp only [lowerB]; esc_simp []
     | Γ, _, .call (.pick pb) [_], k => by simp only [lowerB]; esc_simp []
     | Γ, _, .call (.pick pb) (_ :: _ :: _ :: _), k => by simp only [lowerB]; esc_simp []
@@ -1866,6 +1878,24 @@ theorem tyOf_pick_inv {pb : PickBuiltin} {args : List Expr} {T : Ty}
             exact ⟨a, b, rfl, ha, hb, h.symm⟩
   · simp [tyOf] at h
 
+theorem tyOf_bitwise_inv {bb : BitwiseBuiltin} {args : List Expr} {T : Ty}
+    (h : tyOf M n Γ tail (.call (.bitwise bb) args) = some T) :
+    ∃ a b, args = [a, b] ∧ tyOf M n Γ false a = some .int ∧
+      tyOf M n Γ false b = some .int ∧ T = .int := by
+  rcases args with _ | ⟨a, _ | ⟨b, _ | ⟨e3, rest⟩⟩⟩
+  · simp [tyOf] at h
+  · simp [tyOf] at h
+  · simp only [tyOf] at h
+    cases ha : tyOf M n Γ false a with
+    | none => simp [ha] at h
+    | some ta =>
+        cases hb : tyOf M n Γ false b with
+        | none => simp [ha, hb] at h
+        | some tb =>
+            cases ta <;> cases tb <;> simp [ha, hb] at h
+            exact ⟨a, b, rfl, ha, hb, h.symm⟩
+  · simp [tyOf] at h
+
 theorem tyOf_intrinsic_inv {ie : Intrinsic} {args : List Expr} {T : Ty}
     (h : tyOf M n Γ tail (.call (.intrinsic ie) args) = some T) :
     ∃ a k, args = [a, .literal (.int k)] ∧ k ≠ 0 ∧ inI64Band k = true ∧
@@ -2531,6 +2561,22 @@ theorem intrinsic_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
           simpa [SRepr, Intrinsic.flag] using hc⟩
       · exact ⟨r, .i (x % y), by simp [intrinsicEval, hy], rfl, by
           simpa [SRepr, Intrinsic.flag] using hc⟩
+
+/-- `Bits.and` / `Bits.or` / `Bits.xor` after its two operands. -/
+theorem bitwise_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
+    (R : XHost S M host) (ar : Nat → Option Nat) (callee : Callee) (bb : BitwiseBuiltin)
+    (x y : Int) (wa wb : WVal) (ha : CanonRepr S x wa) (hb : CanonRepr S y wb)
+    (wl st : List WVal) (out : Out)
+    (hrun : wRunF host ar callee [.i32Const bb.flag, .call M.bitwise] wl (wb :: wa :: st) =
+      some out) :
+    ∃ w, out = .ok wl (w :: st) ∧ SRepr S M (.i (bb.z x y)) w := by
+  obtain ⟨g, hg, hgc⟩ := R.bitwise
+  cases hr : g [wa, wb, .i32v bb.flag] with
+  | none => simp [wRunF, hg, popArgs_three, hr] at hrun
+  | some r =>
+      simp [wRunF, hg, popArgs_three, hr] at hrun
+      subst hrun
+      exact ⟨r, rfl, by simpa [SRepr] using hgc bb x y wa wb r ha hb hr⟩
 
 /-! ## The agreement theorem
 
@@ -5002,6 +5048,34 @@ theorem agreement_step :
         (by simpa [SRepr] using hwa) (by simpa [SRepr] using hwd) wl2 st out hseq2
       refine Or.inl ⟨sv, by simp [eval, evalArgs, heva, hsv], ?_, res_ok hw hl2⟩
       cases ie <;> simp [intrinsicEval, hk0] at hsv <;> subst hsv <;> simp [HasTy]
+  | .call (.bitwise bb) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+      obtain ⟨a, b, rfl, hta, htb, rfl⟩ := tyOf_bitwise_inv hty
+      simp only [lowerW, lowerB, lowerArgsB, eraseL_append, List.append_nil,
+        List.append_assoc] at hrun
+      obtain ⟨o1, h1, hseq⟩ := run_split hrun
+      rcases agreement a Γ env false .int wl st o1 hta henv hl h1 with
+        ⟨sva, heva, hTa, hresa⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, evalArgs, h])
+          (fun x hx => by simp [escv, escvArgs, hx])
+          (fun R hR => by simp [bareTries, bareTriesL, hR]))
+      obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
+      simp only [seqOut] at hseq
+      obtain ⟨o2, h2, hseq2⟩ := run_split hseq
+      rcases agreement b Γ env false .int wl1 (wa :: st) o2 htb henv hl1 h2 with
+        ⟨svb, hevb, hTb, hresb⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq2 (fun h => by simp [eval, evalArgs, heva, h])
+          (fun x hx => by simp [escv, escvArgs, escv_none_of_eval heva, heva, hx])
+          (fun R hR => by simp [bareTries, bareTriesL, hR]))
+      obtain ⟨wl2, wb, rfl, hwb, hl2⟩ := res_false hresb
+      simp only [seqOut, eraseL, eraseI] at hseq2
+      obtain ⟨x, rfl⟩ := hasTy_int hTa
+      obtain ⟨y, rfl⟩ := hasTy_int hTb
+      obtain ⟨w, rfl, hw⟩ := bitwise_run R ar callee bb x y wa wb
+        (by simpa [SRepr] using hwa) (by simpa [SRepr] using hwb) wl2 st out hseq2
+      exact Or.inl ⟨.i (bb.z x y), by simp [eval, evalArgs, heva, hevb, bitwiseEval],
+        by simp [HasTy], res_ok hw hl2⟩
   | .call (.pick pb) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨a, b, rfl, hta, htb, rfl⟩ := tyOf_pick_inv hty
       simp only [lowerW, lowerB, eraseL_append, eraseL_ops, List.append_assoc] at hrun

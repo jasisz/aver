@@ -44,6 +44,9 @@ pub const PRINTED_BUILTINS: &[&str] = &[
     "Int.mod",
     "Int.min",
     "Int.max",
+    "Bits.and",
+    "Bits.or",
+    "Bits.xor",
 ];
 
 /// Constructor paths spelled like builtin calls; MIR makes them `Construct`.

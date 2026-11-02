@@ -35,6 +35,8 @@ struct MCtx<'a> {
     streq: u64,
     to_index: u64,
     divmod: u64,
+    /// `__aint_bitwise` (`MCtx.bitwise`).
+    bitwise: u64,
     /// `__aint_to_i64_sat` (`MCtx.toI64Sat`).
     to_i64_sat: u64,
     /// The packed `Bytes` array (`MCtx.bytesArr`) and `__aint_to_i64_checked`
@@ -77,6 +79,7 @@ impl<'a> MCtx<'a> {
             streq: idx_or(18, string_role(StringHostRole::Eq)),
             to_index: idx_or(19, role(|r| r.to_index_idx)),
             divmod: idx_or(23, role(|r| r.divmod_idx)),
+            bitwise: idx_or(28, role(|r| r.bitwise_idx)),
             to_i64_sat: idx_or(24, tt.int_sat),
             bytes_arr: idx_or(25, tt.bytes_arr),
             to_i64_chk: idx_or(26, tt.int_chk),
@@ -619,7 +622,9 @@ impl MCtx<'_> {
                 }
                 _ => None,
             },
-            PlanExpr::Call(PlanCallee::Pick(_), args) => match args.as_slice() {
+            PlanExpr::Call(PlanCallee::Pick(_) | PlanCallee::Bitwise(_), args) => match args
+                .as_slice()
+            {
                 [a, b] => (self.ty_of(n, g, false, a)? == PlanTy::Int
                     && self.ty_of(n, g, false, b)? == PlanTy::Int)
                     .then_some(PlanTy::Int),
@@ -1547,6 +1552,11 @@ impl MCtx<'_> {
                     WI::I32Const(i64::from(*i == PlanIntrinsic::IntModEuclid)),
                     WI::Call(self.divmod),
                 ]));
+                out
+            }
+            PlanExpr::Call(PlanCallee::Bitwise(b), args) => {
+                let mut out = self.lower_args(x, g, args);
+                out.extend(ops(vec![WI::I32Const(b.flag()), WI::Call(self.bitwise)]));
                 out
             }
             PlanExpr::Call(PlanCallee::Pick(p), args) => {

@@ -125,6 +125,7 @@ structure HostFns where
   stringConcat : Nat → List WVal → Option WVal
   toIndex : List WVal → Option WVal
   divmod : List WVal → Option WVal
+  bitwise : List WVal → Option WVal
 
 /-- The named runtime contracts, exactly the premises schema 8 assumed:
     integer add/sub/mul are exact with a canonical result; the three-way
@@ -139,8 +140,11 @@ structure HostFns where
     CANONICAL CARRIER PAIR with a nonzero divisor returns the canonical
     Euclidean quotient (`want_mod = 0`, Lean's `Int` `/`, which is
     `Int.ediv`) or remainder (`want_mod = 1`, `%`, `Int.emod`, in
-    `[0, |b|)`). A helper that returns `none` makes its premise vacuous: none
-    of these demands trap-freedom. -/
+    `[0, |b|)`); `__aint_bitwise(a, b, op)` on a CANONICAL CARRIER PAIR
+    returns the canonical pointwise and (`op = 0`), or (`op = 1`) or xor
+    (`op = 2`) under infinite two's complement (`AverBits`). A helper that
+    returns `none` makes its premise vacuous: none of these demands
+    trap-freedom. -/
 structure HostContracts {C : Nat} (S : CarrierSpec C) (h : HostFns) : Prop where
   add : ∀ a b va vb w, S.Repr a va → S.Repr b vb → h.add [va, vb] = some w →
     S.Repr (a + b) w ∧ S.Canon w
@@ -159,6 +163,12 @@ structure HostContracts {C : Nat} (S : CarrierSpec C) (h : HostFns) : Prop where
   divmod : ∀ a b va vb m r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
     b ≠ 0 → (m = 0 ∨ m = 1) → h.divmod [va, vb, .i32v m] = some r →
     S.Repr (if m = 1 then a % b else a / b) r ∧ S.Canon r
+  bitAnd : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+    h.bitwise [va, vb, .i32v 0] = some r → S.Repr (AverBits.and a b) r ∧ S.Canon r
+  bitOr : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+    h.bitwise [va, vb, .i32v 1] = some r → S.Repr (AverBits.or a b) r ∧ S.Canon r
+  bitXor : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+    h.bitwise [va, vb, .i32v 2] = some r → S.Repr (AverBits.xor a b) r ∧ S.Canon r
 
 /-- The totality premises of an L3 obligation, selected by its totality role:
     add and sub return on represented operands, and mul does too when the

@@ -134,6 +134,7 @@ theorem totE_bare {mem : Nat → Bool} {mulOk calls : Bool} {lim : Nat} :
   | .call (.builtin _) _, h => by simp [totE] at h
   | .call (.lazy _) _, h => by simp [totE] at h
   | .call (.intrinsic _) _, h => by simp [totE] at h
+  | .call (.bitwise _) _, h => by simp [totE] at h
   | .neg _, h => by simp [totE] at h
   | .ifThenElse _ _ _, h => by simp [totE] at h
   | .recordCreate _ _, h => by simp [totE] at h

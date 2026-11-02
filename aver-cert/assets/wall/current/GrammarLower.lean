@@ -66,6 +66,8 @@
      returns the default or calls `__aint_divmod(a, b, want_mod)`;
    * a Euclidean intrinsic (`IntDivEuclid` / `IntModEuclid`) is its two
      operands, the `want_mod` flag and a call of `__aint_divmod`.
+   * `Bits.and` / `Bits.or` / `Bits.xor` is its two operands, the `op`
+     selector and a call of `__aint_bitwise`.
 
    ONE lowering carries both images: `lowerB` yields instructions whose `if`
    carries its block type. `eraseL` forgets the block types (the audited
@@ -369,6 +371,12 @@ def Intrinsic.flag : Intrinsic → Int
   | .intDivEuclid => 0
   | .intModEuclid => 1
 
+/-- The `op` selector `__aint_bitwise` switches on (`bitwise_selector`). -/
+def BitwiseBuiltin.flag : BitwiseBuiltin → Int
+  | .bitsAnd => 0
+  | .bitsOr => 1
+  | .bitsXor => 2
+
 /-! ## The lowering -/
 
 /-! ### The `Int` tree on the machine word
@@ -652,6 +660,8 @@ mutual
         | _ => []
     | .call (.intrinsic ie) args =>
         lowerArgsB M X Γ args ++ [.op (.i32Const ie.flag), .op (.call M.divmod)]
+    | .call (.bitwise bb) args =>
+        lowerArgsB M X Γ args ++ [.op (.i32Const bb.flag), .op (.call M.bitwise)]
     | .call (.pick pb) args =>
         -- both operands, `__aint_cmp` against `0`, then the picked operand
         -- evaluated again inside an `if` of the carrier type

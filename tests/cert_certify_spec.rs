@@ -2878,7 +2878,7 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
     let expected_roles = format!(
-        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {}, toIndex := some {}, cmp := none, eq := none, divmod := some {} }} : CertDecode.AddSub.Roles)",
+        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {}, toIndex := some {}, cmp := none, eq := none, divmod := some {}, bitwise := none }} : CertDecode.AddSub.Roles)",
         table["box"], table["add"], table["mul"], table["sub"], table["toIndex"], table["divmod"],
     );
     assert!(

@@ -1,0 +1,48 @@
+module Bitwise
+    intent =
+        "Certify fixture for Bits.and, Bits.or and Bits.xor: each is its two"
+        "operands, the operation's selector and one call of the bitwise helper."
+    exposes [Word, low8, merged, toggled, mixed, packed]
+    effects []
+
+record Word
+    hi: Int
+    lo: Int
+
+fn low8(x: Int) -> Int
+    ? "A mask by a literal."
+    Bits.and(x, 255)
+
+verify low8
+    low8(4660) => 52
+    low8(-1) => 255
+
+fn merged(a: Int, b: Int) -> Int
+    ? "The or of two locals."
+    Bits.or(a, b)
+
+verify merged
+    merged(12, 3) => 15
+    merged(-8, 3) => -5
+
+fn toggled(a: Int, b: Int) -> Int
+    ? "The xor of two locals."
+    Bits.xor(a, b)
+
+verify toggled
+    toggled(12, 10) => 6
+    toggled(-1, 5) => -6
+
+fn mixed(a: Int, b: Int) -> Int
+    ? "The three nested, over computed operands."
+    Bits.xor(Bits.and(a + 1, b), Bits.or(a, b * 2))
+
+verify mixed
+    mixed(5, 3) => 5
+
+fn packed(w: Word) -> Int
+    ? "Two fields of a record joined by an or."
+    Bits.or(w.hi * 65536, Bits.and(w.lo, 65535))
+
+verify packed
+    packed(Word(hi = 2, lo = 70000)) => 135536

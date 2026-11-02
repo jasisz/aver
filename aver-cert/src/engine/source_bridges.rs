@@ -2226,7 +2226,8 @@ const STEP_EVAL: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, \
      optDefault_none, resDefault_ok, resDefault_err, AverCert.Grammar.argsEnv, \
      AverCert.Grammar.upd, AverCert.Grammar.intBin, AverCert.Grammar.boolBin, \
      AverCert.Grammar.strBin, AverCert.Grammar.strCat, AverCert.Grammar.builtinEval, \
-     AverCert.Grammar.intrinsicEval, AverCert.Grammar.ctorVal, AverCert.Grammar.patMatch, \
+     AverCert.Grammar.intrinsicEval, AverCert.Grammar.bitwiseEval, \
+     AverCert.Grammar.BitwiseBuiltin.z, AverCert.Grammar.ctorVal, AverCert.Grammar.patMatch, \
      AverCert.Grammar.bindVals, AverCert.Grammar.noSlot, AverCert.GrammarBridge.over, \
      _root_.decide_eq_true_eq, _root_.List.getElem?_cons_zero, _root_.List.getElem?_cons_succ, \
      _root_.List.mem_cons, _root_.List.mem_singleton, _root_.List.not_mem_nil, \

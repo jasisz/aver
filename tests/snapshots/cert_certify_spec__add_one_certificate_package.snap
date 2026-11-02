@@ -5,7 +5,7 @@ expression: golden
 == cert-manifest.json ==
 {
   "schema_version": 9,
-  "format": {"version": 1, "wall_id": "sha256:655cc3f6b798a372cfafcb6aa6fee7fadeb2d19e722137029668397ae7456908"},
+  "format": {"version": 1, "wall_id": "sha256:7d577458dae255e1d07d57f7c70e51aabc376f7a5221ae9f661bf2d254eafb75"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "fec1011ea9502dba8815c68cb8ee138e9178e6be3f0d9470e6c553c8aa475445",
   "target": "wasm-gc",
@@ -39,7 +39,7 @@ expression: golden
   ],
   "capabilities": [],
   "start": {"present": false, "function_index": null},
-  "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18, "cmp": null, "eq": null, "divmod": 12},
+  "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18, "cmp": null, "eq": null, "divmod": 12, "bitwise": null},
   "stringHostRoles": [],
   "certified": [
     {"name": "addOne", "class": "source-plan-v1", "facets": [], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"}
@@ -79,7 +79,7 @@ def subject : Subject :=
     declaredUncertified := Plans.subject_declaredUncertified_0
     capabilities := []
     start := none
-    hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18, cmp := none, eq := none, divmod := some 12 } : CertDecode.AddSub.Roles)
+    hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18, cmp := none, eq := none, divmod := some 12, bitwise := none } : CertDecode.AddSub.Roles)
     arithParams := some ({ carrier := 2, limb := 1, decompose := 2, normalize := 3, strip := 4, umagCmp := 5 } : ArithTemplateDerisk.ArithHostParams)
     stringHostRoles := []
     contracts := ["__rt_aint_from_i64 (box i64 -> carrier)", "Int.add (carrier add = exact integer addition on represented values; result canonical)"] }
