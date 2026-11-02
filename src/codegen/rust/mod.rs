@@ -234,6 +234,16 @@ fn transpile_project(
         .is_some_and(|config| config.independence_mode == crate::config::IndependenceMode::Cancel);
     let used_services = detect_used_services(ctx);
     let has_provider_runtime = !required_provider_operations.is_empty();
+    // A program that reaches a capability is emitted as a library crate (the
+    // native provider host boundary: a host binary of its own can install
+    // bindings and call the generated functions) plus a thin `src/main.rs`
+    // that links that library. The program is compiled once, in the library;
+    // the binary only adds the entry point. A self-host meta-runtime is the
+    // exception: its `src/main.rs` is also built as a binary target of the
+    // compiler's own package, which cannot link a second library crate, so it
+    // stays one self-contained binary crate.
+    let library_crate = (has_provider_runtime && !ctx.emit_self_host_support)
+        .then(|| ctx.project_name.replace('-', "_"));
     // The job kinds this program answers itself, resolved against the MIR
     // this transpile is about to emit: the borrow mask of a bound function is
     // a property of the emitted signature, so it is read after the ownership
@@ -297,6 +307,7 @@ fn transpile_project(
                 has_runtime_policy,
                 ctx.emit_replay_runtime,
                 &provider_composition,
+                library_crate.is_some(),
                 rust,
             ),
         ),
@@ -314,6 +325,7 @@ fn transpile_project(
                 !verify_blocks.is_empty(),
                 ctx.emit_self_host_support,
                 has_provider_runtime.then_some(&provider_composition),
+                library_crate.as_deref(),
             ),
         ),
         (
@@ -345,13 +357,11 @@ fn transpile_project(
                 work_max_jobs,
             ),
         ));
+    }
+    if library_crate.is_some() {
         files.push((
             "src/lib.rs".to_string(),
-            render_root_library(
-                has_embedded_policy,
-                ctx.emit_replay_runtime,
-                ctx.emit_self_host_support,
-            ),
+            render_root_library(has_embedded_policy, ctx.emit_replay_runtime),
         ));
     }
 
@@ -464,7 +474,10 @@ fn transpile_project(
     }
 }
 
-fn render_root_library(has_policy: bool, has_replay: bool, has_self_host_support: bool) -> String {
+/// The library crate of a program that reaches a capability: every generated
+/// module, plus the provider entry points a native host binary installs
+/// bindings through. `src/main.rs` is then a thin binary over it.
+fn render_root_library(has_policy: bool, has_replay: bool) -> String {
     let mut sections = vec![
         "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns, hidden_glob_reexports)]".to_string(),
         "// Aver Rust library emission — native provider host boundary".to_string(),
@@ -487,10 +500,6 @@ fn render_root_library(has_policy: bool, has_replay: bool, has_self_host_support
         sections.push("mod replay_support;".to_string());
         sections.push("pub use replay_support::*;".to_string());
     }
-    if has_self_host_support {
-        sections.push(String::new());
-        sections.push("mod self_host_support;".to_string());
-    }
     sections.push(String::new());
     sections.push("pub mod provider_support;".to_string());
     sections.push(
@@ -503,6 +512,7 @@ fn render_root_library(has_policy: bool, has_replay: bool, has_self_host_support
     sections.join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_root_main(
     main_fn: Option<&crate::ir::hir::ResolvedFnDef>,
     has_policy: bool,
@@ -511,51 +521,66 @@ fn render_root_main(
     has_verify: bool,
     has_self_host_support: bool,
     provider_composition: Option<&composition::ProviderComposition>,
+    library_crate: Option<&str>,
 ) -> String {
     let has_provider_runtime = provider_composition.is_some();
     let mut sections = vec![
         "#![allow(unused_variables, unused_mut, dead_code, unused_imports, unused_parens, non_snake_case, non_camel_case_types, unreachable_patterns, hidden_glob_reexports)]".to_string(),
         "// Aver Rust emission".to_string(),
         "#[macro_use] extern crate aver_rt;".to_string(),
-        "pub use ::aver_rt::AverMap as HashMap;".to_string(),
-        "pub use ::aver_rt::AverStr;".to_string(),
-        "pub use ::aver_rt::Buffer;".to_string(),
-        "pub use ::aver_rt::ByteBuilder;".to_string(),
-        String::new(),
-        "mod runtime_support;".to_string(),
-        "pub use runtime_support::*;".to_string(),
     ];
 
-    if has_policy {
-        sections.push(String::new());
-        sections.push("mod policy_support;".to_string());
-        sections.push("pub use policy_support::*;".to_string());
-    }
+    if let Some(library_crate) = library_crate {
+        // The program lives in the library crate; the binary names it once
+        // and reaches every generated module and support item through it.
+        sections.push(format!("pub use {library_crate}::*;"));
+    } else {
+        sections.extend([
+            "pub use ::aver_rt::AverMap as HashMap;".to_string(),
+            "pub use ::aver_rt::AverStr;".to_string(),
+            "pub use ::aver_rt::Buffer;".to_string(),
+            "pub use ::aver_rt::ByteBuilder;".to_string(),
+            String::new(),
+            "mod runtime_support;".to_string(),
+            "pub use runtime_support::*;".to_string(),
+        ]);
 
-    if has_replay {
-        sections.push(String::new());
-        sections.push("mod replay_support;".to_string());
-        sections.push("pub use replay_support::*;".to_string());
-    }
+        if has_policy {
+            sections.push(String::new());
+            sections.push("mod policy_support;".to_string());
+            sections.push("pub use policy_support::*;".to_string());
+        }
 
-    if has_self_host_support {
-        sections.push(String::new());
-        sections.push("mod self_host_support;".to_string());
+        if has_replay {
+            sections.push(String::new());
+            sections.push("mod replay_support;".to_string());
+            sections.push("pub use replay_support::*;".to_string());
+        }
+
+        if has_self_host_support {
+            sections.push(String::new());
+            sections.push("mod self_host_support;".to_string());
+        }
+
+        if provider_composition.is_some() {
+            sections.push(String::new());
+            sections.push("pub mod provider_support;".to_string());
+            sections.push(
+                "pub use provider_support::{install_provider_bindings, install_provider_bindings_exact};"
+                    .to_string(),
+            );
+        }
     }
 
     if let Some(provider_composition) = provider_composition {
         sections.push(String::new());
-        sections.push("pub mod provider_support;".to_string());
-        sections.push(
-            "pub use provider_support::{install_provider_bindings, install_provider_bindings_exact};"
-                .to_string(),
-        );
-        sections.push(String::new());
         sections.extend(provider_composition.render_bootstrap());
     }
 
-    sections.push(String::new());
-    sections.push("pub mod aver_generated;".to_string());
+    if library_crate.is_none() {
+        sections.push(String::new());
+        sections.push("pub mod aver_generated;".to_string());
+    }
 
     if has_verify {
         sections.push(String::new());
@@ -3336,6 +3361,46 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         }
     }
 
+    /// A program that reaches a capability is a library plus a binary. Only
+    /// the library may declare the generated modules: a binary declaring them
+    /// too compiles the whole program a second time as an unrelated crate.
+    #[test]
+    fn a_program_with_a_capability_is_compiled_into_one_crate() {
+        let mut ctx = ctx_from_source(
+            "module Demo\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"hi\")\n",
+            "demo-app",
+        );
+        ctx.emit_replay_runtime = true;
+        let out = transpile(&mut ctx);
+        let library = generated_file(&out, "src/lib.rs");
+        let binary = generated_file(&out, "src/main.rs");
+        for module in [
+            "aver_generated",
+            "runtime_support",
+            "provider_support",
+            "replay_support",
+        ] {
+            assert!(library.contains(&format!("mod {module};")), "{library}");
+            assert!(!binary.contains(&format!("mod {module};")), "{binary}");
+        }
+        assert!(binary.contains("pub use demo_app::*;"), "{binary}");
+        assert!(binary.contains("fn bootstrap_provider_bindings()"));
+        let manifest = generated_file(&out, "Cargo.toml");
+        assert!(manifest.contains("[lib]\ntest = false\ndoctest = false\n"));
+
+        // The self-host is built as a binary target of the compiler's own
+        // package, so it keeps one self-contained binary crate.
+        let mut ctx = ctx_from_source(
+            "module Demo\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"hi\")\n",
+            "demo",
+        );
+        ctx.emit_self_host_support = true;
+        let out = transpile(&mut ctx);
+        assert!(!out.files.iter().any(|(path, _)| path == "src/lib.rs"));
+        assert!(generated_file(&out, "src/main.rs").contains("pub mod aver_generated;"));
+        assert!(!generated_file(&out, "Cargo.toml").contains("[lib]"));
+    }
+
     #[test]
     fn replay_codegen_wraps_root_main_when_no_guest_entry_is_set() {
         let mut ctx = ctx_from_source(
@@ -3421,11 +3486,11 @@ fn main() -> Result<String, String>
         ctx.runtime_policy_from_env = true;
 
         let out = transpile(&mut ctx);
-        let root_main = generated_file(&out, "src/main.rs");
+        let library = generated_file(&out, "src/lib.rs");
         let replay_support = generated_file(&out, "src/replay_support.rs");
         let cargo_toml = generated_file(&out, "Cargo.toml");
 
-        assert!(!root_main.contains("mod policy_support;"));
+        assert!(!library.contains("mod policy_support;"));
         assert!(replay_support.contains("load_runtime_policy_from_env"));
         assert!(cargo_toml.contains("url = \"2\""));
         assert!(cargo_toml.contains("toml = \"0.8\""));
@@ -3510,10 +3575,10 @@ fn main() -> Result<String, String>
         });
 
         let out = transpile(&mut ctx);
-        let root_main = generated_file(&out, "src/main.rs");
+        let library = generated_file(&out, "src/lib.rs");
         let replay_support = generated_file(&out, "src/replay_support.rs");
 
-        assert!(root_main.contains("mod policy_support;"));
+        assert!(library.contains("mod policy_support;"));
         assert!(replay_support.contains("aver_policy::check_disk"));
         assert!(!replay_support.contains("RuntimeEffectPolicy"));
     }

@@ -30,6 +30,7 @@ fn runtime_dependency_line(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_cargo_toml(
     name: &str,
     services: &HashSet<String>,
@@ -37,6 +38,7 @@ pub fn generate_cargo_toml(
     has_runtime_policy: bool,
     has_scoped_runtime: bool,
     provider_composition: &ProviderComposition,
+    has_library: bool,
     rust: RustOptions,
 ) -> String {
     let mut lines = Vec::new();
@@ -45,6 +47,15 @@ pub fn generate_cargo_toml(
     lines.push("version = \"0.1.0\"".to_string());
     lines.push("edition = \"2024\"".to_string());
     lines.push(String::new());
+    if has_library {
+        // The verify tests live in the binary, so the library has no tests of
+        // its own: without these `cargo test` would compile the whole program
+        // a second time as a test harness and once more for doctests.
+        lines.push("[lib]".to_string());
+        lines.push("test = false".to_string());
+        lines.push("doctest = false".to_string());
+        lines.push(String::new());
+    }
 
     // Collect aver-rt feature flags based on which services the program uses.
     let mut rt_features: Vec<&str> = Vec::new();
@@ -234,6 +245,7 @@ mod tests {
             false,
             false,
             &ProviderComposition::default(),
+            false,
             RustOptions::default(),
         );
 
@@ -256,6 +268,7 @@ mod tests {
                 false,
                 false,
                 &ProviderComposition::default(),
+                false,
                 RustOptions {
                     panic,
                     ..Default::default()

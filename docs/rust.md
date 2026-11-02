@@ -58,8 +58,8 @@ out/
 ```
 
 The generated project includes:
-- `src/lib.rs` with the public host boundary when capabilities are present
-- `src/main.rs` with the runtime prelude and final entrypoint
+- `src/lib.rs` when the program reaches a capability: the whole generated program plus the provider entry points (`install_provider_bindings`, `preflight_required_providers`) that a host binary of your own links against
+- `src/main.rs` with the final entrypoint; when `src/lib.rs` exists it is a thin binary over that library, so Cargo compiles the program once
 - `src/runtime_support.rs` for the shared `aver-rt` bridge and shared runtime types
 - `src/provider_support.rs` when the program calls a capability operation
 - `src/replay_support.rs` when `--with-replay` is enabled
@@ -78,6 +78,8 @@ The generated Rust keeps:
 - shared runtime type imports for built-in service records when needed
 - the root `aver_generated` module tree
 - the final `fn main()` entry point
+
+When the program reaches a capability, the first three live in `src/lib.rs` instead and `src/main.rs` only re-exports the library, installs the providers and runs `main`. A program compiled with `--with-self-host-support` keeps the single binary crate, because the self-host is also built as a binary target of the compiler's own package.
 
 Generated Cargo projects target Rust edition 2024.
 
