@@ -657,6 +657,15 @@ fn element_lent_while_its_vector_is_handed_on_matches_vm() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// `List.take` and `List.drop` read the list before the count, in source
+/// order: when both read one variable, the count makes its last read and may
+/// move it, and the list's earlier read clones it.
+#[test]
+fn list_take_reads_the_list_before_the_count_match_vm() {
+    assert_plain_parity("tests/fixtures/rust_take_count_order.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// Pure `Int` trees are computed on `i64` first and exactly when a leaf is
 /// past `i64` or an operation overflows (`codegen/rust/from_mir/int_tree.rs`):
 /// overflow in the middle of a tree, Big leaves, `i64::MIN`, Euclidean
