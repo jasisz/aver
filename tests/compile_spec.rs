@@ -421,6 +421,69 @@ fn spread(n: Int) -> Int
     );
 }
 
+/// A collection matched out of a sum read out of a map is a borrow of the
+/// node the map still holds: its perf note says so, instead of blaming a
+/// caller, whether the write is in place or in a function it is passed to.
+#[test]
+fn compile_perf_notes_name_the_value_a_matched_collection_is_part_of() {
+    let workspace = temp_output_dir("aver-perf-notes-matched");
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(
+        workspace.join("main.av"),
+        r#"module Main
+    intent = "Arrays kept inside a sum in a heap map."
+
+type Obj
+    Array(Int, Vector<Int>)
+    Wide(Int, Int, Int, Int, Int)
+
+type Cell
+    Items(Vector<Int>)
+    Empty
+
+fn setAt(vs: Vector<Int>, k: Int, x: Int) -> Vector<Int>
+    ? "Writes x at k."
+    Option.withDefault(Vector.set(vs, k, x), vs)
+
+fn put(heap: Map<Int, Obj>, a: Int, k: Int, x: Int) -> Map<Int, Obj>
+    ? "Writes in place."
+    match Map.get(heap, a)
+        Option.Some(o) -> match o
+            Obj.Array(t, vs) -> Map.set(heap, a, Obj.Array(t, Option.withDefault(Vector.set(vs, k, x), vs)))
+            _ -> heap
+        Option.None -> heap
+
+fn pass(cells: Map<Int, Cell>, a: Int, k: Int, x: Int) -> Map<Int, Cell>
+    ? "Writes through setAt."
+    match Option.withDefault(Map.get(cells, a), Cell.Empty)
+        Cell.Items(vs) -> Map.set(cells, a, Cell.Items(setAt(vs, k, x)))
+        Cell.Empty -> cells
+
+fn main() -> Unit
+    ! [Console.print]
+    heap = Map.set({}, 1, Obj.Array(0, Vector.new(4, 0)))
+    cells = Map.set({}, 1, Cell.Items(Vector.new(4, 0)))
+    Console.print("{Map.len(put(heap, 1, 0, 1))} {Map.len(pass(cells, 1, 1, 2))}")
+"#,
+    )
+    .expect("write main");
+    let noted = Command::new(aver_bin())
+        .current_dir(&workspace)
+        .args(["compile", "main.av", "-o", "out", "--perf-notes"])
+        .output()
+        .expect("run aver compile");
+    let _ = fs::remove_dir_all(&workspace);
+    assert!(noted.status.success(), "{}", format_output(&noted));
+    let stdout = String::from_utf8_lossy(&noted.stdout);
+    for line in [
+        "main.av:20: `put` copies the whole vector `vs` before `Vector.set`: it is part of a value matched out of `heap` by `Map.get` at line 18, which `heap` still holds",
+        "main.av:27: `pass` passes `vs` to `setAt`, which writes it in place, but `vs` is part of a value matched out of `cells` by `Map.get` at line 26, which `cells` still holds, so the write copies it whole",
+    ] {
+        assert!(stdout.contains(line), "{line}\n{stdout}");
+    }
+    assert!(!stdout.contains("which its caller keeps"), "{stdout}");
+}
+
 #[test]
 fn compile_check_rejects_non_rust_target_before_codegen() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
