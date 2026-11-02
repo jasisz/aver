@@ -308,7 +308,8 @@ def Subject.hostRoles (s : Subject) : _root_.CertDecode.AddSub.Roles :=
   match s.hostRoleTable with
   | some roles => roles
   | none => { box := none, add := none, mul := none, sub := none,
-              toIndex := none, cmp := none, eq := none, divmod := none }
+              toIndex := none, cmp := none, eq := none, divmod := none,
+              bitwise := none }
 
 /-- The certification policy attached to a certified export. Partial simulation
     remains the default; the total preset additionally promises return at the

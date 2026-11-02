@@ -236,7 +236,8 @@ def roleTypesPinnedL (L : Layout) (n len : Nat) (M : MCtx) : Bool :=
   roleTypePinnedL L n len M.toIndex [c] [.numeric 0x7f] &&
   roleTypePinnedL L n len M.streq [refN M.str, refN M.str] [.numeric 0x7f] &&
   roleTypePinnedL L n len M.concat [refN M.strVec] [refN M.str] &&
-  roleTypePinnedL L n len M.divmod [c, c, .numeric 0x7f] [c]
+  roleTypePinnedL L n len M.divmod [c, c, .numeric 0x7f] [c] &&
+  roleTypePinnedL L n len M.bitwise [c, c, .numeric 0x7f] [c]
 
 /-- `listHelpersPinned` with each helper's body and type read from the
     layout. -/

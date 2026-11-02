@@ -490,12 +490,14 @@ theorem entryFast_of_packed {cs : List Nat} {n : Nat} {L : Layout} {fts : List F
   · cases hm
 
 /-- The helper roles a plan's lowering calls, as bits: `box`, `add`, `sub`,
-    `mul`, String equality, concatenation, `toIndex`, `cmp`, `eq`, `divmod`. -/
+    `mul`, String equality, concatenation, `toIndex`, `cmp`, `eq`, `divmod`,
+    `bitwise`. -/
 def roleCalls (M : MCtx) (e : FnEntry) : List Bool :=
   let calls := AverCert.ClaimAxes.wCallsL (fnCode M e.plan).body
   [calls.contains M.box, calls.contains M.add, calls.contains M.sub, calls.contains M.mul,
     calls.contains M.streq, calls.contains M.concat, calls.contains M.toIndex,
-    calls.contains M.cmp, calls.contains M.eq, calls.contains M.divmod]
+    calls.contains M.cmp, calls.contains M.eq, calls.contains M.divmod,
+    calls.contains M.bitwise]
 
 def bitsOf : List Bool → Nat
   | [] => 0
@@ -880,6 +882,7 @@ def useOfBits (M : MCtx) (rs : List Nat) (total totalMul : Bool) :
     cmp := rs.any (bitAt · 7) || hc.contains M.cmp,
     eq := rs.any (bitAt · 8) || hc.contains M.eq,
     divmod := rs.any (bitAt · 9) || hc.contains M.divmod,
+    bitwise := rs.any (bitAt · 10) || hc.contains M.bitwise,
     addTotal := total, subTotal := total, mulTotal := totalMul }
 
 /-- `ClaimAxes.checked` with the plans' helper calls read from the role bits. -/
@@ -909,6 +912,7 @@ theorem any_bit {M : MCtx} {fns : List FnEntry} {i a : Nat}
   refine congrArg (List.any fns) (funext fun e => ?_)
   simp only [Function.comp_def, roleBits, bitAt_bitsOf, hi]
 
+set_option maxHeartbeats 800000 in
 /-- The per-plan role bits give the claim axes. -/
 theorem checked_of_bits {artifact : ArtifactData} {rs : List Nat}
     (hbits : artifact.manifest.fnPlans.map (roleBits (mctxOf artifact.manifest.subject

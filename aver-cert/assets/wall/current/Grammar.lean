@@ -59,6 +59,9 @@
    * `call (.pick b) [a, b]` — `Call { callee: Builtin(..) }` for `Int.min` /
      `Int.max` over two `Int` operands: the emitter evaluates both, compares
      them with `__aint_cmp`, and evaluates the operand it picks once more.
+   * `call (.bitwise b) [a, b]` — `Call { callee: Builtin(..) }` for
+     `Bits.and` / `Bits.or` / `Bits.xor` over two `Int` operands: both
+     operands, the operation's selector, and a call of `__aint_bitwise`.
    * `call (.intrinsic i) [a, <nonzero Int literal>]` — `Call { callee:
      Intrinsic(IntDivEuclid | IntModEuclid) }`, the resolver's discharge of
      `Int.div` / `Int.mod` by a syntactic nonzero literal divisor: a bare
@@ -104,6 +107,7 @@
    (octets, apart from a `List<Int>`) and opaque pass-through values (a `Map`
    field). A tuple instantiation is a record type id of the type table. -/
 import SchemaBase
+import ModelPrelude
 
 namespace AverCert.Grammar
 open CertPrelude AverCert.Schema
@@ -180,6 +184,20 @@ def PickBuiltin.op : PickBuiltin → BinOp
 def PickBuiltin.z : PickBuiltin → Int → Int → Int
   | .intMin => min
   | .intMax => max
+
+/-- `Bits.and` / `Bits.or` / `Bits.xor`, which the emitter lowers as both
+    operands, the selector `0` / `1` / `2`, and one call of
+    `__aint_bitwise` (`emit_mir_bits`). -/
+inductive BitwiseBuiltin where
+  | bitsAnd | bitsOr | bitsXor
+deriving DecidableEq, Repr
+
+/-- The source model's meaning (`AverBits`, `ModelPrelude`): pointwise
+    and / or / xor under infinite two's complement. -/
+def BitwiseBuiltin.z : BitwiseBuiltin → Int → Int → Int
+  | .bitsAnd => AverBits.and
+  | .bitsOr => AverBits.or
+  | .bitsXor => AverBits.xor
 
 /-- A leaf of an `Int` tree computed on the machine word (`Expr.intWord`,
     `MirExpr::IntWord`). -/
@@ -318,6 +336,7 @@ inductive MirCallee where
   | lazy (b : LazyBuiltin)
   | intrinsic (i : Intrinsic)
   | pick (b : PickBuiltin)
+  | bitwise (b : BitwiseBuiltin)
 deriving DecidableEq, Repr
 
 /-- `MirCtor`: a user constructor (type id, constructor index in declaration
@@ -426,6 +445,8 @@ structure MCtx where
   cmp : Nat
   /-- `__aint_divmod(a, b, want_mod)`, the Euclidean division helper. -/
   divmod : Nat := 0
+  /-- `__aint_bitwise(a, b, op)`, pointwise and / or / xor. -/
+  bitwise : Nat := 0
   eq : Nat
   structOf : Nat → Nat
   recFields : Nat → Option (List Ty)
@@ -946,6 +967,13 @@ mutual
             | some .int, some .int => some .int
             | _, _ => none
         | _ => none
+    | .call (.bitwise _) args =>
+        match args with
+        | [a, b] =>
+            match tyOf M n Γ false a, tyOf M n Γ false b with
+            | some .int, some .int => some .int
+            | _, _ => none
+        | _ => none
     | .construct c ty args =>
         match tysOf M n Γ args with
         | some ts => ctorTy M c ty ts
@@ -1339,6 +1367,11 @@ def pickEval : PickBuiltin → List SVal → Option SVal
   | p, [.i x, .i y] => some (.i (p.z x y))
   | _, _ => none
 
+/-- `Bits.and` / `Bits.or` / `Bits.xor` on `Int` (`AverBits`). -/
+def bitwiseEval : BitwiseBuiltin → List SVal → Option SVal
+  | b, [.i x, .i y] => some (.i (b.z x y))
+  | _, _ => none
+
 /-- The value a constructor node builds. -/
 def ctorVal : CtorTag → Ty → List SVal → Option SVal
   | .user tid c, _, vs => some (.variant tid c vs)
@@ -1438,6 +1471,10 @@ mutual
     | .call (.pick pb) args =>
         match evalArgs F env args with
         | some vs => pickEval pb vs
+        | none => none
+    | .call (.bitwise bb) args =>
+        match evalArgs F env args with
+        | some vs => bitwiseEval bb vs
         | none => none
     | .tailCall f args =>
         match evalArgs F env args with
@@ -1544,6 +1581,7 @@ mutual
     | .call (.builtin _) args => escvArgs F env args
     | .call (.intrinsic _) args => escvArgs F env args
     | .call (.pick _) args => escvArgs F env args
+    | .call (.bitwise _) args => escvArgs F env args
     | .call (.lazy lb) args =>
         match args with
         | [o, d] =>
@@ -1745,6 +1783,9 @@ theorem eval_none_of_escv {F : Nat → List SVal → Option SVal} :
       simp only [escv] at h
       simp [eval, evalArgs_none_of_escv env args x h]
   | env, .call (.pick _) args, x, h => by
+      simp only [escv] at h
+      simp [eval, evalArgs_none_of_escv env args x h]
+  | env, .call (.bitwise _) args, x, h => by
       simp only [escv] at h
       simp [eval, evalArgs_none_of_escv env args x h]
   | env, .call (.lazy lb) [], x, h => by simp [escv] at h

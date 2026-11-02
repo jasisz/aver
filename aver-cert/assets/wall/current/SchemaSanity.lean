@@ -176,7 +176,7 @@ true through its contracts. -/
 def trapHost : HostFns :=
   { add := fun _ => none, sub := fun _ => none, mul := fun _ => none, cmp := fun _ => none,
     eq := fun _ => none, stringEq := fun _ => none, stringConcat := fun _ _ => none,
-    toIndex := fun _ => none, divmod := fun _ => none }
+    toIndex := fun _ => none, divmod := fun _ => none, bitwise := fun _ => none }
 
 example (C : Nat) : HostContracts (sanityCarrierSpec C) trapHost where
   add := by intro _ _ _ _ _ _ _ h; cases h
@@ -187,6 +187,9 @@ example (C : Nat) : HostContracts (sanityCarrierSpec C) trapHost where
   stringEq := by intro _ _ _ h; cases h
   stringConcat := by intro _ _ _ h; cases h
   divmod := by intro _ _ _ _ _ _ _ _ _ _ _ _ h; cases h
+  bitAnd := by intro _ _ _ _ _ _ _ _ _ h; cases h
+  bitOr := by intro _ _ _ _ _ _ _ _ _ h; cases h
+  bitXor := by intro _ _ _ _ _ _ _ _ _ h; cases h
   toIndex := by intro _ _ _ _ h; cases h
 
 /-! ## S-6: typing is load-bearing, and ill-typed plans decline -/

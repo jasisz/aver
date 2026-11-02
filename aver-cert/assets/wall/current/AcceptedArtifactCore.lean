@@ -68,7 +68,7 @@ def hostAssoc (M : MCtx) (h : HostFns) : List (Nat × (Nat × (List WVal → Opt
   [(M.box, (1, boxRef M.carrier)), (M.add, (2, h.add)), (M.sub, (2, h.sub)),
    (M.mul, (2, h.mul)), (M.neg, (1, fun _ => none)), (M.cmp, (2, h.cmp)), (M.eq, (2, h.eq)),
    (M.concat, (1, h.stringConcat M.str)), (M.streq, (2, h.stringEq)),
-   (M.toIndex, (1, h.toIndex)), (M.divmod, (3, h.divmod)),
+   (M.toIndex, (1, h.toIndex)), (M.divmod, (3, h.divmod)), (M.bitwise, (3, h.bitwise)),
    (M.toI64Sat, (1, _root_.AverCert.ListHelpers.satSem M.carrier)),
    (M.fromInt, (1, _root_.AverCert.StringHelpers.fromIntSem M.carrier M.mag M.str)),
    (M.toI64Chk, (1, _root_.AverCert.BytesHelpers.chkSem M.carrier))] ++
@@ -79,6 +79,7 @@ def hostOf (M : MCtx) (h : HostFns) : HostTbl := fun f => (hostAssoc M h).lookup
 /-- The role indices of a lowering context, in `hostAssoc` order. -/
 def roleIndices (M : MCtx) : List Nat :=
   [M.box, M.add, M.sub, M.mul, M.neg, M.cmp, M.eq, M.concat, M.streq, M.toIndex, M.divmod,
+   M.bitwise,
    M.toI64Sat, M.fromInt, M.toI64Chk] ++ M.listHelpers.map (·.2.2) ++ M.bytesHelpers.map (·.2)
 
 /-- The emitted code of every planned function: its plan's lowering. -/
@@ -242,7 +243,8 @@ def roleTypesPinned (n len : Nat) (M : MCtx) : Bool :=
   roleTypePinned n len M.toIndex [c] [.numeric 0x7f] &&
   roleTypePinned n len M.streq [refN M.str, refN M.str] [.numeric 0x7f] &&
   roleTypePinned n len M.concat [refN M.strVec] [refN M.str] &&
-  roleTypePinned n len M.divmod [c, c, .numeric 0x7f] [c]
+  roleTypePinned n len M.divmod [c, c, .numeric 0x7f] [c] &&
+  roleTypePinned n len M.bitwise [c, c, .numeric 0x7f] [c]
 
 /-- Role indices are pairwise distinct and distinct from every planned
     function, so the host table resolves each role to its own contract and no
@@ -437,7 +439,8 @@ def arithTableCheck (n len : Nat) (roles? : Option _root_.CertDecode.AddSub.Role
       arithRoleCheck n len .mul roles.mul p &&
       arithRoleCheck n len .cmp roles.cmp p &&
       arithRoleCheck n len .eq roles.eq p &&
-      arithRoleCheck n len .divmod roles.divmod p
+      arithRoleCheck n len .divmod roles.divmod p &&
+      arithRoleCheck n len .bitwise roles.bitwise p
   | _, _ => false
 
 /-- Bind the declared host-role table and arith indices to the module bytes by

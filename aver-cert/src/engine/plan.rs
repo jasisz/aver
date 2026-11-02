@@ -195,6 +195,26 @@ pub enum PlanPick {
     IntMax,
 }
 
+/// `Grammar.BitwiseBuiltin`: `Bits.and` / `Bits.or` / `Bits.xor`, one call of
+/// `__aint_bitwise` with the selector 0 / 1 / 2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanBitwise {
+    And,
+    Or,
+    Xor,
+}
+
+impl PlanBitwise {
+    /// `Grammar.BitwiseBuiltin.flag`, the emitter's `bitwise_selector`.
+    pub fn flag(self) -> i64 {
+        match self {
+            PlanBitwise::And => 0,
+            PlanBitwise::Or => 1,
+            PlanBitwise::Xor => 2,
+        }
+    }
+}
+
 /// `Grammar.MirCallee`; `Fn` carries the callee's wasm function index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanCallee {
@@ -203,6 +223,7 @@ pub enum PlanCallee {
     Lazy(PlanLazy),
     Intrinsic(PlanIntrinsic),
     Pick(PlanPick),
+    Bitwise(PlanBitwise),
 }
 
 /// `Grammar.CtorTag`.
@@ -625,6 +646,14 @@ impl PlanCallee {
                 match p {
                     PlanPick::IntMin => ".intMin",
                     PlanPick::IntMax => ".intMax",
+                }
+            ),
+            PlanCallee::Bitwise(b) => format!(
+                "(.bitwise {})",
+                match b {
+                    PlanBitwise::And => ".bitsAnd",
+                    PlanBitwise::Or => ".bitsOr",
+                    PlanBitwise::Xor => ".bitsXor",
                 }
             ),
         }

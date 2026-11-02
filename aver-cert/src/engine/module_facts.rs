@@ -93,8 +93,11 @@ pub struct HostRoles {
     pub cmp_idx: Option<u32>,
     pub eq_idx: Option<u32>,
     /// `__aint_divmod`: not exported; declared only at the one function
-    /// whose body is the wall's template (`divmod_template_body`).
+    /// whose body is the wall's template (`DIVMOD_TEMPLATE`).
     pub divmod_idx: Option<u32>,
+    /// `__aint_bitwise`: not exported; declared only at the one function
+    /// whose body is the wall's template (`BITWISE_TEMPLATE`).
+    pub bitwise_idx: Option<u32>,
     pub limb_idx: Option<u32>,
     pub decompose_idx: Option<u32>,
     pub normalize_idx: Option<u32>,
@@ -124,7 +127,7 @@ impl HostRoles {
     /// The `CertDecode.AddSub.Roles` literal.
     pub fn roles_lean_value(&self) -> String {
         format!(
-            "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, cmp := {}, eq := {}, divmod := {} }} : CertDecode.AddSub.Roles)",
+            "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, cmp := {}, eq := {}, divmod := {}, bitwise := {} }} : CertDecode.AddSub.Roles)",
             Self::lean_option(self.box_idx),
             Self::lean_option(self.add_idx),
             Self::lean_option(self.mul_idx),
@@ -133,6 +136,7 @@ impl HostRoles {
             Self::lean_option(self.cmp_idx),
             Self::lean_option(self.eq_idx),
             Self::lean_option(self.divmod_idx),
+            Self::lean_option(self.bitwise_idx),
         )
     }
 
@@ -184,12 +188,33 @@ const DIVMOD_TEMPLATE: &str = concat!(
     "<u:normalize>0b0b0b",
 );
 
-/// The canonical `__aint_divmod` body (locals and code, no size prefix) over
+/// `ArithTemplateDerisk.bitwiseTemplateBody`, in the notation of
+/// [`DIVMOD_TEMPLATE`].
+const BITWISE_TEMPLATE: &str = concat!(
+    "0a0163<s:limb>017f0163<s:limb>047f0163<s:limb>037f037e0163<s:limb>057e037f2000fb02",
+    "<u:carrier>01d12001fb02<u:carrier>01d1710463<s:carrier>2002410046047e2000fb02",
+    "<u:carrier>002001fb02<u:carrier>0083052002410146047e2000fb02<u:carrier>002001fb02",
+    "<u:carrier>0084052000fb02<u:carrier>002001fb02<u:carrier>00850b0b21122012d0<s:limb>",
+    "4100fb00<u:carrier>05200010<u:decompose>21042103200110<u:decompose>2106210520044100",
+    "48211720064100482118200310<u:strip>2107200510<u:strip>21084101200720084b047f20070520",
+    "080b6a210d200dfb07<u:limb>210a42012115420121164100210c02400340200c200d4f0d01200c2007",
+    "49047e2003200cfb0b<u:limb>42ffffffff0f830542000b2113201704402015201342ffffffff0f8542",
+    "ffffffff0f837c2115201542ffffffff0f832113201542208821150b200c200849047e2005200cfb0b",
+    "<u:limb>42ffffffff0f830542000b2114201804402016201442ffffffff0f8542ffffffff0f837c2116",
+    "201642ffffffff0f832114201642208821160b200a200c2002410046047e201320148305200241014604",
+    "7e20132014840520132014850b0bfb0e<u:limb>200c41016a210c0c000b0b2002410046047f20172018",
+    "71052002410146047f20172018720520172018730b0b211920190440420121154100210c02400340200c",
+    "200d4f0d012015200a200cfb0b<u:limb>42ffffffff0f8542ffffffff0f837c2115200a200c201542ff",
+    "ffffff0f83fb0e<u:limb>20154220882115200c41016a210c0c000b0b0b2019047f417f0541010b210b",
+    "200a200b10<u:normalize>0b0b",
+);
+
+/// The canonical body (locals and code, no size prefix) of a template over
 /// the declared indices, exactly as the wall synthesizes it.
-fn divmod_template_body(p: (u32, u32, u32, u32, u32, u32)) -> Option<Vec<u8>> {
+fn template_body(template: &str, p: (u32, u32, u32, u32, u32, u32)) -> Option<Vec<u8>> {
     let (carrier, limb, decompose, normalize, strip, umag_cmp) = p;
     let mut out = Vec::new();
-    let mut rest = DIVMOD_TEMPLATE;
+    let mut rest = template;
     while !rest.is_empty() {
         if let Some(tail) = rest.strip_prefix('<') {
             let (tok, after) = tail.split_once('>')?;
@@ -764,9 +789,11 @@ impl ModuleFacts {
                 }
             }
         }
-        // `__aint_divmod` is not exported: declare it only at the one function
-        // whose body is the template the wall pins it by.
-        if let Some(tmpl) = roles.arith_params(carrier).and_then(divmod_template_body) {
+        // `__aint_divmod` and `__aint_bitwise` are not exported: declare each
+        // only at the one function whose body is the template the wall pins it
+        // by.
+        let sole_template_hit = |template: &str| -> Option<u32> {
+            let tmpl = template_body(template, roles.arith_params(carrier)?)?;
             let hits: Vec<u32> = self
                 .code
                 .iter()
@@ -774,10 +801,13 @@ impl ModuleFacts {
                 .filter(|(_, code)| entry_body(&code.entry) == Some(tmpl.as_slice()))
                 .map(|(def, _)| self.nimports + def as u32)
                 .collect();
-            if let [only] = hits.as_slice() {
-                roles.divmod_idx = Some(*only);
+            match hits.as_slice() {
+                [only] => Some(*only),
+                _ => None,
             }
-        }
+        };
+        roles.divmod_idx = sole_template_hit(DIVMOD_TEMPLATE);
+        roles.bitwise_idx = sole_template_hit(BITWISE_TEMPLATE);
         self.roles = roles;
         let strings: std::collections::HashSet<u32> = self
             .types

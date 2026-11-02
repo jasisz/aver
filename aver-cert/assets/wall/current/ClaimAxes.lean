@@ -55,6 +55,7 @@ structure ContractUse where
   cmp : Bool := false
   eq : Bool := false
   divmod : Bool := false
+  bitwise : Bool := false
   addTotal : Bool := false
   subTotal : Bool := false
   mulTotal : Bool := false
@@ -80,6 +81,7 @@ def contractUse (artifact : ArtifactData) : ContractUse :=
     cmp := calls.contains M.cmp
     eq := calls.contains M.eq
     divmod := calls.contains M.divmod
+    bitwise := calls.contains M.bitwise
     addTotal := total
     subTotal := total
     mulTotal := totalMul }
@@ -104,6 +106,8 @@ def eqContract : String :=
   "__aint_eq (canonical carrier pair -> i32 boolean; 1 when equal, else 0)"
 def divmodContract : String :=
   "__aint_divmod (canonical carrier pair, nonzero divisor, want_mod 0 or 1 -> canonical Euclidean quotient (0) or remainder in [0, |b|) (1))"
+def bitwiseContract : String :=
+  "__aint_bitwise (canonical carrier pair, op 0, 1 or 2 -> canonical infinite two's-complement and (0), or (1) or xor (2))"
 def addTotalContract : String :=
   "Int.add (carrier add = exact integer addition on represented values; result canonical); total on represented values"
 def subTotalContract : String :=
@@ -122,6 +126,7 @@ def ContractUse.contracts (use : ContractUse) : List String :=
   (if use.cmp then [cmpContract] else []) ++
   (if use.eq then [eqContract] else []) ++
   (if use.divmod then [divmodContract] else []) ++
+  (if use.bitwise then [bitwiseContract] else []) ++
   (if use.addTotal then [addTotalContract] else []) ++
   (if use.subTotal then [subTotalContract] else []) ++
   (if use.mulTotal then [mulTotalContract] else [])
