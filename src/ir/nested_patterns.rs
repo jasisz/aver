@@ -354,6 +354,10 @@ struct Row {
     /// `(user binder, variable holding its value)` for binders already
     /// consumed by a switch above.
     renames: Vec<(String, String)>,
+    /// `(user binder, value)` for binders of a whole value a switch above
+    /// took apart into its fields (see [`Case::rebuild`]): the leaf binds
+    /// each to its value rebuilt from those fields.
+    rebinds: Vec<(String, Spanned<Expr>)>,
     arm: usize,
 }
 
@@ -461,6 +465,51 @@ impl Case {
         }
     }
 
+    /// The value this case matched, built again from the variables holding
+    /// its fields, for a constructor or a tuple with fields. A row that
+    /// binds the value whole reads it from there instead of from the
+    /// variable the switch tested, so the switch is that variable's last
+    /// read and takes the value apart by moving its fields out, where
+    /// reading it again later would keep it whole and copy every field an
+    /// arm owns. A value is never told apart from an equal one, so the
+    /// rebuilt value is the matched one.
+    fn rebuild(&self, fields: &[String], line: usize) -> Option<Spanned<Expr>> {
+        let args: Vec<Spanned<Expr>> = fields
+            .iter()
+            .map(|name| Spanned::new(Expr::Ident(name.clone()), line))
+            .collect();
+        match self {
+            Case::Tuple(n) if *n > 0 => Some(Spanned::new(
+                Expr::Tuple(crate::ast::shared::vec(args)),
+                line,
+            )),
+            // A field count above zero comes from an arm that spells the
+            // fields, which the check of the written program has matched
+            // against the constructor's own.
+            Case::Ctor(name, n) if *n > 0 => {
+                let mut segments = name.split('.');
+                let first = segments.next()?;
+                let callee = segments.fold(
+                    Spanned::new(Expr::Ident(first.to_string()), line),
+                    |obj, segment| {
+                        Spanned::new(
+                            Expr::Attr(crate::ast::Shared::new(obj), segment.to_string()),
+                            line,
+                        )
+                    },
+                );
+                Some(Spanned::new(
+                    Expr::FnCall(
+                        crate::ast::Shared::new(callee),
+                        crate::ast::Shared::new(args),
+                    ),
+                    line,
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// The flat pattern of this case's arm, binding `fields`.
     fn flat_pattern(&self, fields: &[String]) -> Pattern {
         match self {
@@ -488,6 +537,12 @@ struct Lowering<'a> {
     families: &'a HashMap<String, Vec<String>>,
     errors: &'a mut Vec<TypeError>,
     fresh: usize,
+    /// The fresh variables holding a value the match owns: a computed
+    /// subject bound first, and the fields taken out of such a value. A
+    /// whole value is rebuilt from its fields only there (see
+    /// [`Case::rebuild`]); the fields of a value read through a variable
+    /// may be borrowed, and rebuilding would copy them.
+    owned: HashSet<String>,
 }
 
 /// Per-match state: the written arm bodies, which arms some leaf
@@ -505,6 +560,7 @@ impl<'a> Lowering<'a> {
             families,
             errors,
             fresh: 0,
+            owned: HashSet::new(),
         }
     }
 
@@ -542,6 +598,9 @@ impl<'a> Lowering<'a> {
         arms: &[MatchArm],
         line: usize,
     ) -> Option<Spanned<Expr>> {
+        // Inner matches were compiled before this one, so what a variable
+        // holds is asked only of the variables this match binds.
+        self.owned.clear();
         let bodies: Vec<Spanned<Expr>> = arms.iter().map(|arm| (*arm.body).clone()).collect();
         let rows: Vec<Row> = arms
             .iter()
@@ -549,6 +608,7 @@ impl<'a> Lowering<'a> {
             .map(|(arm, a)| Row {
                 pats: vec![Pat::from_ast(&a.pattern)],
                 renames: Vec::new(),
+                rebinds: Vec::new(),
                 arm,
             })
             .collect();
@@ -576,6 +636,7 @@ impl<'a> Lowering<'a> {
             }
             _ => {
                 let name = self.fresh_name();
+                self.owned.insert(name.clone());
                 let inner = self.compile(&[Occ::Var(name.clone())], rows, &mut state);
                 Spanned::new(
                     Expr::Match {
@@ -630,6 +691,11 @@ impl<'a> Lowering<'a> {
         }
         let occ = occs[column].clone();
         let kind = kind_of(&first.pats[column]);
+        let owned = match &occ {
+            Occ::Var(name) => self.owned.contains(name),
+            Occ::Subject(_) => true,
+            Occ::Unused => false,
+        };
 
         // The cases this column tests, in order of first appearance.
         let mut cases: Vec<Case> = Vec::new();
@@ -665,15 +731,56 @@ impl<'a> Lowering<'a> {
         };
 
         let mut out_arms = Vec::new();
+        let mut any_rebuilt = false;
         for case in &cases {
-            let spec: Vec<(Row, Vec<Pat>)> = rows
+            // A row that reads the whole value under this case gets it
+            // rebuilt from fresh field variables (see [`Case::rebuild`]).
+            let rebuilt = owned
+                && matches!(case, Case::Tuple(_) | Case::Ctor(..))
+                && case.arity() > 0
+                && rows.iter().any(|row| {
+                    matches!(&row.pats[column], Pat::Bind(name)
+                        if mentions(&state.bodies[row.arm], name))
+                });
+            let mut spec: Vec<(Row, Vec<Pat>)> = rows
                 .iter()
                 .filter_map(|row| {
                     let fields = case.specialize(&row.pats[column])?;
-                    Some((self.consume(row, column, &occ), fields))
+                    let row = match (&row.pats[column], rebuilt) {
+                        (Pat::Bind(_), true) => {
+                            let mut row = row.clone();
+                            row.pats[column] = Pat::Wild;
+                            row
+                        }
+                        _ => self.consume(row, column, &occ),
+                    };
+                    Some((row, fields))
                 })
                 .collect();
-            let (names, field_occs) = self.name_fields(&spec, state);
+            let (names, field_occs) = match rebuilt {
+                true => self.fresh_fields(case.arity()),
+                false => self.name_fields(&spec, state),
+            };
+            if owned {
+                self.owned
+                    .extend(field_occs.iter().filter_map(|occ| match occ {
+                        Occ::Var(name) => Some(name.clone()),
+                        _ => None,
+                    }));
+            }
+            any_rebuilt |= rebuilt;
+            if rebuilt && let Some(value) = case.rebuild(&names, line) {
+                for ((row, _), original) in spec.iter_mut().zip(
+                    rows.iter()
+                        .filter(|row| case.specialize(&row.pats[column]).is_some()),
+                ) {
+                    if let Pat::Bind(name) = &original.pats[column]
+                        && mentions(&state.bodies[original.arm], name)
+                    {
+                        row.rebinds.push((name.clone(), value.clone()));
+                    }
+                }
+            }
             let mut sub_occs: Vec<Occ> = Vec::with_capacity(occs.len() - 1 + field_occs.len());
             sub_occs.extend(field_occs);
             sub_occs.extend(
@@ -701,11 +808,28 @@ impl<'a> Lowering<'a> {
             out_arms.push(MatchArm::new(case.flat_pattern(&names), body));
         }
         if !complete {
+            // Where a case above rebuilt the value, a row that reads it
+            // whole under the default reads it from the arm's own binder,
+            // not from the variable the switch tested, which then stays
+            // the switch's last read (see [`Case::rebuild`]).
+            let bound = any_rebuilt
+                && rows.iter().any(|row| {
+                    matches!(&row.pats[column], Pat::Bind(name)
+                    if mentions(&state.bodies[row.arm], name))
+                });
+            let (default_pattern, default_occ) = match (&occ, bound) {
+                (Occ::Var(_), true) => {
+                    let name = self.fresh_name();
+                    self.owned.insert(name.clone());
+                    (Pattern::Ident(name.clone()), Occ::Var(name))
+                }
+                _ => (Pattern::Wildcard, occ.clone()),
+            };
             let default_rows: Vec<Row> = rows
                 .iter()
                 .filter(|row| row.pats[column].is_irrefutable())
                 .map(|row| {
-                    let mut row = self.consume(row, column, &occ);
+                    let mut row = self.consume(row, column, &default_occ);
                     row.pats.remove(column);
                     row
                 })
@@ -723,7 +847,7 @@ impl<'a> Lowering<'a> {
                     .map(|(_, occ)| occ.clone())
                     .collect();
                 let body = self.compile(&sub_occs, default_rows, state);
-                out_arms.push(MatchArm::new(Pattern::Wildcard, body));
+                out_arms.push(MatchArm::new(default_pattern, body));
             }
         }
 
@@ -786,6 +910,14 @@ impl<'a> Lowering<'a> {
         variants
             .iter()
             .all(|variant| present.contains(variant.as_str()))
+    }
+
+    /// A fresh variable for each of `arity` fields: a value rebuilt from
+    /// them (see [`Case::rebuild`]) reads names no binder can shadow.
+    fn fresh_fields(&mut self, arity: usize) -> (Vec<String>, Vec<Occ>) {
+        let names: Vec<String> = (0..arity).map(|_| self.fresh_name()).collect();
+        let occs = names.iter().cloned().map(Occ::Var).collect();
+        (names, occs)
     }
 
     /// Names for the sub-values a case binds. A field no row looks at is
@@ -852,13 +984,29 @@ impl<'a> Lowering<'a> {
             }
         }
         let body = &state.bodies[row.arm];
-        if renames.is_empty() {
-            return body.clone();
-        }
-        crate::ast_rewrite::rewrite_idents_scoped(body, |name| {
-            renames
-                .get(name)
-                .map(|var| Spanned::new(Expr::Ident(var.clone()), body.line))
+        let body = match renames.is_empty() {
+            true => body.clone(),
+            false => crate::ast_rewrite::rewrite_idents_scoped(body, |name| {
+                renames
+                    .get(name)
+                    .map(|var| Spanned::new(Expr::Ident(var.clone()), body.line))
+            }),
+        };
+        // A whole value taken apart above is bound again from its fields;
+        // a rebuilt value reads only fresh variables, so the order of the
+        // bindings does not matter.
+        row.rebinds.iter().rev().fold(body, |body, (name, value)| {
+            let line = body.line;
+            Spanned::new(
+                Expr::Match {
+                    subject: crate::ast::Shared::new(value.clone()),
+                    arms: crate::ast::shared::vec(vec![MatchArm::new(
+                        Pattern::Ident(name.clone()),
+                        body,
+                    )]),
+                },
+                line,
+            )
         })
     }
 }
