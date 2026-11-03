@@ -2143,6 +2143,7 @@ fn id(n: Int) -> Int
                 PipelineStage::CharsFusion,
                 PipelineStage::StringIndex,
                 PipelineStage::ListBuild,
+                PipelineStage::DeforestCalls,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
@@ -2177,6 +2178,7 @@ fn id(n: Int) -> Int
                 run_chars_fusion: false,
                 run_string_index: false,
                 run_list_build: false,
+                run_deforest_calls: false,
                 run_last_use: false,
                 run_analyze: false,
                 run_escape: false,
@@ -2433,6 +2435,7 @@ fn id(n: Int) -> Int
                 PipelineStage::CharsFusion,
                 PipelineStage::StringIndex,
                 PipelineStage::ListBuild,
+                PipelineStage::DeforestCalls,
                 PipelineStage::Escape,
                 PipelineStage::LastUse, // fires even without Resolve — a no-op pass
                 // NameResolve runs unconditionally after
@@ -2474,6 +2477,7 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::CharsFusion,
                 PipelineStage::StringIndex,
                 PipelineStage::ListBuild,
+                PipelineStage::DeforestCalls,
                 PipelineStage::Resolve,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,

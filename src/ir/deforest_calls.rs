@@ -60,7 +60,10 @@
 //! is written in; unfolded into the caller it would return from the
 //! caller instead (the escape pass had that disease, see its
 //! `contains_error_prop`), so such a body stays a call. The same holds for
-//! the consumer. A call at a leaf of the unfolded body is unfolded in turn,
+//! the consumer. A producer whose body is `Bytes.get`'s — a list match over
+//! `List.drop` — is left alone too: the packed-index rewrite turns a match
+//! on its call into one byte read, and needs the call to find it. A call
+//! at a leaf of the unfolded body is unfolded in turn,
 //! at most [`MAX_UNFOLD_DEPTH`] deep, so a wrapper that only forwards to a
 //! worker (the ABI-preserving wrapper of the string index) is seen
 //! through.
@@ -302,7 +305,7 @@ fn shape_of(fd: &FnDef, recursive: bool) -> Option<Shape> {
     if !plain {
         return None;
     }
-    let producer = !recursive && size <= MAX_PRODUCER_NODES;
+    let producer = !recursive && size <= MAX_PRODUCER_NODES && !reads_list_by_drop(body);
     let consumes = if bindings.is_empty() {
         consumed_params(body, &params)
     } else {
@@ -341,6 +344,27 @@ fn consumed_params(body: &Spanned<Expr>, params: &[String]) -> Vec<(usize, Take)
         }
     }
     out
+}
+
+/// A list match over `List.drop(…)`: the body of `Bytes.get`, which the
+/// packed-index rewrite (`ir::mir::optimize::packed_index`) recognises in
+/// MIR and turns a match on its call into one indexed byte read. Unfolded
+/// here, that match would be gone before the rewrite looks for it, so a
+/// reader of this shape is left as a call.
+fn reads_list_by_drop(body: &Spanned<Expr>) -> bool {
+    let mut found = false;
+    walk(body, &mut |e| {
+        if let Expr::Match { subject, arms } = &e.node
+            && let Expr::FnCall(callee, _) = &subject.node
+            && crate::ir::expr_to_dotted_name(&callee.node).as_deref() == Some("List.drop")
+            && arms
+                .iter()
+                .any(|arm| matches!(arm.pattern, Pattern::EmptyList | Pattern::Cons(..)))
+        {
+            found = true;
+        }
+    });
+    found
 }
 
 /// `param` occurs in `body`, and only as the base of a field read.
@@ -549,9 +573,14 @@ fn rename_ident(expr: &mut Spanned<Expr>, from: &str, to: &str) {
 
 // ── Classifying expressions ─────────────────────────────────────────
 
-/// A variable or a literal: substituted in place however often it is read.
+/// A variable or a constant (a literal, negated or not): substituted in
+/// place however often it is read.
 fn is_trivial(expr: &Spanned<Expr>) -> bool {
-    matches!(expr.node, Expr::Ident(_) | Expr::Literal(_))
+    match &expr.node {
+        Expr::Ident(_) | Expr::Literal(_) => true,
+        Expr::Neg(inner) => matches!(inner.node, Expr::Literal(_)),
+        _ => false,
+    }
 }
 
 /// A chain of field reads on a variable: pure, so it may be read later or
