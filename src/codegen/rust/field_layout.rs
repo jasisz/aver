@@ -781,6 +781,10 @@ fn place(sum: &Sum, groups: Vec<Group>) -> TypeLayout {
         .collect()
 }
 
+/// A field moved into a place a constructor has none at yet: the
+/// constructor, the position and the declared field.
+type Filler = (usize, usize, usize);
+
 /// The lowest position the fields `members` can share, and the fields that
 /// fill the places before it where a constructor has none yet: for each, the
 /// constructor, the position and the declared field.
@@ -789,14 +793,14 @@ fn position_for(
     slots: &[Vec<Option<usize>>],
     grouped: &HashSet<(usize, usize)>,
     members: &[(usize, usize)],
-) -> Option<(usize, Vec<(usize, usize, usize)>)> {
+) -> Option<(usize, Vec<Filler>)> {
     let ty = |(v, d): (usize, usize)| sum.variants[v].types[d].as_str();
     let width = members
         .iter()
         .map(|&(v, _)| slots[v].len())
         .min()
         .unwrap_or(0);
-    let mut fillers: Vec<(usize, usize, usize)> = Vec::new();
+    let mut fillers: Vec<Filler> = Vec::new();
     for p in 0..width {
         if members.iter().all(|&(v, _)| slots[v][p].is_none()) {
             return Some((p, fillers));
