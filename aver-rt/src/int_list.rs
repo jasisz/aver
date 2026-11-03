@@ -77,6 +77,7 @@ impl AverIntList {
         }
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         match self {
             Self::Packed(values) => values.len(),
@@ -126,6 +127,7 @@ impl AverIntList {
         }
     }
 
+    #[inline]
     pub fn uncons_cloned(&self) -> Option<(AverInt, Self)> {
         match self {
             Self::Packed(values) => values.as_slice().first().map(|byte| {
@@ -140,6 +142,7 @@ impl AverIntList {
         }
     }
 
+    #[inline]
     pub fn drop_first(&self, count: usize) -> Self {
         match self {
             Self::Packed(values) => Self::Packed(values.drop_first(count)),
@@ -162,11 +165,13 @@ impl AverIntList {
 
     /// `prepend` onto a list the caller hands over (see
     /// `AverList::prepend_owned`).
+    #[inline]
     pub fn prepend_owned(head: AverInt, tail: Self) -> Self {
         Self::Wide(AverList::prepend_owned(head, tail.into_aver_list()))
     }
 
     /// The element at `index`, read in place.
+    #[inline]
     pub fn get(&self, index: usize) -> Option<AverInt> {
         match self {
             Self::Packed(values) => values
