@@ -2355,10 +2355,8 @@ pub fn smaller(
             Some(__pat0) => {
                 let __t = __pat0;
                 match __t.view() {
-                    crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(
-                        __b_fields,
-                    ) => {
-                        let b = __b_fields.0.clone();
+                    crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(_) => {
+                        let (b,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::term::Term__TVar>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__f) => (__f.0.clone(),), _ => unreachable!() } };
                         return (parts.contains(&b) && (!inner.contains(&b)));
                     }
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(
@@ -2925,8 +2923,18 @@ pub fn varied(
         Some(__pat0) => {
             let __t = __pat0;
             match __t.view() {
-                crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__v_fields) => {
-                    let v = __v_fields.0.clone();
+                crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(_) => {
+                    let (v,) = match __t
+                        .try_take::<crate::proof_kernel::aver_generated::kernel::term::Term__TVar>(
+                    ) {
+                        Ok(__f) => (__f.0,),
+                        Err(__t) => match __t.view() {
+                            crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(
+                                __f,
+                            ) => (__f.0.clone(),),
+                            _ => unreachable!(),
+                        },
+                    };
                     if givens.contains(&v) {
                         Ok(
                             crate::proof_kernel::aver_generated::kernel::induct::Varied {

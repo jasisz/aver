@@ -424,6 +424,9 @@ fn spread(n: Int) -> Int
 /// A collection matched out of a sum read out of a map is a borrow of the
 /// node the map still holds: its perf note says so, instead of blaming a
 /// caller, whether the write is in place or in a function it is passed to.
+/// The match on the sum takes its fields out of the node (the subject is a
+/// local at its last use), so the write meets no clone of its own and the
+/// note is the one of a matched part, not of a copied target.
 #[test]
 fn compile_perf_notes_name_the_value_a_matched_collection_is_part_of() {
     let workspace = temp_output_dir("aver-perf-notes-matched");
@@ -476,7 +479,7 @@ fn main() -> Unit
     assert!(noted.status.success(), "{}", format_output(&noted));
     let stdout = String::from_utf8_lossy(&noted.stdout);
     for line in [
-        "main.av:20: `put` copies the whole vector `vs` before `Vector.set`: it is part of a value matched out of `heap` by `Map.get` at line 18, which `heap` still holds",
+        "main.av:20: `put` writes `vs` in place with `Vector.set`, but `vs` is part of a value matched out of `heap` by `Map.get` at line 18, which `heap` still holds, so the write copies it whole",
         "main.av:27: `pass` passes `vs` to `setAt`, which writes it in place, but `vs` is part of a value matched out of `cells` by `Map.get` at line 26, which `cells` still holds, so the write copies it whole",
     ] {
         assert!(stdout.contains(line), "{line}\n{stdout}");
