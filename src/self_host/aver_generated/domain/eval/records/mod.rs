@@ -176,7 +176,7 @@ pub fn mergeRecordFieldsAcc(
         crate::cancel_checkpoint();
         {
             let __list_subject = existing;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (k, v) = pair.clone();
                     match crate::aver_generated::domain::eval::records::findOverride(
@@ -191,8 +191,15 @@ pub fn mergeRecordFieldsAcc(
                                     &overrides,
                                 );
                             let __tco2 = aver_rt::AverList::prepend_owned((k, __stp0), acc);
-                            __hold0 = __tco0;
-                            existing = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    existing = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    existing = &__hold0;
+                                }
+                            }
                             overrides = __tco1;
                             acc = __tco2;
                             continue;
@@ -200,8 +207,15 @@ pub fn mergeRecordFieldsAcc(
                         None => {
                             let __tco0 = rest;
                             let __tco2 = aver_rt::AverList::prepend_owned((k, v), acc);
-                            __hold0 = __tco0;
-                            existing = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    existing = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    existing = &__hold0;
+                                }
+                            }
                             acc = __tco2;
                             continue;
                         }
@@ -262,7 +276,7 @@ pub fn findOverride(
         crate::cancel_checkpoint();
         {
             let __list_subject = overrides;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (ok, ov) = pair.clone();
                     if (ok == k) {
@@ -270,8 +284,15 @@ pub fn findOverride(
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            overrides = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    overrides = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    overrides = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -351,7 +372,7 @@ pub fn mergeRecordFieldsAcc__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = existing;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (k, v) = pair.clone();
                     match crate::aver_generated::domain::eval::records::findOverride(
@@ -366,8 +387,15 @@ pub fn mergeRecordFieldsAcc__collected(
                                     &overrides,
                                 );
                             let __tco2 = aver_rt::list_builder_push(acc, (k, __stp0));
-                            __hold0 = __tco0;
-                            existing = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    existing = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    existing = &__hold0;
+                                }
+                            }
                             overrides = __tco1;
                             acc = __tco2;
                             continue;
@@ -375,8 +403,15 @@ pub fn mergeRecordFieldsAcc__collected(
                         None => {
                             let __tco0 = rest;
                             let __tco2 = aver_rt::list_builder_push(acc, (k, v));
-                            __hold0 = __tco0;
-                            existing = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    existing = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    existing = &__hold0;
+                                }
+                            }
                             acc = __tco2;
                             continue;
                         }

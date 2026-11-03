@@ -111,15 +111,22 @@ pub fn allInRange(xs @ _: &aver_rt::AverIntList) -> bool {
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((head, tail)) => {
                     if ((head >= aver_rt::AverInt::from_i64(0))
                         & (head <= aver_rt::AverInt::from_i64(255)))
                     {
                         {
                             let __tco0 = tail;
-                            __hold0 = __tco0;
-                            xs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    xs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    xs = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     } else {
@@ -143,15 +150,22 @@ pub fn firstOutOfRange(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((head, tail)) => {
                     if ((head >= aver_rt::AverInt::from_i64(0))
                         & (head <= aver_rt::AverInt::from_i64(255)))
                     {
                         {
                             let __tco0 = tail;
-                            __hold0 = __tco0;
-                            xs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    xs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    xs = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     } else {
@@ -496,7 +510,7 @@ pub fn hexParts__buffered(
         crate::cancel_checkpoint();
         {
             let __list_subject = values;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((head, tail)) => {
                     let __tco0 = tail;
                     let __tco1 = {
@@ -510,8 +524,15 @@ pub fn hexParts__buffered(
                         __b.push_str(&crate::aver_generated::bytes::byteToHex(head));
                         __b
                     };
-                    __hold0 = __tco0;
-                    values = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            values = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            values = &__hold0;
+                        }
+                    }
                     __buf = __tco1;
                     continue;
                 }

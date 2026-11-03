@@ -13,7 +13,7 @@ pub fn rewriteInternalFns(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((f, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::AverList::prepend_owned(
@@ -22,8 +22,15 @@ pub fn rewriteInternalFns(
                         ),
                         acc,
                     );
-                    __hold0 = __tco0;
-                    fns = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            fns = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -68,15 +75,22 @@ pub fn rewriteInternalStmts(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((stmt, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(stmt),
                         acc,
                     );
-                    __hold0 = __tco0;
-                    stmts = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            stmts = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            stmts = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -1496,15 +1510,22 @@ pub fn rewriteInternalStmts__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((stmt, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
                         acc,
                         crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(stmt),
                     );
-                    __hold0 = __tco0;
-                    stmts = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            stmts = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            stmts = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -1528,7 +1549,7 @@ pub fn rewriteInternalExprs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((expr, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
@@ -1537,8 +1558,15 @@ pub fn rewriteInternalExprs__collected(
                             expr.clone(),
                         ),
                     );
-                    __hold0 = __tco0;
-                    exprs = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            exprs = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            exprs = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -1563,14 +1591,21 @@ pub fn rewriteInternalFields__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (name, expr) = pair.clone();
                     {
                         let __tco0 = rest;
                         let __tco1 = aver_rt::list_builder_push(acc, (name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr)));
-                        __hold0 = __tco0;
-                        fields = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                fields = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                fields = &__hold0;
+                            }
+                        }
                         acc = __tco1;
                         continue;
                     }
@@ -1595,12 +1630,19 @@ pub fn rewriteInternalArms__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((arm, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(arm.pattern.clone()), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(arm.body.clone()), bindingSlots: arm.bindingSlots.clone() });
-                    __hold0 = __tco0;
-                    arms = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            arms = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            arms = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -1624,15 +1666,22 @@ pub fn rewritePatterns__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = pats;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((p, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
                         acc,
                         crate::aver_generated::domain::resolver::rewrite::rewritePattern(p.clone()),
                     );
-                    __hold0 = __tco0;
-                    pats = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            pats = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            pats = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }

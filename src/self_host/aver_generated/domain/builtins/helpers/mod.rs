@@ -138,7 +138,7 @@ pub fn expectBytesFields(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((field, rest)) => {
                     let (name, value) = field.clone();
                     if (&*name == "values") {
@@ -162,8 +162,15 @@ pub fn expectBytesFields(
                     } else {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            fields = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    fields = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    fields = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -214,7 +221,7 @@ pub fn expectByteItems__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((item, rest)) => {
                     let __t = item;
                     match __t.view() {
@@ -223,8 +230,15 @@ pub fn expectByteItems__collected(
                             {
                                 let __tco0 = rest;
                                 let __tco1 = aver_rt::int_list_builder_push(acc, value);
-                                __hold0 = __tco0;
-                                items = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        items = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        items = &__hold0;
+                                    }
+                                }
                                 acc = __tco1;
                                 continue;
                             }

@@ -1652,6 +1652,20 @@ impl<T> AverList<T> {
         self.uncons().map(|(head, tail)| (head.clone(), tail))
     }
 
+    /// The head and the rest, the rest lent where the node holds it: a
+    /// `Prepend` node, which nearly every node is, gives a borrow of the
+    /// tail it holds, so a loop that walks the list through a borrow steps
+    /// with no count touched; the other shapes build the rest as `uncons`
+    /// does.
+    #[inline]
+    pub fn uncons_lent(&self) -> Option<(&T, ListRest<'_, Self>)> {
+        if let AverListInner::Prepend { head, tail, .. } = &**self.inner.as_ref()? {
+            return Some((head, ListRest::Lent(tail)));
+        }
+        self.uncons_slow()
+            .map(|(head, tail)| (head, ListRest::Owned(tail)))
+    }
+
     /// `uncons` of a list that is not needed after it: a `Prepend` node this
     /// list alone holds gives up its head and tail, moved rather than
     /// counted; any other list is read as `uncons_cloned` reads it.
@@ -2155,6 +2169,28 @@ pub fn list_uncons<T>(list: &AverList<T>) -> Option<(&T, AverList<T>)> {
     list.uncons()
 }
 
+/// The rest of a list a match lends to the loop that walks it: a borrow of
+/// the tail the node holds, or, where the node holds no tail of this type,
+/// the rest as a list of its own. The loop keeps a borrow either way: of the
+/// node, or of a slot of its own the owned rest moves into
+/// (`ListRest::Owned`), as a value a step computes always did.
+pub enum ListRest<'a, L> {
+    Lent(&'a L),
+    Owned(L),
+}
+
+/// `list_uncons` with the rest lent (see [`ListRest`]).
+#[inline]
+pub fn list_uncons_lent_head<T>(list: &AverList<T>) -> Option<(&T, ListRest<'_, AverList<T>>)> {
+    list.uncons_lent()
+}
+
+/// `list_uncons_cloned` with the rest lent (see [`ListRest`]).
+#[inline]
+pub fn list_uncons_lent<L: AverListMatch>(list: &L) -> Option<(L::Item, ListRest<'_, L>)> {
+    list.uncons_lent_for_match()
+}
+
 pub trait AverListMatch: Sized {
     type Item;
 
@@ -2163,6 +2199,14 @@ pub trait AverListMatch: Sized {
     /// The same for a list the match holds alone and drops after.
     fn uncons_owned_for_match(self) -> Option<(Self::Item, Self)> {
         self.uncons_for_match()
+    }
+
+    /// The same with the rest lent where the node holds it; a list whose
+    /// nodes hold no rest of this type gives it owned, as `uncons_for_match`
+    /// does.
+    fn uncons_lent_for_match(&self) -> Option<(Self::Item, ListRest<'_, Self>)> {
+        self.uncons_for_match()
+            .map(|(head, tail)| (head, ListRest::Owned(tail)))
     }
 }
 
@@ -2177,6 +2221,11 @@ impl<T: Clone> AverListMatch for AverList<T> {
     #[inline]
     fn uncons_owned_for_match(self) -> Option<(Self::Item, Self)> {
         self.uncons_owned()
+    }
+
+    #[inline]
+    fn uncons_lent_for_match(&self) -> Option<(Self::Item, ListRest<'_, Self>)> {
+        self.uncons_lent().map(|(head, rest)| (head.clone(), rest))
     }
 }
 
@@ -2284,8 +2333,8 @@ pub fn string_join(parts: &AverList<AverStr>, sep: &str) -> AverStr {
 #[cfg(test)]
 mod tests {
     use super::{
-        AverList, AverListInner, AverMap, AverStr, Buffer, aver_display, env_set, string_slice,
-        string_split_byte,
+        AverInt, AverIntList, AverList, AverListInner, AverMap, AverStr, Buffer, ListRest,
+        aver_display, env_set, list_uncons_lent, string_slice, string_split_byte,
     };
 
     /// A split on one byte gives the parts `str::split` gives, the last
@@ -2418,6 +2467,45 @@ mod tests {
     /// A unique `Prepend` node taken apart by `uncons_reuse` holds the next
     /// node built in its slot; a shared node, another shape or an unused
     /// slot leave every list as it was and free what they should.
+    #[test]
+    fn uncons_lent_borrows_the_tail_a_prepend_node_holds() {
+        use crate::shared::Shared as Rc;
+        let flat = AverList::from_vec(vec![3i64, 4]);
+        let list = AverList::prepend_owned(1i64, AverList::prepend_owned(2i64, flat.clone()));
+        let (head, rest) = list.uncons_lent().expect("four elements");
+        let ListRest::Lent(rest) = rest else {
+            panic!("a prepend node lends its tail");
+        };
+        assert_eq!(*head, 1);
+        let (head, rest) = rest.uncons_lent().expect("three elements");
+        let ListRest::Lent(rest) = rest else {
+            panic!("a prepend node lends its tail");
+        };
+        assert_eq!(*head, 2);
+        assert_eq!(
+            rest.inner.as_ref().map(Rc::as_ptr),
+            flat.inner.as_ref().map(Rc::as_ptr)
+        );
+        let Some((head, ListRest::Owned(rest))) = rest.uncons_lent() else {
+            panic!("a flat body builds its rest");
+        };
+        assert_eq!((*head, rest.len()), (3, 1));
+        let Some((head, ListRest::Owned(rest))) = rest.uncons_lent() else {
+            panic!("a flat body builds its rest");
+        };
+        assert_eq!((*head, rest.len()), (4, 0));
+        assert!(rest.uncons_lent().is_none());
+        assert!(AverList::<i64>::empty().uncons_lent().is_none());
+
+        let ints = AverIntList::from_vec(vec![AverInt::from_i64(7), AverInt::from_i64(8)]);
+        let Some((head, ListRest::Owned(rest))) = list_uncons_lent(&ints) else {
+            panic!("an int list builds its rest");
+        };
+        assert_eq!((head.to_i64(), rest.len()), (Some(7), 1));
+        let (head, _) = list_uncons_lent(&list).expect("cloned head");
+        assert_eq!(head, 1);
+    }
+
     #[test]
     fn uncons_reuse_builds_the_next_node_in_the_old_one() {
         use crate::shared::Shared as Rc;

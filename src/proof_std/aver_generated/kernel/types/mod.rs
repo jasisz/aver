@@ -307,15 +307,22 @@ pub fn find(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = vs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((v, rest)) => {
                     if (v.name == n) {
                         return Some(v.ty.clone());
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            vs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    vs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    vs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -340,15 +347,22 @@ pub fn constType(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = cs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
                     if (c.name == n) {
                         return Some(c.ty.clone());
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            cs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    cs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    cs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -690,13 +704,20 @@ pub fn joinAll(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = ts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((t, rest)) => {
                     let __tco0 = rest;
                     let __tco1 =
                         crate::proof_std::aver_generated::kernel::types::join(acc, t.clone())?;
-                    __hold0 = __tco0;
-                    ts = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            ts = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            ts = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -952,15 +973,22 @@ pub fn sumNamed(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = ss;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((s, rest)) => {
                     if (s.name == n) {
                         return Some(s.clone());
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            ss = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    ss = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    ss = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -985,15 +1013,22 @@ pub fn recNamed(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = rs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((r, rest)) => {
                     if (r.name == n) {
                         return Some(r.clone());
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            rs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    rs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    rs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -1045,15 +1080,22 @@ pub fn variantFields(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = vs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((v, rest)) => {
                     if (v.name == c) {
                         return Some(v.fields.clone());
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            vs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    vs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    vs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -1701,13 +1743,20 @@ pub fn requiredFieldsPresent(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = required;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((f, rest)) => {
                     if actual.contains(&f.name) {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            required = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    required = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    required = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     } else {
@@ -1805,7 +1854,7 @@ pub fn variantsProduce(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = vs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((v, rest)) => {
                     if (crate::proof_std::aver_generated::kernel::types::ctorType(
                         v.name.clone(),
@@ -1816,8 +1865,15 @@ pub fn variantsProduce(
                     ))) {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            vs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    vs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    vs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     } else {
@@ -1904,7 +1960,7 @@ pub fn fieldTypesFit(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = fs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((f, rest)) => {
                     if {
                         let __arg7 @ _ =
@@ -1928,8 +1984,15 @@ pub fn fieldTypesFit(
                     } {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            fs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    fs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    fs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     } else {
@@ -2027,7 +2090,7 @@ pub fn sigType(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = sigs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((s, rest)) => {
                     if (s.name == f) {
                         {
@@ -2062,8 +2125,15 @@ pub fn sigType(
                     } else {
                         {
                             let __tco2 = rest;
-                            __hold2 = __tco2;
-                            sigs = &__hold2;
+                            match __tco2 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    sigs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold2 = __rest;
+                                    sigs = &__hold2;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -3021,7 +3091,7 @@ pub fn armsType(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = arms;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((a, rest)) => {
                     let __tco1 = rest;
                     let __tco2 = {
@@ -3043,8 +3113,15 @@ pub fn armsType(
                         }?;
                         crate::proof_std::aver_generated::kernel::types::join(acc, __arg8)
                     }?;
-                    __hold1 = __tco1;
-                    arms = &__hold1;
+                    match __tco1 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            arms = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold1 = __rest;
+                            arms = &__hold1;
+                        }
+                    }
                     acc = __tco2;
                     continue;
                 }

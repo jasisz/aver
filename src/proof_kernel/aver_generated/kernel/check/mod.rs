@@ -1714,7 +1714,7 @@ pub fn declarationsAcyclic(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = todo;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
                     if {
                         let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::check::constantDeclarationDeps(c.name.clone(), cs, ds, cs);
@@ -1759,8 +1759,15 @@ pub fn declarationsAcyclic(
                     } else {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            todo = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    todo = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    todo = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -1875,7 +1882,7 @@ pub fn constantDeclarationDeps(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = todo;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
                     if (c.name == name) {
                         return {
@@ -1887,8 +1894,15 @@ pub fn constantDeclarationDeps(
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            todo = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    todo = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    todo = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -1916,7 +1930,7 @@ pub fn definitionDeclarationDeps(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = todo;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((d, rest)) => {
                     if (d.name == name) {
                         return crate::proof_kernel::aver_generated::kernel::check::definitionDeps(
@@ -1925,8 +1939,15 @@ pub fn definitionDeclarationDeps(
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            todo = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    todo = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    todo = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -2075,7 +2096,7 @@ pub fn defsTyped(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = ds;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((d, rest)) => {
                     match crate::proof_kernel::aver_generated::kernel::check::definitionTyped(
                         d,
@@ -2087,8 +2108,15 @@ pub fn defsTyped(
                         }
                         Ok(done @ _) => {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            ds = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    ds = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    ds = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -2171,7 +2199,7 @@ pub fn letsTyped(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = bs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((b, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = {
@@ -2192,8 +2220,15 @@ pub fn letsTyped(
                         );
                         crate::proof_kernel::aver_generated::kernel::check::withVars(&env, &__arg6)
                     };
-                    __hold0 = __tco0;
-                    bs = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            bs = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            bs = &__hold0;
+                        }
+                    }
                     env = __tco1;
                     continue;
                 }
@@ -2219,7 +2254,7 @@ pub fn constsTyped(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = cs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
                     let __subject = {
                         let __arg7 @ _ =
@@ -2252,8 +2287,15 @@ pub fn constsTyped(
                         }
                         Ok(done @ _) => {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            cs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    cs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    cs = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -2790,15 +2832,22 @@ pub fn findField(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = fs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, rest)) => {
                     if (x.name == f) {
                         return Some(x.value.clone());
                     } else {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            fs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    fs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    fs = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -2871,7 +2920,7 @@ pub fn projField(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = fs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, rest)) => {
                     if (x.name == f) {
                         return Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
@@ -2881,8 +2930,15 @@ pub fn projField(
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            fs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    fs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    fs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -2920,15 +2976,22 @@ pub fn hyp(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = hs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, rest)) => {
                     if (x.name == h) {
                         return Ok(x.eqn.clone());
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            hs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    hs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    hs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -4141,7 +4204,7 @@ pub fn constantIn(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = cs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
                     if (c.name == n) {
                         return Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
@@ -4153,8 +4216,15 @@ pub fn constantIn(
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            cs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    cs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    cs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -4315,7 +4385,7 @@ pub fn bindLets(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = lets;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((b, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::AverList::prepend_owned(
@@ -4332,8 +4402,15 @@ pub fn bindLets(
                         },
                         outer,
                     );
-                    __hold0 = __tco0;
-                    lets = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            lets = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            lets = &__hold0;
+                        }
+                    }
                     outer = __tco1;
                     continue;
                 }
@@ -5480,15 +5557,22 @@ pub fn findLaw(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = ls;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((l, rest)) => {
                     if (l.key == key) {
                         return Some(l.clone());
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            ls = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    ls = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    ls = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -7144,7 +7228,7 @@ pub fn callAt(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = calls;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
                     if (k == aver_rt::AverInt::from_i64(0)) {
                         return Some(c.clone());
@@ -7152,8 +7236,15 @@ pub fn callAt(
                         {
                             let __tco0 = rest;
                             let __tco1 = k.sub(&aver_rt::AverInt::from_i64(1));
-                            __hold0 = __tco0;
-                            calls = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    calls = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    calls = &__hold0;
+                                }
+                            }
                             k = __tco1;
                             continue;
                         }

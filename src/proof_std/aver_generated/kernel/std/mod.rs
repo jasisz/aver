@@ -1440,21 +1440,35 @@ pub fn rewriteOnce(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = hyps;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((h, rest)) => {
                     if (h.eqn.lhs == h.eqn.rhs) {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            hyps = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    hyps = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    hyps = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     } else {
                         match crate::proof_std::aver_generated::kernel::std::holeAt(t, &h.eqn.lhs) {
                             None => {
                                 let __tco0 = rest;
-                                __hold0 = __tco0;
-                                hyps = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        hyps = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        hyps = &__hold0;
+                                    }
+                                }
                                 continue;
                             }
                             Some(c @ _) => {
@@ -1974,15 +1988,22 @@ pub fn lookup(answers @ _: &aver_rt::AverList<Answer>, mut key @ _: AverStr) -> 
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = answers;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((a, rest)) => {
                     if (a.key == key) {
                         return Some(a.reply.clone());
                     } else {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            answers = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    answers = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    answers = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -2010,7 +2031,7 @@ pub fn first(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = ts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((t, rest)) => {
                     let __subject = {
                         let __arg11 @ _ = crate::proof_std::aver_generated::kernel::std::Node {
@@ -2053,8 +2074,15 @@ pub fn first(
                                     }),
                                     whys,
                                 );
-                                __hold1 = __tco1;
-                                ts = &__hold1;
+                                match __tco1 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        ts = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold1 = __rest;
+                                        ts = &__hold1;
+                                    }
+                                }
                                 i = __tco2;
                                 whys = __tco3;
                                 continue;
@@ -2706,7 +2734,7 @@ pub fn elemType(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = gs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((g, rest)) => {
                     if (g.name == v) {
                         return crate::proof_std::aver_generated::kernel::types::elemOf(&g.ty)
@@ -2714,8 +2742,15 @@ pub fn elemType(
                     } else {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            gs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    gs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    gs = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }

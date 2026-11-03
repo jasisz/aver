@@ -2399,13 +2399,20 @@ pub fn headersToValMap(
         crate::cancel_checkpoint();
         {
             let __list_subject = names;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((name, rest)) => match (headers).get(&name) {
                     Some(values @ _) => {
                         let __tco1 = rest;
                         let __tco2 = acc.insert_owned(name.clone(), crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(name)), crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new(0usize); crate::aver_generated::domain::builtins::stringsToValStrs__collected(values, __arg6) }))]))));
-                        __hold1 = __tco1;
-                        names = &__hold1;
+                        match __tco1 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                names = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold1 = __rest;
+                                names = &__hold1;
+                            }
+                        }
                         acc = __tco2;
                         continue;
                     }
@@ -2428,8 +2435,15 @@ pub fn headersToValMap(
                                 ),
                             ),
                         );
-                        __hold1 = __tco1;
-                        names = &__hold1;
+                        match __tco1 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                names = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold1 = __rest;
+                                names = &__hold1;
+                            }
+                        }
                         acc = __tco2;
                         continue;
                     }
@@ -3109,7 +3123,7 @@ pub fn tcpSocketEntriesToMap(
         crate::cancel_checkpoint();
         {
             let __list_subject = entries;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((entry, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = acc.insert_owned(
@@ -3123,8 +3137,15 @@ pub fn tcpSocketEntriesToMap(
                             crate::aver_generated::domain::builtins::valToTcpSocket(&__arg5)
                         }?,
                     );
-                    __hold0 = __tco0;
-                    entries = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            entries = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            entries = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -4024,7 +4045,7 @@ pub fn stringsToVals__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = strs;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((s, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
@@ -4033,8 +4054,15 @@ pub fn stringsToVals__collected(
                             crate::aver_generated::domain::value::Val__ValStr(s),
                         ),
                     );
-                    __hold0 = __tco0;
-                    strs = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            strs = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            strs = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -4058,15 +4086,22 @@ pub fn entriesKeys__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = entries;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((entry, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
                         acc,
                         crate::aver_generated::domain::value::entryKey(entry),
                     );
-                    __hold0 = __tco0;
-                    entries = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            entries = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            entries = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -4090,15 +4125,22 @@ pub fn entriesValues__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = entries;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((entry, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
                         acc,
                         crate::aver_generated::domain::value::entryValue(entry),
                     );
-                    __hold0 = __tco0;
-                    entries = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            entries = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            entries = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -4122,7 +4164,7 @@ pub fn stringsToValStrs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = values;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((v, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
@@ -4131,8 +4173,15 @@ pub fn stringsToValStrs__collected(
                             crate::aver_generated::domain::value::Val__ValStr(v),
                         ),
                     );
-                    __hold0 = __tco0;
-                    values = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            values = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            values = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -4156,7 +4205,7 @@ pub fn tcpReadyKeysToVals__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = keys;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((key, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
@@ -4165,8 +4214,15 @@ pub fn tcpReadyKeysToVals__collected(
                             crate::aver_generated::domain::value::Val__ValInt(key),
                         ),
                     );
-                    __hold0 = __tco0;
-                    keys = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            keys = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            keys = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }

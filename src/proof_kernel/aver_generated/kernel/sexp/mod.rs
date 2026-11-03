@@ -240,40 +240,75 @@ pub fn scan(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = cs;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((c, rest)) => match mode {
                     crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready => {
                         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
                         match __dispatch_subject.to_i64() {
                             Some(32i64) => {
                                 let __tco0 = rest;
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 continue;
                             }
                             Some(10i64) => {
                                 let __tco0 = rest;
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 continue;
                             }
                             Some(9i64) => {
                                 let __tco0 = rest;
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 continue;
                             }
                             Some(13i64) => {
                                 let __tco0 = rest;
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 continue;
                             }
                             Some(59i64) => {
                                 let __tco0 = rest;
                                 let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Comment;
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 __hold1 = __tco1;
                                 mode = &__hold1;
                                 continue;
@@ -282,8 +317,15 @@ pub fn scan(
                                 let __tco0 = rest;
                                 let __tco2 = aver_rt::AverList::empty();
                                 let __tco3 = aver_rt::AverList::prepend_owned(current, parents);
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 current = __tco2;
                                 parents = __tco3;
                                 continue;
@@ -293,8 +335,7 @@ pub fn scan(
             let __tco0 = rest;
             let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node((current).reverse_owned()), parent);
             let __tco3 = above;
-            __hold0 = __tco0;
-            cs = &__hold0;
+            match __tco0 { aver_rt::ListRest::Lent(__rest) => { cs = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; cs = &__hold0; } }
             current = __tco2;
             parents = __tco3;
             continue;
@@ -303,8 +344,15 @@ pub fn scan(
                             Some(34i64) => {
                                 let __tco0 = rest;
                                 let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text(::aver_rt::str_lit!(""));
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 __hold1 = __tco1;
                                 mode = &__hold1;
                                 continue;
@@ -312,8 +360,15 @@ pub fn scan(
                             _ => {
                                 let __tco0 = rest;
                                 let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom(c);
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 __hold1 = __tco1;
                                 mode = &__hold1;
                                 continue;
@@ -330,8 +385,15 @@ pub fn scan(
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
                                     let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     current = __tco2;
@@ -341,8 +403,15 @@ pub fn scan(
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
                                     let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     current = __tco2;
@@ -352,8 +421,15 @@ pub fn scan(
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
                                     let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     current = __tco2;
@@ -363,8 +439,15 @@ pub fn scan(
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
                                     let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(acc), current);
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     current = __tco2;
@@ -397,8 +480,15 @@ pub fn scan(
                                 _ => {
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Atom((acc + &c));
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     continue;
@@ -416,8 +506,15 @@ pub fn scan(
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
                                     let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Text(acc), current);
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     current = __tco2;
@@ -426,8 +523,15 @@ pub fn scan(
                                 Some(92i64) => {
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Escape(acc);
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     continue;
@@ -435,8 +539,15 @@ pub fn scan(
                                 _ => {
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     continue;
@@ -453,8 +564,15 @@ pub fn scan(
                                 {
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &::aver_rt::str_lit!("\n")));
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     continue;
@@ -463,8 +581,15 @@ pub fn scan(
                                 {
                                     let __tco0 = rest;
                                     let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Text((acc + &c));
-                                    __hold0 = __tco0;
-                                    cs = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                    }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
                                     continue;
@@ -479,8 +604,15 @@ pub fn scan(
                             {
                                 let __tco0 = rest;
                                 let __tco1 = crate::proof_kernel::aver_generated::kernel::sexp::ReadMode::Ready;
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 __hold1 = __tco1;
                                 mode = &__hold1;
                                 continue;
@@ -488,8 +620,15 @@ pub fn scan(
                         } else {
                             {
                                 let __tco0 = rest;
-                                __hold0 = __tco0;
-                                cs = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        cs = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        cs = &__hold0;
+                                    }
+                                }
                                 continue;
                             }
                         }
@@ -586,7 +725,7 @@ pub fn define(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = parts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((__pat0, rest)) => {
                     match __pat0 {
                         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat1) => {
@@ -597,8 +736,7 @@ pub fn define(
             { let __list_subject = __pat3; match aver_rt::list_uncons(&__list_subject) { Some((s, __pat4)) => { { let __list_subject = __pat4; if __list_subject.is_empty() { {
             let __tco0 = rest;
             let __tco1 = { let __arg11 @ _ = crate::proof_kernel::aver_generated::kernel::sexp::fresh(n, &table)?; { let __arg12 @ _ = { let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::sexp::within(s.clone(), &table)?; crate::proof_kernel::aver_generated::kernel::sexp::bounded(&__arg10) }?; table.insert_owned(__arg11, __arg12) } };
-            __hold0 = __tco0;
-            parts = &__hold0;
+            match __tco0 { aver_rt::ListRest::Lent(__rest) => { parts = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; parts = &__hold0; } }
             table = __tco1;
             continue;
         } } else { return Err(::aver_rt::str_lit!("malformed shared part")); } } }, None => { return Err(::aver_rt::str_lit!("malformed shared part")); } } }
@@ -725,7 +863,7 @@ pub fn withinAll(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = xs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, rest)) => {
                     let (y, n) = crate::proof_kernel::aver_generated::kernel::sexp::within(
                         x.clone(),
@@ -735,8 +873,15 @@ pub fn withinAll(
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend_owned(y, acc);
                         let __tco3 = size.add(&n);
-                        __hold0 = __tco0;
-                        xs = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                xs = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                xs = &__hold0;
+                            }
+                        }
                         acc = __tco2;
                         size = __tco3;
                         continue;

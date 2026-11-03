@@ -6059,7 +6059,9 @@ fn a_large_record_is_boxed_and_updated_in_its_box() {
 /// `st` to such a loop, borrows `st` instead of every caller cloning the
 /// whole record. A borrowed list is matched through its borrow, and a part
 /// of a constructor or the head of a list that is only read is borrowed from
-/// it. A loop that returns its accumulator keeps taking it by value.
+/// it; the rest of the list a loop only steps to is lent by the node that
+/// holds it, and the loop's param takes the borrow. A loop that returns its
+/// accumulator keeps taking it by value.
 #[test]
 fn a_loop_borrows_the_params_it_only_reads() {
     let relative = "tests/fixtures/read_only_loop_params_app.av";
@@ -6088,14 +6090,19 @@ fn a_loop_borrows_the_params_it_only_reads() {
         "the branches `leaves` only reads must be borrowed:\n{emitted}"
     );
     assert!(
-        emitted.contains("match aver_rt::list_uncons(__list_subject) { Some((t, rest)) =>"),
-        "the head `allLeaves` only reads must be borrowed:\n{emitted}"
+        emitted
+            .contains("match aver_rt::list_uncons_lent_head(__list_subject) { Some((t, rest)) =>"),
+        "the head `allLeaves` only reads must be borrowed, and its rest lent:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("match __tco0 { aver_rt::ListRest::Lent(__rest) => { ts = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; ts = &__hold0; } }"),
+        "the loop `allLeaves` must step to the lent rest without a copy:\n{emitted}"
     );
     // A head one branch hands on is borrowed too, and cloned only there:
     // `findBefore` compares a field of every head and copies the one it
     // finds, once.
     assert!(
-        emitted.contains("match aver_rt::list_uncons(__list_subject) { Some((p, rest)) => { if (p.name == n) { return placedBefore(p.clone(), upTo); }"),
+        emitted.contains("match aver_rt::list_uncons_lent_head(__list_subject) { Some((p, rest)) => { if (p.name == n) { return placedBefore(p.clone(), upTo); }"),
         "the head `findBefore` hands on in one branch must be borrowed:\n{emitted}"
     );
     // A borrowed head, or a field of one, pushed into a list being built is

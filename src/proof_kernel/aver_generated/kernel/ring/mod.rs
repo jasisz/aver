@@ -294,7 +294,7 @@ pub fn indexOf(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = atoms;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((a, rest)) => {
                     if (a == t) {
                         return Some(i);
@@ -302,8 +302,15 @@ pub fn indexOf(
                         {
                             let __tco1 = rest;
                             let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
-                            __hold1 = __tco1;
-                            atoms = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    atoms = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    atoms = &__hold1;
+                                }
+                            }
                             i = __tco2;
                             continue;
                         }
@@ -329,7 +336,7 @@ pub fn addPoly(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = b;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((m, rest)) => {
                     let __tco0 = crate::proof_kernel::aver_generated::kernel::ring::insertMono(
                         m.clone(),
@@ -337,8 +344,15 @@ pub fn addPoly(
                     );
                     let __tco1 = rest;
                     a = __tco0;
-                    __hold1 = __tco1;
-                    b = &__hold1;
+                    match __tco1 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            b = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold1 = __rest;
+                            b = &__hold1;
+                        }
+                    }
                     continue;
                 }
                 None => {
@@ -615,7 +629,7 @@ pub fn readRows(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = facts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((f, fs)) => {
                     if crate::proof_kernel::aver_generated::kernel::ring::isTruth(&f.rhs) {
                         {
@@ -639,8 +653,15 @@ pub fn readRows(
                                         ),
                                     );
                                     let __tco2 = read.atoms;
-                                    __hold0 = __tco0;
-                                    facts = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            facts = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            facts = &__hold0;
+                                        }
+                                    }
                                     rows = __tco1;
                                     __hold2 = __tco2;
                                     atoms = &__hold2;
@@ -717,7 +738,7 @@ pub fn withCuts(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = cuts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
                     let __subject = {
                         let __arg6 @ _ = <aver_rt::AverList<Mono>>::empty();
@@ -749,8 +770,15 @@ pub fn withCuts(
                                     );
                                     let __tco1 = rest;
                                     rows = __tco0;
-                                    __hold1 = __tco1;
-                                    cuts = &__hold1;
+                                    match __tco1 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            cuts = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold1 = __rest;
+                                            cuts = &__hold1;
+                                        }
+                                    }
                                     continue;
                                 }
                             }
@@ -795,7 +823,7 @@ pub fn roundedBy(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = p;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((m, rest)) => {
                     let __subject = (
                         (match (m.coef).div_euclid(&(d)) {
@@ -822,8 +850,15 @@ pub fn roundedBy(
                                             __arg7,
                                         )
                                     });
-                                    __hold0 = __tco0;
-                                    p = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            p = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            p = &__hold0;
+                                        }
+                                    }
                                     acc = __tco2;
                                     continue;
                                 }

@@ -588,13 +588,15 @@ fn emit_default_dispatch_arm(
 /// `lent`: `subject` is a `&AverList`, matched through the borrow (the macro
 /// takes its list by value). `reuse`: the cons arm builds a list in the node
 /// it takes apart (`aver_list_match_reuse!`). `heads`: the heads an arm
-/// borrows from the list instead of cloning them out.
+/// borrows from the list instead of cloning them out. `tails`: the rests an
+/// arm takes lent (`aver_rt::ListRest`), to rebind a lent loop param to.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_list_match<F>(
     subject: String,
     lent: bool,
     reuse: bool,
     heads: &HashSet<String>,
+    tails: &HashSet<String>,
     arms: &[ResolvedMatchArm],
     list_shape: Option<ListMatchShape>,
     ctx: &CodegenContext,
@@ -618,11 +620,26 @@ where
         true => subject_name.clone(),
         false => format!("&{subject_name}"),
     };
-    let arms_code =
-        emit_one_look_list_match(&subject_name, &subject_ref, heads, arms, ctx, &body_for_arm)
-            .unwrap_or_else(|| {
-                emit_list_match_arms(&subject_name, &subject_ref, heads, arms, ctx, &body_for_arm)
-            });
+    let arms_code = emit_one_look_list_match(
+        &subject_name,
+        &subject_ref,
+        heads,
+        tails,
+        arms,
+        ctx,
+        &body_for_arm,
+    )
+    .unwrap_or_else(|| {
+        emit_list_match_arms(
+            &subject_name,
+            &subject_ref,
+            heads,
+            tails,
+            arms,
+            ctx,
+            &body_for_arm,
+        )
+    });
     format!("{{ let {} = {}; {} }}", subject_name, subject, arms_code)
 }
 
@@ -634,6 +651,7 @@ fn emit_one_look_list_match<F>(
     subject_name: &str,
     subject_ref: &str,
     heads: &HashSet<String>,
+    tails: &HashSet<String>,
     arms: &[ResolvedMatchArm],
     ctx: &CodegenContext,
     body_for_arm: &F,
@@ -663,15 +681,24 @@ where
         n => aver_name_to_rust(n),
     };
     let (head_pat, tail_pat) = (name(head), name(tail));
-    // A borrowed head is read in place, as `first` reads it.
-    let (step, bound) = match (heads.contains(head), tail == "_") {
-        (true, true) => (format!("{subject_name}.first()"), head_pat),
-        (true, false) => (
+    // A borrowed head is read in place, as `first` reads it; a lent rest is
+    // read where the node holds it.
+    let (step, bound) = match (heads.contains(head), tail == "_", tails.contains(tail)) {
+        (true, true, _) => (format!("{subject_name}.first()"), head_pat),
+        (true, false, false) => (
             format!("aver_rt::list_uncons({subject_ref})"),
             format!("({head_pat}, {tail_pat})"),
         ),
-        (false, _) => (
+        (true, false, true) => (
+            format!("aver_rt::list_uncons_lent_head({subject_ref})"),
+            format!("({head_pat}, {tail_pat})"),
+        ),
+        (false, _, false) => (
             format!("aver_rt::list_uncons_cloned({subject_ref})"),
+            format!("({head_pat}, {tail_pat})"),
+        ),
+        (false, _, true) => (
+            format!("aver_rt::list_uncons_lent({subject_ref})"),
             format!("({head_pat}, {tail_pat})"),
         ),
     };
@@ -742,6 +769,7 @@ fn emit_list_match_arms<F>(
     subject_name: &str,
     subject_ref: &str,
     heads: &HashSet<String>,
+    tails: &HashSet<String>,
     arms: &[ResolvedMatchArm],
     ctx: &CodegenContext,
     body_for_arm: &F,
@@ -757,7 +785,15 @@ where
     let fallback = if rest.is_empty() {
         "panic!(\"Aver Rust codegen: non-exhaustive list match\")".to_string()
     } else {
-        emit_list_match_arms(subject_name, subject_ref, heads, rest, ctx, body_for_arm)
+        emit_list_match_arms(
+            subject_name,
+            subject_ref,
+            heads,
+            tails,
+            rest,
+            ctx,
+            body_for_arm,
+        )
     };
 
     match &first.pattern {
@@ -787,19 +823,26 @@ where
             };
             if heads.contains(head) {
                 // The head is borrowed from the list; only the rest is a
-                // new list value.
-                return match tail == "_" {
-                    true => format!(
+                // new list value, unless it is lent too.
+                return match (tail == "_", tails.contains(tail)) {
+                    (true, _) => format!(
                         "if let Some({head_pat}) = {subject_name}.first() {{ {body} }} else {{ {fallback} }}"
                     ),
-                    false => format!(
+                    (false, false) => format!(
                         "if let (Some({head_pat}), Some({tail_pat})) = ({subject_name}.first(), {subject_name}.tail()) {{ {body} }} else {{ {fallback} }}"
+                    ),
+                    (false, true) => format!(
+                        "if let Some(({head_pat}, {tail_pat})) = aver_rt::list_uncons_lent_head({subject_ref}) {{ {body} }} else {{ {fallback} }}"
                     ),
                 };
             }
+            let step = match tails.contains(tail) {
+                true => "list_uncons_lent",
+                false => "list_uncons_cloned",
+            };
             format!(
-                "if let Some(({}, {})) = aver_rt::list_uncons_cloned({}) {{ {} }} else {{ {} }}",
-                head_pat, tail_pat, subject_ref, body, fallback
+                "if let Some(({}, {})) = aver_rt::{}({}) {{ {} }} else {{ {} }}",
+                head_pat, tail_pat, step, subject_ref, body, fallback
             )
         }
         ResolvedPattern::Wildcard => body,

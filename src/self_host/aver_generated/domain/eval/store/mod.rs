@@ -199,18 +199,32 @@ pub fn zipArgs(
         crate::cancel_checkpoint();
         {
             let __list_subject = params;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((p, ps)) => {
                     let __list_subject = args;
-                    match aver_rt::list_uncons(__list_subject) {
+                    match aver_rt::list_uncons_lent_head(__list_subject) {
                         Some((a, as_)) => {
                             let __tco0 = ps;
                             let __tco1 = as_;
                             let __tco2 = acc.insert_owned(p, a.clone());
-                            __hold0 = __tco0;
-                            params = &__hold0;
-                            __hold1 = __tco1;
-                            args = &__hold1;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    params = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    params = &__hold0;
+                                }
+                            }
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    args = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    args = &__hold1;
+                                }
+                            }
                             acc = __tco2;
                             continue;
                         }
@@ -240,14 +254,21 @@ pub fn mergeBindings(
         crate::cancel_checkpoint();
         {
             let __list_subject = bindings;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (k, v) = pair.clone();
                     {
                         let __tco0 = rest;
                         let __tco1 = env.insert_owned(k, v);
-                        __hold0 = __tco0;
-                        bindings = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                bindings = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                bindings = &__hold0;
+                            }
+                        }
                         env = __tco1;
                         continue;
                     }
@@ -293,13 +314,20 @@ pub fn fnsToIdMap(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((f, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
                     let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-                    __hold0 = __tco0;
-                    fns = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            fns = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     idx = __tco2;
                     continue;

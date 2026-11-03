@@ -2813,15 +2813,22 @@ pub fn findDef(mut name @ _: AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = ds;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((d, rest)) => {
                     if (d.name == name) {
                         return Some(d.clone());
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            ds = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    ds = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    ds = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }

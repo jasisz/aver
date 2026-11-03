@@ -56,13 +56,20 @@ pub fn withGivens(
         crate::proof_std::cancel_checkpoint();
         {
             let __list_subject = gs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((g, rest)) => {
                     let __tco0 = crate::proof_std::aver_generated::kernel::wire::withGiven(&g0, g);
                     let __tco1 = rest;
                     g0 = __tco0;
-                    __hold1 = __tco1;
-                    gs = &__hold1;
+                    match __tco1 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            gs = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold1 = __rest;
+                            gs = &__hold1;
+                        }
+                    }
                     continue;
                 }
                 None => {

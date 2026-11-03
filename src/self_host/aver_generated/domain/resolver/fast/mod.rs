@@ -14,7 +14,7 @@ pub fn annotateFastFns(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((f, rest)) => {
                     let __tco0 = rest;
                     let __tco2 = aver_rt::AverList::prepend_owned(
@@ -24,8 +24,15 @@ pub fn annotateFastFns(
                         ),
                         acc,
                     );
-                    __hold0 = __tco0;
-                    fns = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            fns = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                    }
                     acc = __tco2;
                     continue;
                 }
@@ -113,7 +120,6 @@ pub fn exprNeedsTailLoop(
     mut selfId @ _: aver_rt::AverInt,
     expr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> bool {
-    let mut __hold1: crate::aver_generated::domain::ast::Expr;
     let mut expr @ _: &crate::aver_generated::domain::ast::Expr = expr;
     loop {
         crate::cancel_checkpoint();
@@ -136,9 +142,8 @@ pub fn exprNeedsTailLoop(
                         return true;
                     } else {
                         {
-                            let __tco1 = elseExpr.clone();
-                            __hold1 = __tco1;
-                            expr = &__hold1;
+                            let __tco1 = elseExpr;
+                            expr = __tco1;
                             continue;
                         }
                     }
@@ -169,7 +174,7 @@ pub fn armsNeedTailLoop(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((arm, rest)) => {
                     if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(
                         selfId.clone(),
@@ -179,8 +184,15 @@ pub fn armsNeedTailLoop(
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            arms = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    arms = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    arms = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -1503,7 +1515,7 @@ pub fn classifyFastForwardSlots__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = args;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((arg, rest)) => {
                     let __t = arg;
                     match __t.view() {
@@ -1512,8 +1524,15 @@ pub fn classifyFastForwardSlots__collected(
                             {
                                 let __tco0 = rest;
                                 let __tco1 = aver_rt::int_list_builder_push(acc, slot);
-                                __hold0 = __tco0;
-                                args = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        args = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        args = &__hold0;
+                                    }
+                                }
                                 acc = __tco1;
                                 continue;
                             }

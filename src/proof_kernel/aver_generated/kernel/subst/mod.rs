@@ -100,15 +100,22 @@ pub fn lookup(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = bs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((b, rest)) => {
                     if (b.name == name) {
                         return Some(b.value.clone());
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            bs = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    bs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    bs = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -208,7 +215,6 @@ pub fn dropWild(ns @ _: &aver_rt::AverList<AverStr>) -> aver_rt::AverList<AverSt
 pub fn freeVars(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
 ) -> aver_rt::AverList<AverStr> {
-    let mut __hold0: crate::proof_kernel::aver_generated::kernel::term::Term;
     let mut t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term = t;
     loop {
         crate::proof_kernel::cancel_checkpoint();
@@ -229,9 +235,8 @@ pub fn freeVars(
                     let o = &__o_fields.0;
                     let f = __o_fields.1.clone();
                     {
-                        let __tco0 = o.clone();
-                        __hold0 = __tco0;
-                        t = &__hold0;
+                        let __tco0 = o;
+                        t = __tco0;
                         continue;
                     }
                 }
@@ -259,9 +264,8 @@ pub fn freeVars(
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
                     let a = &__a_fields.0;
                     {
-                        let __tco0 = a.clone();
-                        __hold0 = __tco0;
-                        t = &__hold0;
+                        let __tco0 = a;
+                        t = __tco0;
                         continue;
                     }
                 }
@@ -428,7 +432,6 @@ pub fn without(
 pub fn holeCount(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
 ) -> aver_rt::AverInt {
-    let mut __hold0: crate::proof_kernel::aver_generated::kernel::term::Term;
     let mut t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term = t;
     loop {
         crate::proof_kernel::cancel_checkpoint();
@@ -442,9 +445,8 @@ pub fn holeCount(
                     let o = &__o_fields.0;
                     let f = __o_fields.1.clone();
                     {
-                        let __tco0 = o.clone();
-                        __hold0 = __tco0;
-                        t = &__hold0;
+                        let __tco0 = o;
+                        t = __tco0;
                         continue;
                     }
                 }
@@ -470,9 +472,8 @@ pub fn holeCount(
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
                     let a = &__a_fields.0;
                     {
-                        let __tco0 = a.clone();
-                        __hold0 = __tco0;
-                        t = &__hold0;
+                        let __tco0 = a;
+                        t = __tco0;
                         continue;
                     }
                 }
@@ -910,15 +911,22 @@ pub fn firstShared(
         crate::proof_kernel::cancel_checkpoint();
         {
             let __list_subject = ns;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((n, rest)) => {
                     if others.contains(&n) {
                         return Some(n);
                     } else {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            ns = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    ns = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    ns = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }

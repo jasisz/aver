@@ -344,15 +344,22 @@ pub fn resolveFns(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((f, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::AverList::prepend_owned(
                         crate::aver_generated::domain::resolver::core::resolveFn(f),
                         acc,
                     );
-                    __hold0 = __tco0;
-                    fns = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            fns = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -399,13 +406,20 @@ pub fn buildParamSlots(
         crate::cancel_checkpoint();
         {
             let __list_subject = params;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((p, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = slots.insert_owned(p, next.clone());
                     let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
-                    __hold0 = __tco0;
-                    params = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            params = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            params = &__hold0;
+                        }
+                    }
                     slots = __tco1;
                     next = __tco2;
                     continue;
@@ -477,13 +491,20 @@ pub fn maxSlotInStmts(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((s, rest)) => {
                     let __tco0 = rest;
                     let __tco1 =
                         crate::aver_generated::domain::resolver::core::maxSlotInStmt(s, acc);
-                    __hold0 = __tco0;
-                    stmts = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            stmts = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            stmts = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -530,15 +551,22 @@ pub fn maxSlotInExprs(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((e, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
                         e.clone(),
                         acc,
                     );
-                    __hold0 = __tco0;
-                    exprs = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            exprs = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            exprs = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -563,7 +591,7 @@ pub fn maxSlotInFields(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (_, expr) = pair;
                     {
@@ -572,8 +600,15 @@ pub fn maxSlotInFields(
                             expr.clone(),
                             acc,
                         );
-                        __hold0 = __tco0;
-                        fields = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                fields = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                fields = &__hold0;
+                            }
+                        }
                         acc = __tco1;
                         continue;
                     }
@@ -598,15 +633,22 @@ pub fn maxSlotInArms(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((arm, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(
                         arm.body.clone(),
                         acc,
                     );
-                    __hold0 = __tco0;
-                    arms = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            arms = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            arms = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -643,7 +685,7 @@ pub fn resolveStmts(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((s, rest)) => match s {
                     crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
                         let __stp1 = __stp1.clone();
@@ -665,8 +707,15 @@ pub fn resolveStmts(
                                         ),
                                         acc,
                                     );
-                                    __hold0 = __tco0;
-                                    stmts = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            stmts = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            stmts = &__hold0;
+                                        }
+                                    }
                                     slots = __tco1;
                                     next = __tco2;
                                     acc = __tco3;
@@ -696,8 +745,15 @@ pub fn resolveStmts(
                                 crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6),
                                 acc,
                             );
-                            __hold0 = __tco0;
-                            stmts = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    stmts = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    stmts = &__hold0;
+                                }
+                            }
                             slots = __tco1;
                             next = __tco2;
                             acc = __tco3;
@@ -707,8 +763,15 @@ pub fn resolveStmts(
                     crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
                         let __tco0 = rest;
                         let __tco3 = aver_rt::AverList::prepend_owned(s.clone(), acc);
-                        __hold0 = __tco0;
-                        stmts = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                stmts = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                stmts = &__hold0;
+                            }
+                        }
                         acc = __tco3;
                         continue;
                     }
@@ -1640,7 +1703,7 @@ pub fn resolveArms(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((arm, rest)) => {
                     let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(
                         arm.clone(),
@@ -1649,8 +1712,15 @@ pub fn resolveArms(
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend_owned(__stp0, acc);
-                        __hold0 = __tco0;
-                        arms = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                arms = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                arms = &__hold0;
+                            }
+                        }
                         acc = __tco2;
                         continue;
                     }
@@ -1837,13 +1907,20 @@ pub fn patternBindingSlotsConstructor(
         crate::cancel_checkpoint();
         {
             let __list_subject = bindings;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((name, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = bindingSlots.insert_owned(name, next.clone());
                     let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
-                    __hold0 = __tco0;
-                    bindings = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            bindings = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            bindings = &__hold0;
+                        }
+                    }
                     bindingSlots = __tco1;
                     next = __tco2;
                     continue;
@@ -1872,7 +1949,7 @@ pub fn patternBindingSlotsTuple(
         crate::cancel_checkpoint();
         {
             let __list_subject = pats;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((p, rest)) => {
                     let (newBindingSlots, newNext) =
                         crate::aver_generated::domain::resolver::core::patternBindingSlotsInner(
@@ -1884,8 +1961,15 @@ pub fn patternBindingSlotsTuple(
                         let __tco0 = rest;
                         let __tco1 = newBindingSlots;
                         let __tco2 = newNext;
-                        __hold0 = __tco0;
-                        pats = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                pats = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                pats = &__hold0;
+                            }
+                        }
                         bindingSlots = __tco1;
                         next = __tco2;
                         continue;
@@ -1938,22 +2022,36 @@ pub fn maxInList(
         crate::cancel_checkpoint();
         {
             let __list_subject = vals;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((v, rest)) => {
                     if (v > acc) {
                         {
                             let __tco0 = rest;
                             let __tco1 = v;
-                            __hold0 = __tco0;
-                            vals = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    vals = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    vals = &__hold0;
+                                }
+                            }
                             acc = __tco1;
                             continue;
                         }
                     } else {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            vals = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    vals = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    vals = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -2040,13 +2138,20 @@ pub fn addConstructorSlots(
         crate::cancel_checkpoint();
         {
             let __list_subject = bindings;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((name, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = slots.insert_owned(name, next.clone());
                     let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
-                    __hold0 = __tco0;
-                    bindings = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            bindings = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            bindings = &__hold0;
+                        }
+                    }
                     slots = __tco1;
                     next = __tco2;
                     continue;
@@ -2075,7 +2180,7 @@ pub fn addTuplePatternSlots(
         crate::cancel_checkpoint();
         {
             let __list_subject = pats;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((p, rest)) => {
                     let (newSlots, newNext) =
                         crate::aver_generated::domain::resolver::core::addPatternSlotsInner(
@@ -2085,8 +2190,15 @@ pub fn addTuplePatternSlots(
                         let __tco0 = rest;
                         let __tco1 = newSlots;
                         let __tco2 = newNext;
-                        __hold0 = __tco0;
-                        pats = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                pats = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                pats = &__hold0;
+                            }
+                        }
                         slots = __tco1;
                         next = __tco2;
                         continue;
@@ -2118,7 +2230,7 @@ pub fn resolveStmts__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((s, rest)) => match s {
                     crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
                         let __stp1 = __stp1.clone();
@@ -2140,8 +2252,15 @@ pub fn resolveStmts__collected(
                                             next, __stp3,
                                         ),
                                     );
-                                    __hold0 = __tco0;
-                                    stmts = &__hold0;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            stmts = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            stmts = &__hold0;
+                                        }
+                                    }
                                     slots = __tco1;
                                     next = __tco2;
                                     acc = __tco3;
@@ -2171,8 +2290,15 @@ pub fn resolveStmts__collected(
                                 acc,
                                 crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6),
                             );
-                            __hold0 = __tco0;
-                            stmts = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    stmts = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    stmts = &__hold0;
+                                }
+                            }
                             slots = __tco1;
                             next = __tco2;
                             acc = __tco3;
@@ -2182,8 +2308,15 @@ pub fn resolveStmts__collected(
                     crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
                         let __tco0 = rest;
                         let __tco3 = aver_rt::list_builder_push(acc, s.clone());
-                        __hold0 = __tco0;
-                        stmts = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                stmts = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                stmts = &__hold0;
+                            }
+                        }
                         acc = __tco3;
                         continue;
                     }
@@ -2209,7 +2342,7 @@ pub fn resolveExprs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((e, rest)) => {
                     let __tco0 = rest;
                     let __tco2 = aver_rt::list_builder_push(
@@ -2219,8 +2352,15 @@ pub fn resolveExprs__collected(
                             slots.clone(),
                         ),
                     );
-                    __hold0 = __tco0;
-                    exprs = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            exprs = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            exprs = &__hold0;
+                        }
+                    }
                     acc = __tco2;
                     continue;
                 }
@@ -2246,7 +2386,7 @@ pub fn resolveFields__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (name, expr) = pair.clone();
                     {
@@ -2261,8 +2401,15 @@ pub fn resolveFields__collected(
                                 ),
                             ),
                         );
-                        __hold0 = __tco0;
-                        fields = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                fields = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                fields = &__hold0;
+                            }
+                        }
                         acc = __tco2;
                         continue;
                     }
@@ -2291,7 +2438,7 @@ pub fn resolveArms__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((arm, rest)) => {
                     let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(
                         arm.clone(),
@@ -2300,8 +2447,15 @@ pub fn resolveArms__collected(
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::list_builder_push(acc, __stp0);
-                        __hold0 = __tco0;
-                        arms = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                arms = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                arms = &__hold0;
+                            }
+                        }
                         acc = __tco2;
                         continue;
                     }
