@@ -1360,8 +1360,8 @@ pub fn typeOf(
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
-                let f = __f_fields.0.clone();
-                let xs = &__f_fields.1;
+                let f = __f_fields.1.clone();
+                let xs = &__f_fields.0;
                 {
                     let __arg29 @ _ =
                         crate::proof_kernel::aver_generated::kernel::types::typesOf(xs, e)?;
@@ -1369,8 +1369,8 @@ pub fn typeOf(
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__n_fields) => {
-                let n = __n_fields.0.clone();
-                let xs = &__n_fields.1;
+                let n = __n_fields.1.clone();
+                let xs = &__n_fields.0;
                 {
                     let __arg30 @ _ =
                         crate::proof_kernel::aver_generated::kernel::types::typesOf(xs, e)?;
@@ -1410,8 +1410,8 @@ pub fn typeOf(
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
-                let c = __c_fields.0.clone();
-                let xs = &__c_fields.1;
+                let c = __c_fields.1.clone();
+                let xs = &__c_fields.0;
                 {
                     let __arg35 @ _ =
                         crate::proof_kernel::aver_generated::kernel::types::typesOf(xs, e)?;

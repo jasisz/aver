@@ -121,7 +121,7 @@ pub fn exprNeedsTailLoop(
             let __t = expr;
             match __t.view() {
                 crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
-                    let fnId = __fnId_fields.0.clone();
+                    let fnId = __fnId_fields.1.clone();
                     return (fnId == selfId);
                 }
                 crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(
@@ -240,8 +240,8 @@ pub fn classifyFastExpr(
             let __t = expr;
             match __t.view() {
                 crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
-                    let fnId = __fnId_fields.0.clone();
-                    let args = &__fnId_fields.1;
+                    let fnId = __fnId_fields.1.clone();
+                    let args = &__fnId_fields.0;
                     crate::aver_generated::domain::resolver::fast::classifyFastForwardCall(
                         fnId, args,
                     )
@@ -299,8 +299,8 @@ pub fn classifyFastLeafExpr(
                 crate::aver_generated::domain::resolver::fast::classifyFastFieldAccess(obj, field)
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
-                let name = __name_fields.0.clone();
-                let args = &__name_fields.1;
+                let name = __name_fields.1.clone();
+                let args = &__name_fields.0;
                 crate::aver_generated::domain::resolver::fast::classifyFastBuiltinLeaf(name, args)
             }
             crate::aver_generated::domain::ast::Expr__view::ExprAdd(__a_fields) => {
@@ -880,8 +880,8 @@ pub fn classifyFastOptionWithDefaultArgs(
         let __t = optionExpr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
-                let name = __name_fields.0.clone();
-                let innerArgs = &__name_fields.1;
+                let name = __name_fields.1.clone();
+                let innerArgs = &__name_fields.0;
                 if (&*name == "Vector.get") {
                     crate::aver_generated::domain::resolver::fast::classifyFastVectorGet(
                         innerArgs,
@@ -1167,11 +1167,16 @@ pub fn classifyFastListCons(
             match (bindingSlots).get(&tail) {
                 Some(tailSlot @ _) => {
                     let tailSlot = tailSlot.clone();
-                    crate::aver_generated::domain::ast::FnFastPath::FastListSlotBranch(
+                    crate::aver_generated::domain::ast::FnFastPath::FastListSlotBranch({
+                        let __field0 = slot;
+                        let __field1 = emptyLeaf;
+                        let __field2 = headSlot;
+                        let __field3 = tailSlot;
+                        let __field4 = consLeaf;
                         crate::aver_generated::domain::ast::FnFastPath__FastListSlotBranch(
-                            slot, emptyLeaf, headSlot, tailSlot, consLeaf,
-                        ),
-                    )
+                            __field0, __field2, __field3, __field1, __field4,
+                        )
+                    })
                 }
                 None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
             }

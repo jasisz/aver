@@ -195,7 +195,8 @@ pub fn emit_replay_value_impl(
         }
         TypeDef::Sum { name, variants, .. } => {
             let thin = super::representation::is_thin_sum(td, ctx);
-            emit_variant_impl(name, variants, thin, ctx, scope)
+            let layout = super::field_layout::of_def(td, ctx);
+            emit_variant_impl(name, variants, thin, layout, ctx, scope)
         }
     }
 }
@@ -309,6 +310,7 @@ fn emit_variant_impl(
     name: &str,
     variants: &[TypeVariant],
     thin: bool,
+    layout: &[Option<Vec<usize>>],
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
@@ -318,15 +320,22 @@ fn emit_variant_impl(
         Some(module) => format!("{module}.{name}"),
         None => name.to_string(),
     };
+    // Where the struct of each constructor keeps each field (see
+    // `field_layout`).
+    let positions_of = |index: usize| layout.get(index).and_then(|p| p.as_deref());
     let to_arms = variants
         .iter()
-        .map(|variant| emit_variant_to_arm(name, variant, thin))
+        .enumerate()
+        .map(|(index, variant)| emit_variant_to_arm(name, variant, thin, positions_of(index)))
         .collect::<Vec<_>>()
         .join("\n");
 
     let from_arms = variants
         .iter()
-        .map(|variant| emit_variant_from_arm(name, variant, thin, ctx, scope))
+        .enumerate()
+        .map(|(index, variant)| {
+            emit_variant_from_arm(name, variant, thin, positions_of(index), ctx, scope)
+        })
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -371,7 +380,12 @@ fn emit_variant_impl(
     )
 }
 
-fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, thin: bool) -> String {
+fn emit_variant_to_arm(
+    type_name: &str,
+    variant: &TypeVariant,
+    thin: bool,
+    positions: Option<&[usize]>,
+) -> String {
     // A thin sum is matched through its view, its fields borrowed.
     let case = match thin {
         true => format!("{type_name}__view"),
@@ -384,7 +398,13 @@ fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant, thin: bool) -> St
         );
     }
 
-    let (bindings, fields) = variant_field_refs(thin, "f", variant.fields.len());
+    let (bindings, fields) = match thin {
+        true => (
+            "f".to_string(),
+            super::field_layout::field_refs("f", variant.fields.len(), positions),
+        ),
+        false => variant_field_refs(false, "f", variant.fields.len()),
+    };
     let field_json = fields
         .iter()
         .map(|name| format!("ReplayValue::to_replay_json({})", name))
@@ -401,6 +421,7 @@ fn emit_variant_from_arm(
     type_name: &str,
     variant: &TypeVariant,
     thin: bool,
+    positions: Option<&[usize]>,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
@@ -411,7 +432,7 @@ fn emit_variant_from_arm(
         );
     }
 
-    let field_loads = variant
+    let loads = variant
         .fields
         .iter()
         .enumerate()
@@ -424,12 +445,15 @@ fn emit_variant_from_arm(
                 idx
             )
         })
-        .collect::<Vec<_>>()
-        .join(", ");
+        .collect::<Vec<_>>();
     let field_loads = if thin {
-        format!("{type_name}__{}({field_loads})", variant.name)
+        super::field_layout::construction(
+            &format!("{type_name}__{}", variant.name),
+            &loads,
+            positions,
+        )
     } else {
-        field_loads
+        loads.join(", ")
     };
 
     format!(

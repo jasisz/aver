@@ -437,31 +437,34 @@ pub fn headedOf(
         let __dispatch_subject = kind;
         if &*__dispatch_subject == "call" {
             Ok(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TCall(
+                crate::proof_kernel::aver_generated::kernel::term::Term::TCall({
+                    let __field0 = name;
+                    let __field1 = xs.clone();
                     crate::proof_kernel::aver_generated::kernel::term::Term__TCall(
-                        name,
-                        xs.clone(),
-                    ),
-                ),
+                        __field1, __field0,
+                    )
+                }),
             )
         } else {
             if &*__dispatch_subject == "bi" {
                 Ok(
-                    crate::proof_kernel::aver_generated::kernel::term::Term::TBi(
+                    crate::proof_kernel::aver_generated::kernel::term::Term::TBi({
+                        let __field0 = name;
+                        let __field1 = xs.clone();
                         crate::proof_kernel::aver_generated::kernel::term::Term__TBi(
-                            name,
-                            xs.clone(),
-                        ),
-                    ),
+                            __field1, __field0,
+                        )
+                    }),
                 )
             } else {
                 Ok(
-                    crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
+                    crate::proof_kernel::aver_generated::kernel::term::Term::TCtor({
+                        let __field0 = name;
+                        let __field1 = xs.clone();
                         crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(
-                            name,
-                            xs.clone(),
-                        ),
-                    ),
+                            __field1, __field0,
+                        )
+                    }),
                 )
             }
         }
@@ -1235,7 +1238,7 @@ pub fn unfoldProof(
                             match aver_rt::list_uncons(&__list_subject) { Some((__pat2, __pat3)) => { match __pat2 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(k) => {
             let k = k.clone();
-            { let __list_subject = __pat3; match aver_rt::list_uncons(&__list_subject) { Some((xs, __pat4)) => { { let __list_subject = __pat4; match aver_rt::list_uncons(&__list_subject) { Some((ys, given)) => { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PUnfold(crate::proof_kernel::aver_generated::kernel::proof::Proof__PUnfold(f, ({ let __s = &(k); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?, crate::proof_kernel::aver_generated::kernel::decode::termList(xs)?, crate::proof_kernel::aver_generated::kernel::decode::termList(ys)?, crate::proof_kernel::aver_generated::kernel::decode::proofs(&given)?))) }, None => { Err(::aver_rt::str_lit!("malformed unfold")) } } } }, None => { Err(::aver_rt::str_lit!("malformed unfold")) } } }
+            { let __list_subject = __pat3; match aver_rt::list_uncons(&__list_subject) { Some((xs, __pat4)) => { { let __list_subject = __pat4; match aver_rt::list_uncons(&__list_subject) { Some((ys, given)) => { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PUnfold({ let __field0 = f; let __field1 = ({ let __s = &(k); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?; let __field2 = crate::proof_kernel::aver_generated::kernel::decode::termList(xs)?; let __field3 = crate::proof_kernel::aver_generated::kernel::decode::termList(ys)?; let __field4 = crate::proof_kernel::aver_generated::kernel::decode::proofs(&given)?; crate::proof_kernel::aver_generated::kernel::proof::Proof__PUnfold(__field1, __field0, __field2, __field3, __field4) })) }, None => { Err(::aver_rt::str_lit!("malformed unfold")) } } } }, None => { Err(::aver_rt::str_lit!("malformed unfold")) } } }
         },
         _ => {
             Err(::aver_rt::str_lit!("malformed unfold"))
@@ -1629,7 +1632,7 @@ pub fn linearProof(
                                         match aver_rt::list_uncons(&__list_subject) {
                                             Some((hs, __pat4)) => {
                                                 let __list_subject = __pat4;
-                                                match aver_rt::list_uncons(&__list_subject) { Some((ws, cs)) => { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear(crate::proof_kernel::aver_generated::kernel::proof::Proof__PLinear(crate::proof_kernel::aver_generated::kernel::decode::term(g)?, true, { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(hs)?; crate::proof_kernel::aver_generated::kernel::decode::atoms(&__arg14) }?, { let __arg15 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(ws)?; crate::proof_kernel::aver_generated::kernel::decode::ints(&__arg15) }?, crate::proof_kernel::aver_generated::kernel::decode::cuts(&cs)?))) }, None => { Err(::aver_rt::str_lit!("malformed linear")) } }
+                                                match aver_rt::list_uncons(&__list_subject) { Some((ws, cs)) => { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear({ let __field0 = crate::proof_kernel::aver_generated::kernel::decode::term(g)?; let __field1 = true; let __field2 = { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(hs)?; crate::proof_kernel::aver_generated::kernel::decode::atoms(&__arg14) }?; let __field3 = { let __arg15 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(ws)?; crate::proof_kernel::aver_generated::kernel::decode::ints(&__arg15) }?; let __field4 = crate::proof_kernel::aver_generated::kernel::decode::cuts(&cs)?; crate::proof_kernel::aver_generated::kernel::proof::Proof__PLinear(__field1, __field0, __field2, __field3, __field4) })) }, None => { Err(::aver_rt::str_lit!("malformed linear")) } }
                                             }
                                             None => Err(::aver_rt::str_lit!("malformed linear")),
                                         }
@@ -1641,7 +1644,7 @@ pub fn linearProof(
                                             match aver_rt::list_uncons(&__list_subject) {
                                                 Some((hs, __pat5)) => {
                                                     let __list_subject = __pat5;
-                                                    match aver_rt::list_uncons(&__list_subject) { Some((ws, cs)) => { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear(crate::proof_kernel::aver_generated::kernel::proof::Proof__PLinear(crate::proof_kernel::aver_generated::kernel::decode::term(g)?, false, { let __arg16 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(hs)?; crate::proof_kernel::aver_generated::kernel::decode::atoms(&__arg16) }?, { let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(ws)?; crate::proof_kernel::aver_generated::kernel::decode::ints(&__arg17) }?, crate::proof_kernel::aver_generated::kernel::decode::cuts(&cs)?))) }, None => { Err(::aver_rt::str_lit!("malformed linear")) } }
+                                                    match aver_rt::list_uncons(&__list_subject) { Some((ws, cs)) => { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear({ let __field0 = crate::proof_kernel::aver_generated::kernel::decode::term(g)?; let __field1 = false; let __field2 = { let __arg16 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(hs)?; crate::proof_kernel::aver_generated::kernel::decode::atoms(&__arg16) }?; let __field3 = { let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::decode::items(ws)?; crate::proof_kernel::aver_generated::kernel::decode::ints(&__arg17) }?; let __field4 = crate::proof_kernel::aver_generated::kernel::decode::cuts(&cs)?; crate::proof_kernel::aver_generated::kernel::proof::Proof__PLinear(__field1, __field0, __field2, __field3, __field4) })) }, None => { Err(::aver_rt::str_lit!("malformed linear")) } }
                                                 }
                                                 None => {
                                                     Err(::aver_rt::str_lit!("malformed linear"))

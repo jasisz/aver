@@ -48,7 +48,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         crate::aver_generated::domain::ast::Expr__view::ExprBinopSlotInt(
                             __slot_fields,
                         ) => {
-                            let slot = __slot_fields.1.clone();
+                            let slot = __slot_fields.0.clone();
                             return crate::aver_generated::domain::resolver::core::maxInt(
                                 slot, acc,
                             );
@@ -56,8 +56,8 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         crate::aver_generated::domain::ast::Expr__view::ExprBinopSlots(
                             __lhs_fields,
                         ) => {
-                            let lhs = __lhs_fields.1.clone();
-                            let rhs = __lhs_fields.2.clone();
+                            let lhs = __lhs_fields.0.clone();
+                            let rhs = __lhs_fields.1.clone();
                             {
                                 let __arg13 @ _ =
                                     crate::aver_generated::domain::resolver::core::maxInt(lhs, acc);
@@ -69,7 +69,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         crate::aver_generated::domain::ast::Expr__view::ExprCmpSlotInt(
                             __slot_fields,
                         ) => {
-                            let slot = __slot_fields.1.clone();
+                            let slot = __slot_fields.0.clone();
                             return crate::aver_generated::domain::resolver::core::maxInt(
                                 slot, acc,
                             );
@@ -77,8 +77,8 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         crate::aver_generated::domain::ast::Expr__view::ExprCmpSlots(
                             __lhs_fields,
                         ) => {
-                            let lhs = __lhs_fields.1.clone();
-                            let rhs = __lhs_fields.2.clone();
+                            let lhs = __lhs_fields.0.clone();
+                            let rhs = __lhs_fields.1.clone();
                             {
                                 let __arg14 @ _ =
                                     crate::aver_generated::domain::resolver::core::maxInt(lhs, acc);
@@ -188,7 +188,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                             __MutualTco1::MaxSlotInExprPair(a.clone(), b.clone(), acc)
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCall(__args_fields) => {
-                            let args = &__args_fields.1;
+                            let args = &__args_fields.0;
                             return crate::aver_generated::domain::resolver::core::maxSlotInExprs(
                                 args, acc,
                             );
@@ -196,7 +196,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(
                             __args_fields,
                         ) => {
-                            let args = &__args_fields.1;
+                            let args = &__args_fields.0;
                             return crate::aver_generated::domain::resolver::core::maxSlotInExprs(
                                 args, acc,
                             );
@@ -204,7 +204,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(
                             __args_fields,
                         ) => {
-                            let args = &__args_fields.1;
+                            let args = &__args_fields.0;
                             return crate::aver_generated::domain::resolver::core::maxSlotInExprs(
                                 args, acc,
                             );
@@ -212,7 +212,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(
                             __args_fields,
                         ) => {
-                            let args = &__args_fields.1;
+                            let args = &__args_fields.0;
                             return crate::aver_generated::domain::resolver::core::maxSlotInExprs(
                                 args, acc,
                             );
@@ -1086,58 +1086,68 @@ pub fn resolveExprAfterArith(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCall(__name_fields) => {
-                let name = __name_fields.0.clone();
-                let args = &__name_fields.1;
+                let name = __name_fields.1.clone();
+                let args = &__name_fields.0;
                 crate::aver_generated::domain::resolver::core::resolveCallExpr(name, args, slots)
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
-                let fnId = __fnId_fields.0.clone();
-                let args = &__fnId_fields.1;
+                let fnId = __fnId_fields.1.clone();
+                let args = &__fnId_fields.0;
                 (
-                    crate::aver_generated::domain::ast::Expr::ExprCallDirect(
-                        crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, {
+                    crate::aver_generated::domain::ast::Expr::ExprCallDirect({
+                        let __field0 = fnId;
+                        let __field1 = {
                             let __arg23 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                                 args,
                                 slots.clone(),
                                 __arg23,
                             )
-                        }),
-                    ),
+                        };
+                        crate::aver_generated::domain::ast::Expr__ExprCallDirect(__field1, __field0)
+                    }),
                     slots,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
-                let name = __name_fields.0.clone();
-                let args = &__name_fields.1;
+                let name = __name_fields.1.clone();
+                let args = &__name_fields.0;
                 (
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, {
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
+                        let __field0 = name;
+                        let __field1 = {
                             let __arg24 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                                 args,
                                 slots.clone(),
                                 __arg24,
                             )
-                        }),
-                    ),
+                        };
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                            __field1, __field0,
+                        )
+                    }),
                     slots,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(__id_fields) => {
-                let id = __id_fields.0.clone();
-                let args = &__id_fields.1;
+                let id = __id_fields.1.clone();
+                let args = &__id_fields.0;
                 (
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId({
+                        let __field0 = id;
+                        let __field1 = {
                             let __arg25 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                                 args,
                                 slots.clone(),
                                 __arg25,
                             )
-                        }),
-                    ),
+                        };
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(
+                            __field1, __field0,
+                        )
+                    }),
                     slots,
                 )
             }
@@ -1342,16 +1352,18 @@ pub fn resolveCallExpr(
 ) {
     crate::cancel_checkpoint();
     (
-        crate::aver_generated::domain::ast::Expr::ExprCall(
-            crate::aver_generated::domain::ast::Expr__ExprCall(name, {
+        crate::aver_generated::domain::ast::Expr::ExprCall({
+            let __field0 = name;
+            let __field1 = {
                 let __arg3 @ _ = aver_rt::list_builder_new(0usize);
                 crate::aver_generated::domain::resolver::core::resolveExprs__collected(
                     args,
                     slots.clone(),
                     __arg3,
                 )
-            }),
-        ),
+            };
+            crate::aver_generated::domain::ast::Expr__ExprCall(__field1, __field0)
+        }),
         slots,
     )
 }

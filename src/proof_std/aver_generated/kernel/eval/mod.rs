@@ -175,14 +175,14 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
                         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(
                             __c_fields,
                         ) => {
-                            let c = __c_fields.0.clone();
-                            let xs = &__c_fields.1;
+                            let c = __c_fields.1.clone();
+                            let xs = &__c_fields.0;
                             {
                                 let __t = b;
                                 match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__d_fields) => {
-            let d = __d_fields.0.clone();
-            let ys = &__d_fields.1;
+            let d = __d_fields.1.clone();
+            let ys = &__d_fields.0;
             { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(xs.len() as i64).add(&aver_rt::AverInt::from_i64(ys.len() as i64)); crate::proof_std::aver_generated::kernel::eval::sameCtor(c, d, __arg14) }; crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
         },
         _ => {
@@ -220,8 +220,8 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__name_fields) => {
-                let name = __name_fields.0.clone();
-                let args = &__name_fields.1;
+                let name = __name_fields.1.clone();
+                let args = &__name_fields.0;
                 crate::proof_std::aver_generated::kernel::eval::evalBuiltin(name, args)
             }
             _ => None,

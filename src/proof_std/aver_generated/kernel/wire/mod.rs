@@ -633,8 +633,8 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 })
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
-                let f = __f_fields.0.clone();
-                let xs = &__f_fields.1;
+                let f = __f_fields.1.clone();
+                let xs = &__f_fields.0;
                 {
                     let __arg27 @ _ = aver_rt::AverStr::from({
                         let mut __b = {
@@ -653,8 +653,8 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
-                let f = __f_fields.0.clone();
-                let xs = &__f_fields.1;
+                let f = __f_fields.1.clone();
+                let xs = &__f_fields.0;
                 {
                     let __arg29 @ _ = aver_rt::AverStr::from({
                         let mut __b = {
@@ -673,8 +673,8 @@ pub fn termText(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) ->
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
-                let c = __c_fields.0.clone();
-                let xs = &__c_fields.1;
+                let c = __c_fields.1.clone();
+                let xs = &__c_fields.0;
                 {
                     let __arg31 @ _ = aver_rt::AverStr::from({
                         let mut __b = {
@@ -1249,8 +1249,8 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PUnfold(__f_fields) => {
-                let f = __f_fields.0.clone();
-                let k = __f_fields.1.clone();
+                let f = __f_fields.1.clone();
+                let k = __f_fields.0.clone();
                 let xs = &__f_fields.2;
                 let ys = &__f_fields.3;
                 let pre = &__f_fields.4;
@@ -2109,8 +2109,8 @@ pub fn proofText(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof)
                 })
             }
             crate::proof_std::aver_generated::kernel::proof::Proof__view::PLinear(__g_fields) => {
-                let g = &__g_fields.0;
-                let v = __g_fields.1.clone();
+                let g = &__g_fields.1;
+                let v = __g_fields.0.clone();
                 let hs = &__g_fields.2;
                 let ws = &__g_fields.3;
                 let cs = &__g_fields.4;

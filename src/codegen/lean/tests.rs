@@ -89,6 +89,7 @@ fn empty_ctx() -> CodegenContext {
         rust_forced_inline: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),
+        rust_field_layout: Default::default(),
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),

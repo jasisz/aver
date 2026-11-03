@@ -179,47 +179,59 @@ pub fn resolveCallsInExpr(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCall(__name_fields) => {
-                let name = __name_fields.0.clone();
-                let args = &__name_fields.1;
+                let name = __name_fields.1.clone();
+                let args = &__name_fields.0;
                 crate::aver_generated::domain::resolver::calls::resolveOneCall(name, args, fnMap)
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
-                let fnId = __fnId_fields.0.clone();
-                let args = &__fnId_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprCallDirect(
-                    crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, {
+                let fnId = __fnId_fields.1.clone();
+                let args = &__fnId_fields.0;
+                crate::aver_generated::domain::ast::Expr::ExprCallDirect({
+                    let __field0 = fnId;
+                    let __field1 = {
                         let __arg14 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg14)
-                    }),
-                )
+                    };
+                    crate::aver_generated::domain::ast::Expr__ExprCallDirect(__field1, __field0)
+                })
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
-                let name = __name_fields.0.clone();
-                let args = &__name_fields.1;
+                let name = __name_fields.1.clone();
+                let args = &__name_fields.0;
                 match crate::aver_generated::domain::ast::builtinNameToId(name.clone()) {
-                    Some(id @ _) => crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
+                    Some(id @ _) => crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId({
+                        let __field0 = id;
+                        let __field1 = {
                             let __arg15 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg15)
-                        }),
-                    ),
-                    None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, {
+                        };
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(
+                            __field1, __field0,
+                        )
+                    }),
+                    None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
+                        let __field0 = name;
+                        let __field1 = {
                             let __arg16 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg16)
-                        }),
-                    ),
+                        };
+                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
+                            __field1, __field0,
+                        )
+                    }),
                 }
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(__id_fields) => {
-                let id = __id_fields.0.clone();
-                let args = &__id_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
-                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
+                let id = __id_fields.1.clone();
+                let args = &__id_fields.0;
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId({
+                    let __field0 = id;
+                    let __field1 = {
                         let __arg17 @ _ = aver_rt::list_builder_new(0usize);
                         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(args, fnMap, __arg17)
-                    }),
-                )
+                    };
+                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(__field1, __field0)
+                })
             }
             _ => crate::aver_generated::domain::resolver::calls::resolveCallsInExprInternal(
                 expr, fnMap,
@@ -580,15 +592,19 @@ pub fn resolveOneCall(
     match (fnMap).get(&name) {
         Some(fnId @ _) => {
             let fnId = fnId.clone();
-            crate::aver_generated::domain::ast::Expr::ExprCallDirect(
-                crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId, resolvedArgs),
-            )
+            crate::aver_generated::domain::ast::Expr::ExprCallDirect({
+                let __field0 = fnId;
+                let __field1 = resolvedArgs;
+                crate::aver_generated::domain::ast::Expr__ExprCallDirect(__field1, __field0)
+            })
         }
         None => {
             if name.ends_with(".update") {
-                crate::aver_generated::domain::ast::Expr::ExprCall(
-                    crate::aver_generated::domain::ast::Expr__ExprCall(name, resolvedArgs),
-                )
+                crate::aver_generated::domain::ast::Expr::ExprCall({
+                    let __field0 = name;
+                    let __field1 = resolvedArgs;
+                    crate::aver_generated::domain::ast::Expr__ExprCall(__field1, __field0)
+                })
             } else {
                 if crate::aver_generated::domain::resolver::calls::isBuiltinCallName(name.clone()) {
                     crate::aver_generated::domain::resolver::calls::resolveBuiltinCall(
@@ -596,9 +612,11 @@ pub fn resolveOneCall(
                         &resolvedArgs,
                     )
                 } else {
-                    crate::aver_generated::domain::ast::Expr::ExprCall(
-                        crate::aver_generated::domain::ast::Expr__ExprCall(name, resolvedArgs),
-                    )
+                    crate::aver_generated::domain::ast::Expr::ExprCall({
+                        let __field0 = name;
+                        let __field1 = resolvedArgs;
+                        crate::aver_generated::domain::ast::Expr__ExprCall(__field1, __field0)
+                    })
                 }
             }
         }
@@ -613,28 +631,28 @@ pub fn resolveBuiltinCall(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     if crate::aver_generated::domain::resolver::calls::isLiteralDivisorCall(&name, resolvedArgs) {
-        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-            crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                ::aver_rt::str_lit!("Result.withDefault"),
-                aver_rt::AverList::from_vec(vec![
-                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                        crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
-                            name,
-                            resolvedArgs.clone(),
-                        ),
-                    ),
-                    crate::aver_generated::domain::ast::Expr::ExprInt(
-                        crate::aver_generated::domain::ast::Expr__ExprInt(
-                            aver_rt::AverInt::from_i64(0),
-                        ),
-                    ),
-                ]),
-            ),
-        )
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
+            let __field0 = ::aver_rt::str_lit!("Result.withDefault");
+            let __field1 = aver_rt::AverList::from_vec(vec![
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
+                    let __field0 = name;
+                    let __field1 = resolvedArgs.clone();
+                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0)
+                }),
+                crate::aver_generated::domain::ast::Expr::ExprInt(
+                    crate::aver_generated::domain::ast::Expr__ExprInt(aver_rt::AverInt::from_i64(
+                        0,
+                    )),
+                ),
+            ]);
+            crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0)
+        })
     } else {
-        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-            crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, resolvedArgs.clone()),
-        )
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
+            let __field0 = name;
+            let __field1 = resolvedArgs.clone();
+            crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0)
+        })
     }
 }
 

@@ -93,8 +93,8 @@ impl aver_rt::WalkHash for Proof {
                     return 0;
                 }
                 let left = left - 1;
-                std::hash::Hash::hash(&f.0, state);
                 std::hash::Hash::hash(&f.1, state);
+                std::hash::Hash::hash(&f.0, state);
                 let left = aver_rt::shared_items::stream_items(
                     f.2.iter(),
                     state,
@@ -351,8 +351,8 @@ impl aver_rt::WalkHash for Proof {
             }
             Proof__view::PLinear(f) => {
                 std::hash::Hash::hash(&23u32, state);
-                let left = aver_rt::WalkHash::stream(&f.0, state, left);
-                std::hash::Hash::hash(&f.1, state);
+                let left = aver_rt::WalkHash::stream(&f.1, state, left);
+                std::hash::Hash::hash(&f.0, state);
                 std::hash::Hash::hash(&f.2, state);
                 std::hash::Hash::hash(&f.3, state);
                 std::hash::Hash::hash(&f.4, state);
@@ -393,8 +393,8 @@ impl aver_rt::WalkHash for Proof {
             }),
             Proof__view::PUnfold(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&4u32, h);
-                std::hash::Hash::hash(&f.0, h);
                 std::hash::Hash::hash(&f.1, h);
+                std::hash::Hash::hash(&f.0, h);
                 std::hash::Hasher::write_u64(
                     h,
                     aver_rt::shared_items::parts_list(&f.2, walk, |x, walk| {
@@ -584,8 +584,8 @@ impl aver_rt::WalkHash for Proof {
             }),
             Proof__view::PLinear(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&23u32, h);
-                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.0, walk));
-                std::hash::Hash::hash(&f.1, h);
+                std::hash::Hasher::write_u64(h, aver_rt::WalkHash::walk_hash(&f.1, walk));
+                std::hash::Hash::hash(&f.0, h);
                 std::hash::Hash::hash(&f.2, h);
                 std::hash::Hash::hash(&f.3, h);
                 std::hash::Hash::hash(&f.4, h);
@@ -691,11 +691,11 @@ impl aver_rt::thin::HandOver for Proof__PCongr {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash)]
+#[derive(Clone, Eq, Hash)]
 #[repr(C)]
 pub struct Proof__PUnfold(
-    pub AverStr,
     pub aver_rt::AverInt,
+    pub AverStr,
     pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     pub aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     pub aver_rt::AverList<Proof>,
@@ -704,8 +704,8 @@ pub struct Proof__PUnfold(
 impl PartialEq for Proof__PUnfold {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
-            || self.1 == other.1
-                && self.0 == other.0
+            || self.0 == other.0
+                && self.1 == other.1
                 && self.2 == other.2
                 && self.3 == other.3
                 && self.4 == other.4
@@ -714,8 +714,8 @@ impl PartialEq for Proof__PUnfold {
 
 impl aver_rt::WalkEq for Proof__PUnfold {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.1 == other.1
-            && self.0 == other.0
+        self.0 == other.0
+            && self.1 == other.1
             && aver_rt::shared_items::eq_list(&self.2, &other.2, walk, |x, y, walk| {
                 (*x).walk_eq(&(*y), walk)
             })
@@ -729,6 +729,18 @@ impl aver_rt::WalkEq for Proof__PUnfold {
 }
 
 impl aver_rt::thin::HandOver for Proof__PUnfold {}
+
+impl std::fmt::Debug for Proof__PUnfold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Proof__PUnfold")
+            .field(&self.1)
+            .field(&self.0)
+            .field(&self.2)
+            .field(&self.3)
+            .field(&self.4)
+            .finish()
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash)]
 #[repr(C)]
@@ -1300,11 +1312,11 @@ impl aver_rt::thin::HandOver for Proof__PRing {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash)]
+#[derive(Clone, Eq, Hash)]
 #[repr(C)]
 pub struct Proof__PLinear(
-    pub crate::proof_kernel::aver_generated::kernel::term::Term,
     pub bool,
+    pub crate::proof_kernel::aver_generated::kernel::term::Term,
     pub aver_rt::AverList<AverStr>,
     pub aver_rt::AverIntList,
     pub aver_rt::AverList<Cut>,
@@ -1313,8 +1325,8 @@ pub struct Proof__PLinear(
 impl PartialEq for Proof__PLinear {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
-            || self.1 == other.1
-                && self.0 == other.0
+            || self.0 == other.0
+                && self.1 == other.1
                 && self.2 == other.2
                 && self.3 == other.3
                 && self.4 == other.4
@@ -1323,8 +1335,8 @@ impl PartialEq for Proof__PLinear {
 
 impl aver_rt::WalkEq for Proof__PLinear {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.1 == other.1
-            && self.0.walk_eq(&other.0, walk)
+        self.0 == other.0
+            && self.1.walk_eq(&other.1, walk)
             && self.2 == other.2
             && self.3 == other.3
             && self.4 == other.4
@@ -1333,7 +1345,19 @@ impl aver_rt::WalkEq for Proof__PLinear {
 
 impl aver_rt::thin::HandOver for Proof__PLinear {
     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
-        aver_rt::thin::HandOver::hand_over(self.0, pending);
+        aver_rt::thin::HandOver::hand_over(self.1, pending);
+    }
+}
+
+impl std::fmt::Debug for Proof__PLinear {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Proof__PLinear")
+            .field(&self.1)
+            .field(&self.0)
+            .field(&self.2)
+            .field(&self.3)
+            .field(&self.4)
+            .finish()
     }
 }
 
@@ -1534,8 +1558,8 @@ impl Ord for Proof {
                 .then_with(|| (&a.7).cmp((&b.7)))
                 .then_with(|| (&a.8).cmp((&b.8))),
             Some(Proof__pair::PLinear(a, b)) => std::cmp::Ordering::Equal
-                .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.2).cmp((&b.2)))
                 .then_with(|| (&a.3).cmp((&b.3)))
                 .then_with(|| (&a.4).cmp((&b.4))),
@@ -1583,8 +1607,8 @@ impl Ord for Proof {
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
             Some(Proof__pair::PUnfold(a, b)) => std::cmp::Ordering::Equal
-                .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.2).cmp((&b.2)))
                 .then_with(|| (&a.3).cmp((&b.3)))
                 .then_with(|| (&a.4).cmp((&b.4))),
@@ -1609,8 +1633,8 @@ impl aver_rt::AverDisplay for Proof {
             Proof__view::PUnfold(f) => format!(
                 "PUnfold({})",
                 vec![
-                    (&f.0).aver_display_inner(),
                     (&f.1).aver_display_inner(),
+                    (&f.0).aver_display_inner(),
                     (&f.2).aver_display_inner(),
                     (&f.3).aver_display_inner(),
                     (&f.4).aver_display_inner()
@@ -1765,8 +1789,8 @@ impl aver_rt::AverDisplay for Proof {
             Proof__view::PLinear(f) => format!(
                 "PLinear({})",
                 vec![
-                    (&f.0).aver_display_inner(),
                     (&f.1).aver_display_inner(),
+                    (&f.0).aver_display_inner(),
                     (&f.2).aver_display_inner(),
                     (&f.3).aver_display_inner(),
                     (&f.4).aver_display_inner()

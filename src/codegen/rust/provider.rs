@@ -561,6 +561,7 @@ pub(super) fn emit_represented_type_codec(
             name,
             variants,
             super::representation::is_thin_sum(type_def, ctx),
+            super::field_layout::of_def(type_def, ctx),
             &canonical,
             &field_type,
         ),
@@ -641,18 +642,29 @@ fn emit_sum_codec(
     name: &str,
     variants: &[TypeVariant],
     thin: bool,
+    layout: &[Option<Vec<usize>>],
     canonical: &str,
     field_type: &dyn Fn(&str) -> String,
 ) -> String {
+    // Where the struct of each constructor keeps each field (see
+    // `field_layout`).
+    let positions_of = |index: usize| layout.get(index).and_then(|p| p.as_deref());
     let encode_arms = variants
         .iter()
-        .map(|variant| {
+        .enumerate()
+        .map(|(index, variant)| {
             // A thin sum is matched through its view, its fields borrowed.
             let case = match thin {
                 true => format!("{name}__view"),
                 false => "Self".to_string(),
             };
-            let (bindings, fields) = variant_field_refs(thin, "field", variant.fields.len());
+            let (bindings, fields) = match thin {
+                true => (
+                    "field".to_string(),
+                    super::field_layout::field_refs("field", variant.fields.len(), positions_of(index)),
+                ),
+                false => variant_field_refs(false, "field", variant.fields.len()),
+            };
             let pattern = if fields.is_empty() {
                 format!("{case}::{}", variant.name)
             } else {
@@ -677,7 +689,8 @@ fn emit_sum_codec(
         .join("\n");
     let decode_arms = variants
         .iter()
-        .map(|variant| {
+        .enumerate()
+        .map(|(index, variant)| {
             let decoded = variant
                 .fields
                 .iter()
@@ -694,7 +707,9 @@ fn emit_sum_codec(
                 format!("Self::{}", variant.name)
             } else if thin {
                 let payload = format!("{name}__{}", variant.name);
-                format!("Self::{}({payload}({}))", variant.name, decoded.join(", "))
+                let payload =
+                    super::field_layout::construction(&payload, &decoded, positions_of(index));
+                format!("Self::{}({payload})", variant.name)
             } else {
                 format!("Self::{}({})", variant.name, decoded.join(", "))
             };

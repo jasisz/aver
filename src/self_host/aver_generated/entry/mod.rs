@@ -655,44 +655,52 @@ pub fn shiftFnIdsInExprCalls(
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCall(__name_fields) => {
-                let name = __name_fields.0.clone();
-                let args = &__name_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprCall(
-                    crate::aver_generated::domain::ast::Expr__ExprCall(name, {
+                let name = __name_fields.1.clone();
+                let args = &__name_fields.0;
+                crate::aver_generated::domain::ast::Expr::ExprCall({
+                    let __field0 = name;
+                    let __field1 = {
                         let __arg17 @ _ = aver_rt::list_builder_new(0usize);
                         shiftFnIdsInExprs__collected(args, offset, __arg17)
-                    }),
-                )
+                    };
+                    crate::aver_generated::domain::ast::Expr__ExprCall(__field1, __field0)
+                })
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
-                let fnId = __fnId_fields.0.clone();
-                let args = &__fnId_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprCallDirect(
-                    crate::aver_generated::domain::ast::Expr__ExprCallDirect(fnId.add(&offset), {
+                let fnId = __fnId_fields.1.clone();
+                let args = &__fnId_fields.0;
+                crate::aver_generated::domain::ast::Expr::ExprCallDirect({
+                    let __field0 = fnId.add(&offset);
+                    let __field1 = {
                         let __arg18 @ _ = aver_rt::list_builder_new(0usize);
                         shiftFnIdsInExprs__collected(args, offset, __arg18)
-                    }),
-                )
+                    };
+                    crate::aver_generated::domain::ast::Expr__ExprCallDirect(__field1, __field0)
+                })
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
-                let name = __name_fields.0.clone();
-                let args = &__name_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
-                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(name, {
+                let name = __name_fields.1.clone();
+                let args = &__name_fields.0;
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
+                    let __field0 = name;
+                    let __field1 = {
                         let __arg19 @ _ = aver_rt::list_builder_new(0usize);
                         shiftFnIdsInExprs__collected(args, offset, __arg19)
-                    }),
-                )
+                    };
+                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0)
+                })
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltinId(__id_fields) => {
-                let id = __id_fields.0.clone();
-                let args = &__id_fields.1;
-                crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
-                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(id, {
+                let id = __id_fields.1.clone();
+                let args = &__id_fields.0;
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId({
+                    let __field0 = id;
+                    let __field1 = {
                         let __arg20 @ _ = aver_rt::list_builder_new(0usize);
                         shiftFnIdsInExprs__collected(args, offset, __arg20)
-                    }),
-                )
+                    };
+                    crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(__field1, __field0)
+                })
             }
             crate::aver_generated::domain::ast::Expr__view::ExprMatch(__scrutinee_fields) => {
                 let scrutinee = &__scrutinee_fields.0;

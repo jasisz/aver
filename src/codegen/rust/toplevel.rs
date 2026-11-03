@@ -89,6 +89,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             through_collection(td, ctx),
             ctx.rust_lazy_sums
                 .contains(&crate::codegen::common::backend_type_def_key(ctx, td)),
+            super::field_layout::of_def(td, ctx),
         ),
         TypeDef::Product { name, fields, .. } => emit_product_type(
             name,
@@ -107,11 +108,18 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
 }
 
 fn derive_line(capabilities: RepresentationCapabilities) -> String {
+    derive_line_with(capabilities, true)
+}
+
+/// [`derive_line`], with `Debug` derived or written by hand (`debug`).
+fn derive_line_with(capabilities: RepresentationCapabilities, debug: bool) -> String {
     let mut traits = Vec::new();
     if capabilities.clone {
         traits.push("Clone");
     }
-    traits.push("Debug");
+    if debug {
+        traits.push("Debug");
+    }
     if capabilities.partial_eq {
         traits.push("PartialEq");
     }
@@ -318,6 +326,51 @@ impl Walking<'_> {
             ),
             _ => format!("aver_rt::WalkHash::walk_hash(&{v}, walk)"),
         }
+    }
+}
+
+/// The `==` of a thin constructor's struct by its [`EqPlan`]: the fields
+/// in the plan's order (see [`fields_equal`]), after the words of its
+/// scalar block, read as one block of memory against the other's, when the
+/// plan reads them first (an `Int` equal by its word is equal; one equal
+/// otherwise is found by the fields).
+fn plan_test(
+    plan: &super::field_layout::EqPlan,
+    walking: Option<Walking<'_>>,
+    a: impl Fn(usize) -> String,
+    b: impl Fn(usize) -> String,
+) -> String {
+    let fields = fields_equal(&plan.order, walking, &a, &b);
+    if !plan.words_first {
+        return fields;
+    }
+    let words: Vec<String> = plan
+        .block_fields()
+        .iter()
+        .map(|&d| match plan.kinds[d] {
+            super::field_layout::Bitwise::Implies => {
+                format!("aver_rt::AverInt::same_word(&{}, &{})", a(d), b(d))
+            }
+            _ => format!("{} == {}", a(d), b(d)),
+        })
+        .collect();
+    format!("({}) || {fields}", words.join(" && "))
+}
+
+/// [`variant_field_refs`], reading the fields of a thin constructor's
+/// struct where `positions` lays them out (see `field_layout`).
+fn payload_field_refs(
+    thin: bool,
+    stem: &str,
+    count: usize,
+    positions: Option<&[usize]>,
+) -> (String, Vec<String>) {
+    match thin {
+        true => (
+            stem.to_string(),
+            super::field_layout::field_refs(stem, count, positions),
+        ),
+        false => variant_field_refs(false, stem, count),
     }
 }
 
@@ -528,6 +581,7 @@ fn emit_sum_type(
     thin: bool,
     through: bool,
     lazy: bool,
+    layout: &[Option<Vec<usize>>],
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
@@ -538,6 +592,10 @@ fn emit_sum_type(
     let view = format!("{name}__view");
     let pair = format!("{name}__pair");
     let mut payloads = String::new();
+    // Where the struct of each constructor keeps each declared field (see
+    // `field_layout`): `None` where the fields sit as declared.
+    let positions_of = |i: usize| layout.get(i).and_then(|p| p.as_deref());
+    let at = super::field_layout::at;
     // The order `==` compares each constructor's fields in, where it is not
     // the declared one (see `cheap_fields_first`).
     let eq_orders: Vec<Option<Vec<usize>>> = variants
@@ -591,24 +649,30 @@ fn emit_sum_type(
         if thin {
             let payload = format!("{name}__{}", v.name);
             writeln!(body, "        {i} {}({payload}),", v.name).unwrap();
-            let fields: Vec<String> = field_types
+            // The fields sit in the order `field_layout` chose: a field read
+            // in one role in several constructors at one offset in each,
+            // the scalars `==` reads first in one block, the rest by
+            // alignment. Written in that order, `repr(C)` keeps it; Rust
+            // would otherwise move the fields with a niche to the front.
+            let positions = positions_of(i);
+            let physical = super::field_layout::order(positions, v.fields.len());
+            let fields: Vec<String> = physical
                 .iter()
-                .map(|ty| format!("{visibility}{ty}"))
+                .map(|&d| format!("{visibility}{}", field_types[d]))
                 .collect();
+            let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
+            let plan =
+                super::field_layout::eq_plan(&types, order.as_deref(), positions, ctx, scope);
             // A payload is equal to itself without reading it when `==` is
-            // reflexive: both sides are one node.
+            // reflexive: both sides are one node. A derived `==` reads the
+            // fields in memory order: it serves when that is the plan's.
             let reflexive = capabilities.partial_eq && capabilities.eq;
-            let derived = derive_line(without_derived_eq(
-                capabilities,
-                order.is_some() || reflexive,
-            ));
+            let own_eq = reflexive || plan.order != physical || plan.words_first;
+            let derived = derive_line_with(
+                without_derived_eq(capabilities, own_eq),
+                positions.is_none(),
+            );
             writeln!(payloads, "\n{derived}").unwrap();
-            // The fields stay in their declared order: a field every
-            // constructor declares first (a word of metadata, say) is then at
-            // one offset in every node, and a reader of it over the
-            // constructors loads it at that offset instead of looking the
-            // offset up in a table by tag. Rust would otherwise move the
-            // fields with a niche to the front.
             writeln!(payloads, "#[repr(C)]").unwrap();
             writeln!(
                 payloads,
@@ -616,10 +680,10 @@ fn emit_sum_type(
                 fields.join(", ")
             )
             .unwrap();
-            let (this, that) = (|i| format!("self.{i}"), |i| format!("other.{i}"));
-            if order.is_some() || reflexive {
-                let declared: Vec<usize> = (0..v.fields.len()).collect();
-                let test = fields_equal(order.as_ref().unwrap_or(&declared), None, this, that);
+            let this = |d| format!("self.{}", at(positions, d));
+            let that = |d| format!("other.{}", at(positions, d));
+            if capabilities.partial_eq && own_eq {
+                let test = plan_test(&plan, None, this, that);
                 let test = match reflexive {
                     true => format!("std::ptr::eq(self, other) || {test}"),
                     false => test,
@@ -627,20 +691,29 @@ fn emit_sum_type(
                 payloads.push_str(&partial_eq_impl(&payload, &test));
             }
             if walks_on(i) {
-                let order = order
-                    .clone()
-                    .unwrap_or_else(|| (0..v.fields.len()).collect());
-                let test = fields_equal(&order, Some(walking_in(i)), this, that);
+                let test = plan_test(&plan, Some(walking_in(i)), this, that);
                 payloads.push_str(&walk_eq_impl(&payload, &test));
             }
-            let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
             payloads.push_str(&hand_over_impl(
                 &payload,
                 &types,
-                |i| i.to_string(),
+                |d| at(positions, d).to_string(),
                 ctx,
                 scope,
             ));
+            // Printed in declared order, as a derived `Debug` would print
+            // the fields sitting as declared.
+            if positions.is_some() {
+                let printed: Vec<String> = (0..v.fields.len())
+                    .map(|d| format!(".field(&{})", this(d)))
+                    .collect();
+                write!(
+                    payloads,
+                    "\nimpl std::fmt::Debug for {payload} {{\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n        f.debug_tuple({payload:?}){}.finish()\n    }}\n}}\n",
+                    printed.join("")
+                )
+                .unwrap();
+            }
         } else {
             writeln!(body, "    {}({}),", v.name, field_types.join(", ")).unwrap();
         }
@@ -683,7 +756,7 @@ fn emit_sum_type(
                     writeln!(from_parts, "{ctor} => aver_rt::shared_hash::tag_hash({i}),").unwrap();
                     continue;
                 }
-                let parts = hash_parts(walking_in(i), |j| format!("f.{j}"));
+                let parts = hash_parts(walking_in(i), |j| format!("f.{}", at(positions_of(i), j)));
                 writeln!(
                     stream,
                     "{ctor}(f) => {{ {tag}state);{} left }}",
@@ -846,13 +919,13 @@ fn emit_sum_type(
         false => (name, "self"),
     };
     if capabilities.eq && capabilities.hash && representation.orderable {
-        let mut by_name: Vec<&TypeVariant> = variants.iter().collect();
-        by_name.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut by_name: Vec<(usize, &TypeVariant)> = variants.iter().enumerate().collect();
+        by_name.sort_by(|(_, a), (_, b)| a.name.cmp(&b.name));
         writeln!(out).unwrap();
         writeln!(out, "impl {} {{", name).unwrap();
         writeln!(out, "    fn aver_key_rank(&self) -> usize {{").unwrap();
         writeln!(out, "        match {matched} {{").unwrap();
-        for (rank, v) in by_name.iter().enumerate() {
+        for (rank, (_, v)) in by_name.iter().enumerate() {
             if v.fields.is_empty() {
                 writeln!(out, "            {}::{} => {},", case, v.name, rank).unwrap();
             } else {
@@ -892,12 +965,13 @@ fn emit_sum_type(
             false => writeln!(out, "        match (self, other) {{"),
         }
         .unwrap();
-        for v in &by_name {
+        for &(index, v) in &by_name {
             if v.fields.is_empty() {
                 continue;
             }
-            let (binds_a, refs_a) = variant_field_refs(thin, "a", v.fields.len());
-            let (binds_b, refs_b) = variant_field_refs(thin, "b", v.fields.len());
+            let positions = positions_of(index);
+            let (binds_a, refs_a) = payload_field_refs(thin, "a", v.fields.len(), positions);
+            let (binds_b, refs_b) = payload_field_refs(thin, "b", v.fields.len(), positions);
             match thin {
                 true => writeln!(
                     out,
@@ -929,7 +1003,7 @@ fn emit_sum_type(
         writeln!(out, "impl aver_rt::AverDisplay for {} {{", name).unwrap();
         writeln!(out, "    fn aver_display(&self) -> String {{").unwrap();
         writeln!(out, "        match {matched} {{").unwrap();
-        for v in variants {
+        for (index, v) in variants.iter().enumerate() {
             if v.fields.is_empty() {
                 writeln!(
                     out,
@@ -938,7 +1012,8 @@ fn emit_sum_type(
                 )
                 .unwrap();
             } else {
-                let (bindings, fields) = variant_field_refs(thin, "f", v.fields.len());
+                let (bindings, fields) =
+                    payload_field_refs(thin, "f", v.fields.len(), positions_of(index));
                 let display_parts: Vec<String> = fields
                     .iter()
                     .map(|b| format!("{}.aver_display_inner()", b))
@@ -2643,6 +2718,7 @@ mod tests {
             rust_forced_inline: Default::default(),
             knowing_trusted: Default::default(),
             rust_knowing: Default::default(),
+            rust_field_layout: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),

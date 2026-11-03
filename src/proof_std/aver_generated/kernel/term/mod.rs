@@ -620,9 +620,9 @@ impl aver_rt::WalkHash for Term {
             }
             Term__view::TCall(f) => {
                 std::hash::Hash::hash(&7u32, state);
-                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
                 let left = aver_rt::shared_items::stream_items(
-                    f.1.iter(),
+                    f.0.iter(),
                     state,
                     left,
                     |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
@@ -631,9 +631,9 @@ impl aver_rt::WalkHash for Term {
             }
             Term__view::TBi(f) => {
                 std::hash::Hash::hash(&8u32, state);
-                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
                 let left = aver_rt::shared_items::stream_items(
-                    f.1.iter(),
+                    f.0.iter(),
                     state,
                     left,
                     |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
@@ -658,9 +658,9 @@ impl aver_rt::WalkHash for Term {
             }
             Term__view::TCtor(f) => {
                 std::hash::Hash::hash(&11u32, state);
-                std::hash::Hash::hash(&f.0, state);
+                std::hash::Hash::hash(&f.1, state);
                 let left = aver_rt::shared_items::stream_items(
-                    f.1.iter(),
+                    f.0.iter(),
                     state,
                     left,
                     |x, state, left| aver_rt::WalkHash::stream(&(*x), state, left),
@@ -769,20 +769,20 @@ impl aver_rt::WalkHash for Term {
             }),
             Term__view::TCall(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&7u32, h);
-                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
                 std::hash::Hasher::write_u64(
                     h,
-                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                    aver_rt::shared_items::parts_list(&f.0, walk, |x, walk| {
                         aver_rt::WalkHash::walk_hash(&(*x), walk)
                     }),
                 );
             }),
             Term__view::TBi(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&8u32, h);
-                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
                 std::hash::Hasher::write_u64(
                     h,
-                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                    aver_rt::shared_items::parts_list(&f.0, walk, |x, walk| {
                         aver_rt::WalkHash::walk_hash(&(*x), walk)
                     }),
                 );
@@ -799,10 +799,10 @@ impl aver_rt::WalkHash for Term {
             }),
             Term__view::TCtor(f) => walk.node(self, |walk, h| {
                 std::hash::Hash::hash(&11u32, h);
-                std::hash::Hash::hash(&f.0, h);
+                std::hash::Hash::hash(&f.1, h);
                 std::hash::Hasher::write_u64(
                     h,
-                    aver_rt::shared_items::parts_list(&f.1, walk, |x, walk| {
+                    aver_rt::shared_items::parts_list(&f.0, walk, |x, walk| {
                         aver_rt::WalkHash::walk_hash(&(*x), walk)
                     }),
                 );
@@ -941,20 +941,20 @@ impl aver_rt::thin::HandOver for Term__TGet {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash)]
+#[derive(Clone, Eq, Hash)]
 #[repr(C)]
-pub struct Term__TCall(pub AverStr, pub aver_rt::AverList<Term>);
+pub struct Term__TCall(pub aver_rt::AverList<Term>, pub AverStr);
 
 impl PartialEq for Term__TCall {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+        std::ptr::eq(self, other) || self.1 == other.1 && self.0 == other.0
     }
 }
 
 impl aver_rt::WalkEq for Term__TCall {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0 == other.0
-            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+        self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
                 (*x).walk_eq(&(*y), walk)
             })
     }
@@ -962,26 +962,44 @@ impl aver_rt::WalkEq for Term__TCall {
 
 impl aver_rt::thin::HandOver for Term__TCall {}
 
-#[derive(Clone, Debug, Eq, Hash)]
+impl std::fmt::Debug for Term__TCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Term__TCall")
+            .field(&self.1)
+            .field(&self.0)
+            .finish()
+    }
+}
+
+#[derive(Clone, Eq, Hash)]
 #[repr(C)]
-pub struct Term__TBi(pub AverStr, pub aver_rt::AverList<Term>);
+pub struct Term__TBi(pub aver_rt::AverList<Term>, pub AverStr);
 
 impl PartialEq for Term__TBi {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+        std::ptr::eq(self, other) || self.1 == other.1 && self.0 == other.0
     }
 }
 
 impl aver_rt::WalkEq for Term__TBi {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0 == other.0
-            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+        self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
                 (*x).walk_eq(&(*y), walk)
             })
     }
 }
 
 impl aver_rt::thin::HandOver for Term__TBi {}
+
+impl std::fmt::Debug for Term__TBi {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Term__TBi")
+            .field(&self.1)
+            .field(&self.0)
+            .finish()
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash)]
 #[repr(C)]
@@ -1028,26 +1046,35 @@ impl aver_rt::thin::HandOver for Term__TNeg {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash)]
+#[derive(Clone, Eq, Hash)]
 #[repr(C)]
-pub struct Term__TCtor(pub AverStr, pub aver_rt::AverList<Term>);
+pub struct Term__TCtor(pub aver_rt::AverList<Term>, pub AverStr);
 
 impl PartialEq for Term__TCtor {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1
+        std::ptr::eq(self, other) || self.1 == other.1 && self.0 == other.0
     }
 }
 
 impl aver_rt::WalkEq for Term__TCtor {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0 == other.0
-            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+        self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
                 (*x).walk_eq(&(*y), walk)
             })
     }
 }
 
 impl aver_rt::thin::HandOver for Term__TCtor {}
+
+impl std::fmt::Debug for Term__TCtor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Term__TCtor")
+            .field(&self.1)
+            .field(&self.0)
+            .finish()
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash)]
 #[repr(C)]
@@ -1286,17 +1313,17 @@ impl Ord for Term {
         }
         match Term::view_pair(self, other) {
             Some(Term__pair::TBi(a, b)) => std::cmp::Ordering::Equal
-                .then_with(|| (&a.0).cmp((&b.0)))
-                .then_with(|| (&a.1).cmp((&b.1))),
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.0).cmp((&b.0))),
             Some(Term__pair::TBool(a, b)) => {
                 std::cmp::Ordering::Equal.then_with(|| (&a.0).cmp((&b.0)))
             }
             Some(Term__pair::TCall(a, b)) => std::cmp::Ordering::Equal
-                .then_with(|| (&a.0).cmp((&b.0)))
-                .then_with(|| (&a.1).cmp((&b.1))),
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.0).cmp((&b.0))),
             Some(Term__pair::TCtor(a, b)) => std::cmp::Ordering::Equal
-                .then_with(|| (&a.0).cmp((&b.0)))
-                .then_with(|| (&a.1).cmp((&b.1))),
+                .then_with(|| (&a.1).cmp((&b.1)))
+                .then_with(|| (&a.0).cmp((&b.0))),
             Some(Term__pair::TGet(a, b)) => std::cmp::Ordering::Equal
                 .then_with(|| (&a.0).cmp((&b.0)))
                 .then_with(|| (&a.1).cmp((&b.1))),
@@ -1355,11 +1382,11 @@ impl aver_rt::AverDisplay for Term {
             ),
             Term__view::TCall(f) => format!(
                 "TCall({})",
-                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
+                vec![(&f.1).aver_display_inner(), (&f.0).aver_display_inner()].join(", ")
             ),
             Term__view::TBi(f) => format!(
                 "TBi({})",
-                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
+                vec![(&f.1).aver_display_inner(), (&f.0).aver_display_inner()].join(", ")
             ),
             Term__view::TOp(f) => format!(
                 "TOp({})",
@@ -1373,7 +1400,7 @@ impl aver_rt::AverDisplay for Term {
             Term__view::TNeg(f) => format!("TNeg({})", (&f.0).aver_display_inner()),
             Term__view::TCtor(f) => format!(
                 "TCtor({})",
-                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
+                vec![(&f.1).aver_display_inner(), (&f.0).aver_display_inner()].join(", ")
             ),
             Term__view::TMatch(f) => format!(
                 "TMatch({})",

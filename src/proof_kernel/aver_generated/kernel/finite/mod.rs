@@ -59,12 +59,13 @@ pub fn ctorValues(
         let __list_subject = cs;
         match aver_rt::list_uncons_cloned(__list_subject) {
             Some((c, rest)) => aver_rt::AverList::prepend_owned(
-                crate::proof_kernel::aver_generated::kernel::term::Term::TCtor(
+                crate::proof_kernel::aver_generated::kernel::term::Term::TCtor({
+                    let __field0 = c;
+                    let __field1 = aver_rt::AverList::empty();
                     crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(
-                        c,
-                        aver_rt::AverList::empty(),
-                    ),
-                ),
+                        __field1, __field0,
+                    )
+                }),
                 crate::proof_kernel::aver_generated::kernel::finite::ctorValues(&rest),
             ),
             None => aver_rt::AverList::empty(),

@@ -3306,9 +3306,17 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     if con.args.is_empty() {
                         Some(format!("{}::{}", head, variant_name))
                     } else if thin {
-                        Some(format!(
-                            "{head}::{variant_name}({head}__{variant_name}({args_str}))"
-                        ))
+                        // The struct's fields sit where `field_layout` put
+                        // them; the arguments are evaluated as declared.
+                        let positions = emit_ctx
+                            .codegen
+                            .and_then(|cg| super::field_layout::of_ctor_id(ctor_id, cg));
+                        let payload = super::field_layout::construction(
+                            &format!("{head}__{variant_name}"),
+                            &args,
+                            positions,
+                        );
+                        Some(format!("{head}::{variant_name}({payload})"))
                     } else {
                         Some(format!("{}::{}({})", head, variant_name, args_str))
                     }
@@ -5587,11 +5595,18 @@ fn take_fields(
         return None;
     };
     let (view, fields) = super::pattern::thin_ctor_paths(ctor, codegen)?;
+    // Where the struct keeps each field (see `field_layout`).
+    let positions = super::field_layout::of_ctor(ctor, codegen);
     let bound: Vec<(usize, String)> = binding_names
         .iter()
         .enumerate()
         .filter(|(_, name)| name.as_str() != "_")
-        .map(|(idx, name)| (idx, aver_name_to_rust(name)))
+        .map(|(idx, name)| {
+            (
+                super::field_layout::at(positions, idx),
+                aver_name_to_rust(name),
+            )
+        })
         .collect();
     let part = generated_ident("f");
     let names: Vec<&str> = bound.iter().map(|(_, name)| name.as_str()).collect();

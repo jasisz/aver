@@ -718,6 +718,10 @@ pub struct CodegenContext {
     /// value from, as the deferred function and the law's name. Computed by
     /// the Rust transpile from the MIR it emits; empty everywhere else.
     pub rust_knowing: Vec<(crate::ir::FnId, String)>,
+    /// The order the fields of a thin sum's constructors are laid out in,
+    /// where it is not the declared one (see `rust::field_layout`): by type,
+    /// by constructor, the physical position of each declared field.
+    pub rust_field_layout: HashMap<crate::ir::TypeId, Vec<Option<Vec<usize>>>>,
     /// Kernel-proved lemmas parsed back from a committed
     /// `DiscoveredLemmas.lean` (the `--discover` artifact), set by the CLI
     /// on a normal `aver proof` run when the discovery-surface hash still
@@ -1187,6 +1191,7 @@ pub fn build_context(
         rust_forced_inline: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),
+        rust_field_layout: Default::default(),
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
         // Symbol table threaded through from the pipeline (or
@@ -1751,6 +1756,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         rust_forced_inline: Default::default(),
         knowing_trusted: Default::default(),
         rust_knowing: Default::default(),
+        rust_field_layout: Default::default(),
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),
