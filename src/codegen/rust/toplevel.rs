@@ -340,21 +340,35 @@ fn plan_test(
     a: impl Fn(usize) -> String,
     b: impl Fn(usize) -> String,
 ) -> String {
-    let fields = fields_equal(&plan.order, walking, &a, &b);
-    if !plan.words_first {
-        return fields;
-    }
-    let words: Vec<String> = plan
-        .block_fields()
+    // The block's tests are joined by `&`, not `&&`: with no branch between
+    // them they compile to one chain of compares and a single branch (two
+    // words loaded as a pair, `cmp` then `ccmp`), where `&&` branches after
+    // every field. They read plain memory and cannot fail, so evaluating all
+    // of them changes nothing but the cost.
+    let block = plan.block_fields();
+    let words: Vec<String> = block
         .iter()
         .map(|&d| match plan.kinds[d] {
             super::field_layout::Bitwise::Implies => {
                 format!("aver_rt::AverInt::same_word(&{}, &{})", a(d), b(d))
             }
-            _ => format!("{} == {}", a(d), b(d)),
+            _ => format!("({} == {})", a(d), b(d)),
         })
         .collect();
-    format!("({}) || {fields}", words.join(" && "))
+    if plan.words_first {
+        let fields = fields_equal(&plan.order, walking, &a, &b);
+        return format!("({}) || {fields}", words.join(" & "));
+    }
+    if block.len() < 2 {
+        return fields_equal(&plan.order, walking, &a, &b);
+    }
+    // A block of fields equal exactly when their bytes are: the block
+    // decides them, the rest follow.
+    let head = format!("({})", words.join(" & "));
+    match &plan.order[plan.block..] {
+        [] => head,
+        rest => format!("{head} && {}", fields_equal(rest, walking, &a, &b)),
+    }
 }
 
 /// [`variant_field_refs`], reading the fields of a thin constructor's
