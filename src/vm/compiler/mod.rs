@@ -1477,6 +1477,13 @@ pub(super) struct FnCompiler<'a> {
     previous_op_pos: usize,
     /// Byte offset of the last emitted opcode (for superinstruction fusion).
     last_op_pos: usize,
+    /// Byte offset of the latest instruction a jump lands on: the start of
+    /// the current basic block. A superinstruction fuses only instructions
+    /// of one block — the one a jump lands on begins a block, and swallowing
+    /// it into its predecessor would put the jump's target inside an
+    /// operand (the join of a `match` whose last arm ends in a local read
+    /// that is not the last one, followed by the next load).
+    block_start: usize,
     /// Source file path for this function.
     source_file: String,
     /// Run-length encoded line table being built: (bytecode_offset, source_line).
@@ -1539,6 +1546,7 @@ impl<'a> FnCompiler<'a> {
             constants: Vec::new(),
             previous_op_pos: usize::MAX,
             last_op_pos: usize::MAX,
+            block_start: 0,
             source_file: String::new(),
             line_table: Vec::new(),
             last_noted_line: 0,
@@ -1616,14 +1624,26 @@ impl<'a> FnCompiler<'a> {
             0xFF
         };
 
+        // A fusion joins the new instruction to its predecessor, so the new
+        // one must not begin a block: no jump may land where it starts.
+        let same_block = self.block_start <= prev_pos;
+
         // LOAD_LOCAL + LOAD_LOCAL → LOAD_LOCAL_2
-        if op == LOAD_LOCAL && prev_op == LOAD_LOCAL && prev_pos + 2 == self.code.len() {
+        if op == LOAD_LOCAL
+            && prev_op == LOAD_LOCAL
+            && prev_pos + 2 == self.code.len()
+            && same_block
+        {
             self.code[prev_pos] = LOAD_LOCAL_2;
             // slot_a already at prev_pos+1, slot_b emitted next via emit_u8
             return;
         }
         // LOAD_LOCAL + LOAD_CONST → LOAD_LOCAL_CONST
-        if op == LOAD_CONST && prev_op == LOAD_LOCAL && prev_pos + 2 == self.code.len() {
+        if op == LOAD_CONST
+            && prev_op == LOAD_LOCAL
+            && prev_pos + 2 == self.code.len()
+            && same_block
+        {
             self.code[prev_pos] = LOAD_LOCAL_CONST;
             // slot at prev_pos+1, const_idx (u16) emitted next via emit_u16
             return;
@@ -1635,6 +1655,7 @@ impl<'a> FnCompiler<'a> {
             let len = self.code.len();
             if self.previous_op_pos == len - 4
                 && self.last_op_pos == len - 3
+                && self.block_start <= len - 4
                 && self.code[len - 4] == VECTOR_GET
                 && self.code[len - 3] == LOAD_CONST
             {
@@ -1726,14 +1747,27 @@ impl<'a> FnCompiler<'a> {
     }
 
     pub(super) fn patch_jump(&mut self, patch_pos: usize) {
-        let target = self.code.len();
+        let target = self.label();
         self.patch_jump_to(patch_pos, target);
+    }
+
+    /// The offset of the next instruction, as the target of a jump: the
+    /// instruction emitted here begins a block, so no superinstruction
+    /// fuses it into the one before it (see [`Self::emit_op`]). Every
+    /// offset a jump is later pointed at is taken here, not from
+    /// [`Self::offset`], which is for the operands the jumps are written
+    /// into.
+    pub(super) fn label(&mut self) -> usize {
+        let at = self.code.len();
+        self.block_start = at;
+        at
     }
 
     /// Point the offset at `patch_pos` at `target`. The offset counts from
     /// the byte after the four offset bytes, which is where `ip` stands when
     /// the VM reads it.
     pub(super) fn patch_jump_to(&mut self, patch_pos: usize, target: usize) {
+        self.block_start = self.block_start.max(target);
         let offset = jump_offset(patch_pos + 4, target);
         self.code[patch_pos..patch_pos + 4].copy_from_slice(&offset.to_be_bytes());
     }

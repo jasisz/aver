@@ -907,7 +907,7 @@ pub(super) fn compile_mir_expr(
                 compile_mir_expr(fc, &arm.body)?;
                 if !is_last {
                     end_jumps.push(fc.emit_jump(JUMP));
-                    let next_arm_start = fc.offset();
+                    let next_arm_start = fc.label();
                     for patch in fail_patches {
                         fc.patch_jump_to(patch, next_arm_start);
                     }
@@ -1568,7 +1568,7 @@ fn try_emit_match_dispatch_const(
         fc.emit_u64(*expected);
         fc.emit_u64(*result);
     }
-    let table_end = fc.offset();
+    let table_end = fc.label();
 
     // On hit: opcode pushes the result and ip lands right after
     // the table — emit a JUMP to skip past the default arm body.
@@ -1577,7 +1577,7 @@ fn try_emit_match_dispatch_const(
     // Default arm starts here. Default offset is relative to
     // `table_end` (the opcode handler adds `default_offset` to
     // ip-after-table-end).
-    let default_start = fc.offset();
+    let default_start = fc.label();
     let default_rel = super::jump_offset(table_end, default_start);
     fc.code_mut()[default_offset_patch..default_offset_patch + 4]
         .copy_from_slice(&default_rel.to_be_bytes());
@@ -1774,7 +1774,7 @@ where
     }
 
     let success_skip = fc.emit_jump(JUMP);
-    let cleanup_target = fc.offset();
+    let cleanup_target = fc.label();
     for patch in inner_fail_patches {
         fc.patch_jump_to(patch, cleanup_target);
     }
