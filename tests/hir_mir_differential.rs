@@ -216,6 +216,36 @@ fn nested_match_and_arithmetic() {
     assert_golden("nested_match", &src, "run", "Int(0)");
 }
 
+/// A match whose value is followed at once by another load — the next
+/// argument of a call (a local, then a literal), the right operand of an
+/// addition — with a last arm that ends in a plain read of a local read
+/// again after the match. The load after the match begins the code every
+/// other arm jumps to; the emitter used to fuse it with the arm's read into
+/// one superinstruction (`LOAD_LOCAL_2`, `LOAD_LOCAL_CONST`), so the jump
+/// landed inside its operands: "unknown opcode: 0x00", or a read of a slot
+/// that is not there. Found by a one-arm `match` the deforestation pass
+/// writes for a call argument.
+#[test]
+fn match_value_before_the_next_load() {
+    let src = prog(
+        "fn beforeLocal(i: Int, t: Int) -> Int\n    \
+         Int.max(match i\n        0 -> 1\n        _ -> t\n    , t)\n\n\
+         fn beforeLiteral(i: Int, t: Int) -> Int\n    \
+         Int.max(match i\n        0 -> 1\n        _ -> t\n    , 5) + t\n\n\
+         fn leftOperand(i: Int, t: Int) -> Int\n    \
+         (match i\n        0 -> 1\n        _ -> t\n    ) + t\n\n\
+         fn ifBefore(i: Int, t: Int) -> Int\n    \
+         Int.max(match i > 0\n        true -> i\n        false -> t\n    , 5) + t\n\n\
+         fn run() -> Int\n    \
+         beforeLocal(0, 7) * 1000000 + beforeLocal(3, 7) * 100000 \
+         + beforeLiteral(0, 7) * 10000 + beforeLiteral(3, 7) * 1000 \
+         + leftOperand(0, 7) * 100 + leftOperand(3, 7) * 10 \
+         + ifBefore(0, 7) - ifBefore(3, 7)\n",
+    );
+    // 7, 7, 12, 14, 8, 14 at the decimal places, then 14 - 12.
+    assert_golden("match_before_next_load", &src, "run", "Int(7834942)");
+}
+
 #[test]
 fn record_and_tuple_roundtrip() {
     let src = prog(

@@ -1,0 +1,50 @@
+module Main
+    intent =
+        "A match whose value is read together with another value loaded"
+        "right after it: the first argument of a call before a local and before"
+        "a literal, the left operand of an addition, a list element before"
+        "another. The last arm reads a local that is read again after the"
+        "match, so the arm ends in a plain load, and the load that follows the"
+        "match begins the code every other arm jumps to."
+    effects [Console.print]
+
+fn beforeLocal(i: Int, t: Int) -> Int
+    ? "The match's join is followed by the next argument, a local."
+    Int.max(match i
+        0 -> 1
+        _ -> t
+    , t)
+
+fn beforeLiteral(i: Int, t: Int) -> Int
+    ? "The match's join is followed by the next argument, a literal."
+    Int.max(match i
+        0 -> 1
+        _ -> t
+    , 5) + t
+
+fn leftOperand(i: Int, t: Int) -> Int
+    ? "The match's join is followed by the right operand."
+    (match i
+        0 -> 1
+        _ -> t
+    ) + t
+
+fn ifBefore(i: Int, t: Int) -> Int
+    ? "A bool match's join is followed by a literal."
+    Int.max(match i > 0
+        true -> i
+        false -> t
+    , 5) + t
+
+fn inList(i: Int, t: Int) -> Int
+    ? "The match's join is followed by the next element."
+    List.len([match i
+        0 -> 1
+        _ -> t
+    , t]) + t
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{beforeLocal(0, 7)} {beforeLocal(3, 7)} {beforeLiteral(0, 7)} {beforeLiteral(3, 7)}")
+    Console.print("{leftOperand(0, 7)} {leftOperand(3, 7)} {ifBefore(0, 7)} {ifBefore(3, 7)}")
+    Console.print("{inList(0, 7)} {inList(3, 7)}")
