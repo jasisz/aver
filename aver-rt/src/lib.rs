@@ -1866,7 +1866,11 @@ impl<T> AverList<T> {
     #[inline]
     pub fn prepend(item: T, list: &Self) -> Self {
         let len = list.len();
-        let tail = if len == 0 { Self::empty() } else { list.clone() };
+        let tail = if len == 0 {
+            Self::empty()
+        } else {
+            list.clone()
+        };
         Self::node(AverListInner::Prepend {
             head: item,
             len: len + 1,
