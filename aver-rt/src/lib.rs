@@ -1261,6 +1261,7 @@ impl<T> Clone for AverList<T> {
 
 impl<T> AverList<T> {
     /// A list that is a whole node — every shape but a stepped-into flat body.
+    #[inline]
     fn node(inner: AverListInner<T>) -> Self {
         Self {
             inner: Some(Rc::new(inner)),
@@ -1538,7 +1539,19 @@ impl<T> AverList<T> {
         Some(self.view(self.start() + 1, 0))
     }
 
+    /// The head and the rest. A `Prepend` node, which nearly every node is,
+    /// is read here, in the caller; the other shapes out of line.
+    #[inline]
     fn uncons(&self) -> Option<(&T, Self)> {
+        if let AverListInner::Prepend { head, tail, .. } = &**self.inner.as_ref()? {
+            return Some((head, tail.clone()));
+        }
+        self.uncons_slow()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn uncons_slow(&self) -> Option<(&T, Self)> {
         match self.shape()? {
             AverListInner::Flat { items } => {
                 let head = items.get(self.start())?;
@@ -1572,8 +1585,33 @@ impl<T> AverList<T> {
     ///
     /// Sharing the body keeps the stepped-over elements alive for as long as
     /// the view is, which is the same trade `uncons` already makes.
+    #[inline]
     pub fn drop_first(&self, n: usize) -> Self {
-        // The walk borrows; only the list the result starts at is cloned.
+        // The walk borrows; only the list the result starts at is cloned. A
+        // chain of `Prepend` nodes is stepped here, in the caller.
+        let mut current = self;
+        let mut remaining = n;
+        loop {
+            if remaining == 0 {
+                return current.clone();
+            }
+            match current.inner.as_deref() {
+                Some(AverListInner::Prepend { tail, len, .. }) => {
+                    if remaining >= *len {
+                        return Self::empty();
+                    }
+                    remaining -= 1;
+                    current = tail;
+                }
+                None => return Self::empty(),
+                Some(_) => return current.drop_first_slow(remaining),
+            }
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn drop_first_slow(&self, n: usize) -> Self {
         let mut current = self;
         let mut remaining = n;
 
@@ -1606,6 +1644,7 @@ impl<T> AverList<T> {
         }
     }
 
+    #[inline]
     pub fn uncons_cloned(&self) -> Option<(T, Self)>
     where
         T: Clone,
@@ -1616,26 +1655,28 @@ impl<T> AverList<T> {
     /// `uncons` of a list that is not needed after it: a `Prepend` node this
     /// list alone holds gives up its head and tail, moved rather than
     /// counted; any other list is read as `uncons_cloned` reads it.
+    #[inline]
     pub fn uncons_owned(mut self) -> Option<(T, Self)>
     where
         T: Clone,
     {
         if self.start == 0
-            && let Some(AverListInner::Prepend { .. }) = self.shape()
+            && let Some(node) = self.inner.as_mut()
+            && let Some(AverListInner::Prepend { .. }) = Rc::get_mut(node)
             && let Some(node) = self.inner.take()
         {
-            match Rc::try_unwrap(node) {
-                Ok(inner) => {
-                    let inner = std::mem::ManuallyDrop::new(inner);
-                    let AverListInner::Prepend { head, tail, .. } = &*inner else {
-                        unreachable!("the shape was read just above")
-                    };
-                    // SAFETY: `inner` is never dropped, so its head and tail
-                    // are each read out exactly once; `len` is a plain usize.
-                    return Some(unsafe { (std::ptr::read(head), std::ptr::read(tail)) });
-                }
-                Err(node) => self.inner = Some(node),
-            }
+            // The node is this list's alone (a `Prepend` node is never read
+            // from an offset), so it is taken back without a count.
+            let Ok(inner) = Rc::try_unwrap(node) else {
+                unreachable!("the node was unique just above")
+            };
+            let inner = std::mem::ManuallyDrop::new(inner);
+            let AverListInner::Prepend { head, tail, .. } = &*inner else {
+                unreachable!("the shape was read just above")
+            };
+            // SAFETY: `inner` is never dropped, so its head and tail
+            // are each read out exactly once; `len` is a plain usize.
+            return Some(unsafe { (std::ptr::read(head), std::ptr::read(tail)) });
         }
         self.uncons_cloned()
     }
@@ -1707,23 +1748,47 @@ impl<T> AverList<T> {
         }
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         let Some(shape) = self.shape() else {
             return 0;
         };
         match shape {
-            AverListInner::Flat { items } => items.len().saturating_sub(self.start()),
             AverListInner::Prepend { len, .. } => *len,
+            AverListInner::Flat { items } => items.len().saturating_sub(self.start()),
             AverListInner::Concat { len, .. } => *len as usize,
             AverListInner::Indexed { len, .. } => len.saturating_sub(self.start()),
         }
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// The element at `index`. A chain of `Prepend` nodes is stepped here,
+    /// in the caller; a flat, concat or indexed body is read out of line.
+    #[inline]
     pub fn get(&self, index: usize) -> Option<&T> {
+        let mut current = self;
+        let mut remaining = index;
+        loop {
+            match &**current.inner.as_ref()? {
+                AverListInner::Prepend { head, tail, .. } => {
+                    if remaining == 0 {
+                        return Some(head);
+                    }
+                    remaining -= 1;
+                    current = tail;
+                }
+                _ => return current.get_slow(remaining),
+            }
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn get_slow(&self, index: usize) -> Option<&T> {
         let mut current = self;
         let mut remaining = index;
 
@@ -1761,6 +1826,7 @@ impl<T> AverList<T> {
         }
     }
 
+    #[inline]
     pub fn first(&self) -> Option<&T> {
         self.get(0)
     }
@@ -1797,26 +1863,31 @@ impl<T> AverList<T> {
 
     /// One node, also onto the empty list: a one-element list is a
     /// `Prepend` onto `[]`, one allocation rather than a vector and its node.
+    #[inline]
     pub fn prepend(item: T, list: &Self) -> Self {
-        let tail = if list.is_empty() {
+        let len = list.len();
+        let tail = if len == 0 {
             Self::empty()
         } else {
             list.clone()
         };
         Self::node(AverListInner::Prepend {
             head: item,
-            len: tail.len() + 1,
+            len: len + 1,
             tail,
         })
     }
 
     /// `prepend` onto a list the caller hands over: the node takes it as it
     /// is, without a count for a copy the caller would drop right after.
+    /// The tail's length is read once, for the node's own.
+    #[inline]
     pub fn prepend_owned(item: T, list: Self) -> Self {
-        let tail = if list.is_empty() { Self::empty() } else { list };
+        let len = list.len();
+        let tail = if len == 0 { Self::empty() } else { list };
         Self::node(AverListInner::Prepend {
             head: item,
-            len: tail.len() + 1,
+            len: len + 1,
             tail,
         })
     }
@@ -1909,7 +1980,24 @@ impl<T> AverList<T> {
 impl<'a, T> Iterator for AverListIter<'a, T> {
     type Item = &'a T;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
+        // A chain of `Prepend` nodes, the common shape, is stepped here, in
+        // the caller: the cursor on top moves to the tail, nothing is pushed.
+        if let Some(ListCursor::Node(list)) = &self.top
+            && let Some(AverListInner::Prepend { head, tail, .. }) = list.shape()
+        {
+            self.top = Some(ListCursor::Node(tail));
+            self.remaining = self.remaining.saturating_sub(1);
+            return Some(head);
+        }
+        self.next_slow()
+    }
+}
+
+impl<'a, T> AverListIter<'a, T> {
+    #[inline(never)]
+    fn next_slow(&mut self) -> Option<&'a T> {
         while let Some(cursor) = self.pop() {
             match cursor {
                 ListCursor::Slice(items, index) => {
@@ -2062,6 +2150,7 @@ pub fn clamp_list_count(n: &AverInt) -> usize {
     }
 }
 
+#[inline]
 pub fn list_uncons<T>(list: &AverList<T>) -> Option<(&T, AverList<T>)> {
     list.uncons()
 }
@@ -2080,10 +2169,12 @@ pub trait AverListMatch: Sized {
 impl<T: Clone> AverListMatch for AverList<T> {
     type Item = T;
 
+    #[inline]
     fn uncons_for_match(&self) -> Option<(Self::Item, Self)> {
         self.uncons_cloned()
     }
 
+    #[inline]
     fn uncons_owned_for_match(self) -> Option<(Self::Item, Self)> {
         self.uncons_owned()
     }
@@ -2092,10 +2183,12 @@ impl<T: Clone> AverListMatch for AverList<T> {
 impl AverListMatch for AverIntList {
     type Item = AverInt;
 
+    #[inline]
     fn uncons_for_match(&self) -> Option<(Self::Item, Self)> {
         self.uncons_cloned()
     }
 
+    #[inline]
     fn uncons_owned_for_match(self) -> Option<(Self::Item, Self)> {
         match self {
             AverIntList::Wide(values) => values
@@ -2106,10 +2199,12 @@ impl AverListMatch for AverIntList {
     }
 }
 
+#[inline]
 pub fn list_uncons_cloned<L: AverListMatch>(list: &L) -> Option<(L::Item, L)> {
     list.uncons_for_match()
 }
 
+#[inline]
 pub fn list_uncons_owned<L: AverListMatch>(list: L) -> Option<(L::Item, L)> {
     list.uncons_owned_for_match()
 }

@@ -597,6 +597,7 @@ impl aver_rt::WalkHash for Proof {
 impl Eq for Proof {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PRefl(pub crate::proof_std::aver_generated::kernel::term::Term);
 
 impl PartialEq for Proof__PRefl {
@@ -618,6 +619,7 @@ impl aver_rt::thin::HandOver for Proof__PRefl {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PSymm(pub Proof);
 
 impl PartialEq for Proof__PSymm {
@@ -639,6 +641,7 @@ impl aver_rt::thin::HandOver for Proof__PSymm {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PTrans(
     pub aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     pub aver_rt::AverList<Proof>,
@@ -663,6 +666,7 @@ impl aver_rt::WalkEq for Proof__PTrans {
 impl aver_rt::thin::HandOver for Proof__PTrans {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PCongr(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub Proof,
@@ -688,6 +692,7 @@ impl aver_rt::thin::HandOver for Proof__PCongr {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PUnfold(
     pub AverStr,
     pub aver_rt::AverInt,
@@ -726,6 +731,7 @@ impl aver_rt::WalkEq for Proof__PUnfold {
 impl aver_rt::thin::HandOver for Proof__PUnfold {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PConst(pub AverStr);
 
 impl PartialEq for Proof__PConst {
@@ -737,6 +743,7 @@ impl PartialEq for Proof__PConst {
 impl aver_rt::thin::HandOver for Proof__PConst {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PArm(
     pub aver_rt::AverInt,
     pub aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
@@ -770,6 +777,7 @@ impl aver_rt::thin::HandOver for Proof__PArm {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PProj(pub crate::proof_std::aver_generated::kernel::term::Term);
 
 impl PartialEq for Proof__PProj {
@@ -791,6 +799,7 @@ impl aver_rt::thin::HandOver for Proof__PProj {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PCell(pub crate::proof_std::aver_generated::kernel::term::Term);
 
 impl PartialEq for Proof__PCell {
@@ -812,6 +821,7 @@ impl aver_rt::thin::HandOver for Proof__PCell {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PHyp(pub AverStr);
 
 impl PartialEq for Proof__PHyp {
@@ -823,6 +833,7 @@ impl PartialEq for Proof__PHyp {
 impl aver_rt::thin::HandOver for Proof__PHyp {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PRule(
     pub AverStr,
     pub aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
@@ -848,6 +859,7 @@ impl aver_rt::WalkEq for Proof__PRule {
 impl aver_rt::thin::HandOver for Proof__PRule {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PLaw(
     pub AverStr,
     pub aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
@@ -873,6 +885,7 @@ impl aver_rt::WalkEq for Proof__PLaw {
 impl aver_rt::thin::HandOver for Proof__PLaw {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PCompute(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -898,6 +911,7 @@ impl aver_rt::thin::HandOver for Proof__PCompute {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PCases(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub AverStr,
@@ -930,6 +944,7 @@ impl aver_rt::thin::HandOver for Proof__PCases {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PSplit(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub AverStr,
@@ -964,6 +979,7 @@ impl aver_rt::thin::HandOver for Proof__PSplit {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PHave(
     pub AverStr,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -996,6 +1012,7 @@ impl aver_rt::thin::HandOver for Proof__PHave {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PEnum(
     pub AverStr,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -1029,6 +1046,7 @@ impl aver_rt::thin::HandOver for Proof__PEnum {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PAbsurd(
     pub Proof,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -1058,6 +1076,7 @@ impl aver_rt::thin::HandOver for Proof__PAbsurd {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PInduct(
     pub AverStr,
     pub aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
@@ -1102,6 +1121,7 @@ impl aver_rt::thin::HandOver for Proof__PInduct {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PListInduct(
     pub AverStr,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -1158,6 +1178,7 @@ impl aver_rt::thin::HandOver for Proof__PListInduct {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PListCases(
     pub AverStr,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -1203,6 +1224,7 @@ impl aver_rt::thin::HandOver for Proof__PListCases {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PLenInduct(
     pub AverStr,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -1253,6 +1275,7 @@ impl aver_rt::thin::HandOver for Proof__PLenInduct {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PRing(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub crate::proof_std::aver_generated::kernel::term::Term,
@@ -1278,6 +1301,7 @@ impl aver_rt::thin::HandOver for Proof__PRing {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Proof__PLinear(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub bool,

@@ -187,6 +187,7 @@ impl aver_rt::WalkHash for Ty {
 impl Eq for Ty {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Ty__TyList(pub Ty);
 
 impl PartialEq for Ty__TyList {
@@ -208,6 +209,7 @@ impl aver_rt::thin::HandOver for Ty__TyList {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Ty__TyOption(pub Ty);
 
 impl PartialEq for Ty__TyOption {
@@ -229,6 +231,7 @@ impl aver_rt::thin::HandOver for Ty__TyOption {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Ty__TyResult(pub Ty, pub Ty);
 
 impl PartialEq for Ty__TyResult {
@@ -251,6 +254,7 @@ impl aver_rt::thin::HandOver for Ty__TyResult {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Ty__TyMap(pub Ty, pub Ty);
 
 impl PartialEq for Ty__TyMap {
@@ -273,6 +277,7 @@ impl aver_rt::thin::HandOver for Ty__TyMap {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Ty__TyVector(pub Ty);
 
 impl PartialEq for Ty__TyVector {
@@ -294,6 +299,7 @@ impl aver_rt::thin::HandOver for Ty__TyVector {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Ty__TyTuple(pub aver_rt::AverList<Ty>);
 
 impl PartialEq for Ty__TyTuple {
@@ -313,6 +319,7 @@ impl aver_rt::WalkEq for Ty__TyTuple {
 impl aver_rt::thin::HandOver for Ty__TyTuple {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Ty__TyNamed(pub AverStr);
 
 impl PartialEq for Ty__TyNamed {
@@ -324,6 +331,7 @@ impl PartialEq for Ty__TyNamed {
 impl aver_rt::thin::HandOver for Ty__TyNamed {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Ty__TyVar(pub AverStr, pub bool);
 
 impl PartialEq for Ty__TyVar {
@@ -335,6 +343,7 @@ impl PartialEq for Ty__TyVar {
 impl aver_rt::thin::HandOver for Ty__TyVar {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Ty__TyRigid(pub AverStr, pub bool);
 
 impl PartialEq for Ty__TyRigid {
@@ -863,6 +872,7 @@ impl aver_rt::WalkHash for Term {
 impl Eq for Term {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TInt(pub aver_rt::AverInt);
 
 impl PartialEq for Term__TInt {
@@ -874,6 +884,7 @@ impl PartialEq for Term__TInt {
 impl aver_rt::thin::HandOver for Term__TInt {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TBool(pub bool);
 
 impl PartialEq for Term__TBool {
@@ -885,6 +896,7 @@ impl PartialEq for Term__TBool {
 impl aver_rt::thin::HandOver for Term__TBool {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TStr(pub AverStr);
 
 impl PartialEq for Term__TStr {
@@ -896,6 +908,7 @@ impl PartialEq for Term__TStr {
 impl aver_rt::thin::HandOver for Term__TStr {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TVar(pub AverStr);
 
 impl PartialEq for Term__TVar {
@@ -907,6 +920,7 @@ impl PartialEq for Term__TVar {
 impl aver_rt::thin::HandOver for Term__TVar {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TGet(pub Term, pub AverStr);
 
 impl PartialEq for Term__TGet {
@@ -928,6 +942,7 @@ impl aver_rt::thin::HandOver for Term__TGet {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TCall(pub AverStr, pub aver_rt::AverList<Term>);
 
 impl PartialEq for Term__TCall {
@@ -948,6 +963,7 @@ impl aver_rt::WalkEq for Term__TCall {
 impl aver_rt::thin::HandOver for Term__TCall {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TBi(pub AverStr, pub aver_rt::AverList<Term>);
 
 impl PartialEq for Term__TBi {
@@ -968,6 +984,7 @@ impl aver_rt::WalkEq for Term__TBi {
 impl aver_rt::thin::HandOver for Term__TBi {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TOp(pub AverStr, pub Term, pub Term);
 
 impl PartialEq for Term__TOp {
@@ -990,6 +1007,7 @@ impl aver_rt::thin::HandOver for Term__TOp {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TNeg(pub Term);
 
 impl PartialEq for Term__TNeg {
@@ -1011,6 +1029,7 @@ impl aver_rt::thin::HandOver for Term__TNeg {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TCtor(pub AverStr, pub aver_rt::AverList<Term>);
 
 impl PartialEq for Term__TCtor {
@@ -1031,6 +1050,7 @@ impl aver_rt::WalkEq for Term__TCtor {
 impl aver_rt::thin::HandOver for Term__TCtor {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TMatch(pub Term, pub aver_rt::AverList<Arm>);
 
 impl PartialEq for Term__TMatch {
@@ -1055,6 +1075,7 @@ impl aver_rt::thin::HandOver for Term__TMatch {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TParts(pub aver_rt::AverList<Term>);
 
 impl PartialEq for Term__TParts {
@@ -1074,6 +1095,7 @@ impl aver_rt::WalkEq for Term__TParts {
 impl aver_rt::thin::HandOver for Term__TParts {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TList(pub aver_rt::AverList<Term>);
 
 impl PartialEq for Term__TList {
@@ -1093,6 +1115,7 @@ impl aver_rt::WalkEq for Term__TList {
 impl aver_rt::thin::HandOver for Term__TList {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TTuple(pub aver_rt::AverList<Term>);
 
 impl PartialEq for Term__TTuple {
@@ -1112,6 +1135,7 @@ impl aver_rt::WalkEq for Term__TTuple {
 impl aver_rt::thin::HandOver for Term__TTuple {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TRec(pub AverStr, pub aver_rt::AverList<Field>);
 
 impl PartialEq for Term__TRec {
@@ -1132,6 +1156,7 @@ impl aver_rt::WalkEq for Term__TRec {
 impl aver_rt::thin::HandOver for Term__TRec {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Term__TUpd(pub AverStr, pub Term, pub aver_rt::AverList<Field>);
 
 impl PartialEq for Term__TUpd {

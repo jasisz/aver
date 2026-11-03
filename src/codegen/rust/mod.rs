@@ -2038,7 +2038,7 @@ fn width(s: Shape) -> Int
             "Shape::Label(Shape__Label(",
             "Shape__view::Label(__w_fields) => {",
             "    One(aver_rt::AverInt),\n    Two(aver_rt::AverInt, aver_rt::AverInt),",
-            "#[derive(Clone, Debug, Eq, Hash)]\npub struct Tree__Node(pub Tree, pub Tree, pub aver_rt::AverInt);",
+            "#[derive(Clone, Debug, Eq, Hash)]\n#[repr(C)]\npub struct Tree__Node(pub Tree, pub Tree, pub aver_rt::AverInt);",
             "impl PartialEq for Tree__Node {\n    fn eq(&self, other: &Self) -> bool {\n        std::ptr::eq(self, other) || self.2 == other.2 && self.0 == other.0 && self.1 == other.1\n    }\n}",
             "Tree::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)",
             "Some(Tree__pair::Node(a0, b0)) => walk.node(self, other, false, |walk| a0.walk_eq(b0, walk)),",

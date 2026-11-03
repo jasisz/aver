@@ -50,26 +50,31 @@ impl std::fmt::Debug for Expr {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprInt(pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Expr__ExprInt {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprFloat(pub f64);
 
 impl aver_rt::thin::HandOver for Expr__ExprFloat {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprStr(pub AverStr);
 
 impl aver_rt::thin::HandOver for Expr__ExprStr {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprBool(pub bool);
 
 impl aver_rt::thin::HandOver for Expr__ExprBool {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprBoolBranch(pub Expr, pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprBoolBranch {
@@ -89,36 +94,43 @@ impl aver_rt::thin::HandOver for Expr__ExprBoolBranch {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprVar(pub AverStr);
 
 impl aver_rt::thin::HandOver for Expr__ExprVar {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprSlot(pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Expr__ExprSlot {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprBinopSlotInt(pub BinOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Expr__ExprBinopSlotInt {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprBinopSlots(pub BinOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Expr__ExprBinopSlots {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprCmpSlotInt(pub CmpOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Expr__ExprCmpSlotInt {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprCmpSlots(pub CmpOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Expr__ExprCmpSlots {}
 
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct Expr__ExprVectorGetOrInt(pub Expr, pub Expr, pub aver_rt::AverInt);
 
 impl PartialEq for Expr__ExprVectorGetOrInt {
@@ -141,6 +153,7 @@ impl aver_rt::thin::HandOver for Expr__ExprVectorGetOrInt {
 }
 
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct Expr__ExprIntModOrInt(pub Expr, pub Expr, pub aver_rt::AverInt);
 
 impl PartialEq for Expr__ExprIntModOrInt {
@@ -163,6 +176,7 @@ impl aver_rt::thin::HandOver for Expr__ExprIntModOrInt {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprAdd(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprAdd {
@@ -179,6 +193,7 @@ impl aver_rt::thin::HandOver for Expr__ExprAdd {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprSub(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprSub {
@@ -195,6 +210,7 @@ impl aver_rt::thin::HandOver for Expr__ExprSub {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprMul(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprMul {
@@ -211,6 +227,7 @@ impl aver_rt::thin::HandOver for Expr__ExprMul {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprDiv(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprDiv {
@@ -227,6 +244,7 @@ impl aver_rt::thin::HandOver for Expr__ExprDiv {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprNeg(pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprNeg {
@@ -242,6 +260,7 @@ impl aver_rt::thin::HandOver for Expr__ExprNeg {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprEq(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprEq {
@@ -258,6 +277,7 @@ impl aver_rt::thin::HandOver for Expr__ExprEq {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprNeq(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprNeq {
@@ -274,6 +294,7 @@ impl aver_rt::thin::HandOver for Expr__ExprNeq {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprLt(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprLt {
@@ -290,6 +311,7 @@ impl aver_rt::thin::HandOver for Expr__ExprLt {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprGt(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprGt {
@@ -306,6 +328,7 @@ impl aver_rt::thin::HandOver for Expr__ExprGt {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprLte(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprLte {
@@ -322,6 +345,7 @@ impl aver_rt::thin::HandOver for Expr__ExprLte {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprGte(pub Expr, pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprGte {
@@ -338,6 +362,7 @@ impl aver_rt::thin::HandOver for Expr__ExprGte {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprConcat(pub aver_rt::AverList<Expr>);
 
 impl aver_rt::WalkEq for Expr__ExprConcat {
@@ -351,6 +376,7 @@ impl aver_rt::WalkEq for Expr__ExprConcat {
 impl aver_rt::thin::HandOver for Expr__ExprConcat {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprTuple(pub aver_rt::AverList<Expr>);
 
 impl aver_rt::WalkEq for Expr__ExprTuple {
@@ -364,6 +390,7 @@ impl aver_rt::WalkEq for Expr__ExprTuple {
 impl aver_rt::thin::HandOver for Expr__ExprTuple {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprList(pub aver_rt::AverList<Expr>);
 
 impl aver_rt::WalkEq for Expr__ExprList {
@@ -377,6 +404,7 @@ impl aver_rt::WalkEq for Expr__ExprList {
 impl aver_rt::thin::HandOver for Expr__ExprList {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprRecord(pub AverStr, pub aver_rt::AverList<(AverStr, Expr)>);
 
 impl aver_rt::WalkEq for Expr__ExprRecord {
@@ -391,6 +419,7 @@ impl aver_rt::WalkEq for Expr__ExprRecord {
 impl aver_rt::thin::HandOver for Expr__ExprRecord {}
 
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct Expr__ExprFieldAccess(pub Expr, pub AverStr);
 
 impl PartialEq for Expr__ExprFieldAccess {
@@ -412,6 +441,7 @@ impl aver_rt::thin::HandOver for Expr__ExprFieldAccess {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprCall(pub AverStr, pub aver_rt::AverList<Expr>);
 
 impl aver_rt::WalkEq for Expr__ExprCall {
@@ -426,6 +456,7 @@ impl aver_rt::WalkEq for Expr__ExprCall {
 impl aver_rt::thin::HandOver for Expr__ExprCall {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprCallDirect(pub aver_rt::AverInt, pub aver_rt::AverList<Expr>);
 
 impl aver_rt::WalkEq for Expr__ExprCallDirect {
@@ -440,6 +471,7 @@ impl aver_rt::WalkEq for Expr__ExprCallDirect {
 impl aver_rt::thin::HandOver for Expr__ExprCallDirect {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprCallBuiltin(pub AverStr, pub aver_rt::AverList<Expr>);
 
 impl aver_rt::WalkEq for Expr__ExprCallBuiltin {
@@ -454,6 +486,7 @@ impl aver_rt::WalkEq for Expr__ExprCallBuiltin {
 impl aver_rt::thin::HandOver for Expr__ExprCallBuiltin {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprCallBuiltinId(pub aver_rt::AverInt, pub aver_rt::AverList<Expr>);
 
 impl aver_rt::WalkEq for Expr__ExprCallBuiltinId {
@@ -468,6 +501,7 @@ impl aver_rt::WalkEq for Expr__ExprCallBuiltinId {
 impl aver_rt::thin::HandOver for Expr__ExprCallBuiltinId {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprMatch(pub Expr, pub aver_rt::AverList<MatchArm>);
 
 impl aver_rt::WalkEq for Expr__ExprMatch {
@@ -486,6 +520,7 @@ impl aver_rt::thin::HandOver for Expr__ExprMatch {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Expr__ExprPropagate(pub Expr);
 
 impl aver_rt::WalkEq for Expr__ExprPropagate {
@@ -501,6 +536,7 @@ impl aver_rt::thin::HandOver for Expr__ExprPropagate {
 }
 
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct Expr__ExprIndependentProduct(pub aver_rt::AverList<Expr>, pub bool);
 
 impl PartialEq for Expr__ExprIndependentProduct {
@@ -2835,21 +2871,25 @@ impl std::fmt::Debug for FnFastPath {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct FnFastPath__FastLeaf(pub FastLeaf);
 
 impl aver_rt::thin::HandOver for FnFastPath__FastLeaf {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct FnFastPath__FastForwardCall(pub aver_rt::AverInt, pub aver_rt::AverIntList);
 
 impl aver_rt::thin::HandOver for FnFastPath__FastForwardCall {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct FnFastPath__FastBoolSlotBranch(pub aver_rt::AverInt, pub FastLeaf, pub FastLeaf);
 
 impl aver_rt::thin::HandOver for FnFastPath__FastBoolSlotBranch {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct FnFastPath__FastEqIntBranch(
     pub aver_rt::AverInt,
     pub aver_rt::AverInt,
@@ -2860,6 +2900,7 @@ pub struct FnFastPath__FastEqIntBranch(
 impl aver_rt::thin::HandOver for FnFastPath__FastEqIntBranch {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct FnFastPath__FastEqStringBranch(
     pub aver_rt::AverInt,
     pub AverStr,
@@ -2870,6 +2911,7 @@ pub struct FnFastPath__FastEqStringBranch(
 impl aver_rt::thin::HandOver for FnFastPath__FastEqStringBranch {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct FnFastPath__FastLtIntSlotsBranch(
     pub aver_rt::AverInt,
     pub aver_rt::AverInt,
@@ -2880,6 +2922,7 @@ pub struct FnFastPath__FastLtIntSlotsBranch(
 impl aver_rt::thin::HandOver for FnFastPath__FastLtIntSlotsBranch {}
 
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct FnFastPath__FastListSlotBranch(
     pub aver_rt::AverInt,
     pub FastLeaf,

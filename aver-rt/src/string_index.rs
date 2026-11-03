@@ -151,6 +151,7 @@ pub fn string_index_char_at(
 
 /// [`string_index_char_at`] over a raw position (a loop position the
 /// compiler proved to fit `i64`).
+#[inline]
 pub fn string_index_char_at_i64(
     text: &AverStr,
     index: &StringIndex,
@@ -184,6 +185,7 @@ pub fn string_index_code_at(text: &AverStr, index: &StringIndex, position: &Aver
 }
 
 /// [`string_index_code_at`] over a raw position.
+#[inline]
 pub fn string_index_code_at_i64(text: &AverStr, index: &StringIndex, position: i64) -> i64 {
     let Ok(position) = usize::try_from(position) else {
         return -1;
