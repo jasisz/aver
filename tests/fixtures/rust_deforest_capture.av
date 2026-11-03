@@ -1,0 +1,138 @@
+module DeforestCapture
+    intent = "A caller's variable spelled like a binder of the body it is put into is still the caller's after the fusion."
+    effects [Console.print]
+
+type Node
+    Empty
+    Leaf(Int)
+
+type Line
+    App(Int, Int)
+    Blank
+
+record Point
+    x: Int
+    y: Int
+
+type Pair
+    Both(Int, Point)
+    Neither
+
+fn some(n: Int) -> Option<Int>
+    ? "Recursive, so never unfolded: a match on its call keeps its binder."
+    match n > 1000000
+        true -> some(n - 1)
+        false -> Option.Some(n)
+
+verify some
+    some(3) => Option.Some(3)
+
+fn pick(m: Node, y: Int) -> Int
+    ? "Binds a z of its own below the arm."
+    match m
+        Node.Empty -> y
+        Node.Leaf(k) -> match k > 0
+            true -> match some(k)
+                Option.Some(z) -> z + y
+                Option.None -> y
+            false -> y
+
+verify pick
+    pick(Node.Leaf(3), 10) => 13
+    pick(Node.Empty, 10) => 10
+
+fn nested(z: Int) -> Int
+    ? "2z + 1 when the caller's z survives, 2z + 2 when the arm's z captures it."
+    pick(Node.Leaf(z + 1), z)
+
+verify nested
+    nested(10) => 21
+
+fn own(m: Node, y: Int) -> Int
+    ? "The arm's own binder is spelled like the caller's argument."
+    match m
+        Node.Empty -> y
+        Node.Leaf(z) -> z + y
+
+verify own
+    own(Node.Leaf(1), 10) => 11
+
+fn ownArm(z: Int) -> Int
+    ? "1 + z when the caller's z survives, 2 when the binder captures it."
+    own(Node.Leaf(1), z)
+
+verify ownArm
+    ownArm(10) => 11
+
+fn mk(a: Int, p: Point) -> Line
+    ? "A producer whose record parameter is taken apart into its fields."
+    match p.y > 0
+        true -> Line.App(a, p.x)
+        false -> Line.Blank
+
+verify mk
+    mk(1, Point(x = 5, y = 6)) => Line.App(1, 5)
+
+fn producerParam(p: Point) -> Int
+    ? "p.x + 5 when the caller's p survives, 10 when the producer's p captures it."
+    match mk(p.x, Point(x = 5, y = 6))
+        Line.App(u, v) -> u + v
+        Line.Blank -> 0
+
+verify producerParam
+    producerParam(Point(x = 1, y = 2)) => 6
+
+fn sum(pr: Pair) -> Int
+    ? "A consumer whose arm binds a record it reads by field."
+    match pr
+        Pair.Both(a, p) -> a + p.x
+        Pair.Neither -> 0
+
+verify sum
+    sum(Pair.Both(1, Point(x = 5, y = 0))) => 6
+
+fn recordBinder(p: Point) -> Int
+    ? "p.x + 5 when the caller's p survives, 10 when the arm's p captures it."
+    sum(Pair.Both(p.x, Point(x = 5, y = 0)))
+
+verify recordBinder
+    recordBinder(Point(x = 1, y = 2)) => 6
+
+fn wrap(n: Int) -> Line
+    ? "A producer binding a z of its own."
+    match some(n)
+        Option.Some(z) -> Line.App(z, n)
+        Option.None -> Line.Blank
+
+verify wrap
+    wrap(3) => Line.App(3, 3)
+
+fn producerBinder(z: Int) -> Int
+    ? "11z when the caller's z survives."
+    match wrap(z)
+        Line.App(u, v) -> u * 10 + v
+        Line.Blank -> 0
+
+verify producerBinder
+    producerBinder(3) => 33
+
+fn bump(n: Int) -> Line
+    ? "A producer with a statement binding spelled like the caller's argument."
+    k = n + 1
+    Line.App(k, n)
+
+verify bump
+    bump(2) => Line.App(3, 2)
+
+fn producerBinding(k: Int) -> Int
+    ? "10(k + 1) + k when the caller's k survives."
+    match bump(k)
+        Line.App(u, v) -> u * 10 + v
+        Line.Blank -> 0
+
+verify producerBinding
+    producerBinding(2) => 32
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{nested(10)} {ownArm(10)} {producerParam(Point(x = 1, y = 2))} {recordBinder(Point(x = 1, y = 2))} {producerBinder(3)} {producerBinding(2)}")

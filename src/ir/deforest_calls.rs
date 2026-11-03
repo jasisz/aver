@@ -86,9 +86,19 @@
 //! field of a known constructor is either a variable, a literal or a field
 //! read — substituted in place — or is bound once, in source order, by a
 //! one-arm `match` (`match value  __df1_x -> …`) before the body that
-//! reads it. A field a `_` binder discards is still computed. Binders of
-//! the unfolded bodies are renamed to fresh `__df…` names, which no
-//! source program can spell, so no argument is captured.
+//! reads it. A field a `_` binder discards is still computed.
+//!
+//! ## Names
+//!
+//! An argument reads the caller's variables; the body it is put into — a
+//! producer's, or a consumer's arm — binds names of its own, and across
+//! two functions the same spelling is common (`pick(Node.Leaf(z + 1), z)`
+//! against an arm that binds `Option.Some(z)`). So every binder of a
+//! body is renamed to a fresh `__df…` name, which no source program can
+//! spell, *before* anything is put into it, and the parameters a body
+//! reads are replaced all at once (`substitute`), so what one argument
+//! reads is never taken for a parameter put in after it (`p.x` for `a`
+//! when `p` is a record parameter read by field).
 //!
 //! ## Where it sits
 //!
@@ -510,35 +520,26 @@ fn count_field_read(expr: &Spanned<Expr>, param: &str, field: &str) -> usize {
     n
 }
 
-/// Replace every `Ident` named in `map`, in place; types, lines and
-/// `lazy` marks on every other node stay as they are. Binders are not
-/// consulted: callers rename them to fresh names first.
-fn substitute(expr: &mut Spanned<Expr>, map: &HashMap<String, Spanned<Expr>>) {
-    if let Expr::Ident(name) = &expr.node
-        && let Some(value) = map.get(name)
-    {
-        let ty = expr.ty.get().cloned();
-        *expr = value.clone();
-        if expr.ty.get().is_none()
-            && let Some(ty) = ty
-        {
-            expr.set_ty_shared(&ty);
-        }
-        return;
-    }
-    for_each_child_mut(expr, &mut |child| substitute(child, map));
-}
-
-/// Replace every `param.field` named in `map`, in place.
-fn substitute_field_reads(
+/// Replace every `Ident` named in `idents` and every `param.field` named
+/// in `fields`, in place and all at once: what is put in is not looked
+/// into again, so a variable of the caller read by an argument is never
+/// taken for a parameter of the same spelling put in after it. Types,
+/// lines and `lazy` marks on every other node stay as they are. Binders
+/// are not consulted: callers rename them to fresh names first.
+fn substitute(
     expr: &mut Spanned<Expr>,
-    param: &str,
-    map: &HashMap<String, Spanned<Expr>>,
+    idents: &HashMap<&str, &Spanned<Expr>>,
+    fields: &HashMap<&str, &HashMap<String, Spanned<Expr>>>,
 ) {
-    if let Expr::Attr(base, field) = &expr.node
-        && matches!(&base.node, Expr::Ident(id) if id == param)
-        && let Some(value) = map.get(field)
-    {
+    let value = match &expr.node {
+        Expr::Ident(name) => idents.get(name.as_str()).copied(),
+        Expr::Attr(base, field) => match &base.node {
+            Expr::Ident(name) => fields.get(name.as_str()).and_then(|map| map.get(field)),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(value) = value {
         let ty = expr.ty.get().cloned();
         *expr = value.clone();
         if expr.ty.get().is_none()
@@ -548,7 +549,7 @@ fn substitute_field_reads(
         }
         return;
     }
-    for_each_child_mut(expr, &mut |child| substitute_field_reads(child, param, map));
+    for_each_child_mut(expr, &mut |child| substitute(child, idents, fields));
 }
 
 fn rename_ident(expr: &mut Spanned<Expr>, from: &str, to: &str) {
@@ -715,26 +716,40 @@ fn field_reads_as_ident(body: &Spanned<Expr>, param: &str, field: &str) -> Spann
     Spanned::bare(Expr::List(Shared::new(vec![read; reads])))
 }
 
-/// Apply what [`FnCx::argument`] decided for every parameter.
+/// Apply what [`FnCx::argument`] decided for every parameter, all at once.
+/// `body` must have had its binders made fresh first (see
+/// [`FnCx::fresh_body`]): the arguments read the caller's variables, and a
+/// binder of `body` spelled like one would capture it.
 fn apply_bound(body: &mut Spanned<Expr>, bound: &[(String, Bound)]) {
-    let mut map: HashMap<String, Spanned<Expr>> = HashMap::new();
+    let mut idents: HashMap<&str, &Spanned<Expr>> = HashMap::new();
+    let mut fields: HashMap<&str, &HashMap<String, Spanned<Expr>>> = HashMap::new();
     for (param, how) in bound {
-        if let Bound::InPlace(value) = how {
-            map.insert(param.clone(), value.clone());
+        match how {
+            Bound::InPlace(value) => {
+                idents.insert(param, value);
+            }
+            Bound::Fields(map) => {
+                fields.insert(param, map);
+            }
+            Bound::Done => {}
         }
     }
-    substitute(body, &map);
-    for (param, how) in bound {
-        if let Bound::Fields(fields) = how {
-            substitute_field_reads(body, param, fields);
-        }
-    }
+    substitute(body, &idents, &fields);
 }
 
 impl FnCx<'_> {
+    /// A name made fresh twice (an arm's binder made fresh at the site,
+    /// then bound once as a field) keeps the name it had in the source.
     fn fresh_name(&mut self, original: &str) -> String {
+        let mut base = original;
+        while let Some((_, name)) = base
+            .strip_prefix(FRESH_PREFIX)
+            .and_then(|rest| rest.split_once('_'))
+        {
+            base = name;
+        }
         self.fresh += 1;
-        format!("{FRESH_PREFIX}{}_{original}", self.fresh)
+        format!("{FRESH_PREFIX}{}_{base}", self.fresh)
     }
 
     /// Children first, so a site inside an argument is fused before the
@@ -816,12 +831,20 @@ impl FnCx<'_> {
                     return None;
                 };
                 let subject_ty = subject.ty.get()?.clone();
-                let mut arms: Vec<MatchArm> = arms.iter().cloned().collect();
-                for arm in &mut arms {
-                    let mut body = (*arm.body).clone();
-                    apply_bound(&mut body, &bound);
-                    arm.body = Shared::new(body);
-                }
+                // The arms' binders are made fresh before the arguments
+                // go in: an argument may read a variable of the caller
+                // spelled like a binder of the arm, its own or one nested
+                // below it.
+                let arms: Vec<MatchArm> = arms
+                    .iter()
+                    .map(|arm| {
+                        let mut arm = self.fresh_arm(arm);
+                        let mut body = (*arm.body).clone();
+                        apply_bound(&mut body, &bound);
+                        arm.body = Shared::new(body);
+                        arm
+                    })
+                    .collect();
                 let consumer = Consumer { arms, subject_ty };
                 self.fuse_site(prelude, args[k].clone(), consumer, result_ty, original_size)
             }
@@ -1541,6 +1564,209 @@ fn step(s: String) -> Int
             report.rewrites, 0,
             "a copy of forty arms does not fit the growth budget: {report:?}"
         );
+    }
+
+    /// The statements of `name`'s body, as one expression to walk.
+    fn body_of(items: &[TopLevel], name: &str) -> Spanned<Expr> {
+        let fd = items
+            .iter()
+            .find_map(|item| match item {
+                TopLevel::FnDef(fd) if fd.name == name => Some(fd),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} is present"));
+        let FnBody::Block(stmts) = fd.body.as_ref();
+        let exprs = stmts
+            .iter()
+            .map(|stmt| match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr.clone(),
+            })
+            .collect();
+        Spanned::bare(Expr::List(Shared::new(exprs)))
+    }
+
+    /// The first arm below `body` whose pattern is the constructor `ctor`:
+    /// its binders and its body.
+    fn arm_of(body: &Spanned<Expr>, ctor: &str) -> (Vec<String>, Spanned<Expr>) {
+        let mut found = None;
+        walk(body, &mut |e| {
+            if let Expr::Match { arms, .. } = &e.node {
+                for arm in arms.iter() {
+                    if let Pattern::Constructor(name, binders) = &arm.pattern
+                        && ctor_key(name) == ctor_key(ctor)
+                        && found.is_none()
+                    {
+                        found = Some((binders.clone(), (*arm.body).clone()));
+                    }
+                }
+            }
+        });
+        found.unwrap_or_else(|| panic!("an arm for {ctor}"))
+    }
+
+    /// Every caller spells a variable like a binder of the body its
+    /// argument is put into; the fixture
+    /// `tests/fixtures/rust_deforest_capture.av` runs the same cases.
+    const CAPTURE: &str = r#"module Capture
+    intent = "A caller's variable spelled like a binder of the body it is put into."
+    effects []
+
+type Node
+    Empty
+    Leaf(Int)
+
+type Line
+    App(Int, Int)
+    Blank
+
+record Point
+    x: Int
+    y: Int
+
+type Pair
+    Both(Int, Point)
+    Neither
+
+fn some(n: Int) -> Option<Int>
+    match n > 1000000
+        true -> some(n - 1)
+        false -> Option.Some(n)
+
+fn pick(m: Node, y: Int) -> Int
+    match m
+        Node.Empty -> y
+        Node.Leaf(k) -> match k > 0
+            true -> match some(k)
+                Option.Some(z) -> z + y
+                Option.None -> y
+            false -> y
+
+fn nested(z: Int) -> Int
+    pick(Node.Leaf(z + 1), z)
+
+fn own(m: Node, y: Int) -> Int
+    match m
+        Node.Empty -> y
+        Node.Leaf(z) -> z + y
+
+fn ownArm(z: Int) -> Int
+    own(Node.Leaf(1), z)
+
+fn mk(a: Int, p: Point) -> Line
+    match p.y > 0
+        true -> Line.App(a, p.x)
+        false -> Line.Blank
+
+fn producerParam(p: Point) -> Int
+    match mk(p.x, Point(x = 5, y = 6))
+        Line.App(u, v) -> u + v
+        Line.Blank -> 0
+
+fn sum(pr: Pair) -> Int
+    match pr
+        Pair.Both(a, p) -> a + p.x
+        Pair.Neither -> 0
+
+fn recordBinder(p: Point) -> Int
+    sum(Pair.Both(p.x, Point(x = 5, y = 0)))
+
+fn wrap(n: Int) -> Line
+    match some(n)
+        Option.Some(z) -> Line.App(z, n)
+        Option.None -> Line.Blank
+
+fn producerBinder(z: Int) -> Int
+    match wrap(z)
+        Line.App(u, v) -> u * 10 + v
+        Line.Blank -> 0
+
+fn bump(n: Int) -> Line
+    k = n + 1
+    Line.App(k, n)
+
+fn producerBinding(k: Int) -> Int
+    match bump(k)
+        Line.App(u, v) -> u * 10 + v
+        Line.Blank -> 0
+"#;
+
+    fn fused_capture() -> Vec<TopLevel> {
+        let mut items = prepared(CAPTURE);
+        let report = run(&mut items);
+        assert_eq!(report.rewrites, 6, "every site is fused: {report:?}");
+        items
+    }
+
+    /// `pick(Node.Leaf(z + 1), z)`: the consumer's `y` becomes the caller's
+    /// `z`, and the `z` an arm binds below `Node.Leaf(k)` must not take it.
+    #[test]
+    fn an_argument_spelled_like_a_binder_nested_in_the_arm_is_not_captured() {
+        let items = fused_capture();
+        let (binders, body) = arm_of(&body_of(&items, "nested"), "Option.Some");
+        let shown = rendered(&items, "nested");
+        assert_ne!(binders[0], "z", "the arm's binder is fresh: {shown}");
+        assert_eq!(count_ident(&body, &binders[0]), 1, "{shown}");
+        assert_eq!(
+            count_ident(&body, "z"),
+            1,
+            "the arm reads the caller's z: {shown}"
+        );
+    }
+
+    /// `own(Node.Leaf(1), z)` against `Node.Leaf(z) -> z + y`: the arm's
+    /// own binder is spelled like the argument put in for `y`.
+    #[test]
+    fn an_argument_spelled_like_the_arms_own_binder_is_not_captured() {
+        let items = fused_capture();
+        let body = body_of(&items, "ownArm");
+        let shown = rendered(&items, "ownArm");
+        assert_eq!(count_ident(&body, "z"), 1, "{shown}");
+        assert!(shown.contains("1 + z"), "{shown}");
+    }
+
+    /// `mk(p.x, Point(x = 5, y = 6))`: the producer's `a` becomes the
+    /// caller's `p.x`, and the producer's `p`, read by field, becomes the
+    /// record's fields; the caller's `p.x` must not be taken for the
+    /// producer's.
+    #[test]
+    fn an_argument_spelled_like_a_producer_parameter_read_by_field_is_not_captured() {
+        let items = fused_capture();
+        let body = body_of(&items, "producerParam");
+        let shown = rendered(&items, "producerParam");
+        assert_eq!(count_field_read(&body, "p", "x"), 1, "{shown}");
+        assert!(shown.contains("p.x + 5"), "{shown}");
+    }
+
+    /// `sum(Pair.Both(p.x, Point(x = 5, y = 0)))` against
+    /// `Pair.Both(a, p) -> a + p.x`: the arm's record binder is spelled
+    /// like the caller's record.
+    #[test]
+    fn an_argument_spelled_like_an_arms_record_binder_is_not_captured() {
+        let items = fused_capture();
+        let body = body_of(&items, "recordBinder");
+        let shown = rendered(&items, "recordBinder");
+        assert_eq!(count_field_read(&body, "p", "x"), 1, "{shown}");
+        assert!(shown.contains("p.x + 5"), "{shown}");
+    }
+
+    /// `wrap(z)` against a producer that binds `Option.Some(z)` of its
+    /// own, and `bump(k)` against a producer with a binding `k`.
+    #[test]
+    fn an_argument_spelled_like_a_producers_binder_or_binding_is_not_captured() {
+        let items = fused_capture();
+        let (binders, body) = arm_of(&body_of(&items, "producerBinder"), "Option.Some");
+        let shown = rendered(&items, "producerBinder");
+        assert_ne!(binders[0], "z", "{shown}");
+        assert_eq!(count_ident(&body, &binders[0]), 1, "{shown}");
+        assert_eq!(count_ident(&body, "z"), 1, "{shown}");
+        let body = body_of(&items, "producerBinding");
+        let shown = rendered(&items, "producerBinding");
+        assert_eq!(
+            count_ident(&body, "k"),
+            2,
+            "the binding's value and the arm both read the caller's k: {shown}"
+        );
+        assert_eq!(count_ident(&body, "n"), 0, "{shown}");
     }
 
     #[test]
