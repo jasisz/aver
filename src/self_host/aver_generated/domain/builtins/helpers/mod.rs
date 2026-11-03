@@ -192,8 +192,8 @@ pub fn expectByteItems(
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(items, [] => { return Ok((acc).reverse_owned()); }, [item, rest] => { { let __t = item; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValInt(__value_fields) => {
-            let value = __value_fields.0.clone();
+        crate::aver_generated::domain::value::Val__view::ValInt(_) => {
+            let (value,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValInt>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::aver_generated::domain::value::Val__view::ValInt(__f) => (__f.0.clone(),), _ => unreachable!() } };
             {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverIntList::prepend_owned(value, acc);

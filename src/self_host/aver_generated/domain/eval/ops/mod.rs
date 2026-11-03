@@ -485,27 +485,39 @@ pub fn evalVectorGetOrIntVals(
 
 /// Apply Int.mod and return an integer fallback when the result would be Err.
 pub fn evalIntModOrIntVals(
-    aV @ _: &crate::aver_generated::domain::value::Val,
-    bV @ _: &crate::aver_generated::domain::value::Val,
+    mut aV @ _: crate::aver_generated::domain::value::Val,
+    mut bV @ _: crate::aver_generated::domain::value::Val,
     defaultValue @ _: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __t = aV;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValInt(__a_fields) => {
-                let a = __a_fields.0.clone();
+            crate::aver_generated::domain::value::Val__view::ValInt(_) => {
+                let (a, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValInt>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValInt(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
                 {
                     let __t = bV;
                     match __t.view() {
-                        crate::aver_generated::domain::value::Val__view::ValInt(__b_fields) => {
-                            let b = __b_fields.0.clone();
+                        crate::aver_generated::domain::value::Val__view::ValInt(_) => {
+                            let (b, __tok1,) = match __t.try_take_reusing::<crate::aver_generated::domain::value::Val__ValInt>() { Ok((__f, __tok1)) => (__f.0, __tok1,), Err(__t) => match __t.view() { crate::aver_generated::domain::value::Val__view::ValInt(__f) => (__f.0.clone(), aver_rt::thin::Reuse::empty(),), _ => unreachable!() } };
                             if (b == aver_rt::AverInt::from_i64(0)) {
-                                Ok(crate::aver_generated::domain::value::Val::ValInt(
+                                Ok(crate::aver_generated::domain::value::Val::new_in(
+                                    [&__tok1, &__tok0],
                                     crate::aver_generated::domain::value::Val__ValInt(defaultValue),
                                 ))
                             } else {
-                                Ok(crate::aver_generated::domain::value::Val::ValInt(
+                                Ok(crate::aver_generated::domain::value::Val::new_in(
+                                    [&__tok1, &__tok0],
                                     crate::aver_generated::domain::value::Val__ValInt(
                                         (match (a).rem_euclid(&(b)) {
                                             Some(__r) => Ok(__r),
@@ -528,28 +540,39 @@ pub fn evalIntModOrIntVals(
 
 /// Apply Vector.set and return None when the caller should fall back to its default expression.
 pub fn evalVectorSetMaybeDefault(
-    vecV @ _: &crate::aver_generated::domain::value::Val,
-    idxV @ _: &crate::aver_generated::domain::value::Val,
+    mut vecV @ _: crate::aver_generated::domain::value::Val,
+    mut idxV @ _: crate::aver_generated::domain::value::Val,
     mut valueV @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<Option<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
     {
         let __t = vecV;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = &__vec_fields.0;
+            crate::aver_generated::domain::value::Val__view::ValVector(_) => {
+                let (vec, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValVector>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValVector(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
                 {
                     let __t = idxV;
                     match __t.view() {
-                        crate::aver_generated::domain::value::Val__view::ValInt(__idx_fields) => {
-                            let idx = __idx_fields.0.clone();
+                        crate::aver_generated::domain::value::Val__view::ValInt(_) => {
+                            let (idx, __tok1,) = match __t.try_take_reusing::<crate::aver_generated::domain::value::Val__ValInt>() { Ok((__f, __tok1)) => (__f.0, __tok1,), Err(__t) => match __t.view() { crate::aver_generated::domain::value::Val__view::ValInt(__f) => (__f.0.clone(), aver_rt::thin::Reuse::empty(),), _ => unreachable!() } };
                             if (idx < aver_rt::AverInt::from_i64(0)) {
                                 Ok(None)
                             } else {
                                 if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
-                                    Ok(Some(crate::aver_generated::domain::value::Val::ValVector(
+                                    Ok(Some(crate::aver_generated::domain::value::Val::new_in(
+                                        [&__tok1, &__tok0],
                                         crate::aver_generated::domain::value::Val__ValVector({
-                                            let __vec = vec.clone();
+                                            let __vec = vec;
                                             match (idx).to_usize() {
                                                 Some(__idx) if __idx < __vec.len() => {
                                                     __vec.set_unchecked(__idx, valueV)

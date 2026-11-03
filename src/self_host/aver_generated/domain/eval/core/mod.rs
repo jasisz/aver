@@ -815,7 +815,7 @@ fn __mutual_tco_trampoline_1(
             ) => {
                 crate::cancel_checkpoint();
                 match crate::aver_generated::domain::eval::ops::evalVectorSetMaybeDefault(
-                    &vecV, &idxV, valueV,
+                    vecV, idxV, valueV,
                 ) {
                     Ok(maybeV @ _) => match maybeV {
                         Some(v @ _) => return Ok(v),
@@ -2129,7 +2129,7 @@ fn __mutual_tco_trampoline_3(
             ) => {
                 crate::cancel_checkpoint();
                 match crate::aver_generated::domain::eval::ops::evalVectorSetMaybeDefault(
-                    &vecV, &idxV, valueV,
+                    vecV, idxV, valueV,
                 ) {
                     Ok(maybeV @ _) => match maybeV {
                         Some(v @ _) => return Ok(v),
@@ -3295,7 +3295,7 @@ pub fn evalIntModOrIntExpr(
     crate::cancel_checkpoint();
     let aV @ _ = crate::aver_generated::domain::eval::core::evalExpr(a, env.clone(), fns)?;
     let bV @ _ = crate::aver_generated::domain::eval::core::evalExpr(b, env, fns)?;
-    crate::aver_generated::domain::eval::ops::evalIntModOrIntVals(&aV, &bV, defaultValue)
+    crate::aver_generated::domain::eval::ops::evalIntModOrIntVals(aV, bV, defaultValue)
 }
 
 /// Evaluate ? operator: unwrap Ok or propagate Err.
@@ -3309,17 +3309,45 @@ pub fn evalPropagate(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
-                let x = &__x_fields.0;
-                Ok(x.clone())
+            crate::aver_generated::domain::value::Val__view::ValOk(_) => {
+                let (x,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValOk>()
+                {
+                    Ok(__f) => (__f.0,),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValOk(__f) => {
+                            (__f.0.clone(),)
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(x)
             }
-            crate::aver_generated::domain::value::Val__view::ValErr(__e_fields) => {
-                let e = &__e_fields.0;
+            crate::aver_generated::domain::value::Val__view::ValErr(_) => {
+                let (e,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValErr>()
+                {
+                    Ok(__f) => (__f.0,),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValErr(__f) => {
+                            (__f.0.clone(),)
+                        }
+                        _ => unreachable!(),
+                    },
+                };
                 {
                     let __t = e;
                     match __t.view() {
-                        crate::aver_generated::domain::value::Val__view::ValStr(__msg_fields) => {
-                            let msg = __msg_fields.0.clone();
+                        crate::aver_generated::domain::value::Val__view::ValStr(_) => {
+                            let (msg,) = match __t
+                                .try_take::<crate::aver_generated::domain::value::Val__ValStr>()
+                            {
+                                Ok(__f) => (__f.0,),
+                                Err(__t) => match __t.view() {
+                                    crate::aver_generated::domain::value::Val__view::ValStr(
+                                        __f,
+                                    ) => (__f.0.clone(),),
+                                    _ => unreachable!(),
+                                },
+                            };
                             Err(
                                 crate::aver_generated::domain::eval::common::wrapPropagatedError(
                                     msg,
@@ -3565,21 +3593,21 @@ pub fn unwrapProductResults(
     loop {
         crate::cancel_checkpoint();
         ::aver_rt::aver_list_match_reuse!(items, [] => { return Ok(crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple((acc).reverse_owned()))); }, [v, rest, __list_slot] => { { let __t = v; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
-            let x = &__x_fields.0;
+        crate::aver_generated::domain::value::Val__view::ValOk(_) => {
+            let (x,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValOk>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::aver_generated::domain::value::Val__view::ValOk(__f) => (__f.0.clone(),), _ => unreachable!() } };
             {
             let __tco0 = rest;
-            let __tco1 = __list_slot.prepend(x.clone(), acc);
+            let __tco1 = __list_slot.prepend(x, acc);
             items = __tco0;
             acc = __tco1;
             continue;
         }
         },
-        crate::aver_generated::domain::value::Val__view::ValErr(__e_fields) => {
-            let e = &__e_fields.0;
+        crate::aver_generated::domain::value::Val__view::ValErr(_) => {
+            let (e,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValErr>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::aver_generated::domain::value::Val__view::ValErr(__f) => (__f.0.clone(),), _ => unreachable!() } };
             { let __t = e; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValStr(__msg_fields) => {
-            let msg = __msg_fields.0.clone();
+        crate::aver_generated::domain::value::Val__view::ValStr(_) => {
+            let (msg,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValStr>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::aver_generated::domain::value::Val__view::ValStr(__f) => (__f.0.clone(),), _ => unreachable!() } };
             return Err(crate::aver_generated::domain::eval::common::wrapPropagatedError(msg));
         },
         _ => {
@@ -5107,7 +5135,7 @@ pub fn evalIntModOrIntExprSlot(
     let aV @ _ =
         crate::aver_generated::domain::eval::core::evalExprSlot(a, env.clone(), slotMap, fns)?;
     let bV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns)?;
-    crate::aver_generated::domain::eval::ops::evalIntModOrIntVals(&aV, &bV, defaultValue)
+    crate::aver_generated::domain::eval::ops::evalIntModOrIntVals(aV, bV, defaultValue)
 }
 
 /// Binary op in slot path.
@@ -5739,17 +5767,45 @@ pub fn evalPropagateSlot(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValOk(__x_fields) => {
-                let x = &__x_fields.0;
-                Ok(x.clone())
+            crate::aver_generated::domain::value::Val__view::ValOk(_) => {
+                let (x,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValOk>()
+                {
+                    Ok(__f) => (__f.0,),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValOk(__f) => {
+                            (__f.0.clone(),)
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(x)
             }
-            crate::aver_generated::domain::value::Val__view::ValErr(__e_fields) => {
-                let e = &__e_fields.0;
+            crate::aver_generated::domain::value::Val__view::ValErr(_) => {
+                let (e,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValErr>()
+                {
+                    Ok(__f) => (__f.0,),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValErr(__f) => {
+                            (__f.0.clone(),)
+                        }
+                        _ => unreachable!(),
+                    },
+                };
                 {
                     let __t = e;
                     match __t.view() {
-                        crate::aver_generated::domain::value::Val__view::ValStr(__msg_fields) => {
-                            let msg = __msg_fields.0.clone();
+                        crate::aver_generated::domain::value::Val__view::ValStr(_) => {
+                            let (msg,) = match __t
+                                .try_take::<crate::aver_generated::domain::value::Val__ValStr>()
+                            {
+                                Ok(__f) => (__f.0,),
+                                Err(__t) => match __t.view() {
+                                    crate::aver_generated::domain::value::Val__view::ValStr(
+                                        __f,
+                                    ) => (__f.0.clone(),),
+                                    _ => unreachable!(),
+                                },
+                            };
                             Err(
                                 crate::aver_generated::domain::eval::common::wrapPropagatedError(
                                     msg,

@@ -719,10 +719,8 @@ fn __mutual_tco_trampoline_1(
                                 }
                             }
                         }
-                        crate::proof_std::aver_generated::kernel::std::Tactic__view::Plan(
-                            __name_fields,
-                        ) => {
-                            let name = __name_fields.0.clone();
+                        crate::proof_std::aver_generated::kernel::std::Tactic__view::Plan(_) => {
+                            let (name,) = match __t.try_take::<crate::proof_std::aver_generated::kernel::std::Tactic__Plan>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::proof_std::aver_generated::kernel::std::Tactic__view::Plan(__f) => (__f.0.clone(),), _ => unreachable!() } };
                             {
                                 let __arg21 @ _ = aver_rt::AverStr::from({
                                     let mut __b = {
@@ -760,27 +758,21 @@ fn __mutual_tco_trampoline_1(
                                 }
                             }
                         }
-                        crate::proof_std::aver_generated::kernel::std::Tactic__view::Cases(
-                            __next_fields,
-                        ) => {
-                            let next = &__next_fields.0;
+                        crate::proof_std::aver_generated::kernel::std::Tactic__view::Cases(_) => {
+                            let (next,) = match __t.try_take::<crate::proof_std::aver_generated::kernel::std::Tactic__Cases>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::proof_std::aver_generated::kernel::std::Tactic__view::Cases(__f) => (__f.0.clone(),), _ => unreachable!() } };
                             {
                                 let __arg23 @ _ =
                                     crate::proof_std::aver_generated::kernel::std::down(
                                         n,
                                         ::aver_rt::str_lit!("Cases"),
                                     );
-                                __MutualTco1::CasesAt(__arg23, next.clone())
+                                __MutualTco1::CasesAt(__arg23, next)
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::Induction(
-                            __v_fields,
+                            _,
                         ) => {
-                            let v = __v_fields.0.clone();
-                            let h = __v_fields.1.clone();
-                            let tl = __v_fields.2.clone();
-                            let nil = &__v_fields.3;
-                            let cons = &__v_fields.4;
+                            let (v, h, tl, nil, cons,) = match __t.try_take::<crate::proof_std::aver_generated::kernel::std::Tactic__Induction>() { Ok(__f) => (__f.0, __f.1, __f.2, __f.3, __f.4,), Err(__t) => match __t.view() { crate::proof_std::aver_generated::kernel::std::Tactic__view::Induction(__f) => (__f.0.clone(), __f.1.clone(), __f.2.clone(), __f.3.clone(), __f.4.clone(),), _ => unreachable!() } };
                             {
                                 let __arg25 @ _ = {
                                     let __arg24 @ _ = aver_rt::AverStr::from({
@@ -800,25 +792,12 @@ fn __mutual_tco_trampoline_1(
                                     crate::proof_std::aver_generated::kernel::std::down(n, __arg24)
                                 };
                                 return crate::proof_std::aver_generated::kernel::std::listStep(
-                                    __arg25,
-                                    v,
-                                    h,
-                                    tl,
-                                    nil.clone(),
-                                    cons.clone(),
-                                    true,
-                                    &*answers,
+                                    __arg25, v, h, tl, nil, cons, true, &*answers,
                                 );
                             }
                         }
-                        crate::proof_std::aver_generated::kernel::std::Tactic__view::Split(
-                            __v_fields,
-                        ) => {
-                            let v = __v_fields.0.clone();
-                            let h = __v_fields.1.clone();
-                            let tl = __v_fields.2.clone();
-                            let nil = &__v_fields.3;
-                            let cons = &__v_fields.4;
+                        crate::proof_std::aver_generated::kernel::std::Tactic__view::Split(_) => {
+                            let (v, h, tl, nil, cons,) = match __t.try_take::<crate::proof_std::aver_generated::kernel::std::Tactic__Split>() { Ok(__f) => (__f.0, __f.1, __f.2, __f.3, __f.4,), Err(__t) => match __t.view() { crate::proof_std::aver_generated::kernel::std::Tactic__view::Split(__f) => (__f.0.clone(), __f.1.clone(), __f.2.clone(), __f.3.clone(), __f.4.clone(),), _ => unreachable!() } };
                             {
                                 let __arg27 @ _ = {
                                     let __arg26 @ _ = aver_rt::AverStr::from({
@@ -838,23 +817,14 @@ fn __mutual_tco_trampoline_1(
                                     crate::proof_std::aver_generated::kernel::std::down(n, __arg26)
                                 };
                                 return crate::proof_std::aver_generated::kernel::std::listStep(
-                                    __arg27,
-                                    v,
-                                    h,
-                                    tl,
-                                    nil.clone(),
-                                    cons.clone(),
-                                    false,
-                                    &*answers,
+                                    __arg27, v, h, tl, nil, cons, false, &*answers,
                                 );
                             }
                         }
                         crate::proof_std::aver_generated::kernel::std::Tactic__view::SplitBool(
-                            __c_fields,
+                            _,
                         ) => {
-                            let c = &__c_fields.0;
-                            let yes = &__c_fields.1;
-                            let no = &__c_fields.2;
+                            let (c, yes, no,) = match __t.try_take::<crate::proof_std::aver_generated::kernel::std::Tactic__SplitBool>() { Ok(__f) => (__f.0, __f.1, __f.2,), Err(__t) => match __t.view() { crate::proof_std::aver_generated::kernel::std::Tactic__view::SplitBool(__f) => (__f.0.clone(), __f.1.clone(), __f.2.clone(),), _ => unreachable!() } };
                             {
                                 let __arg28 @ _ =
                                     crate::proof_std::aver_generated::kernel::std::down(
@@ -862,11 +832,7 @@ fn __mutual_tco_trampoline_1(
                                         ::aver_rt::str_lit!("SplitBool"),
                                     );
                                 return crate::proof_std::aver_generated::kernel::std::boolStep(
-                                    &__arg28,
-                                    c.clone(),
-                                    yes.clone(),
-                                    no.clone(),
-                                    &*answers,
+                                    &__arg28, c, yes, no, &*answers,
                                 );
                             }
                         }
@@ -1566,7 +1532,7 @@ pub fn holeBelow(
                             });
                         crate::proof_std::aver_generated::kernel::std::mapSome(
                             (&__arg16).as_ref(),
-                            &__arg17,
+                            __arg17,
                         )
                     }
                 }
@@ -1588,7 +1554,7 @@ pub fn holeBelow(
                             });
                         crate::proof_std::aver_generated::kernel::std::mapSome(
                             (&__arg18).as_ref(),
-                            &__arg19,
+                            __arg19,
                         )
                     }
                 }
@@ -1610,7 +1576,7 @@ pub fn holeBelow(
                             });
                         crate::proof_std::aver_generated::kernel::std::mapSome(
                             (&__arg20).as_ref(),
-                            &__arg21,
+                            __arg21,
                         )
                     }
                 }
@@ -1629,7 +1595,7 @@ pub fn holeBelow(
                             );
                         crate::proof_std::aver_generated::kernel::std::mapSome(
                             (&__arg22).as_ref(),
-                            &__arg23,
+                            __arg23,
                         )
                     }
                 }
@@ -1648,7 +1614,7 @@ pub fn holeBelow(
                             );
                         crate::proof_std::aver_generated::kernel::std::mapSome(
                             (&__arg24).as_ref(),
-                            &__arg25,
+                            __arg25,
                         )
                     }
                 }
@@ -1695,7 +1661,7 @@ pub fn holeBelow(
 #[inline(always)]
 pub fn mapSome(
     xs @ _: Option<&aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>>,
-    shape @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    mut shape @ _: crate::proof_std::aver_generated::kernel::term::Term,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
     match xs {
@@ -1703,39 +1669,41 @@ pub fn mapSome(
         Some(ys @ _) => {
             let __t = shape;
             match __t.view() {
-                crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
-                    let f = __f_fields.1.clone();
-                    Some(crate::proof_std::aver_generated::kernel::term::Term::TCall(
-                        {
+                crate::proof_std::aver_generated::kernel::term::Term__view::TCall(_) => {
+                    let (f, __tok0,) = match __t.try_take_reusing::<crate::proof_std::aver_generated::kernel::term::Term__TCall>() { Ok((__f, __tok0)) => (__f.1, __tok0,), Err(__t) => match __t.view() { crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f) => (__f.1.clone(), aver_rt::thin::Reuse::empty(),), _ => unreachable!() } };
+                    Some(
+                        crate::proof_std::aver_generated::kernel::term::Term::new_in([&__tok0], {
                             let __field0 = f;
                             let __field1 = ys.clone();
                             crate::proof_std::aver_generated::kernel::term::Term__TCall(
                                 __field1, __field0,
                             )
-                        },
-                    ))
+                        }),
+                    )
                 }
-                crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
-                    let f = __f_fields.1.clone();
-                    Some(crate::proof_std::aver_generated::kernel::term::Term::TBi({
-                        let __field0 = f;
-                        let __field1 = ys.clone();
-                        crate::proof_std::aver_generated::kernel::term::Term__TBi(
-                            __field1, __field0,
-                        )
-                    }))
+                crate::proof_std::aver_generated::kernel::term::Term__view::TBi(_) => {
+                    let (f, __tok0,) = match __t.try_take_reusing::<crate::proof_std::aver_generated::kernel::term::Term__TBi>() { Ok((__f, __tok0)) => (__f.1, __tok0,), Err(__t) => match __t.view() { crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__f) => (__f.1.clone(), aver_rt::thin::Reuse::empty(),), _ => unreachable!() } };
+                    Some(
+                        crate::proof_std::aver_generated::kernel::term::Term::new_in([&__tok0], {
+                            let __field0 = f;
+                            let __field1 = ys.clone();
+                            crate::proof_std::aver_generated::kernel::term::Term__TBi(
+                                __field1, __field0,
+                            )
+                        }),
+                    )
                 }
-                crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
-                    let c = __c_fields.1.clone();
-                    Some(crate::proof_std::aver_generated::kernel::term::Term::TCtor(
-                        {
+                crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(_) => {
+                    let (c, __tok0,) = match __t.try_take_reusing::<crate::proof_std::aver_generated::kernel::term::Term__TCtor>() { Ok((__f, __tok0)) => (__f.1, __tok0,), Err(__t) => match __t.view() { crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__f) => (__f.1.clone(), aver_rt::thin::Reuse::empty(),), _ => unreachable!() } };
+                    Some(
+                        crate::proof_std::aver_generated::kernel::term::Term::new_in([&__tok0], {
                             let __field0 = c;
                             let __field1 = ys.clone();
                             crate::proof_std::aver_generated::kernel::term::Term__TCtor(
                                 __field1, __field0,
                             )
-                        },
-                    ))
+                        }),
+                    )
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TTuple(_) => Some(
                     crate::proof_std::aver_generated::kernel::term::Term::TTuple(

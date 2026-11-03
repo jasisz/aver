@@ -177,6 +177,19 @@ pub(super) fn type_is_thin(id: crate::ir::TypeId, ctx: &CodegenContext) -> bool 
     named_type_def(Some(id), "", ctx, None).is_some_and(|td| is_thin_sum(td, ctx))
 }
 
+/// Whether the type `id` is a thin sum a match may take the fields out of
+/// a node of (`try_take`): one no `lazy f(…)` returns, since a node a call
+/// was made in is laid out for the largest constructor (see
+/// `CodegenContext::rust_lazy_sums`, computed before the by-value facts).
+pub(super) fn type_is_taken_apart(id: crate::ir::TypeId, ctx: &CodegenContext) -> bool {
+    named_type_def(Some(id), "", ctx, None).is_some_and(|td| {
+        is_thin_sum(td, ctx)
+            && !ctx
+                .rust_lazy_sums
+                .contains(&crate::codegen::common::backend_type_def_key(ctx, td))
+    })
+}
+
 /// How many bytes a record's fields may take inline before the record is
 /// kept behind a pointer (see [`is_boxed_record`]). A record handed on and
 /// updated in a loop is faster boxed at any size (60% at 80 bytes, 69% at

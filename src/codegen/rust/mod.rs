@@ -221,10 +221,12 @@ fn transpile_project(
         ctx.mir_program = Some(prog);
         boxing_notes = perf_notes::boxing(ctx);
         arg_order::bind_computed_arguments(ctx);
+        // The by-value facts ask which sums have deferred calls: a match
+        // never takes the fields out of a node of one.
+        ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
         ctx.rust_counted_records = counted_records::compute(ctx);
         ctx.rust_lent_options = lent_option::compute(ctx);
-        ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
         ctx.rust_forced_inline = forced_inline::compute(ctx);
         ctx.rust_knowing = knowing::compute(ctx);
         ctx.rust_field_layout = field_layout::compute(ctx);

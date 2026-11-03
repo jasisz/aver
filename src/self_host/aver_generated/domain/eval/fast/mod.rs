@@ -115,8 +115,17 @@ pub fn fastBoolSlotBranch(
     {
         let __t = slotV;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValBool(__cond_fields) => {
-                let cond = __cond_fields.0.clone();
+            crate::aver_generated::domain::value::Val__view::ValBool(_) => {
+                let (cond,) =
+                    match __t.try_take::<crate::aver_generated::domain::value::Val__ValBool>() {
+                        Ok(__f) => (__f.0,),
+                        Err(__t) => match __t.view() {
+                            crate::aver_generated::domain::value::Val__view::ValBool(__f) => {
+                                (__f.0.clone(),)
+                            }
+                            _ => unreachable!(),
+                        },
+                    };
                 crate::aver_generated::domain::eval::fast::selectFastLeaf(
                     cond, thenLeaf, elseLeaf, calleeEnv,
                 )
@@ -196,13 +205,32 @@ pub fn fastLtIntSlotsBranch(
     {
         let __t = lhsV;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValInt(__lhs_fields) => {
-                let lhs = __lhs_fields.0.clone();
+            crate::aver_generated::domain::value::Val__view::ValInt(_) => {
+                let (lhs,) =
+                    match __t.try_take::<crate::aver_generated::domain::value::Val__ValInt>() {
+                        Ok(__f) => (__f.0,),
+                        Err(__t) => match __t.view() {
+                            crate::aver_generated::domain::value::Val__view::ValInt(__f) => {
+                                (__f.0.clone(),)
+                            }
+                            _ => unreachable!(),
+                        },
+                    };
                 {
                     let __t = rhsV;
                     match __t.view() {
-                        crate::aver_generated::domain::value::Val__view::ValInt(__rhs_fields) => {
-                            let rhs = __rhs_fields.0.clone();
+                        crate::aver_generated::domain::value::Val__view::ValInt(_) => {
+                            let (rhs,) = match __t
+                                .try_take::<crate::aver_generated::domain::value::Val__ValInt>()
+                            {
+                                Ok(__f) => (__f.0,),
+                                Err(__t) => match __t.view() {
+                                    crate::aver_generated::domain::value::Val__view::ValInt(
+                                        __f,
+                                    ) => (__f.0.clone(),),
+                                    _ => unreachable!(),
+                                },
+                            };
                             {
                                 let __arg9 @ _ = (lhs < rhs);
                                 crate::aver_generated::domain::eval::fast::selectFastLeaf(
@@ -372,12 +400,12 @@ pub fn fastMapSetSlot(
     let mapV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
     let keyV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
     let valueV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, valueSlot)?;
-    crate::aver_generated::domain::eval::fast::fastMapSetSlotInner(&mapV, keyV, valueV)
+    crate::aver_generated::domain::eval::fast::fastMapSetSlotInner(mapV, keyV, valueV)
 }
 
 /// Set a key in a ValMap without going through builtin dispatch.
 pub fn fastMapSetSlotInner(
-    mapV @ _: &crate::aver_generated::domain::value::Val,
+    mut mapV @ _: crate::aver_generated::domain::value::Val,
     mut keyV @ _: crate::aver_generated::domain::value::Val,
     mut valueV @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
@@ -385,12 +413,24 @@ pub fn fastMapSetSlotInner(
     {
         let __t = mapV;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = &__m_fields.0;
-                Ok(crate::aver_generated::domain::value::Val::ValMap(
-                    crate::aver_generated::domain::value::Val__ValMap(m.clone().insert_owned(
+            crate::aver_generated::domain::value::Val__view::ValMap(_) => {
+                let (m, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValMap>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValMap(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
+                    crate::aver_generated::domain::value::Val__ValMap(m.insert_owned(
                         crate::aver_generated::domain::value::mapKeyRepr(&keyV),
-                        crate::aver_generated::domain::value::Val::ValTuple(
+                        crate::aver_generated::domain::value::Val::new_in(
+                            [&__tok0],
                             crate::aver_generated::domain::value::Val__ValTuple(
                                 aver_rt::AverList::from_vec(vec![keyV, valueV]),
                             ),
@@ -411,26 +451,38 @@ pub fn fastVectorNewSlot(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let sizeV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, sizeSlot)?;
-    crate::aver_generated::domain::eval::fast::fastVectorNewSlotInner(&sizeV, fill)
+    crate::aver_generated::domain::eval::fast::fastVectorNewSlotInner(sizeV, fill)
 }
 
 /// Allocate a vector when the wrapper shape is known in advance.
 pub fn fastVectorNewSlotInner(
-    sizeV @ _: &crate::aver_generated::domain::value::Val,
+    mut sizeV @ _: crate::aver_generated::domain::value::Val,
     fill @ _: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __t = sizeV;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValInt(__size_fields) => {
-                let size = __size_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValVector(
+            crate::aver_generated::domain::value::Val__view::ValInt(_) => {
+                let (size, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValInt>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValInt(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValVector(
                         match aver_rt::checked_vector_size(&(size)) {
                             Some(__n) => Ok(aver_rt::AverVector::new(
                                 __n,
-                                crate::aver_generated::domain::value::Val::ValInt(
+                                crate::aver_generated::domain::value::Val::new_in(
+                                    [&__tok0],
                                     crate::aver_generated::domain::value::Val__ValInt(fill),
                                 ),
                             )),
@@ -458,7 +510,7 @@ pub fn fastVectorGetOrIntSlot(
     let idxV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, idxSlot)?;
     crate::aver_generated::domain::eval::fast::fastVectorGetOrIntSlotInner(
         &vecV,
-        &idxV,
+        idxV,
         defaultValue,
     )
 }
@@ -466,7 +518,7 @@ pub fn fastVectorGetOrIntSlot(
 /// Read a vector cell with an integer default without going through builtin dispatch.
 pub fn fastVectorGetOrIntSlotInner(
     vecV @ _: &crate::aver_generated::domain::value::Val,
-    idxV @ _: &crate::aver_generated::domain::value::Val,
+    mut idxV @ _: crate::aver_generated::domain::value::Val,
     defaultValue @ _: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
@@ -478,14 +530,15 @@ pub fn fastVectorGetOrIntSlotInner(
                 {
                     let __t = idxV;
                     match __t.view() {
-                        crate::aver_generated::domain::value::Val__view::ValInt(__idx_fields) => {
-                            let idx = __idx_fields.0.clone();
+                        crate::aver_generated::domain::value::Val__view::ValInt(_) => {
+                            let (idx, __tok0,) = match __t.try_take_reusing::<crate::aver_generated::domain::value::Val__ValInt>() { Ok((__f, __tok0)) => (__f.0, __tok0,), Err(__t) => match __t.view() { crate::aver_generated::domain::value::Val__view::ValInt(__f) => (__f.0.clone(), aver_rt::thin::Reuse::empty(),), _ => unreachable!() } };
                             match {
                                 let __i = (idx).to_usize();
                                 __i.and_then(|__i| (vec).get(__i))
                             } {
                                 Some(v @ _) => Ok(v.clone()),
-                                None => Ok(crate::aver_generated::domain::value::Val::ValInt(
+                                None => Ok(crate::aver_generated::domain::value::Val::new_in(
+                                    [&__tok0],
                                     crate::aver_generated::domain::value::Val__ValInt(defaultValue),
                                 )),
                             }
@@ -536,12 +589,22 @@ pub fn fastMapRemoveSlot(
     {
         let __t = mapV;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = &__m_fields.0;
-                Ok(crate::aver_generated::domain::value::Val::ValMap(
+            crate::aver_generated::domain::value::Val__view::ValMap(_) => {
+                let (m, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValMap>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValMap(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValMap(
-                        m.clone()
-                            .remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
+                        m.remove_owned(&crate::aver_generated::domain::value::mapKeyRepr(&keyV)),
                     ),
                 ))
             }
