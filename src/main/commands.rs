@@ -12448,6 +12448,11 @@ pub(super) struct DepLowering {
     pub string_index: bool,
     pub list_build: bool,
     pub byte_sink: bool,
+    /// A value built by one call and taken apart by the next is never
+    /// built (`PipelineConfig::run_deforest_calls`). Below the proof line
+    /// like the gates above: a dependency's post-pass fns are what the
+    /// Lean exporter reads, so [`Self::PRISTINE`] leaves it off.
+    pub deforest_calls: bool,
     /// Leave functions the certificate printer could print unfused
     /// (`PipelineConfig::keep_printable_unfused`): set by `--certify` only.
     pub keep_printable_unfused: bool,
@@ -12484,6 +12489,7 @@ impl DepLowering {
         string_index: false,
         list_build: false,
         byte_sink: false,
+        deforest_calls: false,
         keep_printable_unfused: false,
         self_host: false,
     };
@@ -12499,6 +12505,7 @@ impl DepLowering {
         chars_fusion: true,
         string_index: true,
         byte_sink: true,
+        deforest_calls: true,
         ..Self::PRISTINE
     };
 
@@ -12513,6 +12520,7 @@ impl DepLowering {
             // Full list-build already includes byte retargeting. The separate
             // gate exists only for backends that must refuse generic lists.
             byte_sink: false,
+            deforest_calls: on,
             keep_printable_unfused: false,
             self_host,
         }
@@ -12610,6 +12618,7 @@ pub(super) fn load_compile_deps_prepared(
                 run_string_index: lowering.string_index,
                 run_list_build: lowering.list_build,
                 run_byte_sink: lowering.byte_sink,
+                run_deforest_calls: lowering.deforest_calls,
                 keep_printable_unfused: lowering.keep_printable_unfused,
                 indexed_wrappers,
                 alloc_policy: Some(&neutral_policy),
