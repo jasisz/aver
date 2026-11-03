@@ -1859,7 +1859,7 @@ pub fn tokenizeDigit__indexed(
 }
 
 /// Synthesized indexed worker of `tokenizeAfterInt`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
-#[inline(always)]
+#[inline]
 pub fn tokenizeAfterInt__indexed(
     src @ _: AverStr,
     pos @ _: aver_rt::AverInt,
@@ -2056,7 +2056,7 @@ pub fn tokenizeMinus__indexed(
 }
 
 /// Synthesized indexed worker of `tokenizeInterp`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
-#[inline(always)]
+#[inline]
 pub fn tokenizeInterp__indexed(
     src @ _: AverStr,
     pos @ _: aver_rt::AverInt,
@@ -2078,7 +2078,7 @@ pub fn tokenizeInterp__indexed(
 }
 
 /// Synthesized indexed worker of `tokenizeInterpString`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
-#[inline(always)]
+#[inline]
 pub fn tokenizeInterpString__indexed(
     mut src @ _: AverStr,
     mut pos @ _: aver_rt::AverInt,

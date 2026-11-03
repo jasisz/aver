@@ -216,7 +216,7 @@ pub fn mergeRecordFieldsAcc(
 }
 
 /// Check if field k has an override.
-#[inline(always)]
+#[inline]
 pub fn mergeOneField(
     k @ _: AverStr,
     mut v @ _: crate::aver_generated::domain::value::Val,

@@ -2338,7 +2338,7 @@ pub fn carryText(ns @ _: &aver_rt::AverList<AverStr>) -> AverStr {
 }
 
 /// (case (NAME…) (IH…) ((K IH (TERM…) (PROOF…))…) PROOF) for each case.
-#[inline(always)]
+#[inline]
 pub fn inductCaseTexts(
     cs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Case>,
 ) -> aver_rt::AverList<AverStr> {

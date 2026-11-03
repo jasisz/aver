@@ -999,7 +999,7 @@ pub fn recursive(
 }
 
 /// Every recursive call passes, at place j, a name its arm's pattern binds and no inner arm rebinds, or List.drop of one: a value smaller than the one matched.
-#[inline(always)]
+#[inline]
 pub fn onParts(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
@@ -1445,7 +1445,7 @@ pub fn openGate(
 }
 
 /// Whether d calls itself only directly, never back through another definition of ds, and at one place every eager local binding and the body, with local bindings substituted, pass a shorter list at every call (shorter). That length falls at every call, so the recursion stops.
-#[inline(always)]
+#[inline]
 pub fn shortens(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
@@ -1860,7 +1860,7 @@ pub fn fieldValues(
 }
 
 /// Whether some definition r of ds reaches d and is reached from it, and r's recursion, read through the others, passes the gate. Every cycle through d then passes r, each time on a smaller value, so d stops.
-#[inline(always)]
+#[inline]
 pub fn rooted(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,

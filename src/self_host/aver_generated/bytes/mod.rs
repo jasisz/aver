@@ -524,7 +524,7 @@ pub fn hexParts__buffered(
 }
 
 /// Synthesized cursor variant of `parseHexChars`. Call sites that hand it `String.chars(s)` walk `s` directly — a byte offset stepped one codepoint at a time — instead of materialising the list of one-character strings.
-#[inline(always)]
+#[inline]
 pub fn parseHexChars__cursor(
     mut __cur_s @ _: AverStr,
     mut __cur_i @ _: i64,
@@ -678,7 +678,7 @@ pub fn hexDigitValue__code(__str_code @ _: i64) -> Option<aver_rt::AverInt> {
 }
 
 /// Synthesized collecting variant of `parseHexChars__cursor`. Appends to a builder where `parseHexChars__cursor` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here. Its only reader handed the collected list straight to the standard library's `fromList`, so the builder collects bytes: the range check rides every push, and the exits answer the `Result<Bytes, String>` the pair used to compute.
-#[inline(always)]
+#[inline]
 pub fn parseHexChars__cursor__collected(
     mut __cur_s @ _: AverStr,
     mut __cur_i @ _: i64,

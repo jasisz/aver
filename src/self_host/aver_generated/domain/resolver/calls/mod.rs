@@ -711,7 +711,7 @@ pub fn isBareNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Ex
 }
 
 /// Return whether a call name is one of the exact builtin/service entrypoints.
-#[inline(always)]
+#[inline]
 pub fn isBuiltinCallName(name @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     let __arg1 @ _ = aver_rt::AverList::from_vec(vec![

@@ -1372,7 +1372,11 @@ fn emit_fn_def_with_visibility(
             .as_ref()
             .is_some_and(|plan| thin_kind_is_parent_thin_candidate(plan.kind))
     {
-        lines.push("#[inline(always)]".to_string());
+        lines.push(if ctx.rust_forced_inline.contains(&resolved_fd.fn_id) {
+            "#[inline(always)]".to_string()
+        } else {
+            "#[inline]".to_string()
+        });
     }
 
     if is_guest_entry && (ctx.emit_replay_runtime || self_host_state.is_some()) {
@@ -2629,6 +2633,7 @@ mod tests {
             rust_lent_options: Default::default(),
             rust_word_spec: Default::default(),
             rust_lazy_sums: Default::default(),
+            rust_forced_inline: Default::default(),
             knowing_trusted: Default::default(),
             rust_knowing: Default::default(),
             discovered_lemmas: Vec::new(),

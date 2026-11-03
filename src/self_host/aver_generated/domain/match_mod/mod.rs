@@ -267,7 +267,7 @@ pub fn matchPatCons(
 }
 
 /// Match constructor pattern. Checks tag name and extracts inner values.
-#[inline(always)]
+#[inline]
 pub fn matchPatConstructor(
     ctorName @ _: AverStr,
     bindings @ _: &aver_rt::AverList<AverStr>,
@@ -384,7 +384,7 @@ pub fn matchGenericCtorCheck(
 }
 
 /// Match constructor pattern by integer tag ID. Builtins dispatch directly; user variants confirm both tag and full name.
-#[inline(always)]
+#[inline]
 pub fn matchPatConstructorById(
     tag @ _: aver_rt::AverInt,
     ctorName @ _: AverStr,

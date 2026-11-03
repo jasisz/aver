@@ -8,6 +8,7 @@ pub(crate) mod composition;
 mod counted_records;
 pub mod emit_ctx;
 mod expr;
+mod forced_inline;
 mod from_mir;
 mod knowing;
 mod lent_option;
@@ -223,6 +224,7 @@ fn transpile_project(
         ctx.rust_counted_records = counted_records::compute(ctx);
         ctx.rust_lent_options = lent_option::compute(ctx);
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
+        ctx.rust_forced_inline = forced_inline::compute(ctx);
         ctx.rust_knowing = knowing::compute(ctx);
         speculation::choose_wrapped(ctx);
     }
@@ -3318,6 +3320,48 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         assert!(entry.contains("aver_replay::with_guest_scope_args_result(\"runGuestProgram\""));
         assert!(entry.contains("guestArgs.clone()"));
         assert!(cargo_toml.contains("edition = \"2024\""));
+    }
+
+    /// A thin function is forced into its callers only while what it pastes
+    /// into one call site, its forced callees included, stays within the
+    /// budget. Down a chain whose every level calls the one below twice, the
+    /// paste doubles per level until a level passes the budget and is left to
+    /// LLVM; the level above it pastes only its own body again.
+    #[test]
+    fn forced_inlining_stops_where_a_chain_fans_out_past_the_budget() {
+        let mut source = String::from(
+            "module Demo\n\nfn g0(x: Int) -> Int\n    match x > 1000\n        true -> 0\n        false -> x + 1\n",
+        );
+        for level in 1..=8 {
+            let below = level - 1;
+            source.push_str(&format!(
+                "\nfn g{level}(x: Int) -> Int\n    match x > 1000\n        true -> 0\n        false -> g{below}(x) + g{below}(x + 1)\n"
+            ));
+        }
+        source.push_str("\nfn main() -> Int\n    g8(1)\n");
+        let mut ctx = ctx_from_source(&source, "demo");
+        let out = transpile(&mut ctx);
+        let entry = generated_file(&out, "src/aver_generated/entry/mod.rs");
+        let hint = |name: &str| {
+            let at = entry
+                .find(&format!("pub fn {name}("))
+                .unwrap_or_else(|| panic!("{name} emitted:\n{entry}"));
+            entry[..at]
+                .trim_end()
+                .lines()
+                .last()
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert_eq!(hint("g0"), "#[inline(always)]", "{entry}");
+        assert_eq!(hint("g1"), "#[inline(always)]", "{entry}");
+        let left_to_llvm: Vec<usize> = (0..=8)
+            .filter(|level| hint(&format!("g{level}")) == "#[inline]")
+            .collect();
+        assert!(
+            !left_to_llvm.is_empty() && !left_to_llvm.contains(&0),
+            "a level past the budget is left to LLVM: {left_to_llvm:?}\n{entry}"
+        );
     }
 
     #[cfg(feature = "runtime")]

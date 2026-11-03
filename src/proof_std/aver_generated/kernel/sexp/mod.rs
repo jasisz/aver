@@ -225,7 +225,7 @@ pub fn readAll(text @ _: AverStr) -> Result<Sexp, AverStr> {
 }
 
 /// Read characters once, keeping reversed items for the current list and each parent list.
-#[inline(always)]
+#[inline]
 pub fn scan(
     cs @ _: &aver_rt::AverList<AverStr>,
     mode @ _: &ReadMode,
@@ -788,7 +788,7 @@ pub fn withinAll(
 }
 
 /// Synthesized cursor variant of `scan`. Call sites that hand it `String.chars(s)` walk `s` directly — a byte offset stepped one codepoint at a time — instead of materialising the list of one-character strings.
-#[inline(always)]
+#[inline]
 pub fn scan__cursor(
     mut __cur_s @ _: AverStr,
     mut __cur_i @ _: i64,

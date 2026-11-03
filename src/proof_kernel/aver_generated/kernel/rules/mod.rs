@@ -226,7 +226,7 @@ pub fn plain(
 }
 
 /// The rule with this identifier.
-#[inline(always)]
+#[inline]
 pub fn schema(id @ _: AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -797,7 +797,7 @@ pub fn range(
 }
 
 /// Int.div and Int.mod by a divisor that is not 0 as the Euclidean quotient and remainder, and Euclidean division by a positive divisor.
-#[inline(always)]
+#[inline]
 pub fn divisionSchema(id @ _: AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -1116,7 +1116,7 @@ pub fn powerOfTwo(
 }
 
 /// The bit-level view of Int, infinite two's complement: complement, a shift left, a low mask 2^n - 1 and a one-bit mask 2^n.
-#[inline(always)]
+#[inline]
 pub fn bitsSchema(id @ _: AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -2408,7 +2408,7 @@ pub fn picked(
 }
 
 /// Int.min and Int.max by a <= b, Int.abs by a < 0; List.contains on [], on an element in front that the value looked for is (found) and past one it is not, by y == x as the builtin compares. Both read == only at a type whose == is equality, where x == x is true of every value.
-#[inline(always)]
+#[inline]
 pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let le @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
@@ -2647,7 +2647,7 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
 }
 
 /// Option.withDefault and Result.withDefault on each constructor: the value a Some or an Ok holds, the default d for None or an Err.
-#[inline(always)]
+#[inline]
 pub fn defaultSchema(id @ _: AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let err @ _ = {
