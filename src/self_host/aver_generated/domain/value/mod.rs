@@ -33,31 +33,37 @@ impl std::fmt::Debug for Val {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValInt(pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Val__ValInt {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValFloat(pub f64);
 
 impl aver_rt::thin::HandOver for Val__ValFloat {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValStr(pub AverStr);
 
 impl aver_rt::thin::HandOver for Val__ValStr {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValBool(pub bool);
 
 impl aver_rt::thin::HandOver for Val__ValBool {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValFnRef(pub AverStr);
 
 impl aver_rt::thin::HandOver for Val__ValFnRef {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValList(pub aver_rt::AverList<Val>);
 
 impl aver_rt::WalkEq for Val__ValList {
@@ -71,6 +77,7 @@ impl aver_rt::WalkEq for Val__ValList {
 impl aver_rt::thin::HandOver for Val__ValList {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValVector(pub aver_rt::AverVector<Val>);
 
 impl aver_rt::WalkEq for Val__ValVector {
@@ -84,6 +91,7 @@ impl aver_rt::WalkEq for Val__ValVector {
 impl aver_rt::thin::HandOver for Val__ValVector {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValOk(pub Val);
 
 impl aver_rt::WalkEq for Val__ValOk {
@@ -99,6 +107,7 @@ impl aver_rt::thin::HandOver for Val__ValOk {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValErr(pub Val);
 
 impl aver_rt::WalkEq for Val__ValErr {
@@ -114,6 +123,7 @@ impl aver_rt::thin::HandOver for Val__ValErr {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValSome(pub Val);
 
 impl aver_rt::WalkEq for Val__ValSome {
@@ -129,6 +139,7 @@ impl aver_rt::thin::HandOver for Val__ValSome {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValTuple(pub aver_rt::AverList<Val>);
 
 impl aver_rt::WalkEq for Val__ValTuple {
@@ -142,6 +153,7 @@ impl aver_rt::WalkEq for Val__ValTuple {
 impl aver_rt::thin::HandOver for Val__ValTuple {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValRecord(pub AverStr, pub aver_rt::AverList<(AverStr, Val)>);
 
 impl aver_rt::WalkEq for Val__ValRecord {
@@ -156,21 +168,25 @@ impl aver_rt::WalkEq for Val__ValRecord {
 impl aver_rt::thin::HandOver for Val__ValRecord {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValTcpConnection(pub crate::aver_generated::tcp::Connection);
 
 impl aver_rt::thin::HandOver for Val__ValTcpConnection {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValTcpDial(pub crate::aver_generated::tcp::Dial);
 
 impl aver_rt::thin::HandOver for Val__ValTcpDial {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValTcpListener(pub crate::aver_generated::tcp::Listener);
 
 impl aver_rt::thin::HandOver for Val__ValTcpListener {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValVariant(
     pub aver_rt::AverInt,
     pub AverStr,
@@ -190,6 +206,7 @@ impl aver_rt::WalkEq for Val__ValVariant {
 impl aver_rt::thin::HandOver for Val__ValVariant {}
 
 #[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Val__ValMap(pub aver_rt::AverMap<AverStr, Val>);
 
 impl aver_rt::WalkEq for Val__ValMap {

@@ -143,6 +143,7 @@ impl aver_rt::WalkHash for Tactic {
 impl Eq for Tactic {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Tactic__Cases(pub Tactic);
 
 impl PartialEq for Tactic__Cases {
@@ -164,6 +165,7 @@ impl aver_rt::thin::HandOver for Tactic__Cases {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Tactic__Induction(
     pub AverStr,
     pub AverStr,
@@ -201,6 +203,7 @@ impl aver_rt::thin::HandOver for Tactic__Induction {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Tactic__Split(
     pub AverStr,
     pub AverStr,
@@ -238,6 +241,7 @@ impl aver_rt::thin::HandOver for Tactic__Split {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Tactic__SplitBool(
     pub crate::proof_std::aver_generated::kernel::term::Term,
     pub Tactic,
@@ -267,6 +271,7 @@ impl aver_rt::thin::HandOver for Tactic__SplitBool {
 }
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Tactic__First(pub aver_rt::AverList<Tactic>);
 
 impl PartialEq for Tactic__First {
@@ -286,6 +291,7 @@ impl aver_rt::WalkEq for Tactic__First {
 impl aver_rt::thin::HandOver for Tactic__First {}
 
 #[derive(Clone, Debug, Eq, Hash)]
+#[repr(C)]
 pub struct Tactic__Plan(pub AverStr);
 
 impl PartialEq for Tactic__Plan {
