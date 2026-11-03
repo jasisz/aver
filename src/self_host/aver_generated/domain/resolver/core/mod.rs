@@ -416,6 +416,69 @@ pub fn buildParamSlots(
 ) {
     let mut __hold0: aver_rt::AverList<AverStr>;
     let mut params @ _: &aver_rt::AverList<AverStr> = params;
+    let __word2 = next.to_i64();
+    let Some(mut next) = __word2 else {
+        return buildParamSlots__boxed(params, slots, next);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = params;
+            match aver_rt::list_uncons_lent(__list_subject) {
+                Some((p, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = slots.insert_owned(p, aver_rt::AverInt::from_i64(next));
+                    let __tco2 = match (|| -> Option<i64> { Some((next).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(next))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            params = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            params = &__hold0;
+                        }
+                    }
+                    slots = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            next = __fit2;
+                        }
+                        __result2 => {
+                            return buildParamSlots__boxed(
+                                params,
+                                slots,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+                None => {
+                    return (slots, aver_rt::AverInt::from_i64(next));
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn buildParamSlots__boxed(
+    params @ _: &aver_rt::AverList<AverStr>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
+) -> (
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    aver_rt::AverInt,
+) {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut params @ _: &aver_rt::AverList<AverStr> = params;
     loop {
         crate::cancel_checkpoint();
         {
@@ -684,6 +747,174 @@ pub fn maxInt(a @ _: aver_rt::AverInt, b @ _: aver_rt::AverInt) -> aver_rt::Aver
 /// Resolve statements, threading slot assignments.
 #[inline(always)]
 pub fn resolveStmts(
+    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+) -> (
+    aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    aver_rt::AverInt,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
+    let __word2 = next.to_i64();
+    let Some(mut next) = __word2 else {
+        return resolveStmts__boxed(stmts, slots, next, acc);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = stmts;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((s, rest)) => {
+                    match s {
+                        crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
+                            let __stp1 = __stp1.clone();
+                            {
+                                let (__stp3, __stp2) =
+                                    crate::aver_generated::domain::resolver::core::resolveExpr(
+                                        __stp0.clone(),
+                                        slots,
+                                    );
+                                {
+                                    let __stp4 = __stp2
+                                        .insert_owned(__stp1, aver_rt::AverInt::from_i64(next));
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco1 = __stp4;
+                                        let __tco2 = match (|| -> Option<i64> {
+                                            Some((next).checked_add(1i64)?)
+                                        })(
+                                        ) {
+                                            Some(__stepped) => Ok(__stepped),
+                                            None => Err((aver_rt::AverInt::from_i64(next))
+                                                .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                        };
+                                        let __tco3 = aver_rt::AverList::prepend_owned(
+                                            crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
+                                                aver_rt::AverInt::from_i64(next),
+                                                __stp3,
+                                            ),
+                                            acc,
+                                        );
+                                        match __tco0 {
+                                            aver_rt::ListRest::Lent(__rest) => {
+                                                stmts = __rest;
+                                            }
+                                            aver_rt::ListRest::Owned(__rest) => {
+                                                __hold0 = __rest;
+                                                stmts = &__hold0;
+                                            }
+                                        }
+                                        slots = __tco1;
+                                        acc = __tco3;
+                                        match __tco2 {
+                                            Ok(__fit2) => {
+                                                next = __fit2;
+                                            }
+                                            __result2 => {
+                                                return resolveStmts__boxed(
+                                                    stmts,
+                                                    slots,
+                                                    match __result2 {
+                                                        Ok(__stepped) => {
+                                                            aver_rt::AverInt::from_i64(__stepped)
+                                                        }
+                                                        Err(__boxed) => __boxed,
+                                                    },
+                                                    acc,
+                                                );
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp0) => {
+                            let (__stp6, __stp5) =
+                                crate::aver_generated::domain::resolver::core::resolveExpr(
+                                    __stp0.clone(),
+                                    slots,
+                                );
+                            {
+                                let __tco0 = rest;
+                                let __tco1 = __stp5.clone();
+                                let __tco2 = {
+                                    let __boxed = crate::aver_generated::domain::resolver::core::maxInt(aver_rt::AverInt::from_i64(next), crate::aver_generated::domain::resolver::core::mapMaxVal(&__stp5).add(&aver_rt::AverInt::from_i64(1)));
+                                    match __boxed.to_i64() {
+                                        Some(__stepped) => Ok(__stepped),
+                                        None => Err(__boxed),
+                                    }
+                                };
+                                let __tco3 = aver_rt::AverList::prepend_owned(
+                                    crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6),
+                                    acc,
+                                );
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        stmts = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        stmts = &__hold0;
+                                    }
+                                }
+                                slots = __tco1;
+                                acc = __tco3;
+                                match __tco2 {
+                                    Ok(__fit2) => {
+                                        next = __fit2;
+                                    }
+                                    __result2 => {
+                                        return resolveStmts__boxed(
+                                            stmts,
+                                            slots,
+                                            match __result2 {
+                                                Ok(__stepped) => {
+                                                    aver_rt::AverInt::from_i64(__stepped)
+                                                }
+                                                Err(__boxed) => __boxed,
+                                            },
+                                            acc,
+                                        );
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
+                            let __tco0 = rest;
+                            let __tco3 = aver_rt::AverList::prepend_owned(s.clone(), acc);
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    stmts = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    stmts = &__hold0;
+                                }
+                            }
+                            acc = __tco3;
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return (
+                        (acc).reverse_owned(),
+                        aver_rt::AverInt::from_i64(next),
+                        slots,
+                    );
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn resolveStmts__boxed(
     stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut next @ _: aver_rt::AverInt,
@@ -1917,6 +2148,69 @@ pub fn patternBindingSlotsConstructor(
 ) {
     let mut __hold0: aver_rt::AverList<AverStr>;
     let mut bindings @ _: &aver_rt::AverList<AverStr> = bindings;
+    let __word2 = next.to_i64();
+    let Some(mut next) = __word2 else {
+        return patternBindingSlotsConstructor__boxed(bindings, bindingSlots, next);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = bindings;
+            match aver_rt::list_uncons_lent(__list_subject) {
+                Some((name, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = bindingSlots.insert_owned(name, aver_rt::AverInt::from_i64(next));
+                    let __tco2 = match (|| -> Option<i64> { Some((next).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(next))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            bindings = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            bindings = &__hold0;
+                        }
+                    }
+                    bindingSlots = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            next = __fit2;
+                        }
+                        __result2 => {
+                            return patternBindingSlotsConstructor__boxed(
+                                bindings,
+                                bindingSlots,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+                None => {
+                    return (bindingSlots, aver_rt::AverInt::from_i64(next));
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn patternBindingSlotsConstructor__boxed(
+    bindings @ _: &aver_rt::AverList<AverStr>,
+    mut bindingSlots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
+) -> (
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    aver_rt::AverInt,
+) {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut bindings @ _: &aver_rt::AverList<AverStr> = bindings;
     loop {
         crate::cancel_checkpoint();
         {
@@ -2027,6 +2321,82 @@ pub fn mapMaxVal(m @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> aver_rt
 /// Find maximum value in a list.
 #[inline(always)]
 pub fn maxInList(
+    vals @ _: &aver_rt::AverIntList,
+    mut acc @ _: aver_rt::AverInt,
+) -> aver_rt::AverInt {
+    let mut __hold0: aver_rt::AverIntList;
+    let mut vals @ _: &aver_rt::AverIntList = vals;
+    let __word1 = acc.to_i64();
+    let Some(mut acc) = __word1 else {
+        return maxInList__boxed(vals, acc);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = vals;
+            match aver_rt::list_uncons_lent(__list_subject) {
+                Some((v, rest)) => {
+                    if (v > aver_rt::AverInt::from_i64(acc)) {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 = {
+                                let __boxed = v;
+                                match __boxed.to_i64() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err(__boxed),
+                                }
+                            };
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    vals = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    vals = &__hold0;
+                                }
+                            }
+                            match __tco1 {
+                                Ok(__fit1) => {
+                                    acc = __fit1;
+                                }
+                                __result1 => {
+                                    return maxInList__boxed(
+                                        vals,
+                                        match __result1 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    vals = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    vals = &__hold0;
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return aver_rt::AverInt::from_i64(acc);
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn maxInList__boxed(
     vals @ _: &aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
@@ -2148,6 +2518,69 @@ pub fn addConstructorSlots(
 ) {
     let mut __hold0: aver_rt::AverList<AverStr>;
     let mut bindings @ _: &aver_rt::AverList<AverStr> = bindings;
+    let __word2 = next.to_i64();
+    let Some(mut next) = __word2 else {
+        return addConstructorSlots__boxed(bindings, slots, next);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = bindings;
+            match aver_rt::list_uncons_lent(__list_subject) {
+                Some((name, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = slots.insert_owned(name, aver_rt::AverInt::from_i64(next));
+                    let __tco2 = match (|| -> Option<i64> { Some((next).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(next))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            bindings = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            bindings = &__hold0;
+                        }
+                    }
+                    slots = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            next = __fit2;
+                        }
+                        __result2 => {
+                            return addConstructorSlots__boxed(
+                                bindings,
+                                slots,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+                None => {
+                    return (slots, aver_rt::AverInt::from_i64(next));
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn addConstructorSlots__boxed(
+    bindings @ _: &aver_rt::AverList<AverStr>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
+) -> (
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    aver_rt::AverInt,
+) {
+    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut bindings @ _: &aver_rt::AverList<AverStr> = bindings;
     loop {
         crate::cancel_checkpoint();
         {
@@ -2229,6 +2662,174 @@ pub fn addTuplePatternSlots(
 /// Synthesized collecting variant of `resolveStmts`. Appends to a builder where `resolveStmts` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn resolveStmts__collected(
+    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+) -> (
+    aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    aver_rt::AverInt,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
+    let __word2 = next.to_i64();
+    let Some(mut next) = __word2 else {
+        return resolveStmts__collected__boxed(stmts, slots, next, acc);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = stmts;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((s, rest)) => {
+                    match s {
+                        crate::aver_generated::domain::ast::Stmt::StmtBind(__stp1, __stp0) => {
+                            let __stp1 = __stp1.clone();
+                            {
+                                let (__stp3, __stp2) =
+                                    crate::aver_generated::domain::resolver::core::resolveExpr(
+                                        __stp0.clone(),
+                                        slots,
+                                    );
+                                {
+                                    let __stp4 = __stp2
+                                        .insert_owned(__stp1, aver_rt::AverInt::from_i64(next));
+                                    {
+                                        let __tco0 = rest;
+                                        let __tco1 = __stp4;
+                                        let __tco2 = match (|| -> Option<i64> {
+                                            Some((next).checked_add(1i64)?)
+                                        })(
+                                        ) {
+                                            Some(__stepped) => Ok(__stepped),
+                                            None => Err((aver_rt::AverInt::from_i64(next))
+                                                .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                        };
+                                        let __tco3 = aver_rt::list_builder_push(
+                                            acc,
+                                            crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
+                                                aver_rt::AverInt::from_i64(next),
+                                                __stp3,
+                                            ),
+                                        );
+                                        match __tco0 {
+                                            aver_rt::ListRest::Lent(__rest) => {
+                                                stmts = __rest;
+                                            }
+                                            aver_rt::ListRest::Owned(__rest) => {
+                                                __hold0 = __rest;
+                                                stmts = &__hold0;
+                                            }
+                                        }
+                                        slots = __tco1;
+                                        acc = __tco3;
+                                        match __tco2 {
+                                            Ok(__fit2) => {
+                                                next = __fit2;
+                                            }
+                                            __result2 => {
+                                                return resolveStmts__collected__boxed(
+                                                    stmts,
+                                                    slots,
+                                                    match __result2 {
+                                                        Ok(__stepped) => {
+                                                            aver_rt::AverInt::from_i64(__stepped)
+                                                        }
+                                                        Err(__boxed) => __boxed,
+                                                    },
+                                                    acc,
+                                                );
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp0) => {
+                            let (__stp6, __stp5) =
+                                crate::aver_generated::domain::resolver::core::resolveExpr(
+                                    __stp0.clone(),
+                                    slots,
+                                );
+                            {
+                                let __tco0 = rest;
+                                let __tco1 = __stp5.clone();
+                                let __tco2 = {
+                                    let __boxed = crate::aver_generated::domain::resolver::core::maxInt(aver_rt::AverInt::from_i64(next), crate::aver_generated::domain::resolver::core::mapMaxVal(&__stp5).add(&aver_rt::AverInt::from_i64(1)));
+                                    match __boxed.to_i64() {
+                                        Some(__stepped) => Ok(__stepped),
+                                        None => Err(__boxed),
+                                    }
+                                };
+                                let __tco3 = aver_rt::list_builder_push(
+                                    acc,
+                                    crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6),
+                                );
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        stmts = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        stmts = &__hold0;
+                                    }
+                                }
+                                slots = __tco1;
+                                acc = __tco3;
+                                match __tco2 {
+                                    Ok(__fit2) => {
+                                        next = __fit2;
+                                    }
+                                    __result2 => {
+                                        return resolveStmts__collected__boxed(
+                                            stmts,
+                                            slots,
+                                            match __result2 {
+                                                Ok(__stepped) => {
+                                                    aver_rt::AverInt::from_i64(__stepped)
+                                                }
+                                                Err(__boxed) => __boxed,
+                                            },
+                                            acc,
+                                        );
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, _) => {
+                            let __tco0 = rest;
+                            let __tco3 = aver_rt::list_builder_push(acc, s.clone());
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    stmts = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    stmts = &__hold0;
+                                }
+                            }
+                            acc = __tco3;
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return (
+                        aver_rt::list_builder_finalize(acc),
+                        aver_rt::AverInt::from_i64(next),
+                        slots,
+                    );
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn resolveStmts__collected__boxed(
     stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut next @ _: aver_rt::AverInt,

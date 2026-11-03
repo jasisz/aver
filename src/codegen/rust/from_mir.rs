@@ -79,6 +79,7 @@ use super::pattern::{emit_pattern, emit_pattern_with_guard};
 use super::syntax::{aver_name_to_rust, generated_ident};
 
 mod int_tree;
+mod word_loop;
 
 /// Walker-side emit context. Holds the slice of the
 /// `CodegenContext` the MIR-to-Rust walker reads — kept explicit
@@ -203,6 +204,13 @@ pub struct MirEmitCtx<'a> {
     /// (`aver_rt::thin::Thin::new_in`). Empty inside a branch of an
     /// independent product, which runs on its own thread.
     pub reuse_tokens: &'a [(crate::ir::TypeId, String)],
+    /// The words of the self-loop copy this ctx emits (see
+    /// [`word_loop`]): the params a self-tail call steps checked, handing
+    /// the state to the ordinary loop on an overflow. Empty everywhere else.
+    pub loop_words: &'a [usize],
+    /// The ordinary loop of that copy, a fn of the same signature, which
+    /// takes the state when a word does not fit. `None` everywhere else.
+    pub word_fallback: Option<&'a str>,
 }
 
 /// The self-loop being emitted: its fn, and the lent params the loop
@@ -277,6 +285,8 @@ impl<'a> MirEmitCtx<'a> {
             self_loop: None,
             lent_rebinds: &[],
             reuse_tokens: &[],
+            loop_words: &[],
+            word_fallback: None,
         }
     }
 
@@ -332,6 +342,8 @@ impl<'a> MirEmitCtx<'a> {
             self_loop: None,
             lent_rebinds: &[],
             reuse_tokens: &[],
+            loop_words: &[],
+            word_fallback: None,
         }
     }
 
@@ -374,6 +386,8 @@ impl<'a> MirEmitCtx<'a> {
             self_loop: None,
             lent_rebinds: &[],
             reuse_tokens: &[],
+            loop_words: &[],
+            word_fallback: None,
         }
     }
 
@@ -532,6 +546,7 @@ fn emit_string_position(arg: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<
 /// borrowing [`MirEmitCtx`] can be built from it. Recomputed per
 /// fn from the `ResolvedFnDef`, mirroring `for_fn` /
 /// `for_fn_no_borrow` on `EmitCtx`.
+#[derive(Clone)]
 pub(super) struct MirFnEmitPolicy {
     pub local_types: HashMap<String, Type>,
     pub rc_wrapped: HashSet<String>,
@@ -7907,6 +7922,61 @@ pub(super) fn emit_mir_tco_fn(
         &emit_ctx,
     )?;
 
+    // The loop's copy over machine words (see [`word_loop`]): the body
+    // rewritten with its words bare, emitted with the facts of that copy.
+    // The rewritten MIR and the analysis must agree on it. The field-move
+    // facts are addresses into the body emitted, so the copy gets its own.
+    let word_facts = ctx
+        .bare_i64
+        .for_fn(mir_fn.fn_id)
+        .and_then(|f| f.word_loop.as_deref());
+    // A word the loop passes on unchanged is narrowed once and never
+    // stepped; the ordinary loop stands on its own, so a copy the two
+    // disagree on is left out rather than failing the fn.
+    let word_loop = match (mir_fn.repr.word_loop.as_ref(), word_facts) {
+        (Some(words), Some(facts))
+            if words.params == facts.params && words.params.iter().all(|i| !lent.contains(i)) =>
+        {
+            Some((words, facts))
+        }
+        _ => None,
+    };
+    let word_fn = word_loop.map(|(words, _)| crate::ir::mir::MirFn {
+        body: words.body.clone(),
+        ..mir_fn.clone()
+    });
+    let mut word_policy = policy.clone();
+    if let Some(word_fn) = &word_fn {
+        word_policy.apply_field_moves(
+            word_fn,
+            ctx.mir_program
+                .as_ref()
+                .map(|p| p.builtins.as_slice())
+                .unwrap_or(&[]),
+        );
+    }
+    // The ordinary loop of a fn with a word loop is a fn of its own, cold:
+    // the hot fn holds only the loop over words, so its size, and what LLVM
+    // pastes into it, is what it was.
+    let boxed_name = word_loop.map(|_| format!("{fn_name}{}", generated_ident("boxed")));
+    let word_code = match (word_loop, &word_fn) {
+        (Some((words, facts)), Some(word_fn)) => {
+            let mut word_ctx = MirEmitCtx::for_fn(ctx, &word_policy);
+            word_ctx.self_loop = Some(&self_loop);
+            word_ctx.bare = &facts.facts;
+            word_ctx.loop_words = &words.params;
+            word_ctx.word_fallback = boxed_name.as_deref();
+            Some(emit_mir_tco_body(
+                &word_fn.body,
+                mir_fn.fn_id,
+                &fd.params,
+                &passthrough_indices,
+                &word_ctx,
+            )?)
+        }
+        _ => None,
+    };
+
     // Int unboxing: a bare-`i64` param/return emits `i64` in the signature
     // (the load-bearing cross-frame change), read off the SAME per-fn facts
     // the body emit applied (`apply_bare_i64`). Every caller converts at the
@@ -7941,51 +8011,83 @@ pub(super) fn emit_mir_tco_fn(
         }
         _ => return None,
     };
-    let mut lines = Vec::new();
-    lines.push(format!(
-        "{}fn {}({}) -> {} {{",
-        visibility, fn_name, params, ret_type
-    ));
-    // A lent param the loop rebinds gets a slot for a value a step computes,
-    // and its borrow becomes rebindable. A param every step rebinds to a
-    // borrow out of its own value (see [`LentRebind`]) writes no slot and
-    // gets none.
-    let writes_slot = |hold: &str| {
-        let written = format!("{hold} = ");
-        body_code.contains(&written)
-            || entry_check
-                .as_ref()
-                .is_some_and(|(_, fallback)| fallback.contains(&written))
-    };
-    for &i in lent.iter().filter(|i| !passthrough_indices.contains(i)) {
-        let (name, type_ann) = &fd.params[i];
-        let rust_type = super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope);
-        let hold = generated_ident(&format!("hold{i}"));
-        if writes_slot(&hold) {
-            lines.push(format!("    let mut {hold}: {rust_type};"));
+    // What comes before a loop: the lent params' slots and borrows, and the
+    // position checked on entry. A lent param the loop rebinds gets a slot
+    // for a value a step computes, and its borrow becomes rebindable. A
+    // param every step rebinds to a borrow out of its own value (see
+    // [`LentRebind`]) writes no slot and gets none; `writes_slot` says which
+    // the loop in question writes.
+    let prologue = |writes_slot: &dyn Fn(&str) -> bool| -> Vec<String> {
+        let mut lines = Vec::new();
+        for &i in lent.iter().filter(|i| !passthrough_indices.contains(i)) {
+            let (name, type_ann) = &fd.params[i];
+            let rust_type = super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope);
+            let hold = generated_ident(&format!("hold{i}"));
+            if writes_slot(&format!("{hold} = ")) {
+                lines.push(format!("    let mut {hold}: {rust_type};"));
+            }
+            lines.push(format!(
+                "    let {}: &{rust_type} = {};",
+                explicit_parameter_pattern(name, true),
+                aver_name_to_rust(name)
+            ));
         }
+        if let Some((check, fallback)) = &entry_check {
+            let name = &fd.params[check.param].0;
+            let start = generated_ident("start");
+            lines.push(format!(
+                "    let {}: i64 = match aver_rt::string_position_within(&{}, {}i64, {}i64) {{",
+                explicit_parameter_pattern(name, true),
+                aver_name_to_rust(name),
+                check.lo,
+                check.hi
+            ));
+            lines.push(format!("        Some({start}) => {start},"));
+            lines.push("        None => {".to_string());
+            lines.push(fallback.clone());
+            lines.push("        }".to_string());
+            lines.push("    };".to_string());
+        }
+        lines
+    };
+    let fallback_writes = |written: &str| {
+        entry_check
+            .as_ref()
+            .is_some_and(|(_, fallback)| fallback.contains(written))
+    };
+    let mut lines = Vec::new();
+    if let (Some((words, _)), Some(code), Some(boxed_name)) = (word_loop, word_code, &boxed_name) {
+        // The hot fn: the loop over words, and the ordinary loop as a fn of
+        // its own, given the state when a word does not fit.
         lines.push(format!(
-            "    let {}: &{rust_type} = {};",
-            explicit_parameter_pattern(name, true),
-            aver_name_to_rust(name)
+            "{}fn {}({}) -> {} {{",
+            visibility, fn_name, params, ret_type
+        ));
+        lines.extend(prologue(&|written| {
+            code.contains(written) || fallback_writes(written)
+        }));
+        lines.extend(word_loop::emit_prologue(
+            &words.params,
+            &fd.params,
+            boxed_name,
+            entry_check.as_ref().map(|(check, _)| check.param),
+        ));
+        lines.push("    loop {".to_string());
+        lines.push(code);
+        lines.push("    }".to_string());
+        lines.push("}".to_string());
+        lines.push("#[cold]".to_string());
+        lines.push("#[inline(never)]".to_string());
+        lines.push(format!("fn {}({}) -> {} {{", boxed_name, params, ret_type));
+    } else {
+        lines.push(format!(
+            "{}fn {}({}) -> {} {{",
+            visibility, fn_name, params, ret_type
         ));
     }
-    if let Some((check, fallback)) = entry_check {
-        let name = &fd.params[check.param].0;
-        let start = generated_ident("start");
-        lines.push(format!(
-            "    let {}: i64 = match aver_rt::string_position_within(&{}, {}i64, {}i64) {{",
-            explicit_parameter_pattern(name, true),
-            aver_name_to_rust(name),
-            check.lo,
-            check.hi
-        ));
-        lines.push(format!("        Some({start}) => {start},"));
-        lines.push("        None => {".to_string());
-        lines.push(fallback);
-        lines.push("        }".to_string());
-        lines.push("    };".to_string());
-    }
+    lines.extend(prologue(&|written| {
+        body_code.contains(written) || fallback_writes(written)
+    }));
     lines.push("    loop {".to_string());
     lines.push(body_code);
     lines.push("    }".to_string());
@@ -8228,6 +8330,12 @@ fn emit_mir_self_tco_continue(
         //     falls through to `emit_mir_expr` (lowering `Unbox`).
         //   - boxed param: `emit_mir_expr` (lowering any `Box` node), then
         //     the clone policy.
+        //   - a word of the loop's copy: the arg checked, as a `Result` the
+        //     rebind below reads (see [`word_loop::emit_step`]).
+        if ctx.loop_words.contains(&i) {
+            arg_strs[i] = Some(word_loop::emit_step(a, &tail_ctx)?);
+            continue;
+        }
         if ctx.bare.loop_param_is_bare(i) {
             let rendered = emit_bare_i64(a, &tail_ctx).or_else(|| emit_mir_expr(a, &tail_ctx));
             arg_strs[i] = Some(rendered?);
@@ -8248,8 +8356,10 @@ fn emit_mir_self_tco_continue(
     }
     // Phase 2: assign temps back to params, in order. A lent param (see
     // [`self_loop_lends`]) keeps the new value in its slot and borrows it.
+    // The words come last, together: a step of any that left `i64` hands
+    // the whole state, boxed, to the ordinary loop.
     for (i, (name, _)) in params.iter().enumerate() {
-        if arg_strs[i].is_some() {
+        if arg_strs[i].is_some() && !ctx.loop_words.contains(&i) {
             let temp = generated_ident(&format!("tco{i}"));
             let param = aver_name_to_rust(name);
             if ctx.is_borrowed_param(name) {
@@ -8271,6 +8381,15 @@ fn emit_mir_self_tco_continue(
                 lines.push(format!("            {param} = {temp};"));
             }
         }
+    }
+    let stepped: Vec<usize> = ctx
+        .loop_words
+        .iter()
+        .copied()
+        .filter(|i| arg_strs[*i].is_some())
+        .collect();
+    if let (false, Some(fallback)) = (stepped.is_empty(), ctx.word_fallback) {
+        lines.push(word_loop::emit_rebind(&stepped, params, fallback, ctx));
     }
     lines.push("            continue;".to_string());
     lines.push("        }".to_string());
@@ -10847,6 +10966,8 @@ mod tests {
             self_loop: None,
             lent_rebinds: &[],
             reuse_tokens: &[],
+            loop_words: &[],
+            word_fallback: None,
         };
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         assert_eq!(
@@ -11983,6 +12104,8 @@ mod tests {
             self_loop: None,
             lent_rebinds: &[],
             reuse_tokens: &[],
+            loop_words: &[],
+            word_fallback: None,
         }
     }
 

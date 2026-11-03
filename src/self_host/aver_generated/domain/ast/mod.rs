@@ -4000,36 +4000,42 @@ impl aver_replay::ReplayValue for CmpOp {
 }
 
 /// Tag ID for Result.Ok constructor.
+#[inline(always)]
 pub fn tagResultOk() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     aver_rt::AverInt::from_i64(1)
 }
 
 /// Tag ID for Result.Err constructor.
+#[inline(always)]
 pub fn tagResultErr() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     aver_rt::AverInt::from_i64(2)
 }
 
 /// Tag ID for Option.Some constructor.
+#[inline(always)]
 pub fn tagOptionSome() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     aver_rt::AverInt::from_i64(3)
 }
 
 /// Tag ID for Option.None constructor.
+#[inline(always)]
 pub fn tagOptionNone() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     aver_rt::AverInt::from_i64(4)
 }
 
 /// Base tag ID for user-defined constructors. User tags start from this value.
+#[inline(always)]
 pub fn tagUserBase() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     aver_rt::AverInt::from_i64(100)
 }
 
 /// Modulo span used to keep hashed user constructor tags bounded.
+#[inline(always)]
 pub fn userTagSpan() -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     aver_rt::AverInt::from_i64(1000003)
@@ -4064,6 +4070,7 @@ pub fn userCtorTagOffsetLoop(
 }
 
 /// Update the user constructor rolling hash and keep it in a bounded range.
+#[inline(always)]
 pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let next @ _ = ({

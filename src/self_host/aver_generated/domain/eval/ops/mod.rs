@@ -440,6 +440,7 @@ pub fn evalCmpRepr(
 }
 
 /// Human-readable comparison operator.
+#[inline(always)]
 pub fn cmpOpName(op @ _: &crate::aver_generated::domain::ast::CmpOp) -> AverStr {
     crate::cancel_checkpoint();
     match op {

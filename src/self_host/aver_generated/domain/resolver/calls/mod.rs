@@ -10,6 +10,66 @@ pub fn buildFnMap(
 ) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
     let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
     let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
+    let __word2 = idx.to_i64();
+    let Some(mut idx) = __word2 else {
+        return buildFnMap__boxed(fns, acc, idx);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = fns;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((f, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = acc.insert_owned(f.name.clone(), aver_rt::AverInt::from_i64(idx));
+                    let __tco2 = match (|| -> Option<i64> { Some((idx).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(idx))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            fns = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                    }
+                    acc = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            idx = __fit2;
+                        }
+                        __result2 => {
+                            return buildFnMap__boxed(
+                                fns,
+                                acc,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+                None => {
+                    return acc;
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn buildFnMap__boxed(
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut acc @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut idx @ _: aver_rt::AverInt,
+) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
         {
@@ -728,6 +788,7 @@ pub fn isNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Expr) 
 }
 
 /// Whether an expression is a bare nonzero integer literal, with no unary minus of its own.
+#[inline(always)]
 pub fn isBareNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Expr) -> bool {
     crate::cancel_checkpoint();
     {

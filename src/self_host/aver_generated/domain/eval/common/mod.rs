@@ -47,12 +47,14 @@ pub fn evalVarFallbackNamed(
 }
 
 /// Internal prefix used to distinguish ? propagation from evaluator runtime errors.
+#[inline(always)]
 pub fn propagationPrefix() -> AverStr {
     crate::cancel_checkpoint();
     ::aver_rt::str_lit!("__aver_prop__:")
 }
 
 /// Mark a language-level Result.Err so function boundaries can convert it back into a value.
+#[inline(always)]
 pub fn wrapPropagatedError(msg @ _: AverStr) -> AverStr {
     crate::cancel_checkpoint();
     (::aver_rt::str_lit!("__aver_prop__:") + &msg)

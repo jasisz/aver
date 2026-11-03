@@ -859,6 +859,80 @@ pub fn withinAll(
 ) -> Result<(Sexp, aver_rt::AverInt), AverStr> {
     let mut __hold0: aver_rt::AverList<Sexp>;
     let mut xs @ _: &aver_rt::AverList<Sexp> = xs;
+    let __word3 = size.to_i64();
+    let Some(mut size) = __word3 else {
+        return withinAll__boxed(xs, table, acc, size);
+    };
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = xs;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((x, rest)) => {
+                    let (y, n) = crate::proof_kernel::aver_generated::kernel::sexp::within(
+                        x.clone(),
+                        table,
+                    )?;
+                    {
+                        let __tco0 = rest;
+                        let __tco2 = aver_rt::AverList::prepend_owned(y, acc);
+                        let __tco3 = match (|| -> Option<i64> {
+                            Some((size).checked_add((n).to_i64()?)?)
+                        })() {
+                            Some(__stepped) => Ok(__stepped),
+                            None => Err((aver_rt::AverInt::from_i64(size)).add(&(n))),
+                        };
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                xs = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                xs = &__hold0;
+                            }
+                        }
+                        acc = __tco2;
+                        match __tco3 {
+                            Ok(__fit3) => {
+                                size = __fit3;
+                            }
+                            __result3 => {
+                                return withinAll__boxed(
+                                    xs,
+                                    table,
+                                    acc,
+                                    match __result3 {
+                                        Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                        Err(__boxed) => __boxed,
+                                    },
+                                );
+                            }
+                        }
+                        continue;
+                    }
+                }
+                None => {
+                    return Ok((
+                        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(
+                            (acc).reverse_owned(),
+                        ),
+                        aver_rt::AverInt::from_i64(size),
+                    ));
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn withinAll__boxed(
+    xs @ _: &aver_rt::AverList<Sexp>,
+    table @ _: &aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>,
+    mut acc @ _: aver_rt::AverList<Sexp>,
+    mut size @ _: aver_rt::AverInt,
+) -> Result<(Sexp, aver_rt::AverInt), AverStr> {
+    let mut __hold0: aver_rt::AverList<Sexp>;
+    let mut xs @ _: &aver_rt::AverList<Sexp> = xs;
     loop {
         crate::proof_kernel::cancel_checkpoint();
         {

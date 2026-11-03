@@ -847,6 +847,7 @@ pub fn rebuildInternalBinop(
 }
 
 /// Return whether swapping operand order preserves arithmetic semantics.
+#[inline(always)]
 pub fn binopCanFlip(op @ _: &crate::aver_generated::domain::ast::BinOp) -> bool {
     crate::cancel_checkpoint();
     match op {
@@ -1180,6 +1181,7 @@ pub fn rewriteInternalIntModOrIntArgs(
 }
 
 /// Return whether an expression is already in a slot-based internal shape worth fusing around.
+#[inline(always)]
 pub fn exprHasSlotShape(expr @ _: &crate::aver_generated::domain::ast::Expr) -> bool {
     crate::cancel_checkpoint();
     {

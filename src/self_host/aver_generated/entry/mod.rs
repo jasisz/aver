@@ -1324,6 +1324,78 @@ pub fn findModulePath__indexed(
     mut depth @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> AverStr {
+    let __word2 = depth.to_i64();
+    let Some(mut depth) = __word2 else {
+        return findModulePath__indexed__boxed(dep, root, depth, __str_index);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let path @ _ = modulePathFromName__indexed(dep.clone(), root.clone(), __str_index.clone());
+        if {
+            let __provider_arg0: AverStr = path.clone();
+            crate::cancel_checkpoint_now();
+            crate::aver_replay::invoke_capability_effect(
+                "Disk.exists",
+                "recorded",
+                crate::aver_replay::effect_args("Disk.exists", || {
+                    vec![crate::aver_replay::ReplayValue::to_replay_json(
+                        &__provider_arg0,
+                    )]
+                }),
+                || {
+                    crate::provider_support::invoke::<bool>(
+                        "Disk",
+                        "Disk.exists",
+                        vec![crate::provider_support::encode(__provider_arg0, "Disk")],
+                        None,
+                        "Bool",
+                    )
+                },
+            )
+        } {
+            return path;
+        } else {
+            if (depth < 3i64) {
+                {
+                    let __tco1 = (root + &::aver_rt::str_lit!("/.."));
+                    let __tco2 = match (|| -> Option<i64> { Some((depth).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(depth))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    root = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            depth = __fit2;
+                        }
+                        __result2 => {
+                            return findModulePath__indexed__boxed(
+                                dep,
+                                root,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                                __str_index,
+                            );
+                        }
+                    }
+                    continue;
+                }
+            } else {
+                return path;
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn findModulePath__indexed__boxed(
+    mut dep @ _: AverStr,
+    mut root @ _: AverStr,
+    mut depth @ _: aver_rt::AverInt,
+    __str_index @ _: &aver_rt::StringIndex,
+) -> AverStr {
     loop {
         crate::cancel_checkpoint();
         let path @ _ = modulePathFromName__indexed(dep.clone(), root.clone(), __str_index.clone());
@@ -1387,6 +1459,97 @@ pub fn modulePathFromName__indexed(
 /// Synthesized indexed worker of `dotToSlash`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn dotToSlash__indexed(
+    mut name @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut total @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
+    mut __str_index @ _: aver_rt::StringIndex,
+) -> AverStr {
+    let __word1 = pos.to_i64();
+    let __word2 = total.to_i64();
+    let (Some(mut pos), Some(mut total)) = (__word1, __word2) else {
+        return dotToSlash__indexed__boxed(name, pos, total, acc, __str_index);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos @ _ = aver_rt::AverInt::from_i64(pos).add(&aver_rt::AverInt::from_i64(1));
+        if (pos < total) {
+            match aver_rt::string_index_char_at_i64(&name, &__str_index, pos) {
+                Some(c @ _) => {
+                    if (&*c == ".") {
+                        {
+                            let __tco1 = {
+                                let __boxed = nextPos;
+                                match __boxed.to_i64() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err(__boxed),
+                                }
+                            };
+                            let __tco3 = (acc + &::aver_rt::str_lit!("/"));
+                            acc = __tco3;
+                            match __tco1 {
+                                Ok(__fit1) => {
+                                    pos = __fit1;
+                                }
+                                __result1 => {
+                                    return dotToSlash__indexed__boxed(
+                                        name,
+                                        match __result1 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                        aver_rt::AverInt::from_i64(total),
+                                        acc,
+                                        __str_index,
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    } else {
+                        {
+                            let __tco1 = {
+                                let __boxed = nextPos;
+                                match __boxed.to_i64() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err(__boxed),
+                                }
+                            };
+                            let __tco3 = (acc + &aver_rt::string_case(&c, false));
+                            acc = __tco3;
+                            match __tco1 {
+                                Ok(__fit1) => {
+                                    pos = __fit1;
+                                }
+                                __result1 => {
+                                    return dotToSlash__indexed__boxed(
+                                        name,
+                                        match __result1 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                        aver_rt::AverInt::from_i64(total),
+                                        acc,
+                                        __str_index,
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return acc;
+                }
+            }
+        } else {
+            return acc;
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn dotToSlash__indexed__boxed(
     mut name @ _: AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut total @ _: aver_rt::AverInt,

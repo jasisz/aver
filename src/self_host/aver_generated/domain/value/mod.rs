@@ -706,6 +706,7 @@ impl aver_replay::ReplayValue for Val {
 }
 
 /// Render a string key or nested string value with quotes.
+#[inline(always)]
 pub fn quoteString(s @ _: AverStr) -> AverStr {
     crate::cancel_checkpoint();
     ((::aver_rt::str_lit!("\"") + &s) + &::aver_rt::str_lit!("\""))

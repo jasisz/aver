@@ -3183,6 +3183,7 @@ pub fn exprLabel(expr @ _: &crate::aver_generated::domain::ast::Expr) -> AverStr
 }
 
 /// Continue naming AST node kinds for the comparison, aggregate, and call forms.
+#[inline(always)]
 pub fn exprLabelAggregate(expr @ _: &crate::aver_generated::domain::ast::Expr) -> AverStr {
     crate::cancel_checkpoint();
     {
@@ -5653,6 +5654,86 @@ pub fn evalArgsMapToSlotEnv(
 ) -> Result<aver_rt::AverVector<crate::aver_generated::domain::value::Val>, AverStr> {
     let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
     let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
+    let __word4 = idx.to_i64();
+    let Some(mut idx) = __word4 else {
+        return evalArgsMapToSlotEnv__boxed(exprs, env, fns, acc, idx);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = exprs;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((e, rest)) => {
+                    match crate::aver_generated::domain::eval::core::evalExpr(
+                        e.clone(),
+                        env.clone(),
+                        fns,
+                    ) {
+                        Err(err @ _) => {
+                            return Err(err);
+                        }
+                        Ok(v @ _) => {
+                            let __tco0 = rest;
+                            let __tco3 = crate::aver_generated::domain::eval::slots::setSlot(
+                                acc,
+                                aver_rt::AverInt::from_i64(idx),
+                                v,
+                            );
+                            let __tco4 =
+                                match (|| -> Option<i64> { Some((idx).checked_add(1i64)?) })() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err((aver_rt::AverInt::from_i64(idx))
+                                        .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                };
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
+                            acc = __tco3;
+                            match __tco4 {
+                                Ok(__fit4) => {
+                                    idx = __fit4;
+                                }
+                                __result4 => {
+                                    return evalArgsMapToSlotEnv__boxed(
+                                        exprs,
+                                        env,
+                                        fns,
+                                        acc,
+                                        match __result4 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return Ok(acc);
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn evalArgsMapToSlotEnv__boxed(
+    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    env @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
+    mut acc @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    mut idx @ _: aver_rt::AverInt,
+) -> Result<aver_rt::AverVector<crate::aver_generated::domain::value::Val>, AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
         {
@@ -5700,6 +5781,89 @@ pub fn evalArgsMapToSlotEnv(
 
 /// Evaluate arg expressions directly into a callee slot env from slot caller state.
 pub fn evalArgsSlotToSlotEnv(
+    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    env @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    slotMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
+    mut acc @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    mut idx @ _: aver_rt::AverInt,
+) -> Result<aver_rt::AverVector<crate::aver_generated::domain::value::Val>, AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
+    let __word5 = idx.to_i64();
+    let Some(mut idx) = __word5 else {
+        return evalArgsSlotToSlotEnv__boxed(exprs, env, slotMap, fns, acc, idx);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = exprs;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((e, rest)) => {
+                    match crate::aver_generated::domain::eval::core::evalExprSlot(
+                        e.clone(),
+                        env.clone(),
+                        slotMap,
+                        fns,
+                    ) {
+                        Err(err @ _) => {
+                            return Err(err);
+                        }
+                        Ok(v @ _) => {
+                            let __tco0 = rest;
+                            let __tco4 = crate::aver_generated::domain::eval::slots::setSlot(
+                                acc,
+                                aver_rt::AverInt::from_i64(idx),
+                                v,
+                            );
+                            let __tco5 =
+                                match (|| -> Option<i64> { Some((idx).checked_add(1i64)?) })() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err((aver_rt::AverInt::from_i64(idx))
+                                        .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                };
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
+                            acc = __tco4;
+                            match __tco5 {
+                                Ok(__fit5) => {
+                                    idx = __fit5;
+                                }
+                                __result5 => {
+                                    return evalArgsSlotToSlotEnv__boxed(
+                                        exprs,
+                                        env,
+                                        slotMap,
+                                        fns,
+                                        acc,
+                                        match __result5 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return Ok(acc);
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn evalArgsSlotToSlotEnv__boxed(
     exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     env @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     slotMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,

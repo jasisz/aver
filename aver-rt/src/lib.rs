@@ -1541,10 +1541,17 @@ impl<T> AverList<T> {
 
     /// The head and the rest. A `Prepend` node, which nearly every node is,
     /// is read here, in the caller; the other shapes out of line.
-    #[inline]
+    #[inline(always)]
     fn uncons(&self) -> Option<(&T, Self)> {
         if let AverListInner::Prepend { head, tail, .. } = &**self.inner.as_ref()? {
             return Some((head, tail.clone()));
+        }
+        // A flat body (what `String.split` and `List.fromVector` give) is
+        // stepped as often as a `Prepend` chain in a reader loop: in the
+        // caller too.
+        if let AverListInner::Flat { items } = &**self.inner.as_ref()? {
+            let head = items.get(self.start())?;
+            return Some((head, self.flat_tail(items.len())?));
         }
         self.uncons_slow()
     }
@@ -1644,7 +1651,7 @@ impl<T> AverList<T> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn uncons_cloned(&self) -> Option<(T, Self)>
     where
         T: Clone,
@@ -1669,7 +1676,7 @@ impl<T> AverList<T> {
     /// `uncons` of a list that is not needed after it: a `Prepend` node this
     /// list alone holds gives up its head and tail, moved rather than
     /// counted; any other list is read as `uncons_cloned` reads it.
-    #[inline]
+    #[inline(always)]
     pub fn uncons_owned(mut self) -> Option<(T, Self)>
     where
         T: Clone,
@@ -1692,7 +1699,33 @@ impl<T> AverList<T> {
             // are each read out exactly once; `len` is a plain usize.
             return Some(unsafe { (std::ptr::read(head), std::ptr::read(tail)) });
         }
-        self.uncons_cloned()
+        match self.inner.as_deref() {
+            // A `Prepend` node another list holds too: its head and tail
+            // cloned, here rather than through `uncons_cloned`.
+            Some(AverListInner::Prepend { head, tail, .. }) => Some((head.clone(), tail.clone())),
+            // A flat body is stepped in place: the view moves on by one
+            // with no count touched (`flat_tail` builds a view, which copies
+            // the `Rc`).
+            Some(AverListInner::Flat { items }) => {
+                let start = self.start();
+                let len = items.len();
+                if start >= len {
+                    return None;
+                }
+                let head = items[start].clone();
+                if start + 1 >= len {
+                    return Some((head, Self::empty()));
+                }
+                match u32::try_from(start + 1) {
+                    Ok(next) => {
+                        self.start = next;
+                        Some((head, self))
+                    }
+                    Err(_) => self.uncons_cloned(),
+                }
+            }
+            _ => self.uncons_cloned(),
+        }
     }
 
     /// `uncons_owned` that also keeps the node it took apart: a `Prepend`
@@ -2218,7 +2251,7 @@ impl<T: Clone> AverListMatch for AverList<T> {
         self.uncons_cloned()
     }
 
-    #[inline]
+    #[inline(always)]
     fn uncons_owned_for_match(self) -> Option<(Self::Item, Self)> {
         self.uncons_owned()
     }
@@ -2237,7 +2270,7 @@ impl AverListMatch for AverIntList {
         self.uncons_cloned()
     }
 
-    #[inline]
+    #[inline(always)]
     fn uncons_owned_for_match(self) -> Option<(Self::Item, Self)> {
         match self {
             AverIntList::Wide(values) => values
@@ -2253,7 +2286,7 @@ pub fn list_uncons_cloned<L: AverListMatch>(list: &L) -> Option<(L::Item, L)> {
     list.uncons_for_match()
 }
 
-#[inline]
+#[inline(always)]
 pub fn list_uncons_owned<L: AverListMatch>(list: L) -> Option<(L::Item, L)> {
     list.uncons_owned_for_match()
 }

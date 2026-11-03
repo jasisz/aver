@@ -193,6 +193,31 @@ pub fn listDrop(
     mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut count @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
+    let __word1 = count.to_i64();
+    let Some(mut count) = __word1 else {
+        return listDrop__boxed(items, count);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        if (count > 0i64) {
+            aver_list_match!(items, [] => { return aver_rt::AverList::empty(); }, [_item, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = match (|| -> Option<i64> { Some(((count)).checked_sub(1i64)?) })() { Some(__stepped) => Ok(__stepped), None => Err((aver_rt::AverInt::from_i64(count)).sub(&(aver_rt::AverInt::from_i64(1i64)))) };
+            items = __tco0;
+            match __tco1 { Ok(__fit1) => { count = __fit1; } __result1 => return listDrop__boxed(items, match __result1 { Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped), Err(__boxed) => __boxed }) }
+            continue;
+        } })
+        } else {
+            return items;
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn listDrop__boxed(
+    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut count @ _: aver_rt::AverInt,
+) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
         if (count > aver_rt::AverInt::from_i64(0)) {

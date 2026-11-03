@@ -4049,6 +4049,67 @@ pub fn splitDottedLoop__indexed(
             }
         }
     };
+    let __word2 = total.to_i64();
+    let Some(mut total) = __word2 else {
+        return splitDottedLoop__indexed__boxed(
+            name,
+            aver_rt::AverInt::from_i64(pos),
+            total,
+            __str_index,
+        );
+    };
+    loop {
+        crate::cancel_checkpoint();
+        if (pos < total) {
+            match aver_rt::string_index_char_at_i64(&name, &__str_index, pos) {
+                Some(c @ _) => {
+                    if (&*c == ".") {
+                        return Some((
+                            aver_rt::string_index_slice_i64(&name, &__str_index, 0i64, pos),
+                            aver_rt::string_index_slice_i64(
+                                &name,
+                                &__str_index,
+                                (pos + 1i64),
+                                total,
+                            ),
+                        ));
+                    } else {
+                        {
+                            let __tco1 = (pos + 1i64);
+                            pos = __tco1;
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return None;
+                }
+            }
+        } else {
+            return None;
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn splitDottedLoop__indexed__boxed(
+    mut name @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut total @ _: aver_rt::AverInt,
+    mut __str_index @ _: aver_rt::StringIndex,
+) -> Option<(AverStr, AverStr)> {
+    let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
+    {
+        Some(__start) => __start,
+        None => {
+            crate::cancel_checkpoint();
+            if (pos < total) {
+                return None;
+            } else {
+                return None;
+            }
+        }
+    };
     loop {
         crate::cancel_checkpoint();
         if (aver_rt::AverInt::from_i64(pos) < total) {

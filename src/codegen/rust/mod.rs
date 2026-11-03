@@ -3548,6 +3548,77 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         );
     }
 
+    /// A leaf classifier, a flat match over literals that calls nothing and
+    /// builds nothing, is forced into its callers though it is not thin; a
+    /// function that builds a list around it is neither thin nor a leaf, and
+    /// is left to LLVM.
+    #[test]
+    fn leaf_classifiers_are_forced_into_their_callers() {
+        let mut source = String::from("module Demo\n\nfn kind(c: Int) -> Int\n    match c\n");
+        for digit in 0..10 {
+            source.push_str(&format!("        {} -> {digit}\n", 48 + digit));
+        }
+        source.push_str("        _ -> -1\n");
+        source.push_str("\nfn pair(c: Int) -> List<Int>\n    [kind(c), c]\n");
+        source.push_str("\nfn main() -> Int\n    List.len(pair(48))\n");
+        let mut ctx = ctx_from_source(&source, "demo");
+        let out = transpile(&mut ctx);
+        let entry = generated_file(&out, "src/aver_generated/entry/mod.rs");
+        let hint = |name: &str| {
+            let at = entry
+                .find(&format!("pub fn {name}("))
+                .unwrap_or_else(|| panic!("{name} emitted:\n{entry}"));
+            entry[..at]
+                .trim_end()
+                .lines()
+                .last()
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert_eq!(hint("kind"), "#[inline(always)]", "{entry}");
+        assert_ne!(hint("pair"), "#[inline(always)]", "{entry}");
+    }
+
+    /// A self-tail loop whose `Int` params its recurrence does not bound
+    /// runs first on machine words: the copy narrows each on entry, steps
+    /// them checked, and breaks out to the ordinary loop with the state
+    /// boxed when a step leaves `i64`.
+    #[test]
+    fn unbounded_loop_params_run_on_machine_words_first() {
+        let source = "module Demo\n\nfn sumTo(i: Int, n: Int, acc: Int) -> Int\n    match i > n\n        true -> acc\n        false -> sumTo(i + 1, n, acc + i * 1000000000000000)\n\nfn main() -> Int\n    sumTo(0, 100, 0)\n";
+        let mut ctx = ctx_from_source(source, "demo");
+        let out = transpile(&mut ctx);
+        let entry = generated_file(&out, "src/aver_generated/entry/mod.rs");
+        // A pure `Int` loop is also a word-speculation entry: its body is
+        // the exact one its wrapper runs after an abandonment.
+        let at = entry
+            .find("fn __exact_sumTo(")
+            .or_else(|| entry.find("pub fn sumTo("))
+            .unwrap_or_else(|| panic!("sumTo emitted:\n{entry}"));
+        let body = &entry[at..];
+        for expected in [
+            "let __word0 = i.to_i64();",
+            "let (Some(mut i), Some(mut n), Some(mut acc)) = (__word0, __word1, __word2) else { return ",
+            "__boxed(i, n, acc) };",
+            ".checked_mul(1000000000000000i64)?",
+            ".checked_add(1i64)?",
+            "=> return ",
+            "aver_rt::AverInt::from_i64(n)",
+            "if (i > n) { return aver_rt::AverInt::from_i64(acc); }",
+            "#[cold]\n#[inline(never)]\nfn ",
+        ] {
+            assert!(body.contains(expected), "missing `{expected}`:\n{body}");
+        }
+        // The ordinary loop is the cold fn, on the boxed state.
+        let ordinary = body
+            .find("#[cold]")
+            .unwrap_or_else(|| panic!("no ordinary loop beside the copy:\n{body}"));
+        assert!(
+            body[ordinary..].contains(".mul(&aver_rt::AverInt::from_i64(1000000000000000))"),
+            "{body}"
+        );
+    }
+
     #[cfg(feature = "runtime")]
     #[test]
     fn rust_allocator_option_adds_mimalloc_only_when_chosen() {

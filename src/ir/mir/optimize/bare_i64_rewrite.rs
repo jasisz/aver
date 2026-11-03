@@ -325,6 +325,7 @@ fn rewrite_fn(
         scratch: Vec::new(),
         self_tail_loop: false,
         leaf_slots: Vec::new(),
+        word_loop: None,
     };
 
     // 2. Insert boundary nodes. The body is in RETURN position: a bare
@@ -340,6 +341,9 @@ fn rewrite_fn(
         &mut f.body,
         Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Unit))),
     );
+    // The loop's copy over machine words is the same body with its words
+    // bare (step 4); it is rewritten from the body as lowered.
+    let for_words = facts.word_loop.as_ref().map(|_| body.clone());
     f.body = rewrite_tail(body, facts.bare_return, &ctx);
 
     // 3. A position checked on entry: its fallback (the failure path on
@@ -355,6 +359,21 @@ fn rewrite_fn(
             lo: check.lo,
             hi: check.hi,
             fallback: rewrite_tail(check.fallback.clone(), false, &fallback_ctx),
+        });
+    }
+
+    // 4. The loop's copy over machine words: the words are bare in its facts,
+    //    so each is boxed where it meets a general `Int`, and a self-tail
+    //    call narrows what it passes at a word's position. The signature and
+    //    the return are the ordinary loop's.
+    if let (Some(words), Some(body)) = (facts.word_loop.as_deref(), for_words) {
+        let word_ctx = RewriteCtx {
+            facts: &words.facts,
+            ..ctx
+        };
+        f.repr.word_loop = Some(crate::ir::mir::MirWordLoop {
+            params: words.params.clone(),
+            body: rewrite_tail(body, facts.bare_return, &word_ctx),
         });
     }
 }
@@ -1080,7 +1099,13 @@ fn rewrite_call_args(
         _ => None,
     };
     // A self-tail-call rebinds the loop's own params: a position checked on
-    // entry is an `i64` there, though the signature keeps it boxed.
+    // entry, or a word of the loop's copy, is an `i64` there, though the
+    // signature keeps it boxed. Which, the facts of the body being rewritten
+    // say (the copy's facts differ from the fn's).
+    let param_facts = match self_tail {
+        true => callee_facts.map(|_| ctx.facts),
+        false => callee_facts,
+    };
     let param_bare = |f: &FnBareFacts, i: usize| match self_tail {
         true => f.loop_param_is_bare(i),
         false => f.param_is_bare(i),
@@ -1089,12 +1114,12 @@ fn rewrite_call_args(
         .enumerate()
         .map(|(i, a)| {
             // A param only read at as a position takes a boxed one saturated.
-            if callee_facts.is_some_and(|f| param_bare(f, i) && f.param_takes_saturated(i))
+            if param_facts.is_some_and(|f| param_bare(f, i) && f.param_takes_saturated(i))
                 && !renders_raw(&a.node, ctx.facts)
             {
                 return saturated_position(rewrite_boxed(a, ctx));
             }
-            if callee_facts.is_some_and(|f| param_bare(f, i))
+            if param_facts.is_some_and(|f| param_bare(f, i))
                 || super::bare_i64::intrinsic_accepts_raw_code_arg(callee, i)
                 || (super::bare_i64::intrinsic_accepts_raw_position_arg(callee, i)
                     && renders_raw(&a.node, ctx.facts))

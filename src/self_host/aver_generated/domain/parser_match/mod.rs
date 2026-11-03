@@ -514,6 +514,72 @@ pub fn tokenAtWalk(
 ) -> crate::aver_generated::domain::token::Token {
     let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::token::Token>;
     let mut tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token> = tokens;
+    let __word1 = target.to_i64();
+    let __word2 = idx.to_i64();
+    let (Some(mut target), Some(mut idx)) = (__word1, __word2) else {
+        return tokenAtWalk__boxed(tokens, target, idx);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = tokens;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((t, rest)) => {
+                    if (idx == target) {
+                        return t.clone();
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco2 =
+                                match (|| -> Option<i64> { Some((idx).checked_add(1i64)?) })() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err((aver_rt::AverInt::from_i64(idx))
+                                        .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                };
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    tokens = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    tokens = &__hold0;
+                                }
+                            }
+                            match __tco2 {
+                                Ok(__fit2) => {
+                                    idx = __fit2;
+                                }
+                                __result2 => {
+                                    return tokenAtWalk__boxed(
+                                        tokens,
+                                        aver_rt::AverInt::from_i64(target),
+                                        match __result2 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return crate::aver_generated::domain::token::Token::TkEof;
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn tokenAtWalk__boxed(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut target @ _: aver_rt::AverInt,
+    mut idx @ _: aver_rt::AverInt,
+) -> crate::aver_generated::domain::token::Token {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::token::Token>;
+    let mut tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token> = tokens;
     loop {
         crate::cancel_checkpoint();
         {
@@ -569,6 +635,75 @@ pub fn continuationAt(
 /// Walk to the token before target; a DEDENT there ends the expression, anything else hands over the token at target.
 #[inline(always)]
 pub fn continuationAtWalk(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut target @ _: aver_rt::AverInt,
+    mut idx @ _: aver_rt::AverInt,
+) -> crate::aver_generated::domain::token::Token {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::token::Token>;
+    let mut tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token> = tokens;
+    let __word1 = target.to_i64();
+    let __word2 = idx.to_i64();
+    let (Some(mut target), Some(mut idx)) = (__word1, __word2) else {
+        return continuationAtWalk__boxed(tokens, target, idx);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = tokens;
+            match aver_rt::list_uncons(__list_subject) {
+                Some((t, rest)) => {
+                    if (idx == target) {
+                        match t {
+                            crate::aver_generated::domain::token::Token::TkDedent => {
+                                return crate::aver_generated::domain::token::Token::TkNewline;
+                            }
+                            _ => {
+                                return crate::aver_generated::domain::parser_match::tokenAt(
+                                    &rest,
+                                    aver_rt::AverInt::from_i64(0),
+                                );
+                            }
+                        }
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco2 =
+                                match (|| -> Option<i64> { Some((idx).checked_add(1i64)?) })() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err((aver_rt::AverInt::from_i64(idx))
+                                        .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                };
+                            __hold0 = __tco0;
+                            tokens = &__hold0;
+                            match __tco2 {
+                                Ok(__fit2) => {
+                                    idx = __fit2;
+                                }
+                                __result2 => {
+                                    return continuationAtWalk__boxed(
+                                        tokens,
+                                        aver_rt::AverInt::from_i64(target),
+                                        match __result2 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return crate::aver_generated::domain::token::Token::TkEof;
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn continuationAtWalk__boxed(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut target @ _: aver_rt::AverInt,
     mut idx @ _: aver_rt::AverInt,
@@ -656,6 +791,51 @@ pub fn expect(
 
 /// Skip past any newline tokens.
 pub fn skipNewlines(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut pos @ _: aver_rt::AverInt,
+) -> aver_rt::AverInt {
+    let __word1 = pos.to_i64();
+    let Some(mut pos) = __word1 else {
+        return skipNewlines__boxed(tokens, pos);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        match crate::aver_generated::domain::parser_match::tokenAt(
+            tokens,
+            aver_rt::AverInt::from_i64(pos),
+        ) {
+            crate::aver_generated::domain::token::Token::TkNewline => {
+                let __tco1 =
+                    match (|| -> Option<i64> { Some((pos).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(pos))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                match __tco1 {
+                    Ok(__fit1) => {
+                        pos = __fit1;
+                    }
+                    __result1 => {
+                        return skipNewlines__boxed(
+                            tokens,
+                            match __result1 {
+                                Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                Err(__boxed) => __boxed,
+                            },
+                        );
+                    }
+                }
+                continue;
+            }
+            _ => {
+                return aver_rt::AverInt::from_i64(pos);
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn skipNewlines__boxed(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
@@ -916,6 +1096,66 @@ pub fn skipTypeExprTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
+    let __word1 = pos.to_i64();
+    let Some(mut pos) = __word1 else {
+        return skipTypeExprTail__boxed(tokens, pos);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos @ _ = aver_rt::AverInt::from_i64(pos).add(&aver_rt::AverInt::from_i64(1));
+        match crate::aver_generated::domain::parser_match::tokenAt(
+            tokens,
+            aver_rt::AverInt::from_i64(pos),
+        ) {
+            crate::aver_generated::domain::token::Token::TkLt => {
+                return crate::aver_generated::domain::parser_match::skipUntilGt(
+                    tokens,
+                    nextPos,
+                    aver_rt::AverInt::from_i64(1),
+                );
+            }
+            crate::aver_generated::domain::token::Token::TkDot => {
+                match crate::aver_generated::domain::parser_match::tokenAt(tokens, nextPos) {
+                    crate::aver_generated::domain::token::Token::TkIdent(_) => {
+                        let __tco1 = match (|| -> Option<i64> { Some((pos).checked_add(2i64)?) })()
+                        {
+                            Some(__stepped) => Ok(__stepped),
+                            None => Err((aver_rt::AverInt::from_i64(pos))
+                                .add(&(aver_rt::AverInt::from_i64(2i64)))),
+                        };
+                        match __tco1 {
+                            Ok(__fit1) => {
+                                pos = __fit1;
+                            }
+                            __result1 => {
+                                return skipTypeExprTail__boxed(
+                                    tokens,
+                                    match __result1 {
+                                        Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                        Err(__boxed) => __boxed,
+                                    },
+                                );
+                            }
+                        }
+                        continue;
+                    }
+                    _ => {
+                        return aver_rt::AverInt::from_i64(pos);
+                    }
+                }
+            }
+            _ => {
+                return aver_rt::AverInt::from_i64(pos);
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn skipTypeExprTail__boxed(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut pos @ _: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -949,6 +1189,86 @@ pub fn skipTypeExprTail(
 /// Skip until matching > for generic type params.
 #[inline(always)]
 pub fn skipUntilGt(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut pos @ _: aver_rt::AverInt,
+    mut depth @ _: aver_rt::AverInt,
+) -> aver_rt::AverInt {
+    let __word2 = depth.to_i64();
+    let Some(mut depth) = __word2 else {
+        return skipUntilGt__boxed(tokens, pos, depth);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        if (depth == 0i64) {
+            return pos;
+        } else {
+            match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
+                crate::aver_generated::domain::token::Token::TkEof => {
+                    return pos;
+                }
+                crate::aver_generated::domain::token::Token::TkLt => {
+                    let __tco1 = nextPos;
+                    let __tco2 = match (|| -> Option<i64> { Some((depth).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(depth))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    pos = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            depth = __fit2;
+                        }
+                        __result2 => {
+                            return skipUntilGt__boxed(
+                                tokens,
+                                pos,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+                crate::aver_generated::domain::token::Token::TkGt => {
+                    let __tco1 = nextPos;
+                    let __tco2 = match (|| -> Option<i64> { Some((depth).checked_sub(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(depth))
+                            .sub(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    pos = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            depth = __fit2;
+                        }
+                        __result2 => {
+                            return skipUntilGt__boxed(
+                                tokens,
+                                pos,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+                _ => {
+                    let __tco1 = nextPos;
+                    pos = __tco1;
+                    continue;
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn skipUntilGt__boxed(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
     mut depth @ _: aver_rt::AverInt,
@@ -990,6 +1310,86 @@ pub fn skipUntilGt(
 /// Skip until matching ) for tuple types.
 #[inline(always)]
 pub fn skipUntilClose(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut pos @ _: aver_rt::AverInt,
+    mut depth @ _: aver_rt::AverInt,
+) -> aver_rt::AverInt {
+    let __word2 = depth.to_i64();
+    let Some(mut depth) = __word2 else {
+        return skipUntilClose__boxed(tokens, pos, depth);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        if (depth == 0i64) {
+            return pos;
+        } else {
+            match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
+                crate::aver_generated::domain::token::Token::TkEof => {
+                    return pos;
+                }
+                crate::aver_generated::domain::token::Token::TkLParen => {
+                    let __tco1 = nextPos;
+                    let __tco2 = match (|| -> Option<i64> { Some((depth).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(depth))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    pos = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            depth = __fit2;
+                        }
+                        __result2 => {
+                            return skipUntilClose__boxed(
+                                tokens,
+                                pos,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+                crate::aver_generated::domain::token::Token::TkRParen => {
+                    let __tco1 = nextPos;
+                    let __tco2 = match (|| -> Option<i64> { Some((depth).checked_sub(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(depth))
+                            .sub(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    pos = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            depth = __fit2;
+                        }
+                        __result2 => {
+                            return skipUntilClose__boxed(
+                                tokens,
+                                pos,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+                _ => {
+                    let __tco1 = nextPos;
+                    pos = __tco1;
+                    continue;
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn skipUntilClose__boxed(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
     mut depth @ _: aver_rt::AverInt,
@@ -1164,6 +1564,89 @@ pub fn skipIndentBlock(
     mut pos @ _: aver_rt::AverInt,
     mut depth @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
+    let __word2 = depth.to_i64();
+    let Some(mut depth) = __word2 else {
+        return skipIndentBlock__boxed(tokens, pos, depth);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
+            crate::aver_generated::domain::token::Token::TkEof => {
+                return pos;
+            }
+            crate::aver_generated::domain::token::Token::TkIndent => {
+                let __tco1 = nextPos;
+                let __tco2 = match (|| -> Option<i64> { Some((depth).checked_add(1i64)?) })() {
+                    Some(__stepped) => Ok(__stepped),
+                    None => Err((aver_rt::AverInt::from_i64(depth))
+                        .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                };
+                pos = __tco1;
+                match __tco2 {
+                    Ok(__fit2) => {
+                        depth = __fit2;
+                    }
+                    __result2 => {
+                        return skipIndentBlock__boxed(
+                            tokens,
+                            pos,
+                            match __result2 {
+                                Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                Err(__boxed) => __boxed,
+                            },
+                        );
+                    }
+                }
+                continue;
+            }
+            crate::aver_generated::domain::token::Token::TkDedent => {
+                if (depth > 1i64) {
+                    {
+                        let __tco1 = nextPos;
+                        let __tco2 =
+                            match (|| -> Option<i64> { Some((depth).checked_sub(1i64)?) })() {
+                                Some(__stepped) => Ok(__stepped),
+                                None => Err((aver_rt::AverInt::from_i64(depth))
+                                    .sub(&(aver_rt::AverInt::from_i64(1i64)))),
+                            };
+                        pos = __tco1;
+                        match __tco2 {
+                            Ok(__fit2) => {
+                                depth = __fit2;
+                            }
+                            __result2 => {
+                                return skipIndentBlock__boxed(
+                                    tokens,
+                                    pos,
+                                    match __result2 {
+                                        Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                        Err(__boxed) => __boxed,
+                                    },
+                                );
+                            }
+                        }
+                        continue;
+                    }
+                } else {
+                    return nextPos;
+                }
+            }
+            _ => {
+                let __tco1 = nextPos;
+                pos = __tco1;
+                continue;
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn skipIndentBlock__boxed(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut pos @ _: aver_rt::AverInt,
+    mut depth @ _: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -1222,6 +1705,92 @@ pub fn findDependsInRange(
     mut pos @ _: aver_rt::AverInt,
     mut endPos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<AverStr> {
+    let __word1 = pos.to_i64();
+    let __word2 = endPos.to_i64();
+    let (Some(mut pos), Some(mut endPos)) = (__word1, __word2) else {
+        return findDependsInRange__boxed(tokens, pos, endPos);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos @ _ = aver_rt::AverInt::from_i64(pos).add(&aver_rt::AverInt::from_i64(1));
+        if (pos < endPos) {
+            match crate::aver_generated::domain::parser_match::tokenAt(
+                tokens,
+                aver_rt::AverInt::from_i64(pos),
+            ) {
+                crate::aver_generated::domain::token::Token::TkIdent(kw) => {
+                    if (&*kw == "depends") {
+                        return crate::aver_generated::domain::parser_match::findDependsListAt(
+                            tokens,
+                            nextPos,
+                            aver_rt::AverInt::from_i64(endPos),
+                        );
+                    } else {
+                        {
+                            let __tco1 = {
+                                let __boxed = nextPos;
+                                match __boxed.to_i64() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err(__boxed),
+                                }
+                            };
+                            match __tco1 {
+                                Ok(__fit1) => {
+                                    pos = __fit1;
+                                }
+                                __result1 => {
+                                    return findDependsInRange__boxed(
+                                        tokens,
+                                        match __result1 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                        aver_rt::AverInt::from_i64(endPos),
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                _ => {
+                    let __tco1 = {
+                        let __boxed = nextPos;
+                        match __boxed.to_i64() {
+                            Some(__stepped) => Ok(__stepped),
+                            None => Err(__boxed),
+                        }
+                    };
+                    match __tco1 {
+                        Ok(__fit1) => {
+                            pos = __fit1;
+                        }
+                        __result1 => {
+                            return findDependsInRange__boxed(
+                                tokens,
+                                match __result1 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                                aver_rt::AverInt::from_i64(endPos),
+                            );
+                        }
+                    }
+                    continue;
+                }
+            }
+        } else {
+            return aver_rt::AverList::empty();
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn findDependsInRange__boxed(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut pos @ _: aver_rt::AverInt,
+    mut endPos @ _: aver_rt::AverInt,
+) -> aver_rt::AverList<AverStr> {
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -1275,6 +1844,90 @@ pub fn findDependsListAt(
 /// Collect module names until ].
 #[inline(always)]
 pub fn collectDependsNames(
+    tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    mut pos @ _: aver_rt::AverInt,
+    mut endPos @ _: aver_rt::AverInt,
+    mut acc @ _: aver_rt::AverList<AverStr>,
+) -> aver_rt::AverList<AverStr> {
+    let __word1 = pos.to_i64();
+    let __word2 = endPos.to_i64();
+    let (Some(mut pos), Some(mut endPos)) = (__word1, __word2) else {
+        return collectDependsNames__boxed(tokens, pos, endPos, acc);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos @ _ = aver_rt::AverInt::from_i64(pos).add(&aver_rt::AverInt::from_i64(1));
+        if (pos < endPos) {
+            match crate::aver_generated::domain::parser_match::tokenAt(
+                tokens,
+                aver_rt::AverInt::from_i64(pos),
+            ) {
+                crate::aver_generated::domain::token::Token::TkRBracket => {
+                    return (acc).reverse_owned();
+                }
+                crate::aver_generated::domain::token::Token::TkIdent(name) => {
+                    let __tco1 = {
+                        let __boxed = nextPos;
+                        match __boxed.to_i64() {
+                            Some(__stepped) => Ok(__stepped),
+                            None => Err(__boxed),
+                        }
+                    };
+                    let __tco3 = aver_rt::AverList::prepend_owned(name, acc);
+                    acc = __tco3;
+                    match __tco1 {
+                        Ok(__fit1) => {
+                            pos = __fit1;
+                        }
+                        __result1 => {
+                            return collectDependsNames__boxed(
+                                tokens,
+                                match __result1 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                                aver_rt::AverInt::from_i64(endPos),
+                                acc,
+                            );
+                        }
+                    }
+                    continue;
+                }
+                _ => {
+                    let __tco1 = {
+                        let __boxed = nextPos;
+                        match __boxed.to_i64() {
+                            Some(__stepped) => Ok(__stepped),
+                            None => Err(__boxed),
+                        }
+                    };
+                    match __tco1 {
+                        Ok(__fit1) => {
+                            pos = __fit1;
+                        }
+                        __result1 => {
+                            return collectDependsNames__boxed(
+                                tokens,
+                                match __result1 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                                aver_rt::AverInt::from_i64(endPos),
+                                acc,
+                            );
+                        }
+                    }
+                    continue;
+                }
+            }
+        } else {
+            return (acc).reverse_owned();
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn collectDependsNames__boxed(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     mut pos @ _: aver_rt::AverInt,
     mut endPos @ _: aver_rt::AverInt,

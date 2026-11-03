@@ -32,6 +32,74 @@ pub fn buildSlotEnvLoop(
 ) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
     let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
     let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = args;
+    let __word2 = idx.to_i64();
+    let Some(mut idx) = __word2 else {
+        return buildSlotEnvLoop__boxed(args, acc, idx);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __list_subject = args;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((a, rest)) => {
+                    let __tco0 = rest;
+                    let __tco1 = {
+                        let __vec = acc;
+                        match (aver_rt::AverInt::from_i64(idx)).to_usize() {
+                            Some(__idx) if __idx < __vec.len() => {
+                                __vec.set_unchecked(__idx, a.clone())
+                            }
+                            _ => __vec,
+                        }
+                    };
+                    let __tco2 = match (|| -> Option<i64> { Some((idx).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(idx))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            args = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            args = &__hold0;
+                        }
+                    }
+                    acc = __tco1;
+                    match __tco2 {
+                        Ok(__fit2) => {
+                            idx = __fit2;
+                        }
+                        __result2 => {
+                            return buildSlotEnvLoop__boxed(
+                                args,
+                                acc,
+                                match __result2 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+                None => {
+                    return acc;
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn buildSlotEnvLoop__boxed(
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    mut idx @ _: aver_rt::AverInt,
+) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = args;
     loop {
         crate::cancel_checkpoint();
         {

@@ -1469,16 +1469,17 @@ fn emit_fn_def_with_visibility(
     };
     let optimized_thin_plan = classify_thin_fn_def_for_rust(resolved_fd, ctx, &ectx);
 
-    if fd.effects.is_empty()
+    // A forced function (a thin one within the budget, or a leaf
+    // classifier) is pasted into its callers; every other thin function is
+    // left to LLVM's cost model with a hint.
+    if ctx.rust_forced_inline.contains(&resolved_fd.fn_id) {
+        lines.push("#[inline(always)]".to_string());
+    } else if fd.effects.is_empty()
         && optimized_thin_plan
             .as_ref()
             .is_some_and(|plan| thin_kind_is_parent_thin_candidate(plan.kind))
     {
-        lines.push(if ctx.rust_forced_inline.contains(&resolved_fd.fn_id) {
-            "#[inline(always)]".to_string()
-        } else {
-            "#[inline]".to_string()
-        });
+        lines.push("#[inline]".to_string());
     }
 
     if is_guest_entry && (ctx.emit_replay_runtime || self_host_state.is_some()) {

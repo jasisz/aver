@@ -1,0 +1,132 @@
+module WordLoop
+    intent = "Self-tail loops hold their unbounded Int params as checked machine words and hand their state to the ordinary loop when a step leaves the word: every result reads as the VM."
+    effects [Console.print]
+
+fn digits(s: String, i: Int, acc: Int) -> Int
+    ? "The decimal digits from position i on, accumulated: past 2^63 on a long string."
+    match String.charAt(s, i)
+        Option.Some("0") -> digits(s, i + 1, acc * 10)
+        Option.Some("1") -> digits(s, i + 1, acc * 10 + 1)
+        Option.Some("2") -> digits(s, i + 1, acc * 10 + 2)
+        Option.Some("3") -> digits(s, i + 1, acc * 10 + 3)
+        Option.Some("4") -> digits(s, i + 1, acc * 10 + 4)
+        Option.Some("5") -> digits(s, i + 1, acc * 10 + 5)
+        Option.Some("6") -> digits(s, i + 1, acc * 10 + 6)
+        Option.Some("7") -> digits(s, i + 1, acc * 10 + 7)
+        Option.Some("8") -> digits(s, i + 1, acc * 10 + 8)
+        Option.Some("9") -> digits(s, i + 1, acc * 10 + 9)
+        Option.Some -> acc
+        Option.None -> acc
+
+fn sumTo(i: Int, n: Int, acc: Int) -> Int
+    ? "The sum crosses 2^63 for a long run; n is a word compared each step."
+    match i > n
+        true -> acc
+        false -> sumTo(i + 1, n, acc + i * 1000000000000000)
+
+fn down(i: Int, acc: Int) -> Int
+    ? "A negative accumulator, past -2^63."
+    match i == 0
+        true -> acc
+        false -> down(i - 1, acc - 3000000000000000000)
+
+fn twoWords(i: Int, n: Int, a: Int, b: Int) -> Int
+    ? "Two words stepped together: a leaves the word while b does not."
+    match i == n
+        true -> a - b
+        false -> twoWords(i + 1, n, a * 7, b + 1)
+
+fn coupled(i: Int, acc: Int) -> Int
+    ? "Each word stepped with the other, past the word in the end."
+    match i > 100000000000000000
+        true -> i + acc
+        false -> coupled(i + acc, acc * 2 + 1)
+
+fn fromBig(i: Int, acc: Int) -> Int
+    ? "Entered past the word, or just below its end: the ordinary loop carries on."
+    match i == 0
+        true -> acc
+        false -> fromBig(i - 1, acc + 1)
+
+record Pair
+    value: Int
+    steps: Int
+
+fn stored(i: Int, n: Int, acc: Int) -> Pair
+    ? "A word stored in a record at the exit."
+    match i >= n
+        true -> Pair(value = acc, steps = i)
+        false -> stored(i + 1, n, acc * 3 + i)
+
+fn wrapped(i: Int, n: Int, acc: Int) -> Int
+    ? "A word stepped by a remainder, which is no tree of the checked steps, and compared with a literal."
+    match i == n
+        true -> acc
+        false -> match acc < 0
+            true -> wrapped(i + 1, n, 0 - acc)
+            false -> wrapped(i + 1, n, Int.mod(acc * 1000003, 1000000007) + acc)
+
+fn negated(i: Int, acc: Int) -> Int
+    ? "Negation each step: -2^63 fits the word, 2^63 does not, and the negation of -2^63 leaves it."
+    match i == 0
+        true -> acc
+        false -> negated(i - 1, -(acc * 2))
+
+fn limit(i: Int, cap: Int) -> Int
+    ? "A cap passed on unchanged, compared each step: a word, or past the word."
+    match i * 1000000000000000000 > cap
+        true -> i
+        false -> limit(i + 1, cap)
+
+fn matched(i: Int, acc: Int) -> Int
+    ? "A word matched on: from 5 it leaves the word once, then comes back down past zero."
+    match acc
+        0 -> i
+        1 -> i * 1000
+        5 -> matched(i + 1, acc * 1844674407370955162)
+        _ -> match acc < 0
+            true -> 0 - i
+            false -> matched(i + 1, acc - 1152921504606846976)
+
+fn countBig(xs: List<Int>, acc: Int) -> Int
+    ? "A word stepped with a boxed element of a list."
+    match xs
+        [] -> acc
+        [x, ..rest] -> countBig(rest, acc + x)
+
+fn show(label: String, v: Int) -> Unit
+    ? "Prints one result."
+    ! [Console.print]
+    Console.print("{label} {v}")
+
+fn main() -> Unit
+    ? "Entry."
+    ! [Console.print]
+    show("digits", digits("12345678901234567890123", 0, 0))
+    show("digits word", digits("9223372036854775807x", 0, 0))
+    show("digits past", digits("9223372036854775808x", 0, 0))
+    show("digits small", digits("42x", 0, 0))
+    show("digits none", digits("42", 5, 7))
+    show("digits negative", digits("42", -1, 7))
+    show("sumTo", sumTo(1, 20000, 0))
+    show("sumTo small", sumTo(1, 10, 0))
+    show("sumTo big acc", sumTo(1, 10, 100000000000000000000))
+    show("down", down(5, 0))
+    show("twoWords", twoWords(0, 30, 1, 0))
+    show("coupled", coupled(1, 1))
+    show("fromBig", fromBig(3, 100000000000000000000))
+    show("fromBig edge", fromBig(3, 9223372036854775805))
+    show("fromBig min", fromBig(3, -9223372036854775808))
+    p = stored(0, 50, 1)
+    show("stored value", p.value)
+    show("stored steps", p.steps)
+    show("wrapped", wrapped(0, 100000, 1))
+    show("negated", negated(63, 1))
+    show("negated more", negated(64, 1))
+    show("negated most", negated(65, 1))
+    show("limit", limit(0, 5000000000000000000))
+    show("limit past", limit(0, 50000000000000000000))
+    show("matched", matched(0, 5))
+    show("matched one", matched(0, 1))
+    show("matched two", matched(0, 2))
+    show("countBig", countBig([1, 9223372036854775807, 2, -5, 100000000000000000000], 0))

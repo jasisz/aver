@@ -1012,6 +1012,7 @@ pub fn eachGiven(
 }
 
 /// Largest number of cases a split may write, over all its givens; the automatic producer's bound.
+#[inline(always)]
 pub fn maxCases() -> aver_rt::AverInt {
     crate::proof_std::cancel_checkpoint();
     aver_rt::AverInt::from_i64(64)
@@ -1850,6 +1851,7 @@ pub fn splitBool(
 }
 
 /// How many Plan nodes may run inside one another before a script is refused: a plan that hands its goal back to itself must not run forever.
+#[inline(always)]
 pub fn maxPlanDepth() -> aver_rt::AverInt {
     crate::proof_std::cancel_checkpoint();
     aver_rt::AverInt::from_i64(64)
@@ -1987,6 +1989,132 @@ pub fn lookup(answers @ _: &aver_rt::AverList<Answer>, mut key @ _: AverStr) -> 
 /// The first script of ts that closes the node; each runs from the node with its own path, and a question stops the search until it is answered.
 #[inline(always)]
 pub fn first(
+    n @ _: &Node,
+    ts @ _: &aver_rt::AverList<Tactic>,
+    mut i @ _: aver_rt::AverInt,
+    mut whys @ _: aver_rt::AverList<AverStr>,
+    answers @ _: &aver_rt::AverList<Answer>,
+) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
+    let mut __hold1: aver_rt::AverList<Tactic>;
+    let mut ts @ _: &aver_rt::AverList<Tactic> = ts;
+    let __word2 = i.to_i64();
+    let Some(mut i) = __word2 else {
+        return first__boxed(n, ts, i, whys, answers);
+    };
+    loop {
+        crate::proof_std::cancel_checkpoint();
+        {
+            let __list_subject = ts;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((t, rest)) => {
+                    let __subject = crate::proof_std::aver_generated::kernel::std::within(
+                        crate::proof_std::aver_generated::kernel::std::Node {
+                            path: ::aver_rt::str_lit!(""),
+                            ..n.clone()
+                        },
+                        t.clone(),
+                        answers,
+                    );
+                    match __subject {
+                        Ok(p @ _) => {
+                            return Ok(p);
+                        }
+                        Err(__pat0 @ _) => match __pat0 {
+                            crate::proof_std::aver_generated::kernel::std::Stop::Ask(key) => {
+                                return Err(
+                                    crate::proof_std::aver_generated::kernel::std::Stop::Ask(key),
+                                );
+                            }
+                            crate::proof_std::aver_generated::kernel::std::Stop::Refused(why) => {
+                                let __tco1 = rest;
+                                let __tco2 =
+                                    match (|| -> Option<i64> { Some((i).checked_add(1i64)?) })() {
+                                        Some(__stepped) => Ok(__stepped),
+                                        None => Err((aver_rt::AverInt::from_i64(i))
+                                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                    };
+                                let __tco3 = aver_rt::AverList::prepend_owned(
+                                    aver_rt::AverStr::from({
+                                        let mut __b = {
+                                            let mut __b = {
+                                                let mut __b =
+                                                    aver_rt::Buffer::with_capacity(34usize);
+                                                __b.push_display(&(aver_rt::AverInt::from_i64(i)));
+                                                __b
+                                            };
+                                            __b.push_str(&::aver_rt::str_lit!(". "));
+                                            __b
+                                        };
+                                        __b.push_display(&(why));
+                                        __b
+                                    }),
+                                    whys,
+                                );
+                                match __tco1 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        ts = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold1 = __rest;
+                                        ts = &__hold1;
+                                    }
+                                }
+                                whys = __tco3;
+                                match __tco2 {
+                                    Ok(__fit2) => {
+                                        i = __fit2;
+                                    }
+                                    __result2 => {
+                                        return first__boxed(
+                                            n,
+                                            ts,
+                                            match __result2 {
+                                                Ok(__stepped) => {
+                                                    aver_rt::AverInt::from_i64(__stepped)
+                                                }
+                                                Err(__boxed) => __boxed,
+                                            },
+                                            whys,
+                                            answers,
+                                        );
+                                    }
+                                }
+                                continue;
+                            }
+                        },
+                    }
+                }
+                None => {
+                    return Err(
+                        crate::proof_std::aver_generated::kernel::std::Stop::Refused(
+                            aver_rt::AverStr::from({
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(47usize);
+                                        __b.push_display(&(crate::proof_std::aver_generated::kernel::std::joinPath(n.path.clone(), ::aver_rt::str_lit!("First"))));
+                                        __b
+                                    };
+                                    __b.push_str(&::aver_rt::str_lit!(": none closes: "));
+                                    __b
+                                };
+                                __b.push_display(
+                                    &(aver_rt::string_join(
+                                        &(whys).reverse_owned(),
+                                        &::aver_rt::str_lit!(" | "),
+                                    )),
+                                );
+                                __b
+                            }),
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn first__boxed(
     n @ _: &Node,
     ts @ _: &aver_rt::AverList<Tactic>,
     mut i @ _: aver_rt::AverInt,

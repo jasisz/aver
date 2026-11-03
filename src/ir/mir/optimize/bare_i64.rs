@@ -459,6 +459,32 @@ pub struct FnBareFacts {
     /// (`ir::mir::int_word`) compute it on the machine word with the
     /// overflow checked, as the certificate proves.
     pub words_only: bool,
+    /// Rust: params the loop holds as an `i64` though the signature keeps
+    /// them boxed: set on the facts of a word loop's copy ([`WordLoop`]) to
+    /// its words and the position checked on entry, whose check the fn's
+    /// own facts carry.
+    pub loop_words: Vec<usize>,
+    /// Rust: the copy of the loop that holds some boxed `Int` params as
+    /// checked machine words, when the fn has one.
+    pub word_loop: Option<std::boxed::Box<WordLoop>>,
+}
+
+/// A self-tail loop's copy over machine words (Rust only). Each of `params`
+/// is an `Int` param the signature keeps boxed and the recurrence does not
+/// bound (an accumulator, a count, a limit): the copy holds it as an `i64`
+/// over the whole line, compares it raw, boxes it at every general-Int
+/// sink, and steps it at a self-tail call with the overflow checked. A value
+/// that does not fit on entry, or a step whose result leaves `i64`, hands the
+/// loop's state, boxed, to the ordinary loop, which carries on exactly: the
+/// copy computes only what the ordinary loop would, so it changes nothing
+/// but the cost.
+#[derive(Debug, Clone)]
+pub struct WordLoop {
+    /// The params, by index, ascending.
+    pub params: Vec<usize>,
+    /// The facts the copy is emitted with: each param in `params` is a bare
+    /// slot over the whole `i64` line.
+    pub facts: FnBareFacts,
 }
 
 /// A position param checked once on entry: a start in `[lo, hi]` enters
@@ -494,7 +520,9 @@ impl FnBareFacts {
     /// Does the loop of this fn hold param `i` as an `i64`: bare in the
     /// signature, or checked on entry?
     pub fn loop_param_is_bare(&self, i: usize) -> bool {
-        self.param_is_bare(i) || self.entry_check.as_ref().is_some_and(|c| c.param == i)
+        self.param_is_bare(i)
+            || self.entry_check.as_ref().is_some_and(|c| c.param == i)
+            || self.loop_words.contains(&i)
     }
 
     /// The interval over-approximation of a value bound to `slot`, when the
@@ -851,9 +879,20 @@ fn analyze_inner(
         carrier_ids,
     );
 
+    // Word loops are a Rust lowering, like the entry check; a build can
+    // keep every loop ordinary for a comparison.
+    let word_loops = rust_positions && std::env::var_os("AVER_NO_WORD_LOOPS").is_none();
     let mut fns: HashMap<FnId, FnBareFacts> = HashMap::new();
     for (id, f) in program.iter() {
-        let mut facts = analyze_fn(f, &summary, carrier, field_carrier, None, rust_positions);
+        let mut facts = analyze_fn(
+            f,
+            &summary,
+            carrier,
+            field_carrier,
+            None,
+            rust_positions,
+            &[],
+        );
         if let Some(checked) = summary.checked.get(id) {
             let on_fallback = MirFn {
                 body: checked.fallback.clone(),
@@ -871,8 +910,36 @@ fn analyze_inner(
                     field_carrier,
                     Some(checked.param),
                     rust_positions,
+                    &[],
                 ),
             }));
+        }
+        // The loop's copy over machine words: the signature and the return
+        // are the ordinary loop's, so the copy's facts keep them.
+        if word_loops {
+            let words = word_loop_params(f, &summary, program);
+            if !words.is_empty() {
+                let mut word_facts = analyze_fn(
+                    f,
+                    &summary,
+                    carrier,
+                    field_carrier,
+                    None,
+                    rust_positions,
+                    &words,
+                );
+                word_facts.bare_params = facts.bare_params.clone();
+                word_facts.bare_return = facts.bare_return;
+                word_facts.saturated_params = facts.saturated_params.clone();
+                // The position checked on entry is an `i64` in the copy too.
+                if let Some(checked) = summary.checked.get(id) {
+                    word_facts.loop_words.push(checked.param);
+                }
+                facts.word_loop = Some(std::boxed::Box::new(WordLoop {
+                    params: words,
+                    facts: word_facts,
+                }));
+            }
         }
         fns.insert(*id, facts);
     }
@@ -908,6 +975,9 @@ struct Summary {
     raw_ops: std::sync::Arc<RawOps>,
     /// Rust: the carriers held as a raw `i64` ([`CarrierIds`]).
     carrier_ids: std::sync::Arc<CarrierIds>,
+    /// Fns with callers the analysis cannot see: `main` and the
+    /// address-taken, whose every param and return stays boxed.
+    pinned: std::rc::Rc<HashSet<FnId>>,
 }
 
 impl Summary {
@@ -962,8 +1032,12 @@ fn compute_summary(
     // return is candidate-bare iff Int-typed and not externally reachable.
     let mut bare_params: HashMap<FnId, Vec<bool>> = HashMap::new();
     let mut bare_return: HashMap<FnId, bool> = HashMap::new();
+    let mut pinned: HashSet<FnId> = HashSet::new();
     for (id, f) in program.iter() {
         let externally_reachable = f.name == "main" || address_taken.contains(&f.name);
+        if externally_reachable {
+            pinned.insert(*id);
+        }
         let ip = &int_params[id];
         let seed: Vec<bool> = ip.iter().map(|&i| i && !externally_reachable).collect();
         bare_params.insert(*id, seed);
@@ -1031,6 +1105,7 @@ fn compute_summary(
     });
     let checked = std::rc::Rc::new(ranges.checked);
     let raw_ops = std::sync::Arc::new(RawOps::of(program, rust_positions));
+    let pinned = std::rc::Rc::new(pinned);
     for &(id, i) in read_only.iter() {
         if let Some(cell) = bare_param_intervals.get_mut(&id).and_then(|v| v.get_mut(i)) {
             *cell = Some(i64_interval());
@@ -1136,6 +1211,7 @@ fn compute_summary(
             read_only: read_only.clone(),
             raw_ops: raw_ops.clone(),
             carrier_ids: carrier_ids.clone(),
+            pinned: pinned.clone(),
         };
         for (id, f) in program.iter() {
             let mut escaping: HashSet<LocalId> = HashSet::new();
@@ -1166,12 +1242,13 @@ fn compute_summary(
             read_only: read_only.clone(),
             raw_ops: raw_ops.clone(),
             carrier_ids: carrier_ids.clone(),
+            pinned: pinned.clone(),
         };
         for (id, f) in program.iter() {
             if !bare_return.get(id).copied().unwrap_or(false) {
                 continue;
             }
-            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
+            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions, &[]);
             if !facts.bare_return && bare_return.insert(*id, false) != Some(false) {
                 tmp.bare_return.insert(*id, false);
                 changed = true;
@@ -1223,9 +1300,10 @@ fn compute_summary(
             read_only: read_only.clone(),
             raw_ops: raw_ops.clone(),
             carrier_ids: carrier_ids.clone(),
+            pinned: pinned.clone(),
         };
         for (_caller, f) in program.iter() {
-            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
+            let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions, &[]);
             let mut demote: Vec<FnId> = Vec::new();
             collect_let_bound_boxed_returns(&f.body.node, &facts, &bare_return, &mut demote);
             for target in demote {
@@ -1251,6 +1329,7 @@ fn compute_summary(
         read_only,
         raw_ops,
         carrier_ids,
+        pinned,
     }
 }
 
@@ -3182,11 +3261,13 @@ fn analyze_fn(
     field_carrier: &FieldCarrierIntervals,
     boxed_param: Option<usize>,
     rust: bool,
+    words: &[usize],
 ) -> FnBareFacts {
     let mut facts = FnBareFacts {
         rust,
         raw_ops: summary.raw_ops.clone(),
         carrier_ids: summary.carrier_ids.clone(),
+        loop_words: words.to_vec(),
         ..FnBareFacts::default()
     };
 
@@ -3236,7 +3317,11 @@ fn analyze_fn(
         }
         let loop_bare =
             recurrence_bare || (boxed_param != Some(i) && summary.checked_param(f.fn_id, i));
-        let iv = if loop_bare {
+        // A word of the loop's copy ranges over the whole line: its steps
+        // are checked, not bounded.
+        let iv = if words.contains(&i) {
+            i64_interval()
+        } else if loop_bare {
             summary
                 .param_interval(f.fn_id, i)
                 .filter(|iv| iv.fits_i64())
@@ -3284,7 +3369,8 @@ fn analyze_fn(
             .copied()
             .unwrap_or(OpClass::OverflowFree);
         let trusted_code_param = f.params.iter().enumerate().any(|(i, p)| {
-            p.local == *slot && (is_code_carrier_param(f, i) || summary.is_position(f, i))
+            p.local == *slot
+                && (is_code_carrier_param(f, i) || summary.is_position(f, i) || words.contains(&i))
         }) || octets.contains(slot);
         // The explicit MIR rewrite inserts a `Box` at every general-Int sink.
         // Keep this compiler-owned scalar carrier raw and pay that boundary
@@ -3682,6 +3768,138 @@ fn collect_fn_values(e: &MirExpr, out: &mut HashSet<String>) {
 }
 
 /// `true` when the source type-annotation string is exactly `Int`.
+// ── Word loops ──────────────────────────────────────────────────────────
+
+/// The params of `f` its word loop carries ([`WordLoop`]): boxed `Int`
+/// params of a self-tail loop that the loop compares, matches on, or steps
+/// with a pure `Int` tree at a self-tail call. A param the loop only hands
+/// on or stores gains nothing from a word, and a bare or position param
+/// already is one. None for a fn whose callers are unseen, or that is no
+/// loop.
+fn word_loop_params(f: &MirFn, summary: &Summary, program: &MirProgram) -> Vec<usize> {
+    if summary.pinned.contains(&f.fn_id) || !contains_self_tailcall(&f.body.node, f.fn_id) {
+        return Vec::new();
+    }
+    let candidates: HashMap<LocalId, usize> = f
+        .params
+        .iter()
+        .enumerate()
+        .filter(|(i, p)| {
+            ty_str_is_int(&p.ty)
+                && !summary.param_bare(f.fn_id, *i)
+                && !summary.checked_param(f.fn_id, *i)
+                && !summary.is_position(f, *i)
+        })
+        .map(|(i, p)| (p.local, i))
+        .collect();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let mut used = HashSet::new();
+    collect_word_uses(
+        &f.body.node,
+        f.fn_id,
+        &candidates,
+        &program.builtins,
+        &mut used,
+    );
+    let mut words: Vec<usize> = used.into_iter().collect();
+    words.sort_unstable();
+    words
+}
+
+/// The candidates (by slot) `e` reads where a word pays: a side of an `Int`
+/// comparison, the subject of a match, or a leaf of a pure `Int` tree that
+/// a self-tail call passes at a candidate's position.
+fn collect_word_uses(
+    e: &MirExpr,
+    self_fn: FnId,
+    candidates: &HashMap<LocalId, usize>,
+    builtins: &[String],
+    out: &mut HashSet<usize>,
+) {
+    let candidate = |e: &MirExpr| match e {
+        MirExpr::Local(l) => candidates.get(&l.node.slot).copied(),
+        _ => None,
+    };
+    match e {
+        MirExpr::TailCall(tc) if tc.node.target == self_fn => {
+            let at_candidate: HashSet<usize> = candidates.values().copied().collect();
+            for (i, arg) in tc.node.args.iter().enumerate() {
+                if at_candidate.contains(&i) && checked_tree_shape(arg, builtins) {
+                    word_tree_leaves(arg, builtins, &mut |leaf| {
+                        if let Some(p) = candidate(leaf) {
+                            out.insert(p);
+                        }
+                    });
+                }
+            }
+        }
+        MirExpr::BinOp(b)
+            if matches!(
+                b.node.op,
+                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
+            ) && type_is_int(b.node.lhs.ty()) =>
+        {
+            for side in [&b.node.lhs, &b.node.rhs] {
+                if let Some(p) = candidate(&side.node) {
+                    out.insert(p);
+                }
+            }
+        }
+        MirExpr::Match(m) if type_is_int(m.node.subject.ty()) => {
+            if let Some(p) = candidate(&m.node.subject.node) {
+                out.insert(p);
+            }
+        }
+        _ => {}
+    }
+    visit_children(e, &mut |c| {
+        collect_word_uses(c, self_fn, candidates, builtins, out)
+    });
+}
+
+/// The operations a word loop steps a word with, checked: the sum,
+/// difference, product and negation of [`crate::ir::mir::int_tree`].
+pub fn word_step_op(op: crate::ir::mir::int_tree::IntOp) -> bool {
+    use crate::ir::mir::int_tree::IntOp;
+    matches!(op, IntOp::Add | IntOp::Sub | IntOp::Mul | IntOp::Neg)
+}
+
+/// Is `e` a tree of [`word_step_op`]s over literals and reads of locals
+/// (boxed by the rewrite where they are raw), with at least one operation?
+/// The shape the Rust backend steps a word with, checked
+/// (`codegen/rust/from_mir/word_loop.rs`).
+pub fn checked_tree_shape(e: &Spanned<MirExpr>, builtins: &[String]) -> bool {
+    use crate::ir::mir::int_tree;
+    fn node(e: &Spanned<MirExpr>, builtins: &[String]) -> bool {
+        match int_tree::op_of(e, builtins) {
+            Some((op, a, b)) => {
+                word_step_op(op) && node(a, builtins) && b.is_none_or(|b| node(b, builtins))
+            }
+            None => match &e.node {
+                MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
+                MirExpr::Local(_) | MirExpr::Box(_) => true,
+                _ => false,
+            },
+        }
+    }
+    int_tree::op_of(e, builtins).is_some() && node(e, builtins)
+}
+
+/// Call `leaf` on each leaf of the tree `e` ([`checked_tree_shape`]).
+fn word_tree_leaves(e: &Spanned<MirExpr>, builtins: &[String], leaf: &mut dyn FnMut(&MirExpr)) {
+    match crate::ir::mir::int_tree::op_of(e, builtins) {
+        Some((_, a, b)) => {
+            word_tree_leaves(a, builtins, leaf);
+            if let Some(b) = b {
+                word_tree_leaves(b, builtins, leaf);
+            }
+        }
+        None => leaf(&e.node),
+    }
+}
+
 fn ty_str_is_int(ty: &str) -> bool {
     ty == "Int"
 }

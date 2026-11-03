@@ -591,6 +591,60 @@ pub fn nth(
     mut ts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
     mut i @ _: aver_rt::AverInt,
 ) -> crate::proof_kernel::aver_generated::kernel::term::Ty {
+    let __word1 = i.to_i64();
+    let Some(mut i) = __word1 else {
+        return nth__boxed(ts, i);
+    };
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __int_match_subject = (ts, aver_rt::AverInt::from_i64(i));
+            let (__lit0, __lit1) = &__int_match_subject;
+            if !(*__lit0).is_empty() && &(*__lit1) == &aver_rt::AverInt::from_i64(0) {
+                let Some((t, rest)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                    unreachable!("Aver Rust codegen: tuple element list mismatch")
+                };
+                return t;
+            } else if !(*__lit0).is_empty() {
+                let Some((t, rest)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                    unreachable!("Aver Rust codegen: tuple element list mismatch")
+                };
+                {
+                    let __tco0 = rest;
+                    let __tco1 = match (|| -> Option<i64> { Some((i).checked_sub(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(i))
+                            .sub(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                    ts = __tco0;
+                    match __tco1 {
+                        Ok(__fit1) => {
+                            i = __fit1;
+                        }
+                        __result1 => {
+                            return nth__boxed(
+                                ts,
+                                match __result1 {
+                                    Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                    Err(__boxed) => __boxed,
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+            } else {
+                return crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny;
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn nth__boxed(
+    mut ts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Ty>,
+    mut i @ _: aver_rt::AverInt,
+) -> crate::proof_kernel::aver_generated::kernel::term::Ty {
     loop {
         crate::proof_kernel::cancel_checkpoint();
         {

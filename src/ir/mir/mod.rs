@@ -102,5 +102,7 @@ pub use optimize::{
     BareI64Facts, FnBareFacts, Repr, ValueFact, algebraic_simplify, bool_match_to_if,
     branch_collapse, const_fold, dead_code, inline_nullary_literals, optimize,
 };
-pub use program::{LocalId, MirEntryCheck, MirFn, MirFnRepr, MirParam, MirProgram, MirScratch};
+pub use program::{
+    LocalId, MirEntryCheck, MirFn, MirFnRepr, MirParam, MirProgram, MirScratch, MirWordLoop,
+};
 pub use stats::{LowerStats, SkipReason};

@@ -121,6 +121,58 @@ pub fn exprNeedsTailLoop(
     expr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> bool {
     let mut expr @ _: &crate::aver_generated::domain::ast::Expr = expr;
+    let __word0 = selfId.to_i64();
+    let Some(mut selfId) = __word0 else {
+        return exprNeedsTailLoop__boxed(selfId, expr);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        {
+            let __t = expr;
+            match __t.view() {
+                crate::aver_generated::domain::ast::Expr__view::ExprCallDirect(__fnId_fields) => {
+                    let fnId = __fnId_fields.1.clone();
+                    return (fnId == aver_rt::AverInt::from_i64(selfId));
+                }
+                crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(
+                    __thenExpr_fields,
+                ) => {
+                    let thenExpr = &__thenExpr_fields.1;
+                    let elseExpr = &__thenExpr_fields.2;
+                    if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(
+                        aver_rt::AverInt::from_i64(selfId),
+                        thenExpr,
+                    ) {
+                        return true;
+                    } else {
+                        {
+                            let __tco1 = elseExpr;
+                            expr = __tco1;
+                            continue;
+                        }
+                    }
+                }
+                crate::aver_generated::domain::ast::Expr__view::ExprMatch(__arms_fields) => {
+                    let arms = &__arms_fields.1;
+                    return crate::aver_generated::domain::resolver::fast::armsNeedTailLoop(
+                        aver_rt::AverInt::from_i64(selfId),
+                        arms,
+                    );
+                }
+                _ => {
+                    return false;
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn exprNeedsTailLoop__boxed(
+    mut selfId @ _: aver_rt::AverInt,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+) -> bool {
+    let mut expr @ _: &crate::aver_generated::domain::ast::Expr = expr;
     loop {
         crate::cancel_checkpoint();
         {

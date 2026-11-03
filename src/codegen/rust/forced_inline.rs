@@ -1,4 +1,4 @@
-//! Which thin functions the Rust backend forces into their callers.
+//! Which functions the Rust backend forces into their callers.
 //!
 //! An effect-free thin function gets an inline hint. `#[inline(always)]`
 //! overrides LLVM's cost model, so it is given only where the code it pastes
@@ -6,6 +6,16 @@
 //! forced functions it calls pasted in, must stay within
 //! [`FORCED_INLINE_BUDGET`] MIR nodes. Every other thin function gets
 //! `#[inline]`, and LLVM inlines it where its cost model finds it pays.
+//!
+//! A leaf classifier ([`is_leaf_classifier`]) is forced on the same budget
+//! though it is not thin: a function that reads a character or a byte,
+//! compares, and answers a literal, such as a digit's value or whether a
+//! position holds a brace. Its body is a match over many literals, which
+//! LLVM's cost model prices as a large function and leaves out of line, so
+//! a reader pays a call per character it classifies. Pasted in, the match
+//! meets the caller's own tests on the same character, and its arms are
+//! branches on a value already in a register. Nothing it pastes allocates
+//! or calls back into the program, so the budget bounds the paste exactly.
 //!
 //! Measuring the pasted body, not the function's own body, is what stops the
 //! cascade: forcing a body that calls two forced functions, each calling two
@@ -43,11 +53,12 @@ pub(super) fn compute(ctx: &CodegenContext) -> HashSet<FnId> {
     let is_user_type = |name: &str| crate::codegen::common::is_user_type(name, ctx);
     let mut candidates: Vec<FnId> = program
         .iter()
-        .filter_map(|(id, _)| {
+        .filter_map(|(id, f)| {
             let fd = ctx.resolved_program.fn_by_id(*id)?;
             let thin = classify_thin_fn_def_resolved(fd, &is_user_type)
                 .is_some_and(|plan| thin_kind_is_parent_thin_candidate(plan.kind));
-            (fd.effects.is_empty() && thin).then_some(*id)
+            let leaf = is_leaf_classifier(&f.body.node, &program.builtins);
+            (fd.effects.is_empty() && (thin || leaf)).then_some(*id)
         })
         .collect();
     candidates.sort();
@@ -82,6 +93,91 @@ pub(super) fn compute(ctx: &CodegenContext) -> HashSet<FnId> {
         .into_iter()
         .filter(|id| sizes.pasted(*id).is_some())
         .collect()
+}
+
+/// Is `body` a leaf classifier: a value computed from character and byte
+/// reads, integer arithmetic, comparisons, matches and literals alone? It
+/// calls no function of the program, builds nothing on the heap, and runs
+/// no effect, so pasting it into a caller copies only branches.
+pub(super) fn is_leaf_classifier(body: &MirExpr, builtins: &[String]) -> bool {
+    use crate::ir::hir::BuiltinIntrinsic as I;
+    let mut leaf = true;
+    let mut stack = vec![body];
+    while let Some(node) = stack.pop() {
+        let fine = match node {
+            MirExpr::Literal(_)
+            | MirExpr::Local(_)
+            | MirExpr::Let(_)
+            | MirExpr::BinOp(_)
+            | MirExpr::Neg(_)
+            | MirExpr::Match(_)
+            | MirExpr::IfThenElse(_)
+            | MirExpr::Project(_)
+            | MirExpr::Box(_)
+            | MirExpr::Unbox(_) => true,
+            MirExpr::Call(call) => match &call.node.callee {
+                MirCallee::Intrinsic(
+                    I::IntDivEuclid
+                    | I::IntModEuclid
+                    | I::BitsShiftLeft
+                    | I::BitsShiftRight
+                    | I::BitsLow
+                    | I::BitsPopCount
+                    | I::StrCursorEnd
+                    | I::StrCursorHead
+                    | I::StrCursorNext
+                    | I::StrCursorCode
+                    | I::StrCode1
+                    | I::StrCode1Lower
+                    | I::StrCode1Upper
+                    | I::StrFoldLower
+                    | I::StrFoldUpper
+                    | I::StrIndexCodeAt
+                    | I::StrIndexLen
+                    | I::StrIndexPosition
+                    | I::PackedByteAt,
+                ) => true,
+                MirCallee::Builtin(id) => matches!(
+                    builtins.get(id.0 as usize).map(String::as_str),
+                    Some(
+                        "Int.min"
+                            | "Int.max"
+                            | "Int.abs"
+                            | "Int.mod"
+                            | "Int.div"
+                            | "Bits.and"
+                            | "Bits.or"
+                            | "Bits.xor"
+                            | "Bits.not"
+                            | "Bool.and"
+                            | "Bool.or"
+                            | "Bool.not"
+                            | "String.len"
+                    )
+                ),
+                _ => false,
+            },
+            MirExpr::TailCall(_)
+            | MirExpr::Construct(_)
+            | MirExpr::RecordCreate(_)
+            | MirExpr::RecordUpdate(_)
+            | MirExpr::Try(_)
+            | MirExpr::List(_)
+            | MirExpr::Tuple(_)
+            | MirExpr::MapLiteral(_)
+            | MirExpr::InterpolatedStr(_)
+            | MirExpr::IndependentProduct(_)
+            | MirExpr::Return(_)
+            | MirExpr::FnValue(_)
+            | MirExpr::IntWord(_) => false,
+        };
+        if !fine {
+            leaf = false;
+            break;
+        }
+        crate::ir::mir::expr::walk_children(node, &mut |child| stack.push(child));
+    }
+    leaf
 }
 
 /// A candidate's own body: its MIR nodes (counting stops past the budget) and

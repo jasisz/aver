@@ -290,6 +290,72 @@ pub fn indexOf(
     let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
     let mut atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
         atoms;
+    let __word2 = i.to_i64();
+    let Some(mut i) = __word2 else {
+        return indexOf__boxed(t, atoms, i);
+    };
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = atoms;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((a, rest)) => {
+                    if (a == t) {
+                        return Some(aver_rt::AverInt::from_i64(i));
+                    } else {
+                        {
+                            let __tco1 = rest;
+                            let __tco2 =
+                                match (|| -> Option<i64> { Some((i).checked_add(1i64)?) })() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err((aver_rt::AverInt::from_i64(i))
+                                        .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                };
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    atoms = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    atoms = &__hold1;
+                                }
+                            }
+                            match __tco2 {
+                                Ok(__fit2) => {
+                                    i = __fit2;
+                                }
+                                __result2 => {
+                                    return indexOf__boxed(
+                                        t,
+                                        atoms,
+                                        match __result2 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return None;
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn indexOf__boxed(
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut i @ _: aver_rt::AverInt,
+) -> Option<aver_rt::AverInt> {
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
+    let mut atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
+        atoms;
     loop {
         crate::proof_kernel::cancel_checkpoint();
         {
@@ -880,6 +946,7 @@ pub fn roundedBy(
 }
 
 /// A Bool literal.
+#[inline(always)]
 pub fn isTruth(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {

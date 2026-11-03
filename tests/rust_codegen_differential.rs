@@ -969,6 +969,75 @@ fn word_speculation_matches_vm() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A self-tail loop holds an `Int` param its recurrence does not bound as a
+/// checked machine word, and hands its state to the ordinary loop when a
+/// step leaves `i64` (`codegen/rust/from_mir/word_loop.rs`): a digit
+/// accumulator past 2^63 beside a position checked on entry, a sum that
+/// crosses the word, a negative accumulator past -2^63, two words of which
+/// one overflows, two words stepped with each other, a word entered past
+/// the word and one just below its end, a word stored in a record, a step
+/// that is no checked tree, negation to and past `i64::MIN`, a cap passed on
+/// unchanged, a word matched on, and a word stepped with a boxed list
+/// element, all read as the VM.
+#[test]
+fn word_loops_match_vm() {
+    let relative = "tests/fixtures/word_loop/main.av";
+    let file = repo_root().join(relative);
+    let vm_stdout = run_vm(&file, None).unwrap_or_else(|e| panic!("{e}"));
+    let ws = temp_dir("word_loop");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&file, &project, "word_loop", None, &[])?;
+        let emitted = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|e| format!("read emitted module: {e}"))?;
+        // Not vacuous: each loop runs on words first, and steps them checked.
+        for name in [
+            "digits__indexed",
+            "sumTo",
+            "down",
+            "twoWords",
+            "coupled",
+            "fromBig",
+            "stored",
+            "wrapped",
+            "negated",
+            "limit",
+            "matched",
+            "countBig",
+        ] {
+            // A pure `Int` loop is also a word-speculation entry: its body
+            // is the exact one its wrapper runs after an abandonment.
+            let start = emitted
+                .find(&format!("fn __exact_{name}("))
+                .or_else(|| emitted.find(&format!("fn {name}(")))
+                .ok_or_else(|| format!("`{name}` is not emitted:\n{emitted}"))?;
+            let body = &emitted[start..];
+            let end = body.find("\n}\n").unwrap_or(body.len());
+            if !body[..end].contains(&format!("__boxed(")) {
+                return Err(format!("`{name}` has no word loop:\n{}", &body[..end]));
+            }
+        }
+        if !emitted.contains(".checked_mul(10i64)?") || !emitted.contains(".checked_neg()?") {
+            return Err(format!("no step is checked:\n{emitted}"));
+        }
+        let bin = cargo_build(&project, "word_loop")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !out.status.success() || rust_stdout != vm_stdout {
+            return Err(format!(
+                "stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{}",
+                format_output(&out)
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// `lazy f(…)` keeps the call in a node until the value is first looked at:
 /// a value never looked into, one looked at many times and from two threads
 /// at once, compared both ways with the value built at once, a spine a

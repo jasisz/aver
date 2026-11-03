@@ -1278,7 +1278,7 @@ pub fn oneEach(
 }
 
 /// The arm where p is at most 0 makes no recursive call; each call in the other descends at place j.
-#[inline(always)]
+#[inline]
 pub fn armDescends(
     a @ _: &crate::proof_kernel::aver_generated::kernel::term::Arm,
     stop @ _: bool,
@@ -1348,6 +1348,7 @@ pub fn callsDescend(
 }
 
 /// Whether t is p - 1, or p / k for a literal k of at least 2: for p > 0 each is at least 0 and below p.
+#[inline(always)]
 pub fn descends(
     t @ _: Option<&crate::proof_kernel::aver_generated::kernel::term::Term>,
     p @ _: &AverStr,
@@ -2417,6 +2418,28 @@ pub fn indexOf(
     mut x @ _: AverStr,
     mut i @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
+    let __word2 = i.to_i64();
+    let Some(mut i) = __word2 else {
+        return indexOf__boxed(xs, x, i);
+    };
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(xs, [] => { return aver_rt::AverInt::from_i64(-1); }, [y, rest] => { if (y == x) { return aver_rt::AverInt::from_i64(i); } else { {
+            let __tco0 = rest;
+            let __tco2 = match (|| -> Option<i64> { Some(((i)).checked_add(1i64)?) })() { Some(__stepped) => Ok(__stepped), None => Err((aver_rt::AverInt::from_i64(i)).add(&(aver_rt::AverInt::from_i64(1i64)))) };
+            xs = __tco0;
+            match __tco2 { Ok(__fit2) => { i = __fit2; } __result2 => return indexOf__boxed(xs, x, match __result2 { Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped), Err(__boxed) => __boxed }) }
+            continue;
+        } } })
+    }
+}
+#[cold]
+#[inline(never)]
+fn indexOf__boxed(
+    mut xs @ _: aver_rt::AverList<AverStr>,
+    mut x @ _: AverStr,
+    mut i @ _: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::proof_kernel::cancel_checkpoint();
         aver_list_match!(xs, [] => { return aver_rt::AverInt::from_i64(-1); }, [y, rest] => { if (y == x) { return i; } else { {
@@ -2432,6 +2455,70 @@ pub fn indexOf(
 /// The term at place i.
 #[inline(always)]
 pub fn nthTerm(
+    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut i @ _: aver_rt::AverInt,
+) -> Option<crate::proof_kernel::aver_generated::kernel::term::Term> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
+    let mut xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
+        xs;
+    let __word1 = i.to_i64();
+    let Some(mut i) = __word1 else {
+        return nthTerm__boxed(xs, i);
+    };
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = xs;
+            match aver_rt::list_uncons_lent_head(__list_subject) {
+                Some((x, rest)) => {
+                    if (i == 0i64) {
+                        return Some(x.clone());
+                    } else {
+                        {
+                            let __tco0 = rest;
+                            let __tco1 =
+                                match (|| -> Option<i64> { Some((i).checked_sub(1i64)?) })() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err((aver_rt::AverInt::from_i64(i))
+                                        .sub(&(aver_rt::AverInt::from_i64(1i64)))),
+                                };
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    xs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    xs = &__hold0;
+                                }
+                            }
+                            match __tco1 {
+                                Ok(__fit1) => {
+                                    i = __fit1;
+                                }
+                                __result1 => {
+                                    return nthTerm__boxed(
+                                        xs,
+                                        match __result1 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return None;
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn nthTerm__boxed(
     xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut i @ _: aver_rt::AverInt,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::term::Term> {
@@ -2556,6 +2643,93 @@ pub fn eachNotMutual(
 
 /// Whether target is among the definitions reachable from the frontier; fuel is the number of definitions, enough for any path that does not repeat.
 pub fn reaches(
+    mut frontier @ _: aver_rt::AverList<AverStr>,
+    mut target @ _: AverStr,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
+    mut fuel @ _: aver_rt::AverInt,
+) -> bool {
+    let __word4 = fuel.to_i64();
+    let Some(mut fuel) = __word4 else {
+        return reaches__boxed(frontier, target, ds, seen, fuel);
+    };
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __subject = (frontier, (fuel > 0i64));
+            {
+                let __int_match_subject = __subject;
+                let (__lit0, __lit1) = &__int_match_subject;
+                if (*__lit0).is_empty() {
+                    return false;
+                } else if (*__lit1) == false {
+                    return false;
+                } else if !(*__lit0).is_empty() && (*__lit1) == true {
+                    let Some((g, rest)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
+                        unreachable!("Aver Rust codegen: tuple element list mismatch")
+                    };
+                    if (g == target) {
+                        return true;
+                    } else {
+                        if seen.contains(&g) {
+                            {
+                                let __tco0 = rest;
+                                frontier = __tco0;
+                                continue;
+                            }
+                        } else {
+                            {
+                                let __tco0 = aver_rt::AverList::concat(
+                                    &rest,
+                                    &crate::proof_kernel::aver_generated::kernel::induct::calleesOf(
+                                        g.clone(),
+                                        ds,
+                                        ds,
+                                    ),
+                                );
+                                let __tco3 = aver_rt::AverList::prepend_owned(g, seen);
+                                let __tco4 =
+                                    match (|| -> Option<i64> { Some((fuel).checked_sub(1i64)?) })()
+                                    {
+                                        Some(__stepped) => Ok(__stepped),
+                                        None => Err((aver_rt::AverInt::from_i64(fuel))
+                                            .sub(&(aver_rt::AverInt::from_i64(1i64)))),
+                                    };
+                                frontier = __tco0;
+                                seen = __tco3;
+                                match __tco4 {
+                                    Ok(__fit4) => {
+                                        fuel = __fit4;
+                                    }
+                                    __result4 => {
+                                        return reaches__boxed(
+                                            frontier,
+                                            target,
+                                            ds,
+                                            seen,
+                                            match __result4 {
+                                                Ok(__stepped) => {
+                                                    aver_rt::AverInt::from_i64(__stepped)
+                                                }
+                                                Err(__boxed) => __boxed,
+                                            },
+                                        );
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    unreachable!("Aver Rust codegen: non-exhaustive guard-chain match")
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn reaches__boxed(
     mut frontier @ _: aver_rt::AverList<AverStr>,
     mut target @ _: AverStr,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
@@ -2972,6 +3146,115 @@ pub fn varied(
 /// Places other than j holding a given other than v not seen before.
 #[inline(always)]
 pub fn generalised(
+    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut k @ _: aver_rt::AverInt,
+    mut j @ _: aver_rt::AverInt,
+    mut v @ _: AverStr,
+    mut givens @ _: aver_rt::AverList<AverStr>,
+    mut seen @ _: aver_rt::AverList<AverStr>,
+) -> aver_rt::AverList<Place> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
+    let mut xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
+        xs;
+    let __word1 = k.to_i64();
+    let __word2 = j.to_i64();
+    let (Some(mut k), Some(mut j)) = (__word1, __word2) else {
+        return generalised__boxed(xs, k, j, v, givens, seen);
+    };
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = xs;
+            match aver_rt::list_uncons(__list_subject) {
+                Some((x, rest)) => {
+                    let __t = x;
+                    match __t.view() {
+                        crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(
+                            __n_fields,
+                        ) => {
+                            let n = __n_fields.0.clone();
+                            if (((k != j) && (n != v))
+                                && (givens.contains(&n) && (!seen.contains(&n))))
+                            {
+                                return aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::induct::Place { at: aver_rt::AverInt::from_i64(k), name: n.clone() }, crate::proof_kernel::aver_generated::kernel::induct::generalised(&rest, aver_rt::AverInt::from_i64(k).add(&aver_rt::AverInt::from_i64(1)), aver_rt::AverInt::from_i64(j), v, givens, aver_rt::AverList::prepend_owned(n, seen)));
+                            } else {
+                                {
+                                    let __tco0 = rest;
+                                    let __tco1 = match (|| -> Option<i64> {
+                                        Some((k).checked_add(1i64)?)
+                                    })() {
+                                        Some(__stepped) => Ok(__stepped),
+                                        None => Err((aver_rt::AverInt::from_i64(k))
+                                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                    };
+                                    __hold0 = __tco0;
+                                    xs = &__hold0;
+                                    match __tco1 {
+                                        Ok(__fit1) => {
+                                            k = __fit1;
+                                        }
+                                        __result1 => {
+                                            return generalised__boxed(
+                                                xs,
+                                                match __result1 {
+                                                    Ok(__stepped) => {
+                                                        aver_rt::AverInt::from_i64(__stepped)
+                                                    }
+                                                    Err(__boxed) => __boxed,
+                                                },
+                                                aver_rt::AverInt::from_i64(j),
+                                                v,
+                                                givens,
+                                                seen,
+                                            );
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        _ => {
+                            let __tco0 = rest;
+                            let __tco1 =
+                                match (|| -> Option<i64> { Some((k).checked_add(1i64)?) })() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err((aver_rt::AverInt::from_i64(k))
+                                        .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                                };
+                            __hold0 = __tco0;
+                            xs = &__hold0;
+                            match __tco1 {
+                                Ok(__fit1) => {
+                                    k = __fit1;
+                                }
+                                __result1 => {
+                                    return generalised__boxed(
+                                        xs,
+                                        match __result1 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                        aver_rt::AverInt::from_i64(j),
+                                        v,
+                                        givens,
+                                        seen,
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return aver_rt::AverList::empty();
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn generalised__boxed(
     xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut k @ _: aver_rt::AverInt,
     mut j @ _: aver_rt::AverInt,

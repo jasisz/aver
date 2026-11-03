@@ -1482,6 +1482,51 @@ pub fn builtinStringRepeatInner(
 /// Repeat string n times.
 #[inline(always)]
 pub fn repeatStr(mut s @ _: AverStr, mut n @ _: aver_rt::AverInt, mut acc @ _: AverStr) -> AverStr {
+    let __word1 = n.to_i64();
+    let Some(mut n) = __word1 else {
+        return repeatStr__boxed(s, n, acc);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        if (n > 0i64) {
+            {
+                let __tco1 =
+                    match (|| -> Option<i64> { Some((n).checked_sub(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(n))
+                            .sub(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                let __tco2 = (acc + &s);
+                acc = __tco2;
+                match __tco1 {
+                    Ok(__fit1) => {
+                        n = __fit1;
+                    }
+                    __result1 => {
+                        return repeatStr__boxed(
+                            s,
+                            match __result1 {
+                                Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                Err(__boxed) => __boxed,
+                            },
+                            acc,
+                        );
+                    }
+                }
+                continue;
+            }
+        } else {
+            return acc;
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn repeatStr__boxed(
+    mut s @ _: AverStr,
+    mut n @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
+) -> AverStr {
     loop {
         crate::cancel_checkpoint();
         if (n > aver_rt::AverInt::from_i64(0)) {
@@ -1546,6 +1591,45 @@ pub fn builtinStringReplaceAllDo(
 /// Synthesized indexed worker of `stringToCharList`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn stringToCharList__indexed(
+    mut s @ _: AverStr,
+    mut pos @ _: i64,
+    mut total @ _: aver_rt::AverInt,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut __str_index @ _: aver_rt::StringIndex,
+) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
+    let __word2 = total.to_i64();
+    let Some(mut total) = __word2 else {
+        return stringToCharList__indexed__boxed(s, pos, total, acc, __str_index);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let reversed @ _ = acc.reverse();
+        if (pos < total) {
+            match aver_rt::string_index_char_at_i64(&s, &__str_index, pos) {
+                Some(c @ _) => {
+                    let __tco1 = (pos + 1i64);
+                    let __tco3 = aver_rt::AverList::prepend_owned(
+                        crate::aver_generated::domain::value::Val::ValStr(
+                            crate::aver_generated::domain::value::Val__ValStr(c),
+                        ),
+                        acc,
+                    );
+                    pos = __tco1;
+                    acc = __tco3;
+                    continue;
+                }
+                None => {
+                    return reversed;
+                }
+            }
+        } else {
+            return reversed;
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn stringToCharList__indexed__boxed(
     mut s @ _: AverStr,
     mut pos @ _: i64,
     mut total @ _: aver_rt::AverInt,

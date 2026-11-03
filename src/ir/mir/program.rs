@@ -262,6 +262,23 @@ pub struct MirFnRepr {
     /// (`super::int_word`), each holding an `Int`, numbered past every other
     /// slot of the fn. Empty everywhere else.
     pub leaf_slots: Vec<LocalId>,
+    /// The loop's copy over machine words (Rust only): some boxed `Int`
+    /// params held as checked `i64`s, the body rewritten so. `None`
+    /// everywhere else.
+    pub word_loop: Option<MirWordLoop>,
+}
+
+/// A self-tail loop's copy over machine words (Rust only). Each of `params`
+/// is an `Int` param the signature keeps boxed that the copy holds as an
+/// `i64`; `body` is the fn's body rewritten with those slots bare: each
+/// such param is boxed where it meets a general `Int`, and a self-tail call
+/// narrows what it passes at those positions (`Unbox`), which the emitter
+/// renders checked. A step that leaves `i64` hands the loop's state, boxed,
+/// to the ordinary loop (see `bare_i64::WordLoop`).
+#[derive(Debug, Clone)]
+pub struct MirWordLoop {
+    pub params: Vec<usize>,
+    pub body: Spanned<MirExpr>,
 }
 
 /// What one scratch local of [`MirFnRepr::scratch`] holds.

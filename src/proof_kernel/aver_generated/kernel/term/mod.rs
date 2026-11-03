@@ -2137,6 +2137,7 @@ impl aver_rt::AverDisplay for FinField {
 }
 
 /// Whether a term is the hole.
+#[inline(always)]
 pub fn isHole(t @ _: &Term) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {

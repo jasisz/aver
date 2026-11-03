@@ -1041,6 +1041,46 @@ pub fn pow10(n @ _: aver_rt::AverInt) -> f64 {
 /// Accumulate 10^n as Float.
 #[inline(always)]
 pub fn pow10Acc(mut n @ _: aver_rt::AverInt, mut acc @ _: f64) -> f64 {
+    let __word0 = n.to_i64();
+    let Some(mut n) = __word0 else {
+        return pow10Acc__boxed(n, acc);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        if (n > 0i64) {
+            {
+                let __tco0 =
+                    match (|| -> Option<i64> { Some((n).checked_sub(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(n))
+                            .sub(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                let __tco1 = (acc * 10.0f64);
+                acc = __tco1;
+                match __tco0 {
+                    Ok(__fit0) => {
+                        n = __fit0;
+                    }
+                    __result0 => {
+                        return pow10Acc__boxed(
+                            match __result0 {
+                                Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                Err(__boxed) => __boxed,
+                            },
+                            acc,
+                        );
+                    }
+                }
+                continue;
+            }
+        } else {
+            return acc;
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn pow10Acc__boxed(mut n @ _: aver_rt::AverInt, mut acc @ _: f64) -> f64 {
     loop {
         crate::cancel_checkpoint();
         if (n > aver_rt::AverInt::from_i64(0)) {
@@ -1081,6 +1121,7 @@ pub fn tokenizeAlphaWith(
 }
 
 /// Check if a character is the greater-than sign.
+#[inline(always)]
 pub fn isGreaterThan(c @ _: &AverStr) -> bool {
     crate::cancel_checkpoint();
     (&**c == ">")
@@ -1735,6 +1776,71 @@ pub fn emitDedentsAcc(
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     let mut __hold2: aver_rt::AverIntList;
     let mut stack @ _: &aver_rt::AverIntList = stack;
+    let __word0 = targetIndent.to_i64();
+    let Some(mut targetIndent) = __word0 else {
+        return emitDedentsAcc__boxed(targetIndent, rest, stack, acc);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let reversed @ _ = acc.reverse();
+        {
+            let __list_subject = stack;
+            match aver_rt::list_uncons_lent(__list_subject) {
+                Some((top, below)) => {
+                    if (top > aver_rt::AverInt::from_i64(targetIndent)) {
+                        {
+                            let __tco2 = below;
+                            let __tco3 = aver_rt::AverList::prepend_owned(
+                                crate::aver_generated::domain::token::Token::TkDedent,
+                                acc,
+                            );
+                            match __tco2 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    stack = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold2 = __rest;
+                                    stack = &__hold2;
+                                }
+                            }
+                            acc = __tco3;
+                            continue;
+                        }
+                    } else {
+                        return aver_rt::AverList::concat(
+                            &reversed,
+                            &aver_rt::AverList::prepend_owned(
+                                crate::aver_generated::domain::token::Token::TkNewline,
+                                crate::aver_generated::domain::lexer::processIndentation(
+                                    rest, stack,
+                                ),
+                            ),
+                        );
+                    }
+                }
+                None => {
+                    return aver_rt::AverList::concat(
+                        &reversed,
+                        &crate::aver_generated::domain::lexer::processIndentation(
+                            rest,
+                            &aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]),
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn emitDedentsAcc__boxed(
+    mut targetIndent @ _: aver_rt::AverInt,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+    stack @ _: &aver_rt::AverIntList,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
+) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
+    let mut __hold2: aver_rt::AverIntList;
+    let mut stack @ _: &aver_rt::AverIntList = stack;
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
@@ -2099,6 +2205,89 @@ pub fn tokenizeInterpString__indexed(
     mut acc @ _: AverStr,
     mut __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
+    let __word1 = pos.to_i64();
+    let Some(mut pos) = __word1 else {
+        return tokenizeInterpString__indexed__boxed(src, pos, acc, __str_index);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos @ _ = aver_rt::AverInt::from_i64(pos).add(&aver_rt::AverInt::from_i64(1));
+        if (aver_rt::AverInt::from_i64(pos)
+            < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)))
+        {
+            match aver_rt::string_index_char_at_i64(&src, &__str_index, pos) {
+                Some(c @ _) => {
+                    if (&*c == "\"") {
+                        return aver_rt::AverList::prepend_owned(
+                            crate::aver_generated::domain::token::Token::TkStr(acc),
+                            crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                                src,
+                                nextPos,
+                                __str_index,
+                            ),
+                        );
+                    } else {
+                        {
+                            let __tco1 = {
+                                let __boxed = nextPos;
+                                match __boxed.to_i64() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err(__boxed),
+                                }
+                            };
+                            let __tco2 = (acc + &c);
+                            acc = __tco2;
+                            match __tco1 {
+                                Ok(__fit1) => {
+                                    pos = __fit1;
+                                }
+                                __result1 => {
+                                    return tokenizeInterpString__indexed__boxed(
+                                        src,
+                                        match __result1 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                        acc,
+                                        __str_index,
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return aver_rt::AverList::prepend_owned(
+                        crate::aver_generated::domain::token::Token::TkStr(acc),
+                        crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                            src,
+                            aver_rt::AverInt::from_i64(pos),
+                            __str_index,
+                        ),
+                    );
+                }
+            }
+        } else {
+            return aver_rt::AverList::prepend_owned(
+                crate::aver_generated::domain::token::Token::TkStr(acc),
+                crate::aver_generated::domain::lexer::tokenizeInterpExpr__indexed(
+                    src,
+                    aver_rt::AverInt::from_i64(pos),
+                    __str_index,
+                ),
+            );
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn tokenizeInterpString__indexed__boxed(
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
+    mut __str_index @ _: aver_rt::StringIndex,
+) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     loop {
         crate::cancel_checkpoint();
         let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
@@ -2340,6 +2529,74 @@ pub fn tokenizeSlashOrComment__indexed(
 /// Synthesized indexed worker of `skipLineComment`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn skipLineComment__indexed(
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut __str_index @ _: aver_rt::StringIndex,
+) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
+    let __word1 = pos.to_i64();
+    let Some(mut pos) = __word1 else {
+        return skipLineComment__indexed__boxed(src, pos, __str_index);
+    };
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos @ _ = aver_rt::AverInt::from_i64(pos).add(&aver_rt::AverInt::from_i64(1));
+        if (aver_rt::AverInt::from_i64(pos)
+            < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)))
+        {
+            match aver_rt::string_index_char_at_i64(&src, &__str_index, pos) {
+                Some(c @ _) => {
+                    if (&*c == "\n") {
+                        return crate::aver_generated::domain::lexer::tokenizeNewline__indexed(
+                            src,
+                            nextPos,
+                            __str_index,
+                        );
+                    } else {
+                        {
+                            let __tco1 = {
+                                let __boxed = nextPos;
+                                match __boxed.to_i64() {
+                                    Some(__stepped) => Ok(__stepped),
+                                    None => Err(__boxed),
+                                }
+                            };
+                            match __tco1 {
+                                Ok(__fit1) => {
+                                    pos = __fit1;
+                                }
+                                __result1 => {
+                                    return skipLineComment__indexed__boxed(
+                                        src,
+                                        match __result1 {
+                                            Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                            Err(__boxed) => __boxed,
+                                        },
+                                        __str_index,
+                                    );
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return aver_rt::AverList::prepend_owned(
+                        crate::aver_generated::domain::token::Token::TkEof,
+                        aver_rt::AverList::empty(),
+                    );
+                }
+            }
+        } else {
+            return aver_rt::AverList::prepend_owned(
+                crate::aver_generated::domain::token::Token::TkEof,
+                aver_rt::AverList::empty(),
+            );
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn skipLineComment__indexed__boxed(
     mut src @ _: AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut __str_index @ _: aver_rt::StringIndex,

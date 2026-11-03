@@ -277,6 +277,7 @@ pub fn selectOne(
 }
 
 /// How deep evaluate nests before it gives up: a bound against a definition that does not shrink.
+#[inline(always)]
 pub fn evalDepth() -> aver_rt::AverInt {
     crate::proof_std::cancel_checkpoint();
     aver_rt::AverInt::from_i64(400)
@@ -324,6 +325,7 @@ pub fn refl(mut t @ _: crate::proof_std::aver_generated::kernel::term::Term) -> 
 }
 
 /// Whether a proof is a bare reflexivity.
+#[inline(always)]
 pub fn isRefl(p @ _: &crate::proof_std::aver_generated::kernel::proof::Proof) -> bool {
     crate::proof_std::cancel_checkpoint();
     {
@@ -440,6 +442,7 @@ pub fn trans(
 }
 
 /// The name of the hypothesis that holds the law's `when`.
+#[inline(always)]
 pub fn whenName() -> AverStr {
     crate::proof_std::cancel_checkpoint();
     ::aver_rt::str_lit!("when")
@@ -2247,6 +2250,7 @@ pub fn cellParts(
 }
 
 /// An Int, Bool or String literal.
+#[inline(always)]
 pub fn isLiteral(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) -> bool {
     crate::proof_std::cancel_checkpoint();
     {
@@ -2388,6 +2392,58 @@ pub fn fresh(base @ _: AverStr, used @ _: &aver_rt::AverList<AverStr>) -> AverSt
 /// The first base followed by a number from k on not in used.
 #[inline(always)]
 pub fn freshFrom(
+    mut base @ _: AverStr,
+    mut used @ _: aver_rt::AverList<AverStr>,
+    mut k @ _: aver_rt::AverInt,
+) -> AverStr {
+    let __word2 = k.to_i64();
+    let Some(mut k) = __word2 else {
+        return freshFrom__boxed(base, used, k);
+    };
+    loop {
+        crate::proof_std::cancel_checkpoint();
+        let name @ _ = aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity(32usize);
+                __b.push_display(&(base));
+                __b
+            };
+            __b.push_display(&(aver_rt::AverInt::from_i64(k)));
+            __b
+        });
+        if used.contains(&name) {
+            {
+                let __tco2 =
+                    match (|| -> Option<i64> { Some((k).checked_add(1i64)?) })() {
+                        Some(__stepped) => Ok(__stepped),
+                        None => Err((aver_rt::AverInt::from_i64(k))
+                            .add(&(aver_rt::AverInt::from_i64(1i64)))),
+                    };
+                match __tco2 {
+                    Ok(__fit2) => {
+                        k = __fit2;
+                    }
+                    __result2 => {
+                        return freshFrom__boxed(
+                            base,
+                            used,
+                            match __result2 {
+                                Ok(__stepped) => aver_rt::AverInt::from_i64(__stepped),
+                                Err(__boxed) => __boxed,
+                            },
+                        );
+                    }
+                }
+                continue;
+            }
+        } else {
+            return name;
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn freshFrom__boxed(
     mut base @ _: AverStr,
     mut used @ _: aver_rt::AverList<AverStr>,
     mut k @ _: aver_rt::AverInt,
