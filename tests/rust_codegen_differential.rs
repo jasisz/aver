@@ -706,6 +706,71 @@ fn thin_fields_taken_and_elements_lent_match_vm() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A match on an owned local at its last use takes the fields out of the
+/// node of a thin sum and keeps the node's memory as a token
+/// (`try_take_reusing`); the constructors of the sum the arm applies build
+/// their nodes in it (`new_in`), the first that fits taking it. A function
+/// whose arms take the fields out of a param that way takes the param by
+/// value (`incr`, a map over a tree, hands each subtree to itself); one that
+/// only reads stays borrowed (`sum`). Nested matches at last uses hold two
+/// tokens, innermost first; a tail-call loop builds the next root before
+/// the token dies at `continue`. Values shared at run time (`shared`, read
+/// again after `incr`) go through the view and an empty token, and a token
+/// that fits no constructor of the arm (`widen`) or is left on another path
+/// (`rightmost`) is freed with the arm. The output reads as the VM.
+#[test]
+fn nodes_taken_at_a_last_use_are_reused_and_match_vm() {
+    let relative = "tests/fixtures/rust_reuse.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_reuse", &src);
+    for shape in [
+        "pub fn incr(mut t @ _: Tree) -> Tree",
+        "pub fn sum(t @ _: &Tree) -> aver_rt::AverInt",
+        "let (l, v, r, __tok0,) = match __t.try_take_reusing::<Tree__Node>() { Ok((__f, __tok0)) => (__f.0, __f.2, __f.1, __tok0,), Err(__t) => match __t.view() { Tree__view::Node(__f) => (__f.0.clone(), __f.2.clone(), __f.1.clone(), aver_rt::thin::Reuse::empty(),), _ => unreachable!() } };",
+        "Tree::new_in([&__tok0], { let __field0 = incr(l);",
+        "let (ll, lv, lr, __tok1,) = match __t.try_take_reusing::<Tree__Node>()",
+        "Tree::new_in([&__tok1, &__tok0], { let __field0 = ll; let __field1 = lv; let __field2 = Tree::new_in([&__tok1, &__tok0],",
+        "let __tco1 = Tree::new_in([&__tok0],",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+    // The token is a local of the arm: never a field, an argument or a
+    // result.
+    assert!(!emitted.contains("Reuse>"), "{emitted}");
+    assert!(!emitted.contains("(__tok"), "{emitted}");
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+
+    // `AVER_NO_REUSE=all` (a developer's switch for measuring, see
+    // `from_mir::reuse_level`) is the emission before the tokens: only the
+    // result of a call that builds every value it returns is taken apart.
+    let emitted = emitted_entry_module_env("rust_reuse_off", &src, &[("AVER_NO_REUSE", "all")]);
+    assert!(
+        emitted.contains("pub fn incr(t @ _: &Tree) -> Tree"),
+        "{emitted}"
+    );
+    for absent in ["try_take_reusing", "new_in(", "Reuse::empty"] {
+        assert!(
+            !emitted.contains(absent),
+            "`{absent}` with reuse off:\n{emitted}"
+        );
+    }
+    let emitted = emitted_entry_module_env("rust_reuse_notok", &src, &[("AVER_NO_REUSE", "1")]);
+    assert!(
+        emitted.contains("pub fn incr(mut t @ _: Tree) -> Tree"),
+        "{emitted}"
+    );
+    assert!(
+        emitted.contains("match __t.try_take::<Tree__Node>()"),
+        "{emitted}"
+    );
+    for absent in ["try_take_reusing", "new_in(", "Reuse::empty"] {
+        assert!(
+            !emitted.contains(absent),
+            "`{absent}` without tokens:\n{emitted}"
+        );
+    }
+}
+
 /// An integer literal past `i64` is parsed once into a static
 /// (`aver_rt::int_lit!`) and read through it, cloned only where a value is
 /// owned: an argument, a field, a list or map element, a tuple, a result, a
@@ -5130,12 +5195,17 @@ fn main() -> Unit
 
 /// The generated entry module of the inline program `src`.
 fn emitted_entry_module(name: &str, src: &str) -> String {
+    emitted_entry_module_env(name, src, &[])
+}
+
+/// As [`emitted_entry_module`], with extra env vars on the compiler.
+fn emitted_entry_module_env(name: &str, src: &str, env: &[(&str, &str)]) -> String {
     let ws = temp_dir(&format!("{name}_emit"));
     let f = ws.join(format!("{name}.av"));
     fs::write(&f, src).expect("write");
     let project = ws.join("project");
     fs::create_dir_all(&project).expect("project dir");
-    compile_rust(&f, &project, name, None, &[]).expect("compile rust");
+    compile_rust_env(&f, &project, name, None, &[], env).expect("compile rust");
     let emitted = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
         .expect("read generated entry module");
     let _ = fs::remove_dir_all(&ws);

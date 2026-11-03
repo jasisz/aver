@@ -230,11 +230,22 @@ pub fn builtinVectorFromList(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValList(__items_fields) => {
-                let items = &__items_fields.0;
-                Ok(crate::aver_generated::domain::value::Val::ValVector(
+            crate::aver_generated::domain::value::Val__view::ValList(_) => {
+                let (items, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValList>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValList(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValVector(
-                        aver_rt::AverVector::from_list(items),
+                        aver_rt::AverVector::from_list(&items),
                     ),
                 ))
             }
@@ -252,9 +263,20 @@ pub fn builtinVectorToList(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValVector(__vec_fields) => {
-                let vec = &__vec_fields.0;
-                Ok(crate::aver_generated::domain::value::Val::ValList(
+            crate::aver_generated::domain::value::Val__view::ValVector(_) => {
+                let (vec, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValVector>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValVector(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValList(vec.to_list()),
                 ))
             }

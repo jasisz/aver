@@ -177,15 +177,33 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                 {
                     let __t = expr;
                     match __t.view() {
-                        crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
-                            let a = &__a_fields.0;
-                            let b = &__a_fields.1;
-                            __MutualTco1::MaxSlotInExprPair(a.clone(), b.clone(), acc)
+                        crate::aver_generated::domain::ast::Expr__view::ExprLte(_) => {
+                            let (a, b) = match __t
+                                .try_take::<crate::aver_generated::domain::ast::Expr__ExprLte>()
+                            {
+                                Ok(__f) => (__f.0, __f.1),
+                                Err(__t) => match __t.view() {
+                                    crate::aver_generated::domain::ast::Expr__view::ExprLte(
+                                        __f,
+                                    ) => (__f.0.clone(), __f.1.clone()),
+                                    _ => unreachable!(),
+                                },
+                            };
+                            __MutualTco1::MaxSlotInExprPair(a, b, acc)
                         }
-                        crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
-                            let a = &__a_fields.0;
-                            let b = &__a_fields.1;
-                            __MutualTco1::MaxSlotInExprPair(a.clone(), b.clone(), acc)
+                        crate::aver_generated::domain::ast::Expr__view::ExprGte(_) => {
+                            let (a, b) = match __t
+                                .try_take::<crate::aver_generated::domain::ast::Expr__ExprGte>()
+                            {
+                                Ok(__f) => (__f.0, __f.1),
+                                Err(__t) => match __t.view() {
+                                    crate::aver_generated::domain::ast::Expr__view::ExprGte(
+                                        __f,
+                                    ) => (__f.0.clone(), __f.1.clone()),
+                                    _ => unreachable!(),
+                                },
+                            };
+                            __MutualTco1::MaxSlotInExprPair(a, b, acc)
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCall(__args_fields) => {
                             let args = &__args_fields.0;
@@ -233,11 +251,9 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                                 );
                             }
                         }
-                        crate::aver_generated::domain::ast::Expr__view::ExprPropagate(
-                            __inner_fields,
-                        ) => {
-                            let inner = &__inner_fields.0;
-                            __MutualTco1::MaxSlotInExpr(inner.clone(), acc)
+                        crate::aver_generated::domain::ast::Expr__view::ExprPropagate(_) => {
+                            let (inner,) = match __t.try_take::<crate::aver_generated::domain::ast::Expr__ExprPropagate>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::aver_generated::domain::ast::Expr__view::ExprPropagate(__f) => (__f.0.clone(),), _ => unreachable!() } };
+                            __MutualTco1::MaxSlotInExpr(inner, acc)
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprConcat(
                             __parts_fields,
@@ -279,11 +295,9 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                                 fields, acc,
                             );
                         }
-                        crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(
-                            __obj_fields,
-                        ) => {
-                            let obj = &__obj_fields.0;
-                            __MutualTco1::MaxSlotInExpr(obj.clone(), acc)
+                        crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(_) => {
+                            let (obj,) = match __t.try_take::<crate::aver_generated::domain::ast::Expr__ExprFieldAccess>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(__f) => (__f.0.clone(),), _ => unreachable!() } };
+                            __MutualTco1::MaxSlotInExpr(obj, acc)
                         }
                         _ => return acc,
                     }

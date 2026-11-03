@@ -77,9 +77,18 @@ pub fn builtinResultWithDefault(
         {
             let __t = resV;
             match __t.view() {
-                crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
-                    let inner = &__inner_fields.0;
-                    Ok(inner.clone())
+                crate::aver_generated::domain::value::Val__view::ValOk(_) => {
+                    let (inner,) =
+                        match __t.try_take::<crate::aver_generated::domain::value::Val__ValOk>() {
+                            Ok(__f) => (__f.0,),
+                            Err(__t) => match __t.view() {
+                                crate::aver_generated::domain::value::Val__view::ValOk(__f) => {
+                                    (__f.0.clone(),)
+                                }
+                                _ => unreachable!(),
+                            },
+                        };
+                    Ok(inner)
                 }
                 crate::aver_generated::domain::value::Val__view::ValErr(_) => Ok(defV),
                 _ => Err(::aver_rt::str_lit!(
@@ -112,9 +121,19 @@ pub fn builtinOptionWithDefault(
         {
             let __t = optV;
             match __t.view() {
-                crate::aver_generated::domain::value::Val__view::ValSome(__inner_fields) => {
-                    let inner = &__inner_fields.0;
-                    Ok(inner.clone())
+                crate::aver_generated::domain::value::Val__view::ValSome(_) => {
+                    let (inner,) = match __t
+                        .try_take::<crate::aver_generated::domain::value::Val__ValSome>()
+                    {
+                        Ok(__f) => (__f.0,),
+                        Err(__t) => match __t.view() {
+                            crate::aver_generated::domain::value::Val__view::ValSome(__f) => {
+                                (__f.0.clone(),)
+                            }
+                            _ => unreachable!(),
+                        },
+                    };
+                    Ok(inner)
                 }
                 crate::aver_generated::domain::value::Val__view::ValNone => Ok(defV),
                 _ => Err(::aver_rt::str_lit!(
@@ -136,10 +155,21 @@ pub fn callResultFromOption(
         {
             let __t = optV;
             match __t.view() {
-                crate::aver_generated::domain::value::Val__view::ValSome(__inner_fields) => {
-                    let inner = &__inner_fields.0;
-                    Ok(crate::aver_generated::domain::value::Val::ValOk(
-                        crate::aver_generated::domain::value::Val__ValOk(inner.clone()),
+                crate::aver_generated::domain::value::Val__view::ValSome(_) => {
+                    let (inner, __tok0) = match __t
+                        .try_take_reusing::<crate::aver_generated::domain::value::Val__ValSome>(
+                    ) {
+                        Ok((__f, __tok0)) => (__f.0, __tok0),
+                        Err(__t) => match __t.view() {
+                            crate::aver_generated::domain::value::Val__view::ValSome(__f) => {
+                                (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                            }
+                            _ => unreachable!(),
+                        },
+                    };
+                    Ok(crate::aver_generated::domain::value::Val::new_in(
+                        [&__tok0],
+                        crate::aver_generated::domain::value::Val__ValOk(inner),
                     ))
                 }
                 crate::aver_generated::domain::value::Val__view::ValNone => {

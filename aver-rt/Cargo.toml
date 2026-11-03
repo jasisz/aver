@@ -66,3 +66,7 @@ harness = false
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 js-sys = "0.3"
+
+[lints.rust]
+# `--cfg aver_reuse_stats` counts reuse tokens used and dropped (`thin::stats`).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(aver_reuse_stats)'] }

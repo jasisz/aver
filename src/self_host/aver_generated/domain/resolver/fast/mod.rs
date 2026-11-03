@@ -1229,8 +1229,8 @@ pub fn classifyFastForwardSlots(
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(args, [] => { return Some((acc).reverse_owned()); }, [arg, rest] => { { let __t = arg; match __t.view() {
-        crate::aver_generated::domain::ast::Expr__view::ExprSlot(__slot_fields) => {
-            let slot = __slot_fields.0.clone();
+        crate::aver_generated::domain::ast::Expr__view::ExprSlot(_) => {
+            let (slot,) = match __t.try_take::<crate::aver_generated::domain::ast::Expr__ExprSlot>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::aver_generated::domain::ast::Expr__view::ExprSlot(__f) => (__f.0.clone(),), _ => unreachable!() } };
             {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverIntList::prepend_owned(slot, acc);

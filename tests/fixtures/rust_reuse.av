@@ -1,0 +1,125 @@
+module Reuse
+    intent = "Nodes taken apart at a last use are built on by the next constructor of the arm."
+    effects [Console.print]
+
+type Tree
+    Leaf
+    Node(Tree, Int, Tree)
+    Wide(Tree, Int, Int, Int, Tree)
+
+fn incr(t: Tree) -> Tree
+    ? "Adds one to every value, rebuilding every node: a map over a tree."
+    match t
+        Tree.Leaf -> Tree.Leaf
+        Tree.Node(l, v, r) -> Tree.Node(incr(l), v + 1, incr(r))
+        Tree.Wide(l, a, b, c, r) -> Tree.Wide(incr(l), a + 1, b, c, incr(r))
+
+verify incr
+    incr(Tree.Node(Tree.Leaf, 1, Tree.Leaf)) => Tree.Node(Tree.Leaf, 2, Tree.Leaf)
+
+fn insert(x: Int, t: Tree) -> Tree
+    ? "Unbalanced insert: rebuilds the path to the leaf, keeps the rest."
+    match t
+        Tree.Leaf -> Tree.Node(Tree.Leaf, x, Tree.Leaf)
+        Tree.Node(l, v, r) -> match x < v
+            true -> Tree.Node(insert(x, l), v, r)
+            false -> Tree.Node(l, v, insert(x, r))
+        Tree.Wide(l, a, b, c, r) -> Tree.Wide(insert(x, l), a, b, c, r)
+
+verify insert
+    insert(2, Tree.Node(Tree.Leaf, 1, Tree.Leaf)) => Tree.Node(Tree.Leaf, 1, Tree.Node(Tree.Leaf, 2, Tree.Leaf))
+
+fn widen(t: Tree) -> Tree
+    ? "A Node becomes a Wide and a Wide a Node: the token fits neither and is dropped unused."
+    match t
+        Tree.Leaf -> Tree.Leaf
+        Tree.Node(l, v, r) -> Tree.Wide(l, v, v * 2, v * 3, r)
+        Tree.Wide(l, a, _, _, r) -> Tree.Node(l, a, r)
+
+verify widen
+    widen(Tree.Node(Tree.Leaf, 1, Tree.Leaf)) => Tree.Wide(Tree.Leaf, 1, 2, 3, Tree.Leaf)
+    widen(Tree.Wide(Tree.Leaf, 1, 2, 3, Tree.Leaf)) => Tree.Node(Tree.Leaf, 1, Tree.Leaf)
+
+fn rightmost(t: Tree) -> Tree
+    ? "The rightmost node, rebuilt: on the way down the token is left unused."
+    match t
+        Tree.Leaf -> Tree.Leaf
+        Tree.Wide(_, a, _, _, _) -> Tree.Node(Tree.Leaf, a, Tree.Leaf)
+        Tree.Node(_, v, r) -> match r
+            Tree.Leaf -> Tree.Node(Tree.Leaf, v, Tree.Leaf)
+            _ -> rightmost(r)
+
+verify rightmost
+    rightmost(Tree.Node(Tree.Leaf, 1, Tree.Node(Tree.Leaf, 2, Tree.Leaf))) => Tree.Node(Tree.Leaf, 2, Tree.Leaf)
+
+fn rotate(t: Tree) -> Tree
+    ? "Nested matches at last uses: two tokens for the two or three nodes built."
+    match t
+        Tree.Leaf -> Tree.Leaf
+        Tree.Wide(l, a, b, c, r) -> Tree.Wide(r, c, b, a, l)
+        Tree.Node(l, v, r) -> match l
+            Tree.Leaf -> Tree.Node(Tree.Leaf, v, r)
+            Tree.Node(ll, lv, lr) -> Tree.Node(ll, lv, Tree.Node(lr, v, r))
+            Tree.Wide(a, b, c, d, e) -> Tree.Node(Tree.Wide(a, b, c, d, e), v, r)
+
+verify rotate
+    rotate(Tree.Node(Tree.Node(Tree.Leaf, 1, Tree.Leaf), 2, Tree.Leaf)) => Tree.Node(Tree.Leaf, 1, Tree.Node(Tree.Leaf, 2, Tree.Leaf))
+
+fn spin(n: Int, t: Tree) -> Tree
+    ? "A tail-call loop that rebuilds the root each round, in its own node."
+    match n <= 0
+        true -> t
+        false -> match t
+            Tree.Leaf -> spin(n - 1, Tree.Node(Tree.Leaf, n, Tree.Leaf))
+            Tree.Node(l, v, r) -> spin(n - 1, Tree.Node(r, v + 1, l))
+            Tree.Wide(l, a, b, c, r) -> spin(n - 1, Tree.Node(l, a + b + c, r))
+
+verify spin
+    spin(3, Tree.Leaf) => Tree.Node(Tree.Leaf, 5, Tree.Leaf)
+
+fn sum(t: Tree) -> Int
+    ? "The sum of the values, read through a borrow."
+    match t
+        Tree.Leaf -> 0
+        Tree.Node(l, v, r) -> sum(l) + v + sum(r)
+        Tree.Wide(l, a, b, c, r) -> sum(l) + a + b + c + sum(r)
+
+verify sum
+    sum(Tree.Node(Tree.Leaf, 1, Tree.Node(Tree.Leaf, 2, Tree.Leaf))) => 3
+
+fn size(t: Tree) -> Int
+    ? "How many nodes."
+    match t
+        Tree.Leaf -> 0
+        Tree.Node(l, _, r) -> 1 + size(l) + size(r)
+        Tree.Wide(l, _, _, _, r) -> 1 + size(l) + size(r)
+
+verify size
+    size(Tree.Node(Tree.Leaf, 1, Tree.Node(Tree.Leaf, 2, Tree.Leaf))) => 2
+
+fn fromList(xs: List<Int>, acc: Tree) -> Tree
+    ? "Inserts every element."
+    match xs
+        [] -> acc
+        [x, ..rest] -> fromList(rest, insert(x, acc))
+
+verify fromList
+    sum(fromList([3, 1, 2], Tree.Leaf)) => 6
+
+fn main() -> Unit
+    ! [Console.print]
+    t = fromList([5, 3, 8, 1, 4, 7, 9, 2, 6], Tree.Leaf)
+    Console.print("t {size(t)} {sum(t)}")
+    both = Tree.Node(t, 0, t)
+    shared = incr(both)
+    Console.print("shared {size(shared)} {sum(shared)} t {sum(t)}")
+    unique = incr(incr(t))
+    Console.print("unique {size(unique)} {sum(unique)}")
+    wide = widen(widen(widen(unique)))
+    Console.print("wide {size(wide)} {sum(wide)}")
+    Console.print("rightmost {sum(rightmost(Tree.Node(wide, 1, wide)))} {sum(rightmost(insert(0, Tree.Node(wide, 2, Tree.Leaf))))}")
+    rotated = rotate(rotate(insert(10, widen(wide))))
+    Console.print("rotated {size(rotated)} {sum(rotated)}")
+    Console.print("spin {sum(spin(1000, rotated))} {size(spin(5, Tree.Leaf))} {sum(spin(4, widen(Tree.Node(Tree.Leaf, 1, Tree.Leaf))))}")
+    kept = insert(11, Tree.Node(shared, 0, shared))
+    Console.print("kept {sum(kept)} {sum(shared)} {size(kept)}")

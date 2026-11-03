@@ -457,8 +457,8 @@ pub fn extractStrings(
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(items, [] => { return Ok((acc).reverse_owned()); }, [v, rest] => { { let __t = v; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValStr(__s_fields) => {
-            let s = __s_fields.0.clone();
+        crate::aver_generated::domain::value::Val__view::ValStr(_) => {
+            let (s,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValStr>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::aver_generated::domain::value::Val__view::ValStr(__f) => (__f.0.clone(),), _ => unreachable!() } };
             {
             let __tco0 = rest;
             let __tco1 = aver_rt::AverList::prepend_owned(s, acc);
@@ -535,9 +535,20 @@ pub fn builtinStringFromBool(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValBool(__b_fields) => {
-                let b = __b_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValStr(
+            crate::aver_generated::domain::value::Val__view::ValBool(_) => {
+                let (b, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValBool>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValBool(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValStr(aver_rt::bool_str(b)),
                 ))
             }
@@ -567,9 +578,20 @@ pub fn builtinStringFromFloat(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValStr(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValStr(aver_rt::display_str(&(f))),
                 ))
             }
@@ -900,9 +922,20 @@ pub fn builtinFloatRound(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValInt(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValInt(
                         aver_rt::AverInt::from_f64_trunc(f.round()),
                     ),
@@ -922,9 +955,20 @@ pub fn builtinFloatToString(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValStr(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValStr(aver_rt::display_str(&(f))),
                 ))
             }
@@ -942,9 +986,20 @@ pub fn builtinFloatAbs(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValFloat(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValFloat(f.abs()),
                 ))
             }
@@ -962,9 +1017,20 @@ pub fn builtinFloatFloor(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValInt(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValInt(
                         aver_rt::AverInt::from_f64_trunc(f.floor()),
                     ),
@@ -984,9 +1050,20 @@ pub fn builtinFloatCeil(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValInt(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValInt(
                         aver_rt::AverInt::from_f64_trunc(f.ceil()),
                     ),
@@ -1054,9 +1131,20 @@ pub fn builtinFloatSin(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValFloat(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValFloat(f.sin()),
                 ))
             }
@@ -1074,9 +1162,20 @@ pub fn builtinFloatCos(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValFloat(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValFloat(f.cos()),
                 ))
             }
@@ -1094,9 +1193,20 @@ pub fn builtinFloatSqrt(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValFloat(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValFloat(f.sqrt()),
                 ))
             }
@@ -1162,9 +1272,20 @@ pub fn builtinFloatToBits(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValFloat(__f_fields) => {
-                let f = __f_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValInt(
+            crate::aver_generated::domain::value::Val__view::ValFloat(_) => {
+                let (f, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValFloat>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValFloat(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_u64(
                         (f).to_bits(),
                     )),
@@ -1184,9 +1305,20 @@ pub fn builtinFloatFromBits(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValInt(__n_fields) => {
-                let n = __n_fields.0.clone();
-                Ok(crate::aver_generated::domain::value::Val::ValFloat(
+            crate::aver_generated::domain::value::Val__view::ValInt(_) => {
+                let (n, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValInt>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValInt(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValFloat(f64::from_bits(
                         (n).low_u64(),
                     )),

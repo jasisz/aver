@@ -22,9 +22,9 @@ fn __mutual_tco_trampoline_1(
             __MutualTco1::TuplesToMap(mut items @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 aver_list_match!(items, [] => { return acc }, [item, rest] => { { let __t = item; match __t.view() {
-        crate::aver_generated::domain::value::Val__view::ValTuple(__parts_fields) => {
-            let parts = &__parts_fields.0;
-            __MutualTco1::TuplesToMapOne(parts.clone(), rest, acc)
+        crate::aver_generated::domain::value::Val__view::ValTuple(_) => {
+            let (parts,) = match __t.try_take::<crate::aver_generated::domain::value::Val__ValTuple>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::aver_generated::domain::value::Val__view::ValTuple(__f) => (__f.0.clone(),), _ => unreachable!() } };
+            __MutualTco1::TuplesToMapOne(parts, rest, acc)
         },
         _ => {
             __MutualTco1::TuplesToMap(rest, acc)
@@ -520,11 +520,22 @@ pub fn builtinMapEntries(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = &__m_fields.0;
-                Ok(crate::aver_generated::domain::value::Val::ValList(
+            crate::aver_generated::domain::value::Val__view::ValMap(_) => {
+                let (m, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValMap>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValMap(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValList(
-                        crate::aver_generated::domain::value::mapEntries(m.clone()),
+                        crate::aver_generated::domain::value::mapEntries(m),
                     ),
                 ))
             }
@@ -578,12 +589,22 @@ pub fn builtinMapKeys(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = &__m_fields.0;
-                Ok(crate::aver_generated::domain::value::Val::ValList(
+            crate::aver_generated::domain::value::Val__view::ValMap(_) => {
+                let (m, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValMap>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValMap(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValList({
-                        let __arg3 @ _ =
-                            crate::aver_generated::domain::value::mapEntries(m.clone());
+                        let __arg3 @ _ = crate::aver_generated::domain::value::mapEntries(m);
                         {
                             let __arg4 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::builtins::entriesKeys__collected(
@@ -607,12 +628,22 @@ pub fn builtinMapValues(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValMap(__m_fields) => {
-                let m = &__m_fields.0;
-                Ok(crate::aver_generated::domain::value::Val::ValList(
+            crate::aver_generated::domain::value::Val__view::ValMap(_) => {
+                let (m, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValMap>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValMap(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
+                Ok(crate::aver_generated::domain::value::Val::new_in(
+                    [&__tok0],
                     crate::aver_generated::domain::value::Val__ValList({
-                        let __arg3 @ _ =
-                            crate::aver_generated::domain::value::mapEntries(m.clone());
+                        let __arg3 @ _ = crate::aver_generated::domain::value::mapEntries(m);
                         {
                             let __arg4 @ _ = aver_rt::list_builder_new(0usize);
                             crate::aver_generated::domain::builtins::entriesValues__collected(
@@ -1847,14 +1878,26 @@ pub fn builtinBoolNot(
     {
         let __t = v;
         match __t.view() {
-            crate::aver_generated::domain::value::Val__view::ValBool(__b_fields) => {
-                let b = __b_fields.0.clone();
+            crate::aver_generated::domain::value::Val__view::ValBool(_) => {
+                let (b, __tok0) = match __t
+                    .try_take_reusing::<crate::aver_generated::domain::value::Val__ValBool>()
+                {
+                    Ok((__f, __tok0)) => (__f.0, __tok0),
+                    Err(__t) => match __t.view() {
+                        crate::aver_generated::domain::value::Val__view::ValBool(__f) => {
+                            (__f.0.clone(), aver_rt::thin::Reuse::empty())
+                        }
+                        _ => unreachable!(),
+                    },
+                };
                 if b {
-                    Ok(crate::aver_generated::domain::value::Val::ValBool(
+                    Ok(crate::aver_generated::domain::value::Val::new_in(
+                        [&__tok0],
                         crate::aver_generated::domain::value::Val__ValBool(false),
                     ))
                 } else {
-                    Ok(crate::aver_generated::domain::value::Val::ValBool(
+                    Ok(crate::aver_generated::domain::value::Val::new_in(
+                        [&__tok0],
                         crate::aver_generated::domain::value::Val__ValBool(true),
                     ))
                 }
@@ -3186,12 +3229,18 @@ pub fn builtinTcpPoll(
         {
             let __t = socketsV;
             match __t.view() {
-                crate::aver_generated::domain::value::Val__view::ValMap(__sockets_fields) => {
-                    let sockets = &__sockets_fields.0;
-                    crate::aver_generated::domain::builtins::builtinTcpPollInner(
-                        sockets.clone(),
-                        &timeoutV,
-                    )
+                crate::aver_generated::domain::value::Val__view::ValMap(_) => {
+                    let (sockets,) =
+                        match __t.try_take::<crate::aver_generated::domain::value::Val__ValMap>() {
+                            Ok(__f) => (__f.0,),
+                            Err(__t) => match __t.view() {
+                                crate::aver_generated::domain::value::Val__view::ValMap(__f) => {
+                                    (__f.0.clone(),)
+                                }
+                                _ => unreachable!(),
+                            },
+                        };
+                    crate::aver_generated::domain::builtins::builtinTcpPollInner(sockets, &timeoutV)
                 }
                 _ => Err(::aver_rt::str_lit!(
                     "Tcp.poll requires a Map as its first argument"

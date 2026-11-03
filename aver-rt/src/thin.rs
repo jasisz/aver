@@ -33,8 +33,17 @@
 //! is 32 bits: a clone past `i32::MAX` aborts, as `Arc` does past
 //! `isize::MAX`; reaching it takes two billion owners of one node, 16 GB of
 //! pointers to it alone.
+//!
+//! A match that takes the fields out of a node it alone owns
+//! ([`Thin::try_take_reusing`]) keeps the node's memory as a [`Reuse`]
+//! token instead of freeing it, and the next constructor applied in the
+//! same arm ([`Thin::new_in`]) writes its node there when the sizes agree
+//! (Lorenzen & Leijen, "Reference counting with frame-limited reuse", ICFP
+//! 2022). The token is a local of the generated function, never stored or
+//! passed on, and frees the memory when it goes out of scope unused.
 
 use std::alloc::Layout;
+use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
@@ -292,6 +301,78 @@ impl<S: ThinSum> Thin<S> {
         Ok(fields)
     }
 
+    /// [`Thin::try_take`] that keeps the emptied node's memory as a
+    /// [`Reuse`] token for [`Thin::new_in`] instead of giving it back.
+    ///
+    /// # Safety
+    /// As `Thin::try_take`.
+    #[inline]
+    pub unsafe fn try_take_reusing<P>(self) -> Result<(P, Reuse), Self> {
+        if self.is_empty_ctor() {
+            return Err(self);
+        }
+        // As in `try_take`.
+        let count = &self.header().count;
+        if count.load(Ordering::Relaxed) != 1
+            || count
+                .compare_exchange(1, 0, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+        {
+            return Err(self);
+        }
+        let this = ManuallyDrop::new(self);
+        let node = this.ptr.cast::<Node<P>>().as_ptr();
+        // SAFETY: the fields are moved out once; the memory is kept by the
+        // token, which frees it without dropping them, or hands it to a new
+        // node, which writes over them.
+        let fields = unsafe { std::ptr::read(&raw const (*node).fields) };
+        let token = Reuse {
+            held: Cell::new(Some(Held {
+                ptr: this.ptr,
+                layout: Layout::new::<Node<P>>(),
+            })),
+        };
+        #[cfg(aver_reuse_stats)]
+        stats::arm();
+        Ok((fields, token))
+    }
+
+    /// [`Thin::new`] in the memory of the first of `tokens` that holds a
+    /// node of the size and alignment of one of constructor `tag`, or a new
+    /// allocation when none does. A token whose node is of another size
+    /// keeps its memory for a constructor it fits.
+    ///
+    /// # Safety
+    /// As `Thin::new`.
+    #[inline]
+    pub unsafe fn new_in<P, const N: usize>(tokens: [&Reuse; N], tag: u32, fields: P) -> Self {
+        let layout = Layout::new::<Node<P>>();
+        for token in tokens {
+            let Some(held) = token.held.get() else {
+                continue;
+            };
+            if held.layout != layout {
+                continue;
+            }
+            token.held.set(None);
+            let node = Node {
+                header: Header {
+                    count: AtomicU32::new(1),
+                    tag: AtomicU32::new(tag),
+                },
+                fields,
+            };
+            // SAFETY: the token holds an allocation of `layout`, which is
+            // `Node<P>`'s, that nothing reads; the node is freed by
+            // `free_node::<P>` with the same layout.
+            unsafe { held.ptr.cast::<Node<P>>().write(node) };
+            #[cfg(aver_reuse_stats)]
+            stats::REUSED.fetch_add(1, Ordering::Relaxed);
+            return Self::from_ptr(held.ptr);
+        }
+        unsafe { Self::new(tag, fields) }
+    }
+
     /// The last owner's part of `drop`, kept out of line as
     /// `Arc::drop_slow` is: the `Acquire` fence makes every other owner's
     /// use of the fields, and a call made in the node, happen before they
@@ -306,6 +387,89 @@ impl<S: ThinSum> Thin<S> {
         while let Some((node, release)) = put_aside.pop() {
             unsafe { release(node, Pending::new(&mut put_aside)) };
         }
+    }
+}
+
+/// The memory of a node [`Thin::try_take_reusing`] emptied, kept for the
+/// next node of the same size and alignment the same arm builds
+/// ([`Thin::new_in`]); freed when the token is dropped still holding it.
+/// An empty token ([`Reuse::empty`]) stands in on the path where the node
+/// had other owners, so an arm reads one token whichever way it went.
+///
+/// A token is a local of the function that took the node apart, read on
+/// that thread only: a `Cell`, so that constructors nested in one another
+/// each hold a shared borrow of it.
+pub struct Reuse {
+    held: Cell<Option<Held>>,
+}
+
+/// An allocation a [`Reuse`] token holds, and the layout to free or fill
+/// it with.
+#[derive(Clone, Copy)]
+struct Held {
+    ptr: NonNull<Header>,
+    layout: Layout,
+}
+
+impl Reuse {
+    /// A token holding no memory: [`Thin::new_in`] allocates past it.
+    #[inline]
+    pub const fn empty() -> Self {
+        Reuse {
+            held: Cell::new(None),
+        }
+    }
+
+    /// Whether the token still holds the node's memory.
+    #[inline]
+    pub fn holds(&self) -> bool {
+        self.held.get().is_some()
+    }
+}
+
+impl Drop for Reuse {
+    #[inline]
+    fn drop(&mut self) {
+        if let Some(held) = self.held.get() {
+            #[cfg(aver_reuse_stats)]
+            stats::DROPPED.fetch_add(1, Ordering::Relaxed);
+            // SAFETY: the memory was allocated with `held.layout` and nothing
+            // reads it (see `try_take_reusing`).
+            unsafe { std::alloc::dealloc(held.ptr.as_ptr().cast(), held.layout) }
+        }
+    }
+}
+
+/// Counts of reuse tokens used and dropped unused, for a developer's
+/// measurement: compiled in with `--cfg aver_reuse_stats` only, and
+/// printed to stderr when the process exits.
+#[cfg(aver_reuse_stats)]
+pub mod stats {
+    use std::sync::Once;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub static REUSED: AtomicU64 = AtomicU64::new(0);
+    pub static DROPPED: AtomicU64 = AtomicU64::new(0);
+    static REPORT: Once = Once::new();
+
+    unsafe extern "C" {
+        fn atexit(callback: extern "C" fn()) -> i32;
+    }
+
+    extern "C" fn report() {
+        eprintln!(
+            "aver reuse: tokens used {} dropped unused {}",
+            REUSED.load(Ordering::Relaxed),
+            DROPPED.load(Ordering::Relaxed)
+        );
+    }
+
+    /// Arranges for the counts to be printed at exit; called by the first
+    /// token taken.
+    pub fn arm() {
+        REPORT.call_once(|| {
+            unsafe { atexit(report) };
+        });
     }
 }
 
@@ -1116,6 +1280,35 @@ macro_rules! thin_sum {
                 }
             }
 
+            /// `try_take` that keeps the emptied node's memory as a token
+            /// for `new_in` (`aver_rt::thin::Reuse`).
+            #[inline]
+            $vis fn try_take_reusing<P: $crate::thin::ThinCtor<$name>>(
+                self,
+            ) -> ::std::result::Result<(P, $crate::thin::Reuse), Self> {
+                if $crate::thin_sum!(@is_lazy $( $lazy )?) || self.0.tag() != P::TAG {
+                    return Err(self);
+                }
+                // SAFETY: as in `try_take`.
+                match unsafe { self.0.try_take_reusing::<P>() } {
+                    Ok(taken) => Ok(taken),
+                    Err(value) => Err($name(value)),
+                }
+            }
+
+            /// The value of constructor `P` built in the memory of the
+            /// first of `tokens` that fits it, or allocated anew
+            /// (`aver_rt::thin::Thin::new_in`).
+            #[inline]
+            $vis fn new_in<P: $crate::thin::ThinCtor<$name>, const N: usize>(
+                tokens: [&$crate::thin::Reuse; N],
+                fields: P,
+            ) -> Self {
+                // SAFETY: `P::TAG` is the tag of the constructor whose
+                // fields `P` holds.
+                $name(unsafe { $crate::thin::Thin::new_in(tokens, P::TAG, fields) })
+            }
+
             /// Both values' fields when they are of the same constructor.
             #[inline]
             $vis fn view_pair<'a>(a: &'a Self, b: &'a Self) -> ::std::option::Option<$pair<'a>> {
@@ -1520,6 +1713,135 @@ mod tests {
         assert!(T::ptr_eq(&y, &T::Nil));
         drop(x);
         assert_eq!(drops.load(Ordering::SeqCst), 2);
+    }
+
+    /// The node of a value taken apart as its only owner is built on by the
+    /// next constructor of the same size, at the same address, and the
+    /// fields taken out are dropped once, by whoever took them.
+    #[test]
+    fn a_node_taken_apart_is_reused_by_the_next_node_of_its_size() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let old = pair(leaf(&drops, 1), leaf(&drops, 2), 5);
+        let address = super::Thin::addr(&old.0);
+        let Ok((T__Pair(x, y, n), token)) = old.try_take_reusing::<T__Pair>() else {
+            panic!("only owner");
+        };
+        assert!(token.holds());
+        assert_eq!((sum(&x), sum(&y), n), (1, 2, 5));
+        let new = T::new_in([&token], T__Pair(y, x, n + 1));
+        assert!(!token.holds());
+        assert_eq!(super::Thin::addr(&new.0), address);
+        assert_eq!(sum(&new), 9);
+        drop(token);
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        drop(new);
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+    }
+
+    /// A node with other owners is not taken apart, so there is no token:
+    /// the arm goes on with an empty one, and `new_in` allocates past it.
+    #[test]
+    fn a_shared_node_gives_no_token_and_an_empty_token_allocates() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let a = pair(leaf(&drops, 1), T::Nil, 0);
+        let b = a.clone();
+        let Err(a) = a.try_take_reusing::<T__Pair>() else {
+            panic!("shared");
+        };
+        assert_eq!(super::Thin::strong_count(&a.0), 2);
+        let empty = super::Reuse::empty();
+        assert!(!empty.holds());
+        let c = T::new_in([&empty], T__Pair(a, b, 1));
+        assert_eq!(sum(&c), 3);
+        assert!(!empty.holds());
+        // A constructor of another kind, or without a node, comes back too.
+        assert!(T::Nil.try_take_reusing::<T__Leaf>().is_err());
+        assert!(c.try_take_reusing::<T__Leaf>().is_err());
+    }
+
+    /// A constructor whose node is of another size leaves the token as it
+    /// is, for one that fits it; a token dropped unused frees its memory.
+    #[test]
+    fn a_node_of_another_size_leaves_the_token_for_one_that_fits() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        assert_ne!(
+            size_of::<super::Node<T__Pair>>(),
+            size_of::<super::Node<T__Leaf>>()
+        );
+        let old = pair(T::Nil, T::Nil, 1);
+        let address = super::Thin::addr(&old.0);
+        let Ok((T__Pair(..), token)) = old.try_take_reusing::<T__Pair>() else {
+            panic!("only owner");
+        };
+        let small = T::new_in([&token], T__Leaf(Counted(drops.clone(), 7)));
+        assert!(token.holds(), "a leaf does not fit a pair's node");
+        assert_ne!(super::Thin::addr(&small.0), address);
+        let fits = T::new_in([&token], T__Pair(small, T::Nil, 2));
+        assert!(!token.holds());
+        assert_eq!(super::Thin::addr(&fits.0), address);
+        assert_eq!(sum(&fits), 9);
+        drop(fits);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+
+        // Unused: dropping the token gives the memory back (Miri checks the
+        // leak), and the fields were already moved out.
+        let Ok((T__Leaf(counted), unused)) = leaf(&drops, 8).try_take_reusing::<T__Leaf>() else {
+            panic!("only owner");
+        };
+        assert!(unused.holds());
+        drop(unused);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        drop(counted);
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+    }
+
+    /// Of several tokens, the first that fits is used; any constructor of
+    /// the sum whose node has the size may take it (`F`'s two have one).
+    #[test]
+    fn the_first_token_that_fits_is_used_by_any_constructor_of_the_size() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        assert_eq!(
+            size_of::<super::Node<F__A>>(),
+            size_of::<super::Node<F__B>>()
+        );
+        let a = F::A(F__A(Counted(drops.clone(), 1)));
+        let a_addr = super::Thin::addr(&a.0);
+        let b = F::B(F__B(a.clone(), 2));
+        let b_addr = super::Thin::addr(&b.0);
+        let Ok((F__B(inner, two), outer)) = b.try_take_reusing::<F__B>() else {
+            panic!("only owner");
+        };
+        drop(inner);
+        let Ok((F__A(counted), inner)) = a.try_take_reusing::<F__A>() else {
+            panic!("only owner now");
+        };
+        assert_eq!(counted.1, 1);
+        let first = F::new_in([&inner, &outer], F__B(F::A(F__A(counted)), two));
+        assert_eq!(super::Thin::addr(&first.0), a_addr);
+        assert!(!inner.holds() && outer.holds());
+        let second = F::new_in([&inner, &outer], F__A(Counted(drops.clone(), 3)));
+        assert_eq!(super::Thin::addr(&second.0), b_addr);
+        assert!(!inner.holds() && !outer.holds());
+        let third = F::new_in([&inner, &outer], F__B(second, 4));
+        assert!(![a_addr, b_addr].contains(&super::Thin::addr(&third.0)));
+        assert!(matches!(third.view(), F__View::B(p) if p.1 == 4));
+        drop(third);
+        drop(first);
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+    }
+
+    /// A sum some `lazy f(…)` returns never gives a token: a node a call
+    /// was made in is laid out for the largest constructor.
+    #[test]
+    fn a_lazy_sum_gives_no_token() {
+        let value = l_leaf(3);
+        let Err(value) = value.try_take_reusing::<L__Leaf>() else {
+            panic!("a lazy sum keeps its nodes");
+        };
+        assert_eq!(l_sum(&value), 3);
+        let token = super::Reuse::empty();
+        let built = L::new_in([&token], L__Node(value, l_leaf(4)));
+        assert_eq!(l_sum(&built), 7);
     }
 
     #[test]
