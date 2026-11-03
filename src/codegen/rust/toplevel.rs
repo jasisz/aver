@@ -603,6 +603,13 @@ fn emit_sum_type(
                 order.is_some() || reflexive,
             ));
             writeln!(payloads, "\n{derived}").unwrap();
+            // The fields stay in their declared order: a field every
+            // constructor declares first (a word of metadata, say) is then at
+            // one offset in every node, and a reader of it over the
+            // constructors loads it at that offset instead of looking the
+            // offset up in a table by tag. Rust would otherwise move the
+            // fields with a niche to the front.
+            writeln!(payloads, "#[repr(C)]").unwrap();
             writeln!(
                 payloads,
                 "{visibility}struct {payload}({});",
