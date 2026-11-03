@@ -603,9 +603,9 @@ pub fn both(a @ _: &Option<Val>, b @ _: &Option<Val>, isAnd @ _: bool) -> Option
                         Some(__pat3) => match __pat3 {
                             crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(y) => {
                                 if isAnd {
-                                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x && y)))
+                                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x & y)))
                                 } else {
-                                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x || y)))
+                                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x | y)))
                                 }
                             }
                             _ => None,
@@ -671,7 +671,7 @@ pub fn shifted(a @ _: &Option<Val>, n @ _: &Option<Val>) -> Option<Val> {
                     Some(__pat3) => match __pat3 {
                         crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(k) => {
                             if ((k >= aver_rt::AverInt::from_i64(0))
-                                && (k <= aver_rt::AverInt::from_i64(4096)))
+                                & (k <= aver_rt::AverInt::from_i64(4096)))
                             {
                                 match (match (x).shift_left(&(k)) { Ok(__v) => Ok(__v), Err(aver_rt::ShiftCountError::Negative) => Err("negative shift count".into()), Err(aver_rt::ShiftCountError::TooLarge) => Err(aver_rt::shift_count_too_large_message()) }).into_aver() { Ok(r @ _) => { Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(r)) }, Err(e @ _) => { None } }
                             } else {

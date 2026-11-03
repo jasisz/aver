@@ -1398,7 +1398,7 @@ pub fn descends(
             { let __list_subject = __pat8; match aver_rt::list_uncons(&__list_subject) { Some((__pat9, __pat10)) => { { let __t = __pat9; match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(__k_fields) => {
             let k = __k_fields.0.clone();
-            { let __list_subject = __pat10; if __list_subject.is_empty() { ((&(q) == p) && (k >= aver_rt::AverInt::from_i64(2))) } else { false } }
+            { let __list_subject = __pat10; if __list_subject.is_empty() { ((&(q) == p) & (k >= aver_rt::AverInt::from_i64(2))) } else { false } }
         },
         _ => {
             false

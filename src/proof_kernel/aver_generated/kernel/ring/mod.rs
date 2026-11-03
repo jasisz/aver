@@ -812,7 +812,7 @@ pub fn roundedBy(
                     match __subject {
                         (Ok(q), Ok(r)) => {
                             if ((m.atoms == aver_rt::AverIntList::empty())
-                                || (r == aver_rt::AverInt::from_i64(0)))
+                                | (r == aver_rt::AverInt::from_i64(0)))
                             {
                                 {
                                     let __tco0 = rest;
@@ -1020,7 +1020,7 @@ pub fn negativeConstant(p @ _: Option<&aver_rt::AverList<Mono>>) -> bool {
                     let __list_subject = __pat1;
                     if __list_subject.is_empty() {
                         ((m.atoms == aver_rt::AverIntList::empty())
-                            && (m.coef < aver_rt::AverInt::from_i64(0)))
+                            & (m.coef < aver_rt::AverInt::from_i64(0)))
                     } else {
                         false
                     }

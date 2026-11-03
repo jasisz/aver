@@ -1439,7 +1439,7 @@ pub fn valCmp(mut a @ _: Val, mut b @ _: Val) -> aver_rt::AverInt {
                     let x = __x_fields.0.clone();
                     let y = __y_fields.0.clone();
                     return aver_rt::AverInt::from_i64({
-                        let __arg28 @ _ = (y && (x == false));
+                        let __arg28 @ _ = (y & (x == false));
                         {
                             let __arg29 @ _ = (x == y);
                             crate::aver_generated::domain::value::ordOf(__arg28, __arg29)
