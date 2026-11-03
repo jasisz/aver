@@ -1,0 +1,39 @@
+module Lines
+    intent = "A line parsed by one function and applied by the next: the runtime never builds it, the proof reads the two calls as written."
+    exposes [count]
+
+type Line
+    App(Int, Int)
+    Blank
+    Bad(String)
+
+fn parse(n: Int) -> Line
+    ? "A known constructor in every leaf; the App leaf builds a cell."
+    match n == 0
+        true -> Line.Blank
+        false -> match n > 0
+            true -> Line.App(n, n * 2)
+            false -> Line.Bad("negative")
+
+verify parse
+    parse(0) => Line.Blank
+    parse(2) => Line.App(2, 4)
+
+fn apply(acc: Int, l: Line) -> Int
+    ? "One arm per constructor."
+    match l
+        Line.App(a, b) -> acc + a * b
+        Line.Blank -> acc
+        Line.Bad(_) -> acc - 1
+
+verify apply
+    apply(1, Line.App(2, 3)) => 7
+
+fn count(ns: List<Int>, acc: Int) -> Int
+    ? "The value parse builds is taken apart by apply at once."
+    match ns
+        [] -> acc
+        [n, ..rest] -> count(rest, apply(acc, parse(n)))
+
+verify count
+    count([0, 2, 0 - 1], 0) => 7

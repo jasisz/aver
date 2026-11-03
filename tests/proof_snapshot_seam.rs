@@ -129,6 +129,10 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
             run_chars_fusion: flags.fabricating,
             run_string_index: flags.fabricating,
             run_list_build: flags.fabricating,
+            // Below the line like the fabricating passes: it rewrites
+            // callers after the string index gave them wrappers, and the
+            // proof view never sees it.
+            run_deforest_calls: flags.fabricating,
             run_escape: flags.escape,
             run_refinement_lower: flags.proof_stages,
             run_contract_lower: flags.proof_stages,

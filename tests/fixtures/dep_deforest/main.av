@@ -1,0 +1,8 @@
+module DeforestDep
+    intent = "An entry that counts through a dependency whose parse and apply are fused for the runtime and exported to Lean as written."
+    depends [Lines]
+    effects [Console.print]
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{Lines.count([0, 2, 3, 0 - 1], 0)}")

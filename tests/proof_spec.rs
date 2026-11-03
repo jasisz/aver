@@ -41,6 +41,8 @@ mod container_induction;
 mod core_kit;
 #[path = "proof_spec/cross_file.rs"]
 mod cross_file;
+#[path = "proof_spec/dep_fusion.rs"]
+mod dep_fusion;
 #[path = "proof_spec/dep_law_names.rs"]
 mod dep_law_names;
 #[path = "proof_spec/dependency_effects.rs"]

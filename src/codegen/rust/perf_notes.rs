@@ -889,7 +889,9 @@ fn push(f: Frame, v: Int) -> Frame
 fn hot(f: Frame, i: Int) -> Option<Frame>
     match i > 0
         true -> Option.Some(push(f, i))
-        false -> Option.None
+        false -> match i < 0
+            true -> hot(f, 0 - i)
+            false -> Option.None
 
 fn step(f: Frame, i: Int) -> Frame
     match hot(f, i)
@@ -903,7 +905,7 @@ fn reads(f: Frame, i: Int) -> Int
             notes(src),
             [
                 "13: `writeArr` copies `xs` to pass it to `setAt`, which writes it in place: `writeArr` only borrows `xs`, which its caller keeps",
-                "25: `step` copies `f` to pass it to `hot`, which writes it in place: `f` is read again at line 27",
+                "27: `step` copies `f` to pass it to `hot`, which writes it in place: `f` is read again at line 29",
             ]
         );
     }

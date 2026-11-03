@@ -1570,6 +1570,9 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
                     run_chars_fusion: false,
                     run_string_index: true,
                     run_list_build: false,
+                    // The facts are read for `m.items`, whose calls stay
+                    // as written.
+                    run_deforest_calls: false,
                     alloc_policy: Some(&neutral_policy),
                     ..Default::default()
                 },
@@ -1678,6 +1681,9 @@ fn load_compile_deps_with_runtime_strings(
                 run_string_index: true,
                 run_list_build: false,
                 run_byte_sink: runtime_strings,
+                // Below the proof line like the string passes: a proof
+                // caller reads these items as written.
+                run_deforest_calls: runtime_strings,
                 indexed_wrappers: &indexed_wrappers,
                 alloc_policy: Some(&neutral_policy),
                 ..Default::default()

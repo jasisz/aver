@@ -4962,6 +4962,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "string_index" => Some(PipelineStage::StringIndex),
         "list_build" => Some(PipelineStage::ListBuild),
         "byte_sink" => Some(PipelineStage::ByteSink),
+        "deforest_calls" => Some(PipelineStage::DeforestCalls),
         "resolve" => Some(PipelineStage::Resolve),
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
@@ -4976,7 +4977,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, yield_lower, typecheck, interp_lower, buffer_build, chars_fusion, string_index, list_build, byte_sink, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
+                     parse, tco, yield_lower, typecheck, interp_lower, buffer_build, chars_fusion, string_index, list_build, byte_sink, deforest_calls, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
                     other
                 )
                 .red()
@@ -6220,6 +6221,21 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     ));
                 }
             }
+            PassReport::DeforestCalls(report) => {
+                if report.rewrites == 0 {
+                    out.push_str(&format!(
+                        "{label} no value built by a call and taken apart at once\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {} call site(s) fused — {} producer bodies unfolded, {} known leaves reduced, {} nodes added\n",
+                        report.rewrites, report.unfolded, report.known_leaves, report.grown_nodes
+                    ));
+                    for (name, (sites, grown)) in &report.sites_by_fn {
+                        out.push_str(&format!("  • {name}: {sites} site(s), +{grown} nodes\n"));
+                    }
+                }
+            }
             PassReport::Escape { rewrites } => {
                 if *rewrites == 0 {
                     out.push_str(&format!(
@@ -6567,6 +6583,26 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                 out.push_str(&format!(
                     "{{\"total_fns\":{},\"no_alloc_fns\":{},\"recursive_fns\":{},\"mutual_tco_members\":{},\"unknown_alloc\":{}}}",
                     total_fns, no_alloc_fns, recursive_fns, mutual_tco_members, unknown_alloc
+                ));
+            }
+            PassReport::DeforestCalls(report) => {
+                let fns: Vec<String> = report
+                    .sites_by_fn
+                    .iter()
+                    .map(|(name, (sites, grown))| {
+                        format!(
+                            "{{\"fn\":{},\"sites\":{sites},\"grown_nodes\":{grown}}}",
+                            json_str(name)
+                        )
+                    })
+                    .collect();
+                out.push_str(&format!(
+                    "{{\"rewrites\":{},\"unfolded\":{},\"known_leaves\":{},\"grown_nodes\":{},\"fns\":[{}]}}",
+                    report.rewrites,
+                    report.unfolded,
+                    report.known_leaves,
+                    report.grown_nodes,
+                    fns.join(",")
                 ));
             }
             PassReport::Escape { rewrites } => {
@@ -12412,6 +12448,11 @@ pub(super) struct DepLowering {
     pub string_index: bool,
     pub list_build: bool,
     pub byte_sink: bool,
+    /// A value built by one call and taken apart by the next is never
+    /// built (`PipelineConfig::run_deforest_calls`). Below the proof line
+    /// like the gates above: a dependency's post-pass fns are what the
+    /// Lean exporter reads, so [`Self::PRISTINE`] leaves it off.
+    pub deforest_calls: bool,
     /// Leave functions the certificate printer could print unfused
     /// (`PipelineConfig::keep_printable_unfused`): set by `--certify` only.
     pub keep_printable_unfused: bool,
@@ -12448,6 +12489,7 @@ impl DepLowering {
         string_index: false,
         list_build: false,
         byte_sink: false,
+        deforest_calls: false,
         keep_printable_unfused: false,
         self_host: false,
     };
@@ -12463,6 +12505,7 @@ impl DepLowering {
         chars_fusion: true,
         string_index: true,
         byte_sink: true,
+        deforest_calls: true,
         ..Self::PRISTINE
     };
 
@@ -12477,6 +12520,7 @@ impl DepLowering {
             // Full list-build already includes byte retargeting. The separate
             // gate exists only for backends that must refuse generic lists.
             byte_sink: false,
+            deforest_calls: on,
             keep_printable_unfused: false,
             self_host,
         }
@@ -12574,6 +12618,7 @@ pub(super) fn load_compile_deps_prepared(
                 run_string_index: lowering.string_index,
                 run_list_build: lowering.list_build,
                 run_byte_sink: lowering.byte_sink,
+                run_deforest_calls: lowering.deforest_calls,
                 keep_printable_unfused: lowering.keep_printable_unfused,
                 indexed_wrappers,
                 alloc_policy: Some(&neutral_policy),

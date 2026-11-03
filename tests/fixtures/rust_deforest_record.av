@@ -1,0 +1,51 @@
+module DeforestRecord
+    intent = "A record is no cell: written at the call it is spliced by escape, built by a small function it stays a call."
+    effects [Console.print]
+
+record Point
+    x: Int
+    y: Int
+    tag: String
+
+fn distance(p: Point) -> Int
+    ? "Reads x twice and y once; never the tag."
+    p.x * p.x + p.y
+
+verify distance
+    distance(Point(x = 2, y = 3, tag = "t")) => 7
+
+fn mk(n: Int) -> Point
+    ? "A point in one of two shapes."
+    match n > 0
+        true -> Point(x = n, y = n + 1, tag = "pos")
+        false -> Point(x = 0 - n, y = 0, tag = "neg")
+
+verify mk
+    mk(2) => Point(x = 2, y = 3, tag = "pos")
+
+fn direct(n: Int) -> Int
+    ? "The record written at the call: x is computed once and read twice."
+    distance(Point(x = n * 2, y = n, tag = "d{n}"))
+
+verify direct
+    direct(3) => 39
+
+fn viaCall(n: Int) -> Int
+    ? "The record built by mk: no cell to deforest, so the call stays."
+    distance(mk(n))
+
+verify viaCall
+    viaCall(3) => 13
+    viaCall(0 - 2) => 4
+
+fn label(p: Point) -> String
+    ? "Reads the tag and the point whole: not scalar-replaced."
+    "{p.tag}:{distance(p)}"
+
+verify label
+    label(Point(x = 1, y = 1, tag = "a")) => "a:2"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{direct(3)} {direct(0)} {viaCall(3)} {viaCall(0 - 2)}")
+    Console.print("{label(mk(4))} {label(Point(x = 1, y = 2, tag = "w"))}")

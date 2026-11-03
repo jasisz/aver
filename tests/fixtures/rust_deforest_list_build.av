@@ -1,0 +1,45 @@
+module DeforestListBuild
+    intent = "A collecting loop keeps its builder, and the sum its caller builds from the list is still fused."
+    effects [Console.print]
+
+type Summary
+    Some(Int, String)
+    Empty
+
+fn collect(xs: List<Int>, acc: List<String>) -> List<String>
+    ? "The list-build shape: prepend, then reverse on the way out."
+    match xs
+        [] -> List.reverse(acc)
+        [x, ..rest] -> collect(rest, List.prepend("<{x}>", acc))
+
+verify collect
+    collect([1, 2], []) => ["<1>", "<2>"]
+
+fn summarize(parts: List<String>) -> Summary
+    ? "A small producer over the collected list."
+    match parts
+        [] -> Summary.Empty
+        [first, ..rest] -> Summary.Some(List.len(rest), first)
+
+verify summarize
+    summarize(["a"]) => Summary.Some(0, "a")
+
+fn describe(s: Summary) -> String
+    ? "The consumer."
+    match s
+        Summary.Some(n, first) -> "{first} and {n} more"
+        Summary.Empty -> "nothing"
+
+verify describe
+    describe(Summary.Empty) => "nothing"
+
+fn report(xs: List<Int>) -> String
+    ? "The collected list is built by the loop; the summary of it is not."
+    describe(summarize(collect(xs, [])))
+
+verify report
+    report([]) => "nothing"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{report([1, 2, 3])} / {report([])} / {report([7])}")

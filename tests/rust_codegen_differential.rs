@@ -796,6 +796,131 @@ fn nodes_taken_at_a_last_use_are_reused_and_match_vm() {
     }
 }
 
+/// A sum one function builds only for the next to match on is never
+/// built (`ir::deforest_calls`): the producer is unfolded at the call and
+/// the consumer's match pushed into its leaves. Known leaves become the
+/// arm, so the loop constructs no `Line::App`; the recursive `other` is the
+/// one unknown leaf and keeps the one copy of the match. The tables moved
+/// through the fused call (`readAll`) and read after it (`shared`), and the
+/// match written at the call (`direct`), all read as the VM.
+#[test]
+fn rust_sum_built_by_a_call_is_matched_without_being_built() {
+    let relative = "tests/fixtures/rust_deforest_sum_call.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_deforest_sum_call", &src);
+    let read_all = emitted
+        .split("fn __mutual_tco_trampoline_1")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("the reader loop is a trampoline");
+    assert!(
+        !read_all.contains("parseLine(") && !read_all.contains("applyLine("),
+        "producer and consumer are unfolded into the loop:\n{read_all}"
+    );
+    // Each constructor is spelled once in the loop: as the pattern of the
+    // one copy of the match, at the unknown leaf `other(l)`. The known
+    // leaves build nothing, so no `Line::App(` or `Line::Blank` is a
+    // construction.
+    for ctor in ["Line::App(", "Line::Name(", "Line::Blank", "Line::Bad("] {
+        assert_eq!(
+            read_all.matches(ctor).count(),
+            1,
+            "`{ctor}` appears once, as a pattern of the one copy of the match:\n{read_all}"
+        );
+    }
+    assert!(
+        read_all.contains("match other(l)"),
+        "the unknown leaf keeps its call and the match:\n{read_all}"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A record is no cell (a struct by value in Rust), so `ir::deforest_calls`
+/// leaves a record argument to the `escape` pass: the record written at
+/// the call is spliced into the reader there, and the one a function builds
+/// stays a call. Both read as the VM.
+#[test]
+fn rust_record_written_at_the_call_escapes_and_one_built_by_a_call_stays() {
+    let relative = "tests/fixtures/rust_deforest_record.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_deforest_record", &src);
+    let body = |name: &str| {
+        emitted
+            .split(&format!("pub fn {name}("))
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap_or_else(|| panic!("{name} is emitted"))
+            .to_string()
+    };
+    let direct = body("direct");
+    assert!(
+        !direct.contains("Point {") && !direct.contains("distance("),
+        "escape splices the record written at the call:\n{direct}"
+    );
+    let via = body("viaCall");
+    assert!(
+        via.contains("mk(") && via.contains("distance("),
+        "a record built by a call stays a call:\n{via}"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A `?` returns from the function it is written in, and an independent
+/// product is a sequencing point: a producer with either, and a consumer
+/// whose arm has a `?`, stay calls, so the `Err` a call should produce as
+/// its value never ends the caller instead.
+#[test]
+fn rust_error_propagation_and_products_keep_their_calls() {
+    let relative = "tests/fixtures/rust_deforest_error_prop.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_deforest_error_prop", &src);
+    for call in ["areaOf(", "parse(", "pair("] {
+        assert!(
+            emitted.matches(call).count() >= 2,
+            "`{call}` is still called, not unfolded:\n{emitted}"
+        );
+    }
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// Two leaves whose value is not known would need two copies of the
+/// consumer's match: over the budget, so the call stays as written.
+#[test]
+fn rust_fusion_over_budget_keeps_the_call() {
+    let relative = "tests/fixtures/rust_deforest_budget.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_deforest_budget", &src);
+    assert!(
+        emitted.contains("weight(") && emitted.contains("lex("),
+        "consumer and producer are still called:\n{emitted}"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A collecting loop keeps its list builder (`list_build` fires first, on
+/// the loop; the fusion sees the loop only as a call), and the sum built
+/// from the collected list is still fused into its consumer.
+#[test]
+fn rust_list_builder_and_sum_fusion_compose() {
+    let relative = "tests/fixtures/rust_deforest_list_build.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_deforest_list_build", &src);
+    assert!(
+        emitted.contains("collect__collected"),
+        "builder kept:\n{emitted}"
+    );
+    let report = emitted
+        .split("pub fn report(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("report is emitted");
+    assert!(
+        !report.contains("Summary::Some(") && !report.contains("describe("),
+        "the summary is never built:\n{report}"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// An integer literal past `i64` is parsed once into a static
 /// (`aver_rt::int_lit!`) and read through it, cloned only where a value is
 /// owned: an argument, a field, a list or map element, a tuple, a result, a

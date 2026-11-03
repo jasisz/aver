@@ -5666,6 +5666,9 @@ fn mixed(w: Word, k: Int) -> Int
         let mut items = parse_source(WORD_SRC).expect("parse");
         let cfg = crate::ir::pipeline::PipelineConfig {
             typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
+            // The facts are read off the binder and the call result as
+            // written; fused, `fromInt` is unfolded and no `Word` is built.
+            run_deforest_calls: false,
             ..Default::default()
         };
         let result = crate::ir::pipeline::run(&mut items, cfg);

@@ -158,6 +158,7 @@ fn main() -> Int
             "chars_fusion",
             "string_index",
             "list_build",
+            "deforest_calls",
             "resolve",
             "analyze",
             "escape",
