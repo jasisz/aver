@@ -1,0 +1,133 @@
+module OwnedArgReadAgain
+    intent = "A value a builtin takes owned, or a closure around it captures, read again after the call."
+    effects [Console.print]
+    depends [Bytes]
+
+type Line
+    App(Int, Int)
+    Blank
+
+fn wrap(n: Int) -> Line
+    ? "n is the fill of a vector with a literal size, and is read again in"
+      "the arm of the lookup around it."
+    match Vector.get(Vector.new(1, n), 0)
+        Option.Some(z) -> Line.App(z, n)
+        Option.None -> Line.Blank
+
+verify wrap
+    wrap(3) => Line.App(3, 3)
+
+fn tag(s: String) -> String
+    ? "A String fill read again after the lookup."
+    match Vector.get(Vector.new(2, s), 1)
+        Option.Some(t) -> "{t}/{s}"
+        Option.None -> s
+
+verify tag
+    tag("ab") => "ab/ab"
+
+fn describe(v: Vector<String>, s: String) -> String
+    ? "The vector's size and the fill."
+    "{Vector.len(v)} of {s}"
+
+fn twice(s: String) -> String
+    ? "The vector built from s and s itself go to the same call."
+    describe(Vector.new(2, s), s)
+
+verify twice
+    twice("x") => "2 of x"
+
+fn put(v: Vector<String>, s: String) -> String
+    ? "s is written into the vector and read again in the arm."
+    match Vector.set(v, 0, s)
+        Option.Some(w) -> "{Vector.len(w)} {s}"
+        Option.None -> s
+
+verify put
+    put(Vector.new(2, "-"), "q") => "2 q"
+
+fn both(n: Int) -> String
+    ? "n is the fill, the written value and the arm's value."
+    match Vector.set(Vector.new(1, n), 0, n)
+        Option.Some(w) -> "{Vector.len(w)} {n}"
+        Option.None -> "{n}"
+
+verify both
+    both(5) => "1 5"
+
+fn pick(v: Vector<String>, s: String) -> String
+    ? "s is the fallback of a missing lookup and is read again."
+    "{Option.withDefault(Vector.get(v, 7), s)}|{s}"
+
+verify pick
+    pick(Vector.new(2, "-"), "q") => "q|q"
+
+fn fallback(s: String) -> String
+    ? "s is the fill, the fallback and the tail."
+    "{Option.withDefault(Vector.get(Vector.new(1, s), 3), s)} {s}"
+
+verify fallback
+    fallback("w") => "w w"
+
+fn first(xs: List<String>) -> String
+    ? "xs is indexed through a vector and then measured."
+    match Vector.get(Vector.fromList(xs), 0)
+        Option.Some(x) -> "{x} of {List.len(xs)}"
+        Option.None -> "none"
+
+verify first
+    first(["a", "b"]) => "a of 2"
+
+fn head(s: String) -> String
+    ? "s is indexed and then shown."
+    match String.charAt(s, 0)
+        Option.Some(c) -> "{c} in {s}"
+        Option.None -> s
+
+verify head
+    head("xyz") => "x in xyz"
+
+fn repeat(s: String, k: Int, acc: List<String>) -> List<String>
+    ? "s is pushed into the built list and carried on."
+    match k <= 0
+        true -> List.reverse(acc)
+        false -> repeat(s, k - 1, List.prepend(s, acc))
+
+verify repeat
+    repeat("ab", 2, []) => ["ab", "ab"]
+
+fn octets(n: Int, k: Int, acc: List<Int>) -> List<Int>
+    ? "n is pushed into the built list and carried on."
+    match k <= 0
+        true -> List.reverse(acc)
+        false -> octets(n, k - 1, List.prepend(n, acc))
+
+verify octets
+    octets(7, 2, []) => [7, 7]
+
+fn size(n: Int, k: Int) -> Int
+    ? "The length of the bytes built from the loop, or -1 for a value no"
+      "octet holds."
+    match Bytes.fromList(octets(n, k, []))
+        Result.Ok(b) -> Bytes.len(b)
+        Result.Err(_) -> -1
+
+verify size
+    size(65, 3) => 3
+    size(300, 2) => -1
+
+fn main() -> Unit
+    ! [Console.print]
+    match wrap(3)
+        Line.App(u, v) -> Console.print("{u} {v}")
+        Line.Blank -> Console.print("blank")
+    Console.print(tag("ab"))
+    Console.print(twice("x"))
+    Console.print(put(Vector.new(2, "-"), "q"))
+    Console.print(both(5))
+    Console.print(pick(Vector.new(2, "-"), "q"))
+    Console.print(fallback("w"))
+    Console.print(first(["a", "b"]))
+    Console.print(head("xyz"))
+    Console.print("{List.len(repeat("ab", 3, []))}")
+    Console.print("{size(65, 3)} {size(300, 2)}")

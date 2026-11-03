@@ -10381,6 +10381,11 @@ fn emit_mir_builtin_call(
 /// loop-rebind shape the deforestation synthesizer emits. The Rust
 /// backend deforests differently, so a buffered fn's MIR shape may not
 /// byte-match HIR — the parity gate then falls back safely.
+///
+/// The surface-call discharge intrinsics (`VectorNew`, `BranchPathChild`,
+/// …) take user values, not synthesized loop state: an operand they hand
+/// over owned goes through the ownership model (`mir_clone_arg`), as the
+/// builtin they stand in for hands it over.
 fn emit_mir_intrinsic_call(
     intrinsic: BuiltinIntrinsic,
     args: &[Spanned<MirExpr>],
@@ -10473,7 +10478,12 @@ fn emit_mir_intrinsic_call(
         }
         BuiltinIntrinsic::VectorNew => {
             let size = emit_mir_expr(&args[0], ctx)?;
-            let fill = emit_mir_expr(&args[1], ctx)?;
+            // The fill is a user value the vector takes owned, as the
+            // unfused `Vector.new` takes it: a local read again later is
+            // cloned, one at its last read moves. A raw emit would move it
+            // whatever comes after — into the `Vector.get` closure around
+            // it, say — and the later read would be of a moved value.
+            let fill = mir_clone_arg(emit_mir_expr(&args[1], ctx)?, &args[1].node, ctx);
             Some(format!(
                 "aver_rt::AverVector::new(aver_rt::checked_vector_size(&({})).expect(\"invalid discharged Vector.new size\"), {})",
                 size, fill
@@ -10650,16 +10660,13 @@ fn emit_mir_intrinsic_call(
         }
         BuiltinIntrinsic::LstPush => {
             let builder = emit_mir_expr(&args[0], ctx)?;
-            // An item read through a borrow (a lent list head, a borrowed
-            // param, or a field of one) is cloned into the builder; an owned
-            // one moves in.
-            let item = emit_mir_expr(&args[1], ctx)?;
-            let item = match super::ownership::projection_root_local(&args[1].node) {
-                Some(root) if super::ownership::root_is_borrowed(root, ctx) => {
-                    materialize_owned(item, &args[1].node, ctx)
-                }
-                _ => item,
-            };
+            // The builder takes its item owned. An item read through a
+            // borrow (a lent list head, a borrowed param, or a field of one)
+            // is cloned into it; an owned one moves in at its last read and
+            // is cloned where it is read again (a loop-carried param pushed
+            // on every step, say). A value the loop made is a temporary and
+            // moves in.
+            let item = materialize_owned(emit_mir_expr(&args[1], ctx)?, &args[1].node, ctx);
             let push = if type_is_int_list(result_ty) {
                 "int_list_builder_push"
             } else {
@@ -10689,7 +10696,8 @@ fn emit_mir_intrinsic_call(
         }
         BuiltinIntrinsic::BytPush => {
             let builder = emit_mir_expr(&args[0], ctx)?;
-            let item = emit_mir_expr(&args[1], ctx)?;
+            // Owned by the builder, as a list builder's item.
+            let item = materialize_owned(emit_mir_expr(&args[1], ctx)?, &args[1].node, ctx);
             Some(format!("aver_rt::byte_builder_push({}, {})", builder, item))
         }
         BuiltinIntrinsic::BytFinalize => {
@@ -11077,6 +11085,67 @@ mod tests {
         let expr = span(MirExpr::Call(span(call)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("__buf_finalize emits");
         assert_eq!(emit, "aver_rt::AverStr::from(b)");
+    }
+
+    /// `Vector.new(1, n)` with a literal size (the `VectorNew` discharge).
+    fn vector_new_of_local(last_use: bool) -> String {
+        let fill = MirLocal {
+            slot: LocalId(0),
+            last_use,
+            name: "n".to_string(),
+        };
+        let call = MirCall {
+            callee: MirCallee::Intrinsic(BuiltinIntrinsic::VectorNew),
+            args: vec![
+                span(MirExpr::Literal(span(crate::ast::Literal::Int(1)))),
+                span(MirExpr::Local(span(fill))),
+            ],
+        };
+        let expr = span(MirExpr::Call(span(call)));
+        emit_mir_expr(&expr, &empty_ctx()).expect("__vector_new emits")
+    }
+
+    #[test]
+    fn discharged_vector_new_clones_a_fill_read_again_later() {
+        // The fill goes in owned; a local read again after the call (the
+        // arm of a `match Vector.get(Vector.new(1, n), 0)` reading `n`)
+        // is cloned, not moved into the vector.
+        let emit = vector_new_of_local(false);
+        assert!(
+            emit.ends_with(", n.clone())"),
+            "a fill read again later is cloned: {emit}"
+        );
+    }
+
+    #[test]
+    fn discharged_vector_new_moves_a_fill_at_its_last_read() {
+        let emit = vector_new_of_local(true);
+        assert!(
+            emit.ends_with(", n)"),
+            "a fill at its last read moves in: {emit}"
+        );
+    }
+
+    /// `__lst_push(acc, s)` with `s` read again after the push (a
+    /// loop-carried value pushed on every step).
+    #[test]
+    fn list_builder_push_clones_an_item_read_again_later() {
+        let local = |name: &str, slot: u32, last_use: bool| {
+            span(MirExpr::Local(span(MirLocal {
+                slot: LocalId(slot),
+                last_use,
+                name: name.to_string(),
+            })))
+        };
+        let push = |last_use: bool| {
+            let call = MirCall {
+                callee: MirCallee::Intrinsic(BuiltinIntrinsic::LstPush),
+                args: vec![local("acc", 0, true), local("s", 1, last_use)],
+            };
+            emit_mir_expr(&span(MirExpr::Call(span(call))), &empty_ctx()).expect("__lst_push emits")
+        };
+        assert_eq!(push(false), "aver_rt::list_builder_push(acc, s.clone())");
+        assert_eq!(push(true), "aver_rt::list_builder_push(acc, s)");
     }
 
     #[test]

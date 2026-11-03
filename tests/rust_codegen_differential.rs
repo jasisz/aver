@@ -921,6 +921,32 @@ fn rust_list_builder_and_sum_fusion_compose() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A value a builtin takes owned is read again after the call: the fill of
+/// a `Vector.new` with a literal size (the `VectorNew` discharge), inside
+/// the closure `Vector.get` puts around it and on its own; a `Vector.set`
+/// value; a `withDefault` fallback; a list behind `Vector.fromList`; a
+/// `String.charAt` subject; a loop-carried value pushed into a built list
+/// and into built bytes.
+/// Each is cloned where it is read again and moved at its last read, so
+/// the generated crate builds (a moved value read again is a rustc error,
+/// which the VM never sees) and prints what the VM prints.
+#[test]
+fn rust_owned_builtin_arguments_read_again_are_cloned() {
+    let relative = "tests/fixtures/rust_owned_arg_read_again.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_owned_arg_read_again", &src);
+    let wrap = emitted
+        .split("pub fn wrap(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("wrap is emitted");
+    assert!(
+        wrap.contains("invalid discharged Vector.new size\"), n.clone())"),
+        "the fill read again in the arm is cloned into the vector:\n{wrap}"
+    );
+    assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A caller's variable put into a fused body is never captured by a binder
 /// of that body spelled the same way (`ir::deforest_calls` makes the
 /// binders fresh before the arguments go in, and puts every argument in
