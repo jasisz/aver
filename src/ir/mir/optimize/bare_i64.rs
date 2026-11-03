@@ -3776,7 +3776,10 @@ fn collect_fn_values(e: &MirExpr, out: &mut HashSet<String>) {
 /// already is one. None for a fn whose callers are unseen, or that is no
 /// loop.
 fn word_loop_params(f: &MirFn, summary: &Summary, program: &MirProgram) -> Vec<usize> {
-    if summary.pinned.contains(&f.fn_id) || !contains_self_tailcall(&f.body.node, f.fn_id) {
+    if summary.pinned.contains(&f.fn_id)
+        || !contains_self_tailcall(&f.body.node, f.fn_id)
+        || !self_tailcalls_are_loop_steps(&f.body.node, f.fn_id)
+    {
         return Vec::new();
     }
     let candidates: HashMap<LocalId, usize> = f
@@ -3805,6 +3808,42 @@ fn word_loop_params(f: &MirFn, summary: &Summary, program: &MirProgram) -> Vec<u
     let mut words: Vec<usize> = used.into_iter().collect();
     words.sort_unstable();
     words
+}
+
+/// Does every self-tail call of `body` sit where the Rust backend makes it
+/// a step of the loop: at the end of the body's leading `let` chain, or in
+/// an arm of a match or a branch of an `if` reached through such matches
+/// and `if`s alone? One anywhere else (under a `let` inside an arm, say) is
+/// emitted as a call of the fn, which takes its params as the signature
+/// has them, not as the loop holds them.
+fn self_tailcalls_are_loop_steps(body: &MirExpr, self_fn: FnId) -> bool {
+    fn step(e: &MirExpr, self_fn: FnId) -> bool {
+        match e {
+            MirExpr::TailCall(tc) if tc.node.target == self_fn => tc
+                .node
+                .args
+                .iter()
+                .all(|a| !contains_self_tailcall(&a.node, self_fn)),
+            MirExpr::Match(m) => {
+                !contains_self_tailcall(&m.node.subject.node, self_fn)
+                    && m.node.arms.iter().all(|arm| step(&arm.body.node, self_fn))
+            }
+            MirExpr::IfThenElse(ite) => {
+                !contains_self_tailcall(&ite.node.cond.node, self_fn)
+                    && step(&ite.node.then_branch.node, self_fn)
+                    && step(&ite.node.else_branch.node, self_fn)
+            }
+            other => !contains_self_tailcall(other, self_fn),
+        }
+    }
+    let mut e = body;
+    while let MirExpr::Let(l) = e {
+        if contains_self_tailcall(&l.node.value.node, self_fn) {
+            return false;
+        }
+        e = &l.node.body.node;
+    }
+    step(e, self_fn)
 }
 
 /// The candidates (by slot) `e` reads where a word pays: a side of an `Int`

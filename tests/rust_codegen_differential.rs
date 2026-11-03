@@ -727,8 +727,28 @@ fn thin_fields_taken_and_elements_lent_match_vm() {
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
     }
-    assert_eq!(emitted.matches("try_take").count(), 1, "{emitted}");
+    // `run` steps `n` on a machine word, so its ordinary loop is a cold copy
+    // beside it, with the same match; the take is counted in the loop itself.
+    assert_eq!(
+        without_cold_copies(&emitted).matches("try_take").count(),
+        1,
+        "{emitted}"
+    );
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// `emitted` without the cold fns that hold the ordinary loop of a fn whose
+/// loop runs on machine words first (`codegen/rust/from_mir/word_loop.rs`).
+fn without_cold_copies(emitted: &str) -> String {
+    let mut rest = emitted;
+    let mut out = String::new();
+    while let Some(at) = rest.find("#[cold]\n#[inline(never)]\nfn ") {
+        out.push_str(&rest[..at]);
+        let end = rest[at..].find("\n}\n").map_or(rest.len(), |e| at + e + 3);
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A match on an owned local at its last use takes the fields out of the
