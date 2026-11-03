@@ -449,3 +449,113 @@ fn main() -> Unit
 "#;
     assert_backends_agree("control", src, "err\nok 25\nerr\nok 25\nreached the end");
 }
+
+/// The escape pass (`src/ir/escape.rs`) splices a one-parameter body into its
+/// caller when the argument is a fresh record (`parseReq(Req(...))`) or a
+/// fresh variant the body matches on (`parseInput(Input.Digits(...))`). A `?`
+/// in that body then sits in the CALLER, and returns from it: the `Err` each
+/// call was supposed to produce ended `main` instead (`main returned error`,
+/// exit 1). Bodies with a `?` are not spliced.
+#[test]
+fn try_in_a_body_the_escape_pass_would_splice_returns_from_that_body() {
+    let src = r#"module TryInInlinedBody
+    intent = "a `?` in a body the escape pass would splice returns from that body"
+    depends []
+    effects [Console]
+
+record Req
+    text: String
+
+type Input
+    Digits(String)
+    Blank
+
+fn parseReq(r: Req) -> Result<Int, String>
+    ? "Reads its record only through a field, so a fresh record argument is scalar-replaced."
+    Int.div(100, Int.fromString(r.text)?)
+
+fn parseInput(i: Input) -> Result<Int, String>
+    ? "Matches its parameter directly, so a fresh variant argument picks one arm."
+    match i
+        Input.Digits(s) -> Int.div(100, Int.fromString(s)?)
+        Input.Blank -> Result.Err("blank")
+
+fn describe(r: Result<Int, String>) -> String
+    ? "Renders a result without pinning the error text."
+    match r
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(_) -> "err"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(describe(parseReq(Req(text = "abc"))))
+    Console.print(describe(parseReq(Req(text = "4"))))
+    Console.print(describe(parseInput(Input.Digits("abc"))))
+    Console.print(describe(parseInput(Input.Digits("4"))))
+    Console.print("reached the end")
+"#;
+    assert_backends_agree(
+        "escape_splice",
+        src,
+        "err\nok 25\nerr\nok 25\nreached the end",
+    );
+}
+
+/// The same splice inside a verify case. Each case is compiled as a call in a
+/// helper, so a spliced `?` returned from the HELPER and the runner reported
+/// the expected `Err` as `verify-unexpected-err: error propagated from ?`.
+/// The `?` here also sits mid-expression (`ensure(...)?.st`) on a callee that
+/// itself propagates with `?` — the shape Pestka's `typeIsSort` hit.
+#[test]
+fn verify_case_expecting_err_through_a_spliced_body_passes() {
+    let src = r#"module TryInVerifiedBody
+    intent = "a verify case that expects the Err a `?` propagates"
+
+type Fail
+    Reject(String)
+    Decline(String)
+
+record RE
+    e: Int
+    st: Int
+
+fn sortAfter(t: RE) -> Result<RE, Fail>
+    ? "Err unless e is zero."
+    match t.e == 0
+        true -> Result.Ok(t)
+        false -> Result.Err(Fail.Reject("type expected"))
+
+fn ensure(st: Int, e: Int) -> Result<RE, Fail>
+    ? "Wraps sortAfter."
+    r = sortAfter(RE(e = e, st = st))?
+    Result.Ok(r)
+
+fn outer(t: RE) -> Result<Int, Fail>
+    ? "Propagates through a field."
+    Result.Ok(ensure(t.st, t.e)?.st)
+
+verify outer
+    outer(RE(e = 0, st = 3)) => Result.Ok(3)
+    outer(RE(e = 1, st = 3)) => Result.Err(Fail.Reject("type expected"))
+"#;
+    let path = temp_module("verify_splice", src);
+    let module_root = path.parent().expect("temp module has parent").to_path_buf();
+    let out = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&module_root)
+        .arg("verify")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(&module_root)
+        .output()
+        .expect("expected `aver verify` to execute");
+    let rendered = format_output(&out);
+    let _ = fs::remove_dir_all(&module_root);
+    assert!(
+        out.status.success(),
+        "a case expecting the propagated Err must pass:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("2/2 cases passed"),
+        "both cases must pass:\n{rendered}"
+    );
+}

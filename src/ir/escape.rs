@@ -161,6 +161,14 @@ fn classify_fn(fd: &FnDef) -> Option<InlineCandidate> {
     if contains_tail_call(&body.node) {
         return None;
     }
+    // A `?` returns from the function whose body it is written in. Spliced
+    // into a caller, the same `?` returns from the CALLER: an `Err` the
+    // call was supposed to produce as its value instead ends the caller
+    // (in a verify case, the case helper — `verify-unexpected-err`; in
+    // `main`, the whole run). Such a body stays a call.
+    if contains_error_prop(&body.node) {
+        return None;
+    }
     // The splice copies the body into the CALLER's frame, where only the
     // substituted parameter (and, for shape B, the top-level arm
     // binders) are accounted for. A `match` whose pattern binds a name
@@ -362,6 +370,16 @@ fn contains_tail_call(expr: &Expr) -> bool {
     let mut found = false;
     walk_expr_with_context(expr, false, &mut |e, _| {
         if matches!(e, Expr::TailCall(_)) {
+            found = true;
+        }
+    });
+    found
+}
+
+fn contains_error_prop(expr: &Expr) -> bool {
+    let mut found = false;
+    walk_expr_with_context(expr, false, &mut |e, _| {
+        if matches!(e, Expr::ErrorProp(_)) {
             found = true;
         }
     });
@@ -943,6 +961,51 @@ mod tests {
             args: vec![attr(resolved("p", 0), "x")],
         })));
         let fd = fn_def_p("loopy", "Point", "Float", body);
+        assert!(classify_fn(&fd).is_none());
+    }
+
+    #[test]
+    fn classify_disqualifies_with_error_prop() {
+        // fn field(p: Req) -> Result<Int, String> = Result.Ok(ensure(p.x)?.st)
+        // The `?` returns from `field`; spliced into a caller it would
+        // return from the caller instead.
+        let try_call = sp(Expr::ErrorProp(crate::ast::Shared::new(fn_call(
+            ident("ensure"),
+            vec![attr(resolved("p", 0), "x")],
+        ))));
+        let body = fn_call(ident("Result.Ok"), vec![attr(try_call, "st")]);
+        let fd = fn_def_p("field", "Req", "Result<Int, String>", body);
+        assert!(classify_fn(&fd).is_none());
+    }
+
+    #[test]
+    fn classify_variant_match_disqualifies_error_prop_in_arm() {
+        // fn unwrap(p: Option<Int>) -> Result<Int, String> =
+        //   match p { Option.Some(v) -> check(v)? ; Option.None -> 0 }
+        let try_call = sp(Expr::ErrorProp(crate::ast::Shared::new(fn_call(
+            ident("check"),
+            vec![resolved("v", 1)],
+        ))));
+        let arms = vec![
+            arm_with_slots(
+                Pattern::Constructor("Option.Some".to_string(), vec!["v".to_string()]),
+                try_call,
+                &[1],
+            ),
+            arm_with_slots(
+                Pattern::Constructor("Option.None".to_string(), vec![]),
+                lit_int(0),
+                &[],
+            ),
+        ];
+        let body = match_expr(resolved("p", 0), arms);
+        let fd = fn_def_p_with_extra(
+            "unwrap",
+            "Option<Int>",
+            "Result<Int, String>",
+            body,
+            &[("v", 1)],
+        );
         assert!(classify_fn(&fd).is_none());
     }
 
