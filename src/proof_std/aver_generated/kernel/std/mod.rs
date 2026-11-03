@@ -1536,19 +1536,20 @@ pub fn holeBelow(
         let __t = t;
         match __t.view() {
             crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
-                let f = __f_fields.0.clone();
-                let xs = &__f_fields.1;
+                let f = __f_fields.1.clone();
+                let xs = &__f_fields.0;
                 {
                     let __arg16 @ _ =
                         crate::proof_std::aver_generated::kernel::std::holeInList(xs, target);
                     {
                         let __arg17 @ _ =
-                            crate::proof_std::aver_generated::kernel::term::Term::TCall(
+                            crate::proof_std::aver_generated::kernel::term::Term::TCall({
+                                let __field0 = f;
+                                let __field1 = aver_rt::AverList::empty();
                                 crate::proof_std::aver_generated::kernel::term::Term__TCall(
-                                    f,
-                                    aver_rt::AverList::empty(),
-                                ),
-                            );
+                                    __field1, __field0,
+                                )
+                            });
                         crate::proof_std::aver_generated::kernel::std::mapSome(
                             (&__arg16).as_ref(),
                             &__arg17,
@@ -1557,18 +1558,20 @@ pub fn holeBelow(
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
-                let f = __f_fields.0.clone();
-                let xs = &__f_fields.1;
+                let f = __f_fields.1.clone();
+                let xs = &__f_fields.0;
                 {
                     let __arg18 @ _ =
                         crate::proof_std::aver_generated::kernel::std::holeInList(xs, target);
                     {
-                        let __arg19 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TBi(
-                            crate::proof_std::aver_generated::kernel::term::Term__TBi(
-                                f,
-                                aver_rt::AverList::empty(),
-                            ),
-                        );
+                        let __arg19 @ _ =
+                            crate::proof_std::aver_generated::kernel::term::Term::TBi({
+                                let __field0 = f;
+                                let __field1 = aver_rt::AverList::empty();
+                                crate::proof_std::aver_generated::kernel::term::Term__TBi(
+                                    __field1, __field0,
+                                )
+                            });
                         crate::proof_std::aver_generated::kernel::std::mapSome(
                             (&__arg18).as_ref(),
                             &__arg19,
@@ -1577,19 +1580,20 @@ pub fn holeBelow(
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
-                let c = __c_fields.0.clone();
-                let xs = &__c_fields.1;
+                let c = __c_fields.1.clone();
+                let xs = &__c_fields.0;
                 {
                     let __arg20 @ _ =
                         crate::proof_std::aver_generated::kernel::std::holeInList(xs, target);
                     {
                         let __arg21 @ _ =
-                            crate::proof_std::aver_generated::kernel::term::Term::TCtor(
+                            crate::proof_std::aver_generated::kernel::term::Term::TCtor({
+                                let __field0 = c;
+                                let __field1 = aver_rt::AverList::empty();
                                 crate::proof_std::aver_generated::kernel::term::Term__TCtor(
-                                    c,
-                                    aver_rt::AverList::empty(),
-                                ),
-                            );
+                                    __field1, __field0,
+                                )
+                            });
                         crate::proof_std::aver_generated::kernel::std::mapSome(
                             (&__arg20).as_ref(),
                             &__arg21,
@@ -1686,21 +1690,37 @@ pub fn mapSome(
             let __t = shape;
             match __t.view() {
                 crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
-                    let f = __f_fields.0.clone();
+                    let f = __f_fields.1.clone();
                     Some(crate::proof_std::aver_generated::kernel::term::Term::TCall(
-                        crate::proof_std::aver_generated::kernel::term::Term__TCall(f, ys.clone()),
+                        {
+                            let __field0 = f;
+                            let __field1 = ys.clone();
+                            crate::proof_std::aver_generated::kernel::term::Term__TCall(
+                                __field1, __field0,
+                            )
+                        },
                     ))
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TBi(__f_fields) => {
-                    let f = __f_fields.0.clone();
-                    Some(crate::proof_std::aver_generated::kernel::term::Term::TBi(
-                        crate::proof_std::aver_generated::kernel::term::Term__TBi(f, ys.clone()),
-                    ))
+                    let f = __f_fields.1.clone();
+                    Some(crate::proof_std::aver_generated::kernel::term::Term::TBi({
+                        let __field0 = f;
+                        let __field1 = ys.clone();
+                        crate::proof_std::aver_generated::kernel::term::Term__TBi(
+                            __field1, __field0,
+                        )
+                    }))
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
-                    let c = __c_fields.0.clone();
+                    let c = __c_fields.1.clone();
                     Some(crate::proof_std::aver_generated::kernel::term::Term::TCtor(
-                        crate::proof_std::aver_generated::kernel::term::Term__TCtor(c, ys.clone()),
+                        {
+                            let __field0 = c;
+                            let __field1 = ys.clone();
+                            crate::proof_std::aver_generated::kernel::term::Term__TCtor(
+                                __field1, __field0,
+                            )
+                        },
                     ))
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TTuple(_) => Some(
@@ -2171,8 +2191,8 @@ pub fn valueText(x @ _: &crate::proof_std::aver_generated::kernel::term::Term) -
                 })
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__c_fields) => {
-                let c = __c_fields.0.clone();
-                let __pat0 = &__c_fields.1;
+                let c = __c_fields.1.clone();
+                let __pat0 = &__c_fields.0;
                 {
                     let __list_subject = __pat0;
                     if __list_subject.is_empty() {

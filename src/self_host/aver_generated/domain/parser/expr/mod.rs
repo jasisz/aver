@@ -240,19 +240,20 @@ fn __mutual_tco_trampoline_3(
                     }
                     crate::aver_generated::domain::token::Token::TkRBrace => {
                         return Ok((
-                            crate::aver_generated::domain::ast::Expr::ExprCall(
-                                crate::aver_generated::domain::ast::Expr__ExprCall(
-                                    ::aver_rt::str_lit!("Map.fromList"),
-                                    aver_rt::AverList::prepend_owned(
-                                        crate::aver_generated::domain::ast::Expr::ExprList(
-                                            crate::aver_generated::domain::ast::Expr__ExprList(
-                                                (acc).reverse_owned(),
-                                            ),
+                            crate::aver_generated::domain::ast::Expr::ExprCall({
+                                let __field0 = ::aver_rt::str_lit!("Map.fromList");
+                                let __field1 = aver_rt::AverList::prepend_owned(
+                                    crate::aver_generated::domain::ast::Expr::ExprList(
+                                        crate::aver_generated::domain::ast::Expr__ExprList(
+                                            (acc).reverse_owned(),
                                         ),
-                                        aver_rt::AverList::empty(),
                                     ),
-                                ),
-                            ),
+                                    aver_rt::AverList::empty(),
+                                );
+                                crate::aver_generated::domain::ast::Expr__ExprCall(
+                                    __field1, __field0,
+                                )
+                            }),
                             pos2.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
@@ -909,12 +910,13 @@ fn __mutual_tco_trampoline_9(
                     }
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
-                            crate::aver_generated::domain::ast::Expr::ExprCall(
+                            crate::aver_generated::domain::ast::Expr::ExprCall({
+                                let __field0 = name;
+                                let __field1 = (args).reverse_owned();
                                 crate::aver_generated::domain::ast::Expr__ExprCall(
-                                    name,
-                                    (args).reverse_owned(),
-                                ),
-                            ),
+                                    __field1, __field0,
+                                )
+                            }),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
@@ -926,12 +928,13 @@ fn __mutual_tco_trampoline_9(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
-                            crate::aver_generated::domain::ast::Expr::ExprCall(
+                            crate::aver_generated::domain::ast::Expr::ExprCall({
+                                let __field0 = name;
+                                let __field1 = (args).reverse_owned();
                                 crate::aver_generated::domain::ast::Expr__ExprCall(
-                                    name,
-                                    (args).reverse_owned(),
-                                ),
-                            ),
+                                    __field1, __field0,
+                                )
+                            }),
                             pos.add(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
@@ -1059,11 +1062,11 @@ fn __mutual_tco_trampoline_10(
                             field,
                         )
                     }
-                    crate::aver_generated::domain::token::Token::TkRParen => return Ok((
-                        crate::aver_generated::domain::ast::Expr::ExprCall(
-                            crate::aver_generated::domain::ast::Expr__ExprCall(
-                                name,
-                                aver_rt::AverList::concat(
+                    crate::aver_generated::domain::token::Token::TkRParen => {
+                        return Ok((
+                            crate::aver_generated::domain::ast::Expr::ExprCall({
+                                let __field0 = name;
+                                let __field1 = aver_rt::AverList::concat(
                                     &positionalArgs.reverse(),
                                     &aver_rt::AverList::prepend_owned(
                                         crate::aver_generated::domain::ast::Expr::ExprRecord(
@@ -1074,11 +1077,14 @@ fn __mutual_tco_trampoline_10(
                                         ),
                                         aver_rt::AverList::empty(),
                                     ),
-                                ),
-                            ),
-                        ),
-                        pos.add(&aver_rt::AverInt::from_i64(1)),
-                    )),
+                                );
+                                crate::aver_generated::domain::ast::Expr__ExprCall(
+                                    __field1, __field0,
+                                )
+                            }),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                        ));
+                    }
                     _ => {
                         return Err(::aver_rt::str_lit!(
                             "Expected field name or ')' in named arguments"
@@ -1117,11 +1123,11 @@ fn __mutual_tco_trampoline_10(
                         );
                         __MutualTco10::ParseNamedArgs(__arg6, name, namedAcc)
                     }
-                    crate::aver_generated::domain::token::Token::TkRParen => return Ok((
-                        crate::aver_generated::domain::ast::Expr::ExprCall(
-                            crate::aver_generated::domain::ast::Expr__ExprCall(
-                                name,
-                                aver_rt::AverList::concat(
+                    crate::aver_generated::domain::token::Token::TkRParen => {
+                        return Ok((
+                            crate::aver_generated::domain::ast::Expr::ExprCall({
+                                let __field0 = name;
+                                let __field1 = aver_rt::AverList::concat(
                                     &positionalArgs.reverse(),
                                     &aver_rt::AverList::prepend_owned(
                                         crate::aver_generated::domain::ast::Expr::ExprRecord(
@@ -1132,11 +1138,14 @@ fn __mutual_tco_trampoline_10(
                                         ),
                                         aver_rt::AverList::empty(),
                                     ),
-                                ),
-                            ),
-                        ),
-                        pos.add(&aver_rt::AverInt::from_i64(1)),
-                    )),
+                                );
+                                crate::aver_generated::domain::ast::Expr__ExprCall(
+                                    __field1, __field0,
+                                )
+                            }),
+                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                        ));
+                    }
                     _ => {
                         return Err(::aver_rt::str_lit!(
                             "Expected ',' or ')' in named arguments"
@@ -1754,19 +1763,18 @@ pub fn parseMapLiteral(
     let pos2 @ _ = crate::aver_generated::domain::parser::expr::skipNl(tokens, pos);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos2.clone()) {
         crate::aver_generated::domain::token::Token::TkRBrace => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprCall(
-                crate::aver_generated::domain::ast::Expr__ExprCall(
-                    ::aver_rt::str_lit!("Map.fromList"),
-                    aver_rt::AverList::prepend_owned(
-                        crate::aver_generated::domain::ast::Expr::ExprList(
-                            crate::aver_generated::domain::ast::Expr__ExprList(
-                                aver_rt::AverList::empty(),
-                            ),
+            crate::aver_generated::domain::ast::Expr::ExprCall({
+                let __field0 = ::aver_rt::str_lit!("Map.fromList");
+                let __field1 = aver_rt::AverList::prepend_owned(
+                    crate::aver_generated::domain::ast::Expr::ExprList(
+                        crate::aver_generated::domain::ast::Expr__ExprList(
+                            aver_rt::AverList::empty(),
                         ),
-                        aver_rt::AverList::empty(),
                     ),
-                ),
-            ),
+                    aver_rt::AverList::empty(),
+                );
+                crate::aver_generated::domain::ast::Expr__ExprCall(__field1, __field0)
+            }),
             pos2.add(&aver_rt::AverInt::from_i64(1)),
         )),
         _ => {
@@ -2121,12 +2129,11 @@ pub fn parseCallOrRecord(
     let pos2 @ _ = crate::aver_generated::domain::parser::expr::skipNl(tokens, pos);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos2.clone()) {
         crate::aver_generated::domain::token::Token::TkRParen => Ok((
-            crate::aver_generated::domain::ast::Expr::ExprCall(
-                crate::aver_generated::domain::ast::Expr__ExprCall(
-                    name,
-                    aver_rt::AverList::empty(),
-                ),
-            ),
+            crate::aver_generated::domain::ast::Expr::ExprCall({
+                let __field0 = name;
+                let __field1 = aver_rt::AverList::empty();
+                crate::aver_generated::domain::ast::Expr__ExprCall(__field1, __field0)
+            }),
             pos2.add(&aver_rt::AverInt::from_i64(1)),
         )),
         crate::aver_generated::domain::token::Token::TkIdent(first) => {

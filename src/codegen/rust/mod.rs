@@ -8,6 +8,7 @@ pub(crate) mod composition;
 mod counted_records;
 pub mod emit_ctx;
 mod expr;
+mod field_layout;
 mod forced_inline;
 mod from_mir;
 mod knowing;
@@ -226,6 +227,7 @@ fn transpile_project(
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
         ctx.rust_forced_inline = forced_inline::compute(ctx);
         ctx.rust_knowing = knowing::compute(ctx);
+        ctx.rust_field_layout = field_layout::compute(ctx);
         speculation::choose_wrapped(ctx);
     }
     let has_embedded_policy = ctx.policy.is_some();
@@ -1983,6 +1985,9 @@ fn left(t: T) -> T
     /// `==` compares the fields that answer at once (scalars, strings,
     /// field-less sums) before a subtree or a list, whatever order they are
     /// declared in, and is derived where the declared order already is that.
+    /// The struct of a thin constructor keeps the scalars `==` decides by
+    /// their bytes first, in one block (see `field_layout`), built and
+    /// printed in declared order.
     #[test]
     fn large_constructor_boxed_and_cheap_fields_compared_first() {
         let mut ctx = ctx_from_source(
@@ -2035,15 +2040,18 @@ fn width(s: Shape) -> Int
 
         for expected in [
             "        0 Dot(Shape__Dot),\n        1 Label(Shape__Label),\n        2 Blank,",
-            "Shape::Label(Shape__Label(",
-            "Shape__view::Label(__w_fields) => {",
+            "#[derive(Clone, Eq, Hash)]\n#[repr(C)]\npub struct Shape__Label(pub aver_rt::AverInt, pub aver_rt::AverInt, pub aver_rt::AverInt, pub AverStr, pub AverStr, pub AverStr);",
+            "std::ptr::eq(self, other) || ((aver_rt::AverInt::same_word(&self.0, &other.0) & aver_rt::AverInt::same_word(&self.1, &other.1) & aver_rt::AverInt::same_word(&self.2, &other.2)) || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2)) && self.3 == other.3 && self.4 == other.4 && self.5 == other.5",
+            "f.debug_tuple(\"Shape__Label\").field(&self.3).field(&self.4).field(&self.5).field(&self.0).field(&self.1).field(&self.2).finish()",
+            "Shape::Label({ let __field0 = ::aver_rt::str_lit!(\"a\"); let __field1 = ::aver_rt::str_lit!(\"b\"); let __field2 = ::aver_rt::str_lit!(\"c\"); let __field3 = n.clone(); let __field4 = n.clone(); let __field5 = n; Shape__Label(__field3, __field4, __field5, __field0, __field1, __field2) })",
+            "Shape__view::Label(__w_fields) => {\n            let w = __w_fields.0.clone();",
             "    One(aver_rt::AverInt),\n    Two(aver_rt::AverInt, aver_rt::AverInt),",
-            "#[derive(Clone, Debug, Eq, Hash)]\n#[repr(C)]\npub struct Tree__Node(pub Tree, pub Tree, pub aver_rt::AverInt);",
-            "impl PartialEq for Tree__Node {\n    fn eq(&self, other: &Self) -> bool {\n        std::ptr::eq(self, other) || self.2 == other.2 && self.0 == other.0 && self.1 == other.1\n    }\n}",
+            "#[derive(Clone, Eq, Hash)]\n#[repr(C)]\npub struct Tree__Node(pub aver_rt::AverInt, pub Tree, pub Tree);",
+            "impl PartialEq for Tree__Node {\n    fn eq(&self, other: &Self) -> bool {\n        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1 && self.2 == other.2\n    }\n}",
             "Tree::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)",
             "Some(Tree__pair::Node(a0, b0)) => walk.node(self, other, false, |walk| a0.walk_eq(b0, walk)),",
             "Some(Tree__pair::Leaf(a0, b0)) => a0 == b0,",
-            "impl aver_rt::WalkEq for Tree__Node {\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {\n        self.2 == other.2 && self.0.walk_eq(&other.0, walk) && self.1.walk_eq(&other.1, walk)\n    }\n}",
+            "impl aver_rt::WalkEq for Tree__Node {\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {\n        self.0 == other.0 && self.1.walk_eq(&other.1, walk) && self.2.walk_eq(&other.2, walk)\n    }\n}",
             "(Cell::Cell(a0, a1, a2), Cell::Cell(b0, b1, b2)) => a1 == b1 && a2 == b2 && a0 == b0,",
             "(Cell::Empty, Cell::Empty) => true,",
             "self.weight == other.weight && self.parts == other.parts",
@@ -2054,6 +2062,102 @@ fn width(s: Shape) -> Int
         assert!(
             !entry.contains("impl PartialEq for Point"),
             "an equality already in cheap-first order is not hand-written:\n{entry}"
+        );
+    }
+
+    /// The struct of a thin constructor keeps a field read in one role in
+    /// several constructors at one position in each, whatever position it
+    /// is declared at (see `field_layout`): the word every reader of
+    /// `wordOf` takes, declared last in three constructors and first in one,
+    /// is first in all; the body `bodyOf` takes from `Lam`, `Pi` and `Let`
+    /// is at one position in each, and in `size`, whose arms over `App`
+    /// and `Lam` are alike, their fields pair the same way. A constructor
+    /// is built with its arguments evaluated in declared order and bound
+    /// first; a match reads the fields where they sit; `==`, ordering,
+    /// printing and hashing go by the declared order.
+    #[test]
+    fn thin_fields_read_in_one_role_share_a_position() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Expr
+    Leaf(Int)
+    App(Expr, Expr, Int)
+    Lam(Expr, Expr, Int)
+    Pi(Int, Expr, Expr)
+    Let(Expr, Expr, Expr, Int)
+
+fn wordOf(e: Expr) -> Int
+    match e
+        Expr.App(_, _, w) -> w
+        Expr.Lam(_, _, w) -> w
+        Expr.Pi(w, _, _) -> w
+        Expr.Let(_, _, _, w) -> w
+        Expr.Leaf(n) -> n
+
+fn bodyOf(e: Expr) -> Expr
+    match e
+        Expr.Lam(_, b, _) -> b
+        Expr.Pi(_, _, b) -> b
+        Expr.Let(_, _, b, _) -> b
+        _ -> e
+
+fn size(e: Expr) -> Int
+    match e
+        Expr.App(f, a, _) -> 1 + size(f) + size(a)
+        Expr.Lam(t, b, _) -> 1 + size(t) + size(b)
+        Expr.Pi(_, t, b) -> 1 + size(t) + size(b)
+        Expr.Let(t, v, b, _) -> 1 + size(t) + size(v) + size(b)
+        Expr.Leaf(_) -> 1
+
+fn build(n: Int) -> Expr
+    Expr.App(Expr.Leaf(n), Expr.Lam(Expr.Leaf(1), Expr.Pi(n, Expr.Leaf(2), Expr.Leaf(3)), n), n)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        for expected in [
+            "pub struct Expr__App(pub aver_rt::AverInt, pub Expr, pub Expr);",
+            "pub struct Expr__Lam(pub aver_rt::AverInt, pub Expr, pub Expr);",
+            "pub struct Expr__Pi(pub aver_rt::AverInt, pub Expr, pub Expr);",
+            "pub struct Expr__Let(pub aver_rt::AverInt, pub Expr, pub Expr, pub Expr);",
+            // `Lam(t, b, w)` sits as `(w, b, t)`, `Pi(w, t, b)` as `(w, b, t)`,
+            // `Let(t, v, b, w)` as `(w, b, t, v)`: the arguments are bound
+            // in declared order and placed where the fields sit.
+            "Expr::Lam({ let __field0 = Expr::Leaf(Expr__Leaf(aver_rt::AverInt::from_i64(1))); let __field1 = Expr::Pi({ let __field0 = n.clone(); let __field1 = Expr::Leaf(Expr__Leaf(aver_rt::AverInt::from_i64(2))); let __field2 = Expr::Leaf(Expr__Leaf(aver_rt::AverInt::from_i64(3))); Expr__Pi(__field0, __field2, __field1) }); let __field2 = n.clone(); Expr__Lam(__field2, __field1, __field0) })",
+            "Expr__view::Let(__b_fields) => {\n            let b = &__b_fields.1;",
+            "Expr__view::Lam(__w_fields) => {\n            let w = __w_fields.0.clone();",
+            "Expr__view::Let(__w_fields) => {\n            let w = __w_fields.0.clone();",
+            "Expr__view::App(__f_fields) => {\n            let f = &__f_fields.2;\n            let a = &__f_fields.1;",
+            "Expr__view::Let(__t_fields) => {\n            let t = &__t_fields.2;\n            let v = &__t_fields.3;\n            let b = &__t_fields.1;",
+            "std::ptr::eq(self, other) || self.0 == other.0 && self.2 == other.2 && self.3 == other.3 && self.1 == other.1",
+            "self.0 == other.0 && self.2.walk_eq(&other.2, walk) && self.3.walk_eq(&other.3, walk) && self.1.walk_eq(&other.1, walk)",
+            "f.debug_tuple(\"Expr__Let\").field(&self.2).field(&self.3).field(&self.1).field(&self.0).finish()",
+            ".then_with(|| (&a.2).cmp((&b.2)))\n                .then_with(|| (&a.3).cmp((&b.3)))\n                .then_with(|| (&a.1).cmp((&b.1)))\n                .then_with(|| (&a.0).cmp((&b.0))),",
+            "Expr__view::Let(f) => format!(\"Let({})\", vec![(&f.2).aver_display_inner(), (&f.3).aver_display_inner(), (&f.1).aver_display_inner(), (&f.0).aver_display_inner()].join(\", \")),",
+            "let left = aver_rt::WalkHash::stream(&f.2, state, left); let left = aver_rt::WalkHash::stream(&f.3, state, left); let left = aver_rt::WalkHash::stream(&f.1, state, left); std::hash::Hash::hash(&f.0, state); left }",
+        ] {
+            assert!(entry.contains(expected), "missing `{expected}`:\n{entry}");
+        }
+        let positions = ctx
+            .rust_field_layout
+            .values()
+            .next()
+            .expect("Expr is laid out");
+        // Leaf: as declared; App (f, a, w) -> (w, a, f); Lam (t, b, w) -> (w, b, t); Pi (w, t, b) -> (w, b, t); Let (t, v, b, w) -> (w, b, t, v).
+        assert_eq!(
+            positions,
+            &vec![
+                None,
+                Some(vec![2, 1, 0]),
+                Some(vec![2, 1, 0]),
+                Some(vec![0, 2, 1]),
+                Some(vec![2, 3, 1, 0]),
+            ]
         );
     }
 

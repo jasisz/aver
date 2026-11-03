@@ -698,7 +698,7 @@ fn thin_fields_taken_and_elements_lent_match_vm() {
     let emitted = emitted_entry_module("rust_thin_take", &src);
     for shape in [
         "match { let __i = (pc).to_usize(); __i.and_then(|__i| (code).get(__i)) }",
-        "let (s2, extra, pc2,) = match __t.try_take::<Next__Go>() { Ok(__f) => (__f.0, __f.1, __f.2,), Err(__t) =>",
+        "let (s2, extra, pc2,) = match __t.try_take::<Next__Go>() { Ok(__f) => (__f.1, __f.2, __f.0,), Err(__t) =>",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
     }

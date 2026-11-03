@@ -866,9 +866,12 @@ fn collect_pattern_rebindings(
         }
         ResolvedPattern::Ctor(ctor, bindings) => {
             let fields = super::pattern::thin_fields_binder(ctor, bindings, ctx);
+            // Where the struct keeps each field (see `field_layout`).
+            let positions = super::field_layout::of_ctor(ctor, ctx);
             for (idx, b) in bindings.iter().enumerate().filter(|(_, b)| *b != "_") {
                 let borrowed = lent.contains(b);
                 let b = aver_name_to_rust(b);
+                let idx = super::field_layout::at(positions, idx);
                 match &fields {
                     Some(fields) if borrowed => lines.push(format!("let {b} = &{fields}.{idx};")),
                     Some(fields) => lines.push(format!("let {b} = {fields}.{idx}.clone();")),

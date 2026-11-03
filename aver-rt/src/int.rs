@@ -730,6 +730,16 @@ impl AverInt {
         AverInt(Repr::from_word(word))
     }
 
+    /// Whether two values are one word: one inline value, or one heap
+    /// integer. They are then equal; two heap integers of one value have two
+    /// words, which `==` reads behind. Generated `==` compares the words of
+    /// the scalar fields of a constructor first, one block of memory
+    /// against another.
+    #[inline(always)]
+    pub fn same_word(a: &Self, b: &Self) -> bool {
+        a.0.word() == b.0.word()
+    }
+
     /// `self` as `i64` if it fits, else `None`.
     #[inline]
     pub fn to_i64(&self) -> Option<i64> {

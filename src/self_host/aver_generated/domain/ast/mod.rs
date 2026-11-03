@@ -105,29 +105,105 @@ pub struct Expr__ExprSlot(pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Expr__ExprSlot {}
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 #[repr(C)]
-pub struct Expr__ExprBinopSlotInt(pub BinOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
+pub struct Expr__ExprBinopSlotInt(pub aver_rt::AverInt, pub aver_rt::AverInt, pub BinOp);
+
+impl PartialEq for Expr__ExprBinopSlotInt {
+    fn eq(&self, other: &Self) -> bool {
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
+            & aver_rt::AverInt::same_word(&self.1, &other.1)
+            & (self.2 == other.2))
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
+    }
+}
 
 impl aver_rt::thin::HandOver for Expr__ExprBinopSlotInt {}
 
-#[derive(Clone, Debug, PartialEq)]
+impl std::fmt::Debug for Expr__ExprBinopSlotInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Expr__ExprBinopSlotInt")
+            .field(&self.2)
+            .field(&self.0)
+            .field(&self.1)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 #[repr(C)]
-pub struct Expr__ExprBinopSlots(pub BinOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
+pub struct Expr__ExprBinopSlots(pub aver_rt::AverInt, pub aver_rt::AverInt, pub BinOp);
+
+impl PartialEq for Expr__ExprBinopSlots {
+    fn eq(&self, other: &Self) -> bool {
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
+            & aver_rt::AverInt::same_word(&self.1, &other.1)
+            & (self.2 == other.2))
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
+    }
+}
 
 impl aver_rt::thin::HandOver for Expr__ExprBinopSlots {}
 
-#[derive(Clone, Debug, PartialEq)]
+impl std::fmt::Debug for Expr__ExprBinopSlots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Expr__ExprBinopSlots")
+            .field(&self.2)
+            .field(&self.0)
+            .field(&self.1)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 #[repr(C)]
-pub struct Expr__ExprCmpSlotInt(pub CmpOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
+pub struct Expr__ExprCmpSlotInt(pub aver_rt::AverInt, pub aver_rt::AverInt, pub CmpOp);
+
+impl PartialEq for Expr__ExprCmpSlotInt {
+    fn eq(&self, other: &Self) -> bool {
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
+            & aver_rt::AverInt::same_word(&self.1, &other.1)
+            & (self.2 == other.2))
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
+    }
+}
 
 impl aver_rt::thin::HandOver for Expr__ExprCmpSlotInt {}
 
-#[derive(Clone, Debug, PartialEq)]
+impl std::fmt::Debug for Expr__ExprCmpSlotInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Expr__ExprCmpSlotInt")
+            .field(&self.2)
+            .field(&self.0)
+            .field(&self.1)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 #[repr(C)]
-pub struct Expr__ExprCmpSlots(pub CmpOp, pub aver_rt::AverInt, pub aver_rt::AverInt);
+pub struct Expr__ExprCmpSlots(pub aver_rt::AverInt, pub aver_rt::AverInt, pub CmpOp);
+
+impl PartialEq for Expr__ExprCmpSlots {
+    fn eq(&self, other: &Self) -> bool {
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
+            & aver_rt::AverInt::same_word(&self.1, &other.1)
+            & (self.2 == other.2))
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
+    }
+}
 
 impl aver_rt::thin::HandOver for Expr__ExprCmpSlots {}
+
+impl std::fmt::Debug for Expr__ExprCmpSlots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Expr__ExprCmpSlots")
+            .field(&self.2)
+            .field(&self.0)
+            .field(&self.1)
+            .finish()
+    }
+}
 
 #[derive(Clone, Debug)]
 #[repr(C)]
@@ -440,14 +516,20 @@ impl aver_rt::thin::HandOver for Expr__ExprFieldAccess {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 #[repr(C)]
-pub struct Expr__ExprCall(pub AverStr, pub aver_rt::AverList<Expr>);
+pub struct Expr__ExprCall(pub aver_rt::AverList<Expr>, pub AverStr);
+
+impl PartialEq for Expr__ExprCall {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Expr__ExprCall {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0 == other.0
-            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+        self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
                 (*x).walk_eq(&(*y), walk)
             })
     }
@@ -455,14 +537,29 @@ impl aver_rt::WalkEq for Expr__ExprCall {
 
 impl aver_rt::thin::HandOver for Expr__ExprCall {}
 
-#[derive(Clone, Debug, PartialEq)]
+impl std::fmt::Debug for Expr__ExprCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Expr__ExprCall")
+            .field(&self.1)
+            .field(&self.0)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 #[repr(C)]
-pub struct Expr__ExprCallDirect(pub aver_rt::AverInt, pub aver_rt::AverList<Expr>);
+pub struct Expr__ExprCallDirect(pub aver_rt::AverList<Expr>, pub aver_rt::AverInt);
+
+impl PartialEq for Expr__ExprCallDirect {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Expr__ExprCallDirect {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0 == other.0
-            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+        self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
                 (*x).walk_eq(&(*y), walk)
             })
     }
@@ -470,14 +567,29 @@ impl aver_rt::WalkEq for Expr__ExprCallDirect {
 
 impl aver_rt::thin::HandOver for Expr__ExprCallDirect {}
 
-#[derive(Clone, Debug, PartialEq)]
+impl std::fmt::Debug for Expr__ExprCallDirect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Expr__ExprCallDirect")
+            .field(&self.1)
+            .field(&self.0)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 #[repr(C)]
-pub struct Expr__ExprCallBuiltin(pub AverStr, pub aver_rt::AverList<Expr>);
+pub struct Expr__ExprCallBuiltin(pub aver_rt::AverList<Expr>, pub AverStr);
+
+impl PartialEq for Expr__ExprCallBuiltin {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Expr__ExprCallBuiltin {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0 == other.0
-            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+        self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
                 (*x).walk_eq(&(*y), walk)
             })
     }
@@ -485,20 +597,44 @@ impl aver_rt::WalkEq for Expr__ExprCallBuiltin {
 
 impl aver_rt::thin::HandOver for Expr__ExprCallBuiltin {}
 
-#[derive(Clone, Debug, PartialEq)]
+impl std::fmt::Debug for Expr__ExprCallBuiltin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Expr__ExprCallBuiltin")
+            .field(&self.1)
+            .field(&self.0)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 #[repr(C)]
-pub struct Expr__ExprCallBuiltinId(pub aver_rt::AverInt, pub aver_rt::AverList<Expr>);
+pub struct Expr__ExprCallBuiltinId(pub aver_rt::AverList<Expr>, pub aver_rt::AverInt);
+
+impl PartialEq for Expr__ExprCallBuiltinId {
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && self.0 == other.0
+    }
+}
 
 impl aver_rt::WalkEq for Expr__ExprCallBuiltinId {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
-        self.0 == other.0
-            && aver_rt::shared_items::eq_list(&self.1, &other.1, walk, |x, y, walk| {
+        self.1 == other.1
+            && aver_rt::shared_items::eq_list(&self.0, &other.0, walk, |x, y, walk| {
                 (*x).walk_eq(&(*y), walk)
             })
     }
 }
 
 impl aver_rt::thin::HandOver for Expr__ExprCallBuiltinId {}
+
+impl std::fmt::Debug for Expr__ExprCallBuiltinId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Expr__ExprCallBuiltinId")
+            .field(&self.1)
+            .field(&self.0)
+            .finish()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -680,36 +816,36 @@ impl aver_rt::AverDisplay for Expr {
             Expr__view::ExprBinopSlotInt(f) => format!(
                 "ExprBinopSlotInt({})",
                 vec![
+                    (&f.2).aver_display_inner(),
                     (&f.0).aver_display_inner(),
-                    (&f.1).aver_display_inner(),
-                    (&f.2).aver_display_inner()
+                    (&f.1).aver_display_inner()
                 ]
                 .join(", ")
             ),
             Expr__view::ExprBinopSlots(f) => format!(
                 "ExprBinopSlots({})",
                 vec![
+                    (&f.2).aver_display_inner(),
                     (&f.0).aver_display_inner(),
-                    (&f.1).aver_display_inner(),
-                    (&f.2).aver_display_inner()
+                    (&f.1).aver_display_inner()
                 ]
                 .join(", ")
             ),
             Expr__view::ExprCmpSlotInt(f) => format!(
                 "ExprCmpSlotInt({})",
                 vec![
+                    (&f.2).aver_display_inner(),
                     (&f.0).aver_display_inner(),
-                    (&f.1).aver_display_inner(),
-                    (&f.2).aver_display_inner()
+                    (&f.1).aver_display_inner()
                 ]
                 .join(", ")
             ),
             Expr__view::ExprCmpSlots(f) => format!(
                 "ExprCmpSlots({})",
                 vec![
+                    (&f.2).aver_display_inner(),
                     (&f.0).aver_display_inner(),
-                    (&f.1).aver_display_inner(),
-                    (&f.2).aver_display_inner()
+                    (&f.1).aver_display_inner()
                 ]
                 .join(", ")
             ),
@@ -785,19 +921,19 @@ impl aver_rt::AverDisplay for Expr {
             ),
             Expr__view::ExprCall(f) => format!(
                 "ExprCall({})",
-                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
+                vec![(&f.1).aver_display_inner(), (&f.0).aver_display_inner()].join(", ")
             ),
             Expr__view::ExprCallDirect(f) => format!(
                 "ExprCallDirect({})",
-                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
+                vec![(&f.1).aver_display_inner(), (&f.0).aver_display_inner()].join(", ")
             ),
             Expr__view::ExprCallBuiltin(f) => format!(
                 "ExprCallBuiltin({})",
-                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
+                vec![(&f.1).aver_display_inner(), (&f.0).aver_display_inner()].join(", ")
             ),
             Expr__view::ExprCallBuiltinId(f) => format!(
                 "ExprCallBuiltinId({})",
-                vec![(&f.0).aver_display_inner(), (&f.1).aver_display_inner()].join(", ")
+                vec![(&f.1).aver_display_inner(), (&f.0).aver_display_inner()].join(", ")
             ),
             Expr__view::ExprMatch(f) => format!(
                 "ExprMatch({})",
@@ -914,9 +1050,9 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
+                        ReplayValue::to_replay_json((&f.2)),
                         ReplayValue::to_replay_json((&f.0)),
                         ReplayValue::to_replay_json((&f.1)),
-                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -929,9 +1065,9 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
+                        ReplayValue::to_replay_json((&f.2)),
                         ReplayValue::to_replay_json((&f.0)),
                         ReplayValue::to_replay_json((&f.1)),
-                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -944,9 +1080,9 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
+                        ReplayValue::to_replay_json((&f.2)),
                         ReplayValue::to_replay_json((&f.0)),
                         ReplayValue::to_replay_json((&f.1)),
-                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -959,9 +1095,9 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
+                        ReplayValue::to_replay_json((&f.2)),
                         ReplayValue::to_replay_json((&f.0)),
                         ReplayValue::to_replay_json((&f.1)),
-                        ReplayValue::to_replay_json((&f.2)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -1216,8 +1352,8 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json((&f.0)),
                         ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.0)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -1230,8 +1366,8 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json((&f.0)),
                         ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.0)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -1244,8 +1380,8 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json((&f.0)),
                         ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.0)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -1258,8 +1394,8 @@ impl aver_replay::ReplayValue for Expr {
                 payload.insert(
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
-                        ReplayValue::to_replay_json((&f.0)),
                         ReplayValue::to_replay_json((&f.1)),
+                        ReplayValue::to_replay_json((&f.0)),
                     ]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
@@ -1390,74 +1526,77 @@ impl aver_replay::ReplayValue for Expr {
                         .ok_or_else(|| format!("$variant ExprSlot missing field #{}", 0))?,
                 )?,
             ))),
-            "ExprBinopSlotInt" => {
-                Ok(Expr::ExprBinopSlotInt(Expr__ExprBinopSlotInt(
+            "ExprBinopSlotInt" => Ok(Expr::ExprBinopSlotInt({
+                let __field0 =
                     <BinOp as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
                         format!("$variant ExprBinopSlotInt missing field #{}", 0)
-                    })?)?,
-                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                        fields.get(1).ok_or_else(|| {
-                            format!("$variant ExprBinopSlotInt missing field #{}", 1)
-                        })?,
-                    )?,
-                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                        fields.get(2).ok_or_else(|| {
-                            format!("$variant ExprBinopSlotInt missing field #{}", 2)
-                        })?,
-                    )?,
-                )))
-            }
-            "ExprBinopSlots" => Ok(Expr::ExprBinopSlots(Expr__ExprBinopSlots(
-                <BinOp as ReplayValue>::from_replay_json(
+                    })?)?;
+                let __field1 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(1)
+                        .ok_or_else(|| format!("$variant ExprBinopSlotInt missing field #{}", 1))?,
+                )?;
+                let __field2 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields
+                        .get(2)
+                        .ok_or_else(|| format!("$variant ExprBinopSlotInt missing field #{}", 2))?,
+                )?;
+                Expr__ExprBinopSlotInt(__field1, __field2, __field0)
+            })),
+            "ExprBinopSlots" => Ok(Expr::ExprBinopSlots({
+                let __field0 = <BinOp as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprBinopSlots missing field #{}", 0))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                )?;
+                let __field1 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprBinopSlots missing field #{}", 1))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                )?;
+                let __field2 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(2)
                         .ok_or_else(|| format!("$variant ExprBinopSlots missing field #{}", 2))?,
-                )?,
-            ))),
-            "ExprCmpSlotInt" => Ok(Expr::ExprCmpSlotInt(Expr__ExprCmpSlotInt(
-                <CmpOp as ReplayValue>::from_replay_json(
+                )?;
+                Expr__ExprBinopSlots(__field1, __field2, __field0)
+            })),
+            "ExprCmpSlotInt" => Ok(Expr::ExprCmpSlotInt({
+                let __field0 = <CmpOp as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprCmpSlotInt missing field #{}", 0))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                )?;
+                let __field1 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprCmpSlotInt missing field #{}", 1))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                )?;
+                let __field2 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(2)
                         .ok_or_else(|| format!("$variant ExprCmpSlotInt missing field #{}", 2))?,
-                )?,
-            ))),
-            "ExprCmpSlots" => Ok(Expr::ExprCmpSlots(Expr__ExprCmpSlots(
-                <CmpOp as ReplayValue>::from_replay_json(
+                )?;
+                Expr__ExprCmpSlotInt(__field1, __field2, __field0)
+            })),
+            "ExprCmpSlots" => Ok(Expr::ExprCmpSlots({
+                let __field0 = <CmpOp as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprCmpSlots missing field #{}", 0))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                )?;
+                let __field1 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprCmpSlots missing field #{}", 1))?,
-                )?,
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                )?;
+                let __field2 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(2)
                         .ok_or_else(|| format!("$variant ExprCmpSlots missing field #{}", 2))?,
-                )?,
-            ))),
+                )?;
+                Expr__ExprCmpSlots(__field1, __field2, __field0)
+            })),
             "ExprVectorGetOrInt" => {
                 Ok(Expr::ExprVectorGetOrInt(Expr__ExprVectorGetOrInt(
                     <Expr as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(|| {
@@ -1658,54 +1797,57 @@ impl aver_replay::ReplayValue for Expr {
                     )?)?,
                 )))
             }
-            "ExprCall" => Ok(Expr::ExprCall(Expr__ExprCall(
-                <AverStr as ReplayValue>::from_replay_json(
+            "ExprCall" => Ok(Expr::ExprCall({
+                let __field0 = <AverStr as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprCall missing field #{}", 0))?,
-                )?,
-                <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
+                )?;
+                let __field1 = <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprCall missing field #{}", 1))?,
-                )?,
-            ))),
-            "ExprCallDirect" => Ok(Expr::ExprCallDirect(Expr__ExprCallDirect(
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                )?;
+                Expr__ExprCall(__field1, __field0)
+            })),
+            "ExprCallDirect" => Ok(Expr::ExprCallDirect({
+                let __field0 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ExprCallDirect missing field #{}", 0))?,
-                )?,
-                <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
+                )?;
+                let __field1 = <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprCallDirect missing field #{}", 1))?,
-                )?,
-            ))),
-            "ExprCallBuiltin" => {
-                Ok(Expr::ExprCallBuiltin(Expr__ExprCallBuiltin(
+                )?;
+                Expr__ExprCallDirect(__field1, __field0)
+            })),
+            "ExprCallBuiltin" => Ok(Expr::ExprCallBuiltin({
+                let __field0 =
                     <AverStr as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(
                         || format!("$variant ExprCallBuiltin missing field #{}", 0),
-                    )?)?,
-                    <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
-                        fields.get(1).ok_or_else(|| {
-                            format!("$variant ExprCallBuiltin missing field #{}", 1)
-                        })?,
-                    )?,
-                )))
-            }
-            "ExprCallBuiltinId" => Ok(Expr::ExprCallBuiltinId(Expr__ExprCallBuiltinId(
-                <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    )?)?;
+                let __field1 = <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
+                    fields
+                        .get(1)
+                        .ok_or_else(|| format!("$variant ExprCallBuiltin missing field #{}", 1))?,
+                )?;
+                Expr__ExprCallBuiltin(__field1, __field0)
+            })),
+            "ExprCallBuiltinId" => Ok(Expr::ExprCallBuiltinId({
+                let __field0 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields.get(0).ok_or_else(|| {
                         format!("$variant ExprCallBuiltinId missing field #{}", 0)
                     })?,
-                )?,
-                <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
+                )?;
+                let __field1 = <aver_rt::AverList<Expr> as ReplayValue>::from_replay_json(
                     fields.get(1).ok_or_else(|| {
                         format!("$variant ExprCallBuiltinId missing field #{}", 1)
                     })?,
-                )?,
-            ))),
+                )?;
+                Expr__ExprCallBuiltinId(__field1, __field0)
+            })),
             "ExprMatch" => Ok(Expr::ExprMatch(Expr__ExprMatch(
                 <Expr as ReplayValue>::from_replay_json(
                     fields
@@ -2888,7 +3030,7 @@ pub struct FnFastPath__FastBoolSlotBranch(pub aver_rt::AverInt, pub FastLeaf, pu
 
 impl aver_rt::thin::HandOver for FnFastPath__FastBoolSlotBranch {}
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 #[repr(C)]
 pub struct FnFastPath__FastEqIntBranch(
     pub aver_rt::AverInt,
@@ -2896,6 +3038,16 @@ pub struct FnFastPath__FastEqIntBranch(
     pub FastLeaf,
     pub FastLeaf,
 );
+
+impl PartialEq for FnFastPath__FastEqIntBranch {
+    fn eq(&self, other: &Self) -> bool {
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
+            & aver_rt::AverInt::same_word(&self.1, &other.1))
+            || (self.0 == other.0 && self.1 == other.1))
+            && self.2 == other.2
+            && self.3 == other.3
+    }
+}
 
 impl aver_rt::thin::HandOver for FnFastPath__FastEqIntBranch {}
 
@@ -2910,7 +3062,7 @@ pub struct FnFastPath__FastEqStringBranch(
 
 impl aver_rt::thin::HandOver for FnFastPath__FastEqStringBranch {}
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 #[repr(C)]
 pub struct FnFastPath__FastLtIntSlotsBranch(
     pub aver_rt::AverInt,
@@ -2919,29 +3071,52 @@ pub struct FnFastPath__FastLtIntSlotsBranch(
     pub FastLeaf,
 );
 
+impl PartialEq for FnFastPath__FastLtIntSlotsBranch {
+    fn eq(&self, other: &Self) -> bool {
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
+            & aver_rt::AverInt::same_word(&self.1, &other.1))
+            || (self.0 == other.0 && self.1 == other.1))
+            && self.2 == other.2
+            && self.3 == other.3
+    }
+}
+
 impl aver_rt::thin::HandOver for FnFastPath__FastLtIntSlotsBranch {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[repr(C)]
 pub struct FnFastPath__FastListSlotBranch(
     pub aver_rt::AverInt,
+    pub aver_rt::AverInt,
+    pub aver_rt::AverInt,
     pub FastLeaf,
-    pub aver_rt::AverInt,
-    pub aver_rt::AverInt,
     pub FastLeaf,
 );
 
 impl PartialEq for FnFastPath__FastListSlotBranch {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-            && self.2 == other.2
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
+            & aver_rt::AverInt::same_word(&self.1, &other.1)
+            & aver_rt::AverInt::same_word(&self.2, &other.2))
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
             && self.3 == other.3
-            && self.1 == other.1
             && self.4 == other.4
     }
 }
 
 impl aver_rt::thin::HandOver for FnFastPath__FastListSlotBranch {}
+
+impl std::fmt::Debug for FnFastPath__FastListSlotBranch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("FnFastPath__FastListSlotBranch")
+            .field(&self.0)
+            .field(&self.3)
+            .field(&self.1)
+            .field(&self.2)
+            .field(&self.4)
+            .finish()
+    }
+}
 
 impl aver_rt::WalkEq for FnFastPath {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
@@ -3020,9 +3195,9 @@ impl aver_rt::AverDisplay for FnFastPath {
                 "FastListSlotBranch({})",
                 vec![
                     (&f.0).aver_display_inner(),
+                    (&f.3).aver_display_inner(),
                     (&f.1).aver_display_inner(),
                     (&f.2).aver_display_inner(),
-                    (&f.3).aver_display_inner(),
                     (&f.4).aver_display_inner()
                 ]
                 .join(", ")
@@ -3155,9 +3330,9 @@ impl aver_replay::ReplayValue for FnFastPath {
                     "fields".to_string(),
                     serde_json::Value::Array(vec![
                         ReplayValue::to_replay_json((&f.0)),
+                        ReplayValue::to_replay_json((&f.3)),
                         ReplayValue::to_replay_json((&f.1)),
                         ReplayValue::to_replay_json((&f.2)),
-                        ReplayValue::to_replay_json((&f.3)),
                         ReplayValue::to_replay_json((&f.4)),
                     ]),
                 );
@@ -3285,31 +3460,32 @@ impl aver_replay::ReplayValue for FnFastPath {
                     )?)?,
                 ),
             )),
-            "FastListSlotBranch" => Ok(FnFastPath::FastListSlotBranch(
-                FnFastPath__FastListSlotBranch(
-                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                        fields.get(0).ok_or_else(|| {
-                            format!("$variant FastListSlotBranch missing field #{}", 0)
-                        })?,
-                    )?,
+            "FastListSlotBranch" => Ok(FnFastPath::FastListSlotBranch({
+                let __field0 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields.get(0).ok_or_else(|| {
+                        format!("$variant FastListSlotBranch missing field #{}", 0)
+                    })?,
+                )?;
+                let __field1 =
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(1).ok_or_else(
                         || format!("$variant FastListSlotBranch missing field #{}", 1),
-                    )?)?,
-                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                        fields.get(2).ok_or_else(|| {
-                            format!("$variant FastListSlotBranch missing field #{}", 2)
-                        })?,
-                    )?,
-                    <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                        fields.get(3).ok_or_else(|| {
-                            format!("$variant FastListSlotBranch missing field #{}", 3)
-                        })?,
-                    )?,
+                    )?)?;
+                let __field2 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields.get(2).ok_or_else(|| {
+                        format!("$variant FastListSlotBranch missing field #{}", 2)
+                    })?,
+                )?;
+                let __field3 = <aver_rt::AverInt as ReplayValue>::from_replay_json(
+                    fields.get(3).ok_or_else(|| {
+                        format!("$variant FastListSlotBranch missing field #{}", 3)
+                    })?,
+                )?;
+                let __field4 =
                     <FastLeaf as ReplayValue>::from_replay_json(fields.get(4).ok_or_else(
                         || format!("$variant FastListSlotBranch missing field #{}", 4),
-                    )?)?,
-                ),
-            )),
+                    )?)?;
+                FnFastPath__FastListSlotBranch(__field0, __field2, __field3, __field1, __field4)
+            })),
             _ => Err(format!(
                 "unknown variant '{}' for Domain.Ast.FnFastPath",
                 variant_name
