@@ -664,7 +664,7 @@ pub fn isLiteralDivisorCall(
 ) -> bool {
     crate::cancel_checkpoint();
     if (((&**name == "Int.div") || (&**name == "Int.mod"))
-        && (aver_rt::AverInt::from_i64(args.len() as i64) == aver_rt::AverInt::from_i64(2)))
+        & (aver_rt::AverInt::from_i64(args.len() as i64) == aver_rt::AverInt::from_i64(2)))
     {
         crate::aver_generated::domain::resolver::calls::isNonzeroIntLiteralDivisor(args)
     } else {

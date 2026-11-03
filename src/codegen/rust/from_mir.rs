@@ -8960,6 +8960,52 @@ fn try_emit_mir_fusion(
     }
 }
 
+/// Whether `e` costs so little that evaluating it where Rust would skip it
+/// is cheaper than the branch that skips it: literals, locals, field reads,
+/// arithmetic and comparisons on `Int`, `Float` and `Bool` (no division, no
+/// structural `==` on anything else), a list's length (kept in its node),
+/// `let`s of such, and `Bool.and` / `Bool.or` / `Bool.not` of such, within
+/// `budget` nodes.
+fn cheap_bool_operand(e: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>, budget: &mut u32) -> bool {
+    use crate::ast::{BinOp, Type};
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    let scalar =
+        |x: &Spanned<MirExpr>| matches!(x.ty(), Some(Type::Int | Type::Float | Type::Bool));
+    match &e.node {
+        MirExpr::Literal(_) | MirExpr::Local(_) => true,
+        MirExpr::Let(l) => {
+            cheap_bool_operand(&l.node.value, ctx, budget)
+                && cheap_bool_operand(&l.node.body, ctx, budget)
+        }
+        MirExpr::Project(p) => cheap_bool_operand(&p.node.base, ctx, budget),
+        MirExpr::Neg(x) | MirExpr::Box(x) | MirExpr::Unbox(x) => cheap_bool_operand(x, ctx, budget),
+        MirExpr::BinOp(b) => {
+            !matches!(b.node.op, BinOp::Div)
+                && scalar(&b.node.lhs)
+                && scalar(&b.node.rhs)
+                && cheap_bool_operand(&b.node.lhs, ctx, budget)
+                && cheap_bool_operand(&b.node.rhs, ctx, budget)
+        }
+        MirExpr::Call(call) => {
+            let MirCallee::Builtin(id) = call.node.callee else {
+                return false;
+            };
+            matches!(
+                ctx.mir_builtins.get(id.0 as usize).map(String::as_str),
+                Some("Bool.and" | "Bool.or" | "Bool.not" | "List.len")
+            ) && call
+                .node
+                .args
+                .iter()
+                .all(|a| cheap_bool_operand(a, ctx, budget))
+        }
+        _ => false,
+    }
+}
+
 /// Emit a PURE builtin call from MIR, byte-identical to the HIR
 /// oracle's `emit_builtin_call` (minus the effectful / replay / policy
 /// branches, which never reach here). Returns `None` for any builtin
@@ -9564,8 +9610,18 @@ fn emit_mir_builtin_call(
         ),
 
         // ---- Bool ----
-        "Bool.or" => format!("({} || {})", arg!(0), arg!(1)),
-        "Bool.and" => format!("({} && {})", arg!(0), arg!(1)),
+        // `Bool.and` / `Bool.or` are functions: both operands are values
+        // before the call. Rust's `&&` / `||` skip the second one, which only
+        // pays when it costs something; a cheap one (see `cheap_bool_operand`)
+        // is joined by `&` / `|`, with no branch between the two.
+        "Bool.or" => match cheap_bool_operand(&args[1], ctx, &mut 12) {
+            true => format!("({} | {})", arg!(0), arg!(1)),
+            false => format!("({} || {})", arg!(0), arg!(1)),
+        },
+        "Bool.and" => match cheap_bool_operand(&args[1], ctx, &mut 12) {
+            true => format!("({} & {})", arg!(0), arg!(1)),
+            false => format!("({} && {})", arg!(0), arg!(1)),
+        },
         "Bool.not" => format!("(!{})", arg!(0)),
 
         // ---- Unicode code points ----
@@ -10314,7 +10370,9 @@ mod tests {
         };
         let expr = span(MirExpr::Call(span(call)));
         let emit = emit_mir_expr(&expr, &ctx_with_builtin("Bool.or")).expect("Bool.or emits");
-        assert_eq!(emit, "(true || false)");
+        // A literal second operand costs less than the branch `||` would
+        // take around it.
+        assert_eq!(emit, "(true | false)");
     }
 
     #[test]

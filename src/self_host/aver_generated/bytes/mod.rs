@@ -114,7 +114,7 @@ pub fn allInRange(xs @ _: &aver_rt::AverIntList) -> bool {
             match aver_rt::list_uncons_cloned(__list_subject) {
                 Some((head, tail)) => {
                     if ((head >= aver_rt::AverInt::from_i64(0))
-                        && (head <= aver_rt::AverInt::from_i64(255)))
+                        & (head <= aver_rt::AverInt::from_i64(255)))
                     {
                         {
                             let __tco0 = tail;
@@ -146,7 +146,7 @@ pub fn firstOutOfRange(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
             match aver_rt::list_uncons_cloned(__list_subject) {
                 Some((head, tail)) => {
                     if ((head >= aver_rt::AverInt::from_i64(0))
-                        && (head <= aver_rt::AverInt::from_i64(255)))
+                        & (head <= aver_rt::AverInt::from_i64(255)))
                     {
                         {
                             let __tco0 = tail;
@@ -175,7 +175,7 @@ pub fn firstOutOfRangeIndex(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
         match aver_rt::list_uncons_cloned(__list_subject) {
             Some((head, tail)) => {
                 if ((head >= aver_rt::AverInt::from_i64(0))
-                    && (head <= aver_rt::AverInt::from_i64(255)))
+                    & (head <= aver_rt::AverInt::from_i64(255)))
                 {
                     aver_rt::AverInt::from_i64(1)
                         .add(&crate::aver_generated::bytes::firstOutOfRangeIndex(&tail))
