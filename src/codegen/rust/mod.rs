@@ -2041,7 +2041,7 @@ fn width(s: Shape) -> Int
         for expected in [
             "        0 Dot(Shape__Dot),\n        1 Label(Shape__Label),\n        2 Blank,",
             "#[derive(Clone, Eq, Hash)]\n#[repr(C)]\npub struct Shape__Label(pub aver_rt::AverInt, pub aver_rt::AverInt, pub aver_rt::AverInt, pub AverStr, pub AverStr, pub AverStr);",
-            "std::ptr::eq(self, other) || (aver_rt::AverInt::same_word(&self.0, &other.0) & aver_rt::AverInt::same_word(&self.1, &other.1) & aver_rt::AverInt::same_word(&self.2, &other.2)) || self.0 == other.0 && self.1 == other.1 && self.2 == other.2 && self.3 == other.3 && self.4 == other.4 && self.5 == other.5",
+            "std::ptr::eq(self, other) || ((aver_rt::AverInt::same_word(&self.0, &other.0) & aver_rt::AverInt::same_word(&self.1, &other.1) & aver_rt::AverInt::same_word(&self.2, &other.2)) || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2)) && self.3 == other.3 && self.4 == other.4 && self.5 == other.5",
             "f.debug_tuple(\"Shape__Label\").field(&self.3).field(&self.4).field(&self.5).field(&self.0).field(&self.1).field(&self.2).finish()",
             "Shape::Label({ let __field0 = ::aver_rt::str_lit!(\"a\"); let __field1 = ::aver_rt::str_lit!(\"b\"); let __field2 = ::aver_rt::str_lit!(\"c\"); let __field3 = n.clone(); let __field4 = n.clone(); let __field5 = n; Shape__Label(__field3, __field4, __field5, __field0, __field1, __field2) })",
             "Shape__view::Label(__w_fields) => {\n            let w = __w_fields.0.clone();",

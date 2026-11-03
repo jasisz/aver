@@ -356,8 +356,14 @@ fn plan_test(
         })
         .collect();
     if plan.words_first {
-        let fields = fields_equal(&plan.order, walking, &a, &b);
-        return format!("({}) || {fields}", words.join(" & "));
+        // Equal words settle the block only: the fields after it are
+        // compared either way.
+        let fields = fields_equal(block, walking, &a, &b);
+        let head = format!("(({}) || ({fields}))", words.join(" & "));
+        return match &plan.order[plan.block..] {
+            [] => head,
+            rest => format!("{head} && {}", fields_equal(rest, walking, &a, &b)),
+        };
     }
     if block.len() < 2 {
         return fields_equal(&plan.order, walking, &a, &b);

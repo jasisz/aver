@@ -111,10 +111,10 @@ pub struct Expr__ExprBinopSlotInt(pub aver_rt::AverInt, pub aver_rt::AverInt, pu
 
 impl PartialEq for Expr__ExprBinopSlotInt {
     fn eq(&self, other: &Self) -> bool {
-        (aver_rt::AverInt::same_word(&self.0, &other.0)
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
             & aver_rt::AverInt::same_word(&self.1, &other.1)
             & (self.2 == other.2))
-            || self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
     }
 }
 
@@ -136,10 +136,10 @@ pub struct Expr__ExprBinopSlots(pub aver_rt::AverInt, pub aver_rt::AverInt, pub 
 
 impl PartialEq for Expr__ExprBinopSlots {
     fn eq(&self, other: &Self) -> bool {
-        (aver_rt::AverInt::same_word(&self.0, &other.0)
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
             & aver_rt::AverInt::same_word(&self.1, &other.1)
             & (self.2 == other.2))
-            || self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
     }
 }
 
@@ -161,10 +161,10 @@ pub struct Expr__ExprCmpSlotInt(pub aver_rt::AverInt, pub aver_rt::AverInt, pub 
 
 impl PartialEq for Expr__ExprCmpSlotInt {
     fn eq(&self, other: &Self) -> bool {
-        (aver_rt::AverInt::same_word(&self.0, &other.0)
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
             & aver_rt::AverInt::same_word(&self.1, &other.1)
             & (self.2 == other.2))
-            || self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
     }
 }
 
@@ -186,10 +186,10 @@ pub struct Expr__ExprCmpSlots(pub aver_rt::AverInt, pub aver_rt::AverInt, pub Cm
 
 impl PartialEq for Expr__ExprCmpSlots {
     fn eq(&self, other: &Self) -> bool {
-        (aver_rt::AverInt::same_word(&self.0, &other.0)
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
             & aver_rt::AverInt::same_word(&self.1, &other.1)
             & (self.2 == other.2))
-            || self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
     }
 }
 
@@ -3041,9 +3041,11 @@ pub struct FnFastPath__FastEqIntBranch(
 
 impl PartialEq for FnFastPath__FastEqIntBranch {
     fn eq(&self, other: &Self) -> bool {
-        (aver_rt::AverInt::same_word(&self.0, &other.0)
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
             & aver_rt::AverInt::same_word(&self.1, &other.1))
-            || self.0 == other.0 && self.1 == other.1 && self.2 == other.2 && self.3 == other.3
+            || (self.0 == other.0 && self.1 == other.1))
+            && self.2 == other.2
+            && self.3 == other.3
     }
 }
 
@@ -3071,9 +3073,11 @@ pub struct FnFastPath__FastLtIntSlotsBranch(
 
 impl PartialEq for FnFastPath__FastLtIntSlotsBranch {
     fn eq(&self, other: &Self) -> bool {
-        (aver_rt::AverInt::same_word(&self.0, &other.0)
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
             & aver_rt::AverInt::same_word(&self.1, &other.1))
-            || self.0 == other.0 && self.1 == other.1 && self.2 == other.2 && self.3 == other.3
+            || (self.0 == other.0 && self.1 == other.1))
+            && self.2 == other.2
+            && self.3 == other.3
     }
 }
 
@@ -3091,14 +3095,12 @@ pub struct FnFastPath__FastListSlotBranch(
 
 impl PartialEq for FnFastPath__FastListSlotBranch {
     fn eq(&self, other: &Self) -> bool {
-        (aver_rt::AverInt::same_word(&self.0, &other.0)
+        ((aver_rt::AverInt::same_word(&self.0, &other.0)
             & aver_rt::AverInt::same_word(&self.1, &other.1)
             & aver_rt::AverInt::same_word(&self.2, &other.2))
-            || self.0 == other.0
-                && self.1 == other.1
-                && self.2 == other.2
-                && self.3 == other.3
-                && self.4 == other.4
+            || (self.0 == other.0 && self.1 == other.1 && self.2 == other.2))
+            && self.3 == other.3
+            && self.4 == other.4
     }
 }
 
