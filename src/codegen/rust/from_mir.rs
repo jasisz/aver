@@ -5522,7 +5522,6 @@ fn emit_mir_match_with(
     // ── 1. Single-arm irrefutable → `let` destructuring. ──
     // Mirror of `emit_match`'s first branch.
     if arms.len() == 1 && resolved_pattern_is_irrefutable(&arms[0].pattern) {
-        let subj_code = emit_mir_expr(&m.subject, emit_ctx)?;
         // Int unboxing boundary (defect esc_match): a `match (n - 1) { x -> … }`
         // binds the subject to `x`. When the analysis marked the bound slot
         // BOXED (because `x` later escapes — `[x, x]`) but the subject renders
@@ -5532,9 +5531,20 @@ fn emit_mir_match_with(
         // wildcard / destructuring pattern is unaffected.)
         // ETAP-2 SLICE 1: the bind-crossing boundary is now an EXPLICIT
         // `Box`/`Unbox` node the rewrite wrapped the subject in (it rewrites
-        // the subject in the binding's representation context). `subj_code`
-        // already carries the right representation — no codegen-side coercion.
-        let _ = &m.arms[0].pattern;
+        // the subject in the binding's representation context), so a value
+        // it had to convert already carries the right representation. A
+        // value the rewrite considers raw as it stands (an `Int` literal, a
+        // bare local, arithmetic over them) gets no node, and only this
+        // binding knows it is a raw `i64`: `match -1 { x -> … }` with a bare
+        // `x` is `let x = -1i64;`, not `AverInt::from_i64(-1)` read as an
+        // `i64`. Mirror of the `MirExpr::Let` arm's bare binding.
+        let bare_binding = matches!(&m.arms[0].pattern,
+            MirPattern::Bind(slot, _) if emit_ctx.bare.is_bare(*slot));
+        let subj_code = if bare_binding {
+            emit_bare_i64(&m.subject, emit_ctx).or_else(|| emit_mir_expr(&m.subject, emit_ctx))?
+        } else {
+            emit_mir_expr(&m.subject, emit_ctx)?
+        };
         let codegen = emit_ctx.codegen?;
         let pat = emit_pattern(&arms[0].pattern, false, codegen);
         let body = arm_bodies[0].clone();
@@ -5558,7 +5568,12 @@ fn emit_mir_match_with(
                 .collect();
             return Some(format!("{{ let {pat} = {subj_code}; {owned}{body} }}"));
         }
-        let subj = mir_clone_arg(subj_code, &m.subject.node, emit_ctx);
+        // A raw `i64` is `Copy`: nothing to clone.
+        let subj = if bare_binding {
+            subj_code
+        } else {
+            mir_clone_arg(subj_code, &m.subject.node, emit_ctx)
+        };
         return Some(match &arms[0].pattern {
             ResolvedPattern::Ident(name) => {
                 let name = aver_name_to_rust(name);

@@ -1,0 +1,31 @@
+module Main
+    intent =
+        "Literals bound to raw i64 slots by one-arm matches: a negative literal,"
+        "a positive one and one folded from arithmetic, each read raw in"
+        "arithmetic after the binding; and a literal bound to a slot that stays"
+        "an Int because the binding escapes into a list."
+    effects [Console.print]
+
+fn shifted(i: Int) -> Int
+    ? "A negative literal bound by a one-arm match, read raw."
+    match -1
+        x -> i + x
+
+fn scaled(i: Int) -> Int
+    ? "A positive literal bound by a one-arm match, read raw."
+    match 5
+        k -> i * k
+
+fn folded(i: Int) -> Int
+    ? "A literal the constant fold makes, bound by a one-arm match."
+    match 2 + 3
+        k -> i - k
+
+fn kept(i: Int) -> Int
+    ? "A bound literal that escapes into a list stays an Int."
+    match -7
+        x -> List.len([x, i + x]) + x
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{shifted(7)} {scaled(7)} {folded(7)} {kept(7)}")

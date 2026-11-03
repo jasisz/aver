@@ -491,6 +491,18 @@ fn raw_int_match_subjects_and_free_values_match_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A literal bound to a raw `i64` slot by a one-arm match (`match -1 { x ->
+/// … }`, the let-form the deforestation pass writes for an argument) is
+/// written as the raw `i64` the slot holds. The bare-i64 rewrite leaves a
+/// literal as it stands, so only the binding knows its representation; the
+/// backend used to bind `AverInt::from_i64(-1)` and read `x` raw, and the
+/// crate did not compile. A bound literal that escapes stays an `Int`.
+#[test]
+fn bare_int_literal_bound_by_match_matches_vm() {
+    assert_plain_parity("tests/fixtures/rust_bare_int_bind_literal.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A match whose arms are `Int` literals is one flat Rust `match` on a
 /// machine integer, on a raw `i64` subject (negative too) and on an `Int`:
 /// a default binds the subject, and an `Int` past `i64` falls to it.
