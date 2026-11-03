@@ -37,6 +37,7 @@ fn analyze_src(src: &str) -> IntervalAnalysisResult {
             run_list_build: false,
             run_byte_sink: false,
             keep_printable_unfused: false,
+            run_deforest_calls: false,
             run_resolve: false,
             run_last_use: false,
             run_analyze: true,

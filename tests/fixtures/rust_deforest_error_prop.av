@@ -1,0 +1,79 @@
+module DeforestErrors
+    intent = "A producer with `?` or `!`, and a consumer whose arm has `?`, stay calls: the `?` must keep returning from the function it is written in."
+    effects [Console.print]
+
+type Shape
+    Circle(Int)
+    Square(Int)
+    Empty
+
+fn side(s: String) -> Result<Int, String>
+    ? "The length, or why there is none."
+    match s == ""
+        true -> Result.Err("empty")
+        false -> Result.Ok(String.len(s))
+
+verify side
+    side("") => Result.Err("empty")
+
+fn parse(s: String) -> Result<Shape, String>
+    ? "A producer with `?`: the Err is this function's value."
+    match String.startsWith(s, "c")
+        true -> Result.Ok(Shape.Circle(side(s)?))
+        false -> Result.Ok(Shape.Square(side(s)?))
+
+verify parse
+    parse("") => Result.Err("empty")
+    parse("cc") => Result.Ok(Shape.Circle(2))
+
+fn pair(s: String) -> Shape
+    ? "A producer with an independent product."
+    match (side(s), side("{s}x"))!
+        (Result.Ok(a), Result.Ok(b)) -> Shape.Square(a + b)
+        _ -> Shape.Empty
+
+verify pair
+    pair("ab") => Shape.Square(5)
+
+fn area(s: Shape) -> Int
+    ? "A plain consumer."
+    match s
+        Shape.Circle(r) -> 3 * r * r
+        Shape.Square(a) -> a * a
+        Shape.Empty -> 0
+
+verify area
+    area(Shape.Square(2)) => 4
+
+fn areaOf(r: Result<Shape, String>) -> Result<Int, String>
+    ? "A consumer whose arm leaves early with `?`."
+    match r
+        Result.Ok(s) -> Result.Ok(area(s) + side("q")?)
+        Result.Err(e) -> Result.Err("no shape: {e}")
+
+verify areaOf
+    areaOf(Result.Err("x")) => Result.Err("no shape: x")
+
+fn checked(s: String) -> Result<Int, String>
+    ? "The consumer's `?` must not return from here."
+    match areaOf(parse(s))
+        Result.Ok(a) -> Result.Ok(a + 1000)
+        Result.Err(e) -> Result.Err("checked: {e}")
+
+verify checked
+    checked("") => Result.Err("checked: no shape: empty")
+    checked("cc") => Result.Ok(1013)
+
+fn show(r: Result<Int, String>) -> String
+    ? "A result as one line."
+    match r
+        Result.Ok(n) -> "ok {n}"
+        Result.Err(e) -> "err {e}"
+
+verify show
+    show(Result.Ok(1)) => "ok 1"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{show(checked(""))} {show(checked("cc"))} {show(checked("sq"))}")
+    Console.print("{area(pair("ab"))} {area(pair(""))}")

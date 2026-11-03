@@ -26,8 +26,9 @@
 //! source does not contain (`interp_lower`'s `__buf_*` chain,
 //! `buffer_build`'s `<sink>__buffered` sink, `chars_fusion`'s cursor loops,
 //! `string_index`'s workers, and `list_build`'s builders) sits below it and
-//! must never be visible to Lean; every other pass sits above it
-//! and the proof exporters read its output. `run`
+//! must never be visible to Lean, and so does `deforest_calls`, which
+//! unfolds those workers into their callers; every other pass sits above
+//! it and the proof exporters read its output. `run`
 //! serves both halves from one run: it snapshots the AST before the
 //! first fabricating stage and completes the copy afterwards by
 //! re-running the above-the-line stages on it — see [`AstView`]. So a
@@ -38,6 +39,7 @@
 use crate::ast::TopLevel;
 use crate::ir::buffer_build::{BufferBuildPassReport, ListBuildPassReport};
 use crate::ir::chars_fusion::CharsFusionPassReport;
+use crate::ir::deforest_calls::DeforestCallsPassReport;
 use crate::ir::pass_diag::{self, CountsByFn};
 use crate::ir::string_index::StringIndexPassReport;
 use crate::ir::{AllocPolicy, AnalysisResult};
@@ -90,6 +92,14 @@ pub enum PipelineStage {
     /// copy but commits solely variants retargeted to `__byt_*`, allowing
     /// wasm-gc/wasip2 to keep generic `__lst_*` collectors fail-closed.
     ByteSink,
+    /// Deforestation across a call — a sum or record one function builds
+    /// only for its caller to match on or read the fields of is never
+    /// built: the producer is unfolded at the call site and the
+    /// consumer's taking-apart pushed into its leaves. Rewrites bodies
+    /// but synthesizes no entity; it sits BELOW the proof line with the
+    /// passes whose workers it sees through — see [`AstView`] and
+    /// [`crate::ir::deforest_calls`].
+    DeforestCalls,
     Resolve,
     LastUse,
     Analyze,
@@ -157,6 +167,7 @@ impl PipelineStage {
             Self::StringIndex => "string_index",
             Self::ListBuild => "list_build",
             Self::ByteSink => "byte_sink",
+            Self::DeforestCalls => "deforest_calls",
             Self::Resolve => "resolve",
             Self::LastUse => "last_use",
             Self::Analyze => "analyze",
@@ -251,6 +262,15 @@ pub struct PipelineConfig<'a> {
     /// [`crate::ir::cert_shape`]). Set by a wasm-gc/wasip2 `--certify` build
     /// only; every other build fuses wherever it can.
     pub keep_printable_unfused: bool,
+    /// Whether to fuse a value built by one call and taken apart by its
+    /// consumer at once (see [`crate::ir::deforest_calls`]). Every runtime
+    /// backend compiles the result; it is ordinary matches and bindings.
+    ///
+    /// Below the proof line, so — like `run_buffer_build` — what you pass
+    /// here cannot change what gets proven (see [`AstView`]). `--certify`
+    /// builds keep the functions the plan printer could print as written,
+    /// through `keep_printable_unfused`.
+    pub run_deforest_calls: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
     /// `resolve`. Annotates each `Expr::Resolved` slot reference with
@@ -370,6 +390,7 @@ impl<'a> Default for PipelineConfig<'a> {
             // `run_list_build` does not opt into fabrication accidentally.
             run_byte_sink: false,
             keep_printable_unfused: false,
+            run_deforest_calls: true,
             run_resolve: true,
             run_last_use: true,
             run_analyze: true,
@@ -422,6 +443,7 @@ pub enum PassReport {
     CharsFusion(CharsFusionPassReport),
     StringIndex(StringIndexPassReport),
     ListBuild(ListBuildPassReport),
+    DeforestCalls(DeforestCallsPassReport),
     Resolve {
         slots_resolved: usize,
         fns_with_slots: usize,
@@ -600,6 +622,9 @@ pub struct PipelineResult {
     /// sites moved, and every collecting loop the recogniser turned down
     /// with its reason. `None` when the pass was disabled.
     pub list_build: Option<ListBuildPassReport>,
+    /// Deforest-calls report — sites rewritten, producers unfolded, known
+    /// leaves reduced, per function. `None` when the pass was disabled.
+    pub deforest_calls: Option<DeforestCallsPassReport>,
     /// IR-level analysis facts (per-fn body shape, thin kind, alloc info)
     /// when `run_analyze` was on. `None` when the stage was disabled.
     pub analysis: Option<AnalysisResult>,
@@ -1522,6 +1547,19 @@ fn back(
         fire(&mut cfg, stage, items);
     }
 
+    // After every pass that gives a function a worker or a wrapper, so a
+    // producer is seen in the shape it will be compiled in: the string
+    // index's wrapper is unfolded through to its worker, and the index it
+    // builds is bound once at the call site.
+    if cfg.run_deforest_calls {
+        let report = crate::ir::run_deforest_calls_pass(items, cfg.dep_modules, &kept);
+        result
+            .pass_diagnostics
+            .push(diag_for_deforest_calls(&report));
+        result.deforest_calls = Some(report);
+        fire(&mut cfg, PipelineStage::DeforestCalls, items);
+    }
+
     if cfg.run_resolve {
         resolve(items);
         let post = pass_diag::collect(items);
@@ -1906,6 +1944,13 @@ fn diag_for_last_use(post: &CountsByFn) -> PassDiagnostic {
             last_use_marked: totals.last_use_resolved,
             total_resolved: totals.resolved,
         },
+    }
+}
+
+fn diag_for_deforest_calls(report: &DeforestCallsPassReport) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::DeforestCalls,
+        report: PassReport::DeforestCalls(report.clone()),
     }
 }
 

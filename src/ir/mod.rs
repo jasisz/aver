@@ -7,6 +7,7 @@ mod calls;
 pub mod cert_shape;
 mod chars_fusion;
 pub(crate) mod compare_shape;
+pub mod deforest_calls;
 pub mod dump;
 pub mod escape;
 pub(crate) mod field_take;
@@ -74,6 +75,7 @@ pub use chars_fusion::{
     CharsFusionDecline, CharsFusionPassReport, has_fusable_shape, run_chars_fusion_pass,
     run_chars_fusion_pass_keeping,
 };
+pub use deforest_calls::{DeforestCallsPassReport, run_deforest_calls_pass};
 pub use interp_lower::lower_interpolation_pass;
 pub use matches::{
     BoolCompareOp, BoolMatchShape, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,

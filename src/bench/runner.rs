@@ -676,6 +676,7 @@ fn canonical_passes(target: BenchTarget) -> Vec<String> {
         passes.push("list_build");
     }
     passes.extend([
+        "deforest_calls",
         "resolve",
         "analyze",
         "escape",

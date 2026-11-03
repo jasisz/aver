@@ -1,0 +1,60 @@
+module DeforestBudget
+    intent = "Two leaves whose value is not known would copy the consumer twice, so the call stays as written."
+    effects [Console.print]
+
+type Token
+    Num(Int)
+    Word(String)
+    Gap
+
+fn digits(s: String) -> Token
+    ? "Recursive: an unknown leaf."
+    match String.len(s) > 3
+        true -> digits(String.slice(s, 1, String.len(s)))
+        false -> Token.Num(String.len(s))
+
+verify digits
+    digits("12345") => Token.Num(3)
+
+fn word(s: String) -> Token
+    ? "Recursive too: the second unknown leaf."
+    match String.startsWith(s, " ")
+        true -> word(String.slice(s, 1, String.len(s)))
+        false -> Token.Word(s)
+
+verify word
+    word(" ab") => Token.Word("ab")
+
+fn lex(s: String) -> Token
+    ? "Two unknown leaves and one known."
+    match s == ""
+        true -> Token.Gap
+        false -> match String.startsWith(s, "1")
+            true -> digits(s)
+            false -> word(s)
+
+verify lex
+    lex("") => Token.Gap
+
+fn weight(t: Token) -> Int
+    ? "The consumer."
+    match t
+        Token.Num(n) -> n * 2
+        Token.Word(w) -> String.len(w)
+        Token.Gap -> 0
+
+verify weight
+    weight(Token.Gap) => 0
+
+fn total(ss: List<String>, acc: Int) -> Int
+    ? "Every token weighed."
+    match ss
+        [] -> acc
+        [s, ..rest] -> total(rest, acc + weight(lex(s)))
+
+verify total
+    total(["", "12345"], 0) => 6
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{total(["", "12345", "  word", "w"], 0)}")

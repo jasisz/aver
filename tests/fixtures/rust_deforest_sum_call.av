@@ -1,0 +1,117 @@
+module DeforestSum
+    intent = "A sum built by one call and matched by the next is never built: a known leaf becomes the arm, the unknown leaf keeps one copy of the match."
+    effects [Console.print]
+
+type Line
+    App(Int, Int, Int)
+    Name(String, Int)
+    Blank
+    Bad(String)
+
+record Ids
+    ie: Int
+    f: Int
+    a: Int
+
+fn probe(line: String) -> Option<Ids>
+    ? "An app line starts with 'a'; its ids come from its length."
+    match String.startsWith(line, "a")
+        true -> Option.Some(Ids(ie = String.len(line), f = String.len(line) * 2, a = 3))
+        false -> Option.None
+
+verify probe
+    probe("abc") => Option.Some(Ids(ie = 3, f = 6, a = 3))
+
+fn other(line: String) -> Line
+    ? "Recursive, so it is never unfolded: the leaf whose value is not known."
+    match String.startsWith(line, "n")
+        true -> Line.Name(line, String.len(line))
+        false -> match String.len(line) > 6
+            true -> other(String.slice(line, 1, String.len(line)))
+            false -> Line.Bad(line)
+
+verify other
+    other("nx") => Line.Name("nx", 2)
+
+fn parseLine(line: String) -> Line
+    ? "Known constructors in three leaves, a call in the fourth."
+    match line == ""
+        true -> Line.Blank
+        false -> match probe(line)
+            Option.Some(ids) -> Line.App(ids.ie, ids.f, ids.a)
+            Option.None -> other(line)
+
+verify parseLine
+    parseLine("") => Line.Blank
+    parseLine("abcd") => Line.App(4, 8, 3)
+
+record Tables
+    count: Int
+    names: List<String>
+
+fn applyLine(t: Tables, l: Line) -> Result<Tables, String>
+    ? "One arm per constructor; the tables are read in every arm."
+    match l
+        Line.App(ie, f, a) -> Result.Ok(Tables.update(t, count = t.count + ie * f + a))
+        Line.Name(n, k) -> Result.Ok(Tables.update(t, names = List.prepend(n, t.names), count = t.count + k))
+        Line.Blank -> Result.Ok(t)
+        Line.Bad(e) -> Result.Err(e)
+
+verify applyLine
+    applyLine(Tables(count = 1, names = []), Line.Blank) => Result.Ok(Tables(count = 1, names = []))
+
+fn readAll(t: Tables, lines: List<String>, n: Int) -> Result<Tables, String>
+    ? "The tables move through the fused call: unique."
+    match lines
+        [] -> Result.Ok(t)
+        [l, ..rest] -> continueAfter(applyLine(t, parseLine(l)), rest, n)
+
+verify readAll
+    readAll(Tables(count = 0, names = []), ["", "abc"], 1) => Result.Ok(Tables(count = 21, names = []))
+
+fn continueAfter(r: Result<Tables, String>, rest: List<String>, n: Int) -> Result<Tables, String>
+    ? "Stops at the first bad line, naming it."
+    match r
+        Result.Err(e) -> Result.Err("line {n}: {e}")
+        Result.Ok(t) -> readAll(t, rest, n + 1)
+
+verify continueAfter
+    continueAfter(Result.Err("x"), [], 4) => Result.Err("line 4: x")
+
+fn shared(t: Tables, l: String) -> Int
+    ? "The tables and the line are read after the fused call: shared."
+    match applyLine(t, parseLine(l))
+        Result.Ok(t2) -> t2.count * 100 + t.count + String.len(l)
+        Result.Err(e) -> 0 - String.len(e) - t.count
+
+verify shared
+    shared(Tables(count = 2, names = []), "abc") => 2305
+
+fn direct(l: String) -> Int
+    ? "The match written at the call."
+    match parseLine(l)
+        Line.App(ie, _, a) -> ie + a
+        Line.Name(_, k) -> k * 10
+        _ -> 0 - 1
+
+verify direct
+    direct("abc") => 6
+    direct("nn") => 20
+    direct("") => 0 - 1
+
+fn show(r: Result<Tables, String>) -> String
+    ? "A result as one line."
+    match r
+        Result.Ok(t) -> "ok {t.count} [{String.join(t.names, ",")}]"
+        Result.Err(e) -> "err {e}"
+
+verify show
+    show(Result.Err("x")) => "err x"
+
+fn main() -> Unit
+    ! [Console.print]
+    start = Tables(count = 0, names = [])
+    Console.print(show(readAll(start, ["abc", "", "name", "zzzzzzzzzzz", "aaaa"], 1)))
+    Console.print(show(readAll(start, ["abc", "", "name", "zzzzzzzzzzz", "bad", "aaaa"], 1)))
+    Console.print("{shared(Tables(count = 2, names = []), "abc")} {shared(Tables(count = 2, names = []), "bad")} {shared(Tables(count = 5, names = ["q"]), "nnn")}")
+    Console.print("{direct("abc")} {direct("nn")} {direct("")} {direct("zzzzzzzzzzzz")}")
