@@ -921,6 +921,45 @@ fn rust_list_builder_and_sum_fusion_compose() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A caller's variable put into a fused body is never captured by a binder
+/// of that body spelled the same way (`ir::deforest_calls` makes the
+/// binders fresh before the arguments go in, and puts every argument in
+/// at once): a consumer arm's own binder, a binder nested in the arm, a
+/// producer's record parameter read by field, a producer's own binder and
+/// its statement binding. Both backends fuse, so the parity oracle alone
+/// cannot see a capture; the printed line is checked against the values
+/// the source computes.
+#[test]
+fn rust_deforested_bodies_keep_the_callers_variables() {
+    let relative = "tests/fixtures/rust_deforest_capture.av";
+    let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
+    let emitted = emitted_entry_module("rust_deforest_capture", &src);
+    for (caller, callee) in [
+        ("nested", "pick("),
+        ("ownArm", "own("),
+        ("producerParam", "mk("),
+        ("recordBinder", "sum("),
+        ("producerBinder", "wrap("),
+        ("producerBinding", "bump("),
+    ] {
+        let body = emitted
+            .split(&format!("pub fn {caller}("))
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap_or_else(|| panic!("{caller} is emitted:\n{emitted}"));
+        assert!(
+            !body.contains(callee),
+            "the call of `{callee}` in `{caller}` is fused:\n{body}"
+        );
+    }
+    assert_plain_parity_then(relative, None, |_, stdout| {
+        (stdout == "21 11 6 6 33 32")
+            .then_some(())
+            .ok_or_else(|| format!("a caller's variable was captured: {stdout}"))
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// An integer literal past `i64` is parsed once into a static
 /// (`aver_rt::int_lit!`) and read through it, cloned only where a value is
 /// owned: an argument, a field, a list or map element, a tuple, a result, a
