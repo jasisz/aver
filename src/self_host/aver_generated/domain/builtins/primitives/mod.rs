@@ -1459,7 +1459,7 @@ pub fn extractStrings__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((v, rest)) => {
                     let __t = v;
                     match __t.view() {
@@ -1468,8 +1468,15 @@ pub fn extractStrings__collected(
                             {
                                 let __tco0 = rest;
                                 let __tco1 = aver_rt::list_builder_push(acc, s);
-                                __hold0 = __tco0;
-                                items = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        items = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        items = &__hold0;
+                                    }
+                                }
                                 acc = __tco1;
                                 continue;
                             }
@@ -1501,7 +1508,7 @@ pub fn strPartsToVals__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = parts;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((s, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
@@ -1510,8 +1517,15 @@ pub fn strPartsToVals__collected(
                             crate::aver_generated::domain::value::Val__ValStr(s),
                         ),
                     );
-                    __hold0 = __tco0;
-                    parts = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            parts = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            parts = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }

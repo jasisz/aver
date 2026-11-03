@@ -518,7 +518,7 @@ pub fn tokenAtWalk(
         crate::cancel_checkpoint();
         {
             let __list_subject = tokens;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((t, rest)) => {
                     if (idx == target) {
                         return t.clone();
@@ -526,8 +526,15 @@ pub fn tokenAtWalk(
                         {
                             let __tco0 = rest;
                             let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-                            __hold0 = __tco0;
-                            tokens = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    tokens = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    tokens = &__hold0;
+                                }
+                            }
                             idx = __tco2;
                             continue;
                         }

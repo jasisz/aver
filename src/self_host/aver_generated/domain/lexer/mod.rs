@@ -1740,7 +1740,7 @@ pub fn emitDedentsAcc(
         let reversed @ _ = acc.reverse();
         {
             let __list_subject = stack;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((top, below)) => {
                     if (top > targetIndent) {
                         {
@@ -1749,8 +1749,15 @@ pub fn emitDedentsAcc(
                                 crate::aver_generated::domain::token::Token::TkDedent,
                                 acc,
                             );
-                            __hold2 = __tco2;
-                            stack = &__hold2;
+                            match __tco2 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    stack = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold2 = __rest;
+                                    stack = &__hold2;
+                                }
+                            }
                             acc = __tco3;
                             continue;
                         }
@@ -1801,7 +1808,7 @@ pub fn emitFinalDedentsAcc(
         let reversed @ _ = acc.reverse();
         {
             let __list_subject = stack;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((top, rest)) => {
                     if (top > aver_rt::AverInt::from_i64(0)) {
                         {
@@ -1810,8 +1817,15 @@ pub fn emitFinalDedentsAcc(
                                 crate::aver_generated::domain::token::Token::TkDedent,
                                 acc,
                             );
-                            __hold0 = __tco0;
-                            stack = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    stack = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    stack = &__hold0;
+                                }
+                            }
                             acc = __tco1;
                             continue;
                         }

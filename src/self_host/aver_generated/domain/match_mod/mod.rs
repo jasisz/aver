@@ -635,18 +635,32 @@ pub fn zipBindingsAcc(
         let reversed @ _ = acc.reverse();
         {
             let __list_subject = names;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((n, ns)) => {
                     let __list_subject = vals;
-                    match aver_rt::list_uncons(__list_subject) {
+                    match aver_rt::list_uncons_lent_head(__list_subject) {
                         Some((v, vs)) => {
                             let __tco0 = ns;
                             let __tco1 = vs;
                             let __tco2 = aver_rt::AverList::prepend_owned((n, v.clone()), acc);
-                            __hold0 = __tco0;
-                            names = &__hold0;
-                            __hold1 = __tco1;
-                            vals = &__hold1;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    names = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    names = &__hold0;
+                                }
+                            }
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    vals = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    vals = &__hold1;
+                                }
+                            }
                             acc = __tco2;
                             continue;
                         }

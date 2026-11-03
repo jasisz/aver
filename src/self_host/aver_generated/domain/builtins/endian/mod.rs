@@ -209,7 +209,7 @@ pub fn byteVals__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = octets;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((octet, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
@@ -218,8 +218,15 @@ pub fn byteVals__collected(
                             crate::aver_generated::domain::value::Val__ValInt(octet),
                         ),
                     );
-                    __hold0 = __tco0;
-                    octets = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            octets = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            octets = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }

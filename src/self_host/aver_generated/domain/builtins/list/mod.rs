@@ -286,15 +286,22 @@ pub fn listContainsVal(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((v, rest)) => {
                     if crate::aver_generated::domain::value::valEq(v, needle) {
                         return true;
                     } else {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            items = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    items = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    items = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -361,10 +368,10 @@ pub fn zipListsAcc(
         let reversed @ _ = acc.reverse();
         {
             let __list_subject = a;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, xs)) => {
                     let __list_subject = b;
-                    match aver_rt::list_uncons(__list_subject) {
+                    match aver_rt::list_uncons_lent_head(__list_subject) {
                         Some((y, ys)) => {
                             let __tco0 = xs;
                             let __tco1 = ys;
@@ -376,10 +383,24 @@ pub fn zipListsAcc(
                                 ),
                                 acc,
                             );
-                            __hold0 = __tco0;
-                            a = &__hold0;
-                            __hold1 = __tco1;
-                            b = &__hold1;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    a = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    a = &__hold0;
+                                }
+                            }
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    b = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    b = &__hold1;
+                                }
+                            }
                             acc = __tco2;
                             continue;
                         }

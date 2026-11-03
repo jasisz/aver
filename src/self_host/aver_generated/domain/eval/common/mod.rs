@@ -111,7 +111,7 @@ pub fn lookupField(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (k, v) = pair.clone();
                     if (k == name) {
@@ -119,8 +119,15 @@ pub fn lookupField(
                     } else {
                         {
                             let __tco0 = rest;
-                            __hold0 = __tco0;
-                            fields = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    fields = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    fields = &__hold0;
+                                }
+                            }
                             continue;
                         }
                     }

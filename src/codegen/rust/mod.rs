@@ -1609,6 +1609,84 @@ fn headPlusTailLen(xs: List<Int>) -> Int
     }
 
     #[test]
+    fn a_lent_loop_param_walks_its_list_through_the_lent_rest() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn total(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [x, ..rest] -> match x == 0
+            true -> acc
+            false -> total(rest, acc + x)
+
+fn keep(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [x, ..rest] -> keep(rest, acc + List.len(rest))
+
+fn both(xs: List<Int>) -> Int
+    total(xs, 0) + keep(xs, 0)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // The rest the loop only rebinds its param to is lent by the node
+        // that holds it: the param takes the borrow, and only an owned rest
+        // (another shape of node) goes through the param's slot. (The list
+        // is lent because a caller keeps it and the arm that stops reads no
+        // rest: a loop that consumes its list on every path takes it apart
+        // by value instead.)
+        assert!(
+            entry.contains("match aver_rt::list_uncons_lent(__list_subject) { Some((x, rest)) =>"),
+            "{entry}"
+        );
+        assert!(
+            entry.contains("match __tco0 { aver_rt::ListRest::Lent(__rest) => { xs = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; xs = &__hold0; } }"),
+            "{entry}"
+        );
+        // A rest the arm reads elsewhere is a list value, as before.
+        assert!(
+            entry
+                .contains("match aver_rt::list_uncons_cloned(__list_subject) { Some((x, rest)) =>"),
+            "{entry}"
+        );
+        assert!(entry.contains("__hold0 = __tco0;"), "{entry}");
+    }
+
+    #[test]
+    fn a_lent_loop_param_takes_a_part_of_its_own_value_as_the_borrow() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Peano
+    Zero
+    Succ(Peano)
+
+fn depth(n: Peano, acc: Int) -> Int
+    match n
+        Peano.Zero -> acc
+        Peano.Succ(m) -> depth(m, acc + 1)
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // The part the arm borrows out of the param's value becomes the
+        // param: nothing is copied, and the loop needs no slot of its own.
+        assert!(entry.contains("let __tco0 = m;"), "{entry}");
+        assert!(entry.contains("n = __tco0;"), "{entry}");
+        assert!(!entry.contains("__hold0"), "{entry}");
+    }
+
+    #[test]
     fn a_literal_count_is_emitted_as_the_usize_it_clamps_to() {
         let mut ctx = ctx_from_source(
             r#"

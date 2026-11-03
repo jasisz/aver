@@ -36,7 +36,7 @@ pub fn buildSlotEnvLoop(
         crate::cancel_checkpoint();
         {
             let __list_subject = args;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((a, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = {
@@ -49,8 +49,15 @@ pub fn buildSlotEnvLoop(
                         }
                     };
                     let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-                    __hold0 = __tco0;
-                    args = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            args = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            args = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     idx = __tco2;
                     continue;

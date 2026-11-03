@@ -3398,15 +3398,22 @@ pub fn splitIndependentExprs(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((expr, rest)) => {
                     if sendLeft {
                         {
                             let __tco0 = rest;
                             let __tco1 = aver_rt::AverList::prepend_owned(expr.clone(), leftAcc);
                             let __tco3 = false;
-                            __hold0 = __tco0;
-                            exprs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
                             leftAcc = __tco1;
                             sendLeft = __tco3;
                             continue;
@@ -3416,8 +3423,15 @@ pub fn splitIndependentExprs(
                             let __tco0 = rest;
                             let __tco2 = aver_rt::AverList::prepend_owned(expr.clone(), rightAcc);
                             let __tco3 = true;
-                            __hold0 = __tco0;
-                            exprs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
                             rightAcc = __tco2;
                             sendLeft = __tco3;
                             continue;
@@ -3449,13 +3463,20 @@ pub fn interleaveIndependentVals(
         if takeLeft {
             {
                 let __list_subject = left;
-                match aver_rt::list_uncons(__list_subject) {
+                match aver_rt::list_uncons_lent_head(__list_subject) {
                     Some((v, rest)) => {
                         let __tco0 = rest;
                         let __tco2 = false;
                         let __tco3 = aver_rt::AverList::prepend_owned(v.clone(), acc);
-                        __hold0 = __tco0;
-                        left = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                left = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                left = &__hold0;
+                            }
+                        }
                         takeLeft = __tco2;
                         acc = __tco3;
                         continue;
@@ -3470,13 +3491,20 @@ pub fn interleaveIndependentVals(
         } else {
             {
                 let __list_subject = right;
-                match aver_rt::list_uncons(__list_subject) {
+                match aver_rt::list_uncons_lent_head(__list_subject) {
                     Some((v, rest)) => {
                         let __tco1 = rest;
                         let __tco2 = true;
                         let __tco3 = aver_rt::AverList::prepend_owned(v.clone(), acc);
-                        __hold1 = __tco1;
-                        right = &__hold1;
+                        match __tco1 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                right = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold1 = __rest;
+                                right = &__hold1;
+                            }
+                        }
                         takeLeft = __tco2;
                         acc = __tco3;
                         continue;
@@ -3504,12 +3532,19 @@ pub fn finishIndependentVals(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((v, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::AverList::prepend_owned(v.clone(), acc);
-                    __hold0 = __tco0;
-                    items = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            items = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            items = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     continue;
                 }
@@ -3662,7 +3697,7 @@ pub fn evalConcatParts(
         crate::cancel_checkpoint();
         {
             let __list_subject = parts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((p, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExpr(
                         p.clone(),
@@ -3675,8 +3710,15 @@ pub fn evalConcatParts(
                         Ok(v @ _) => {
                             let __tco0 = rest;
                             let __tco3 = (acc + &crate::aver_generated::domain::value::valRepr(&v));
-                            __hold0 = __tco0;
-                            parts = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    parts = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    parts = &__hold0;
+                                }
+                            }
                             acc = __tco3;
                             continue;
                         }
@@ -3816,7 +3858,7 @@ pub fn evalListItemsRev(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExpr(
                         e.clone(),
@@ -3829,8 +3871,15 @@ pub fn evalListItemsRev(
                         Ok(v @ _) => {
                             let __tco0 = rest;
                             let __tco3 = aver_rt::AverList::prepend_owned(v, acc);
-                            __hold0 = __tco0;
-                            exprs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
                             acc = __tco3;
                             continue;
                         }
@@ -3868,7 +3917,7 @@ pub fn evalArgsRev(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExpr(
                         e.clone(),
@@ -3881,8 +3930,15 @@ pub fn evalArgsRev(
                         Ok(v @ _) => {
                             let __tco0 = rest;
                             let __tco3 = aver_rt::AverList::prepend_owned(v, acc);
-                            __hold0 = __tco0;
-                            exprs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
                             acc = __tco3;
                             continue;
                         }
@@ -4772,7 +4828,7 @@ pub fn evalTopLevelStmts(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((s, rest)) => {
                     let __subject = {
                         let __arg10 @ _ = crate::aver_generated::domain::eval::store::withGlobals(
@@ -4791,8 +4847,15 @@ pub fn evalTopLevelStmts(
                                 let __tco0 = rest;
                                 let __tco1 = newEnv;
                                 let __tco2 = v;
-                                __hold0 = __tco0;
-                                stmts = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        stmts = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        stmts = &__hold0;
+                                    }
+                                }
                                 env = __tco1;
                                 last = __tco2;
                                 continue;
@@ -5122,7 +5185,7 @@ pub fn evalConcatPartsSlot(
         crate::cancel_checkpoint();
         {
             let __list_subject = parts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((p, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
                         p.clone(),
@@ -5136,8 +5199,15 @@ pub fn evalConcatPartsSlot(
                         Ok(v @ _) => {
                             let __tco0 = rest;
                             let __tco4 = (acc + &crate::aver_generated::domain::value::valRepr(&v));
-                            __hold0 = __tco0;
-                            parts = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    parts = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    parts = &__hold0;
+                                }
+                            }
                             acc = __tco4;
                             continue;
                         }
@@ -5211,7 +5281,7 @@ pub fn evalListItemsSlotRev(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
                         e.clone(),
@@ -5225,8 +5295,15 @@ pub fn evalListItemsSlotRev(
                         Ok(v @ _) => {
                             let __tco0 = rest;
                             let __tco4 = aver_rt::AverList::prepend_owned(v, acc);
-                            __hold0 = __tco0;
-                            exprs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
                             acc = __tco4;
                             continue;
                         }
@@ -5502,7 +5579,7 @@ pub fn evalArgsSlotRev(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
                         e.clone(),
@@ -5516,8 +5593,15 @@ pub fn evalArgsSlotRev(
                         Ok(v @ _) => {
                             let __tco0 = rest;
                             let __tco4 = aver_rt::AverList::prepend_owned(v, acc);
-                            __hold0 = __tco0;
-                            exprs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
                             acc = __tco4;
                             continue;
                         }
@@ -5545,7 +5629,7 @@ pub fn evalArgsMapToSlotEnv(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExpr(
                         e.clone(),
@@ -5563,8 +5647,15 @@ pub fn evalArgsMapToSlotEnv(
                                 v,
                             );
                             let __tco4 = idx.add(&aver_rt::AverInt::from_i64(1));
-                            __hold0 = __tco0;
-                            exprs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
                             acc = __tco3;
                             idx = __tco4;
                             continue;
@@ -5594,7 +5685,7 @@ pub fn evalArgsSlotToSlotEnv(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((e, rest)) => {
                     match crate::aver_generated::domain::eval::core::evalExprSlot(
                         e.clone(),
@@ -5613,8 +5704,15 @@ pub fn evalArgsSlotToSlotEnv(
                                 v,
                             );
                             let __tco5 = idx.add(&aver_rt::AverInt::from_i64(1));
-                            __hold0 = __tco0;
-                            exprs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    exprs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    exprs = &__hold0;
+                                }
+                            }
                             acc = __tco4;
                             idx = __tco5;
                             continue;
@@ -5728,7 +5826,7 @@ pub fn unwrapProductResults__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((v, rest)) => {
                     let __t = v;
                     match __t.view() {
@@ -5737,8 +5835,15 @@ pub fn unwrapProductResults__collected(
                             {
                                 let __tco0 = rest;
                                 let __tco1 = aver_rt::list_builder_push(acc, x.clone());
-                                __hold0 = __tco0;
-                                items = &__hold0;
+                                match __tco0 {
+                                    aver_rt::ListRest::Lent(__rest) => {
+                                        items = __rest;
+                                    }
+                                    aver_rt::ListRest::Owned(__rest) => {
+                                        __hold0 = __rest;
+                                        items = &__hold0;
+                                    }
+                                }
                                 acc = __tco1;
                                 continue;
                             }
@@ -5792,14 +5897,21 @@ pub fn collectFastForwardArgs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = slotArgs;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((slot, rest)) => {
                     match crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot) {
                         Ok(v @ _) => {
                             let __tco0 = rest;
                             let __tco2 = aver_rt::list_builder_push(acc, v);
-                            __hold0 = __tco0;
-                            slotArgs = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    slotArgs = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    slotArgs = &__hold0;
+                                }
+                            }
                             acc = __tco2;
                             continue;
                         }

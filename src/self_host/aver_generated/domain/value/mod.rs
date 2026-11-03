@@ -724,15 +724,22 @@ pub fn valListRepr(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((v, rest)) => {
                     if first {
                         {
                             let __tco0 = rest;
                             let __tco1 = crate::aver_generated::domain::value::valReprInner(v);
                             let __tco2 = false;
-                            __hold0 = __tco0;
-                            items = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    items = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    items = &__hold0;
+                                }
+                            }
                             acc = __tco1;
                             first = __tco2;
                             continue;
@@ -743,8 +750,15 @@ pub fn valListRepr(
                             let __tco1 = ((acc + &::aver_rt::str_lit!(", "))
                                 + &crate::aver_generated::domain::value::valReprInner(v));
                             let __tco2 = false;
-                            __hold0 = __tco0;
-                            items = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    items = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    items = &__hold0;
+                                }
+                            }
                             acc = __tco1;
                             first = __tco2;
                             continue;
@@ -1038,7 +1052,7 @@ pub fn valMapRepr(
         crate::cancel_checkpoint();
         {
             let __list_subject = entries;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((entry, rest)) => {
                     if first {
                         {
@@ -1054,8 +1068,15 @@ pub fn valMapRepr(
                                     crate::aver_generated::domain::value::valReprInner(&__arg6)
                                 });
                             let __tco2 = false;
-                            __hold0 = __tco0;
-                            entries = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    entries = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    entries = &__hold0;
+                                }
+                            }
                             acc = __tco1;
                             first = __tco2;
                             continue;
@@ -1076,8 +1097,15 @@ pub fn valMapRepr(
                                     crate::aver_generated::domain::value::valReprInner(&__arg8)
                                 });
                             let __tco2 = false;
-                            __hold0 = __tco0;
-                            entries = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    entries = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    entries = &__hold0;
+                                }
+                            }
                             acc = __tco1;
                             first = __tco2;
                             continue;
@@ -1208,7 +1236,7 @@ pub fn partsKey(mut tag @ _: AverStr, items @ _: &aver_rt::AverList<Val>) -> Ave
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((item, rest)) => {
                     let __tco0 = (((tag
                         + &aver_rt::display_str(
@@ -1222,8 +1250,15 @@ pub fn partsKey(mut tag @ _: AverStr, items @ _: &aver_rt::AverList<Val>) -> Ave
                         + &crate::aver_generated::domain::value::mapKeyRepr(item));
                     let __tco1 = rest;
                     tag = __tco0;
-                    __hold1 = __tco1;
-                    items = &__hold1;
+                    match __tco1 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            items = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold1 = __rest;
+                            items = &__hold1;
+                        }
+                    }
                     continue;
                 }
                 None => {
@@ -1353,13 +1388,20 @@ pub fn splitVals(
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = right;
                     let __tco2 = aver_rt::AverList::prepend_owned(x.clone(), left);
-                    __hold0 = __tco0;
-                    xs = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            xs = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            xs = &__hold0;
+                        }
+                    }
                     left = __tco1;
                     right = __tco2;
                     continue;
@@ -1607,10 +1649,10 @@ pub fn valsCmp(
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, xr)) => {
                     let __list_subject = ys;
-                    match aver_rt::list_uncons(__list_subject) {
+                    match aver_rt::list_uncons_lent_head(__list_subject) {
                         Some((y, yr)) => {
                             let __int_match_subject =
                                 crate::aver_generated::domain::value::valCmp(x.clone(), y.clone());
@@ -1618,10 +1660,24 @@ pub fn valsCmp(
                                 {
                                     let __tco0 = xr;
                                     let __tco1 = yr;
-                                    __hold0 = __tco0;
-                                    xs = &__hold0;
-                                    __hold1 = __tco1;
-                                    ys = &__hold1;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            xs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            xs = &__hold0;
+                                        }
+                                    }
+                                    match __tco1 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            ys = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold1 = __rest;
+                                            ys = &__hold1;
+                                        }
+                                    }
                                     continue;
                                 }
                             } else {
@@ -1706,15 +1762,22 @@ pub fn valFieldsRepr(
         crate::cancel_checkpoint();
         {
             let __list_subject = items;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((v, rest)) => {
                     if first {
                         {
                             let __tco0 = rest;
                             let __tco1 = crate::aver_generated::domain::value::valReprInner(v);
                             let __tco2 = false;
-                            __hold0 = __tco0;
-                            items = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    items = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    items = &__hold0;
+                                }
+                            }
                             acc = __tco1;
                             first = __tco2;
                             continue;
@@ -1725,8 +1788,15 @@ pub fn valFieldsRepr(
                             let __tco1 = ((acc + &::aver_rt::str_lit!(", "))
                                 + &crate::aver_generated::domain::value::valReprInner(v));
                             let __tco2 = false;
-                            __hold0 = __tco0;
-                            items = &__hold0;
+                            match __tco0 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    items = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold0 = __rest;
+                                    items = &__hold0;
+                                }
+                            }
                             acc = __tco1;
                             first = __tco2;
                             continue;
@@ -1986,19 +2056,33 @@ pub fn valsEq(xs @ _: &aver_rt::AverList<Val>, ys @ _: &aver_rt::AverList<Val>) 
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, xr)) => {
                     let __list_subject = ys;
-                    match aver_rt::list_uncons(__list_subject) {
+                    match aver_rt::list_uncons_lent_head(__list_subject) {
                         Some((y, yr)) => {
                             if crate::aver_generated::domain::value::valEq(x, y) {
                                 {
                                     let __tco0 = xr;
                                     let __tco1 = yr;
-                                    __hold0 = __tco0;
-                                    xs = &__hold0;
-                                    __hold1 = __tco1;
-                                    ys = &__hold1;
+                                    match __tco0 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            xs = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold0 = __rest;
+                                            xs = &__hold0;
+                                        }
+                                    }
+                                    match __tco1 {
+                                        aver_rt::ListRest::Lent(__rest) => {
+                                            ys = __rest;
+                                        }
+                                        aver_rt::ListRest::Owned(__rest) => {
+                                            __hold1 = __rest;
+                                            ys = &__hold1;
+                                        }
+                                    }
                                     continue;
                                 }
                             } else {
@@ -2037,10 +2121,10 @@ pub fn entriesEq(
         crate::cancel_checkpoint();
         {
             let __list_subject = xs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, xr)) => {
                     let __list_subject = ys;
-                    match aver_rt::list_uncons(__list_subject) {
+                    match aver_rt::list_uncons_lent_head(__list_subject) {
                         Some((y, yr)) => {
                             let ((k, v), (j, w)) = (x.clone(), y.clone());
                             if (k == j) {
@@ -2048,10 +2132,24 @@ pub fn entriesEq(
                                     {
                                         let __tco0 = xr;
                                         let __tco1 = yr;
-                                        __hold0 = __tco0;
-                                        xs = &__hold0;
-                                        __hold1 = __tco1;
-                                        ys = &__hold1;
+                                        match __tco0 {
+                                            aver_rt::ListRest::Lent(__rest) => {
+                                                xs = __rest;
+                                            }
+                                            aver_rt::ListRest::Owned(__rest) => {
+                                                __hold0 = __rest;
+                                                xs = &__hold0;
+                                            }
+                                        }
+                                        match __tco1 {
+                                            aver_rt::ListRest::Lent(__rest) => {
+                                                ys = __rest;
+                                            }
+                                            aver_rt::ListRest::Owned(__rest) => {
+                                                __hold1 = __rest;
+                                                ys = &__hold1;
+                                            }
+                                        }
                                         continue;
                                     }
                                 } else {

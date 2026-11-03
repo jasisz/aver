@@ -188,6 +188,37 @@ pub struct MirEmitCtx<'a> {
     /// slot (see [`lent_vector_get_in_wrapper`]). An arm that moves the root
     /// owns such an element first and borrows nothing out of it.
     pub lent_elements: &'a [(LocalId, String, LocalId)],
+    /// The self-loop whose body this ctx emits, when it is one (see
+    /// [`SelfLoop`]).
+    pub self_loop: Option<&'a SelfLoop>,
+    /// Locals a lent self-loop param takes as a borrow instead of a copy of
+    /// its own: each is bound out of a match on that very param (by
+    /// position), so the borrow lives as long as the param's current one
+    /// (see [`LentRebind`]).
+    pub lent_rebinds: &'a [(LocalId, usize, LentRebind)],
+}
+
+/// The self-loop being emitted: its fn, and the lent params the loop
+/// rebinds, by name and position; each has a slot of its own
+/// (`__hold{i}`) for a value a step computes.
+pub struct SelfLoop {
+    pub fn_id: crate::ir::FnId,
+    pub held: Vec<(String, usize)>,
+}
+
+/// How a lent self-loop param takes a value bound out of its own current
+/// value (see [`MirEmitCtx::lent_rebinds`]). A step that rebound the param
+/// to such a value copied it into the param's slot and borrowed the slot:
+/// one count up and one down per step, for a value the param already
+/// borrowed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LentRebind {
+    /// A part borrowed out of the matched value: the param becomes that
+    /// borrow.
+    Part,
+    /// The rest of a matched list, an `aver_rt::ListRest`: the param becomes
+    /// the borrow it lends, or borrows its slot where the rest is owned.
+    ListRest,
 }
 
 /// A record place (`s`, `r.st`) an update of a boxed record has moved into
@@ -236,6 +267,8 @@ impl<'a> MirEmitCtx<'a> {
             list_slot: None,
             record_alias: None,
             lent_elements: &[],
+            self_loop: None,
+            lent_rebinds: &[],
         }
     }
 
@@ -288,6 +321,8 @@ impl<'a> MirEmitCtx<'a> {
             list_slot: None,
             record_alias: None,
             lent_elements: &[],
+            self_loop: None,
+            lent_rebinds: &[],
         }
     }
 
@@ -327,6 +362,8 @@ impl<'a> MirEmitCtx<'a> {
             list_slot: None,
             record_alias: None,
             lent_elements: &[],
+            self_loop: None,
+            lent_rebinds: &[],
         }
     }
 
@@ -5007,6 +5044,12 @@ fn emit_mir_match_with(
             .map(|root| root.slot),
         _ => None,
     };
+    // The lent self-loop param this match reads, by position: what an arm
+    // binds out of it may become the param's next value as a borrow (see
+    // [`lent_rebinds`]).
+    let subject_param = lent_subject_param(&m.subject.node, emit_ctx);
+    // The rests of the list this match lends (see [`lent_rebinds`]).
+    let mut tails: HashSet<String> = HashSet::new();
     for (arm, resolved) in m.arms.iter().zip(&arms) {
         let slot_ctx;
         let emit_ctx = match (reuse, &arm.pattern) {
@@ -5075,9 +5118,26 @@ fn emit_mir_match_with(
         };
         let mut binders = Vec::new();
         pattern_binder_names(&arm.pattern, &mut binders);
+        let rebinds = match subject_param {
+            Some(index) if !take => lent_rebinds(
+                arm,
+                path,
+                &parts,
+                takes_list_apart(m, emit_ctx),
+                index,
+                emit_ctx,
+            ),
+            _ => Vec::new(),
+        };
+        if let (Some((_, _, LentRebind::ListRest)), MirPattern::Cons { tail_name, .. }) =
+            (rebinds.first(), &arm.pattern)
+        {
+            tails.insert(tail_name.clone());
+        }
         let arm_body = if parts.is_empty()
             && owned_elements.is_empty()
             && new_elements.is_empty()
+            && rebinds.is_empty()
             && !binders.iter().any(|b| emit_ctx.is_borrowed_param(b))
         {
             render_arm(&arm.body, emit_ctx)?
@@ -5097,9 +5157,16 @@ fn emit_mir_match_with(
                 .cloned()
                 .chain(new_elements)
                 .collect();
+            let lent_rebinds: Vec<(LocalId, usize, LentRebind)> = emit_ctx
+                .lent_rebinds
+                .iter()
+                .copied()
+                .chain(rebinds)
+                .collect();
             let mut arm_ctx = *emit_ctx;
             arm_ctx.borrowed_params = &borrowed;
             arm_ctx.lent_elements = &elements;
+            arm_ctx.lent_rebinds = &lent_rebinds;
             let body = render_arm(&arm.body, &arm_ctx)?;
             owned_elements.iter().fold(body, |body, name| {
                 let name = aver_name_to_rust(name);
@@ -5375,6 +5442,7 @@ fn emit_mir_match_with(
             subject_lent,
             reuse.is_some(),
             &heads,
+            &tails,
             &arms,
             list_shape,
             codegen,
@@ -6159,6 +6227,118 @@ fn lent_parts(
         _ => {}
     }
     out
+}
+
+/// The lent self-loop param `subject` reads, by position (see
+/// [`MirEmitCtx::lent_rebinds`]): a borrowed param the loop rebinds through
+/// a slot of its own, read as `&T` (a lent `Option` is read as
+/// `Option<&T>`, which binds no borrow of the param's type).
+fn lent_subject_param(subject: &MirExpr, ctx: &MirEmitCtx<'_>) -> Option<usize> {
+    let local = local_of(subject)?;
+    if !ctx.is_borrowed_param(&local.name) || ctx.lent_options.contains(&local.name) {
+        return None;
+    }
+    ctx.self_loop?
+        .held
+        .iter()
+        .find(|(name, _)| *name == local.name)
+        .map(|(_, index)| *index)
+}
+
+/// What `arm`, over the lent self-loop param at `index`, binds out of it that
+/// the param may take as its next value by borrow (see [`LentRebind`]): a
+/// part the arm already borrows (`parts`) from a match on the reference, or
+/// the rest of a list the match reads through its borrow, when the arm
+/// reads the rest only to rebind the param to it.
+fn lent_rebinds(
+    arm: &crate::ir::mir::MirMatchArm,
+    path: MatchPath,
+    parts: &HashSet<String>,
+    takes_list_apart: bool,
+    index: usize,
+    ctx: &MirEmitCtx<'_>,
+) -> Vec<(LocalId, usize, LentRebind)> {
+    let Some(self_loop) = ctx.self_loop else {
+        return Vec::new();
+    };
+    match (path, &arm.pattern) {
+        (
+            MatchPath::List,
+            MirPattern::Cons {
+                tail, tail_name, ..
+            },
+        ) if !takes_list_apart
+            && !tail_name.is_empty()
+            && tail_name != "_"
+            && reads_local(&arm.body.node, *tail)
+            && rebinds_only(&arm.body.node, *tail, self_loop.fn_id, index) =>
+        {
+            vec![(*tail, index, LentRebind::ListRest)]
+        }
+        (MatchPath::Generic { by_ref: true }, pattern) => {
+            let mut bound = Vec::new();
+            pattern_binder_slots(pattern, &mut bound);
+            bound
+                .into_iter()
+                .filter(|(_, name)| parts.contains(name))
+                .map(|(slot, _)| (slot, index, LentRebind::Part))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Whether every read of the local in `slot` within `expr`, an arm body in
+/// the tail position of the self-loop `fn_id`, is the argument at `index` of
+/// a tail call to the loop, so the loop rebinds its param there to it and
+/// reads it nowhere else. Only the shapes the loop emits as a rebind count
+/// (a tail call under matches and conditionals); a read anywhere else, a
+/// `let` chain included, is a read of the value.
+fn rebinds_only(expr: &MirExpr, slot: LocalId, fn_id: crate::ir::FnId, index: usize) -> bool {
+    let is_slot = |e: &MirExpr| matches!(e, MirExpr::Local(local) if local.node.slot == slot);
+    match expr {
+        MirExpr::TailCall(tc) if tc.node.target == fn_id => tc
+            .node
+            .args
+            .iter()
+            .enumerate()
+            .all(|(i, arg)| (i == index && is_slot(&arg.node)) || !reads_local(&arg.node, slot)),
+        MirExpr::Match(m) => {
+            !reads_local(&m.node.subject.node, slot)
+                && m.node
+                    .arms
+                    .iter()
+                    .all(|arm| rebinds_only(&arm.body.node, slot, fn_id, index))
+        }
+        MirExpr::IfThenElse(ite) => {
+            !reads_local(&ite.node.cond.node, slot)
+                && rebinds_only(&ite.node.then_branch.node, slot, fn_id, index)
+                && rebinds_only(&ite.node.else_branch.node, slot, fn_id, index)
+        }
+        _ => !reads_local(expr, slot),
+    }
+}
+
+/// The locals `pattern` binds, with their source names.
+fn pattern_binder_slots(pattern: &MirPattern, out: &mut Vec<(LocalId, String)>) {
+    match pattern {
+        MirPattern::Bind(slot, name) => out.push((*slot, name.clone())),
+        MirPattern::Cons {
+            head,
+            head_name,
+            tail,
+            tail_name,
+        } => out.extend([(*head, head_name.clone()), (*tail, tail_name.clone())]),
+        MirPattern::Tuple(items) => items
+            .iter()
+            .for_each(|item| pattern_binder_slots(item, out)),
+        MirPattern::Ctor {
+            bindings,
+            binding_names,
+            ..
+        } => out.extend(bindings.iter().copied().zip(binding_names.iter().cloned())),
+        MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => {}
+    }
 }
 
 /// The source names `pattern` binds.
@@ -7263,7 +7443,16 @@ pub(super) fn emit_mir_tco_fn(
             .unwrap_or(&[]),
     );
     policy.apply_lent_options(mir_fn, ctx);
-    let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+    let self_loop = SelfLoop {
+        fn_id: mir_fn.fn_id,
+        held: lent
+            .iter()
+            .filter(|i| !passthrough_indices.contains(i))
+            .map(|&i| (resolved_fd.params[i].0.clone(), i))
+            .collect(),
+    };
+    let mut emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+    emit_ctx.self_loop = Some(&self_loop);
 
     // Render the body in tail position FIRST — bail before emitting any
     // signature if the walker can't render it.
@@ -7315,14 +7504,23 @@ pub(super) fn emit_mir_tco_fn(
         visibility, fn_name, params, ret_type
     ));
     // A lent param the loop rebinds gets a slot for a value a step computes,
-    // and its borrow becomes rebindable.
+    // and its borrow becomes rebindable. A param every step rebinds to a
+    // borrow out of its own value (see [`LentRebind`]) writes no slot and
+    // gets none.
+    let writes_slot = |hold: &str| {
+        let written = format!("{hold} = ");
+        body_code.contains(&written)
+            || entry_check
+                .as_ref()
+                .is_some_and(|(_, fallback)| fallback.contains(&written))
+    };
     for &i in lent.iter().filter(|i| !passthrough_indices.contains(i)) {
         let (name, type_ann) = &fd.params[i];
         let rust_type = super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope);
-        lines.push(format!(
-            "    let mut {}: {rust_type};",
-            generated_ident(&format!("hold{i}"))
-        ));
+        let hold = generated_ident(&format!("hold{i}"));
+        if writes_slot(&hold) {
+            lines.push(format!("    let mut {hold}: {rust_type};"));
+        }
         lines.push(format!(
             "    let {}: &{rust_type} = {};",
             explicit_parameter_pattern(name, true),
@@ -7559,8 +7757,22 @@ fn emit_mir_self_tco_continue(
     tail_ctx.loop_carried_params = &loop_carried_params;
 
     let mut arg_strs = vec![None; args.len()];
+    // A lent param rebound to a borrow out of its own value takes the borrow
+    // (see [`LentRebind`]).
+    let mut lent_rebinds = vec![None; args.len()];
     for (i, a) in args.iter().enumerate() {
         if identity[i] {
+            continue;
+        }
+        if ctx.is_borrowed_param(&params[i].0)
+            && let Some(local) = local_of(&a.node)
+            && let Some((_, _, kind)) = ctx
+                .lent_rebinds
+                .iter()
+                .find(|(slot, index, _)| *slot == local.slot && *index == i)
+        {
+            arg_strs[i] = Some(aver_name_to_rust(&local.name));
+            lent_rebinds[i] = Some(*kind);
             continue;
         }
         // ETAP-2 SLICE 1: the rebind-value representation boundary is now
@@ -7599,8 +7811,19 @@ fn emit_mir_self_tco_continue(
             let param = aver_name_to_rust(name);
             if ctx.is_borrowed_param(name) {
                 let hold = generated_ident(&format!("hold{i}"));
-                lines.push(format!("            {hold} = {temp};"));
-                lines.push(format!("            {param} = &{hold};"));
+                match lent_rebinds[i] {
+                    Some(LentRebind::Part) => lines.push(format!("            {param} = {temp};")),
+                    Some(LentRebind::ListRest) => {
+                        let rest = generated_ident("rest");
+                        lines.push(format!(
+                            "            match {temp} {{ aver_rt::ListRest::Lent({rest}) => {{ {param} = {rest}; }} aver_rt::ListRest::Owned({rest}) => {{ {hold} = {rest}; {param} = &{hold}; }} }}"
+                        ));
+                    }
+                    None => {
+                        lines.push(format!("            {hold} = {temp};"));
+                        lines.push(format!("            {param} = &{hold};"));
+                    }
+                }
             } else {
                 lines.push(format!("            {param} = {temp};"));
             }
@@ -10178,6 +10401,8 @@ mod tests {
             list_slot: None,
             record_alias: None,
             lent_elements: &[],
+            self_loop: None,
+            lent_rebinds: &[],
         };
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         assert_eq!(
@@ -11311,6 +11536,8 @@ mod tests {
             list_slot: None,
             record_alias: None,
             lent_elements: &[],
+            self_loop: None,
+            lent_rebinds: &[],
         }
     }
 

@@ -14,13 +14,20 @@ pub fn buildFnMap(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((f, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
                     let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
-                    __hold0 = __tco0;
-                    fns = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            fns = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                    }
                     acc = __tco1;
                     idx = __tco2;
                     continue;
@@ -46,7 +53,7 @@ pub fn resolveCallsInFns(
         crate::cancel_checkpoint();
         {
             let __list_subject = fns;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((f, rest)) => {
                     let __tco0 = rest;
                     let __tco2 = aver_rt::AverList::prepend_owned(
@@ -56,8 +63,15 @@ pub fn resolveCallsInFns(
                         ),
                         acc,
                     );
-                    __hold0 = __tco0;
-                    fns = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            fns = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                    }
                     acc = __tco2;
                     continue;
                 }
@@ -883,15 +897,22 @@ pub fn isBuiltinCallNameFrom(
         crate::cancel_checkpoint();
         {
             let __list_subject = knownNames;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            match aver_rt::list_uncons_lent(__list_subject) {
                 Some((knownName, rest)) => {
                     if (name == knownName) {
                         return true;
                     } else {
                         {
                             let __tco1 = rest;
-                            __hold1 = __tco1;
-                            knownNames = &__hold1;
+                            match __tco1 {
+                                aver_rt::ListRest::Lent(__rest) => {
+                                    knownNames = __rest;
+                                }
+                                aver_rt::ListRest::Owned(__rest) => {
+                                    __hold1 = __rest;
+                                    knownNames = &__hold1;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -974,7 +995,7 @@ pub fn resolveCallsInStmts__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = stmts;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((s, rest)) => {
                     let __tco0 = rest;
                     let __tco2 = aver_rt::list_builder_push(
@@ -983,8 +1004,15 @@ pub fn resolveCallsInStmts__collected(
                             s, fnMap,
                         ),
                     );
-                    __hold0 = __tco0;
-                    stmts = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            stmts = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            stmts = &__hold0;
+                        }
+                    }
                     acc = __tco2;
                     continue;
                 }
@@ -1009,7 +1037,7 @@ pub fn resolveCallsInExprs__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = exprs;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((e, rest)) => {
                     let __tco0 = rest;
                     let __tco2 = aver_rt::list_builder_push(
@@ -1019,8 +1047,15 @@ pub fn resolveCallsInExprs__collected(
                             fnMap,
                         ),
                     );
-                    __hold0 = __tco0;
-                    exprs = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            exprs = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            exprs = &__hold0;
+                        }
+                    }
                     acc = __tco2;
                     continue;
                 }
@@ -1045,7 +1080,7 @@ pub fn resolveCallsInArms__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = arms;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((arm, rest)) => {
                     let __tco0 = rest;
                     let __tco2 = aver_rt::list_builder_push(
@@ -1060,8 +1095,15 @@ pub fn resolveCallsInArms__collected(
                             bindingSlots: arm.bindingSlots.clone(),
                         },
                     );
-                    __hold0 = __tco0;
-                    arms = &__hold0;
+                    match __tco0 {
+                        aver_rt::ListRest::Lent(__rest) => {
+                            arms = __rest;
+                        }
+                        aver_rt::ListRest::Owned(__rest) => {
+                            __hold0 = __rest;
+                            arms = &__hold0;
+                        }
+                    }
                     acc = __tco2;
                     continue;
                 }
@@ -1087,7 +1129,7 @@ pub fn resolveCallsInFields__collected(
         crate::cancel_checkpoint();
         {
             let __list_subject = fields;
-            match aver_rt::list_uncons(__list_subject) {
+            match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (name, expr) = pair.clone();
                     {
@@ -1101,8 +1143,15 @@ pub fn resolveCallsInFields__collected(
                                 ),
                             ),
                         );
-                        __hold0 = __tco0;
-                        fields = &__hold0;
+                        match __tco0 {
+                            aver_rt::ListRest::Lent(__rest) => {
+                                fields = __rest;
+                            }
+                            aver_rt::ListRest::Owned(__rest) => {
+                                __hold0 = __rest;
+                                fields = &__hold0;
+                            }
+                        }
                         acc = __tco2;
                         continue;
                     }
