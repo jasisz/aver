@@ -1,9 +1,8 @@
 //! Deforestation across a call: a value one function builds only for its
 //! caller to take apart is never built.
 //!
-//! The shape is a *producer* whose leaves build a value and a *consumer*
-//! that takes it apart at once — a `match` over a sum, or field reads of a
-//! record:
+//! The shape is a *producer* whose leaves build a sum value and a
+//! *consumer* that matches on it at once:
 //!
 //! ```aver
 //! fn parseLine(line: String) -> Line
@@ -20,26 +19,29 @@
 //!         Line.Blank -> Result.Ok(t)
 //!
 //! applyLine(t, parseLine(l))          -- or directly:  match parseLine(l) …
-//! distance(Point(x = n, y = n * 2))   -- distance reads only p.x and p.y
 //! ```
 //!
 //! Compiled as written, every line allocates a `Line`, hands it across one
-//! call, matches it once and frees it; every `distance` call allocates a
-//! `Point` that is read twice and dropped. This pass rewrites the call site
+//! call, matches it once and frees it. This pass rewrites the call site
 //! instead: the producer's body is unfolded in place of the call (its
-//! parameters replaced by the arguments) and the consumer's taking-apart is
+//! parameters replaced by the arguments) and the consumer's match is
 //! pushed into the leaves of that body (case-of-case). A leaf that is a
 //! known constructor becomes the matching arm with the constructor's
 //! fields in place of the arm's binders (case-of-known-constructor); a
-//! record built at a leaf becomes the consumer's body with its field
-//! reads replaced by the field values (scalar replacement); a leaf whose
-//! value is not known — the `otherLine(line)` call — keeps one copy of the
-//! whole consumer. The intermediate value is gone where it was known: no
-//! allocation, no construction, no match, no free.
+//! leaf whose value is not known — the `otherLine(line)` call — keeps one
+//! copy of the whole match. The intermediate value is gone where it was
+//! known: no allocation, no construction, no match, no free.
 //!
-//! The record shape is what the `escape` pass has rewritten after slot
-//! resolution, above the proof line; here it is one instance of the
-//! general rule, and the sum shape across a call is the other.
+//! A record that reaches a body only through its fields — an argument, or
+//! the payload of a known constructor — is taken apart the same way, field
+//! by field (the `escape` pass's scalar replacement, as one step of this
+//! rule). A site fires only when a known leaf builds a *cell*: a
+//! constructor of a user sum type with a field, perhaps inside `Option` or
+//! `Result`. A record is a struct by value in the Rust backend and an
+//! `Option` around an existing value costs nothing, so a fusion that saves
+//! no cell only copies arms; measured on Pestka, fusing those shapes cost
+//! 3–4% of the instructions. The record written at a call site stays with
+//! `escape`, above the proof line.
 //!
 //! ## What is fused
 //!
@@ -49,9 +51,8 @@
 //!   match's arms are constructor (or `_`) patterns;
 //! - `g(…, v, …)` where `g` is a consumer of this module: its body is one
 //!   `match` over the parameter receiving `v`, with constructor (or `_`)
-//!   arms that never read that parameter whole, or a body that reads the
-//!   parameter only through its fields; `v` is a producer call of this
-//!   module or a constructor or record written at the call site.
+//!   arms that never read that parameter whole; `v` is a producer call of
+//!   this module or a constructor written at the call site.
 //!
 //! A producer is unfolded only when it is small (at most
 //! [`MAX_PRODUCER_NODES`] nodes), pure (no declared effects), not
@@ -72,8 +73,9 @@
 //!
 //! The consumer may be copied at most [`MAX_CONSUMER_COPIES`] times, i.e.
 //! at most one unknown leaf; the rewritten site may grow the caller by at
-//! most [`MAX_GROWTH_NODES`] nodes; and at least one known leaf must carry
-//! a field, so there is a value to deforest at all. When the budget is
+//! most [`MAX_GROWTH_NODES`] nodes, all its sites together at most
+//! [`MAX_FN_GROWTH_NODES`]; and at least one known leaf must build a cell,
+//! so there is a value to deforest at all. When the budget is
 //! not met the deepest unfolding is given up first, and when no depth
 //! fits the call stays as written.
 //!
@@ -194,16 +196,6 @@ pub fn run_deforest_calls_pass(
 
 // ── The table of functions and types the pass reads ─────────────────
 
-/// How a consumer takes its parameter apart.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Take {
-    /// The body is one `match` over the parameter, with constructor or `_`
-    /// arms that never read the parameter whole.
-    Match,
-    /// The body reads the parameter only through `param.field`.
-    Fields,
-}
-
 /// A function of this module as the pass sees it: its parameters, its
 /// statement bindings, its final expression, whether it may be unfolded
 /// (`producer`) and which parameters it takes apart (`consumes`).
@@ -214,9 +206,10 @@ struct Shape {
     /// Small enough, pure, not recursive (alone or with others), no `?`,
     /// `!` or `lazy`.
     producer: bool,
-    /// Parameter index → how it is taken apart. Empty when the body has
-    /// statement bindings.
-    consumes: Vec<(usize, Take)>,
+    /// The parameter the body is one `match` over, with constructor or
+    /// `_` arms that never read it whole. `None` when the body has
+    /// statement bindings or is anything else.
+    consumes: Option<usize>,
 }
 
 struct Table {
@@ -307,11 +300,11 @@ fn shape_of(fd: &FnDef, recursive: bool) -> Option<Shape> {
     }
     let producer = !recursive && size <= MAX_PRODUCER_NODES && !reads_list_by_drop(body);
     let consumes = if bindings.is_empty() {
-        consumed_params(body, &params)
+        consumed_param(body, &params)
     } else {
-        Vec::new()
+        None
     };
-    if !producer && consumes.is_empty() {
+    if !producer && consumes.is_none() {
         return None;
     }
     Some(Shape {
@@ -323,27 +316,24 @@ fn shape_of(fd: &FnDef, recursive: bool) -> Option<Shape> {
     })
 }
 
-/// The parameters `body` takes apart, and how.
-fn consumed_params(body: &Spanned<Expr>, params: &[String]) -> Vec<(usize, Take)> {
-    let mut out = Vec::new();
-    if let Expr::Match { subject, arms } = &body.node
-        && let Expr::Ident(name) = &subject.node
-        && name != "_"
-        && let Some(k) = params.iter().position(|p| p == name)
-        && !arms.is_empty()
-        && arms
-            .iter()
-            .all(|arm| matches!(arm.pattern, Pattern::Constructor(..) | Pattern::Wildcard))
-        && arms.iter().all(|arm| count_ident(&arm.body, name) == 0)
-    {
-        out.push((k, Take::Match));
+/// The parameter `body` is one `match` over, with constructor or `_` arms
+/// that never read it whole.
+fn consumed_param(body: &Spanned<Expr>, params: &[String]) -> Option<usize> {
+    let Expr::Match { subject, arms } = &body.node else {
+        return None;
+    };
+    let Expr::Ident(name) = &subject.node else {
+        return None;
+    };
+    if name == "_" || arms.is_empty() {
+        return None;
     }
-    for (k, param) in params.iter().enumerate() {
-        if param != "_" && reads_only_fields(body, param) {
-            out.push((k, Take::Fields));
-        }
-    }
-    out
+    let k = params.iter().position(|p| p == name)?;
+    let flat = arms
+        .iter()
+        .all(|arm| matches!(arm.pattern, Pattern::Constructor(..) | Pattern::Wildcard));
+    let whole = arms.iter().any(|arm| count_ident(&arm.body, name) > 0);
+    (flat && !whole).then_some(k)
 }
 
 /// A list match over `List.drop(…)`: the body of `Bytes.get`, which the
@@ -642,29 +632,14 @@ fn called_fn(expr: &Spanned<Expr>) -> Option<&str> {
 
 // ── The consumer ────────────────────────────────────────────────────
 
-/// What is pushed into the producer's leaves, with the consumer's other
+/// The match pushed into the producer's leaves, with the consumer's other
 /// parameters already replaced by the call's arguments.
-enum Consumer {
-    /// The arms of the match over the value.
-    Match {
-        arms: Vec<MatchArm>,
-        subject_ty: Shared<Type>,
-    },
-    /// The body reading `param` only through its fields.
-    Fields {
-        param: String,
-        body: Spanned<Expr>,
-        subject_ty: Shared<Type>,
-    },
+struct Consumer {
+    arms: Vec<MatchArm>,
+    subject_ty: Shared<Type>,
 }
 
 impl Consumer {
-    fn subject_ty(&self) -> &Type {
-        match self {
-            Consumer::Match { subject_ty, .. } | Consumer::Fields { subject_ty, .. } => subject_ty,
-        }
-    }
-
     /// The arm a leaf constructor `key` with `arity` fields selects, with
     /// the binders of its pattern — none for a `_` arm.
     fn arm_for(
@@ -672,10 +647,7 @@ impl Consumer {
         key: &(String, String),
         arity: usize,
     ) -> Option<(Vec<String>, Spanned<Expr>)> {
-        let Consumer::Match { arms, .. } = self else {
-            return None;
-        };
-        for arm in arms {
+        for arm in &self.arms {
             match &arm.pattern {
                 Pattern::Constructor(name, binders) => {
                     if ctor_key(name) == *key {
@@ -708,7 +680,8 @@ struct Fused {
     expr: Spanned<Expr>,
     /// Unknown leaves, each holding a copy of the whole consumer.
     copies: usize,
-    /// Known leaves whose value carries at least one field.
+    /// Known leaves that build a cell: a constructor of a user sum type
+    /// with a field, perhaps inside `Option`/`Result`.
     built: usize,
     known: usize,
     unfolded: usize,
@@ -798,7 +771,7 @@ impl FnCx<'_> {
                 {
                     return None;
                 }
-                let consumer = Consumer::Match {
+                let consumer = Consumer {
                     arms: arms.iter().cloned().collect(),
                     subject_ty: subject.ty.get()?.clone(),
                 };
@@ -813,22 +786,17 @@ impl FnCx<'_> {
                 if args.len() != shape.params.len() {
                     return None;
                 }
-                // The first argument that is a producer of this module or a
-                // value built at the call site, whose parameter `g` takes
-                // apart.
-                let (k, take) = shape.consumes.iter().copied().find(|(k, _)| {
-                    let arg = &args[*k];
-                    if arg.lazy.is_deferred() {
-                        return false;
-                    }
-                    match called_fn(arg) {
-                        Some(f) => self.table.fns.get(f).is_some_and(|s| s.producer),
-                        None => {
-                            matches!(arg.node, Expr::RecordCreate { .. })
-                                || dotted_call(arg).is_some()
-                        }
-                    }
-                })?;
+                // The argument `g` matches on: a producer call of this
+                // module, or a constructor written at the call site.
+                let k = shape.consumes?;
+                let arg = &args[k];
+                let producible = match called_fn(arg) {
+                    Some(f) => self.table.fns.get(f).is_some_and(|s| s.producer),
+                    None => dotted_call(arg).is_some(),
+                };
+                if arg.lazy.is_deferred() || !producible {
+                    return None;
+                }
                 // Arguments after the producer's are read in place only if
                 // reading them later cannot be told from reading them
                 // first; the ones before it are bound in order.
@@ -844,38 +812,17 @@ impl FnCx<'_> {
                     let how = self.argument(param, arg, &shape.body, &mut prelude)?;
                     bound.push((param.clone(), how));
                 }
-                let subject_ty = match take {
-                    Take::Match => {
-                        let Expr::Match { subject, .. } = &shape.body.node else {
-                            return None;
-                        };
-                        subject.ty.get()?.clone()
-                    }
-                    Take::Fields => args[k].ty.get()?.clone(),
+                let Expr::Match { subject, arms } = &shape.body.node else {
+                    return None;
                 };
-                let consumer = match take {
-                    Take::Match => {
-                        let Expr::Match { arms, .. } = &shape.body.node else {
-                            return None;
-                        };
-                        let mut arms: Vec<MatchArm> = arms.iter().cloned().collect();
-                        for arm in &mut arms {
-                            let mut body = (*arm.body).clone();
-                            apply_bound(&mut body, &bound);
-                            arm.body = Shared::new(body);
-                        }
-                        Consumer::Match { arms, subject_ty }
-                    }
-                    Take::Fields => {
-                        let mut body = shape.body.clone();
-                        apply_bound(&mut body, &bound);
-                        Consumer::Fields {
-                            param: shape.params[k].clone(),
-                            body,
-                            subject_ty,
-                        }
-                    }
-                };
+                let subject_ty = subject.ty.get()?.clone();
+                let mut arms: Vec<MatchArm> = arms.iter().cloned().collect();
+                for arm in &mut arms {
+                    let mut body = (*arm.body).clone();
+                    apply_bound(&mut body, &bound);
+                    arm.body = Shared::new(body);
+                }
+                let consumer = Consumer { arms, subject_ty };
                 self.fuse_site(prelude, args[k].clone(), consumer, result_ty, original_size)
             }
             _ => None,
@@ -996,25 +943,19 @@ impl FnCx<'_> {
             return fused;
         }
         let line = leaf.line;
-        let expr = match consumer {
-            Consumer::Match { arms, .. } => {
-                let arms: Vec<MatchArm> = arms.iter().map(|arm| self.fresh_arm(arm)).collect();
-                typed(
-                    Expr::Match {
-                        subject: Shared::new(leaf),
-                        arms: Shared::new(arms),
-                    },
-                    line,
-                    result_ty,
-                )
-            }
-            Consumer::Fields { param, body, .. } => {
-                let fresh = self.fresh_name(param);
-                let mut body = self.fresh_body(body.clone());
-                rename_ident(&mut body, param, &fresh);
-                let_match(Pattern::Ident(fresh), leaf, body, result_ty)
-            }
-        };
+        let arms: Vec<MatchArm> = consumer
+            .arms
+            .iter()
+            .map(|arm| self.fresh_arm(arm))
+            .collect();
+        let expr = typed(
+            Expr::Match {
+                subject: Shared::new(leaf),
+                arms: Shared::new(arms),
+            },
+            line,
+            result_ty,
+        );
         Fused {
             expr,
             copies: 1,
@@ -1057,9 +998,8 @@ impl FnCx<'_> {
         self.fuse_leaf(body, consumer, result_ty, depth)
     }
 
-    /// `leaf` is a constructor or record of the consumer's type: the arm
-    /// or body it selects, with the leaf's fields for the binders or field
-    /// reads.
+    /// `leaf` is a constructor of the consumer's type: the arm it selects,
+    /// with the leaf's fields for the arm's binders.
     fn reduce_known(
         &mut self,
         leaf: &Spanned<Expr>,
@@ -1067,15 +1007,10 @@ impl FnCx<'_> {
         result_ty: Option<&Shared<Type>>,
     ) -> Option<Fused> {
         let leaf_ty = leaf.ty.get()?;
-        if !same_type(consumer.subject_ty(), leaf_ty) {
+        if !same_type(&consumer.subject_ty, leaf_ty) {
             return None;
         }
-        match consumer {
-            Consumer::Match { .. } => self.reduce_ctor(leaf, consumer, result_ty),
-            Consumer::Fields { param, body, .. } => {
-                self.reduce_record(leaf, param, body, result_ty)
-            }
-        }
+        self.reduce_ctor(leaf, consumer, result_ty)
     }
 
     fn reduce_ctor(
@@ -1093,7 +1028,7 @@ impl FnCx<'_> {
                 !self.table.foreign_fns.contains(&dotted)
                     && !self.table.fns.contains_key(&dotted)
                     && consumer
-                        .subject_ty()
+                        .subject_ty
                         .named_name()
                         .is_some_and(|name| bare_name(name) == ty)
                     && self
@@ -1125,43 +1060,34 @@ impl FnCx<'_> {
         Some(Fused {
             expr: body,
             copies: 0,
-            built: usize::from(!fields.is_empty()),
+            built: usize::from(self.builds_cell(leaf)),
             known: 1,
             unfolded: 0,
         })
     }
 
-    fn reduce_record(
-        &mut self,
-        leaf: &Spanned<Expr>,
-        param: &str,
-        body: &Spanned<Expr>,
-        result_ty: Option<&Shared<Type>>,
-    ) -> Option<Fused> {
-        let Expr::RecordCreate { fields, .. } = &leaf.node else {
-            return None;
+    /// Whether `expr` builds a cell every runtime backend allocates: a
+    /// constructor of a user sum type with at least one field, directly or
+    /// as the payload of `Option.Some` / `Result.Ok` / `Result.Err`. A
+    /// nullary constructor, an `Option` or `Result` around a value that
+    /// exists already, and a record (a struct by value in the Rust backend)
+    /// cost no cell, and a fusion that saves no cell only copies arms.
+    fn builds_cell(&self, expr: &Spanned<Expr>) -> bool {
+        let Some((dotted, fields)) = dotted_call(expr) else {
+            return false;
         };
-        let mut body = self.fresh_body(body.clone());
-        let mut wraps: Vec<Binding> = Vec::new();
-        let how = self.argument(param, leaf, &body, &mut wraps)?;
-        if !matches!(how, Bound::Fields(_)) {
-            return None;
+        let key = ctor_key(&dotted);
+        match key.0.as_str() {
+            "Option" | "Result" => fields.iter().any(|f| self.builds_cell(f)),
+            ty => {
+                !fields.is_empty()
+                    && self
+                        .table
+                        .sums
+                        .get(ty)
+                        .is_some_and(|variants| variants.contains_key(&key.1))
+            }
         }
-        apply_bound(&mut body, &[(param.to_string(), how)]);
-        if count_ident(&body, param) > 0 {
-            // A field the record does not set — not a checked program.
-            return None;
-        }
-        for (pattern, value) in wraps.into_iter().rev() {
-            body = let_match(pattern, value, body, result_ty);
-        }
-        Some(Fused {
-            expr: body,
-            copies: 0,
-            built: usize::from(!fields.is_empty()),
-            known: 1,
-            unfolded: 0,
-        })
     }
 
     /// The producer's body with its parameters replaced by `args` and its
@@ -1371,26 +1297,16 @@ fn direct(line: String) -> Int
     fn sum_built_by_a_call_is_matched_in_place() {
         let mut items = prepared(LINES);
         let report = run(&mut items);
-        // `parse` matches what `probe` builds, so it is a site too — and
-        // the `Ids` record `probe` builds is read field by field. The
-        // same site is fused again inside each unfolded copy of `parse`.
-        assert_eq!(report.rewrites, 5, "{report:?}");
-        assert_eq!(report.sites_by_fn.get("step").map(|s| s.0), Some(2));
-        assert_eq!(report.sites_by_fn.get("direct").map(|s| s.0), Some(2));
-        assert_eq!(report.sites_by_fn.get("parse").map(|s| s.0), Some(1));
-        let parse = rendered(&items, "parse");
-        assert!(
-            !parse.contains("probe(") && !parse.contains("Ids("),
-            "{parse}"
-        );
+        // `parse` matches what `probe` builds too, but `probe` builds no
+        // cell — an `Option` around a record — so that site stays.
+        assert_eq!(report.rewrites, 2, "{report:?}");
+        assert_eq!(report.sites_by_fn.get("step").map(|s| s.0), Some(1));
+        assert_eq!(report.sites_by_fn.get("direct").map(|s| s.0), Some(1));
+        assert!(!report.sites_by_fn.contains_key("parse"), "{report:?}");
         let step = rendered(&items, "step");
         assert!(!step.contains("parse("), "producer unfolded: {step}");
         assert!(!step.contains("apply("), "consumer unfolded: {step}");
         assert!(!step.contains("Line.App("), "known leaf reduced: {step}");
-        assert!(
-            !step.contains("probe("),
-            "the site inside the unfolded body is fused too: {step}"
-        );
         assert!(
             step.contains("other("),
             "unknown leaf keeps its call: {step}"
@@ -1406,16 +1322,23 @@ fn direct(line: String) -> Int
         assert!(direct.contains("other("), "{direct}");
     }
 
+    /// A record is no cell: the site stays for `escape`, which splices the
+    /// record written at the call after slot resolution. A record inside
+    /// a sum constructor is taken apart with the sum.
     #[test]
-    fn record_built_at_the_call_is_read_in_place() {
+    fn a_record_alone_is_not_a_cell_but_one_inside_a_sum_is() {
         let mut items = prepared(
             r#"module Points
-    intent = "Scalar replacement of a record argument."
+    intent = "Scalar replacement belongs to escape; a record in a cell goes with the cell."
     effects []
 
 record Point
     x: Int
     y: Int
+
+type Shape
+    At(Point)
+    Nowhere
 
 fn distance(p: Point) -> Int
     p.x * p.x + p.y * p.y
@@ -1430,19 +1353,33 @@ fn direct(n: Int) -> Int
 
 fn viaCall(n: Int) -> Int
     distance(mk(n))
+
+fn place(n: Int) -> Shape
+    match n > 0
+        true -> Shape.At(Point(x = n, y = n * 2))
+        false -> Shape.Nowhere
+
+fn far(s: Shape) -> Int
+    match s
+        Shape.At(p) -> p.x * p.x + p.y
+        Shape.Nowhere -> 0
+
+fn viaSum(n: Int) -> Int
+    far(place(n))
 "#,
         );
         let report = run(&mut items);
-        assert_eq!(report.rewrites, 2, "{report:?}");
-        let direct = rendered(&items, "direct");
-        assert!(!direct.contains("distance("), "{direct}");
-        assert!(!direct.contains("Point("), "{direct}");
+        assert_eq!(report.rewrites, 1, "{report:?}");
+        assert!(report.sites_by_fn.contains_key("viaSum"), "{report:?}");
+        let via = rendered(&items, "viaSum");
         assert!(
-            direct.contains("__df"),
-            "`n * 2` is read twice, so it is bound once: {direct}"
+            !via.contains("Shape.At(") && !via.contains("Point("),
+            "{via}"
         );
-        let via = rendered(&items, "viaCall");
-        assert!(!via.contains("Point(") && !via.contains("mk("), "{via}");
+        assert!(
+            via.contains("__df"),
+            "`n * 2` is read twice through the record, so it is bound once: {via}"
+        );
     }
 
     #[test]

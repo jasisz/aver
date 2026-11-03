@@ -810,27 +810,33 @@ fn rust_sum_built_by_a_call_is_matched_without_being_built() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
-/// A record built for a call that only reads its fields is never built
-/// (the escape pass's shape, as an instance of `ir::deforest_calls`):
-/// written at the call or by a small function with two leaves. A field
-/// read twice is computed once; a function reading the record whole keeps
-/// it.
+/// A record is no cell (a struct by value in Rust), so `ir::deforest_calls`
+/// leaves a record argument to the `escape` pass: the record written at
+/// the call is spliced into the reader there, and the one a function builds
+/// stays a call. Both read as the VM.
 #[test]
-fn rust_record_built_for_a_field_reader_is_never_built() {
+fn rust_record_written_at_the_call_escapes_and_one_built_by_a_call_stays() {
     let relative = "tests/fixtures/rust_deforest_record.av";
     let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
     let emitted = emitted_entry_module("rust_deforest_record", &src);
-    for name in ["direct", "viaCall"] {
-        let body = emitted
+    let body = |name: &str| {
+        emitted
             .split(&format!("pub fn {name}("))
             .nth(1)
             .and_then(|rest| rest.split("\n}\n").next())
-            .unwrap_or_else(|| panic!("{name} is emitted"));
-        assert!(
-            !body.contains("Point {") && !body.contains("distance("),
-            "{name} builds no Point and calls no reader:\n{body}"
-        );
-    }
+            .unwrap_or_else(|| panic!("{name} is emitted"))
+            .to_string()
+    };
+    let direct = body("direct");
+    assert!(
+        !direct.contains("Point {") && !direct.contains("distance("),
+        "escape splices the record written at the call:\n{direct}"
+    );
+    let via = body("viaCall");
+    assert!(
+        via.contains("mk(") && via.contains("distance("),
+        "a record built by a call stays a call:\n{via}"
+    );
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
