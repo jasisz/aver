@@ -3767,7 +3767,6 @@ fn collect_fn_values(e: &MirExpr, out: &mut HashSet<String>) {
     visit_children(e, &mut |c| collect_fn_values(c, out));
 }
 
-/// `true` when the source type-annotation string is exactly `Int`.
 // ── Word loops ──────────────────────────────────────────────────────────
 
 /// The params of `f` its word loop carries ([`WordLoop`]): boxed `Int`
@@ -3900,6 +3899,7 @@ fn word_tree_leaves(e: &Spanned<MirExpr>, builtins: &[String], leaf: &mut dyn Fn
     }
 }
 
+/// `true` when the source type-annotation string is exactly `Int`.
 fn ty_str_is_int(ty: &str) -> bool {
     ty == "Int"
 }
