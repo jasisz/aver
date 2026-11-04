@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.32.0 "Tight" (unreleased)
+## 0.32.0 "Tight" — 2026-11-04
 
 > _Certified code computes `Int` on machine words, and compiled Rust copies far less._
 
