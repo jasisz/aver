@@ -397,6 +397,16 @@ fn deep_recursion_under_a_result_int_main_matches_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A self tail call under a binding in a match arm (a match on a
+/// constructor written in place folds to the bindings of its arm) is a
+/// step of the loop, not a call: the count runs deeper than the thread's
+/// stack holds frames.
+#[test]
+fn tail_call_under_a_binding_runs_as_a_loop_step_matching_vm() {
+    assert_plain_parity("tests/fixtures/tail_call_under_binding_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A value of a recursive sum is one pointer to a node holding its
 /// constructor's tag and fields, matched through a view: alone, in a tuple,
 /// with a name bound to the whole value, in a self tail call, compared with

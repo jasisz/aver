@@ -4078,10 +4078,8 @@ pub fn evalResolvedSlotLoop(
         )?;
         match step {
             crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v) => {
-                return {
-                    let __arg7 @ _ = Ok(v);
-                    crate::aver_generated::domain::eval::common::normalizeFnReturn(&__arg7)
-                };
+                let __arg7 @ _ = Ok(v);
+                return crate::aver_generated::domain::eval::common::normalizeFnReturn(&__arg7);
             }
             crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailRecurEnv(nextEnv) => {
                 let __tco2 = nextEnv;

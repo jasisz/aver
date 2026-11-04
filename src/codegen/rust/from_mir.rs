@@ -7566,6 +7566,23 @@ fn emit_mir_statement_value(
     emit_mir_binding_value(&let_node.value, ctx)
 }
 
+/// A `Let` as a statement before its body: `let x @ _ = v;`, or a bare
+/// `v;` for a discarded intermediate (a non-tail `Stmt::Expr` or a
+/// `_ = effect()` discard, which carries an empty `binding_name`: the value
+/// is evaluated for its effect and dropped).
+fn emit_mir_let_statement(
+    let_node: &crate::ir::mir::MirLet,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let value = emit_mir_statement_value(let_node, ctx)?;
+    Some(if let_node.binding_name.is_empty() {
+        format!("{value};")
+    } else {
+        let name = explicit_binding_pattern(&let_node.binding_name);
+        format!("let {name} = {value};")
+    })
+}
+
 /// Emit a `let` binding's value as an OWNED value.
 ///
 /// Naming a read of a borrowed param does not change what a function may do
@@ -8063,13 +8080,10 @@ fn emit_mir_tco_body(
     let mut current = body;
     while let MirExpr::Let(spanned_let) = &current.node {
         let let_node = &spanned_let.node;
-        let value = emit_mir_statement_value(let_node, ctx)?;
-        if let_node.binding_name.is_empty() {
-            lines.push(format!("        {};", value));
-        } else {
-            let name = explicit_binding_pattern(&let_node.binding_name);
-            lines.push(format!("        let {} = {};", name, value));
-        }
+        lines.push(format!(
+            "        {}",
+            emit_mir_let_statement(let_node, ctx)?
+        ));
         current = &let_node.body;
     }
 
@@ -8079,9 +8093,9 @@ fn emit_mir_tco_body(
 }
 
 /// Emit a MIR expression in self-TCO tail position. Self-`TailCall` →
-/// `{ rebind; continue }`; `Match` / `IfThenElse` recurse into arms
-/// (still tail position); anything else is a base-case value → `return
-/// <expr>;`.
+/// `{ rebind; continue }`; `Match` / `IfThenElse` recurse into arms and a
+/// `Let` into its body (still tail position); anything else is a base-case
+/// value → `return <expr>;`.
 fn emit_mir_tco_tail_expr(
     expr: &Spanned<MirExpr>,
     self_fn: crate::ir::FnId,
@@ -8115,7 +8129,18 @@ fn emit_mir_tco_tail_expr(
         MirExpr::IfThenElse(spanned_ite) => {
             emit_mir_tco_if_then_else(&spanned_ite.node, self_fn, params, passthrough, ctx)
         }
-        // Base-case value (or `?` / let-bound value): `return <expr>;`.
+        // A binding before the tail (a constructor match folded to its
+        // bindings, an argument bound first by `arg_order`) keeps its body
+        // in tail position: the statement, then the body, in one block. A
+        // self-`TailCall` under it is a loop step as in an arm; rendered as
+        // a value it was a real call, one frame per step.
+        MirExpr::Let(spanned_let) => {
+            let let_node = &spanned_let.node;
+            let statement = emit_mir_let_statement(let_node, ctx)?;
+            let tail = emit_mir_tco_tail_expr(&let_node.body, self_fn, params, passthrough, ctx)?;
+            Some(format!("{{ {statement} {tail} }}"))
+        }
+        // Base-case value (or `?` value): `return <expr>;`.
         _ => Some(format!("return {};", emit_mir_value_return(expr, ctx)?)),
     }
 }
@@ -8745,15 +8770,10 @@ fn emit_mir_trampoline_body(
     let mut current = body;
     while let MirExpr::Let(spanned_let) = &current.node {
         let let_node = &spanned_let.node;
-        let value = emit_mir_statement_value(let_node, ctx)?;
-        if let_node.binding_name.is_empty() {
-            // Discarded intermediate (`Stmt::Expr` / `_ = effect()`)
-            // — bare statement, result dropped.
-            lines.push(format!("                {};", value));
-        } else {
-            let name = explicit_binding_pattern(&let_node.binding_name);
-            lines.push(format!("                let {} = {};", name, value));
-        }
+        lines.push(format!(
+            "                {}",
+            emit_mir_let_statement(let_node, ctx)?
+        ));
         current = &let_node.body;
     }
 
@@ -8815,14 +8835,9 @@ fn emit_mir_trampoline_tail_expr(
         // `arg_order`) keeps its body in tail position.
         MirExpr::Let(spanned_let) => {
             let let_node = &spanned_let.node;
-            let value = emit_mir_statement_value(let_node, ctx)?;
+            let statement = emit_mir_let_statement(let_node, ctx)?;
             let tail = emit_mir_trampoline_tail_expr(&let_node.body, members, enum_name, ctx)?;
-            Some(if let_node.binding_name.is_empty() {
-                format!("{{ {value}; {tail} }}")
-            } else {
-                let name = explicit_binding_pattern(&let_node.binding_name);
-                format!("{{ let {name} = {value}; {tail} }}")
-            })
+            Some(format!("{{ {statement} {tail} }}"))
         }
         _ => Some(format!("return {}", emit_mir_value_return(expr, ctx)?)),
     }

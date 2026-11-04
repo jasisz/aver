@@ -1687,27 +1687,27 @@ pub fn shorter(
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TRec(__k_fields) => {
                     let k = __k_fields.0.clone();
                     let fs = &__k_fields.1;
-                    return {
+                    {
                         let __arg28 @ _ =
                             crate::proof_kernel::aver_generated::kernel::induct::fieldValues(fs);
-                        crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                        return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
                             &__arg28, m, live, parts,
-                        )
-                    };
+                        );
+                    }
                 }
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TUpd(__k_fields) => {
                     let k = __k_fields.0.clone();
                     let b = &__k_fields.1;
                     let fs = &__k_fields.2;
-                    return {
+                    {
                         let __arg29 @ _ = aver_rt::AverList::prepend_owned(
                             b.clone(),
                             crate::proof_kernel::aver_generated::kernel::induct::fieldValues(fs),
                         );
-                        crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
+                        return crate::proof_kernel::aver_generated::kernel::induct::shorterAll(
                             &__arg29, m, live, parts,
-                        )
-                    };
+                        );
+                    }
                 }
                 _ => {
                     return true;
