@@ -2826,6 +2826,7 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         manifest["certified"],
         serde_json::json!([{
             "name": "addOne",
+            "funcIdx": 1,
             "class": "source-plan-v1",
             "facets": [],
             "policy": "simulatesModel",

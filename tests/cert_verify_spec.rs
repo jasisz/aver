@@ -2734,13 +2734,14 @@ fn cert_tripwire_declines_recursion_self_decouple() {
     );
 }
 
-/// (u) Label relabel. A certified function is its index; its name is a
-/// label. Relabelled consistently in the plans and the JSON, the certificate
-/// still checks the same functions at the same indices, under the new label.
-/// Relabelled to a duplicate, the checker refuses the manifest; relabelled in
-/// the JSON alone, the witness's label pin does not elaborate.
+/// (u) Label relabel. A certified function is its index, and its label is
+/// what the report credits. Relabelled to a duplicate, the checker refuses the
+/// manifest; relabelled in the JSON alone, the witness's label pin does not
+/// elaborate; relabelled consistently in the plans and the JSON, the module
+/// still exports the function as `sumTo`, and an export of a certified
+/// function must carry its label, so the export walk refuses it.
 #[test]
-fn cert_tripwire_relabel_changes_no_verdict() {
+fn cert_tripwire_declines_relabels() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-u") else {
         return;
     };
@@ -2795,12 +2796,10 @@ fn cert_tripwire_relabel_changes_no_verdict() {
         "JSON-only relabel checked:\n{out}"
     );
     let (ok, out) = relabel("renamed", true);
-    assert!(ok, "a consistent relabel checks the same functions:\n{out}");
+    assert!(!ok, "an exported function relabelled must be DECLINED:\n{out}");
     assert!(
-        out.contains("2 checked functions")
-            && out.contains("renamed  policy:")
-            && out.contains("countDown  policy:"),
-        "{out}"
+        out.contains("walkExports") || out.contains("ExportChars.walk"),
+        "wrong reason (exported relabel):\n{out}"
     );
 }
 

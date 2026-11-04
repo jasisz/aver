@@ -4,15 +4,15 @@ expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 9,
-  "format": {"version": 1, "wall_id": "sha256:7d577458dae255e1d07d57f7c70e51aabc376f7a5221ae9f661bf2d254eafb75"},
+  "schema_version": 10,
+  "format": {"version": 1, "wall_id": "sha256:0b8ad406750e650c8229550371614bbc5ef1dbe7a40526dcbdbe9a8c55c1478d"},
   "wasm": "wasip2_carrierless.component.wasm",
-  "wasm_sha256": "74b662054b8ea8de4b1f625c464c2aec4704cf6a9b80f1d70ebdde1783d7e6fc",
+  "wasm_sha256": "755298fcabd68362f925447aa11bea2d9eecd07d8c039923add32350bbd40f2f",
   "target": "wasip2",
   "level": "L1",
   "profile": "AverUserProfile/v1",
   "abi": "aver-wasip2/0",
-  "wasip2ComponentEnvelope": {"kind": "prefix-core-suffix/v1", "prefix_len": 11, "embedded_core_module_len": 2572, "suffix_len": 478},
+  "wasip2ComponentEnvelope": {"kind": "prefix-core-suffix/v1", "prefix_len": 11, "embedded_core_module_len": 2549, "suffix_len": 478},
   "final_theorem": "AverCert.Final.cert",
   "artifact_certificate_root": "AverCert.Artifact.certificate",
   "carrier_type_index": null,
@@ -38,12 +38,12 @@ expression: golden
   "hostRoleTable": null,
   "stringHostRoles": [{"function_index": 4, "role": "stringConcat"}, {"function_index": 8, "role": "stringEq"}],
   "certified": [
-    {"name": "greet", "class": "source-plan-v1", "facets": ["strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"},
-    {"name": "shout", "class": "source-plan-v1", "facets": ["strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"},
-    {"name": "main", "class": "source-plan-v1", "facets": ["calls", "strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"}
+    {"name": "greet", "funcIdx": 1, "class": "source-plan-v1", "facets": ["strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"},
+    {"name": "shout", "funcIdx": 2, "class": "source-plan-v1", "facets": ["strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"},
+    {"name": "main", "funcIdx": 3, "class": "source-plan-v1", "facets": ["calls", "strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"}
   ],
   "source_level_only": []
 }
 
 == Artifact.data envelope ==
-    manifest := AverCert.manifest, wasip2ComponentEnvelope := some { prefixLen := 11, embeddedCoreModuleLen := 2572, suffixLen := 478 },
+    manifest := AverCert.manifest, wasip2ComponentEnvelope := some { prefixLen := 11, embeddedCoreModuleLen := 2549, suffixLen := 478 },
