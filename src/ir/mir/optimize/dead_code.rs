@@ -61,7 +61,7 @@ fn dce_walk_children(node: &mut MirExpr) {
 /// `true` when `body` contains a `MirExpr::Local` whose slot
 /// equals `target`. Lexical — doesn't track scope shadowing
 /// because MIR's slot numbering is already SSA-ish.
-fn local_is_read(target: LocalId, body: &Spanned<MirExpr>) -> bool {
+pub(crate) fn local_is_read(target: LocalId, body: &Spanned<MirExpr>) -> bool {
     let mut found = false;
     visit_locals(&body.node, &mut |slot| {
         if slot == target {

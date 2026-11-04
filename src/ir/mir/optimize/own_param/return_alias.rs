@@ -24,10 +24,9 @@ pub(super) type ReturnAliasSummary = HashMap<FnId, HashSet<usize>>;
 /// The lattice is deliberately one-way: a function is absent (unknown) until
 /// its complete result shape can be expressed as a set of parameter indices.
 /// A known empty set means fresh. Acyclic helper chains become known as their
-/// callees do; recursive result cycles remain unknown rather than guessing a
-/// fixpoint. That conservative loss of precision is safe and does not affect
-/// ordinary tail-recursive accumulator functions, whose recursive *arguments*
-/// are the consumer of this summary rather than their own returned call.
+/// callees do; recursive result cycles become known through a checked
+/// post-fixpoint, so a caller that keeps the result of a recursive helper
+/// (`sieve(mark(v, ..), ..)`) can still hand it on as uniquely owned.
 pub(super) fn compute_return_alias_summary(
     program: &MirProgram,
     provenance: &HashMap<FnId, HashMap<u32, Spanned<MirExpr>>>,
@@ -47,43 +46,89 @@ pub(super) fn compute_return_alias_summary(
             )
         })
         .collect();
-    let mut summary = ReturnAliasSummary::new();
+    let empty_provenance = HashMap::new();
+    let fn_result_aliases = |id: &FnId, summary: &ReturnAliasSummary| {
+        let f = program.fns.get(id)?;
+        let slots = param_slots.get(id)?;
+        let prov = provenance.get(id).unwrap_or(&empty_provenance);
+        let mut aliases =
+            return_aliases_of_expr(&f.body.node, slots, prov, builtins, summary, model, 0)?;
+        collect_explicit_return_aliases(
+            &f.body.node,
+            slots,
+            prov,
+            builtins,
+            summary,
+            model,
+            &mut aliases,
+            0,
+        )
+        .then_some(aliases)
+    };
 
+    // Acyclic helper chains: a function becomes known once every callee its
+    // result passes through is known.
+    let mut summary = ReturnAliasSummary::new();
     loop {
         let mut changed = false;
-        for (id, f) in program.iter() {
+        for (id, _) in program.iter() {
             if summary.contains_key(id) {
                 continue;
             }
-            let Some(slots) = param_slots.get(id) else {
-                continue;
-            };
-            let empty_provenance = HashMap::new();
-            let prov = provenance.get(id).unwrap_or(&empty_provenance);
-            let Some(mut aliases) =
-                return_aliases_of_expr(&f.body.node, slots, prov, builtins, &summary, model, 0)
-            else {
-                continue;
-            };
-            if !collect_explicit_return_aliases(
-                &f.body.node,
-                slots,
-                prov,
-                builtins,
-                &summary,
-                model,
-                &mut aliases,
-                0,
-            ) {
-                continue;
+            if let Some(aliases) = fn_result_aliases(id, &summary) {
+                summary.insert(*id, aliases);
+                changed = true;
             }
-            summary.insert(*id, aliases);
-            changed = true;
         }
         if !changed {
             break;
         }
     }
+
+    // Recursive result cycles (`fn fill(v, ..) = match .. { done -> v; _ ->
+    // fill(set(v, ..), ..) }`): every remaining function starts with the
+    // empty assumption, each round recomputes every result against the
+    // current assumptions, grows an assumption that was too small and drops
+    // a function whose result cannot be traced at all (unknown, which may
+    // make its callers untraceable on the next round). The loop stops only
+    // when every surviving assumption already covers its recomputed result:
+    // a post-fixpoint. A value a call returns is built by finitely many
+    // nested calls, the innermost of which returns through a non-recursive
+    // path, so induction on that nesting shows every returned backing is
+    // fresh or comes from the parameters the assumption names.
+    let mut assumed: HashMap<FnId, HashSet<usize>> = program
+        .iter()
+        .filter(|(id, _)| !summary.contains_key(id))
+        .map(|(id, _)| (*id, HashSet::new()))
+        .collect();
+    let mut order: Vec<FnId> = assumed.keys().copied().collect();
+    order.sort_by_key(|id| id.0);
+    loop {
+        let mut changed = false;
+        let mut view = summary.clone();
+        view.extend(assumed.iter().map(|(id, a)| (*id, a.clone())));
+        for id in &order {
+            let Some(current) = assumed.get_mut(id) else {
+                continue;
+            };
+            match fn_result_aliases(id, &view) {
+                Some(aliases) => {
+                    if !aliases.is_subset(current) {
+                        current.extend(aliases);
+                        changed = true;
+                    }
+                }
+                None => {
+                    assumed.remove(id);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    summary.extend(assumed);
 
     summary
 }

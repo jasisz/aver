@@ -526,7 +526,6 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
             f.aliased_slots = Arc::new(slots);
         }
     }
-
     program
 }
 
