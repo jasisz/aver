@@ -2,6 +2,31 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.32.0 "Word" (unreleased)
+
+> _Certified code computes `Int` on machine words, and compiled Rust copies far less._
+
+### Highlights
+
+- **Certified `Int` on machine words.** In a `--certify` build, `+`, `-`, `*`, comparisons, `Int.min`, `Int.max`, negation, and `Int.div` / `Int.mod` by a literal run on machine words, and the certificate covers that code. This includes operands that are calls, record fields or one-field `Int` records the compiler keeps as words. Functions the certificate does not cover keep their fast form.
+- **Certificates cover more**: `Bits.and`, `Bits.or`, `Bits.xor`, `T.update(...)` in declared field order, functions that pass a `Vector` along, `==` on records and sums, and self tail calls kept as loops.
+- **Faster compiled Rust.** Pure `Int` functions that recurse or loop run on machine words first and redo the work exactly only on overflow (15 to 40% faster on such code). Values are moved instead of cloned where a function stores, matches or hands them on. A value built and taken apart at once is never built, and a `match` at a value's last use reuses its memory.
+- **Big generated programs build.** A `match` with thousands of `Int` arms becomes one flat `match`, parameter ownership is decided in time linear in the program, a program with capabilities compiles once instead of twice, and thin functions are no longer pasted into every caller.
+- **New builtins**: `Float.toBits`, `Float.fromBits` and `Bytes.get` (constant-time octet read). Float literals may end in an exponent (`1.0e20`). `Vector.new` takes up to 16,777,216 elements; `Vector.fromList` has no limit.
+- **wasm-gc**: `==` on records and sums, and `List.contains` over them, run as functions of the program (`List.contains` is about twice as fast). `aver verify --wasm-gc` no longer slows down quadratically with the number of cases.
+- **Tooling**: `aver compile --perf-notes` names more of the copies it finds, and a command warns when `aver.toml` sits outside the module root, where it is not read.
+
+### Migration
+
+Certificates from 0.31 must be produced again.
+
+### Fixed
+
+- `aver verify` runs cases through the same passes as `aver run`. A division whose divisor became a literal only after inlining returned the default under `aver run`; this is fixed too.
+- wasm-gc no longer emits an invalid module when `Result.Ok(..)` or `Result.Err(..)` is compared with `==` inside a function returning a different `Result` type.
+- Rust backend: `List.take` / `List.drop` whose list and count read the same variable, a module binding that is a bare integer literal past i64, and interpolating a name bound by a match on a computed `String` compile again.
+- A VM superinstruction no longer spans a jump target. A `?` body is no longer spliced into its caller.
+
 ## 0.31.0 "Kernel" — 2026-10-30
 
 > _Aver checks its own proofs: a kernel written in Aver judges every proof step, and Lean checks the same steps again._
