@@ -405,8 +405,8 @@ fn the_fold_that_routes_every_insert_through_a_helper_is_linear() {
     assert_eq!((small.answer, large.answer), (200, 400));
 }
 
-/// A fold seeded behind a recursive result cycle — a deliberately conservative
-/// boundary the named-return summary does not try to solve as a fixpoint.
+/// A fold seeded out of a match binder — a deliberately conservative boundary:
+/// the named-return summary does not follow a value through a pattern.
 fn helper_seeded_fold(steps: i64) -> String {
     map_fold(
         steps,
@@ -415,11 +415,15 @@ fn seedPairs() -> List<Tuple<String, String>>
     ? "one pair, built where no literal map is in reach"
     [("s", "z")]
 
+fn wrapped() -> Option<Map<String, String>>
+    ? "a fresh seed inside an option"
+    Option.Some(Map.fromList(seedPairs()))
+
 fn seed(n: Int) -> Map<String, String>
-    ? "build a fresh seed behind a recursive result cycle"
-    match n > 0
-        true -> seed(n - 1)
-        false -> Map.fromList(seedPairs())
+    ? "build a fresh seed the compiler cannot follow out of a match binder"
+    match wrapped()
+        Option.Some(m) -> m
+        Option.None -> Map.fromList([])
 "#,
         "seed(1)",
     )
@@ -455,8 +459,8 @@ fn a_literal_seeded_fold_stops_paying_for_the_literals_own_entries() {
 #[test]
 fn a_helper_seeded_fold_is_linear_in_the_steps_it_takes() {
     // The runtime fallback half of #890. `own_param` reads the argument written
-    // at the call site, but deliberately leaves recursive return cycles unknown,
-    // so the accumulator parameter stays conservative and every insert reaches
+    // at the call site, but does not follow a result out of a match binder, so
+    // the accumulator parameter stays conservative and every insert reaches
     // the runtime decision. Nothing about the shape is out of the runtime's
     // reach: the seed is a fresh map and it is threaded linearly.
     let small = run(&helper_seeded_fold(40));
@@ -659,11 +663,15 @@ fn seedPairs() -> List<Tuple<String, String>>
     ? "one pair, built where no literal map is in reach"
     [("s", "z")]
 
+fn wrapped() -> Option<Map<String, String>>
+    ? "a fresh seed inside an option"
+    Option.Some(Map.fromList(seedPairs()))
+
 fn seed(n: Int) -> Map<String, String>
-    ? "build a fresh seed behind a recursive result cycle"
-    match n > 0
-        true -> seed(n - 1)
-        false -> Map.fromList(seedPairs())
+    ? "build a fresh seed the compiler cannot follow out of a match binder"
+    match wrapped()
+        Option.Some(m) -> m
+        Option.None -> Map.fromList([])
 
 fn descend(n: Int, m: Map<String, String>) -> Int
     ? "recurse first, write at the bottom, so every frame is still suspended"

@@ -141,6 +141,83 @@ fn main() -> Int
     );
 }
 
+/// A recursive helper's result: `sieve` hands its vector to the
+/// self-recursive `mark` and keeps what `mark` returns. `mark` returns either
+/// its parameter or its own recursive result, so the result carries only its
+/// parameter's backing; without a summary for recursive functions the call
+/// site counted as unknown and neither param graduated.
+#[test]
+fn vector_param_graduates_through_a_recursive_helper_result() {
+    let src = r#"module Sieve
+    intent = "a vector threaded through a recursive helper"
+    depends []
+    effects []
+
+fn mark(v: Vector<Bool>, j: Int, step: Int, n: Int) -> Vector<Bool>
+    ? "cross out multiples"
+    match j >= n
+        true -> v
+        false -> mark(Option.withDefault(Vector.set(v, j, false), v), j + step, step, n)
+
+fn sieve(v: Vector<Bool>, i: Int, n: Int) -> Vector<Bool>
+    ? "sieve below n"
+    match i * i >= n
+        true -> v
+        false -> match Option.withDefault(Vector.get(v, i), false)
+            true -> sieve(mark(v, i * i, i, n), i + 1, n)
+            false -> sieve(v, i + 1, n)
+
+fn main() -> Int
+    Vector.len(sieve(Vector.new(100, true), 2, 100))
+"#;
+    let program = refine(src);
+    assert!(
+        !param_flagged(&program, "mark", 0),
+        "mark's Vector param must graduate"
+    );
+    assert!(
+        !param_flagged(&program, "sieve", 0),
+        "sieve's Vector param must graduate through the recursive mark result"
+    );
+}
+
+/// The recursive summary must still name the parameter a recursive helper
+/// passes back: a caller that reads its vector after handing it to such a
+/// helper keeps the helper's result, and every param in the chain, flagged.
+#[test]
+fn recursive_helper_returning_its_param_keeps_a_read_vector_flagged() {
+    let src = r#"module SameAfter
+    intent = "a recursive helper hands its parameter back"
+    depends []
+    effects []
+
+fn same(v: Vector<Int>, k: Int) -> Vector<Int>
+    ? "the vector itself after k steps"
+    match k == 0
+        true -> v
+        false -> same(v, k - 1)
+
+fn fill(v: Vector<Int>, i: Int, n: Int) -> Vector<Int>
+    ? "write i at every i below n"
+    match i >= n
+        true -> v
+        false -> fill(Option.withDefault(Vector.set(v, i, i), v), i + 1, n)
+
+fn run(base: Vector<Int>) -> Int
+    ? "fill a vector the helper handed back, then read the original"
+    filled = fill(same(base, 2), 0, 3)
+    Option.withDefault(Vector.get(filled, 1), 0) + Option.withDefault(Vector.get(base, 1), 0)
+
+fn main() -> Int
+    run(Vector.new(3, 0))
+"#;
+    let program = refine(src);
+    assert!(
+        param_flagged(&program, "fill", 0),
+        "fill's Vector param must stay flagged: its only caller passes a vector it reads again"
+    );
+}
+
 /// `Result.Ok(Map.set(...))` is ownership-transparent only for generated
 /// Rust: `?` consumes and drops the wrapper. The VM keeps the wrapper in its
 /// arena after logical unwrapping, so the shared pass must remain conservative.

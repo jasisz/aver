@@ -604,6 +604,7 @@ pub(crate) fn emit_mir_option_with_default(
                 &inner.args[0],
                 &inner.args[1],
                 &inner.args[2],
+                default,
                 slots,
                 ctx,
             );
@@ -810,13 +811,14 @@ fn emit_vector_len(func: &mut Function, slots: crate::codegen::wasm_gc::types::V
 
 /// The fused `Option.withDefault(Vector.set(v, i, x), v)`: a new version
 /// with the cell written when `i` is in range, `v` itself otherwise.
-/// `mir_arg_uniquely_owned` (a dead, non-aliased binding) lets the `set`
-/// helper skip recording the old cell when no other version needs it.
+/// A dead, non-aliased receiver lets the `set` helper skip recording the
+/// old cell when no other version needs it.
 fn emit_mir_vector_set_or_default(
     func: &mut Function,
     vector: &Spanned<MirExpr>,
     index: &Spanned<MirExpr>,
     value: &Spanned<MirExpr>,
+    default: &Spanned<MirExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<MirBuiltinEmit, WasmGcError> {
@@ -858,7 +860,25 @@ fn emit_mir_vector_set_or_default(
     // version; a dead, non-aliased receiver that no other version is
     // described against is written with nothing recorded. Out of range the
     // answer is the receiver itself.
-    let owned = mir_arg_uniquely_owned(vector, ctx);
+    //
+    // The fusion reads the receiver's slot twice and hands back one of the
+    // two handles, so the slot is dead after it when EITHER read is its last
+    // use: the textually-last read is the default, which leaves the
+    // receiver's own bit false (the VM and Rust fusions OR the bits the same
+    // way). The index and the value run before the write; a read of the
+    // slot there could keep the old version inside the written cell, so it
+    // keeps the copying path, as the unfused rule would by not seeing the
+    // receiver as the last read.
+    let owned = match (&vector.node, &default.node) {
+        (MirExpr::Local(v), MirExpr::Local(d)) => {
+            let slot = v.node.slot;
+            (v.node.last_use || d.node.last_use)
+                && !ctx.is_aliased_slot(slot.0 as u16)
+                && !crate::ir::mir::optimize::dead_code::local_is_read(slot, index)
+                && !crate::ir::mir::optimize::dead_code::local_is_read(slot, value)
+        }
+        _ => false,
+    };
     idx_nonneg!();
     idx_i32!();
     e!(vector);
