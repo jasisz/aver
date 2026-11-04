@@ -1,0 +1,28 @@
+module M
+    intent = "Matches on a computed Int subject the certificate reads."
+    effects [Console]
+
+fn pushWidth(code: Int) -> Int
+    ? "Width of a push opcode."
+    match code
+        76 -> 1
+        77 -> 2
+        _ -> 0
+
+fn pushHead(code: Int, length: Int) -> List<Int>
+    ? "A call as the subject."
+    match pushWidth(code)
+        0 -> [code]
+        _ -> List.prepend(code, [length, pushWidth(code)])
+
+fn baseOf(hashType: Int) -> Int
+    ? "A remainder as the subject."
+    match Int.mod(hashType, 32)
+        2 -> 7
+        3 -> 8
+        _ -> 9
+
+fn main() -> Unit
+    ? "Prints them."
+    ! [Console.print]
+    Console.print("{List.len(pushHead(76, baseOf(3)))} {baseOf(-30)} {baseOf(35)}")

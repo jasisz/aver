@@ -123,3 +123,48 @@ fn two_int_fns_on_i64_leave_the_int_helpers_found() {
         .collect();
     assert!(certified.contains(&"poly"), "{manifest:#}");
 }
+
+/// A computed `Int` match subject tested against literals is held as its
+/// machine word and each literal compared as an `i64`; a Big subject, a tree
+/// that overflows on the way to a small value, negative literals and a
+/// catch-all binding the subject print what the VM prints.
+#[test]
+fn int_match_on_a_tree_prints_what_the_vm_prints() {
+    let file = fixture("int_match.av");
+    let vm = run(&file, false);
+    assert!(vm.starts_with("even odd even odd\n"), "{vm}");
+    assert_eq!(vm, run(&file, true));
+    assert_ne!(module(&file, true), module(&file, false));
+}
+
+/// In a `--certify` build a fn matching a computed `Int` subject against
+/// literals binds it once in MIR, so its plan states the code the emitter
+/// writes and the fn is certified.
+#[test]
+fn int_match_on_a_computed_subject_is_certified() {
+    let file = fixture("int_match_kept.av");
+    let dir = std::env::temp_dir().join(format!("aver-int-match-kept-{}", std::process::id()));
+    let out = Command::new(aver_cmd::aver_bin())
+        .current_dir(aver_cmd::repo_root())
+        .arg("compile")
+        .arg(&file)
+        .args(["--target", "wasm-gc", "--certify", "-o"])
+        .arg(&dir)
+        .output()
+        .expect("aver compile --certify executes");
+    assert!(out.status.success(), "{}", aver_cmd::format_output(&out));
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(dir.join("cert").join("cert-manifest.json")).expect("manifest written"),
+    )
+    .expect("manifest is JSON");
+    let _ = std::fs::remove_dir_all(&dir);
+    let certified: Vec<&str> = manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    for name in ["baseOf", "pushWidth", "pushHead"] {
+        assert!(certified.contains(&name), "{name}: {manifest:#}");
+    }
+}

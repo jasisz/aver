@@ -148,7 +148,7 @@ pub fn mark_fn(f: &MirFn, target: &Target<'_>) -> Option<MirFn> {
     }
     out.repr.scratch = pass.scratch;
     out.local_count += pass.leaf_slots.len() as u32;
-    out.repr.leaf_slots = pass.leaf_slots;
+    out.repr.leaf_slots.extend(pass.leaf_slots);
     Some(out)
 }
 

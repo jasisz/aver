@@ -1,0 +1,50 @@
+module M
+    intent = "A computed Int match subject tested against literals: Small, Big, overflowing, negative."
+    effects [Console]
+
+fn parity(x: Int) -> String
+    ? "Remainder by two."
+    match Int.mod(x, 2)
+        0 -> "even"
+        _ -> "odd"
+
+fn sign(x: Int, y: Int) -> String
+    ? "Negative subjects never equal a literal; the tree may overflow the machine word."
+    match x * y + 7
+        7 -> "zero"
+        0 -> "minus seven"
+        8 -> "one"
+        _ -> "other"
+
+fn width(x: Int) -> Int
+    ? "A tree whose product overflows but whose remainder is small."
+    match Int.mod(x * x, 32)
+        0 -> 100
+        1 -> 101
+        4 -> 104
+        9 -> 109
+        _ -> 0
+
+fn named(x: Int) -> Int
+    ? "A catch-all binding the subject."
+    match x + 1
+        0 -> 0
+        n -> n * 2
+
+fn collatz(x: Int, acc: Int) -> Int
+    ? "Collatz length."
+    match x == 1
+        true -> acc
+        false -> match Int.mod(x, 2)
+            0 -> collatz(Int.div(x, 2), acc + 1)
+            _ -> collatz(3 * x + 1, acc + 1)
+
+fn main() -> Unit
+    ? "Prints each case."
+    ! [Console.print]
+    big = 9223372036854775807 + 9223372036854775807
+    Console.print("{parity(4)} {parity(-3)} {parity(big)} {parity(big + 1)}")
+    Console.print("{sign(0, 5)} {sign(-1, 7)} {sign(1, 1)} {sign(big, big)} {sign(4611686018427387904, 2)} {sign(-4, 2)}")
+    Console.print("{width(3)} {width(4)} {width(5)} {width(big)} {width(big + 3)} {width(-9223372036854775807)}")
+    Console.print("{named(-1)} {named(big)} {named(9223372036854775807)}")
+    Console.print("{collatz(27, 0)} {collatz(big + 1, 0)}")
