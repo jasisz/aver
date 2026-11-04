@@ -564,11 +564,14 @@ fn rename_ident(expr: &mut Spanned<Expr>, from: &str, to: &str) {
 
 // ── Classifying expressions ─────────────────────────────────────────
 
-/// A variable or a constant (a literal, negated or not): substituted in
-/// place however often it is read.
+/// A variable or a constant (a literal, negated or not, or the empty list):
+/// substituted in place however often it is read, and dropped when unread.
+/// An unread `[]` bound by a `_` would leave the Rust backend a list whose
+/// element type nothing names.
 fn is_trivial(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::Ident(_) | Expr::Literal(_) => true,
+        Expr::List(items) => items.is_empty(),
         Expr::Neg(inner) => matches!(inner.node, Expr::Literal(_)),
         _ => false,
     }

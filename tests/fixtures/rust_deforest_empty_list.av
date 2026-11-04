@@ -1,0 +1,23 @@
+module Main
+    intent = "An unread empty list in a fused constructor is dropped, not bound untyped."
+
+type Comp
+    FuncT(List<String>, List<String>)
+    Other
+
+record Sub
+    comp: Comp
+
+fn pick(cs: Vector<Sub>, t: Int) -> Comp
+    match Vector.get(cs, t)
+        Option.Some(s) -> s.comp
+        Option.None -> Comp.FuncT([], [])
+
+fn params(cs: Vector<Sub>, t: Int) -> List<String>
+    match pick(cs, t)
+        Comp.FuncT(ps, _) -> ps
+        _ -> []
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(List.len(params(Vector.fromList([Sub(comp = Comp.FuncT(["a", "b"], []))]), 5))))
