@@ -1775,41 +1775,83 @@ example : AcceptedArtifact.plansAccepted hostileArtifact = false := by decide +k
     assert_probe_holds(&cert, "StringHostRoleGuardIso.lean", &lean);
 }
 
-/// The export accounting by index: a function export is accounted for only
-/// when its index is some obligation's `self` (or the export is declared
-/// uncertified). The honest artifact passes. Unclaiming `sumTo` (its entry
-/// kept, its obligation gone) leaves the module's `sumTo` export pointing at a
-/// function without a theorem, and the real accounting rejects it; a literal
-/// copy of the live check weakened by exactly the claimed-index conjunct
-/// accepts it, so that conjunct is the sole rejector.
+/// The byte offset of the function index of the export named `name`, and
+/// that index (one LEB byte).
+fn export_index_byte(bytes: &[u8], name: &str) -> (usize, u8) {
+    let mut pattern = vec![u8::try_from(name.len()).unwrap()];
+    pattern.extend_from_slice(name.as_bytes());
+    pattern.push(0x00);
+    let at = bytes
+        .windows(pattern.len())
+        .position(|window| window == pattern.as_slice())
+        .unwrap_or_else(|| panic!("the module exports `{name}`"))
+        + pattern.len();
+    assert!(bytes[at] < 0x80, "a one-byte function index");
+    (at, bytes[at])
+}
+
+/// The export accounting of certified functions, two guards, each isolated:
+///
+/// * A function export of a claimed function must carry that function's
+///   label. The module's `sumTo` and `countDown` exports swapped to each
+///   other's function index (the reviewer's attack on #1892: the export a host
+///   calls as `sumTo` runs `countDown`) are rejected; a literal copy of the
+///   live check with the label comparison removed accepts them.
+/// * A function export of an unclaimed function must be declared. Unclaiming
+///   `sumTo` (its entry kept, its obligation gone) leaves its export
+///   unaccounted for; the live check weakened to accept any function export
+///   in the declared branch accepts it.
 #[test]
-fn export_of_an_unclaimed_function_is_rejected_by_exports_accounted() {
+fn certified_exports_are_bound_by_index_and_label() {
     if !lake_available() {
-        eprintln!("skipping export-by-index GuardIso test: `lake` not available");
+        eprintln!("skipping export-binding GuardIso test: `lake` not available");
         return;
     }
-    let (_out_dir, cert, _wasm) = built_package(
+    let (_out_dir, cert, wasm) = built_package(
         "tools/certkit/fixtures/certprobe2.av",
         &[],
-        "cert-export-by-index",
+        "cert-export-binding",
     );
     let core = std::fs::read_to_string(cert.join("AcceptedArtifactCore.lean"))
         .expect("the materialized wall has AcceptedArtifactCore.lean");
-    const CLAIMED: &str = "(entry.kind == 0 && claimedIndex.contains entry.idx)";
+    const LABEL: &str = "claimed.any (fun c =>\n      c.1 == entry.idx && _root_.AverCert.WasmSlice.seqKey c.2 == some entry.name)";
+    const DECLARED: &str = "else declaredIndex.contains entry.name";
     let entry = extract_wall_def(&core, "exportEntryAccounted");
-    assert_eq!(
-        entry.matches(CLAIMED).count(),
-        1,
-        "the claimed-index conjunct moved; refit the GuardIso surgery"
-    );
-    let weak_entry = entry
-        .replace(CLAIMED, "(entry.kind == 0)")
-        .replace("exportEntryAccounted", "exportEntryAccountedWeak");
     let of = extract_wall_def(&core, "exportsAccountedOf");
+    for conjunct in [LABEL, DECLARED] {
+        assert_eq!(
+            entry.matches(conjunct).count(),
+            1,
+            "`{conjunct}` moved; refit the GuardIso surgery"
+        );
+    }
     assert_eq!(of.matches("exportEntryAccounted").count(), 1);
-    let weak_of = of
-        .replace("exportEntryAccounted", "exportEntryAccountedWeak")
-        .replace("exportsAccountedOf", "exportsAccountedOfWeak");
+    let weak = |suffix: &str, from: &str, to: &str| {
+        format!(
+            "{}\n\n{}\n",
+            entry.replace(from, to).replace(
+                "exportEntryAccounted",
+                &format!("exportEntryAccounted{suffix}")
+            ),
+            of.replace(
+                "exportEntryAccounted",
+                &format!("exportEntryAccounted{suffix}")
+            )
+            .replace("exportsAccountedOf", &format!("exportsAccountedOf{suffix}"))
+        )
+    };
+    let no_label = weak("NoLabel", LABEL, "true");
+    let any_function = weak(
+        "AnyFunction",
+        DECLARED,
+        "else (entry.kind == 0 || declaredIndex.contains entry.name)",
+    );
+    let mut swapped = wasm.clone();
+    let (sum_at, sum_idx) = export_index_byte(&wasm, "sumTo");
+    let (count_at, count_idx) = export_index_byte(&wasm, "countDown");
+    swapped[sum_at] = count_idx;
+    swapped[count_at] = sum_idx;
+    let swapped_hex = hex_le(&swapped);
     let lean = format!(
         r#"import Artifact
 
@@ -1819,14 +1861,25 @@ noncomputable section
 
 namespace AverCert.AcceptedArtifact
 /-! Live `exportEntryAccounted` / `exportsAccountedOf`, weakened by exactly the
-claimed-index conjunct: any function export counts as accounted. -/
-{weak_entry}
-
-{weak_of}
+label comparison. -/
+{no_label}
+/-! Live `exportEntryAccounted` / `exportsAccountedOf`, weakened to accept any
+function export in the declared branch. -/
+{any_function}
 end AverCert.AcceptedArtifact
 
 example : AcceptedArtifact.exportsAccounted Artifact.data = true := Artifact.exports_ok
 
+-- (a) `sumTo` and `countDown` exported at each other's function index.
+def swappedBytes : Nat := 0x{swapped_hex}
+def swappedArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := swappedBytes }}
+example : AcceptedArtifact.exportsAccounted swappedArtifact = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfNoLabel swappedBytes ArtifactBytes.modLen
+    (AcceptedArtifact.claimedLabels manifest)
+    (AcceptedArtifact.declaredUncertifiedNames manifest) = true := by decide +kernel
+
+-- (b) `sumTo` unclaimed: its export points at a function without a theorem.
 def unclaim (e : FnEntry) : FnEntry :=
   if e.name == "sumTo" then {{ e with claimed := false }} else e
 def unclaimedPlans : List FnEntry := manifest.fnPlans.map unclaim
@@ -1840,12 +1893,12 @@ def unclaimedArtifact : AcceptedArtifact.ArtifactData :=
 example : unclaimedManifest.obligations.length + 1 = manifest.obligations.length := by
   decide +kernel
 example : AcceptedArtifact.exportsAccounted unclaimedArtifact = false := by decide +kernel
-example : AcceptedArtifact.exportsAccountedOfWeak unclaimedArtifact.modBytes
-    unclaimedArtifact.modLen (AcceptedArtifact.claimedIndices unclaimedManifest)
+example : AcceptedArtifact.exportsAccountedOfAnyFunction unclaimedArtifact.modBytes
+    unclaimedArtifact.modLen (AcceptedArtifact.claimedLabels unclaimedManifest)
     (AcceptedArtifact.declaredUncertifiedNames unclaimedManifest) = true := by decide +kernel
 "#
     );
-    assert_probe_holds(&cert, "ExportByIndexGuardIso.lean", &lean);
+    assert_probe_holds(&cert, "ExportBindingGuardIso.lean", &lean);
 }
 
 /// A minimal but REAL Int runtime: the canonical `__rt_aint_from_i64` helper

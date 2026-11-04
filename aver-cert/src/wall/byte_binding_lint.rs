@@ -2080,14 +2080,16 @@ pub const ALLOWED: &[Allowance] = &[
         structure: "FnEntry",
         field: "name",
         category: Category::PinnedOutsideTheWall,
-        reason: "A report label (the source name, or `#<funcIdx>`), never an identity: no \
-                 conjunct of `accepted` reads it, and the function a plan is bound to is \
-                 selected by `funcIdx` alone. A wrong label changes neither the bytes an \
-                 obligation is bound to nor its theorem, and a source bridge names its \
-                 obligation by index (`GrammarBridge.obligationAt`). verifier.rs pins the \
-                 labels through the checker-authored witness: `obligations.map (fun o => \
+        reason: "A report label (the source name, or `#<funcIdx>`), never an identity: the \
+                 function a plan is bound to is selected by `funcIdx` alone, and a source \
+                 bridge names its obligation by index (`GrammarBridge.obligationAt`). The \
+                 wall reads it in one place: an export of a claimed function must carry \
+                 the label (`exportsAccounted`), so a host calling an export by name runs \
+                 the function the report credits under that name. A certified function \
+                 that is not exported has no byte fact naming it; verifier.rs pins the \
+                 labels through the checker-authored witness (`obligations.map (fun o => \
                  o.name)` equals the manifest's `certified[].name` list by `rfl`, paired \
-                 position by position with the pinned indices.",
+                 position by position with the pinned indices).",
         doc_anchor: "",
     },
 ];

@@ -1409,6 +1409,36 @@ fn cert_hardening_declines_unsorted_exports() {
     assert_export_walk_error(&report);
 }
 
+/// The reviewer's attack on #1892: two certified exports, `addTwo` and
+/// `double`, pointed at each other's function index, the package re-stamped.
+/// Each still points at a claimed function, but a host calling `addTwo` would
+/// run `double`'s code under `addTwo`'s credited claim. The export of a
+/// certified function must carry that function's label (`labelOk`).
+#[test]
+fn cert_hardening_declines_swapped_certified_exports() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-swapnames") else {
+        return;
+    };
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let entries = export_entries(&bytes);
+    let index_byte = |name: &str| {
+        let (_, range) = entries
+            .iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("an export named {name}: {entries:?}"));
+        let at = range.end - 1;
+        assert!(bytes[at] < 0x80, "a one-byte function index");
+        at
+    };
+    let (a, d) = (index_byte("addTwo"), index_byte("double"));
+    bytes.swap(a, d);
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert_export_walk_error(&report);
+}
+
 /// The export walk is written in blocks, each a declaration that states where
 /// its entries start and where the next block starts. The one block of the
 /// tiny module split in two, the boundary declared one byte into the second
@@ -1486,11 +1516,11 @@ fn cert_hardening_declines_an_export_block_boundary_inside_an_entry() {
     let boundary = e0 + cuts[0] + 1;
     let blocks = format!(
         "theorem exports_block_0 : AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks \
-         exportClaimed none exportStart exportCuts_0\n    \
+         exportClaimed\n    (AverCert.AcceptedArtifact.labelAt AverCert.manifest) none exportStart exportCuts_0\n    \
          AverCert.Plans.subject_declaredUncertified_0 =\n    some ({prev}, {boundary}) := by\n  \
          decide +kernel\n\n\
          theorem exports_block_1 : AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks \
-         exportClaimed {prev} {boundary} exportCuts_1\n    \
+         exportClaimed\n    (AverCert.AcceptedArtifact.labelAt AverCert.manifest) {prev} {boundary} exportCuts_1\n    \
          AverCert.Plans.subject_declaredUncertified_1 {tail}"
     );
     let text = format!("{}{blocks}{}", &text[..start], &text[end..]);
