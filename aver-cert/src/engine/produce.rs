@@ -566,6 +566,44 @@ fn call_sccs(nodes: &[u32], edges: &BTreeMap<u32, Vec<u32>>) -> Vec<Vec<u32>> {
     st.out
 }
 
+const MISMATCH: &str = "plan lowering differs from the emitted code entry";
+
+/// A fn whose bytes differ from its plan, and that calls a fn declined for
+/// any other reason, is declined for that call: it could not be certified
+/// whatever its bytes. That is also why its bytes differ: a `--certify`
+/// build emits such a fn as a plain build does, since no certificate can
+/// cover it. The call is named instead, so the reason points at the fn that
+/// holds the rest back. Repeated until no reason changes, so a chain of
+/// callers names its next link; fns that only call each other keep their
+/// own reasons. Only reasons change, never the verdict.
+fn name_declined_calls(
+    types: &PlanTypeTable,
+    plan_of: &BTreeMap<u32, &FnPlan>,
+    candidates: &BTreeSet<u32>,
+    reasons: &mut BTreeMap<u32, String>,
+) {
+    loop {
+        let mut changed = false;
+        for (f, p) in plan_of {
+            if candidates.contains(f) || !reasons.get(f).is_some_and(|r| r.starts_with(MISMATCH)) {
+                continue;
+            }
+            let held_back = plan_targets(types, p).into_iter().find(|t| {
+                t != f
+                    && !candidates.contains(t)
+                    && !reasons.get(t).is_some_and(|r| r.starts_with(MISMATCH))
+            });
+            if let Some(t) = held_back {
+                reasons.insert(*f, format!("calls function {t}, which has no certified plan"));
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
 /// Check one candidate against the bytes: typing, the code entry, the
 /// function type, the string literals, and that every call targets a
 /// candidate. `None` means offered.
@@ -612,7 +650,7 @@ fn check_candidate(
             .take_while(|(a, b)| a == b)
             .count();
         return Some(format!(
-            "plan lowering differs from the emitted code entry at byte {at} ({} vs {} bytes)",
+            "{MISMATCH} at byte {at} ({} vs {} bytes)",
             bytes.len(),
             code.entry.len()
         ));
@@ -825,6 +863,7 @@ pub fn analyze(
             reasons.insert(f, reason);
         }
     }
+    name_declined_calls(&types, &plan_of, &candidates, &mut reasons);
 
     // Offered: every exported candidate, plus the internal candidates it
     // reaches.
@@ -1243,6 +1282,32 @@ mod produce_tests {
         )
         .expect("analyzes");
         assert_eq!(analysis.certified_names(), ["sumTo"]);
+    }
+
+    #[test]
+    fn a_caller_whose_bytes_differ_names_the_declined_fn_it_calls() {
+        // `sumTo` types wrong; `countDown` calls it and its plan is not its
+        // bytes. Both drop in the same round; the caller's reason is the
+        // call, since its bytes could not save it.
+        let mut plans = certprobe2_plans(rec(1, k(0), PlanExpr::Literal(PlanLit::Bool(true))));
+        plans.fns[1].plan = Ok(rec(
+            2,
+            PlanExpr::Call(PlanCallee::Fn(1), vec![l(0)]),
+            l(1),
+        ));
+        let analysis = analyze(
+            &fixture("certprobe2"),
+            &plans,
+            crate::format::TARGET_WASM_GC,
+        )
+        .expect("analyzes");
+        assert!(analysis.certified_names().is_empty());
+        let reasons: BTreeMap<String, String> = analysis.declined().iter().cloned().collect();
+        assert!(!reasons["sumTo"].starts_with(MISMATCH), "{}", reasons["sumTo"]);
+        assert_eq!(
+            reasons["countDown"],
+            "calls function 1, which has no certified plan"
+        );
     }
 
     #[test]
