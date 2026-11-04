@@ -1510,7 +1510,7 @@ pub fn valCmp(mut a @ _: Val, mut b @ _: Val) -> aver_rt::AverInt {
                 ) => {
                     let fs = &__fs_fields.1;
                     let gs = &__gs_fields.1;
-                    return {
+                    {
                         let __arg30 @ _ = {
                             let __map = &({
                                 let mut __map = HashMap::new();
@@ -1540,9 +1540,11 @@ pub fn valCmp(mut a @ _: Val, mut b @ _: Val) -> aver_rt::AverInt {
                                     es.into_iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(),
                                 )
                             };
-                            crate::aver_generated::domain::value::valsCmp(&__arg30, &__arg31)
+                            return crate::aver_generated::domain::value::valsCmp(
+                                &__arg30, &__arg31,
+                            );
                         }
-                    };
+                    }
                 }
                 (
                     crate::aver_generated::domain::value::Val__view::ValVariant(__n_fields),
@@ -1884,13 +1886,15 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                 ) => {
                     let xs = &__xs_fields.0;
                     let ys = &__ys_fields.0;
-                    return {
+                    {
                         let __arg34 @ _ = xs.to_list();
                         {
                             let __arg35 @ _ = ys.to_list();
-                            crate::aver_generated::domain::value::valsEq(&__arg34, &__arg35)
+                            return crate::aver_generated::domain::value::valsEq(
+                                &__arg34, &__arg35,
+                            );
                         }
-                    };
+                    }
                 }
                 (
                     crate::aver_generated::domain::value::Val__view::ValOk(__x_fields),
@@ -1961,7 +1965,7 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                     let m = __m_fields.0.clone();
                     let gs = &__m_fields.1;
                     if (n == m) {
-                        return {
+                        {
                             let __arg36 @ _ = {
                                 let mut es: Vec<_> = {
                                     let mut __map = HashMap::new();
@@ -1991,9 +1995,11 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                                     es.sort_by(|a, b| a.0.cmp(&b.0));
                                     aver_rt::AverList::from_vec(es)
                                 };
-                                crate::aver_generated::domain::value::entriesEq(&__arg36, &__arg37)
+                                return crate::aver_generated::domain::value::entriesEq(
+                                    &__arg36, &__arg37,
+                                );
                             }
-                        };
+                        }
                     } else {
                         return false;
                     }
@@ -2018,7 +2024,7 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                 ) => {
                     let x = &__x_fields.0;
                     let y = &__y_fields.0;
-                    return {
+                    {
                         let __arg38 @ _ = {
                             let mut es: Vec<_> =
                                 x.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
@@ -2032,9 +2038,11 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                                 es.sort_by(|a, b| a.0.cmp(&b.0));
                                 aver_rt::AverList::from_vec(es)
                             };
-                            crate::aver_generated::domain::value::entriesEq(&__arg38, &__arg39)
+                            return crate::aver_generated::domain::value::entriesEq(
+                                &__arg38, &__arg39,
+                            );
                         }
-                    };
+                    }
                 }
                 _ => {
                     return (crate::aver_generated::domain::value::valRepr(a)

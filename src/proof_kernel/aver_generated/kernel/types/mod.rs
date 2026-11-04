@@ -3383,15 +3383,11 @@ pub fn bindTyped(
                     }
                 }
                 None => {
-                    return {
-                        let __arg8 @ _ =
-                            crate::proof_kernel::aver_generated::kernel::types::typesOfVars(
-                                declared,
-                            );
-                        crate::proof_kernel::aver_generated::kernel::types::eqKept(
-                            &__arg8, bound, e, what,
-                        )
-                    };
+                    let __arg8 @ _ =
+                        crate::proof_kernel::aver_generated::kernel::types::typesOfVars(declared);
+                    return crate::proof_kernel::aver_generated::kernel::types::eqKept(
+                        &__arg8, bound, e, what,
+                    );
                 }
             }
         }

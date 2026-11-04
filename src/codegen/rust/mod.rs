@@ -1689,6 +1689,38 @@ fn depth(n: Peano, acc: Int) -> Int
     }
 
     #[test]
+    fn a_self_tail_call_under_a_binding_in_an_arm_is_a_loop_step() {
+        // A match on a constructor written in place folds to the bindings
+        // of its arm (`const_fold`), so the tail call sits under a `let`
+        // inside the outer arm. It stays a step of the loop there.
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Node
+    Leaf
+    Cell(Int, Node)
+
+fn walk(t: Node, acc: Int) -> Int
+    match t
+        Node.Leaf -> acc
+        Node.Cell(_, rest) -> match Option.Some(rest)
+            Option.Some(r) -> walk(r, acc + 1)
+            Option.None -> acc
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("let r @ _ = "), "{entry}");
+        assert!(entry.contains("continue;"), "{entry}");
+        assert!(!entry.contains("return { let r @ _ = "), "{entry}");
+        assert!(!entry.contains("walk(&r"), "{entry}");
+    }
+
+    #[test]
     fn a_literal_count_is_emitted_as_the_usize_it_clamps_to() {
         let mut ctx = ctx_from_source(
             r#"

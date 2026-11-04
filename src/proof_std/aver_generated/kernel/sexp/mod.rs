@@ -648,15 +648,15 @@ pub fn scan(
                     }
                     crate::proof_std::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
                         let acc = acc.clone();
-                        return {
+                        {
                             let __arg14 @ _ = aver_rt::AverList::prepend_owned(
                                 crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(acc),
                                 current,
                             );
-                            crate::proof_std::aver_generated::kernel::sexp::finish(
+                            return crate::proof_std::aver_generated::kernel::sexp::finish(
                                 &__arg14, parents,
-                            )
-                        };
+                            );
+                        }
                     }
                     _ => {
                         return crate::proof_std::aver_generated::kernel::sexp::finish(
@@ -965,13 +965,15 @@ pub fn scan__cursor(
                 }
                 crate::proof_std::aver_generated::kernel::sexp::ReadMode::Atom(acc) => {
                     let acc = acc.clone();
-                    return {
+                    {
                         let __arg15 @ _ = aver_rt::AverList::prepend_owned(
                             crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(acc),
                             current,
                         );
-                        crate::proof_std::aver_generated::kernel::sexp::finish(&__arg15, parents)
-                    };
+                        return crate::proof_std::aver_generated::kernel::sexp::finish(
+                            &__arg15, parents,
+                        );
+                    }
                 }
                 _ => {
                     return crate::proof_std::aver_generated::kernel::sexp::finish(

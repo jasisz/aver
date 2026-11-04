@@ -1,0 +1,19 @@
+module TailCallUnderBinding
+    intent = "A self tail call under a binding in a match arm is a step of the loop, as deep as the VM runs it."
+
+fn count(n: Int, acc: Int, tag: String) -> String
+    ? "Counts down through a match on a constructor written in place: the folded match leaves its binding before the tail call."
+    match n == 0
+        true -> "{tag}{acc}"
+        false -> match Option.Some(n - 1)
+            Option.Some(m) -> count(m, acc + 1, tag)
+            Option.None -> tag
+
+verify count
+    count(0, 0, "n=") => "n=0"
+    count(3, 0, "n=") => "n=3"
+
+fn main() -> Unit
+    ? "Prints a count deeper than the thread's stack holds frames."
+    ! [Console.print]
+    Console.print(count(20000000, 0, "n="))

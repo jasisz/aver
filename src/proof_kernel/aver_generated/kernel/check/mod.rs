@@ -1868,12 +1868,10 @@ pub fn constantDeclarationDeps(
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
                     if (c.name == name) {
-                        return {
+                        {
                             let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
-                            crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(
-                                &c.value, &__arg6, ds, cs,
-                            )
-                        };
+                            return crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(&c.value, &__arg6, ds, cs);
+                        }
                     } else {
                         {
                             let __tco1 = rest;
@@ -2927,18 +2925,18 @@ pub fn projField(
                     }
                 }
                 None => {
-                    return {
-                        let __arg6 @ _ = aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(40usize);
-                                __b.push_str(&::aver_rt::str_lit!("the record has no field "));
-                                __b
-                            };
-                            __b.push_display(&(f));
+                    let __arg6 @ _ = aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(40usize);
+                            __b.push_str(&::aver_rt::str_lit!("the record has no field "));
                             __b
-                        });
-                        crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg6)
-                    };
+                        };
+                        __b.push_display(&(f));
+                        __b
+                    });
+                    return crate::proof_kernel::aver_generated::kernel::check::refuse(
+                        path, __arg6,
+                    );
                 }
             }
         }
@@ -2980,22 +2978,22 @@ pub fn hyp(
                     }
                 }
                 None => {
-                    return {
-                        let __arg5 @ _ = aver_rt::AverStr::from({
+                    let __arg5 @ _ = aver_rt::AverStr::from({
+                        let mut __b = {
                             let mut __b = {
-                                let mut __b = {
-                                    let mut __b = aver_rt::Buffer::with_capacity(43usize);
-                                    __b.push_str(&::aver_rt::str_lit!("hypothesis "));
-                                    __b
-                                };
-                                __b.push_display(&(h));
+                                let mut __b = aver_rt::Buffer::with_capacity(43usize);
+                                __b.push_str(&::aver_rt::str_lit!("hypothesis "));
                                 __b
                             };
-                            __b.push_str(&::aver_rt::str_lit!(" is not in scope"));
+                            __b.push_display(&(h));
                             __b
-                        });
-                        crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg5)
-                    };
+                        };
+                        __b.push_str(&::aver_rt::str_lit!(" is not in scope"));
+                        __b
+                    });
+                    return crate::proof_kernel::aver_generated::kernel::check::refuse(
+                        path, __arg5,
+                    );
                 }
             }
         }
@@ -4213,18 +4211,18 @@ pub fn constantIn(
                     }
                 }
                 None => {
-                    return {
-                        let __arg5 @ _ = aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(40usize);
-                                __b.push_str(&::aver_rt::str_lit!("no module-level binding "));
-                                __b
-                            };
-                            __b.push_display(&(n));
+                    let __arg5 @ _ = aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(40usize);
+                            __b.push_str(&::aver_rt::str_lit!("no module-level binding "));
                             __b
-                        });
-                        crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg5)
-                    };
+                        };
+                        __b.push_display(&(n));
+                        __b
+                    });
+                    return crate::proof_kernel::aver_generated::kernel::check::refuse(
+                        path, __arg5,
+                    );
                 }
             }
         }
