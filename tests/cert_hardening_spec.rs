@@ -326,8 +326,8 @@ fn cert_hardening_declines_a_sorry_backed_report_pin() {
     let manifest = cert.join("cert-manifest.json");
     replace_once(
         &manifest,
-        "{\"name\": \"addTwo\", \"class\": \"source-plan-v1\", \"facets\": []",
-        "{\"name\": \"addTwo\", \"class\": \"source-plan-v1\", \"facets\": [\"forged\"]",
+        "{\"name\": \"addTwo\", \"funcIdx\": 2, \"class\": \"source-plan-v1\", \"facets\": []",
+        "{\"name\": \"addTwo\", \"funcIdx\": 2, \"class\": \"source-plan-v1\", \"facets\": [\"forged\"]",
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "non-whitelisted axiom: sorryAx");
@@ -847,12 +847,11 @@ fn cert_hardening_declines_lying_role_bits() {
         first = bits[0];
         bits[0] = 0;
     });
-    // The plan's own declaration names its bits literally, before its export
-    // site.
+    // The plan's own declaration names its bits literally.
     replace_once(
         &cert.join("ArtifactPlans.lean"),
-        &format!("\n    {first} ("),
-        "\n    0 (",
+        &format!("\n    {first} = true"),
+        "\n    0 = true",
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
@@ -3294,7 +3293,14 @@ fn cert_hardening_declines_a_duplicate_declared_name() {
     });
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert_export_walk_error(&report);
+    // The block's declared names no longer unify with the manifest's piece:
+    // the walk refuses them, or the unification gives up first.
+    assert!(
+        report.contains("walkExports")
+            || report.contains("ExportChars.walk")
+            || report.contains("ArtifactExports.lean"),
+        "{report}"
+    );
 }
 
 /// A program calling every List helper the plan grammar admits, over Lists

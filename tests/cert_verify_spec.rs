@@ -2360,6 +2360,7 @@ fn cert_tripwire_declines_json_claiming_an_extra_export() {
         .unwrap()
         .push(serde_json::json!({
             "name": "phantom",
+            "funcIdx": 4000,
             "class": "source-plan-v1",
             "facets": [],
             "policy": "simulatesModel",
@@ -4709,6 +4710,7 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         .unwrap()
         .push(serde_json::json!({
             "name": "withdrawAll",
+            "funcIdx": 4000,
             "class": "source-plan-v1",
             "facets": [],
             "policy": "simulatesModel",
@@ -6090,10 +6092,8 @@ fn explain_states_the_record_compute_faces_certified_domain() {
         explain.contains("SOURCE-BRIDGES")
             && explain
                 .contains("Domain_Rational_plus  ≡ Domain.Rational.plus  (exact)  [credited]")
-            && explain.contains(
-                "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest \
-                 \"Domain_Rational_plus\" (fun (x : "
-            ),
+            && explain
+                .contains("_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest (nat_lit "),
         "the rendered statement and its credit must be printed under SOURCE-BRIDGES:\n{explain}"
     );
 }
