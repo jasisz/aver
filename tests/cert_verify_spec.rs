@@ -2796,7 +2796,10 @@ fn cert_tripwire_declines_relabels() {
         "JSON-only relabel checked:\n{out}"
     );
     let (ok, out) = relabel("renamed", true);
-    assert!(!ok, "an exported function relabelled must be DECLINED:\n{out}");
+    assert!(
+        !ok,
+        "an exported function relabelled must be DECLINED:\n{out}"
+    );
     assert!(
         out.contains("walkExports") || out.contains("ExportChars.walk"),
         "wrong reason (exported relabel):\n{out}"

@@ -164,6 +164,7 @@ fn assert_plans_lean_is_the_only_public_plan_data(
             fields.keys().all(|field| matches!(
                 field.as_str(),
                 "name"
+                    | "funcIdx"
                     | "class"
                     | "facets"
                     | "policy"
@@ -581,8 +582,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(9),
-        "schema 9 is the one plan grammar with its plan-equals-source and law-claim surfaces"
+        Some(10),
+        "schema 10 binds certified functions by index, over the one plan grammar"
     );
     assert_eq!(
         manifest["target"].as_str(),
@@ -599,7 +600,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         Some(aver::codegen::cert::RUNTIME_ABI),
         "the wasm-gc runtime ABI is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 9);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 10);
     // Every certified export carries a plan-equals-source bridge, in obligation
     // order, unless one of its parameters has no decoder in this version — in
     // which case it is listed, with that reason, under `sourceBridgesDeclined`.
@@ -2540,7 +2541,7 @@ fn certify_certifies_carrier_free_classes_in_a_module_without_int_helper() {
     );
 }
 
-/// Each declined export must be told what is actually stopping it. The plan
+/// Each declined function must be told what is actually stopping it. The plan
 /// printer declines by naming the MIR node it has no grammar for (a builtin,
 /// a pattern, an operator, an interpolation part), the producer declines a
 /// plan that does not type or a call to an unplanned function by saying so,
@@ -2553,9 +2554,11 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
         &[],
         "certify-decline-blockers",
     );
-    let declared: BTreeMap<String, String> = manifest["declaredUncertified"]
+    // Every declined function, exported or not (`source_level_only`): a
+    // function need not be exported to be certified, or to be declined.
+    let declared: BTreeMap<String, String> = manifest["source_level_only"]
         .as_array()
-        .expect("declaredUncertified report is an array")
+        .expect("source_level_only report is an array")
         .iter()
         .map(|entry| {
             (
