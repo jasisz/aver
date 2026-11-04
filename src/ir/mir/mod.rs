@@ -80,6 +80,7 @@ pub mod instantiations;
 pub mod int_tree;
 pub mod int_word;
 pub mod lower;
+pub mod match_subject;
 pub mod optimize;
 pub mod param_fields;
 pub mod program;

@@ -343,7 +343,20 @@ pub(crate) fn emit_mir_match(
             // A computed subject tested against literals is evaluated once
             // into its own local, in the representation its tests read; a
             // slot read is simply read again per test.
-            let stash = if !typed_arms.is_empty() && !is_pure_read(&m.subject.node) {
+            let stash = if !typed_arms.is_empty()
+                && fallback_slot.is_none()
+                && super::int_tree::allowed()
+                && super::int_tree::makes_word(&m.subject)
+            {
+                // An `Int` tree tested against literals and bound by no arm:
+                // held as its machine word, each literal an `i64` immediate.
+                // A Big value equals no literal, so its word is a value no
+                // arm tests.
+                let Some(local) = stash_word(func, &m.subject, &typed_arms, slots, ctx)? else {
+                    return Ok(None);
+                };
+                Some(IntSubjectStash { local, raw: true })
+            } else if !typed_arms.is_empty() && !is_pure_read(&m.subject.node) {
                 let raw = super::mir_renders_raw_i64(&m.subject.node, ctx);
                 ctx.int_result_raw.set(false);
                 if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
@@ -1417,6 +1430,57 @@ fn emit_mir_float_match(
         func.instruction(&Instruction::End);
     }
     Ok(Some(()))
+}
+
+/// Store the machine word of the `Int` tree `subject` in a fresh `i64`
+/// local and return it. A Small value is its word; a Big one (only the exact
+/// path gives one) is stored as an `i64` none of `arms` tests, so it falls
+/// through to the catch-all, as it does on the boxed path.
+fn stash_word(
+    func: &mut Function,
+    subject: &Spanned<MirExpr>,
+    arms: &[(i64, &Spanned<MirExpr>)],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<u32>, WasmGcError> {
+    let Some(aint_idx) = ctx.registry.aint_struct_idx.filter(|_| ctx.registry.bignum) else {
+        return unsupported("an Int tree on the machine word without the Int carrier");
+    };
+    let aint = aver_to_wasm("Int", Some(ctx.registry))?.unwrap_or(ValType::I64);
+    let mut none = i64::MIN;
+    while arms.iter().any(|(k, _)| *k == none) {
+        none += 1;
+    }
+    let boxed = slots.match_subject_local(aint);
+    let word = slots.match_subject_local(ValType::I64);
+    // `$AverInt`: field 0 the Small value, field 1 the Big magnitude (null
+    // for a Small value).
+    let after_exact = &mut |f: &mut Function| {
+        f.instruction(&Instruction::LocalTee(boxed));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: aint_idx,
+            field_index: 1,
+        });
+        f.instruction(&Instruction::RefIsNull);
+        f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+            ValType::I64,
+        )));
+        f.instruction(&Instruction::LocalGet(boxed));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: aint_idx,
+            field_index: 0,
+        });
+        f.instruction(&Instruction::Else);
+        f.instruction(&Instruction::I64Const(none));
+        f.instruction(&Instruction::End);
+        Ok(Some(()))
+    };
+    ctx.int_result_raw.set(false);
+    if super::int_tree::emit_word(func, subject, slots, ctx, after_exact)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::LocalSet(word));
+    Ok(Some(word))
 }
 
 /// A computed `Int` match subject held in its own local, and whether it was

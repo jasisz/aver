@@ -657,13 +657,21 @@ fn emit_module_pass(
             .filter(|(fd, _)| for_certificate(fd))
             .map(|(_, rfd)| rfd.fn_id)
             .collect();
-        crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_wasm_gc(
+        let mut rewritten = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_wasm_gc(
             optimized,
             &boxed,
             &bare_carrier_intervals,
             &field_carrier_intervals,
             &kept,
-        )
+        );
+        // A kept fn evaluates a computed `Int` match subject once, into a
+        // slot its plan names (`ir::mir::match_subject`).
+        for id in &kept {
+            if let Some(f) = rewritten.fns.get_mut(id) {
+                crate::ir::mir::match_subject::bind(f);
+            }
+        }
+        rewritten
     };
 
     // Fabricated-intrinsic refusal — before any body is emitted, so a
