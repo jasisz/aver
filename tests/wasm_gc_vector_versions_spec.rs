@@ -256,6 +256,128 @@ fn main() -> Unit
     );
 }
 
+/// The fused `Option.withDefault(Vector.set(v, i, x), v)` and a recursive
+/// helper that returns the vector it was given. Each vector some later line
+/// still reads must come out unchanged when another binding is written
+/// through the fusion, and the ones nothing reads again are written in place.
+#[test]
+fn the_self_keep_set_leaves_every_vector_still_read_unchanged() {
+    assert_vm_and_wasm_gc(
+        "vector-versions-self-keep",
+        &program(
+            r#"
+fn fill(v: Vector<Int>, i: Int, n: Int) -> Vector<Int>
+    ? "Writes i + 1 at every i below n."
+    match i >= n
+        true -> v
+        false -> fill(Option.withDefault(Vector.set(v, i, i + 1), v), i + 1, n)
+
+fn same(v: Vector<Int>, k: Int) -> Vector<Int>
+    ? "The vector itself, after k steps."
+    match k == 0
+        true -> v
+        false -> same(v, k - 1)
+
+fn sizeAt(v: Vector<Int>, i: Int) -> Vector<Int>
+    ? "Writes the length at i; the value reads the vector itself."
+    Option.withDefault(Vector.set(v, i, Vector.len(v)), v)
+
+fn main() -> Unit
+    ! [Console.print]
+    base = Vector.new(4, 0)
+    kept = same(base, 3)
+    filled = fill(kept, 0, 3)
+    once = Option.withDefault(Vector.set(filled, 3, 9), filled)
+    outside = Option.withDefault(Vector.set(once, 7, 5), once)
+    sized = sizeAt(outside, 0)
+    fresh = fill(same(Vector.new(3, 0), 2), 0, 3)
+    Console.print("{show(base)} {show(kept)} {show(filled)} {show(once)} {show(outside)} {show(sized)} {show(fresh)}")
+"#,
+        ),
+        "0,0,0,0, 0,0,0,0, 1,2,3,0, 1,2,3,9, 1,2,3,9, 4,2,3,9, 1,2,3,",
+    );
+}
+
+/// The sieve the speed scout measured: `mark` threads its vector through the
+/// fused set in a self tail call, and `sieve` hands `mark` the vector and
+/// keeps its result. Every call of the versioned `set` helper must pass the
+/// owned flag, so the write records no old cell; it used to pass the constant
+/// 0, because the fusion asked only the receiver read (never the last use)
+/// and because the result of the recursive `mark` had no alias summary.
+#[test]
+fn a_vector_threaded_through_a_recursive_helper_is_written_in_place() {
+    let source = r#"
+module Main
+    intent = "Sieve of Eratosthenes over a Vector."
+    effects [Console.print]
+
+fn mark(v: Vector<Bool>, j: Int, step: Int, n: Int) -> Vector<Bool>
+    ? "Crosses out multiples."
+    match j >= n
+        true -> v
+        false -> mark(Option.withDefault(Vector.set(v, j, false), v), j + step, step, n)
+
+fn sieve(v: Vector<Bool>, i: Int, n: Int) -> Vector<Bool>
+    ? "Sieves below n."
+    match i * i >= n
+        true -> v
+        false -> match Option.withDefault(Vector.get(v, i), false)
+            true -> sieve(mark(v, i * i, i, n), i + 1, n)
+            false -> sieve(v, i + 1, n)
+
+fn primes(v: Vector<Bool>, i: Int, acc: Int) -> Int
+    ? "Counts the cells still true from i on."
+    match Vector.get(v, i)
+        Option.Some(true) -> primes(v, i + 1, acc + 1)
+        Option.Some(false) -> primes(v, i + 1, acc)
+        Option.None -> acc
+
+"#;
+    let fresh = format!(
+        "{source}
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(\"{{primes(sieve(Vector.new(100, true), 2, 100), 2, 0)}}\")
+"
+    );
+    // The same sieve on a vector main reads again afterwards: no write may
+    // land in it.
+    let kept = format!(
+        "{source}
+fn main() -> Unit
+    ! [Console.print]
+    base = Vector.new(100, true)
+    v = sieve(base, 2, 100)
+    Console.print(\"{{primes(v, 2, 0)}} {{primes(base, 2, 0)}}\")
+"
+    );
+    let wat = wat_of(&fresh);
+    let sets = func_bodies(&wat, " i32 i32 i32) (result (ref null ");
+    assert_eq!(sets.len(), 1, "expected one Vector.set helper in:\n{wat}");
+    let head = sets[0].lines().next().unwrap_or_default().trim();
+    let name = head
+        .strip_prefix("(func ")
+        .and_then(|rest| rest.split(' ').next())
+        .unwrap_or_else(|| panic!("helper name in {head:?}"));
+    let call = match name.strip_prefix("(;").and_then(|n| n.strip_suffix(";)")) {
+        Some(index) => format!("call {index}"),
+        None => format!("call {name}"),
+    };
+    let lines: Vec<&str> = wat.lines().map(str::trim).collect();
+    let flags: Vec<&str> = lines
+        .windows(2)
+        .filter(|pair| pair[1] == call)
+        .map(|pair| pair[0])
+        .collect();
+    assert!(!flags.is_empty(), "no call of the set helper in:\n{wat}");
+    assert!(
+        flags.iter().all(|flag| *flag == "i32.const 1"),
+        "a call of the set helper does not pass the owned flag: {flags:?}\n{wat}"
+    );
+    assert_vm_and_wasm_gc("vector-versions-sieve", &fresh, "25");
+    assert_vm_and_wasm_gc("vector-versions-sieve-kept", &kept, "25 98");
+}
+
 fn wat_of(source: &str) -> String {
     let mut items = aver::source::parse_source(source).expect("parse");
     let neutral_policy = aver::ir::NeutralAllocPolicy;
