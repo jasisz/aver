@@ -806,8 +806,12 @@ fn cert_hardening_declines_a_lying_packed_code_entry() {
     let at = text.find("def fn").expect("a plan");
     let body_end = at + text[at..].find("\n\n").unwrap();
     let body = &text[at..body_end];
-    let lit = body.find(".int 2").expect("addTwo adds the literal 2");
-    let edited = format!("{}.int 3{}", &body[..lit], &body[lit + ".int 2".len()..]);
+    let lit = body.find(".lit (2)").expect("addTwo adds the literal 2");
+    let edited = format!(
+        "{}.lit (3){}",
+        &body[..lit],
+        &body[lit + ".lit (2)".len()..]
+    );
     std::fs::write(
         &plans,
         format!("{}{edited}{}", &text[..at], &text[body_end..]),

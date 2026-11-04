@@ -3333,8 +3333,10 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // calls `List.reverse`): 24 of 162. The packed `Bytes` helpers certify
     // six more (`Bytes.empty`, `len`, `octets`, `concat`, `take`, `drop`):
     // 30 of 162. Int interpolation certifies `Bytes.fromList`: 31 of 162.
+    // Computing Int trees on the machine word certifies four more and adds
+    // one function without a claim: 35 of 163.
     assert!(
-        compile_report.contains("(31 certified, 131 source-level-only)"),
+        compile_report.contains("(35 certified, 128 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
@@ -5903,10 +5905,10 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
     let cert = out_dir.join("cert");
     let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     for (export, shape) in [
-        ("isNonNeg", "(.binOp .gte (.binOp .mul"),
-        ("isNonPos", "(.binOp .lte (.binOp .mul"),
-        ("below", "(.binOp .lt (.binOp .mul"),
-        ("sameValue", "(.binOp .eq (.binOp .mul"),
+        ("isNonNeg", "(.binOp .gte (.intWord (.op .mul"),
+        ("isNonPos", "(.binOp .lte (.intWord (.op .mul"),
+        ("below", "(.intCmp .lt (.op .mul"),
+        ("sameValue", "(.intCmp .eq (.op .mul"),
         (
             "isNonNegField",
             "(.binOp .gte (.project 0 0 (.local 0)) (.literal (.int 0)))",
@@ -5932,8 +5934,8 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
             (
                 "operator",
                 "plan:isNonNeg",
-                "(.binOp .gte (.binOp .mul",
-                "(.binOp .gt (.binOp .mul",
+                "(.binOp .gte (.intWord (.op .mul",
+                "(.binOp .gt (.intWord (.op .mul",
             ),
             (
                 "constant",
@@ -5944,14 +5946,14 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
             (
                 "parameter slot",
                 "plan:below",
-                "(.project 0 0 (.local 0)) (.project 0 1 (.local 1))",
-                "(.project 0 0 (.local 1)) (.project 0 1 (.local 1))",
+                "(.leaf (.field 0 0 0 3)) (.leaf (.field 0 1 1 4))",
+                "(.leaf (.field 0 0 1 3)) (.leaf (.field 0 1 1 4))",
             ),
             (
                 "comparison kind",
                 "plan:sameValue",
-                "(.binOp .eq (.binOp .mul",
-                "(.binOp .lt (.binOp .mul",
+                "(.intCmp .eq (.op .mul",
+                "(.intCmp .lt (.op .mul",
             ),
         ],
     );

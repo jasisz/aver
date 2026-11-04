@@ -3118,8 +3118,8 @@ fn cert_projects_payment_ops_package_checks() {
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
     assert!(
-        report.contains("147 checked exports"),
-        "payment_ops must keep the 147 exports it certifies:\n{report}"
+        report.contains("165 checked exports"),
+        "payment_ops must keep the 165 exports it certifies:\n{report}"
     );
     // The project's single `verify … law` is universal by design but its
     // emitted proof ladder has no `String.replace` theory and lands on its
