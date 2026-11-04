@@ -3,8 +3,8 @@
 // A package declares where the wall finds each planned function's facts in
 // the module, so that its checks read them instead of searching for them:
 // every defined function's type index and code-entry offset and length (as
-// packed tables), the exact function type of every planned function, and
-// each planned function's export position. `DeclaredLayout.layoutConfirmed`
+// packed tables) and the exact function type of every planned function.
+// `DeclaredLayout.layoutConfirmed`
 // and `fnTypesConfirmed` confirm the declarations against the wall's own
 // decoders, and a plan check compares its own function's facts with them; a
 // wrong declaration fails those equalities and the package declines.
@@ -33,6 +33,8 @@ struct ModuleLayout {
     export_start: usize,
     /// The bytes of every export's name, in section order.
     export_names: Vec<Vec<u8>>,
+    /// The kind and index of every export, in section order.
+    export_targets: Vec<(u8, u32)>,
     /// The module offset of the data section's first segment, and every
     /// segment's byte length; `None` when a segment is not passive (the wall
     /// then declines whatever the package declares).
@@ -131,6 +133,7 @@ impl ModuleLayout {
             section_headers: Vec::new(),
             export_start: 0,
             export_names: Vec::new(),
+            export_targets: Vec::new(),
             data_cuts: Some((0, Vec::new())),
         };
         let mut c = Cursor { bytes, at: 8 };
@@ -178,7 +181,11 @@ impl ModuleLayout {
                             .to_string();
                         s.skip(n)?;
                         let kind = s.byte()?;
-                        s.uleb()?;
+                        let index = s.uleb()?;
+                        layout.export_targets.push((
+                            kind,
+                            u32::try_from(index).map_err(|_| "layout: export index overflows")?,
+                        ));
                         layout.export_cuts.push(s.at - start);
                         if kind == 0 {
                             layout.export_positions.entry(name).or_insert(position);
@@ -291,9 +298,9 @@ fn nat_list(values: &[usize]) -> String {
         .join(",\n   ")
 }
 
-/// `ArtifactLayout.lean`: the declared layout, the planned functions' types
-/// and export positions, and the proof that the layout is the module's; with
-/// every plan entry's declaration (`FnDecl`) as its Lean literal.
+/// `ArtifactLayout.lean`: the declared layout, the planned functions' types,
+/// and the proof that the layout is the module's; with every plan entry's
+/// declaration (`FnDecl`) as its Lean literal.
 fn render_artifact_layout(
     core_bytes: &[u8],
     analysis: &Analysis,
@@ -330,60 +337,29 @@ fn render_artifact_layout(
         .map(|e| {
             let t = type_of(e.func_idx)?;
             let sig_pos = planned_types.binary_search(&t).expect("collected above");
-            let export_pos = if e.exported {
-                *layout
-                    .export_positions
-                    .get(&e.name)
-                    .ok_or_else(|| format!("layout: no function export named {}", e.name))?
-            } else {
-                0
-            };
-            Ok(format!(
-                "⟨{}, {export_pos}, {sig_pos}⟩",
-                lean_char_list(&e.name)
-            ))
+            Ok(format!("⟨{sig_pos}⟩"))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    // Each planned export's entry by module offset and length, and the
-    // bitmap of every export entry's start relative to the first.
+    // Every export entry's module offset, and the bitmap of every export
+    // entry's start relative to the first.
     let mut export_offsets = Vec::with_capacity(layout.export_cuts.len());
     let mut at = layout.export_start;
     for &l in &layout.export_cuts {
         export_offsets.push(at);
         at += l;
     }
-    let sites = analysis
-        .entries
-        .iter()
-        .map(|e| {
-            if !e.exported {
-                return "(0, 0)".to_string();
-            }
-            let p = layout.export_positions[&e.name];
-            format!("({}, {})", export_offsets[p], layout.export_cuts[p])
-        })
-        .collect::<Vec<_>>();
     let mut start_bits = vec![0u8; at.saturating_sub(layout.export_start) / 8 + 1];
     for &o in &export_offsets {
         let bit = o - layout.export_start;
         start_bits[bit / 8] |= 1 << (bit % 8);
     }
     let export_starts = hex_bits(&start_bits);
-    // The planned exports' entries: the walk leaves them to the plan checks,
-    // which read each at its site.
-    let certified: BTreeSet<usize> = analysis
-        .entries
-        .iter()
-        .filter(|e| e.exported)
-        .map(|e| export_offsets[layout.export_positions[&e.name]])
-        .collect();
-    let mut certified_bits = vec![0u8; start_bits.len()];
-    for &o in &certified {
-        let bit = o - layout.export_start;
-        certified_bits[bit / 8] |= 1 << (bit % 8);
-    }
-    let export_certified = hex_bits(&certified_bits);
-    let walk = ExportWalk::new(&layout, &export_offsets, &certified, declared_uncertified(analysis));
+    // The claimed functions' indices as the bits of one numeral
+    // (`SortedKeys.bitsOf`): the walk accounts for every function export of
+    // one of them by its index alone.
+    let claimed = analysis.certified_indices();
+    let export_claimed = hex_bits(&index_bits(&claimed));
+    let walk = ExportWalk::new(&layout, &claimed, declared_uncertified(analysis));
     let export_cut_pieces: String = walk
         .blocks
         .iter()
@@ -460,8 +436,8 @@ fn render_artifact_layout(
     let text = format!(
         "-- The declared module layout: every defined function's type index and\n\
          -- code entry (packed tables, {LAYOUT_WIDTH} bits per entry), the function types\n\
-         -- of the planned functions, each planned function's name, export position\n\
-         -- and the helper roles its lowering calls, and every section header's\n\
+         -- of the planned functions, the helper roles each plan's lowering calls,\n\
+         -- the claimed functions' indices, and every section header's\n\
          -- offset. Producer data: the framing and the code tiling are confirmed\n\
          -- against the staged bytes below, and the plan checks confirm the rest.\n\
          import ScaleTables\n\
@@ -491,14 +467,11 @@ fn render_artifact_layout(
          {export_cut_pieces}\
          def exportCuts : List Nat :=\n  {export_cuts}\n\n\
          -- The module offset of the export section's first entry, the start of\n\
-         -- every export entry relative to it (as bits), the starts of the\n\
-         -- planned exports' entries (as bits), and each plan entry's export\n\
-         -- entry by module offset and length (`(0, 0)` for an internal\n\
-         -- function).\n\
+         -- every export entry relative to it (as bits), and the claimed\n\
+         -- functions' indices (as bits, `SortedKeys.bitsOf`).\n\
          def exportStart : Nat := {export_start}\n\n\
          def exportStarts : Nat :=\n  {export_starts}\n\n\
-         def exportCertified : Nat :=\n  {export_certified}\n\n\
-         def exportSites : List (Nat × Nat) :=\n  [{sites}]\n\n\
+         def exportClaimed : Nat :=\n  {export_claimed}\n\n\
          theorem bytes_eq : AverCert.ScaleBytes.join 1024 AverCert.ArtifactBytes.chunks =\n    \
            AverCert.ArtifactBytes.modBytes :=\n  \
            (AverCert.ScaleBytes.joinTree_eq _ _ _).symm\n\n\
@@ -539,7 +512,6 @@ fn render_artifact_layout(
         headers = nat_list(&layout.section_headers),
         type_decls = types.layout_decls()?,
         export_start = layout.export_start,
-        sites = sites.join(",\n   "),
         bytes = "AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen",
     );
     let strings = render_string_blocks(analysis, count, layout.imports);
@@ -557,7 +529,6 @@ fn render_artifact_layout(
         text,
         extra,
         decls,
-        sites,
         walk,
         strings,
         data,
@@ -566,13 +537,12 @@ fn render_artifact_layout(
 }
 
 /// What the layout rendering produces: `ArtifactLayout.lean`, the block
-/// modules of a large package, every plan entry's declaration and export
-/// site, the export walk, and the String roles' function blocks.
+/// modules of a large package, every plan entry's declaration, the export
+/// walk, and the String roles' function blocks.
 pub(crate) struct LayoutParts {
     text: String,
     extra: Vec<(String, String)>,
     decls: Vec<String>,
-    sites: Vec<String>,
     walk: ExportWalk,
     strings: String,
     /// `rest_data` and the data section's blocks, when every segment is
@@ -653,6 +623,17 @@ fn render_data_blocks((start, cuts): &(usize, Vec<usize>)) -> String {
 }
 
 /// A byte-per-8-bits bitmap as a hex numeral, bit 0 lowest.
+/// The bytes of the numeral whose bits are `indices` (`SortedKeys.bitsOf`),
+/// least significant first.
+fn index_bits(indices: &BTreeSet<u32>) -> Vec<u8> {
+    let top = indices.iter().next_back().map_or(0, |&i| i as usize);
+    let mut bits = vec![0u8; top / 8 + 1];
+    for &i in indices {
+        bits[i as usize / 8] |= 1 << (i % 8);
+    }
+    bits
+}
+
 fn hex_bits(bits: &[u8]) -> String {
     let digits: String = bits.iter().rev().map(|b| format!("{b:02x}")).collect();
     format!("0x{digits}")

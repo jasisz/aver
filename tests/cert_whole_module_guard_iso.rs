@@ -279,10 +279,23 @@ fn admitted_closure_indices(cert: &Path) -> BTreeSet<u32> {
         .collect()
 }
 
-fn certified_opcode_offsets(bytes: &[u8]) -> (usize, u32, usize) {
+/// The function index of the certified function labelled `name`, from the
+/// package's public manifest (a certified function need not be exported).
+fn certified_index(cert: &Path, name: &str) -> Option<u32> {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(cert.join("cert-manifest.json")).unwrap()).unwrap();
+    manifest["certified"]
+        .as_array()?
+        .iter()
+        .find(|entry| entry["name"] == name)
+        .and_then(|entry| entry["funcIdx"].as_u64())
+        .and_then(|idx| u32::try_from(idx).ok())
+}
+
+fn certified_opcode_offsets(bytes: &[u8], cert: &Path) -> (usize, u32, usize) {
     let mut imported_funcs = 0u32;
-    let mut json_int = None;
-    let mut json_entry_key = None;
+    let json_int = certified_index(cert, "jsonInt");
+    let json_entry_key = certified_index(cert, "jsonEntryKey");
     let mut code_ordinal = 0u32;
     let mut call = None;
     let mut local_get = None;
@@ -295,19 +308,6 @@ fn certified_opcode_offsets(bytes: &[u8]) -> (usize, u32, usize) {
                         if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
                             imported_funcs += 1;
                         }
-                    }
-                }
-            }
-            wasmparser::Payload::ExportSection(reader) => {
-                for export in reader {
-                    let export = export.expect("export must parse");
-                    if export.kind != wasmparser::ExternalKind::Func {
-                        continue;
-                    }
-                    match export.name {
-                        "jsonInt" => json_int = Some(export.index),
-                        "jsonEntryKey" => json_entry_key = Some(export.index),
-                        _ => {}
                     }
                 }
             }
@@ -698,7 +698,7 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
     .unwrap();
 
     let start_insert_offset = section_offset_after_export(&wasm);
-    let (call_offset, call_target, local_get_offset) = certified_opcode_offsets(&wasm);
+    let (call_offset, call_target, local_get_offset) = certified_opcode_offsets(&wasm, &cert);
     let capability_offset = wasm
         .windows(b"console_print".len())
         .position(|window| window == b"console_print")
@@ -1775,39 +1775,77 @@ example : AcceptedArtifact.plansAccepted hostileArtifact = false := by decide +k
     assert_probe_holds(&cert, "StringHostRoleGuardIso.lean", &lean);
 }
 
-/// The export accounting binds every obligation's `(export name, function
-/// kind, self index)` triple to the byte-decoded export section, so an
-/// obligation cannot claim a fabricated self index: the honest artifact passes
-/// `exportsAccounted`, and decoupling one obligation's `self` from the index
-/// its export name resolves to in the bytes fails it.
+/// The export accounting by index: a function export is accounted for only
+/// when its index is some obligation's `self` (or the export is declared
+/// uncertified). The honest artifact passes. Unclaiming `sumTo` (its entry
+/// kept, its obligation gone) leaves the module's `sumTo` export pointing at a
+/// function without a theorem, and the real accounting rejects it; a literal
+/// copy of the live check weakened by exactly the claimed-index conjunct
+/// accepts it, so that conjunct is the sole rejector.
 #[test]
-fn self_index_is_kernel_bound_by_exports_accounted() {
+fn export_of_an_unclaimed_function_is_rejected_by_exports_accounted() {
     if !lake_available() {
-        eprintln!("skipping self-binding GuardIso test: `lake` not available");
+        eprintln!("skipping export-by-index GuardIso test: `lake` not available");
         return;
     }
     let (_out_dir, cert, _wasm) = built_package(
         "tools/certkit/fixtures/certprobe2.av",
         &[],
-        "cert-self-index-binding",
+        "cert-export-by-index",
     );
-    let lean = r#"import Artifact
+    let core = std::fs::read_to_string(cert.join("AcceptedArtifactCore.lean"))
+        .expect("the materialized wall has AcceptedArtifactCore.lean");
+    const CLAIMED: &str = "(entry.kind == 0 && claimedIndex.contains entry.idx)";
+    let entry = extract_wall_def(&core, "exportEntryAccounted");
+    assert_eq!(
+        entry.matches(CLAIMED).count(),
+        1,
+        "the claimed-index conjunct moved; refit the GuardIso surgery"
+    );
+    let weak_entry = entry
+        .replace(CLAIMED, "(entry.kind == 0)")
+        .replace("exportEntryAccounted", "exportEntryAccountedWeak");
+    let of = extract_wall_def(&core, "exportsAccountedOf");
+    assert_eq!(of.matches("exportEntryAccounted").count(), 1);
+    let weak_of = of
+        .replace("exportEntryAccounted", "exportEntryAccountedWeak")
+        .replace("exportsAccountedOf", "exportsAccountedOfWeak");
+    let lean = format!(
+        r#"import Artifact
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000
 noncomputable section
 
+namespace AverCert.AcceptedArtifact
+/-! Live `exportEntryAccounted` / `exportsAccountedOf`, weakened by exactly the
+claimed-index conjunct: any function export counts as accounted. -/
+{weak_entry}
+
+{weak_of}
+end AverCert.AcceptedArtifact
+
 example : AcceptedArtifact.exportsAccounted Artifact.data = true := Artifact.exports_ok
 
-def hostileSelfManifest : Manifest :=
-  match manifest.obligations with
-  | o :: rest => { manifest with obligations := { o with self := o.self + 1 } :: rest }
-  | [] => manifest
-def hostileSelfArtifact : AcceptedArtifact.ArtifactData :=
-  { Artifact.data with manifest := hostileSelfManifest }
-example : AcceptedArtifact.exportsAccounted hostileSelfArtifact = false := by decide +kernel
-"#;
-    assert_probe_holds(&cert, "SelfBindingGuardIso.lean", lean);
+def unclaim (e : FnEntry) : FnEntry :=
+  if e.name == "sumTo" then {{ e with claimed := false }} else e
+def unclaimedPlans : List FnEntry := manifest.fnPlans.map unclaim
+def unclaimedObligations : List Obligation :=
+  AcceptedArtifact.obligationsOf manifest.subject manifest.types unclaimedPlans
+def unclaimedManifest : Manifest :=
+  {{ manifest with fnPlans := unclaimedPlans, obligations := unclaimedObligations }}
+def unclaimedArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := unclaimedManifest }}
+-- One obligation fewer, every derived obligation still derived.
+example : unclaimedManifest.obligations.length + 1 = manifest.obligations.length := by
+  decide +kernel
+example : AcceptedArtifact.exportsAccounted unclaimedArtifact = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfWeak unclaimedArtifact.modBytes
+    unclaimedArtifact.modLen (AcceptedArtifact.claimedIndices unclaimedManifest)
+    (AcceptedArtifact.declaredUncertifiedNames unclaimedManifest) = true := by decide +kernel
+"#
+    );
+    assert_probe_holds(&cert, "ExportByIndexGuardIso.lean", &lean);
 }
 
 /// A minimal but REAL Int runtime: the canonical `__rt_aint_from_i64` helper

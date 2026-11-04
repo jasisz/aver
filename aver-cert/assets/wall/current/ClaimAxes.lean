@@ -20,7 +20,7 @@ open AverCert.TypeTable
 open AverCert.AcceptedArtifact
 open CertPrelude
 
-/-- The one report class of a certified export. -/
+/-- The one report class of a certified function. -/
 def planClass : String := "source-plan-v1"
 
 mutual
@@ -189,20 +189,20 @@ def facetsOf (fns : List FnEntry) (e : FnEntry) : List String :=
     else if f == "mutual" then recursive && decide (2 ≤ grp.length)
     else body.contains f
 
-/-- `(export, class)` for every certified export, in obligation order. -/
+/-- `(label, class)` for every certified function, in obligation order. -/
 def reportEntries (artifact : ArtifactData) : List (String × String) :=
-  artifact.manifest.obligations.map fun o => (o.export_, planClass)
+  artifact.manifest.obligations.map fun o => (o.name, planClass)
 
-/-- `(export, facets)` for every exported planned function. -/
+/-- `(label, facets)` for every claimed planned function. -/
 def reportFacets (artifact : ArtifactData) : List (String × List String) :=
-  (artifact.manifest.fnPlans.filter (·.exported)).map fun e =>
+  (artifact.manifest.fnPlans.filter (·.claimed)).map fun e =>
     (e.name, facetsOf artifact.manifest.fnPlans e)
 
 /-! ### Report data, one call group at a time
 
 `groupMembers fns g` walks every plan, and the facets, policies and
-termination witnesses of the report ask it once per exported plan, so a
-kernel check of the whole report walks every plan once per export. The
+termination witnesses of the report ask it once per claimed plan, so a
+kernel check of the whole report walks every plan once per claim. The
 producer lists the plans group by group (callees first, `group`
 increasing), so the plans of one group are one run of the list. `runsOf`
 cuts the list into its runs in one pass. When the runs' groups are
@@ -297,13 +297,13 @@ theorem filter_group_of_runs : ∀ (runs : List (Nat × List FnEntry)),
           rw [hnone r0 List.mem_cons_self hne, List.nil_append]
           exact filter_group_of_runs rest hnd' hg' r hr'
 
-/-- Anything computed per exported plan from its group's members, computed
+/-- Anything computed per claimed plan from its group's members, computed
     per run instead. -/
 theorem map_groupMembers_of_runs {α : Type} (f : List (Nat × FnPlan) → FnEntry → α)
     (fns : List FnEntry) (h : ((runsOf fns).map (·.1)).Nodup) :
-    (fns.filter (·.exported)).map (fun e => f (groupMembers fns e.group) e) =
+    (fns.filter (·.claimed)).map (fun e => f (groupMembers fns e.group) e) =
       (runsOf fns).flatMap (fun r =>
-        (r.2.filter (·.exported)).map (f (r.2.map fun e => (e.funcIdx, e.plan)))) := by
+        (r.2.filter (·.claimed)).map (f (r.2.map fun e => (e.funcIdx, e.plan)))) := by
   obtain ⟨hflat, hg⟩ := runsOf_spec fns
   have hmem : ∀ r ∈ runsOf fns, groupMembers fns r.1 = r.2.map fun e => (e.funcIdx, e.plan) :=
     fun r hr => by
@@ -312,8 +312,8 @@ theorem map_groupMembers_of_runs {α : Type} (f : List (Nat × FnPlan) → FnEnt
       rw [filter_group_of_runs (runsOf fns) h hg r hr]
   -- Walk the runs, keeping `fns` itself inside `groupMembers`.
   have key : ∀ runs : List (Nat × List FnEntry), (∀ r ∈ runs, r ∈ runsOf fns) →
-      ((runs.flatMap (·.2)).filter (·.exported)).map (fun e => f (groupMembers fns e.group) e) =
-        runs.flatMap (fun r => (r.2.filter (·.exported)).map
+      ((runs.flatMap (·.2)).filter (·.claimed)).map (fun e => f (groupMembers fns e.group) e) =
+        runs.flatMap (fun r => (r.2.filter (·.claimed)).map
           (f (r.2.map fun e => (e.funcIdx, e.plan)))) := by
     intro runs hsub
     induction runs with
@@ -352,8 +352,8 @@ def runGroups (fns : List FnEntry) : List Nat := (runsOf fns).map (·.1)
 def reportFacetsFast (fns : List FnEntry) : List (String × List String) :=
   if _root_.AverCert.SortedKeys.strictly (runGroups fns) then
     (runsOf fns).flatMap fun r =>
-      (r.2.filter (·.exported)).map fun e => (e.name, facetsIn (runMembers r.2) e)
-  else (fns.filter (·.exported)).map fun e => (e.name, facetsOf fns e)
+      (r.2.filter (·.claimed)).map fun e => (e.name, facetsIn (runMembers r.2) e)
+  else (fns.filter (·.claimed)).map fun e => (e.name, facetsOf fns e)
 
 theorem reportFacets_eq_fast (artifact : ArtifactData) :
     reportFacets artifact = reportFacetsFast artifact.manifest.fnPlans := by
@@ -368,15 +368,15 @@ theorem reportFacets_eq_fast (artifact : ArtifactData) :
 def policiesFast (fns : List FnEntry) : List Policy :=
   if _root_.AverCert.SortedKeys.strictly (runGroups fns) then
     (runsOf fns).flatMap fun r =>
-      (r.2.filter (·.exported)).map fun _ => (groupPolicy (runMembers r.2)).1
-  else (fns.filter (·.exported)).map fun e => (axesOf fns e).1
+      (r.2.filter (·.claimed)).map fun _ => (groupPolicy (runMembers r.2)).1
+  else (fns.filter (·.claimed)).map fun e => (axesOf fns e).1
 
 /-- The obligations' termination witnesses, once per run. -/
 def terminationsFast (fns : List FnEntry) : List (Option TerminationWitness) :=
   if _root_.AverCert.SortedKeys.strictly (runGroups fns) then
     (runsOf fns).flatMap fun r =>
-      (r.2.filter (·.exported)).map fun _ => (groupPolicy (runMembers r.2)).2.1
-  else (fns.filter (·.exported)).map fun e => (axesOf fns e).2.1
+      (r.2.filter (·.claimed)).map fun _ => (groupPolicy (runMembers r.2)).2.1
+  else (fns.filter (·.claimed)).map fun e => (axesOf fns e).2.1
 
 theorem map_policy_of_derived {artifact : ArtifactData} (h : obligationsDerived artifact) :
     artifact.manifest.obligations.map (·.policy) = policiesFast artifact.manifest.fnPlans := by

@@ -246,8 +246,8 @@ fn compile_certified(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Pro
     }
 }
 
-/// The producer's `fnPlans` entries as `(name, exported, function index)`,
-/// read from the `⟨"name", exported, funcIdx, group, plan⟩` lines of
+/// The producer's `fnPlans` entries as `(name, claimed, function index)`,
+/// read from the `⟨"name", claimed, funcIdx, group, plan⟩` lines of
 /// `Plans.lean`.
 fn planned_entries(plans_lean: &str) -> Vec<(String, bool, u32)> {
     let Some(at) = plans_lean.find("def fnPlans : List FnEntry :=") else {
@@ -259,11 +259,11 @@ fn planned_entries(plans_lean: &str) -> Vec<(String, bool, u32)> {
         .map(|entry| {
             let fields: Vec<&str> = entry.split(',').map(str::trim).collect();
             let name = fields[0].trim_matches('"').to_string();
-            let exported = fields[1] == "true";
+            let claimed = fields[1] == "true";
             let func_idx = fields[2]
                 .parse::<u32>()
                 .unwrap_or_else(|_| panic!("fnPlans entry index: {entry}"));
-            (name, exported, func_idx)
+            (name, claimed, func_idx)
         })
         .collect()
 }
@@ -934,20 +934,25 @@ fn cert_decode_three_way_differential() {
             }
         }
 
-        // Producer oracle: every exported entry of `Plans.lean` names the
-        // function index the Python oracle's export map and the kernel's
-        // `decodeExports` both give its export name, and the producer's
-        // declared carrier is the one both decoders read.
-        for (name, exported, func_idx) in planned_entries(&produced.plans_lean) {
-            if !exported {
+        // Producer oracle: every claimed entry of `Plans.lean` that the module
+        // exports under its label is exported at the function index the
+        // Python oracle's export map and the kernel's `decodeExports` both
+        // give that name, and the producer's declared carrier is the one both
+        // decoders read. (A claimed function need not be exported: the wall
+        // binds it by index.)
+        for (name, claimed, func_idx) in planned_entries(&produced.plans_lean) {
+            let exported = oracle["exports"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e[0].as_str() == Some(name.as_str()));
+            let Some(exported) = exported.filter(|_| claimed) else {
                 continue;
-            }
-            let mapped = oracle["exports"].as_array().unwrap().iter().any(|e| {
-                e[0].as_str() == Some(name.as_str()) && e[1].as_u64() == Some(u64::from(func_idx))
-            });
-            assert!(
-                mapped,
-                "{fixture}: planned export {name}→{func_idx} not in the decoded export map"
+            };
+            assert_eq!(
+                exported[1].as_u64(),
+                Some(u64::from(func_idx)),
+                "{fixture}: claimed export {name}→{func_idx} not in the decoded export map"
             );
             src.push_str(&format!(
                 "example : (CertDecode.decodeExports bytesN bytesLen).bind (fun m => m.lookup {}) = some {func_idx} := rfl\n",

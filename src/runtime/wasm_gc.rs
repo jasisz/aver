@@ -179,6 +179,9 @@ pub struct RunWasmGcHost {
 /// harness does this — but it means cross-module fn refs in `items`
 /// would trip the wasm validator. The CLI wrapper handles the
 /// multi-module path before getting here.
+///
+/// The module is built in process, never shipped, and exports every
+/// function (`FnExports::All`): `--expr` calls any of them by name.
 pub fn run_in_process(
     items: &[TopLevel],
     analysis: Option<&AnalysisResult>,
@@ -194,6 +197,7 @@ pub fn run_in_process(
                 &custom.plan,
                 config.packed_sequences_enabled,
                 false,
+                aver::codegen::wasm_gc::FnExports::All,
             )
         }
         None => aver::codegen::wasm_gc::compile_to_wasm_gc_flattened_with_options(
@@ -203,6 +207,7 @@ pub fn run_in_process(
             aver::codegen::wasm_gc::TargetMode::AverBridge,
             &config.type_aliases,
             config.packed_sequences_enabled,
+            aver::codegen::wasm_gc::FnExports::All,
         ),
     }
     .map(|out| out.bytes)

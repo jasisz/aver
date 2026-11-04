@@ -1,6 +1,6 @@
 /- GrammarBridge — plan-equals-source bridges on the one grammar.
 
-   A certified export's obligation is stated over its plan: the model is the
+   A certified function's obligation is stated over its plan: the model is the
    plan's fuel-indexed meaning (`AcceptedArtifact.modelOf`). A BRIDGE says
    that this model computes a named source function `f`, read through
    source-value encoders. The checker renders every bridge statement from
@@ -39,51 +39,53 @@ open AverCert.Schema AverCert.Grammar AverCert.TypeTable AverCert.AcceptedArtifa
 
 /-! ## The statement vocabulary -/
 
-/-- Export `name`'s obligation: the first obligation of the manifest carrying
-    that export name (`HoldsCore` covers every member, so the choice among
-    duplicates is immaterial). -/
-def exportObligation (m : Manifest) (name : String) : Option Obligation :=
-  m.obligations.find? (fun o => o.export_ == name)
+/-- The obligation of the function at index `idx`: the first obligation of
+    the manifest whose `self` is `idx` (`HoldsCore` covers every member, so
+    the choice among duplicates is immaterial). A bridge names its function
+    by index, the way the acceptance binds it to the bytes; a name is only a
+    report label. -/
+def obligationAt (m : Manifest) (idx : Nat) : Option Obligation :=
+  m.obligations.find? (fun o => o.self == idx)
 
-theorem exportObligation_mem {m : Manifest} {name : String} {o : Obligation}
-    (h : exportObligation m name = some o) : o ∈ m.obligations :=
+theorem obligationAt_mem {m : Manifest} {idx : Nat} {o : Obligation}
+    (h : obligationAt m idx = some o) : o ∈ m.obligations :=
   List.mem_of_find?_eq_some h
 
-/-! Selecting an export's obligation without evaluating String equality.
+/-! Selecting a function's obligation from distinct indices.
 
-The kernel has no fast path for String literals: deciding `a == b` rebuilds
-both UTF-8 byte arrays, in time quadratic in their length. Deciding
-`exportObligation` directly therefore compares the wanted name with every
-earlier export name. The lemmas below select it from pairwise-distinct names
-instead: the names are shown distinct ONCE per package, read from the export
-accounting of the byte facts (`SortedKeys.obligationNamesNodup_of_accounted`),
-and each export's obligation then follows from membership and one
-literal-to-literal name equality. -/
+The plans' function indices are distinct (`AcceptedArtifact.indicesDistinct`,
+or `SortedKeys.nodupBits` on the plans alone), so each function's obligation
+follows from membership, without evaluating the search over every earlier
+obligation. -/
 
-theorem find?_export_of_nodup {os : List Obligation} {name : String} {o : Obligation}
-    (hnd : (os.map (·.export_)).Nodup) (hmem : o ∈ os) (hname : o.export_ = name) :
-    os.find? (fun o => o.export_ == name) = some o := by
+theorem find?_self_of_nodup {os : List Obligation} {idx : Nat} {o : Obligation}
+    (hnd : (os.map (·.self)).Nodup) (hmem : o ∈ os) (hidx : o.self = idx) :
+    os.find? (fun o => o.self == idx) = some o := by
   induction os with
   | nil => cases hmem
   | cons a rest ih =>
       rw [List.map_cons, List.nodup_cons] at hnd
       rcases List.mem_cons.mp hmem with rfl | hrest
-      · simp [hname]
-      · have hne : ¬ a.export_ = name := fun h =>
-          hnd.1 (List.mem_map.mpr ⟨o, hrest, hname.trans h.symm⟩)
+      · simp [hidx]
+      · have hne : ¬ a.self = idx := fun h =>
+          hnd.1 (List.mem_map.mpr ⟨o, hrest, hidx.trans h.symm⟩)
         simp [hne, ih hnd.2 hrest]
 
-/-- The obligation of a planned, exported entry, when the manifest's export
-    names are pairwise distinct. -/
-theorem exportObligation_of_entry {m : Manifest} {s : Subject} {tt : TypeTable}
+/-- The obligation of a planned, claimed entry, when the plans' function
+    indices are pairwise distinct. -/
+theorem obligationAt_of_entry {m : Manifest} {s : Subject} {tt : TypeTable}
     {fns : List FnEntry} (hm : m.obligations = obligationsOf s tt fns)
-    (hnd : (m.obligations.map (·.export_)).Nodup) {e : FnEntry} (he : e ∈ fns)
-    (hex : e.exported = true) :
-    exportObligation m e.name = some (obligationOf s tt fns e) := by
-  unfold exportObligation
-  refine find?_export_of_nodup hnd ?_ rfl
-  rw [hm]
-  exact List.mem_map.mpr ⟨e, List.mem_filter.mpr ⟨he, hex⟩, rfl⟩
+    (hnd : (fns.map (·.funcIdx)).Nodup) {e : FnEntry} (he : e ∈ fns)
+    (hc : e.claimed = true) :
+    obligationAt m e.funcIdx = some (obligationOf s tt fns e) := by
+  unfold obligationAt
+  have hself : m.obligations.map (·.self) = (fns.filter (·.claimed)).map (·.funcIdx) := by
+    rw [hm]; unfold obligationsOf; rw [List.map_map]; rfl
+  refine find?_self_of_nodup ?_ ?_ rfl
+  · rw [hself]
+    exact List.Nodup.sublist (List.Sublist.map _ List.filter_sublist) hnd
+  · rw [hm]
+    exact List.mem_map.mpr ⟨e, List.mem_filter.mpr ⟨he, hc⟩, rfl⟩
 
 /-- An argument list inhabits the obligation's parameter types. -/
 def ArgsTyped (o : Obligation) (args : List SVal) : Prop :=
@@ -91,15 +93,15 @@ def ArgsTyped (o : Obligation) (args : List SVal) : Prop :=
 
 /-- The adequate kind, over one argument binder `α` (a rendered statement
     spells the same proposition with one binder per parameter). -/
-def Adequate (m : Manifest) (name : String) {α : Type} (args : α → List SVal)
+def Adequate (m : Manifest) (idx : Nat) {α : Type} (args : α → List SVal)
     (res : α → SVal) : Prop :=
-  ∃ o, exportObligation m name = some o ∧ (∀ x, ArgsTyped o (args x)) ∧
+  ∃ o, obligationAt m idx = some o ∧ (∀ x, ArgsTyped o (args x)) ∧
     ∀ fuel x v, o.model fuel (args x) = some v → v = res x
 
 /-- The exact kind. -/
-def Exact (m : Manifest) (name : String) {α : Type} (args : α → List SVal)
+def Exact (m : Manifest) (idx : Nat) {α : Type} (args : α → List SVal)
     (res : α → SVal) : Prop :=
-  ∃ o, exportObligation m name = some o ∧ (∀ x, ArgsTyped o (args x)) ∧
+  ∃ o, obligationAt m idx = some o ∧ (∀ x, ArgsTyped o (args x)) ∧
     ∃ k, ∀ fuel, k ≤ fuel → ∀ x, o.model fuel (args x) = some (res x)
 
 /-! ## String values
@@ -188,12 +190,12 @@ theorem holds_of_mem {m : Manifest} (hm : HoldsCore m) {o : Obligation}
   · exact h.1
 
 /-- The bytes compute the source function: under the named runtime
-    contracts, a run of the export's emitted function on a represented
+    contracts, a run of the certified function on a represented
     encoded argument list that returns, returns a represented, well-typed
     image of the source result. -/
-theorem adequate_transfer {m : Manifest} (hm : HoldsCore m) {name : String} {α : Type}
-    {args : α → List SVal} {res : α → SVal} (hb : Adequate m name args res) :
-    ∃ o, exportObligation m name = some o ∧
+theorem adequate_transfer {m : Manifest} (hm : HoldsCore m) {idx : Nat} {α : Type}
+    {args : α → List SVal} {res : α → SVal} (hb : Adequate m idx args res) :
+    ∃ o, obligationAt m idx = some o ∧
       ∀ (S : CarrierSpec o.carrier) (h : HostFns), HostContracts S h →
         ∀ fuel x ws r, SReprL S o.layout (args x) ws →
           wFuncN o.code (o.host h) fuel o.self ws = some r →
@@ -202,7 +204,7 @@ theorem adequate_transfer {m : Manifest} (hm : HoldsCore m) {name : String} {α 
   refine ⟨o, ho, ?_⟩
   intro S h hc fuel x ws r hrep hrun
   obtain ⟨sv, hmod, hrep', hty'⟩ :=
-    holds_of_mem hm (exportObligation_mem ho) S h hc fuel (args x) ws r (hty x) hrep hrun
+    holds_of_mem hm (obligationAt_mem ho) S h hc fuel (args x) ws r (hty x) hrep hrun
   have := hadq fuel x sv hmod
   subst this
   exact ⟨hrep', hty'⟩

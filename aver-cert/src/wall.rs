@@ -559,9 +559,8 @@ mod tests {
 
     /// Removing the code-entry equality must leave the plan payload unbound.
     ///
-    /// The equality `exactFuncBindingForExport n len name bytes` (and the
-    /// `codeEntry == bytes` filter for internal callees) is the one fact that
-    /// makes a plan's lowering the delivered code. An earlier lint counted
+    /// The `codeEntry == bytes` filter on the function at the plan's index is
+    /// the one fact that makes a plan's lowering the delivered code. An earlier lint counted
     /// `planTyped M e.plan` and `callsOrdered fns e` as binding the plan,
     /// because they sit in a definition whose `match` reads the bytes, and so
     /// stayed green with the equality deleted. The function type pin
@@ -569,8 +568,8 @@ mod tests {
     #[test]
     fn lint_flags_the_removed_code_entry_pin() {
         let core = wall_with_core_edit(
-            "        _root_.AverCert.WasmSlice.exactFuncBindingForExport n len (stringBytes e.name) bytes\n      else\n        (_root_.AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter\n          (fun b => b.codeEntry == bytes)\n",
-            "        AverCert.WasmSlice.funcBindingForExport n len (stringBytes e.name)\n      else\n        AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx\n",
+            "      (_root_.AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter\n        (fun b => b.codeEntry == bytes)\n",
+            "      AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx\n",
         );
         let sources = sources_with_core(&core);
         let report = byte_binding_lint::analyse(&sources);

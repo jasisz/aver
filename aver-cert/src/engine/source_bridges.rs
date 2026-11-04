@@ -80,7 +80,10 @@ impl SourceModel {
 /// STRUCTURE, never statement text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceBridge {
+    /// The certified function's report label, which names the theorem.
     pub export: String,
+    /// The certified function's index: what the statement names.
+    pub func_idx: u32,
     pub theorem: String,
     pub corollary: String,
     /// Fully qualified Lean name of the source function (no `_root_.`).
@@ -107,7 +110,7 @@ impl SourceBridge {
     /// The pinned statement (what the checker renders and pins).
     pub fn statement(&self) -> String {
         render_bridge_statement(
-            &self.export,
+            self.func_idx,
             &self.model,
             self.kind,
             &self.params,
@@ -119,7 +122,7 @@ impl SourceBridge {
     /// `_certified` corollary.
     pub fn expanded_statement(&self) -> String {
         render_bridge_statement_expanded(
-            &self.export,
+            self.func_idx,
             &self.model,
             self.kind,
             &self.params,
@@ -1343,7 +1346,7 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel, law_claims: &[LawClaim
                 let entry = format!(
                     "⟨{}, {}, {}, {}, AverCert.Plans.{}⟩",
                     lean_str(&e.name),
-                    e.exported,
+                    e.claimed,
                     e.func_idx,
                     e.group,
                     plan_def_name(e.func_idx)
@@ -1551,6 +1554,7 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel, law_claims: &[LawClaim
         };
         let bridge = SourceBridge {
             export: c.name.clone(),
+            func_idx: c.func_idx,
             theorem: SourceBridge::theorem_name(&c.name),
             corollary: SourceBridge::corollary_name(&c.name),
             model: b.model.clone(),
@@ -2587,16 +2591,16 @@ fn render_export(
     // Concatenated, never interpolated into a format string: a statement
     // carrying `{`/`}` must stay inert text.
     s.push_str(&statement);
-    // The obligation is selected by its entry and the package's distinct
-    // export names, never by deciding `exportObligation` (String equality
-    // against every earlier export, which the kernel evaluates slowly).
+    // The obligation is selected by its entry and the plans' distinct
+    // function indices, never by deciding `obligationAt` (a search through
+    // every earlier obligation).
     let (entry_index, entry) = &plan.entries[&func_idx];
     s.push_str(" := by\n  first\n  | (set_option maxHeartbeats ");
     s.push_str(&EXPORT_HEARTBEATS.to_string());
     s.push_str(&format!(
-        " in\n      (refine ⟨_, AverCert.GrammarBridge.exportObligation_of_entry \
+        " in\n      (refine ⟨_, AverCert.GrammarBridge.obligationAt_of_entry \
          (s := AverCert.subject) (tt := AverCert.Plans.types) (fns := AverCert.Plans.fnPlans) \
-         rfl export_names_nodup (e := {entry}) \
+         rfl fn_indices_nodup (e := {entry}) \
          (List.getElem_mem (l := AverCert.Plans.fnPlans) (n := {entry_index}) (by decide)) rfl, \
          ?_, ?_⟩\n       next => "
     ));
@@ -2621,26 +2625,24 @@ fn render_export(
     c.push_str(", _root_.AverCert.Final.cert⟩\n\n");
 }
 
-/// `BridgeNames.lean`: `export_names_nodup`, the obligations' export names
-/// pairwise distinct, read from the export accounting the byte facts already
-/// prove (`exports_ok`, in `exports_module`): it requires the names' numeric
-/// keys distinct (`SortedKeys.obligationNamesNodup_of_accounted`). Deciding
-/// it again over the names' characters cost btc-listener's 823 names about
-/// 45 s and most of a 9 GB module. A failure costs every bridge its credit,
-/// never the package.
-fn render_bridge_names(exports_module: &str) -> String {
-    format!(
-        "-- The obligations' export names are pairwise distinct, read from the\n\
-         -- export accounting of the byte facts.\n\
-         import {exports_module}\n\
-         import SortedKeys\n\n\
-         set_option autoImplicit false\n\n\
-         namespace AverCert.Bridge\n\n\
-         theorem export_names_nodup :\n    \
-         (AverCert.manifest.obligations.map (·.export_)).Nodup :=\n  \
-         AverCert.SortedKeys.obligationNamesNodup_of_accounted AverCert.Artifact.exports_ok\n\n\
-         end AverCert.Bridge\n"
-    )
+/// `BridgeNames.lean`: `fn_indices_nodup`, the plans' function indices
+/// pairwise distinct, decided on a bitmap over the plans alone
+/// (`SortedKeys.nodupBits`): one bit test and one `or` per plan. It reads no
+/// byte fact, so the bridge proofs need not wait for them. A failure costs
+/// every bridge its credit, never the package.
+fn render_bridge_names() -> String {
+    "-- The plans' function indices are pairwise distinct.\n\
+     import Manifest\n\
+     import SortedKeys\n\n\
+     set_option autoImplicit false\n\n\
+     namespace AverCert.Bridge\n\n\
+     theorem fn_indices_nodup :\n    \
+     (AverCert.Plans.fnPlans.map (·.funcIdx)).Nodup :=\n  \
+     (AverCert.SortedKeys.nodupBits_sound (xs := AverCert.Plans.fnPlans.map (·.funcIdx))\n      \
+     (bound := AverCert.SortedKeys.indexBound) (bits := 0)\n    \
+     (by decide +kernel)).1\n\n\
+     end AverCert.Bridge\n"
+        .to_string()
 }
 
 /// The package modules that carry the bridge proofs themselves,
@@ -2652,7 +2654,7 @@ pub const BRIDGE_PROOF_MODULE: &str = "BridgeProof";
 /// 297 s and 9 GB, and slices of 100 up to 64 s each. Slices of about this
 /// size build in parallel and keep the critical path short.
 const BRIDGE_PROOFS_PER_MODULE: usize = 50;
-/// The module of `export_names_nodup`, which every bridge proof cites.
+/// The module of `fn_indices_nodup`, which every bridge proof cites.
 pub const BRIDGE_NAMES_MODULE: &str = "BridgeNames";
 /// The complete image table the thin step bindings import.
 pub const BRIDGE_DEFS_MODULE: &str = "BridgeDefs";
@@ -3016,7 +3018,7 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
     let bridge_lean = (!plan.fns.is_empty() && !bridges.is_empty())
         .then(|| {
             let (corollaries, parts) =
-                render_bridge_lean(&plan, &roots, exports_fact_module(analysis));
+                render_bridge_lean(&plan, &roots);
             let parts = parts
                 .into_iter()
                 .map(|(name, text)| (name, isolate_theorems(&text)))
@@ -3427,12 +3429,11 @@ mod source_bridge_tests {
             chars, "[['a', 'b'],\n       ['a', (Char.ofNat 39), (Char.ofNat 34)]]",
             "{chars}"
         );
-        let names = render_bridge_names("ArtifactInterface");
+        let names = render_bridge_names();
         assert!(
-            names.contains("import ArtifactInterface\n")
-                && names.contains(
-                    "obligationNamesNodup_of_accounted AverCert.Artifact.exports_ok"
-                ),
+            names.contains("import Manifest\n")
+                && names.contains("theorem fn_indices_nodup :")
+                && !names.contains("import Artifact"),
             "{names}"
         );
     }

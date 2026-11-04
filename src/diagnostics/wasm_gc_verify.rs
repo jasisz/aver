@@ -278,12 +278,15 @@ pub fn run_verify_for_items_wasm_gc_with_marks(
         crate::ir::pipeline::resolve_and_reannotate(&mut items);
     }
 
-    let bytes = crate::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+    // The cases call their functions by name, so every function is exported.
+    let bytes = crate::codegen::wasm_gc::compile_to_wasm_gc_flattened_with_options(
         &items,
         result.analysis.as_ref(),
         None,
         crate::codegen::wasm_gc::TargetMode::AverBridge,
         &type_aliases,
+        true,
+        crate::codegen::wasm_gc::FnExports::All,
     )
     .map(|out| out.bytes)
     .map_err(|e| format!("wasm-gc compile error: {}", e))?;

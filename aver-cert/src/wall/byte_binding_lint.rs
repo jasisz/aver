@@ -2061,21 +2061,33 @@ pub const ALLOWED: &[Allowance] = &[
         doc_anchor: "",
     },
     Allowance {
-        structure: "Subject",
-        field: "exports",
+        structure: "FnEntry",
+        field: "claimed",
         category: Category::PinnedOutsideTheWall,
-        reason: "The wall never reads this field — its only occurrence in the whole wall is \
-                 its own declaration in SchemaBase.lean, and `exportsAccounted` does the \
-                 byte-level export accounting from `manifest.obligations` and \
-                 `subject.declaredUncertified` instead. It is constrained by the \
-                 checker-authored witness rather than by `accepted`: verifier.rs emits \
-                 `subject.exports = {names} := rfl` against the SAME `{names}` list it pins \
-                 `obligations.map (fun o => o.export_)` to, so the two cannot disagree \
-                 without the witness failing to elaborate, and the obligation export names \
-                 are byte-bound through `exportsAccounted`. Transported duplicate, not an \
-                 independent value. Note this is the one category the lint cannot audit: it \
-                 sees only the wall, so `PinnedOutsideTheWall` is trusted by assertion and \
-                 defended only by review of verifier.rs.",
+        reason: "Which planned functions the certificate states a theorem about is the \
+                 producer's choice, and any choice is sound: `obligationsOf` derives an \
+                 obligation for every claimed entry and the acceptance proves each one, \
+                 while an unclaimed entry is still bound to its code entry by index \
+                 (`boundFunction`) and serves only as a callee. No byte fact could pin the \
+                 choice: a certified function need not be exported, and an export is \
+                 accounted for by the index it points at (`exportsAccountedOf`). The \
+                 claimed set is what the report states, and verifier.rs pins it: the \
+                 checker-authored witness proves `obligations.map (fun o => o.self)` equal \
+                 to the manifest's `certified[].funcIdx` list by `rfl`.",
+        doc_anchor: "",
+    },
+    Allowance {
+        structure: "FnEntry",
+        field: "name",
+        category: Category::PinnedOutsideTheWall,
+        reason: "A report label (the source name, or `#<funcIdx>`), never an identity: no \
+                 conjunct of `accepted` reads it, and the function a plan is bound to is \
+                 selected by `funcIdx` alone. A wrong label changes neither the bytes an \
+                 obligation is bound to nor its theorem, and a source bridge names its \
+                 obligation by index (`GrammarBridge.obligationAt`). verifier.rs pins the \
+                 labels through the checker-authored witness: `obligations.map (fun o => \
+                 o.name)` equals the manifest's `certified[].name` list by `rfl`, paired \
+                 position by position with the pinned indices.",
         doc_anchor: "",
     },
 ];

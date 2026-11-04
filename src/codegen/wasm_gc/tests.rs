@@ -154,3 +154,90 @@ fn main() -> Int
         globals.join("\n")
     );
 }
+
+/// The names a module exports, in section order.
+fn export_names(bytes: &[u8]) -> Vec<String> {
+    let mut names = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::ExportSection(reader) = payload.expect("valid module") {
+            for export in reader {
+                names.push(export.expect("export reads").name.to_string());
+            }
+        }
+    }
+    names
+}
+
+fn exposes_items() -> Vec<crate::ast::TopLevel> {
+    let mut items = parse(
+        r#"
+module Exposing
+    intent = "only what the module exposes is exported"
+    exposes [visible]
+
+fn hidden(x: Int) -> Int
+    x + 1
+
+fn visible(x: Int) -> Int
+    hidden(x) * 2
+
+fn main() -> Int
+    visible(20)
+"#,
+    );
+    use crate::ir::{PipelineConfig, TypecheckMode};
+    let _result = crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+    items
+}
+
+/// An artifact exports the entry point, `main`, the host helpers and the
+/// entry module's `exposes`, and no other user function. An in-process build
+/// that calls any function by name asks for every one.
+#[test]
+fn exports_follow_the_entry_module_exposes() {
+    let items = exposes_items();
+    let bytes = compile_to_wasm_gc(&items, None).expect("compile");
+    let names = export_names(&bytes);
+    for expected in ["_start", "main", "visible"] {
+        assert!(names.iter().any(|n| n == expected), "{expected}: {names:?}");
+    }
+    assert!(!names.iter().any(|n| n == "hidden"), "{names:?}");
+
+    let all = super::compile_to_wasm_gc_flattened_with_options(
+        &items,
+        None,
+        None,
+        super::TargetMode::AverBridge,
+        &std::collections::HashMap::new(),
+        true,
+        super::FnExports::All,
+    )
+    .expect("compile")
+    .bytes;
+    let names = export_names(&all);
+    for expected in ["_start", "main", "visible", "hidden"] {
+        assert!(names.iter().any(|n| n == expected), "{expected}: {names:?}");
+    }
+}
+
+/// A wasip2 core exports the world's entry point and no user function, even
+/// one the module exposes.
+#[test]
+fn wasip2_exports_no_user_function() {
+    let items = exposes_items();
+    let bytes = super::compile_to_wasm_gc_for_wasip2(&items, None).expect("compile");
+    let names = export_names(&bytes);
+    assert!(
+        names.iter().any(|n| n == "wasi:cli/run@0.2.4#run"),
+        "{names:?}"
+    );
+    for user in ["main", "visible", "hidden"] {
+        assert!(!names.iter().any(|n| n == user), "{user}: {names:?}");
+    }
+}

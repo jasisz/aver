@@ -31,23 +31,27 @@ pub struct ModuleEnvelopeFacts {
 }
 
 impl ModuleEnvelopeFacts {
-    pub(crate) fn declared_uncertified(
+    /// Every export that is not a function export of a certified function's
+    /// index, with the reason it is uncertified. A certified function is
+    /// identified by its index, so an export of one under any name is
+    /// accounted for by the certificate, and is not declared.
+    pub(crate) fn declared_uncertified<'a>(
         &self,
-        certified_names: impl IntoIterator<Item = String>,
-        declined: &[(String, String)],
+        certified: &BTreeSet<u32>,
+        reason_of: impl Fn(u32) -> Option<&'a str>,
     ) -> Vec<(String, String)> {
-        let certified = certified_names.into_iter().collect::<BTreeSet<_>>();
-        let reasons = declined
-            .iter()
-            .cloned()
-            .collect::<BTreeMap<String, String>>();
         self.exports
             .iter()
-            .filter(|export| !certified.contains(&export.name))
+            .filter(|export| !(export.kind == 0 && certified.contains(&export.index)))
             .map(|export| {
-                let reason = reasons.get(&export.name).cloned().unwrap_or_else(|| {
-                    "module export is outside the claimed certification obligations".to_string()
-                });
+                let reason = (export.kind == 0)
+                    .then(|| reason_of(export.index))
+                    .flatten()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        "module export is outside the claimed certification obligations"
+                            .to_string()
+                    });
                 (export.name.clone(), reason)
             })
             .collect()

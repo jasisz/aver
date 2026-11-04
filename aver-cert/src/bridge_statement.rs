@@ -1,7 +1,7 @@
 //! The plan-equals-source bridge statement, rendered from declared structure.
 //!
 //! A certificate does not transport the text of a bridge theorem. It transports
-//! the STRUCTURE — the certified export, the transpiled source function, the
+//! the STRUCTURE — the certified function, the transpiled source function, the
 //! statement kind, and one encoder per parameter plus one for the result — and
 //! both sides render the statement from that structure with this module. The
 //! producer writes the rendered text into `Bridge.lean`; the checker renders it
@@ -11,13 +11,13 @@
 //! anything the gates do not forbid — `f x = f x` is a single `_root_.`-first
 //! line naming its declared model, and it proves nothing. A statement RENDERED
 //! by the checker can only ever say what this file says: the model of the
-//! obligation named by the export, at the encoded arguments, returns the
-//! encoded source result. A manifest that permutes a record's accessors, points
-//! at another export, or declares an encoder kind this file does not know
+//! obligation of the certified function's index, at the encoded arguments,
+//! returns the encoded source result. A manifest that permutes a record's
+//! accessors, points at another function, or declares an encoder kind this file does not know
 //! renders a different text (or no text at all), and the pin then fails to
 //! elaborate — which declines the package rather than crediting the claim.
 //!
-//! The statement is over the plan grammar of statement schema 9
+//! The statement is over the plan grammar of statement schema 10
 //! (`GrammarBridge.lean`), in one of two kinds:
 //!
 //! * `exact` — above some fuel, the model at every encoded argument list
@@ -597,9 +597,11 @@ pub fn param_binders(params: &[SourceEncoder]) -> String {
         .join(" ")
 }
 
-/// The obligation of `export`, as the statement names it.
-pub fn export_obligation(export: &str) -> String {
-    format!("_root_.AverCert.GrammarBridge.exportObligation _root_.AverCert.manifest \"{export}\"")
+/// The obligation of the function at `func_idx`, as the statement names it.
+pub fn obligation_at(func_idx: u32) -> String {
+    format!(
+        "_root_.AverCert.GrammarBridge.obligationAt _root_.AverCert.manifest (nat_lit {func_idx})"
+    )
 }
 
 /// The binder of a pinned statement: one variable `x` of the tuple of the
@@ -619,18 +621,19 @@ fn pinned_binder(params: &[SourceEncoder]) -> (String, Vec<String>) {
     }
 }
 
-/// The bridge statement for one export: what the checker pins and what the
-/// package's `_certified` corollary must state.
+/// The bridge statement for one certified function, named by its function
+/// index: what the checker pins and what the package's `_certified`
+/// corollary must state.
 ///
 /// This is the single definition of what a bridge SAYS. The statement is an
 /// application of the wall's own `GrammarBridge.Exact` / `GrammarBridge.Adequate`
 /// — whose `≤`, quantifiers and numerals were elaborated inside the wall — to
-/// the manifest, the export name, and two functions of one tuple binder: the
+/// the manifest, the function index, and two functions of one tuple binder: the
 /// encoded argument list and the encoded source result. Every numeral in those
 /// functions is a `nat_lit`, and every name is `_root_`-qualified, so neither a
 /// namespace nor an instance the package declares can change what it says.
 pub fn render_bridge_statement(
-    export: &str,
+    func_idx: u32,
     model: &str,
     kind: BridgeKind,
     params: &[SourceEncoder],
@@ -655,7 +658,7 @@ pub fn render_bridge_statement(
         BridgeKind::Adequate => "_root_.AverCert.GrammarBridge.Adequate",
     };
     format!(
-        "{definition} _root_.AverCert.manifest \"{export}\" \
+        "{definition} _root_.AverCert.manifest (nat_lit {func_idx}) \
          (fun (x : {binder}) => [{args}]) (fun (x : {binder}) => {image})"
     )
 }
@@ -708,7 +711,7 @@ pub fn pinned_from_expanded(theorem: &str, kind: BridgeKind, arity: usize) -> St
 /// through [`pinned_from_expanded`], so a package instance that changed what
 /// this text means makes that restatement fail rather than weakening the pin.
 pub fn render_bridge_statement_expanded(
-    export: &str,
+    func_idx: u32,
     model: &str,
     kind: BridgeKind,
     params: &[SourceEncoder],
@@ -746,7 +749,7 @@ pub fn render_bridge_statement_expanded(
     };
     format!(
         "∃ o, {} = _root_.Option.some o ∧ ({typing}) ∧ ({tail})",
-        export_obligation(export)
+        obligation_at(func_idx)
     )
 }
 
@@ -1002,19 +1005,19 @@ mod tests {
     fn pinned_statements_go_through_the_wall_definitions() {
         assert_eq!(
             render_bridge_statement(
-                "addOne",
+                3,
                 "CertificateHello.addOne",
                 BridgeKind::Exact,
                 &[SourceEncoder::Int],
                 &SourceEncoder::Int
             ),
-            "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest \"addOne\" \
+            "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest (nat_lit 3) \
              (fun (x : _root_.Int) => [_root_.AverCert.Grammar.SVal.i (x)]) \
              (fun (x : _root_.Int) => _root_.AverCert.Grammar.SVal.i \
              (_root_.CertificateHello.addOne x))"
         );
         let pinned = render_bridge_statement(
-            "Domain_Rational_plus",
+            7,
             "Domain.Rational.plus",
             BridgeKind::Adequate,
             &[fraction(), op()],
@@ -1023,7 +1026,7 @@ mod tests {
         assert!(
             pinned.starts_with(
                 "_root_.AverCert.GrammarBridge.Adequate _root_.AverCert.manifest \
-             \"Domain_Rational_plus\" (fun (x : (_root_.Prod _root_.Domain.Rational.Fraction \
+             (nat_lit 7) (fun (x : (_root_.Prod _root_.Domain.Rational.Fraction \
              _root_.CertGoals.Op)) => [_root_.AverCert.Grammar.SVal.record (nat_lit 0) ["
             ),
             "{pinned}"
@@ -1050,14 +1053,14 @@ mod tests {
     fn both_kinds_render_their_exact_statement() {
         assert_eq!(
             render_bridge_statement_expanded(
-                "addOne",
+                3,
                 "CertificateHello.addOne",
                 BridgeKind::Exact,
                 &[SourceEncoder::Int],
                 &SourceEncoder::Int
             ),
-            "∃ o, _root_.AverCert.GrammarBridge.exportObligation _root_.AverCert.manifest \
-             \"addOne\" = _root_.Option.some o ∧ (∀ (x0 : _root_.Int), \
+            "∃ o, _root_.AverCert.GrammarBridge.obligationAt _root_.AverCert.manifest \
+             (nat_lit 3) = _root_.Option.some o ∧ (∀ (x0 : _root_.Int), \
              _root_.AverCert.GrammarBridge.ArgsTyped o [_root_.AverCert.Grammar.SVal.i (x0)]) ∧ \
              (∃ (k : _root_.Nat), ∀ (fuel : _root_.Nat), k ≤ fuel → ∀ (x0 : _root_.Int), \
              _root_.AverCert.Schema.Obligation.model o fuel [_root_.AverCert.Grammar.SVal.i (x0)] \
@@ -1066,14 +1069,14 @@ mod tests {
         );
         assert_eq!(
             render_bridge_statement_expanded(
-                "sumFrom",
+                4,
                 "RecGen.sumFrom",
                 BridgeKind::Adequate,
                 &[SourceEncoder::Int],
                 &SourceEncoder::Int
             ),
-            "∃ o, _root_.AverCert.GrammarBridge.exportObligation _root_.AverCert.manifest \
-             \"sumFrom\" = _root_.Option.some o ∧ (∀ (x0 : _root_.Int), \
+            "∃ o, _root_.AverCert.GrammarBridge.obligationAt _root_.AverCert.manifest \
+             (nat_lit 4) = _root_.Option.some o ∧ (∀ (x0 : _root_.Int), \
              _root_.AverCert.GrammarBridge.ArgsTyped o [_root_.AverCert.Grammar.SVal.i (x0)]) ∧ \
              (∀ (fuel : _root_.Nat) (x0 : _root_.Int) (v : _root_.AverCert.Grammar.SVal), \
              _root_.AverCert.Schema.Obligation.model o fuel [_root_.AverCert.Grammar.SVal.i (x0)] \
@@ -1082,14 +1085,14 @@ mod tests {
         // Nullary: no parameter binders, and the source call is the bare name.
         assert_eq!(
             render_bridge_statement_expanded(
-                "Domain_Rational_zeroFraction",
+                5,
                 "Domain.Rational.zeroFraction",
                 BridgeKind::Exact,
                 &[],
                 &fraction(),
             ),
-            "∃ o, _root_.AverCert.GrammarBridge.exportObligation _root_.AverCert.manifest \
-             \"Domain_Rational_zeroFraction\" = _root_.Option.some o ∧ \
+            "∃ o, _root_.AverCert.GrammarBridge.obligationAt _root_.AverCert.manifest \
+             (nat_lit 5) = _root_.Option.some o ∧ \
              (_root_.AverCert.GrammarBridge.ArgsTyped o []) ∧ (∃ (k : _root_.Nat), \
              ∀ (fuel : _root_.Nat), k ≤ fuel → _root_.AverCert.Schema.Obligation.model o fuel [] \
              = _root_.Option.some (_root_.AverCert.Grammar.SVal.record 0 \
@@ -1167,20 +1170,20 @@ mod tests {
     /// longer has the package corollary's type.
     #[test]
     fn structure_edits_change_the_rendered_statement() {
-        let render = |export: &str, model: &str, kind, params: &[SourceEncoder]| {
-            render_bridge_statement(export, model, kind, params, &fraction())
+        let render = |func_idx: u32, model: &str, kind, params: &[SourceEncoder]| {
+            render_bridge_statement(func_idx, model, kind, params, &fraction())
         };
         let honest = render(
-            "Domain_Rational_plus",
+            7,
             "Domain.Rational.plus",
             BridgeKind::Exact,
             &[fraction(), fraction()],
         );
-        // A different export (another obligation).
+        // A different function index (another obligation).
         assert_ne!(
             honest,
             render(
-                "Domain_Rational_minus",
+                8,
                 "Domain.Rational.plus",
                 BridgeKind::Exact,
                 &[fraction(), fraction()]
@@ -1190,7 +1193,7 @@ mod tests {
         assert_ne!(
             honest,
             render(
-                "Domain_Rational_plus",
+                7,
                 "Domain.Rational.minus",
                 BridgeKind::Exact,
                 &[fraction(), fraction()]
@@ -1200,7 +1203,7 @@ mod tests {
         assert_ne!(
             honest,
             render(
-                "Domain_Rational_plus",
+                7,
                 "Domain.Rational.plus",
                 BridgeKind::Adequate,
                 &[fraction(), fraction()]
@@ -1224,14 +1227,14 @@ mod tests {
         assert_ne!(
             honest,
             render(
-                "Domain_Rational_plus",
+                7,
                 "Domain.Rational.plus",
                 BridgeKind::Exact,
                 &[permuted, fraction()]
             )
         );
         // A tautology is unrepresentable: the statement is always the wall's
-        // own `Exact`/`Adequate` of the named export's obligation.
+        // own `Exact`/`Adequate` of the indexed function's obligation.
         assert!(honest.starts_with("_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest"));
     }
 
@@ -1298,7 +1301,7 @@ mod tests {
     fn rendered_statements_pass_the_gates_they_are_pinned_under() {
         for kind in [BridgeKind::Exact, BridgeKind::Adequate] {
             let statement = render_bridge_statement(
-                "Domain_Rational_plus",
+                7,
                 "Domain.Rational.plus",
                 kind,
                 &[

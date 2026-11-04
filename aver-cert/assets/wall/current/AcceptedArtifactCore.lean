@@ -1,4 +1,4 @@
--- Lean-side artifact acceptance for the one plan grammar (statement schema 9).
+-- Lean-side artifact acceptance for the one plan grammar (statement schema 10).
 --
 -- A certificate declares its plans (`Manifest.fnPlans`), the module layout
 -- (`Manifest.types`) and the runtime helper indices (`Subject`). This file
@@ -103,7 +103,7 @@ def axesOf (fns : List FnEntry) (e : FnEntry) :
 
 def obligationOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) (e : FnEntry) :
     Obligation :=
-  { export_ := e.name
+  { name := e.name
     policy := (axesOf fns e).1
     termination? := (axesOf fns e).2.1
     totalityRole := (axesOf fns e).2.2
@@ -115,9 +115,10 @@ def obligationOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) (e : FnEntr
     sig := e.plan.sig
     model := fun fuel => modelOf fns fuel e.funcIdx }
 
-/-- The certified obligations: one per exported planned function. -/
+/-- The certified obligations: one per claimed planned function, exported
+    or not. -/
 def obligationsOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) : List Obligation :=
-  (fns.filter (·.exported)).map (obligationOf s tt fns)
+  (fns.filter (·.claimed)).map (obligationOf s tt fns)
 
 /-! ### Calls -/
 
@@ -184,20 +185,17 @@ def sigPinned (n len : Nat) (M : MCtx) (sig : Sig) (typeIdx : Nat) : Bool :=
         typeIdx
   | _, _ => false
 
-/-- The function a planned entry is bound to, selected by the plan's own code
-    entry: an exported entry through its export name, an internal callee
-    through its function index. Either way the module's code entry must be
-    EXACTLY `codeEntryBytes` of the plan (locals vector included). -/
+/-- The function a planned entry is bound to: the function at its declared
+    function index, whose code entry must be EXACTLY `codeEntryBytes` of the
+    plan (locals vector included). No name is read: an export of the function,
+    if there is one, is accounted for separately (`exportsAccountedOf`). -/
 def boundFunction (n len : Nat) (M : MCtx) (e : FnEntry) :
     Option _root_.AverCert.WasmSlice.FuncBinding :=
   match codeEntryBytes M e.funcIdx e.plan with
   | none => none
   | some bytes =>
-      if e.exported then
-        _root_.AverCert.WasmSlice.exactFuncBindingForExport n len (stringBytes e.name) bytes
-      else
-        (_root_.AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter
-          (fun b => b.codeEntry == bytes)
+      (_root_.AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter
+        (fun b => b.codeEntry == bytes)
 
 /-- One planned function: its plan types at its signature, its lowering is
     the code entry of the function at its declared index, the declared
@@ -505,60 +503,58 @@ def customCapabilityImport (capability : String × String) : Bool :=
   !operationTail.isEmpty && operationTail.length % 2 == 0 &&
   operationTail.all lowerHexByte
 
-def certifiedExportEntries
-    (manifest : _root_.AverCert.Schema.Manifest) : List _root_.AverCert.WasmSlice.ExportEntry :=
-  manifest.obligations.map (fun obligation =>
-    { name := stringBytes obligation.export_, kind := 0, idx := obligation.self })
+/-- The function indices of the certified obligations. -/
+def claimedIndices (manifest : _root_.AverCert.Schema.Manifest) : List Nat :=
+  manifest.obligations.map (fun obligation => obligation.self)
 
 def declaredUncertifiedNames
     (manifest : _root_.AverCert.Schema.Manifest) : List _root_.AverCert.WasmSlice.ByteSeq :=
   manifest.subject.declaredUncertified.map (fun entry => stringBytes entry.1)
 
-/-- An export entry keyed for the set-shaped accounting: its name's numeric
-    key (`WasmSlice.seqKey`), kind and index. -/
+/-- An export entry keyed for the accounting: its name's numeric key
+    (`WasmSlice.seqKey`), kind and index. -/
 structure ExportKey where
   name : Nat
   kind : Nat
   idx : Nat
-deriving Ord
 
 def exportEntryKey (entry : _root_.AverCert.WasmSlice.ExportEntry) : Option ExportKey :=
   (_root_.AverCert.WasmSlice.seqKey entry.name).map (fun name => ⟨name, entry.kind, entry.idx⟩)
 
-/-- Every byte-derived module export is classified exactly once: either the
-    function/name/index of a claimed obligation or an explicit uncertified
-    declaration. Both declaration lists are duplicate-free, disjoint and have
-    no phantom names absent from the export section. Names are compared
-    through their numeric keys, which identify them exactly (`seqKey_inj`);
-    a name without a key fails the check. -/
-def exportsAccountedOf (modBytes modLen : Nat)
-    (certified : List _root_.AverCert.WasmSlice.ExportEntry)
+/-- One export entry is accounted for: a function export (kind 0) of a
+    claimed function's index, or a name declared uncertified. The export's
+    name plays no part in the first case: a certified function is identified
+    by its index, and need not be exported at all. -/
+def exportEntryAccounted (claimedIndex : Std.TreeSet Nat)
+    (declaredIndex : Std.TreeSet Nat) (entry : ExportKey) : Bool :=
+  (entry.kind == 0 && claimedIndex.contains entry.idx) || declaredIndex.contains entry.name
+
+/-- Every byte-derived module export is accounted for
+    (`exportEntryAccounted`): it points at a claimed function, or it is
+    declared uncertified. The export names are distinct, and the declared
+    list is duplicate-free and has no phantom name absent from the export
+    section. Names are compared through their numeric keys, which identify
+    them exactly (`seqKey_inj`); a name without a key fails the check. -/
+def exportsAccountedOf (modBytes modLen : Nat) (claimed : List Nat)
     (declared : List _root_.AverCert.WasmSlice.ByteSeq) : Bool :=
   match _root_.AverCert.WasmSlice.enumExports modBytes modLen with
   | none => false
   | some actual =>
-      match actual.mapM exportEntryKey, certified.mapM exportEntryKey,
-          _root_.AverCert.WasmSlice.seqKeys declared with
-      | some actual, some certified, some declared =>
+      match actual.mapM exportEntryKey, _root_.AverCert.WasmSlice.seqKeys declared with
+      | some actual, some declared =>
           let actualNames := actual.map (fun entry => entry.name)
-          let certifiedNames := certified.map (fun entry => entry.name)
           let actualNameIndex := _root_.AverCert.WasmSlice.orderedSet actualNames
           let declaredIndex := _root_.AverCert.WasmSlice.orderedSet declared
-          let actualEntryIndex := _root_.AverCert.WasmSlice.orderedSet actual
-          let certifiedEntryIndex := _root_.AverCert.WasmSlice.orderedSet certified
+          let claimedIndex := _root_.AverCert.WasmSlice.orderedSet claimed
           _root_.AverCert.WasmSlice.natListNodup actualNames &&
-          _root_.AverCert.WasmSlice.natListNodup certifiedNames &&
           _root_.AverCert.WasmSlice.natListNodup declared &&
-          certifiedNames.all (fun name => !declaredIndex.contains name) &&
-          actual.all (fun entry =>
-            certifiedEntryIndex.contains entry || declaredIndex.contains entry.name) &&
-          certified.all (fun entry => actualEntryIndex.contains entry) &&
+          actual.all (exportEntryAccounted claimedIndex declaredIndex) &&
           declared.all actualNameIndex.contains
-      | _, _, _ => false
+      | _, _ => false
 
 def exportsAccounted (artifact : ArtifactData) : Bool :=
   exportsAccountedOf artifact.modBytes artifact.modLen
-    (certifiedExportEntries artifact.manifest) (declaredUncertifiedNames artifact.manifest)
+    (claimedIndices artifact.manifest) (declaredUncertifiedNames artifact.manifest)
 
 /-! #### Names as character lists
 
@@ -573,23 +569,6 @@ of those characters. -/
 theorem stringBytes_ofList (c : List Char) : stringBytes (String.ofList c) = c.map Char.toNat := by
   simp [stringBytes, String.toList_ofList]
 
-theorem certifiedExportEntries_of_chars {m : _root_.AverCert.Schema.Manifest} (cs : List (List Char))
-    (h : m.obligations.map (·.export_) = cs.map String.ofList) :
-    certifiedExportEntries m =
-      List.zipWith (fun (o : Obligation) (c : List Char) =>
-        ({ name := c.map Char.toNat, kind := 0, idx := o.self } : _root_.AverCert.WasmSlice.ExportEntry))
-        m.obligations cs := by
-  unfold certifiedExportEntries
-  generalize m.obligations = os at h ⊢
-  induction os generalizing cs with
-  | nil => cases cs <;> simp_all
-  | cons o os ih =>
-      cases cs with
-      | nil => simp at h
-      | cons c cs =>
-          simp only [List.map_cons, List.cons.injEq] at h
-          rw [List.map_cons, List.zipWith_cons_cons, ih cs h.2, h.1, stringBytes_ofList]
-
 theorem declaredUncertifiedNames_of_chars {m : _root_.AverCert.Schema.Manifest} (ds : List (List Char))
     (h : m.subject.declaredUncertified.map (·.1) = ds.map String.ofList) :
     declaredUncertifiedNames m = ds.map (List.map Char.toNat) := by
@@ -597,18 +576,14 @@ theorem declaredUncertifiedNames_of_chars {m : _root_.AverCert.Schema.Manifest} 
   simp only [List.map_map, Function.comp_def, stringBytes_ofList] at this
   exact this
 
-/-- `exportsAccounted`, with the export names given as character lists. -/
-theorem exportsAccounted_of_chars (artifact : ArtifactData) (cs ds : List (List Char))
-    (hc : artifact.manifest.obligations.map (·.export_) = cs.map String.ofList)
+/-- `exportsAccounted`, with the declared names given as character lists. -/
+theorem exportsAccounted_of_chars (artifact : ArtifactData) (ds : List (List Char))
     (hd : artifact.manifest.subject.declaredUncertified.map (·.1) = ds.map String.ofList)
-    (h : exportsAccountedOf artifact.modBytes artifact.modLen
-      (List.zipWith (fun (o : Obligation) (c : List Char) =>
-        ({ name := c.map Char.toNat, kind := 0, idx := o.self } : _root_.AverCert.WasmSlice.ExportEntry))
-        artifact.manifest.obligations cs)
+    (h : exportsAccountedOf artifact.modBytes artifact.modLen (claimedIndices artifact.manifest)
       (ds.map (List.map Char.toNat)) = true) :
     exportsAccounted artifact = true := by
   unfold exportsAccounted
-  rw [certifiedExportEntries_of_chars cs hc, declaredUncertifiedNames_of_chars ds hd]
+  rw [declaredUncertifiedNames_of_chars ds hd]
   exact h
 
 def capabilityBytes (capability : String × String) :

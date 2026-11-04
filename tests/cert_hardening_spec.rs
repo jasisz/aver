@@ -29,14 +29,14 @@
 //!   tiles, overlapping code entries, a gap between code entries, a lying
 //!   code count, a false section header, a header inside a payload, a header
 //!   past the end of the module, a plan whose packed lowering is not its code
-//!   entry, swapped export sites, role bits hiding a helper call, and a package chunk list with a
+//!   entry, role bits hiding a helper call, and a package chunk list with a
 //!   wrong chunk boundary;
 //! * a package constant a report pin used to read as a dotted path
 //!   (`AverCert.manifest.obligations`, `AverCert.manifest.subject.contracts`,
 //!   `AverCert.Artifact.data.manifest`, and `.modBytes` on wasip2), with and
 //!   without the JSON forged to match it;
-//! * a declared layout that lies about a code entry's offset or length, a
-//!   function's type index or type, or an export's site;
+//! * a declared layout that lies about a code entry's offset or length, or a
+//!   function's type index or type;
 //! * a closure claim hiding a helper, a declared callee list missing a call,
 //!   naming a callee outside the closure, declared twice, or out of the
 //!   fold's order, `__aint_divmod` at a supertype
@@ -56,11 +56,12 @@
 //!   call groups numbered against the plans' order (which must check
 //!   unchanged), a conjunct of the plans' acceptance proved by `sorry`,
 //!   declared-uncertified names out of key order, listed twice, left out or
-//!   spelled unlike their export, and export names for the bridges'
-//!   distinctness that are not the obligations' names;
+//!   spelled unlike their export, and a `sorry` for the plans' distinct
+//!   function indices the bridges cite;
 //! * on the export walk: an export section out of key order (with every
 //!   declared offset kept true), a block boundary declared inside an entry,
-//!   and site bits that hand a declared-uncertified export to the plans;
+//!   and claimed-index bits that account a declared-uncertified export as a
+//!   claimed function's;
 //! * on the type section by index: a top-level entry declared at a wrong
 //!   offset, a byte moved between two rec subtypes, and the rec group
 //!   declared one subtype short; on the data section: a byte moved between
@@ -383,7 +384,7 @@ fn cert_hardening_report_blocks_check_the_last_export() {
         return;
     };
     let (ok, report) = aver_cert("check", &wasm, &cert);
-    assert!(ok && report.contains("65 checked exports"), "{report}");
+    assert!(ok && report.contains("65 checked functions"), "{report}");
     let block = cert.join("ArtifactReportBlocks0.lean");
     let text = std::fs::read_to_string(&block).unwrap();
     let start = text.find("def report_entries_1 :").expect("second block");
@@ -424,8 +425,18 @@ fn cert_hardening_declines_a_record_encoder_missing_a_field() {
         lean_type: "_root_.Evil".to_string(),
         fields: vec![("_root_.Evil.a".to_string(), SourceEncoder::Int)],
     };
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    let add_two = json["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "addTwo")
+        .and_then(|entry| entry["funcIdx"].as_u64())
+        .expect("addTwo carries its function index");
     let statement = render_bridge_statement(
-        "addTwo",
+        u32::try_from(add_two).unwrap(),
         "Evil.fake",
         BridgeKind::Exact,
         &[record],
@@ -1329,53 +1340,6 @@ fn cert_hardening_declines_a_lying_function_type() {
     );
 }
 
-/// Two planned exports whose declared export entries (module offset and
-/// length) are swapped: each plan reads the entry at its declared site on its
-/// own window and requires it to be the export of its own name.
-#[test]
-fn cert_hardening_declines_a_lying_export_site() {
-    let Some((_dir, wasm, cert)) = baseline("certharden-exportsite") else {
-        return;
-    };
-    let layout = cert.join("ArtifactLayout.lean");
-    let text = std::fs::read_to_string(&layout).unwrap();
-    let head = "def exportSites : List (Nat × Nat) :=\n  [";
-    let start = text.find(head).unwrap() + head.len();
-    let end = start + text[start..].find(']').unwrap();
-    let sites: Vec<String> = text[start..end]
-        .split("),")
-        .map(|site| format!("{})", site.trim().trim_end_matches(')')))
-        .collect();
-    assert!(sites.len() >= 2 && sites[0] != sites[1], "{sites:?}");
-    let swap = |text: &str, pre: &str, post: &str| {
-        text.replacen(&format!("{pre}{}{post}", sites[0]), "@SWAP@", 1)
-            .replacen(
-                &format!("{pre}{}{post}", sites[1]),
-                &format!("{pre}{}{post}", sites[0]),
-                1,
-            )
-            .replacen("@SWAP@", &format!("{pre}{}{post}", sites[1]), 1)
-    };
-    std::fs::write(
-        &layout,
-        format!(
-            "{}{}{}",
-            &text[..start],
-            swap(&text[start..end], "", ""),
-            &text[end..]
-        ),
-    )
-    .unwrap();
-    // Each plan's declaration names its site literally: the lie is told there
-    // too.
-    let plans = cert.join("ArtifactPlans.lean");
-    let text = std::fs::read_to_string(&plans).unwrap();
-    std::fs::write(&plans, swap(&text, " ", " = true")).unwrap();
-    let (ok, report) = aver_cert("check", &wasm, &cert);
-    assert_declined(ok, &report, "did not build");
-    assert!(report.contains("planCheck"), "{report}");
-}
-
 /// Every export entry of a module as its name and its byte range.
 fn export_entries(bytes: &[u8]) -> Vec<(String, std::ops::Range<usize>)> {
     fn uleb(bytes: &[u8], at: &mut usize) -> usize {
@@ -1411,8 +1375,8 @@ fn export_entries(bytes: &[u8]) -> Vec<(String, std::ops::Range<usize>)> {
 
 /// The emitter sorts the export section by the wall's name key, and the walk
 /// requires every name's key above the one before. Two exports of one length
-/// exchanged in the section, with the plans' declared sites exchanged too:
-/// every declared offset and length is then true of the tampered module, and
+/// exchanged in the section: each still points at its own claimed function,
+/// every declared offset and length is still true of the tampered module, and
 /// only the order is wrong.
 #[test]
 fn cert_hardening_declines_unsorted_exports() {
@@ -1440,25 +1404,6 @@ fn cert_hardening_declines_unsorted_exports() {
     bytes[ra.start..ra.start + ed.len()].copy_from_slice(&ed);
     validate(&bytes);
     restamp(&wasm, &cert, &bytes);
-    let (sd, sa) = (
-        format!("({}, {})", rd.start, rd.len()),
-        format!("({}, {})", ra.start, ra.len()),
-    );
-    for file in ["ArtifactLayout.lean", "ArtifactPlans.lean"] {
-        let path = cert.join(file);
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            text.contains(&sd) && text.contains(&sa),
-            "{file} names both sites"
-        );
-        std::fs::write(
-            &path,
-            text.replace(&sd, "@SWAP@")
-                .replace(&sa, &sd)
-                .replace("@SWAP@", &sa),
-        )
-        .unwrap();
-    }
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
     assert_export_walk_error(&report);
@@ -1541,11 +1486,11 @@ fn cert_hardening_declines_an_export_block_boundary_inside_an_entry() {
     let boundary = e0 + cuts[0] + 1;
     let blocks = format!(
         "theorem exports_block_0 : AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks \
-         exportStart\n    exportCertified none exportStart exportCuts_0\n    \
+         exportClaimed none exportStart exportCuts_0\n    \
          AverCert.Plans.subject_declaredUncertified_0 =\n    some ({prev}, {boundary}) := by\n  \
          decide +kernel\n\n\
          theorem exports_block_1 : AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks \
-         exportStart\n    exportCertified {prev} {boundary} exportCuts_1\n    \
+         exportClaimed {prev} {boundary} exportCuts_1\n    \
          AverCert.Plans.subject_declaredUncertified_1 {tail}"
     );
     let text = format!("{}{blocks}{}", &text[..start], &text[end..]);
@@ -1560,28 +1505,68 @@ fn cert_hardening_declines_an_export_block_boundary_inside_an_entry() {
     assert!(report.contains("subject_declaredUncertified_0"), "{report}");
 }
 
-/// The site bits (`exportCertified`) hand an entry to the plan checks, which
-/// read only the planned exports' sites. A bit added for the declared `size`
-/// entry would let the walk skip it: the bits are checked against the plans'
-/// sites.
+/// The claimed indices' bits (`exportClaimed`) let the export walk account
+/// for a function export by the index it points at. A bit added for the
+/// uncertified `size`, with `size` dropped from the declared-uncertified
+/// list, walks clean: the bits are checked against the obligations' own
+/// indices (`claimed_bits`, `SortedKeys.bitsOf`).
 #[test]
-fn cert_hardening_declines_site_bits_hiding_a_declared_export() {
-    let Some((_dir, wasm, cert)) = baseline("certharden-sitebits") else {
+fn cert_hardening_declines_claimed_bits_hiding_a_declared_export() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-claimedbits") else {
         return;
     };
+    let bytes = std::fs::read(&wasm).unwrap();
+    let size = function_export_index(&bytes, "size");
     let layout = cert.join("ArtifactLayout.lean");
     let text = std::fs::read_to_string(&layout).unwrap();
-    let head = "def exportCertified : Nat :=\n  0x";
+    let head = "def exportClaimed : Nat :=\n  0x";
     let start = text.find(head).unwrap() + head.len();
     let end = start + text[start..].find('\n').unwrap();
-    let digits = &text[start..end];
-    let last = u8::from_str_radix(&digits[digits.len() - 1..], 16).unwrap();
-    assert_eq!(last & 1, 0, "the first entry, `size`, is no site");
-    let lied = format!("{}{:x}", &digits[..digits.len() - 1], last | 1);
+    let mut digits: Vec<u8> = text[start..end]
+        .chars()
+        .rev()
+        .map(|c| c.to_digit(16).unwrap() as u8)
+        .collect();
+    let at = size as usize / 4;
+    digits.resize(digits.len().max(at + 1), 0);
+    assert_eq!(digits[at] & (1 << (size % 4)), 0, "`size` is not claimed");
+    digits[at] |= 1 << (size % 4);
+    let lied: String = digits
+        .iter()
+        .rev()
+        .map(|d| char::from_digit(u32::from(*d), 16).unwrap())
+        .collect();
     std::fs::write(&layout, format!("{}{lied}{}", &text[..start], &text[end..])).unwrap();
+    let declared = "(\"size\", \"Call Builtin(Map.len)\"),\n   ";
+    replace_once(&cert.join("Manifest.lean"), declared, "");
+    replace_once(
+        &cert.join("ArtifactExports.lean"),
+        "(['s', 'i', 'z', 'e'], \"Call Builtin(Map.len)\"),\n    ",
+        "",
+    );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("certBitsOf"), "{report}");
+    assert!(
+        report.contains(
+            "SortedKeys.bitsOf (AcceptedArtifact.claimedIndices manifest) = exportClaimed"
+        ),
+        "{report}"
+    );
+}
+
+/// The function index a module's export of `name` points at.
+fn function_export_index(bytes: &[u8], name: &str) -> u32 {
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::ExportSection(reader) = payload.expect("parses") {
+            for export in reader {
+                let export = export.expect("export parses");
+                if export.name == name && export.kind == wasmparser::ExternalKind::Func {
+                    return export.index;
+                }
+            }
+        }
+    }
+    panic!("the module exports no function {name}")
 }
 
 /// The closure claim with one reachable helper left out. The claim is checked
@@ -2652,7 +2637,7 @@ fn cert_hardening_accepts_list_matches() {
     };
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "the List certificate must check:\n{report}");
-    assert!(report.contains("3 checked exports"), "{report}");
+    assert!(report.contains("3 checked functions"), "{report}");
     assert!(
         report.contains("source-bridges: 3 of 3 credited"),
         "every List argument decodes:\n{report}"
@@ -2820,7 +2805,7 @@ fn cert_hardening_accepts_list_literals() {
     assert!(plans.contains("(.string, "), "{plans}");
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "the List-literal certificate must check:\n{report}");
-    assert!(report.contains("3 checked exports"), "{report}");
+    assert!(report.contains("3 checked functions"), "{report}");
 }
 
 /// The cons helper a literal calls is the one the type table declares, and
@@ -2890,9 +2875,9 @@ fn cert_hardening_declines_exchanged_cons_helpers() {
     assert_declined(ok, &report, "did not build");
 }
 
-/// The first planned entry of `Plans.lean` (`⟨"name", exported, funcIdx,
-/// group, fnN⟩`) and its declaration in `ArtifactLayout.lean`
-/// (`⟨[chars], exportPos, sigPos⟩`), as text.
+/// The first planned entry of `Plans.lean` (`⟨"name", claimed, funcIdx,
+/// group, fnN⟩`) and its declaration in `ArtifactLayout.lean` (`⟨sigPos⟩`),
+/// as text.
 fn first_plan_entry(cert: &Path) -> (String, String) {
     let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     let at = plans.find("def fnPlans : List FnEntry :=\n  [").unwrap()
@@ -2918,7 +2903,7 @@ fn append_to_list(path: &Path, header: &str, item: &str) {
     .unwrap();
 }
 
-/// A second, internal entry for the first plan's function index, with its
+/// A second, unclaimed entry for the first plan's function index, with its
 /// declaration: every per-plan check passes for it (it is the same plan at
 /// the same code entry), so only the distinctness of the planned indices
 /// (`rest_indices`, decided on a bitmap) refuses it.
@@ -2936,12 +2921,7 @@ fn cert_hardening_declines_a_duplicate_planned_index() {
         .collect();
     assert_eq!(fields.len(), 5, "{entry}");
     let (idx, group, plan) = (fields[2], fields[3], fields[4]);
-    let sig_pos = decl.trim_end_matches('⟩').rsplit(", ").next().unwrap();
-    let chars = format!("#{idx}")
-        .chars()
-        .map(|c| format!("'{c}'"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let sig_pos = decl.trim_start_matches('⟨').trim_end_matches('⟩');
     append_to_list(
         &cert.join("Plans.lean"),
         "def fnPlans : List FnEntry :=",
@@ -2950,7 +2930,7 @@ fn cert_hardening_declines_a_duplicate_planned_index() {
     append_to_list(
         &cert.join("ArtifactLayout.lean"),
         "def fnDecls : List FnDecl :=",
-        &format!("⟨[{chars}], 0, {sig_pos}⟩"),
+        &format!("⟨{sig_pos}⟩"),
     );
     // Its role bits, and its own plan declaration joined to the others.
     let mut bits = 0;
@@ -2958,31 +2938,21 @@ fn cert_hardening_declines_a_duplicate_planned_index() {
         bits = all[0];
         all.push(bits);
     });
-    let layout = cert.join("ArtifactLayout.lean");
-    let text = std::fs::read_to_string(&layout).unwrap();
-    let head = "def exportSites : List (Nat × Nat) :=\n  [";
-    let close = text.find(head).unwrap() + head.len();
-    let close = close + text[close..].find(']').unwrap();
-    std::fs::write(
-        &layout,
-        format!("{}, (0, 0){}", &text[..close], &text[close..]),
-    )
-    .unwrap();
     let plans = cert.join("ArtifactPlans.lean");
     replace_once(
         &plans,
         "theorem plans_block_0 :",
         &format!(
             "theorem plan_extra : planCheck\n    ⟨\"#{idx}\", false, {idx}, {group}, AverCert.Plans.{plan}⟩\n    \
-             ⟨[{chars}], 0, {sig_pos}⟩\n    {bits} (0, 0) = true := by\n  decide +kernel\n\n\
+             ⟨{sig_pos}⟩\n    {bits} = true := by\n  decide +kernel\n\n\
              theorem plans_block_0 :"
         ),
     );
     replace_once(
         &plans,
-        "((AverCert.ScaleLayout.plansFrom_nil _ _ _ _ _ _ _ :",
+        "((AverCert.ScaleLayout.plansFrom_nil _ _ _ _ _ :",
         "((AverCert.ScaleLayout.plansFrom_cons plan_extra\n      \
-         (AverCert.ScaleLayout.plansFrom_nil _ _ _ _ _ _ _) :",
+         (AverCert.ScaleLayout.plansFrom_nil _ _ _ _ _) :",
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
@@ -3026,7 +2996,7 @@ fn cert_hardening_checks_call_groups_out_of_order_unchanged() {
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "groups out of order must still check:\n{report}");
     assert!(
-        report.contains("2 checked exports, level L1")
+        report.contains("2 checked functions, level L1")
             && report.contains("law-claims: 2 of 2 credited")
             && report.contains("addTwo  policy: simulatesModel")
             && report.contains("double  policy: simulatesModel"),
@@ -3053,10 +3023,10 @@ fn cert_hardening_declines_a_sorry_backed_plans_part() {
     assert_declined(ok, &report, "non-whitelisted axiom: sorryAx");
 }
 
-/// Every bridge proof cites `export_names_nodup`, which `BridgeNames.lean`
-/// reads from the byte facts' export accounting. Proved by `sorry` instead,
-/// the axiom audit reaches it through every bridge: each loses its credit,
-/// and the exports stand.
+/// Every bridge proof cites `fn_indices_nodup`, which `BridgeNames.lean`
+/// decides over the plans' function indices. Proved by `sorry` instead, the
+/// axiom audit reaches it through every bridge: each loses its credit, and
+/// the certified functions stand.
 #[test]
 fn cert_hardening_uncredits_bridges_over_a_sorry_backed_names_fact() {
     let Some((_dir, wasm, cert)) = baseline("certharden-names-sorry") else {
@@ -3064,9 +3034,11 @@ fn cert_hardening_uncredits_bridges_over_a_sorry_backed_names_fact() {
     };
     replace_once(
         &cert.join("BridgeNames.lean"),
-        "(AverCert.manifest.obligations.map (·.export_)).Nodup :=\n  \
-         AverCert.SortedKeys.obligationNamesNodup_of_accounted AverCert.Artifact.exports_ok",
-        "(AverCert.manifest.obligations.map (·.export_)).Nodup := by\n  sorry",
+        "(AverCert.Plans.fnPlans.map (·.funcIdx)).Nodup :=\n  \
+         (AverCert.SortedKeys.nodupBits_sound (xs := AverCert.Plans.fnPlans.map (·.funcIdx))\n      \
+         (bound := AverCert.SortedKeys.indexBound) (bits := 0)\n    \
+         (by decide +kernel)).1\n",
+        "(AverCert.Plans.fnPlans.map (·.funcIdx)).Nodup := by\n  sorry\n",
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(
@@ -3074,7 +3046,7 @@ fn cert_hardening_uncredits_bridges_over_a_sorry_backed_names_fact() {
         "a bridge proof failing only its axiom audit keeps the exports:\n{report}"
     );
     assert!(
-        report.contains("2 checked exports")
+        report.contains("2 checked functions")
             && report.contains("source-bridges: 0 of 2 credited")
             && report.contains("(proof depends on sorryAx)"),
         "{report}"
@@ -3402,7 +3374,7 @@ fn cert_hardening_accepts_list_helpers() {
     }
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "the List-helper certificate must check:\n{report}");
-    assert!(report.contains("11 checked exports"), "{report}");
+    assert!(report.contains("11 checked functions"), "{report}");
     assert!(
         report.contains("source-bridges: 11 of 11 credited"),
         "every helper call meets its source List function:\n{report}"
@@ -3544,7 +3516,7 @@ fn cert_hardening_accepts_list_of_records_bridges() {
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "the List-of-records certificate must check:\n{report}");
-    assert!(report.contains("5 checked exports"), "{report}");
+    assert!(report.contains("5 checked functions"), "{report}");
     assert!(
         report.contains("source-bridges: 5 of 5 credited"),
         "every List of records or Lists decodes:\n{report}"
@@ -3802,7 +3774,7 @@ fn cert_hardening_accepts_bytes_helpers() {
     assert!(ok, "the Bytes-helper certificate must check:\n{report}");
     // `Bytes_fromList` interpolates an Int into its error, which now certifies,
     // and `Bytes_get` certifies as an ordinary list match.
-    assert!(report.contains("22 checked exports"), "{report}");
+    assert!(report.contains("22 checked functions"), "{report}");
 }
 
 /// A role row naming another helper of the same type: `take` declared at the
@@ -3955,7 +3927,7 @@ fn cert_hardening_accepts_early_returns() {
     }
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "the early-return certificate must check:\n{report}");
-    assert!(report.contains("3 checked exports"), "{report}");
+    assert!(report.contains("3 checked functions"), "{report}");
 }
 
 /// The bytes of `bumped`'s `?` and where its `Err` branch starts: the first
@@ -4057,7 +4029,7 @@ fn cert_hardening_accepts_int_interpolation() {
         ok,
         "the Int-interpolation certificate must check:\n{report}"
     );
-    assert!(report.contains("2 checked exports"), "{report}");
+    assert!(report.contains("2 checked functions"), "{report}");
 }
 
 /// `String.fromInt` declared at a planned function's index: one index

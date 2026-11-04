@@ -1500,7 +1500,7 @@ fn assert_hostile_manifest_model_shard_is_declined(shard: usize) {
         let honest = "obligations := AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans";
         let hostile = format!(
             "obligations := (AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans).map \
-             (fun o => if o.export_ = \"{victim}\" then {{ o with model := {hostile_model} }} else o)"
+             (fun o => if o.name = \"{victim}\" then {{ o with model := {hostile_model} }} else o)"
         );
         let edited = source.replacen(honest, &hostile, 1);
         assert_ne!(
@@ -1546,7 +1546,7 @@ fn assert_hostile_source_model_loses_bridges(prefix: &str, edits: &[(&str, &str)
 
     let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        ok && report.contains("30 checked exports"),
+        ok && report.contains("30 checked functions"),
         "a wrong source definition must not touch the export verdict:\n{report}"
     );
     assert!(
@@ -1882,7 +1882,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         "import ArtifactCertificate\n\
          set_option maxRecDepth 200000\n\
          open AverCert\n\n\
-         example : AverCert.manifest.obligations.map (·.export_) =\n    \
+         example : AverCert.manifest.obligations.map (·.name) =\n    \
          [\"sumFrom\", \"constPlus\", \"backward\", \"factorial\", \"countDown\"] := by decide +kernel\n\
          example : AverCert.manifest.obligations.map (·.totalityRole) =\n    \
          [.addSub, .addSub, .addSub, .mul, .addSub] := by decide +kernel\n\
@@ -1919,7 +1919,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
 
         let (ok, report) = check_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
         assert!(
-            ok && report.contains("5 checked exports")
+            ok && report.contains("5 checked functions")
                 && report.contains("source-bridges: 4 of 5 credited")
                 && report.contains(&format!(
                     "source-bridge not credited: {name} (proof depends on sorryAx)"
@@ -3067,7 +3067,7 @@ fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
     }
     let (ok, report) = check_certificate(&out_dir.join("clockrange.wasm"), &out_dir.join("cert"));
     assert!(
-        ok && report.contains("1 checked export"),
+        ok && report.contains("1 checked function"),
         "the producer's offer must be accepted by the wall:\n{report}"
     );
 }
@@ -3118,7 +3118,7 @@ fn cert_projects_payment_ops_package_checks() {
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
     assert!(
-        report.contains("165 checked exports"),
+        report.contains("165 checked functions"),
         "payment_ops must keep the 165 exports it certifies:\n{report}"
     );
     // The project's single `verify … law` is universal by design but its
@@ -3393,7 +3393,7 @@ fn cert_when_law_with_steps_is_a_claim_and_broken_steps_cost_only_that_law() {
     std::fs::write(broken.join("cert/AverModel/EqualSides.lean"), tampered).unwrap();
     let (ok, report) = check_certificate(&broken.join("equal_sides.wasm"), &broken.join("cert"));
     assert!(
-        ok && report.contains("5 checked exports"),
+        ok && report.contains("5 checked functions"),
         "broken steps must not touch the export verdict:\n{report}"
     );
     assert!(

@@ -89,7 +89,7 @@ The checker binds it to its own root `AverCertChecker.checked`. Acceptance estab
 - every certified export's code entry is the wall's lowering of its plan, and the plan type-checks at the export's declared signature;
 - the obligations in the manifest are exactly the ones the wall derives from the plans, policy and termination witness included, and the listed runtime contracts are exactly the ones the wall derives from the helpers the lowered code calls and from the L3 obligations;
 - the declared type layout matches the type section, and every string literal matches its data segment;
-- the exports, imports, start function and the call closure of the certified exports are accounted for;
+- the exports, imports, start function and the call closure of the certified functions are accounted for. A certified function is identified by its function index and need not be exported; every export points at a certified function or is declared uncertified;
 - the proof uses no axiom outside `propext`, `Classical.choice` and `Quot.sound`.
 
 For each certified export the theorem says: for every carrier specification and every set of runtime helpers that obey the named contracts, if the emitted function returns on well-typed, represented arguments, the result represents what the plan returns at the same fuel. Int arguments are assumed to be canonical carriers. Every carrier the runtime builds is canonical; a host that fabricates its own carrier words is outside the claim.
@@ -130,7 +130,7 @@ Schema 9 rejects every earlier package. Regenerate old packages with `aver compi
 
 ## Plans, source functions and law-claims
 
-The model of every obligation is the plan. The report line of each export says so: `model: plan (the export's optimized MIR body)`.
+The model of every obligation is the plan. The report line of each export says so: `model: plan (the function's optimized MIR body)`.
 
 A source-bridge connects the plan to the function you wrote. It is a kernel-checked theorem that the plan computes the transpiled source function `<Module>.<fn>` through source-value encoders. The manifest declares only its structure: the export, the source function, a statement kind and one encoder per parameter and result. The verifier writes the statement from that structure and requires the package to prove exactly it.
 

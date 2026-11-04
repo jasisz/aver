@@ -360,7 +360,14 @@ fn printer_verdicts(repo_root: &Path, entry: &Entry) -> Result<Vec<(String, bool
     );
     aver::ir::pipeline::resolve_and_reannotate(&mut items);
     let output = wasm_gc::compile_to_wasm_gc_flattened_with_custom_capabilities(
-        &items, None, None, &aliases, &plan, true, true,
+        &items,
+        None,
+        None,
+        &aliases,
+        &plan,
+        true,
+        true,
+        wasm_gc::FnExports::Exposed,
     )
     .map_err(|e| format!("compile: {e}"))?;
     Ok(output

@@ -222,7 +222,6 @@ fn render_bridge_literals(plan: &BridgePlan) -> (String, BTreeMap<Vec<u8>, usize
 fn render_bridge_lean(
     plan: &BridgePlan,
     model_roots: &[String],
-    exports_module: &str,
 ) -> (String, Vec<(String, String)>) {
     let steps: Vec<&BridgedFn> = plan.fns.values().collect();
     let owners: BTreeMap<u32, usize> = steps.iter().enumerate()
@@ -280,7 +279,7 @@ fn render_bridge_lean(
         bindings.push_str("end AverCert.Bridge\n");
         parts.push((format!("{BRIDGE_STEPS_MODULE}{i}.lean"), bindings));
     }
-    parts.push((format!("{BRIDGE_NAMES_MODULE}.lean"), render_bridge_names(exports_module)));
+    parts.push((format!("{BRIDGE_NAMES_MODULE}.lean"), render_bridge_names()));
 
     let slices = plan.bridges.len().div_ceil(BRIDGE_PROOFS_PER_MODULE).max(1);
     let per_slice = plan.bridges.len().div_ceil(slices).max(1);

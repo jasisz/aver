@@ -10,15 +10,18 @@
 
 /// One planned function of the package, in `fnPlans` order.
 pub struct PackageEntry {
-    /// Export name, or `#<funcIdx>` for an internal callee.
+    /// Report label: the source name of a user function, or `#<funcIdx>` for
+    /// a helper callee. The wall reads no name: a function is identified by
+    /// its index.
     pub name: String,
-    pub exported: bool,
+    /// An obligation's root: the certificate states a theorem about it.
+    pub claimed: bool,
     pub func_idx: u32,
     pub group: u32,
     pub plan: FnPlan,
 }
 
-/// The report data of one certified export, as the wall derives it
+/// The report data of one certified function, as the wall derives it
 /// (`AcceptedArtifact.obligationsOf`, `ClaimAxes.reportFacets`). The checker
 /// witness pins every field.
 pub struct CertifiedExport {
@@ -51,6 +54,21 @@ pub struct Analysis {
 impl Analysis {
     pub fn certified_names(&self) -> Vec<String> {
         self.certified.iter().map(|c| c.name.clone()).collect()
+    }
+
+    /// The function indices of the certified functions.
+    pub fn certified_indices(&self) -> BTreeSet<u32> {
+        self.certified.iter().map(|c| c.func_idx).collect()
+    }
+
+    /// Why the user function at `func_idx` is not certified, when it was
+    /// declined.
+    pub fn decline_reason(&self, func_idx: u32) -> Option<&str> {
+        let name = self.fn_names.get(&func_idx)?;
+        self.declined
+            .iter()
+            .find(|(declined, _)| declined == name)
+            .map(|(_, reason)| reason.as_str())
     }
 
     pub fn declined(&self) -> &[(String, String)] {
@@ -87,7 +105,9 @@ fn clean_reason(reason: &str) -> String {
     out
 }
 
-fn is_runtime_export(name: &str) -> bool {
+/// A name the compiler gives the functions it synthesizes, or a runtime
+/// entry point: never a user function's.
+fn is_runtime_name(name: &str) -> bool {
     name.starts_with("__")
         || name == "_start"
         || name == "memory"
@@ -806,12 +826,17 @@ pub fn analyze(
     }
     let role_table = carriered.then_some(roles);
 
-    let mut export_name: BTreeMap<u32, String> = BTreeMap::new();
-    for (name, kind, idx) in &facts.exports {
-        if *kind == 0 && !is_runtime_export(name) && name.is_ascii() {
-            export_name.entry(*idx).or_insert_with(|| name.clone());
-        }
-    }
+    // The user functions a certificate may claim, by function index. A
+    // claimed function need not be exported: the wall binds it by its index,
+    // and its source name is only the report's label.
+    // Compiler-synthesized functions (`__eq_*` and the like) are callees
+    // only, as they were when the claim followed the export section.
+    let user_name: BTreeMap<u32, String> = plans
+        .fns
+        .iter()
+        .filter(|f| f.name.is_ascii() && !is_runtime_name(&f.name))
+        .map(|f| (f.func_idx, f.name.clone()))
+        .collect();
 
     let mut types = plans.types.clone();
     confirm_type_table(&facts, &mut types);
@@ -865,8 +890,8 @@ pub fn analyze(
     }
     name_declined_calls(&types, &plan_of, &candidates, &mut reasons);
 
-    // Offered: every exported candidate, plus the internal candidates it
-    // reaches.
+    // Offered: every user candidate (each one claimed), plus the helper
+    // candidates they reach.
     let mut edges: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     for f in &candidates {
         let mut t = plan_targets(&types, plan_of[f]);
@@ -878,7 +903,7 @@ pub fn analyze(
     let mut work: Vec<u32> = candidates
         .iter()
         .copied()
-        .filter(|f| export_name.contains_key(f))
+        .filter(|f| user_name.contains_key(f))
         .collect();
     while let Some(f) = work.pop() {
         if included.insert(f) {
@@ -890,10 +915,10 @@ pub fn analyze(
     let mut entries = Vec::new();
     for (group, comp) in sccs.iter().enumerate() {
         for f in comp {
-            let exported = export_name.get(f);
+            let user = user_name.get(f);
             entries.push(PackageEntry {
-                name: exported.cloned().unwrap_or_else(|| format!("#{f}")),
-                exported: exported.is_some(),
+                name: user.cloned().unwrap_or_else(|| format!("#{f}")),
+                claimed: user.is_some(),
                 func_idx: *f,
                 group: group as u32,
                 plan: plan_of[f].clone(),
@@ -976,7 +1001,7 @@ pub fn analyze(
         group_total.insert(group as u32, check_term_group(&members));
     }
     let mut certified = Vec::new();
-    for e in entries.iter().filter(|e| e.exported) {
+    for e in entries.iter().filter(|e| e.claimed) {
         let members: Vec<&PackageEntry> = entries.iter().filter(|x| x.group == e.group).collect();
         let member_idx: BTreeSet<u32> = members.iter().map(|x| x.func_idx).collect();
         let recursive = members.iter().any(|x| {
@@ -1015,7 +1040,7 @@ pub fn analyze(
     let any_total = certified.iter().any(|c| c.total);
     let any_total_mul = entries
         .iter()
-        .filter(|e| e.exported)
+        .filter(|e| e.claimed)
         .any(|e| group_total[&e.group] == Some(true));
     let has = |i: u64| calls.contains(&i);
     let mut contracts = Vec::new();
@@ -1056,7 +1081,7 @@ pub fn analyze(
     types.bytes_helpers = used_bytes;
     types.int_chk = used_chk;
 
-    let declined: Vec<(String, String)> = export_name
+    let declined: Vec<(String, String)> = user_name
         .iter()
         .filter(|(f, _)| !included.contains(f))
         .map(|(f, name)| {
