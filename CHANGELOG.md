@@ -16,6 +16,7 @@ Certificates from 0.31 must be produced again.
 
 ### Fixed
 
+- VM: a record literal that read a field of a local record and that record's parent (`Out(seen = h.location.segment, location = h.location)`) could give the parent with that field as `Unit`.
 - `aver verify` runs cases through the same passes as `aver run`, which fixes a division that returned its default under `aver run`.
 - wasm-gc: comparing `Result.Ok(..)` with `==` inside a function returning another `Result` type no longer emits an invalid module.
 - Rust backend: several shapes that stopped compiling (`List.take`/`drop` on one variable, big integer literals in module bindings) compile again.
