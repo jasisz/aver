@@ -871,6 +871,20 @@ pub fn analyze(
         plan_of.entry(*f).or_insert(p);
     }
     let mut candidates: BTreeSet<u32> = plan_of.keys().copied().collect();
+    // A host calls an exported function by its export's name, so the wall
+    // requires the export of a certified function to carry its label. A
+    // function exported under another name is not offered.
+    for (name, kind, idx) in &facts.exports {
+        if *kind == 0
+            && user_name.get(idx).is_some_and(|label| label != name)
+            && candidates.remove(idx)
+        {
+            reasons.insert(
+                *idx,
+                format!("exported as `{name}`, not under its own name"),
+            );
+        }
+    }
     loop {
         let fns: Vec<(u32, &FnPlan)> = candidates.iter().map(|f| (*f, plan_of[f])).collect();
         let m = MCtx::new(role_table.as_ref(), &facts.string_roles, &types, &fns);

@@ -19,7 +19,7 @@ theorem asciiChars_eq (cs : List Char) :
   unfold List.utf8Encode
   rw [List.toList_data_toByteArray]
 
-def walk (cs : List Nat) (claimed : Nat) :
+def walk (cs : List Nat) (claimed : Nat) (label : Nat → Option String) :
     Option (List Nat) → Nat → List Nat → List (List Char × String) →
       Option (Option (List Nat) × Nat)
   | p, off, [], [] => some (p, off)
@@ -29,12 +29,14 @@ def walk (cs : List Nat) (claimed : Nat) :
       | none => none
       | some e =>
           if keyAfter p e.name then
-            if claimedEntry claimed e then walk cs claimed (some e.name) (off + l) ls ds
+            if claimedEntry claimed e then
+              if labelOk label e then walk cs claimed label (some e.name) (off + l) ls ds
+              else none
             else
               match ds with
               | d :: ds' =>
                   if asciiChars d.1 == some e.name then
-                    walk cs claimed (some e.name) (off + l) ls ds'
+                    walk cs claimed label (some e.name) (off + l) ls ds'
                   else none
               | [] => none
           else none
@@ -42,9 +44,9 @@ def walk (cs : List Nat) (claimed : Nat) :
 def names (ds : List (List Char × String)) : List (String × String) :=
   ds.map fun d => (String.ofList d.1, d.2)
 
-theorem walk_eq (cs : List Nat) (claimed : Nat) (ls : List Nat)
+theorem walk_eq (cs : List Nat) (claimed : Nat) (label : Nat → Option String) (ls : List Nat)
     (p : Option (List Nat)) (off : Nat) (ds : List (List Char × String)) :
-    walkExports cs claimed p off ls (names ds) = walk cs claimed p off ls ds := by
+    walkExports cs claimed label p off ls (names ds) = walk cs claimed label p off ls ds := by
   induction ls generalizing p off ds with
   | nil => cases ds <;> rfl
   | cons l ls ih =>
@@ -55,7 +57,9 @@ theorem walk_eq (cs : List Nat) (claimed : Nat) (ls : List Nat)
           simp only
           split
           · split
-            · exact ih _ _ _
+            · split
+              · exact ih _ _ _
+              · rfl
             · cases ds with
               | nil => rfl
               | cons d ds =>
@@ -176,7 +180,8 @@ fn lean_prev(prev: &Option<Vec<u8>>) -> String {
 /// cut, the export names' distinctness and the export accounting, all read
 /// from it.
 fn render_artifact_exports(walk: &ExportWalk) -> Vec<(String, String)> {
-    const WALK: &str = "AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks exportClaimed";
+    const WALK: &str = "AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks exportClaimed\n    \
+         (AverCert.AcceptedArtifact.labelAt AverCert.manifest)";
     let mut block_texts = Vec::new();
     for (b, block) in walk.blocks.iter().enumerate() {
         let (next_prev, next_start) = match walk.blocks.get(b + 1) {
@@ -203,7 +208,7 @@ fn render_artifact_exports(walk: &ExportWalk) -> Vec<(String, String)> {
             "theorem exports_block_{b} : {WALK} {} {start} exportCuts_{b}\n    \
              AverCert.Plans.subject_declaredUncertified_{b} =\n    \
              some ({}, {next_start}) := by\n  \
-             exact (AverCert.Artifact.ExportChars.walk_eq _ _ _ _ _ {declared}).trans (by decide +kernel)\n\n",
+             exact (AverCert.Artifact.ExportChars.walk_eq _ _ _ _ _ _ {declared}).trans (by decide +kernel)\n\n",
             lean_prev(&block.prev),
             lean_prev(next_prev),
         ));
@@ -272,10 +277,10 @@ fn render_artifact_exports(walk: &ExportWalk) -> Vec<(String, String)> {
            (AverCert.AcceptedArtifact.claimedIndices AverCert.manifest) = exportClaimed := by\n  \
            decide +kernel\n\n\
          /-- The export accounting: every export is a function export of a claimed\n\
-         index, or the next declared-uncertified export. -/\n\
+         index under that function's label, or the next declared-uncertified export. -/\n\
          theorem exports_accounted : AverCert.AcceptedArtifact.exportsAccountedOf\n    \
            {BYTES}\n    \
-           (AverCert.AcceptedArtifact.claimedIndices AverCert.manifest)\n    \
+           (AverCert.AcceptedArtifact.claimedLabels AverCert.manifest)\n    \
            (AverCert.AcceptedArtifact.declaredUncertifiedNames AverCert.manifest) = true :=\n  \
            AverCert.ScaleExports.exportsAccounted_of_walk bytes_eq chunks_fit exports_head\n    \
            exports_walk claimed_bits\n\n\
@@ -347,6 +352,6 @@ mod export_walk_tests {
             .iter()
             .find(|(name, _)| name == "ArtifactExports.lean")
             .unwrap();
-        assert!(text.contains("(AverCert.Artifact.ExportChars.walk_eq _ _ _ _ _ []).trans"));
+        assert!(text.contains("(AverCert.Artifact.ExportChars.walk_eq _ _ _ _ _ _ []).trans"));
     }
 }

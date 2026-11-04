@@ -507,6 +507,16 @@ def customCapabilityImport (capability : String × String) : Bool :=
 def claimedIndices (manifest : _root_.AverCert.Schema.Manifest) : List Nat :=
   manifest.obligations.map (fun obligation => obligation.self)
 
+/-- Every certified obligation's function index with its label's bytes. -/
+def claimedLabels (manifest : _root_.AverCert.Schema.Manifest) :
+    List (Nat × _root_.AverCert.WasmSlice.ByteSeq) :=
+  manifest.obligations.map (fun obligation => (obligation.self, stringBytes obligation.name))
+
+/-- The label of the obligation at function index `idx`, if there is one. -/
+def labelAt (manifest : _root_.AverCert.Schema.Manifest) (idx : Nat) : Option String :=
+  (manifest.obligations.find? (fun obligation => obligation.self == idx)).map
+    (fun obligation => obligation.name)
+
 def declaredUncertifiedNames
     (manifest : _root_.AverCert.Schema.Manifest) : List _root_.AverCert.WasmSlice.ByteSeq :=
   manifest.subject.declaredUncertified.map (fun entry => stringBytes entry.1)
@@ -521,21 +531,27 @@ structure ExportKey where
 def exportEntryKey (entry : _root_.AverCert.WasmSlice.ExportEntry) : Option ExportKey :=
   (_root_.AverCert.WasmSlice.seqKey entry.name).map (fun name => ⟨name, entry.kind, entry.idx⟩)
 
-/-- One export entry is accounted for: a function export (kind 0) of a
-    claimed function's index, or a name declared uncertified. The export's
-    name plays no part in the first case: a certified function is identified
-    by its index, and need not be exported at all. -/
-def exportEntryAccounted (claimedIndex : Std.TreeSet Nat)
-    (declaredIndex : Std.TreeSet Nat) (entry : ExportKey) : Bool :=
-  (entry.kind == 0 && claimedIndex.contains entry.idx) || declaredIndex.contains entry.name
+/-- One export entry is accounted for. A function export (kind 0) of a
+    claimed function's index must carry that function's label as its name:
+    a host calls a certified function through an export, and the name it
+    calls is the one the report credits. Any other export must be declared
+    uncertified. A certified function need not be exported at all. -/
+def exportEntryAccounted (claimed : List (Nat × _root_.AverCert.WasmSlice.ByteSeq))
+    (claimedIndex : Std.TreeSet Nat) (declaredIndex : Std.TreeSet Nat) (entry : ExportKey) :
+    Bool :=
+  if entry.kind == 0 && claimedIndex.contains entry.idx then
+    claimed.any (fun c =>
+      c.1 == entry.idx && _root_.AverCert.WasmSlice.seqKey c.2 == some entry.name)
+  else declaredIndex.contains entry.name
 
 /-- Every byte-derived module export is accounted for
-    (`exportEntryAccounted`): it points at a claimed function, or it is
-    declared uncertified. The export names are distinct, and the declared
+    (`exportEntryAccounted`): it points at a claimed function under that
+    function's label, or it is declared uncertified. The export names are distinct, and the declared
     list is duplicate-free and has no phantom name absent from the export
     section. Names are compared through their numeric keys, which identify
     them exactly (`seqKey_inj`); a name without a key fails the check. -/
-def exportsAccountedOf (modBytes modLen : Nat) (claimed : List Nat)
+def exportsAccountedOf (modBytes modLen : Nat)
+    (claimed : List (Nat × _root_.AverCert.WasmSlice.ByteSeq))
     (declared : List _root_.AverCert.WasmSlice.ByteSeq) : Bool :=
   match _root_.AverCert.WasmSlice.enumExports modBytes modLen with
   | none => false
@@ -545,16 +561,16 @@ def exportsAccountedOf (modBytes modLen : Nat) (claimed : List Nat)
           let actualNames := actual.map (fun entry => entry.name)
           let actualNameIndex := _root_.AverCert.WasmSlice.orderedSet actualNames
           let declaredIndex := _root_.AverCert.WasmSlice.orderedSet declared
-          let claimedIndex := _root_.AverCert.WasmSlice.orderedSet claimed
+          let claimedIndex := _root_.AverCert.WasmSlice.orderedSet (claimed.map (·.1))
           _root_.AverCert.WasmSlice.natListNodup actualNames &&
           _root_.AverCert.WasmSlice.natListNodup declared &&
-          actual.all (exportEntryAccounted claimedIndex declaredIndex) &&
+          actual.all (exportEntryAccounted claimed claimedIndex declaredIndex) &&
           declared.all actualNameIndex.contains
       | _, _ => false
 
 def exportsAccounted (artifact : ArtifactData) : Bool :=
   exportsAccountedOf artifact.modBytes artifact.modLen
-    (claimedIndices artifact.manifest) (declaredUncertifiedNames artifact.manifest)
+    (claimedLabels artifact.manifest) (declaredUncertifiedNames artifact.manifest)
 
 /-! #### Names as character lists
 
@@ -579,7 +595,7 @@ theorem declaredUncertifiedNames_of_chars {m : _root_.AverCert.Schema.Manifest} 
 /-- `exportsAccounted`, with the declared names given as character lists. -/
 theorem exportsAccounted_of_chars (artifact : ArtifactData) (ds : List (List Char))
     (hd : artifact.manifest.subject.declaredUncertified.map (·.1) = ds.map String.ofList)
-    (h : exportsAccountedOf artifact.modBytes artifact.modLen (claimedIndices artifact.manifest)
+    (h : exportsAccountedOf artifact.modBytes artifact.modLen (claimedLabels artifact.manifest)
       (ds.map (List.map Char.toNat)) = true) :
     exportsAccounted artifact = true := by
   unfold exportsAccounted

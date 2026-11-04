@@ -84,7 +84,8 @@ the declared-uncertified exports in the same order. `walkExports` reads the
 section one entry at a time from a declared offset, each entry on its own
 chunk window, and requires every name's key above the previous one. An entry
 that is a function export of a claimed function (`claimedEntry`: kind 0, its
-index a bit of `claimed`) is accounted for by that index alone; every other
+index a bit of `claimed`) must carry that function's label as its name
+(`labelOk`, the label read from `label`, the obligations' own); every other
 entry must be the next declared-uncertified name, read as ASCII bytes. The
 walk takes the declared list in pieces, one per block of entries, so a block
 of the section is one declaration (`walk_append`). -/
@@ -102,10 +103,17 @@ def keyAfter : Option (List Nat) → List Nat → Bool
 def claimedEntry (claimed : Nat) (e : AverCert.WasmSlice.ExportEntry) : Bool :=
   e.kind == 0 && claimed.testBit e.idx
 
+/-- The export's name is the label `label` gives its function index, read as
+    ASCII bytes. -/
+def labelOk (label : Nat → Option String) (e : AverCert.WasmSlice.ExportEntry) : Bool :=
+  match label e.idx with
+  | some s => asciiBytes s == some e.name
+  | none => false
+
 /-- The export entries of the given lengths from `off`, after the name `p`,
     against the declared names `ds`: the last name and the offset after the
     last entry. -/
-def walkExports (cs : List Nat) (claimed : Nat) :
+def walkExports (cs : List Nat) (claimed : Nat) (label : Nat → Option String) :
     Option (List Nat) → Nat → List Nat → List (String × String) →
       Option (Option (List Nat) × Nat)
   | p, off, [], [] => some (p, off)
@@ -115,23 +123,25 @@ def walkExports (cs : List Nat) (claimed : Nat) :
       | none => none
       | some e =>
           if keyAfter p e.name then
-            if claimedEntry claimed e then walkExports cs claimed (some e.name) (off + l) ls ds
+            if claimedEntry claimed e then
+              if labelOk label e then walkExports cs claimed label (some e.name) (off + l) ls ds
+              else none
             else
               match ds with
               | d :: ds' =>
                   if asciiBytes d.1 == some e.name then
-                    walkExports cs claimed (some e.name) (off + l) ls ds'
+                    walkExports cs claimed label (some e.name) (off + l) ls ds'
                   else none
               | [] => none
           else none
 
 /-- One block of entries that uses up its piece of the declared names, then
     the rest. -/
-theorem walk_append {cs : List Nat} {claimed : Nat} :
+theorem walk_append {cs : List Nat} {claimed : Nat} {label : Nat → Option String} :
     ∀ {l1 : List Nat} {p : Option (List Nat)} {off : Nat} {d1 : List (String × String)}
       {p' : Option (List Nat)} {off' : Nat} (l2 : List Nat) (d2 : List (String × String)),
-      walkExports cs claimed p off l1 d1 = some (p', off') →
-      walkExports cs claimed p off (l1 ++ l2) (d1 ++ d2) = walkExports cs claimed p' off' l2 d2
+      walkExports cs claimed label p off l1 d1 = some (p', off') →
+      walkExports cs claimed label p off (l1 ++ l2) (d1 ++ d2) = walkExports cs claimed label p' off' l2 d2
   | [], p, off, [], p', off', l2, d2, h => by
       simp only [walkExports, Option.some.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
@@ -151,7 +161,11 @@ theorem walk_append {cs : List Nat} {claimed : Nat} :
               cases hb : claimedEntry claimed e with
               | true =>
                   simp only [hb, ite_true] at h ⊢
-                  exact walk_append l2 d2 h
+                  cases hl : labelOk label e with
+                  | false => simp [hl] at h
+                  | true =>
+                      simp only [hl, ite_true] at h ⊢
+                      exact walk_append l2 d2 h
               | false =>
                   simp only [hb, Bool.false_eq_true, ite_false] at h ⊢
                   cases d1 with
@@ -166,12 +180,12 @@ theorem walk_append {cs : List Nat} {claimed : Nat} :
 
 /-- A block of entries that uses up its piece of the declared names, and a
     walk over the rest. -/
-theorem walk_cons {cs : List Nat} {claimed : Nat} {l1 l2 : List Nat}
+theorem walk_cons {cs : List Nat} {claimed : Nat} {label : Nat → Option String} {l1 l2 : List Nat}
     {d1 d2 : List (String × String)} {p p' : Option (List Nat)} {off off' : Nat}
     {r : Option (Option (List Nat) × Nat)}
-    (h1 : walkExports cs claimed p off l1 d1 = some (p', off'))
-    (h2 : walkExports cs claimed p' off' l2 d2 = r) :
-    walkExports cs claimed p off (l1 ++ l2) (d1 ++ d2) = r :=
+    (h1 : walkExports cs claimed label p off l1 d1 = some (p', off'))
+    (h2 : walkExports cs claimed label p' off' l2 d2 = r) :
+    walkExports cs claimed label p off (l1 ++ l2) (d1 ++ d2) = r :=
   (walk_append l2 d2 h1).trans h2
 
 /-! ### What the walk reads -/
@@ -194,16 +208,17 @@ theorem winsAt_length (cs : List Nat) : ∀ (off : Nat) (ls : List Nat),
 theorem whole_export_zero (w : Nat) : whole readExportEntry (w, 0) = none := by
   simp [whole, readExportEntry, readName, readU, uleb]
 
-theorem walk_spec {cs : List Nat} {claimed : Nat} :
+theorem walk_spec {cs : List Nat} {claimed : Nat} {label : Nat → Option String} :
     ∀ (ls : List Nat) (p : Option (List Nat)) (off : Nat) (ds : List (String × String))
       (p' : Option (List Nat)) (off' : Nat),
-      walkExports cs claimed p off ls ds = some (p', off') →
+      walkExports cs claimed label p off ls ds = some (p', off') →
       ∃ E : List AverCert.WasmSlice.ExportEntry,
         (winsAt cs off ls).mapM (whole readExportEntry) = some E ∧
         chainAfter p (E.map (·.name)) = true ∧
         ds.map (fun d => asciiBytes d.1) =
-          (E.filter (fun e => !claimedEntry claimed e)).map (fun e => some e.name)
-  | [], p, off, [], p', off', _ => ⟨[], rfl, rfl, rfl⟩
+          (E.filter (fun e => !claimedEntry claimed e)).map (fun e => some e.name) ∧
+        (∀ e ∈ E, claimedEntry claimed e = true → labelOk label e = true)
+  | [], p, off, [], p', off', _ => ⟨[], rfl, rfl, rfl, fun _ h => by cases h⟩
   | [], _, _, _ :: _, _, _, h => by simp [walkExports] at h
   | l :: ls, p, off, ds, p', off', h => by
       simp only [walkExports] at h
@@ -214,26 +229,37 @@ theorem walk_spec {cs : List Nat} {claimed : Nat} :
         · rename_i hk
           split at h
           · rename_i hb
-            obtain ⟨E, hE, hc, hd⟩ := walk_spec ls (some e.name) (off + l) ds p' off' h
-            refine ⟨e :: E, ?_, ?_, ?_⟩
-            · simp only [winsAt, List.mapM_cons, he, hE, Option.bind_eq_bind, Option.bind_some,
-                Option.pure_def]
-            · simp only [List.map_cons, chainAfter, hk, hc, Bool.and_self]
-            · simp only [List.filter_cons, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-              exact hd
+            split at h
+            · rename_i hl
+              obtain ⟨E, hE, hc, hd, hla⟩ := walk_spec ls (some e.name) (off + l) ds p' off' h
+              refine ⟨e :: E, ?_, ?_, ?_, ?_⟩
+              · simp only [winsAt, List.mapM_cons, he, hE, Option.bind_eq_bind,
+                  Option.bind_some, Option.pure_def]
+              · simp only [List.map_cons, chainAfter, hk, hc, Bool.and_self]
+              · simp only [List.filter_cons, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+                exact hd
+              · intro x hx hxc
+                cases hx with
+                | head => exact hl
+                | tail _ hx => exact hla x hx hxc
+            · cases h
           · rename_i hb
             split at h
             · rename_i d ds'
               split at h
               · rename_i hdm
-                obtain ⟨E, hE, hc, hd⟩ := walk_spec ls (some e.name) (off + l) ds' p' off' h
-                refine ⟨e :: E, ?_, ?_, ?_⟩
+                obtain ⟨E, hE, hc, hd, hla⟩ := walk_spec ls (some e.name) (off + l) ds' p' off' h
+                refine ⟨e :: E, ?_, ?_, ?_, ?_⟩
                 · simp only [winsAt, List.mapM_cons, he, hE, Option.bind_eq_bind,
                     Option.bind_some, Option.pure_def]
                 · simp only [List.map_cons, chainAfter, hk, hc, Bool.and_self]
                 · simp only [beq_iff_eq] at hdm
                   simp only [List.filter_cons, hb, Bool.not_false, ↓reduceIte, List.map_cons,
                     hdm, hd]
+                · intro x hx hxc
+                  cases hx with
+                  | head => exact absurd hxc hb
+                  | tail _ hx => exact hla x hx hxc
               · cases h
             · cases h
         · cases h
@@ -327,13 +353,13 @@ theorem chain_nodup {p : Option (List Nat)} {ns : List (List Nat)} (h : chainAft
 
 /-- The export names are distinct when a walk reads the whole section. -/
 theorem exportNamesDistinct_of_walk {cs : List Nat} {n len : Nat} {hs : List Nat}
-    {e0 claimed : Nat} {ls : List Nat} {ds : List (String × String)}
+    {e0 claimed : Nat} {label : Nat → Option String} {ls : List Nat} {ds : List (String × String)}
     {p' : Option (List Nat)} {off' : Nat}
     (hn : join 1024 cs = n) (hfit : chunksFit 1024 cs = true)
     (hH : exportsHead cs len hs e0 ls = true)
-    (hW : walkExports cs claimed none e0 ls ds = some (p', off')) :
+    (hW : walkExports cs claimed label none e0 ls ds = some (p', off')) :
     exportNamesDistinct n len = true := by
-  obtain ⟨E, hE, hc, -⟩ := walk_spec ls none e0 ds p' off' hW
+  obtain ⟨E, hE, hc, -, -⟩ := walk_spec ls none e0 ds p' off' hW
   obtain ⟨ks, hks, hs, -⟩ := chain_keys hc
   unfold exportNamesDistinct byteSeqListNodup
   rw [decodeRawExports_of_cut (exportsCut_of_walk hn hfit hH hE)]
@@ -344,13 +370,13 @@ theorem exportNamesDistinct_of_walk {cs : List Nat} {n len : Nat} {hs : List Nat
 
 /-- The export section decodes on its declared cut when a walk reads it. -/
 theorem exportsCutOk_of_walk {cs : List Nat} {n len : Nat} {hs : List Nat}
-    {e0 claimed : Nat} {ls : List Nat} {ds : List (String × String)}
+    {e0 claimed : Nat} {label : Nat → Option String} {ls : List Nat} {ds : List (String × String)}
     {p' : Option (List Nat)} {off' : Nat}
     (hn : join 1024 cs = n) (hfit : chunksFit 1024 cs = true)
     (hH : exportsHead cs len hs e0 ls = true)
-    (hW : walkExports cs claimed none e0 ls ds = some (p', off')) :
+    (hW : walkExports cs claimed label none e0 ls ds = some (p', off')) :
     (decodeRawExportsCut n len ls).isSome = true := by
-  obtain ⟨E, hE, -, -⟩ := walk_spec ls none e0 ds p' off' hW
+  obtain ⟨E, hE, -, -, -⟩ := walk_spec ls none e0 ds p' off' hW
   rw [exportsCut_of_walk hn hfit hH hE]
   rfl
 
@@ -419,13 +445,16 @@ theorem exportEntryKey_name {e : AverCert.WasmSlice.ExportEntry} {k : ExportKey}
 /-! ### The accounting from set facts -/
 
 /-- `exportsAccountedOf`, from what it decides stated as facts about the
-    actual entries, the claimed indices and the declared names. -/
+    actual entries, the claimed labels and the declared names. -/
 theorem exportsAccountedOf_of_props {n len : Nat}
-    {E : List AverCert.WasmSlice.ExportEntry} {C : List Nat} {D : List AverCert.WasmSlice.ByteSeq}
+    {E : List AverCert.WasmSlice.ExportEntry} {C : List (Nat × AverCert.WasmSlice.ByteSeq)}
+    {D : List AverCert.WasmSlice.ByteSeq}
     (hE : AverCert.WasmSlice.enumExports n len = some E)
     (hkE : ∀ e ∈ E, (AverCert.WasmSlice.seqKey e.name).isSome = true)
     (hnE : (E.map (·.name)).Nodup) (hnD : D.Nodup)
-    (hcov : ∀ e ∈ E, (e.kind = 0 ∧ e.idx ∈ C) ∨ e.name ∈ D)
+    (hclaimed : ∀ e ∈ E, e.kind = 0 → e.idx ∈ C.map (·.1) →
+      ∃ c ∈ C, c.1 = e.idx ∧ c.2 = e.name)
+    (hdecl : ∀ e ∈ E, ¬ (e.kind = 0 ∧ e.idx ∈ C.map (·.1)) → e.name ∈ D)
     (hDE : ∀ d ∈ D, d ∈ E.map (·.name)) :
     exportsAccountedOf n len C D = true := by
   have hkD : ∀ d ∈ D, (AverCert.WasmSlice.seqKey d).isSome = true := by
@@ -446,8 +475,7 @@ theorem exportsAccountedOf_of_props {n len : Nat}
   simp only [hA]
   unfold AverCert.WasmSlice.seqKeys
   rw [hDK]
-  simp only [Bool.and_eq_true, List.all_eq_true, exportEntryAccounted, Bool.or_eq_true,
-    beq_iff_eq, AverCert.SortedKeys.orderedSet_contains]
+  simp only [Bool.and_eq_true, List.all_eq_true, AverCert.SortedKeys.orderedSet_contains]
   refine ⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩
   · exact AverCert.SortedKeys.natListNodup_of_nodup (mapM_nodup hseq hAN hnE)
   · exact AverCert.SortedKeys.natListNodup_of_nodup (mapM_nodup hseq hDK hnD)
@@ -457,9 +485,26 @@ theorem exportsAccountedOf_of_props {n len : Nat}
       unfold exportEntryKey at hea
       obtain ⟨k, -, rfl⟩ := Option.map_eq_some_iff.mp hea
       exact ⟨rfl, rfl⟩
-    rcases hcov e he with ⟨hk, hi⟩ | hd
-    · exact Or.inl ⟨hka.1.trans hk, hka.2 ▸ hi⟩
-    · exact Or.inr ((mapM_mem hDK a.name).mpr ⟨e.name, hd, exportEntryKey_name hea⟩)
+    have hname := exportEntryKey_name hea
+    unfold exportEntryAccounted
+    by_cases hcl : e.kind = 0 ∧ e.idx ∈ C.map (·.1)
+    · have hcond : (a.kind == 0 &&
+          (AverCert.WasmSlice.orderedSet (C.map (·.1))).contains a.idx) = true := by
+        simp only [Bool.and_eq_true, beq_iff_eq, AverCert.SortedKeys.orderedSet_contains,
+          hka.1, hka.2]
+        exact hcl
+      rw [if_pos hcond]
+      obtain ⟨c, hc, hc1, hc2⟩ := hclaimed e he hcl.1 hcl.2
+      refine List.any_eq_true.mpr ⟨c, hc, ?_⟩
+      simp only [Bool.and_eq_true, beq_iff_eq]
+      exact ⟨hc1.trans hka.2.symm, by rw [hc2, hname]⟩
+    · have hcond : ¬ (a.kind == 0 &&
+          (AverCert.WasmSlice.orderedSet (C.map (·.1))).contains a.idx) = true := by
+        simp only [Bool.and_eq_true, beq_iff_eq, AverCert.SortedKeys.orderedSet_contains,
+          hka.1, hka.2]
+        exact hcl
+      rw [if_neg hcond, AverCert.SortedKeys.orderedSet_contains]
+      exact (mapM_mem hDK a.name).mpr ⟨e.name, hdecl e he hcl, hname⟩
   · intro k hk
     obtain ⟨d, hd, hdk⟩ := (mapM_mem hDK k).mp hk
     obtain ⟨e, he, rfl⟩ := List.mem_map.mp (hDE d hd)
@@ -482,18 +527,30 @@ theorem map_of_map_some {α β γ : Type} {f : α → Option γ} {g : α → γ}
 
 /-! ### The accounting from the walk -/
 
-/-- The export accounting, from a walk over the whole export section and the
-    claimed indices' bits. The walk reads every entry, requires the names'
-    keys increasing, and matches every entry that is not a function export of
-    a claimed index with the next declared name. -/
+/-- A label `labelAt` gives is the label of an obligation at that index. -/
+theorem labelAt_mem {m : Manifest} {idx : Nat} {s : String} (h : labelAt m idx = some s) :
+    (idx, stringBytes s) ∈ claimedLabels m := by
+  unfold labelAt at h
+  obtain ⟨o, ho, rfl⟩ := Option.map_eq_some_iff.mp h
+  have hmem := List.mem_of_find?_eq_some ho
+  have hself : o.self = idx := by simpa using List.find?_some ho
+  unfold claimedLabels
+  exact List.mem_map.mpr ⟨o, hmem, by rw [hself]⟩
+
+/-- The export accounting, from a walk over the whole export section, the
+    claimed indices' bits and the obligations' labels. The walk reads every
+    entry, requires the names' keys increasing, requires every function
+    export of a claimed index to carry that function's label, and matches
+    every other entry with the next declared name. -/
 theorem exportsAccounted_of_walk {n len : Nat} {m : Manifest} {cs hs : List Nat}
     {e0 claimed : Nat} {ls : List Nat} {p' : Option (List Nat)} {off' : Nat}
     (hn : join 1024 cs = n) (hfit : chunksFit 1024 cs = true)
     (hH : exportsHead cs len hs e0 ls = true)
-    (hW : walkExports cs claimed none e0 ls m.subject.declaredUncertified = some (p', off'))
+    (hW : walkExports cs claimed (labelAt m) none e0 ls m.subject.declaredUncertified =
+      some (p', off'))
     (hC : AverCert.SortedKeys.bitsOf (claimedIndices m) = claimed) :
-    exportsAccountedOf n len (claimedIndices m) (declaredUncertifiedNames m) = true := by
-  obtain ⟨E, hEw, hc, hd⟩ := walk_spec ls none e0 m.subject.declaredUncertified p' off' hW
+    exportsAccountedOf n len (claimedLabels m) (declaredUncertifiedNames m) = true := by
+  obtain ⟨E, hEw, hc, hd, hla⟩ := walk_spec ls none e0 m.subject.declaredUncertified p' off' hW
   have hcut := exportsCut_of_walk hn hfit hH hEw
   have hnE : (E.map (·.name)).Nodup := chain_nodup hc
   have hkE : ∀ e ∈ E, (AverCert.WasmSlice.seqKey e.name).isSome = true := by
@@ -501,6 +558,16 @@ theorem exportsAccounted_of_walk {n len : Nat} {m : Manifest} {cs hs : List Nat}
     intro e he
     obtain ⟨k, -, hk⟩ := mapM_seqKey_mem hks e.name (List.mem_map_of_mem he)
     simp [hk]
+  have hidx : (claimedLabels m).map (·.1) = claimedIndices m := by
+    unfold claimedLabels claimedIndices
+    rw [List.map_map]
+    rfl
+  -- A claimed entry: kind 0 and a bit of `claimed`.
+  have hclaimedEntry : ∀ e : AverCert.WasmSlice.ExportEntry,
+      claimedEntry claimed e = true ↔ (e.kind = 0 ∧ e.idx ∈ (claimedLabels m).map (·.1)) := by
+    intro e
+    rw [hidx, ← AverCert.SortedKeys.testBit_bitsOf, hC]
+    simp [claimedEntry]
   -- The declared names are the entries that are not claimed exports, in order.
   have hD : declaredUncertifiedNames m =
       (E.filter (fun e => !claimedEntry claimed e)).map (·.name) := by
@@ -510,14 +577,21 @@ theorem exportsAccounted_of_walk {n len : Nat} {m : Manifest} {cs hs : List Nat}
   have hsub : ((E.filter (fun e => !claimedEntry claimed e)).map (·.name)).Sublist
       (E.map (·.name)) := List.Sublist.map _ List.filter_sublist
   refine exportsAccountedOf_of_props (decodeRawExports_of_cut hcut) hkE hnE
-    (List.Nodup.sublist hsub hnE) ?_ (fun d hd => hsub.subset hd)
-  intro e he
-  cases hb : claimedEntry claimed e
-  · exact Or.inr (List.mem_map_of_mem (List.mem_filter.mpr ⟨he, by simp [hb]⟩))
-  · left
-    simp only [claimedEntry, Bool.and_eq_true, beq_iff_eq] at hb
-    refine ⟨hb.1, ?_⟩
-    rw [← hC] at hb
-    exact (AverCert.SortedKeys.testBit_bitsOf _ _).mp hb.2
+    (List.Nodup.sublist hsub hnE) ?_ ?_ (fun d hd => hsub.subset hd)
+  · intro e he hk hi
+    have hb : claimedEntry claimed e = true := (hclaimedEntry e).mpr ⟨hk, hi⟩
+    have hl := hla e he hb
+    unfold labelOk at hl
+    split at hl
+    · rename_i s hs
+      simp only [beq_iff_eq] at hl
+      exact ⟨(e.idx, stringBytes s), labelAt_mem hs, rfl, stringBytes_of_ascii hl⟩
+    · cases hl
+  · intro e he hn
+    have hb : claimedEntry claimed e = false := by
+      cases h : claimedEntry claimed e
+      · rfl
+      · exact absurd ((hclaimedEntry e).mp h) hn
+    exact List.mem_map_of_mem (List.mem_filter.mpr ⟨he, by simp [hb]⟩)
 
 end AverCert.ScaleExports
