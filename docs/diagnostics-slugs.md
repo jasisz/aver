@@ -54,7 +54,7 @@ When a real signature shape is deliberately uninhabited, keep the suppression ex
 
 | Slug | Severity | Fires when | Repair |
 |---|---|---|---|
-| `non-tail-recursion` | warning | Recursive call is not in tail position, so the compiler cannot apply TCO. | Convert to accumulator style. |
+| `non-tail-recursion` | warning | Recursive call is not in tail position, so the compiler cannot apply TCO; no later pass turns it into a loop. Not reported for a function a `verify` law names as another's specification. | Depends on the shape (see [Tail-call optimization](language.md#tail-call-optimization)). A function returning a `List` with one recursive call per path: collect into an accumulator started at `[]` and return `List.reverse(acc)` at the exit, which `list_build` builds in order without the reverse (Rust and VM). Any other single call per path: an accumulator parameter. Two or more calls on one path (a tree walk): an accumulator does not help; fine for shallow data, otherwise a list of pending parts walked by a tail-recursive loop. |
 | `perf-list-len` | warning | `List.len` called inside recursion, which adds up to O(n²). | Compute the length once, outside the recursion. |
 | `perf-string-concat` | warning | String concatenation inside recursion. | Accumulate in a list and join once. |
 | `perf-nested-match` | warning | Nested `match` on the same subject. | Combine into one `match`. |

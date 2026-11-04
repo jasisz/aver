@@ -509,7 +509,20 @@ value = Vector.get(grid, 42)       // Option<Int>
 
 Self and mutual tail recursion are optimized automatically. A transform pass after parsing rewrites calls in tail position into a trampoline, so recursive functions in tail position do not grow the stack. Tail position is the last expression in a function body, or each arm body of a `match` that is itself in tail position.
 
-This deliberately covers less than all recursion. Non-tail recursion can still be expensive on large inputs, so `aver check` warns when a recursive function still has non-tail recursive callsites after TCO. When scale matters, write long linear traversals in accumulator style.
+This deliberately covers less than all recursion. No later pass turns a call outside tail position into a loop, so every such call keeps one stack frame per level, and `aver check` warns (`non-tail-recursion`) when a recursive function still has non-tail recursive callsites after TCO. A function a `verify` law names as the specification of another is not reported. The repair depends on the shape of the recursion:
+
+- **A list built element by element.** `List.prepend(f(x), go(rest))` is one call per element. Collect into an accumulator instead and reverse it where the walk ends, starting it at `[]`:
+
+  ```aver
+  fn incAllInto(xs: List<Int>, acc: List<Int>) -> List<Int>
+      match xs
+          [] -> List.reverse(acc)
+          [x, ..rest] -> incAllInto(rest, List.prepend(x + 1, acc))
+  ```
+
+  This does not build the list twice. On Rust and the VM, the `list_build` pass moves every call that starts `acc` at `[]` onto a builder that appends in order, so there is no cons chain to reverse and no reverse, and the loop runs in constant stack (see [transpilation.md](transpilation.md)). A call site that writes `List.reverse(go(xs, []))` around a loop returning `acc` bare is moved the same way.
+- **A fold to anything else** (`x + total(rest)`): carry the pending work in an accumulator parameter, so the recursive call is the last thing each arm does.
+- **A walk that makes two or more recursive calls on one path** (a tree, `fib`): the stack grows with the depth of what is walked, not its size, and an accumulator alone does not flatten it. That is usually fine for shallow or balanced data; for deep data keep the pending parts in a list that a tail-recursive loop works through, or suppress the warning for that function with a reason (see [diagnostics-slugs.md](diagnostics-slugs.md)).
 
 How deep non-tail recursion may go depends on the backend:
 

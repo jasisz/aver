@@ -414,10 +414,9 @@ pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
             Some("Add a ? \"description\" line after the function signature".to_string()),
         )
     } else if msg.contains("non-tail recursion") {
-        (
-            "non-tail-recursion",
-            Some("Convert to accumulator style for tail-call optimization".to_string()),
-        )
+        // The repair depends on the recursion's shape (see
+        // `tail_check::NonTailShape`) and travels in the message.
+        ("non-tail-recursion", split_repair(msg))
     } else if msg.contains("unused expose") || msg.contains("not used by") {
         ("unused-expose", None)
     } else if msg.contains("verify coverage") || msg.contains("verify case") {
