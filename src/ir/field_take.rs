@@ -40,8 +40,8 @@
 //! - every read of the local in those values is a path `local.f…`, never the
 //!   bare local, a pattern subject or a callee, except as the base of an
 //!   update inside them;
-//! - no other read goes through `P` or below it, so no read after the take
-//!   can see the emptied field;
+//! - no other read goes through `P` or below it, or stops at a record above
+//!   it, so no read after the take can see the emptied field;
 //! - one of the reads is the local's last use, so nothing after the literal
 //!   or update reads the local at all;
 //! - every update base that is a proper prefix of `P` (the local itself or a
@@ -196,8 +196,12 @@ fn plan_path(reads: &SlotReads, index: usize) -> Option<PathTake> {
         .enumerate()
         .filter(|(other, _)| *other != index)
         .map(|(_, other)| other);
-    // Nothing else reads the taken field or anything below it.
-    if others.clone().any(|other| starts_with(&other.fields, path))
+    // Nothing else reads the taken field, anything below it, or a record
+    // above it: `local.f` read next to a take of `local.f.g` would hand
+    // out the record `f` with `g` already gone.
+    if others
+        .clone()
+        .any(|other| starts_with(&other.fields, path) || starts_with(path, &other.fields))
         || reads
             .bases
             .iter()

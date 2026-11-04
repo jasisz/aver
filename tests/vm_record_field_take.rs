@@ -1144,3 +1144,37 @@ fn main() -> Int
     // The child is the node before adoption: three kids, label 5.
     assert_eq!(answer, (3 * 100 + 5) * 10 + 6);
 }
+
+/// A record above the taken field is read in the same literal: `h.location`
+/// next to `h.location.segment` must hand out `location` with `segment` in
+/// it, not the hole the take leaves.
+#[test]
+fn a_read_of_the_record_above_a_path_keeps_the_field_in_it() {
+    let src = r#"module Places
+    intent = "a field read beside the record that holds it"
+    effects []
+
+record Location
+    segment: Int
+    offset: Int
+
+record Holder
+    location: Location
+    used: Int
+
+record Out
+    seen: Int
+    location: Location
+
+fn build(n: Int) -> Out
+    h = Holder(location = Location(segment = n, offset = 9), used = 1)
+    Out(seen = h.location.segment, location = h.location)
+
+fn main() -> Int
+    o = build(7)
+    o.seen * 100 + o.location.segment * 10 + o.location.offset
+"#;
+    let mut machine = compiled_vm(src);
+    let result = machine.run().expect("program should run");
+    assert_eq!(result.as_int(&machine.arena), 7 * 100 + 7 * 10 + 9);
+}
