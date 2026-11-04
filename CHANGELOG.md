@@ -2,6 +2,25 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.32.0 "Tight" (unreleased)
+
+> _Certified code computes `Int` on machine words, and compiled Rust copies far less._
+
+### Highlights
+
+- **Certified `Int` on machine words.** In a `--certify` build, arithmetic, comparisons, `Int.min`/`Int.max` and division by a literal run on machine words, and the certificate covers that code. Certificates also cover `Bits.and`/`or`/`xor`, `T.update(...)`, `==` on records and sums, and functions that pass a `Vector` along.
+- **Faster compiled Rust.** Pure `Int` loops run on machine words (15 to 40% faster), values are moved instead of copied, and very large generated programs build quickly.
+- **New**: `Float.toBits`, `Float.fromBits`, `Bytes.get`, exponent Float literals (`1.0e20`); `Vector.new` up to 2^24 elements.
+
+Certificates from 0.31 must be produced again.
+
+### Fixed
+
+- VM: a record literal that read a field of a local record and that record's parent (`Out(seen = h.location.segment, location = h.location)`) could give the parent with that field as `Unit`.
+- `aver verify` runs cases through the same passes as `aver run`, which fixes a division that returned its default under `aver run`.
+- wasm-gc: comparing `Result.Ok(..)` with `==` inside a function returning another `Result` type no longer emits an invalid module.
+- Rust backend: several shapes that stopped compiling (`List.take`/`drop` on one variable, big integer literals in module bindings) compile again.
+
 ## 0.31.0 "Kernel" — 2026-10-30
 
 > _Aver checks its own proofs: a kernel written in Aver judges every proof step, and Lean checks the same steps again._
