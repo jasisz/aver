@@ -875,6 +875,15 @@ fn rust_record_written_at_the_call_escapes_and_one_built_by_a_call_stays() {
     assert_plain_parity(relative, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A producer arm `Comp.FuncT([], [])` fused into a consumer that discards
+/// the second field: the unread `[]` is dropped, not bound by `let _ =`,
+/// where rustc could not infer its element type (E0282).
+#[test]
+fn rust_fused_unread_empty_list_field_compiles() {
+    assert_plain_parity("tests/fixtures/rust_deforest_empty_list.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A `?` returns from the function it is written in, and an independent
 /// product is a sequencing point: a producer with either, and a consumer
 /// whose arm has a `?`, stay calls, so the `Err` a call should produce as
