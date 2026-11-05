@@ -284,6 +284,7 @@ aver compile file.av --explain-passes
 ```
 
 - Default: Rust codegen, emits a modular Cargo project
+- `--single-thread` (Rust only): build a program that runs its Aver code on one thread at a time. Independent products run in sequence, a service that may run Aver code on threads of its own is refused, and reference counts change with plain instructions instead of atomic ones. The same as `[rust] threads = "one"` in `aver.toml`; see [one thread](rust.md#one-thread---single-thread).
 - `--target wasm-gc`: native WebAssembly GC + tail-call output. A self-contained binary; the engine handles GC and recursion, and per-instantiation helpers are DCE'd down to what each program calls. Host baseline: Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+, Cloudflare Workers.
 - `--target wasip2`: WASI 0.2 / Component Model output for wasmtime and other component hosts. It wraps the wasm-gc core with `wit-component`; see `docs/wasip2.md` for the supported effect surface.
 - `--optimize size|speed`: derive `<name>.optimized.wasm` from the canonical `<name>.wasm` with binaryen `-Oz` (size) or `-O3` (speed). It drops the name section, so a wasm trap reports `<wasm function N>` instead of the name of the function that trapped. `aver compile` says so on stderr for a program whose named helpers it is about to strip. On wasm-gc it can accompany `--certify`: the certificate binds only the unchanged canonical file.
