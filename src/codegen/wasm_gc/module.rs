@@ -6967,10 +6967,28 @@ fn emit_module_pass(
     // sub-routines through the `Int` add helper's calls (`aver-cert`
     // `module_facts::derive_roles`), and a module exporting the box helper
     // must carry it to have a host-role table at all.
-    let kept: Vec<u32> = builtin_registry
+    //
+    // A wasip2 core exports only its world's entry points, never the entry
+    // module's `exposes`; the functions listed there are kept all the same,
+    // as roots without an export, so `exposes` keeps a function in the
+    // artifact (and so in its certificate) on both targets.
+    let mut kept: Vec<u32> = builtin_registry
         .lookup_wasm_fn_idx(BuiltinName::AintAdd)
         .into_iter()
         .collect();
+    if matches!(target, super::TargetMode::Wasip2) {
+        let exposed: std::collections::HashSet<&str> = crate::visibility::module_decl(items)
+            .map(|module| module.exposes.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        kept.extend(
+            fn_defs
+                .iter()
+                .enumerate()
+                .take(user_fn_count)
+                .filter(|(_, fd)| exposed.contains(fd.name.as_str()))
+                .map(|(i, _)| import_count + 1 + i as u32),
+        );
+    }
     let (bytes, renumbering) = super::dead_functions::drop_dead_functions(bytes, &kept)?;
     if renumbering.dropped() > 0
         && let Err(e) = validate(&bytes)
