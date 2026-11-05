@@ -354,7 +354,9 @@ fn is_arithmetic_nan_bits(bits: u64) -> bool {
 /// and the bridges each law-claim cites are the same in both modes.
 #[test]
 fn certify_bridges_only_the_law_cone_without_examples() {
-    let fixture = "projects/k5_fdiv/main.av";
+    // k5 no longer fits: its module holds only what `main` reaches, and the
+    // laws mention all of that, so its law cone is everything. Song's is not.
+    let fixture = "projects/song/main.av";
     let compile = |extra: &[&str], prefix: &str| {
         let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let out_dir = temp_dir(prefix);
@@ -362,7 +364,7 @@ fn certify_bridges_only_the_law_cone_without_examples() {
             .current_dir(&repo_root)
             .arg("compile")
             .arg(fixture)
-            .args(["--module-root", "projects/k5_fdiv"])
+            .args(["--module-root", "projects/song"])
             .args(["--target", "wasm-gc", "--certify"])
             .args(extra)
             .arg("-o")
@@ -427,16 +429,13 @@ fn certify_bridges_only_the_law_cone_without_examples() {
         cone_bridges.is_subset(&every_bridges) && cone_bridges.len() < every_bridges.len(),
         "the law cone is a strict subset: {cone_bridges:?} vs {every_bridges:?}"
     );
-    assert!(
-        every_bridges.contains("Domain_Rational_absInt"),
-        "{every_bridges:?}"
-    );
+    assert!(every_bridges.contains("Wave_degreeHz"), "{every_bridges:?}");
     let declined = cone["sourceBridgesDeclined"]
         .as_array()
         .expect("sourceBridgesDeclined is an array")
         .iter()
-        .find(|d| d["export"] == "Domain_Rational_absInt")
-        .unwrap_or_else(|| panic!("absInt outside the law cone is declined: {cone:#}"));
+        .find(|d| d["export"] == "Wave_degreeHz")
+        .unwrap_or_else(|| panic!("degreeHz outside the law cone is declined: {cone:#}"));
     assert!(
         declined["reason"]
             .as_str()
