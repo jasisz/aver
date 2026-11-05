@@ -1,5 +1,5 @@
 module IntComparisonLaws
-    exposes [sameKey, notBelow, comparable]
+    exposes [sameKey, atLeast, notBelow, comparable]
     intent =
         "Bool-valued integer comparison predicates a scheduler/sorter relies on,"
         "with their defining algebraic laws proved UNIVERSALLY (every pair of"

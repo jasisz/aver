@@ -2928,10 +2928,14 @@ fn function_opcode_offsets(bytes: &[u8], func_idx: u32, opcode: u8) -> Vec<usize
 /// `__aint_divmod` body changed (`i64.div_s` -> `i64.div_u`, a valid module
 /// with every export, index and type unchanged) declines the package even
 /// though no plan of this fixture divides — a declared helper is pinned
-/// whether or not a plan calls it.
+/// whether or not a plan calls it. `certprobe`'s quotient is declined (a
+/// `Result`), and its call is what keeps the helper in the module.
 #[test]
 fn cert_tripwire_declines_flipped_divmod_helper_byte() {
-    let Some(out_dir) = tripwire_baseline("certverify-divmod-template") else {
+    let Some(out_dir) = tripwire_baseline_of(
+        "certverify-divmod-template",
+        "tools/certkit/fixtures/certprobe.av",
+    ) else {
         return;
     };
     let manifest: serde_json::Value = serde_json::from_str(
@@ -2940,11 +2944,11 @@ fn cert_tripwire_declines_flipped_divmod_helper_byte() {
     .unwrap();
     let divmod_idx = manifest["hostRoleTable"]["divmod"]
         .as_u64()
-        .expect("certprobe2 declares the divmod helper") as u32;
-    let wasm = std::fs::read(out_dir.join("certprobe2.wasm")).unwrap();
+        .expect("certprobe declares the divmod helper") as u32;
+    let wasm = std::fs::read(out_dir.join("certprobe.wasm")).unwrap();
     let hits = function_opcode_offsets(&wasm, divmod_idx, 0x7f);
     assert_eq!(hits.len(), 1, "the divmod template carries one i64.div_s");
-    assert_rebound_byte_tamper_declines(&out_dir, "certprobe2.wasm", "divmod body", &|bytes| {
+    assert_rebound_byte_tamper_declines(&out_dir, "certprobe.wasm", "divmod body", &|bytes| {
         bytes[hits[0]] = 0x80;
     });
 }

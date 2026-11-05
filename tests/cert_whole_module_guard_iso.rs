@@ -294,8 +294,11 @@ fn certified_index(cert: &Path, name: &str) -> Option<u32> {
 
 fn certified_opcode_offsets(bytes: &[u8], cert: &Path) -> (usize, u32, usize) {
     let mut imported_funcs = 0u32;
-    let json_int = certified_index(cert, "jsonInt");
-    let json_entry_key = certified_index(cert, "jsonEntryKey");
+    // Two functions `main` reaches, so they are in the module and certified:
+    // one whose first instruction-level call targets its closure, one that
+    // reads a parameter.
+    let json_int = certified_index(cert, "Bytes_byteToHex");
+    let json_entry_key = certified_index(cert, "jsonStr");
     let mut code_ordinal = 0u32;
     let mut call = None;
     let mut local_get = None;
@@ -337,7 +340,8 @@ fn certified_opcode_offsets(bytes: &[u8], cert: &Path) -> (usize, u32, usize) {
             _ => {}
         }
     }
-    let (call_offset, call_target) = call.expect("jsonInt must directly call a helper");
+    let (call_offset, call_target) =
+        call.expect("Bytes_byteToHex must directly call a function of its closure");
     // The hostile artifact below adds a delta to the byte at `call_offset`, the
     // lowest LEB128 byte of the call target, so the call lands on another
     // function index whatever the encoding width is. That only holds while the
@@ -346,7 +350,7 @@ fn certified_opcode_offsets(bytes: &[u8], cert: &Path) -> (usize, u32, usize) {
         call_target & 0x7f != 0x7f,
         "GuardIso bumps the low LEB byte of the call target; it must not carry"
     );
-    let local_get_offset = local_get.expect("jsonEntryKey must contain local.get");
+    let local_get_offset = local_get.expect("jsonStr must contain local.get");
     assert_eq!(bytes[local_get_offset], 0x20);
     (call_offset, call_target, local_get_offset)
 }
@@ -705,14 +709,14 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
         .expect("json wasm must import aver.console_print");
     assert_eq!(wasm[capability_offset], b'c');
     assert_eq!(wasm[call_offset], leb_low_byte(call_target));
-    // The escaped-call control re-points `jsonInt`'s first call by adding a
+    // The escaped-call control re-points `Bytes_byteToHex`'s first call by adding a
     // delta to the LOW LEB byte of its target. The delta is derived from the
     // closure the producer just declared, so the mutated call provably leaves
     // it.
     let admitted = admitted_closure_indices(&cert);
     assert!(
         admitted.contains(&call_target),
-        "jsonInt's first callee must be inside the declared closure: \
+        "Bytes_byteToHex's first callee must be inside the declared closure: \
          {call_target} not in {admitted:?}"
     );
     let call_delta = (1u32..=0x7f)
@@ -781,7 +785,7 @@ example : AcceptedArtifact.startAccounted undeclaredStartArtifact = false := by 
 example : withoutStart undeclaredStartArtifact :=
   ⟨by decide +kernel, by decide +kernel, by decide +kernel⟩
 
--- (d) jsonInt's first call leaves the admitted closure.
+-- (d) Bytes_byteToHex's first call leaves the admitted closure.
 def escapedCallBytes : Nat := ArtifactBytes.modBytes +
   ({call_delta} <<< (8 * {call_offset}))
 def escapedCallArtifact : AcceptedArtifact.ArtifactData :=
