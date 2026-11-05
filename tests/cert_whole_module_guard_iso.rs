@@ -1801,7 +1801,10 @@ fn export_index_byte(bytes: &[u8], name: &str) -> (usize, u8) {
 ///   `sumTo` (its entry kept, its obligation gone) leaves its export
 ///   unaccounted for; the live check weakened to accept any function export
 ///   in the declared branch accepts it.
-/// * No certified label is declared uncertified. `sumTo` re-pointed at the
+/// * No certified label is declared uncertified, on both paths: the slow
+///   definition, and the large-module `ScaleExports.labelsDisjoint` the package
+///   decides as `labels_disjoint` (which the checker's Rust pre-check would
+///   otherwise keep any end-to-end package from reaching). `sumTo` re-pointed at the
 ///   uncertified `_start` function and declared uncertified, or declared
 ///   uncertified beside its correct export, is rejected; the live check
 ///   without the disjointness conjunct accepts both.
@@ -1866,6 +1869,18 @@ fn certified_exports_are_bound_by_index_and_label() {
         1,
         "the label/declared disjointness conjunct moved; refit the GuardIso surgery"
     );
+    let scale = std::fs::read_to_string(cert.join("ScaleExports.lean"))
+        .expect("the materialized wall has ScaleExports.lean");
+    let labels = extract_wall_def(&scale, "labelsDisjoint");
+    const LOOKUP: &str = "| some k => !index.contains k";
+    assert_eq!(
+        labels.matches(LOOKUP).count(),
+        1,
+        "the label lookup moved; refit the GuardIso surgery"
+    );
+    let labels_weak = labels
+        .replace(LOOKUP, "| some _ => true")
+        .replace("labelsDisjoint", "labelsDisjointWeak");
     let no_disjoint = of
         .replace(DISJOINT, "")
         .replace("exportsAccountedOf", "exportsAccountedOfNoDisjoint");
@@ -1888,6 +1903,13 @@ claimed labels and the declared names. -/
 {no_disjoint}
 
 end AverCert.AcceptedArtifact
+
+namespace AverCert.ScaleExports
+open AverCert.Schema AverCert.AcceptedArtifact
+/-! Live `labelsDisjoint` (the large-module path's disjointness, which the
+package's `labels_disjoint` decides), weakened by exactly the label lookup. -/
+{labels_weak}
+end AverCert.ScaleExports
 
 example : AcceptedArtifact.exportsAccounted Artifact.data = true := Artifact.exports_ok
 
@@ -1940,6 +1962,22 @@ example : AcceptedArtifact.exportsAccounted doubledArtifact = false := by decide
 example : AcceptedArtifact.exportsAccountedOfNoDisjoint ArtifactBytes.modBytes ArtifactBytes.modLen
     (AcceptedArtifact.claimedLabels stolenManifest)
     (AcceptedArtifact.declaredUncertifiedNames stolenManifest) = true := by decide +kernel
+
+-- (e) The large-module path's disjointness, the live definition: the honest
+-- manifest passes; `sumTo` declared uncertified fails, and so does
+-- `countDown` declared beside its correct export; the copy without the
+-- label lookup accepts the declared `sumTo`.
+def countDownManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with
+         declaredUncertified :=
+           manifest.subject.declaredUncertified ++ [("countDown", "tampered")] }} }}
+example : ScaleExports.labelsDisjoint manifest = true := by decide +kernel
+example : ScaleExports.labelsDisjoint stolenManifest = false := by decide +kernel
+example : ScaleExports.labelsDisjoint countDownManifest = false := by decide +kernel
+example : ScaleExports.labelsDisjointWeak stolenManifest = true := by decide +kernel
+-- The package's own theorem is the live definition at this manifest.
+example : ScaleExports.labelsDisjoint manifest = true := Artifact.labels_disjoint
 "#
     );
     assert_probe_holds(&cert, "ExportBindingGuardIso.lean", &lean);
