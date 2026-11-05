@@ -585,8 +585,58 @@ fn emit_fast(
             guard(func, 0, max, t0);
             func.instruction(&g0);
         }
+        Op::DivOr | Op::ModOr => emit_div_mod_or(func, op, temps),
     }
     Ok(Some(()))
+}
+
+/// `Result.withDefault(Int.div(a, b), d)` / `Int.mod` of the words `a`,
+/// `b`, `d` on the stack: `d` when `b` is 0, else the Euclidean quotient or
+/// remainder. The machine divides by 1 in place of 0 (the result is then
+/// thrown away for `d`), so nothing traps; `i64::MIN / -1`, whose quotient
+/// `2^63` does not fit, leaves the `i64` path.
+fn emit_div_mod_or(func: &mut Function, op: Op, temps: [u32; 3]) {
+    let [t0, t1, t2] = temps;
+    let (g0, g1) = (I::LocalGet(t0), I::LocalGet(t1));
+    seq(func, &[I::LocalSet(t2), I::LocalSet(t1), I::LocalSet(t0)]);
+    // The divisor the machine divides by: `b`, or 1 for a zero `b`.
+    let divisor = [I::I64Const(1), g1.clone(), g1.clone(), I::I64Eqz, I::Select];
+    // `b >> 63`: 0 for `b >= 0`, -1 below.
+    let sign = [g1.clone(), I::I64Const(63), I::I64ShrS];
+    if op == Op::DivOr {
+        seq(func, &[g0.clone(), I::I64Const(i64::MIN), I::I64Eq]);
+        seq(
+            func,
+            &[g1.clone(), I::I64Const(-1), I::I64Eq, I::I32And, I::BrIf(0)],
+        );
+    }
+    func.instruction(&I::LocalGet(t2));
+    // r, the truncated remainder (`i64.rem_s` of `i64::MIN` by -1 is 0).
+    func.instruction(&g0);
+    seq(func, &divisor);
+    func.instruction(&I::I64RemS);
+    if op == Op::DivOr {
+        // q + (r >> 63 ^ s) - s, s = b >> 63: the truncated quotient one
+        // further from zero when r is negative (q - 1 for b > 0, q + 1 for
+        // b < 0).
+        seq(func, &[I::I64Const(63), I::I64ShrS]);
+        seq(func, &sign);
+        func.instruction(&I::I64Xor);
+        func.instruction(&g0);
+        seq(func, &divisor);
+        seq(func, &[I::I64DivS, I::I64Add]);
+        seq(func, &sign);
+        func.instruction(&I::I64Sub);
+    } else {
+        // r + (|b| if r < 0); |b| wraps for `i64::MIN`, the sum does not.
+        seq(func, &[I::LocalTee(t0), g0, I::I64Const(63), I::I64ShrS]);
+        seq(func, &[g1.clone()]);
+        seq(func, &sign);
+        func.instruction(&I::I64Xor);
+        seq(func, &sign);
+        seq(func, &[I::I64Sub, I::I64And, I::I64Add]);
+    }
+    seq(func, &[g1, I::I64Eqz, I::Select]);
 }
 
 /// The `$small` of the Small `$AverInt` in `local`; a Big one leaves the
