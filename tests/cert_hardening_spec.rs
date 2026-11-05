@@ -3885,9 +3885,9 @@ fn bytes_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
 }
 
 /// The honest certificate checks: every `Bytes` helper is declared, pinned
-/// to its template and run by the wall, and the probe's six functions, the
-/// six `Bytes` functions they call and the `Bytes` module's other certified
-/// functions (20 in all) check.
+/// to its template and run by the wall, and the probe's six functions and
+/// the six `Bytes` functions they call check. The `Bytes` module's other
+/// functions are not in the module: nothing the probe exposes calls them.
 #[test]
 fn cert_hardening_accepts_bytes_helpers() {
     let Some((_dir, wasm, cert)) = bytes_baseline("certharden-bytes-clean") else {
@@ -3911,7 +3911,7 @@ fn cert_hardening_accepts_bytes_helpers() {
     assert!(ok, "the Bytes-helper certificate must check:\n{report}");
     // `Bytes_fromList` interpolates an Int into its error, which now certifies,
     // and `Bytes_get` certifies as an ordinary list match.
-    assert!(report.contains("22 checked functions"), "{report}");
+    assert!(report.contains("12 checked functions"), "{report}");
 }
 
 /// A role row naming another helper of the same type: `take` declared at the
