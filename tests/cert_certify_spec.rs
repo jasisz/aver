@@ -3005,7 +3005,9 @@ fn certify_nested_module_models_close_end_to_end() {
         "nestedmods --certify failed:\n{report}"
     );
     assert!(
-        report.contains("6 certified"),
+        // The module holds what the entry's `exposes` reaches: four entry
+        // functions and the three nested ones they call.
+        report.contains("7 certified"),
         "nestedmods must certify the entry exports and all three nested-module exports:\n{report}"
     );
     assert!(

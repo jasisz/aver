@@ -2,7 +2,7 @@ module NestedMods
     intent =
         "Certification probe whose model tree carries a nested module"
         "dependency, so the emitted certificate stages a dotted model root."
-    exposes [addTwo, viaDep]
+    exposes [addTwo, viaDep, viaBump, viaTally]
     depends [Nested.Deep.Util]
     effects []
 
@@ -18,6 +18,10 @@ fn viaBump(n: Int) -> Int
     ? "Keeps the nested certifiable function live from the entry module."
     Nested.Deep.Util.bump(n)
 
+fn viaTally(n: Int) -> Int
+    ? "Keeps the nested recursive function live from the entry module."
+    Nested.Deep.Util.tally(n)
+
 verify addTwo
     addTwo(1) => 3
 
@@ -26,3 +30,6 @@ verify viaDep
 
 verify viaBump
     viaBump(1) => 3
+
+verify viaTally
+    viaTally(2) => 3

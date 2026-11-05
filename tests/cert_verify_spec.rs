@@ -1369,7 +1369,8 @@ fn cert_verify_accepts_nested_module_certificate() {
     );
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
     assert!(
-        report.contains("6 certified functions"),
+        // Seven: the module holds what the entry's `exposes` reaches.
+        report.contains("7 certified functions"),
         "expected the entry exports and all three nested-module exports:\n{report}"
     );
     assert!(
