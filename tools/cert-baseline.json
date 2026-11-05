@@ -147,11 +147,13 @@
  },
  "examples/formal/int_comparison_laws.av": {
   "bridges": [
+   "atLeast",
    "comparable",
    "notBelow",
    "sameKey"
   ],
   "certified": {
+   "atLeast": "L1",
    "comparable": "L1",
    "notBelow": "L1",
    "sameKey": "L1"
@@ -1704,10 +1706,12 @@
  },
  "tests/fixtures/cert_work_job/main.av": {
   "bridges": [
-   "Node_validate"
+   "Node_validate",
+   "bonus"
   ],
   "certified": {
-   "Node_validate": "L1"
+   "Node_validate": "L1",
+   "bonus": "L1"
   },
   "laws": []
  },
