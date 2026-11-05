@@ -17,6 +17,7 @@ pub(super) fn emit_cmp_for(
     k_aver: &str,
     registry: &TypeRegistry,
     cmp_helpers: &HashMap<String, u32>,
+    word_keys: bool,
 ) -> Result<Function, WasmGcError> {
     if registry.is_eligible_carrier(k_aver) {
         return Ok(emit_cmp_i64());
@@ -26,7 +27,7 @@ pub(super) fn emit_cmp_for(
     }
     match k_aver {
         "String" => emit_cmp_string(registry),
-        "Int" | "Bool" => emit_cmp_primitive(k_aver, registry),
+        "Int" | "Bool" => emit_cmp_primitive(k_aver, registry, word_keys),
         _ if registry.newtype_underlying(k_aver).is_some() => {
             let underlying = registry.newtype_underlying(k_aver).unwrap();
             emit_cmp_proxy(underlying, registry, cmp_helpers)
@@ -605,19 +606,16 @@ fn emit_cmp_packed_sequence(name: &str, registry: &TypeRegistry) -> Result<Funct
     Ok(f)
 }
 
-fn emit_cmp_primitive(k_aver: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let mut f = Function::new([]);
+fn emit_cmp_primitive(
+    k_aver: &str,
+    registry: &TypeRegistry,
+    word_keys: bool,
+) -> Result<Function, WasmGcError> {
     if k_aver == "Int" && registry.bignum {
-        let cmp = registry.aint_cmp_fn_idx.ok_or(WasmGcError::Validation(
-            "bignum active but __aint_cmp fn idx wasn't recorded on the registry".into(),
-        ))?;
-        f.instruction(&Instruction::LocalGet(0));
-        f.instruction(&Instruction::LocalGet(1));
-        f.instruction(&Instruction::Call(cmp));
-        f.instruction(&Instruction::End);
-        return Ok(f);
+        return emit_cmp_aint(registry, word_keys);
     }
 
+    let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
     match k_aver {
@@ -640,6 +638,68 @@ fn emit_cmp_primitive(k_aver: &str, registry: &TypeRegistry) -> Result<Function,
     f.instruction(&Instruction::Else);
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Order of two `Int` keys. Two Small keys (no limbs, the value in `$small`)
+/// compare as machine words; any Big key goes to `__aint_cmp`.
+///
+/// The fast path is what makes sorting a map cheap: `__aint_cmp` builds a
+/// limb array for each Small operand before it compares, so a heapsort over
+/// `n` keys allocated two arrays per comparison. Comparing the words is exact
+/// because a canonical Int is Small exactly when it fits in an `i64`, so two
+/// Small keys are ordered as their words are. `__aint_cmp` itself is not
+/// changed: the certificate wall pins its bytes.
+///
+/// A `--certify` build (`word_keys` off) keeps the plain call.
+fn emit_cmp_aint(registry: &TypeRegistry, word_keys: bool) -> Result<Function, WasmGcError> {
+    let cmp = registry.aint_cmp_fn_idx.ok_or(WasmGcError::Validation(
+        "bignum active but __aint_cmp fn idx wasn't recorded on the registry".into(),
+    ))?;
+    if !word_keys {
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::Call(cmp));
+        f.instruction(&Instruction::End);
+        return Ok(f);
+    }
+    let aint = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+        "bignum active but the $AverInt struct idx wasn't recorded on the registry".into(),
+    ))?;
+    let small = |f: &mut Function, param: u32| {
+        f.instruction(&Instruction::LocalGet(param));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: aint,
+            field_index: 0,
+        });
+    };
+    // params 0, 1: the keys; locals 2, 3: their words.
+    let mut f = Function::new([(2, ValType::I64)]);
+    f.instruction(&Instruction::Block(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    for param in [0, 1] {
+        f.instruction(&Instruction::LocalGet(param));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: aint,
+            field_index: 1,
+        });
+        f.instruction(&Instruction::RefIsNull);
+        f.instruction(&Instruction::I32Eqz);
+        f.instruction(&Instruction::BrIf(0));
+    }
+    small(&mut f, 0);
+    f.instruction(&Instruction::LocalSet(2));
+    small(&mut f, 1);
+    f.instruction(&Instruction::LocalSet(3));
+    emit_cmp_i64_locals(&mut f, 2, 3);
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(cmp));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     Ok(f)

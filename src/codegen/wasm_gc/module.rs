@@ -1414,6 +1414,7 @@ fn emit_module_pass(
 
     // 6) Map helper fn types (per-K hash + eq, per-(K,V) empty/set/get/len).
     let mut map_helpers = MapHelperRegistry::default();
+    map_helpers.word_keys = !certify && std::env::var_os("AVER_NO_WORD_KEYS").is_none();
     map_helpers.assign_slots(
         &registry.map_order,
         &registry,
