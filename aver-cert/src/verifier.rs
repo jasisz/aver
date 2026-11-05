@@ -2181,6 +2181,18 @@ fn read_candidates(
     let contracts = string_array(manifest, "runtime_contracts")?;
     let declared_uncertified =
         object_pair_array(manifest, "declaredUncertified", "name", "reason")?;
+    // A certified function's label is the name a host calls it by; an export
+    // under that name declared uncertified would stand in for it. The wall
+    // refuses the overlap (`exportsAccountedOf`); refuse it here first.
+    if let Some((name, _)) = declared_uncertified
+        .iter()
+        .find(|(name, _)| certified.iter().any(|candidate| &candidate.name == name))
+    {
+        return Err(format!(
+            "cert-manifest.json declares `{}` uncertified, but it is the label of a certified function",
+            display_safe(name)
+        ));
+    }
     let capabilities = object_pair_array(manifest, "capabilities", "module", "name")?;
     let start_object = manifest
         .get("start")

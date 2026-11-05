@@ -872,8 +872,19 @@ pub fn analyze(
     }
     let mut candidates: BTreeSet<u32> = plan_of.keys().copied().collect();
     // A host calls an exported function by its export's name, so the wall
-    // requires the export of a certified function to carry its label. A
-    // function exported under another name is not offered.
+    // requires the export of a certified function to carry its label, and no
+    // other export to carry it. A function exported under another name, or
+    // whose name another export carries, is not offered.
+    let label_of: BTreeMap<&str, u32> =
+        user_name.iter().map(|(f, name)| (name.as_str(), *f)).collect();
+    for (name, kind, idx) in &facts.exports {
+        if let Some(&f) = label_of.get(name.as_str())
+            && !(*kind == 0 && *idx == f)
+            && candidates.remove(&f)
+        {
+            reasons.insert(f, format!("another export is named `{name}`"));
+        }
+    }
     for (name, kind, idx) in &facts.exports {
         if *kind == 0
             && user_name.get(idx).is_some_and(|label| label != name)

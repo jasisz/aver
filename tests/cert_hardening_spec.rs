@@ -1438,6 +1438,107 @@ fn cert_hardening_declines_swapped_certified_exports() {
     assert_export_walk_error(&report);
 }
 
+/// `addTwo` declared uncertified in all three places the package lists the
+/// declared exports (the JSON, `Manifest.lean` and the export walk's block),
+/// in the key order the walk reads, and, when `repoint`, the `addTwo` export
+/// pointed at the uncertified `size` function (the second review of #1892:
+/// `CERTIFIED` with `addTwo` credited while a host calling `addTwo` ran
+/// `size`).
+fn declare_a_certified_label(wasm: &Path, cert: &Path, repoint: bool) {
+    if repoint {
+        let mut bytes = std::fs::read(wasm).unwrap();
+        let entries = export_entries(&bytes);
+        let index_at = |name: &str| {
+            let (_, range) = entries.iter().find(|(n, _)| n == name).unwrap();
+            range.end - 1
+        };
+        let (a, z) = (index_at("addTwo"), index_at("size"));
+        assert!(bytes[a] < 0x80 && bytes[z] < 0x80);
+        bytes[a] = bytes[z];
+        validate(&bytes);
+        restamp(wasm, cert, &bytes);
+    }
+    // The wall's key order: more code points is larger, then the last code
+    // point is the most significant.
+    let key = |name: &str| {
+        let mut codes: Vec<u32> = name.chars().map(u32::from).collect();
+        codes.reverse();
+        (codes.len(), codes)
+    };
+    let mut declared: Vec<(String, String)> = Vec::new();
+    edit_json(cert, |json| {
+        declared = json["declaredUncertified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e["name"].as_str().unwrap().to_string(),
+                    e["reason"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let mut with = declared.clone();
+        with.push(("addTwo".into(), "tampered".into()));
+        with.sort_by_key(|(name, _)| key(name));
+        json["declaredUncertified"] = serde_json::Value::Array(
+            with.iter()
+                .map(|(name, reason)| serde_json::json!({"name": name, "reason": reason}))
+                .collect(),
+        );
+    });
+    let mut with = declared.clone();
+    with.push(("addTwo".into(), "tampered".into()));
+    with.sort_by_key(|(name, _)| key(name));
+    let strings = |list: &[(String, String)]| {
+        list.iter()
+            .map(|(n, r)| format!("(\"{n}\", \"{r}\")"))
+            .collect::<Vec<_>>()
+            .join(",\n   ")
+    };
+    replace_once(
+        &cert.join("Manifest.lean"),
+        &format!("[{}]", strings(&declared)),
+        &format!("[{}]", strings(&with)),
+    );
+    let chars = |list: &[(String, String)]| {
+        list.iter()
+            .map(|(n, r)| {
+                let cs: Vec<String> = n.chars().map(|c| format!("'{c}'")).collect();
+                format!("([{}], \"{r}\")", cs.join(", "))
+            })
+            .collect::<Vec<_>>()
+            .join(",\n    ")
+    };
+    replace_once(
+        &cert.join("ArtifactExports.lean"),
+        &format!("[{}]).trans", chars(&declared)),
+        &format!("[{}]).trans", chars(&with)),
+    );
+}
+
+/// The reviewer's attack: the `addTwo` export re-pointed at the uncertified
+/// `size` and `addTwo` declared uncertified. A certified label is never a
+/// declared-uncertified name: the checker refuses the manifest, and the wall
+/// refuses the overlap too (`exportsAccountedOf`, `labelsDisjoint`; isolated in
+/// `cert_whole_module_guard_iso`).
+#[test]
+fn cert_hardening_declines_a_certified_label_declared_uncertified() {
+    for repoint in [true, false] {
+        let Some((_dir, wasm, cert)) = baseline(&format!("certharden-label-declared-{repoint}"))
+        else {
+            return;
+        };
+        declare_a_certified_label(&wasm, &cert, repoint);
+        let (ok, report) = aver_cert("check", &wasm, &cert);
+        assert!(!ok, "repoint {repoint}: must decline:\n{report}");
+        assert!(
+            report.contains("`addTwo` uncertified, but it is the label of a certified function"),
+            "repoint {repoint}: {report}"
+        );
+    }
+}
+
 /// The export walk is written in blocks, each a declaration that states where
 /// its entries start and where the next block starts. The one block of the
 /// tiny module split in two, the boundary declared one byte into the second

@@ -272,6 +272,9 @@ fn render_artifact_exports(walk: &ExportWalk) -> Vec<(String, String)> {
            AverCert.ByteWindow.decodeRawExports_eq_lazy exports_cut_ok\n\n\
          theorem export_names_ok : AverCert.DeclaredLayout.exportNamesDistinct {BYTES} = true :=\n  \
            AverCert.ScaleExports.exportNamesDistinct_of_walk bytes_eq chunks_fit exports_head exports_walk\n\n\
+         -- No certified function's label is declared uncertified.\n\
+         theorem labels_disjoint : AverCert.ScaleExports.labelsDisjoint AverCert.manifest = true := by\n  \
+           decide +kernel\n\n\
          -- The claimed functions' indices are the bits the walk reads.\n\
          theorem claimed_bits : AverCert.SortedKeys.bitsOf\n    \
            (AverCert.AcceptedArtifact.claimedIndices AverCert.manifest) = exportClaimed := by\n  \
@@ -283,7 +286,7 @@ fn render_artifact_exports(walk: &ExportWalk) -> Vec<(String, String)> {
            (AverCert.AcceptedArtifact.claimedLabels AverCert.manifest)\n    \
            (AverCert.AcceptedArtifact.declaredUncertifiedNames AverCert.manifest) = true :=\n  \
            AverCert.ScaleExports.exportsAccounted_of_walk bytes_eq chunks_fit exports_head\n    \
-           exports_walk claimed_bits\n\n\
+           exports_walk claimed_bits labels_disjoint\n\n\
          end AverCert.Artifact\n",
         lean_prev(&walk.end.0),
         walk.end.1,

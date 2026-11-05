@@ -546,7 +546,10 @@ def exportEntryAccounted (claimed : List (Nat × _root_.AverCert.WasmSlice.ByteS
 
 /-- Every byte-derived module export is accounted for
     (`exportEntryAccounted`): it points at a claimed function under that
-    function's label, or it is declared uncertified. The export names are distinct, and the declared
+    function's label, or it is declared uncertified. No label of a claimed
+    function is declared uncertified, so no export carrying a certified
+    function's name can stand in for it, of whatever kind and wherever it
+    points. The export names are distinct, and the declared
     list is duplicate-free and has no phantom name absent from the export
     section. Names are compared through their numeric keys, which identify
     them exactly (`seqKey_inj`); a name without a key fails the check. -/
@@ -564,6 +567,10 @@ def exportsAccountedOf (modBytes modLen : Nat)
           let claimedIndex := _root_.AverCert.WasmSlice.orderedSet (claimed.map (·.1))
           _root_.AverCert.WasmSlice.natListNodup actualNames &&
           _root_.AverCert.WasmSlice.natListNodup declared &&
+          claimed.all (fun c =>
+            match _root_.AverCert.WasmSlice.seqKey c.2 with
+            | some k => !declaredIndex.contains k
+            | none => false) &&
           actual.all (exportEntryAccounted claimed claimedIndex declaredIndex) &&
           declared.all actualNameIndex.contains
       | _, _ => false

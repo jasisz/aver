@@ -1801,6 +1801,10 @@ fn export_index_byte(bytes: &[u8], name: &str) -> (usize, u8) {
 ///   `sumTo` (its entry kept, its obligation gone) leaves its export
 ///   unaccounted for; the live check weakened to accept any function export
 ///   in the declared branch accepts it.
+/// * No certified label is declared uncertified. `sumTo` re-pointed at the
+///   uncertified `_start` function and declared uncertified, or declared
+///   uncertified beside its correct export, is rejected; the live check
+///   without the disjointness conjunct accepts both.
 #[test]
 fn certified_exports_are_bound_by_index_and_label() {
     if !lake_available() {
@@ -1852,6 +1856,19 @@ fn certified_exports_are_bound_by_index_and_label() {
     swapped[sum_at] = count_idx;
     swapped[count_at] = sum_idx;
     let swapped_hex = hex_le(&swapped);
+    let mut stolen = wasm.clone();
+    let (_, start_idx) = export_index_byte(&wasm, "_start");
+    stolen[sum_at] = start_idx;
+    let stolen_hex = hex_le(&stolen);
+    const DISJOINT: &str = "          claimed.all (fun c =>\n            match _root_.AverCert.WasmSlice.seqKey c.2 with\n            | some k => !declaredIndex.contains k\n            | none => false) &&\n";
+    assert_eq!(
+        of.matches(DISJOINT).count(),
+        1,
+        "the label/declared disjointness conjunct moved; refit the GuardIso surgery"
+    );
+    let no_disjoint = of
+        .replace(DISJOINT, "")
+        .replace("exportsAccountedOf", "exportsAccountedOfNoDisjoint");
     let lean = format!(
         r#"import Artifact
 
@@ -1866,6 +1883,10 @@ label comparison. -/
 /-! Live `exportEntryAccounted` / `exportsAccountedOf`, weakened to accept any
 function export in the declared branch. -/
 {any_function}
+/-! Live `exportsAccountedOf`, weakened by exactly the disjointness of the
+claimed labels and the declared names. -/
+{no_disjoint}
+
 end AverCert.AcceptedArtifact
 
 example : AcceptedArtifact.exportsAccounted Artifact.data = true := Artifact.exports_ok
@@ -1896,6 +1917,29 @@ example : AcceptedArtifact.exportsAccounted unclaimedArtifact = false := by deci
 example : AcceptedArtifact.exportsAccountedOfAnyFunction unclaimedArtifact.modBytes
     unclaimedArtifact.modLen (AcceptedArtifact.claimedLabels unclaimedManifest)
     (AcceptedArtifact.declaredUncertifiedNames unclaimedManifest) = true := by decide +kernel
+
+-- (c) The export `sumTo` re-pointed at the uncertified `_start` function and
+-- declared uncertified (the second review of #1892): a host calling `sumTo`
+-- would run code the report does not certify, under a certified label.
+def stolenBytes : Nat := 0x{stolen_hex}
+def stolenManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with
+         declaredUncertified := manifest.subject.declaredUncertified ++ [("sumTo", "tampered")] }} }}
+def stolenArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := stolenBytes, manifest := stolenManifest }}
+example : AcceptedArtifact.exportsAccounted stolenArtifact = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfNoDisjoint stolenBytes ArtifactBytes.modLen
+    (AcceptedArtifact.claimedLabels stolenManifest)
+    (AcceptedArtifact.declaredUncertifiedNames stolenManifest) = true := by decide +kernel
+
+-- (d) The weaker variant: `sumTo` declared uncertified beside its correct export.
+def doubledArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := stolenManifest }}
+example : AcceptedArtifact.exportsAccounted doubledArtifact = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfNoDisjoint ArtifactBytes.modBytes ArtifactBytes.modLen
+    (AcceptedArtifact.claimedLabels stolenManifest)
+    (AcceptedArtifact.declaredUncertifiedNames stolenManifest) = true := by decide +kernel
 "#
     );
     assert_probe_holds(&cert, "ExportBindingGuardIso.lean", &lean);

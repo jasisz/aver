@@ -408,6 +408,15 @@ theorem mapM_mem {α β : Type} {f : α → Option β} :
         | head => rw [hk] at hfx; exact Or.inl (Option.some.inj hfx).symm
         | tail _ hx' => exact Or.inr ⟨x', hx', hfx⟩
 
+theorem mapM_some_iff_forall {α β : Type} {f : α → Option β} :
+    ∀ {l : List α} {ys : List β}, l.mapM f = some ys → ∀ x ∈ l, (f x).isSome
+  | [], _, _, _, hx => by cases hx
+  | x :: xs, ys, h, y, hy => by
+      obtain ⟨k, ks, hk, hks, rfl⟩ := mapM_cons_some h
+      cases hy with
+      | head => simp [hk]
+      | tail _ hy => exact mapM_some_iff_forall hks y hy
+
 theorem mapM_some {α β : Type} {f : α → Option β} :
     ∀ {l : List α}, (∀ x ∈ l, (f x).isSome = true) → ∃ ys, l.mapM f = some ys
   | [], _ => ⟨[], rfl⟩
@@ -455,7 +464,9 @@ theorem exportsAccountedOf_of_props {n len : Nat}
     (hclaimed : ∀ e ∈ E, e.kind = 0 → e.idx ∈ C.map (·.1) →
       ∃ c ∈ C, c.1 = e.idx ∧ c.2 = e.name)
     (hdecl : ∀ e ∈ E, ¬ (e.kind = 0 ∧ e.idx ∈ C.map (·.1)) → e.name ∈ D)
-    (hDE : ∀ d ∈ D, d ∈ E.map (·.name)) :
+    (hDE : ∀ d ∈ D, d ∈ E.map (·.name))
+    (hkC : ∀ c ∈ C, (AverCert.WasmSlice.seqKey c.2).isSome = true)
+    (hCD : ∀ c ∈ C, c.2 ∉ D) :
     exportsAccountedOf n len C D = true := by
   have hkD : ∀ d ∈ D, (AverCert.WasmSlice.seqKey d).isSome = true := by
     intro d hd
@@ -476,9 +487,18 @@ theorem exportsAccountedOf_of_props {n len : Nat}
   unfold AverCert.WasmSlice.seqKeys
   rw [hDK]
   simp only [Bool.and_eq_true, List.all_eq_true, AverCert.SortedKeys.orderedSet_contains]
-  refine ⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩
+  refine ⟨⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩, ?_⟩
   · exact AverCert.SortedKeys.natListNodup_of_nodup (mapM_nodup hseq hAN hnE)
   · exact AverCert.SortedKeys.natListNodup_of_nodup (mapM_nodup hseq hDK hnD)
+  · intro c hc
+    obtain ⟨k, hk⟩ := Option.isSome_iff_exists.mp (hkC c hc)
+    simp only [hk]
+    cases hm : (AverCert.WasmSlice.orderedSet DK).contains k
+    · rfl
+    · exfalso
+      rw [AverCert.SortedKeys.orderedSet_contains] at hm
+      obtain ⟨d, hd, hdk⟩ := (mapM_mem hDK k).mp hm
+      exact hCD c hc (hseq hk hdk ▸ hd)
   · intro a ha
     obtain ⟨e, he, hea⟩ := (mapM_mem hA a).mp ha
     have hka : a.kind = e.kind ∧ a.idx = e.idx := by
@@ -493,7 +513,7 @@ theorem exportsAccountedOf_of_props {n len : Nat}
         simp only [Bool.and_eq_true, beq_iff_eq, AverCert.SortedKeys.orderedSet_contains,
           hka.1, hka.2]
         exact hcl
-      rw [if_pos hcond]
+      simp only [hcond, ↓reduceIte]
       obtain ⟨c, hc, hc1, hc2⟩ := hclaimed e he hcl.1 hcl.2
       refine List.any_eq_true.mpr ⟨c, hc, ?_⟩
       simp only [Bool.and_eq_true, beq_iff_eq]
@@ -503,7 +523,8 @@ theorem exportsAccountedOf_of_props {n len : Nat}
         simp only [Bool.and_eq_true, beq_iff_eq, AverCert.SortedKeys.orderedSet_contains,
           hka.1, hka.2]
         exact hcl
-      rw [if_neg hcond, AverCert.SortedKeys.orderedSet_contains]
+      simp only [hcond, Bool.false_eq_true, ↓reduceIte]
+      rw [AverCert.SortedKeys.orderedSet_contains]
       exact (mapM_mem hDK a.name).mpr ⟨e.name, hdecl e he hcl, hname⟩
   · intro k hk
     obtain ⟨d, hd, hdk⟩ := (mapM_mem hDK k).mp hk
@@ -537,6 +558,66 @@ theorem labelAt_mem {m : Manifest} {idx : Nat} {s : String} (h : labelAt m idx =
   unfold claimedLabels
   exact List.mem_map.mpr ⟨o, hmem, by rw [hself]⟩
 
+/-- No label of a claimed function is a declared-uncertified name, decided on
+    the names' keys, every name read as ASCII bytes (`asciiBytes`): the
+    declared names indexed once, each label looked up once. -/
+def labelsDisjoint (m : Manifest) : Bool :=
+  match m.subject.declaredUncertified.mapM
+      (fun d => (asciiBytes d.1).bind AverCert.WasmSlice.seqKey) with
+  | some dk =>
+      let index := AverCert.WasmSlice.orderedSet dk
+      m.obligations.all (fun o =>
+        match (asciiBytes o.name).bind AverCert.WasmSlice.seqKey with
+        | some k => !index.contains k
+        | none => false)
+  | none => false
+
+theorem labels_of_disjoint {m : Manifest} (h : labelsDisjoint m = true) :
+    (∀ c ∈ claimedLabels m, (AverCert.WasmSlice.seqKey c.2).isSome = true) ∧
+    (∀ c ∈ claimedLabels m, c.2 ∉ declaredUncertifiedNames m) := by
+  unfold labelsDisjoint at h
+  split at h
+  · rename_i dk hdk
+    simp only [List.all_eq_true] at h
+    have hlabel : ∀ c ∈ claimedLabels m, ∃ k, AverCert.WasmSlice.seqKey c.2 = some k ∧
+        (AverCert.WasmSlice.orderedSet dk).contains k = false := by
+      intro c hc
+      unfold claimedLabels at hc
+      obtain ⟨o, ho, rfl⟩ := List.mem_map.mp hc
+      have hk := h o ho
+      split at hk
+      · rename_i k hok
+        obtain ⟨bs, hbs, hkey⟩ := Option.bind_eq_some_iff.mp hok
+        refine ⟨k, ?_, by simpa using hk⟩
+        simp only
+        rw [stringBytes_of_ascii hbs]
+        exact hkey
+      · cases hk
+    refine ⟨fun c hc => ?_, fun c hc hmem => ?_⟩
+    · obtain ⟨k, hk, -⟩ := hlabel c hc
+      simp [hk]
+    · obtain ⟨k, hk, hout⟩ := hlabel c hc
+      unfold declaredUncertifiedNames at hmem
+      obtain ⟨d, hd, hdc⟩ := List.mem_map.mp hmem
+      obtain ⟨k', hk'mem, hdk'⟩ : ∃ k', k' ∈ dk ∧
+          (asciiBytes d.1).bind AverCert.WasmSlice.seqKey = some k' := by
+        cases hx : (asciiBytes d.1).bind AverCert.WasmSlice.seqKey with
+        | none =>
+            exfalso
+            have := (mapM_some_iff_forall hdk) d hd
+            rw [hx] at this
+            simp at this
+        | some k' => exact ⟨k', (mapM_mem hdk k').mpr ⟨d, hd, hx⟩, rfl⟩
+      obtain ⟨bs, hbs, hkey⟩ := Option.bind_eq_some_iff.mp hdk'
+      have hbytes : stringBytes d.1 = bs := stringBytes_of_ascii hbs
+      rw [hbytes] at hdc
+      rw [← hdc, hkey] at hk
+      cases hk
+      rw [← AverCert.SortedKeys.orderedSet_contains] at hk'mem
+      rw [hk'mem] at hout
+      cases hout
+  · cases h
+
 /-- The export accounting, from a walk over the whole export section, the
     claimed indices' bits and the obligations' labels. The walk reads every
     entry, requires the names' keys increasing, requires every function
@@ -548,8 +629,10 @@ theorem exportsAccounted_of_walk {n len : Nat} {m : Manifest} {cs hs : List Nat}
     (hH : exportsHead cs len hs e0 ls = true)
     (hW : walkExports cs claimed (labelAt m) none e0 ls m.subject.declaredUncertified =
       some (p', off'))
-    (hC : AverCert.SortedKeys.bitsOf (claimedIndices m) = claimed) :
+    (hC : AverCert.SortedKeys.bitsOf (claimedIndices m) = claimed)
+    (hL : labelsDisjoint m = true) :
     exportsAccountedOf n len (claimedLabels m) (declaredUncertifiedNames m) = true := by
+  obtain ⟨hkC, hCD⟩ := labels_of_disjoint hL
   obtain ⟨E, hEw, hc, hd, hla⟩ := walk_spec ls none e0 m.subject.declaredUncertified p' off' hW
   have hcut := exportsCut_of_walk hn hfit hH hEw
   have hnE : (E.map (·.name)).Nodup := chain_nodup hc
@@ -576,8 +659,9 @@ theorem exportsAccounted_of_walk {n len : Nat} {m : Manifest} {cs hs : List Nat}
   rw [hD]
   have hsub : ((E.filter (fun e => !claimedEntry claimed e)).map (·.name)).Sublist
       (E.map (·.name)) := List.Sublist.map _ List.filter_sublist
+  rw [hD] at hCD
   refine exportsAccountedOf_of_props (decodeRawExports_of_cut hcut) hkE hnE
-    (List.Nodup.sublist hsub hnE) ?_ ?_ (fun d hd => hsub.subset hd)
+    (List.Nodup.sublist hsub hnE) ?_ ?_ (fun d hd => hsub.subset hd) hkC hCD
   · intro e he hk hi
     have hb : claimedEntry claimed e = true := (hclaimedEntry e).mpr ⟨hk, hi⟩
     have hl := hla e he hb
