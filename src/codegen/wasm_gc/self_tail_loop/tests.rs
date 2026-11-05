@@ -15,7 +15,7 @@ fn transformed(source: &str, parameters: &[u32]) -> Vec<u8> {
             while !reader.eof() {
                 function.instruction(&reencoder.parse_instruction(&mut reader).unwrap());
             }
-            code.function(&lower(function, index, parameters[index as usize]).unwrap());
+            code.function(&lower(function, index, parameters[index as usize], &[]).unwrap());
             index += 1;
         }
     }

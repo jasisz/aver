@@ -7,7 +7,10 @@
 //! branches to the loop. Other calls retain
 //! their calling convention. Arguments are evaluated before any parameter
 //! is overwritten, and every defaultable local is reset on loop entry:
-//! cached boxes and Big flags belong to the previous invocation.
+//! cached boxes and Big flags belong to the previous invocation. The
+//! exceptions are the carried locals, which hold part of a parameter's value
+//! from one iteration to the next: the buffer of a `String` parameter the
+//! loop grows by appending (`body/from_mir/str_builder.rs`).
 //!
 //! Certification builds run it too: the certificate wall lowers a plan whose
 //! body tail-calls its own function to exactly this loop
@@ -26,6 +29,7 @@ pub(super) fn lower(
     body: Function,
     self_index: u32,
     parameter_count: u32,
+    carried: &[u32],
 ) -> Result<Function, WasmGcError> {
     let raw = body.clone().into_raw_body();
     let parsed = wasmparser::FunctionBody::new(wasmparser::BinaryReader::new(&raw, 0));
@@ -50,6 +54,13 @@ pub(super) fn lower(
                 | I::ResumeThrowRef { .. }
         )
     }) {
+        // A carried local holds part of a parameter's value, which the
+        // self tail call then does not pass.
+        if !carried.is_empty() {
+            return Err(invalid(
+                &"a function with carried locals must run as a loop",
+            ));
+        }
         return Ok(body);
     }
 
@@ -78,7 +89,9 @@ pub(super) fn lower(
             ValType::Ref(_) => None,
         };
         for _ in 0..count {
-            if let Some(zero) = &zero {
+            if let Some(zero) = &zero
+                && !carried.contains(&slot)
+            {
                 out.instruction(zero);
                 out.instruction(&I::LocalSet(slot));
             }
