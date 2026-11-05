@@ -348,8 +348,9 @@ pub enum RustThreads {
 }
 /// `[rust] equality_classes` when `aver.toml` does not set it: the
 /// `MIN_STEPS` of the equality classes `==` on a recursive sum keeps (see
-/// `aver_rt::eq_classes`), measured best on a Lean kernel checker.
-pub const DEFAULT_EQUALITY_CLASSES: u32 = 8;
+/// `aver_rt::eq_classes`), measured best on a Lean kernel checker (8 to 16
+/// were within 0.2% of each other on Mathlib, 12 the best on small inputs).
+pub const DEFAULT_EQUALITY_CLASSES: u32 = 12;
 
 /// The `[rust]` table of `aver.toml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
