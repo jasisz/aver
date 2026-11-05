@@ -1553,6 +1553,34 @@ fn nested_unwrap_in_error_keeps_value_wasm_gc() {
     );
 }
 
+// ─── Walking the lists a map hands out ─────────────────────────────────
+
+/// `Map.keys`, `Map.values`, `Map.entries` and `List.reverse` walked one
+/// tail at a time, with `[e, ..rest]` and with `List.drop`. The VM took time
+/// quadratic in the length when the elements were tuples or records; this
+/// pins that the fix keeps every walk's answer and order.
+/// `tests/rust_codegen_differential.rs` holds Rust to the same output.
+const MAP_LIST_WALKS_SRC: &str = include_str!("fixtures/map_list_walks.av");
+const MAP_LIST_WALKS_OUT: &str = include_str!("fixtures/map_list_walks.expected");
+
+#[test]
+fn map_list_walks_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-maplistwalk-vm", MAP_LIST_WALKS_SRC),
+        MAP_LIST_WALKS_OUT.trim(),
+    );
+}
+
+#[test]
+fn map_list_walks_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-maplistwalk-wasmgc", MAP_LIST_WALKS_SRC),
+        MAP_LIST_WALKS_OUT.trim(),
+    );
+}
+
 // ─── Bits.popCount ─────────────────────────────────────────────────────
 
 /// `Bits.popCount` on both signs, across the 64-bit seam and at the width

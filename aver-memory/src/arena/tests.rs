@@ -607,3 +607,48 @@ fn a_write_into_the_block_or_a_truncate_below_its_bounds_forgets_it() {
         "a boundary that rewrites entries outside its regions"
     );
 }
+
+/// Walking a flat list of records one tail at a time must not re-mark the
+/// rest of the body on every step.
+///
+/// Each tail `list_uncons` hands out is a new view over the same body. Storing
+/// that view used to register every remaining element as held again, which
+/// read the whole rest of the body per step: `Map.entries` walked with
+/// `[e, ..rest]` was quadratic. The body's first entry already registered every
+/// element, so after a full walk each record is held exactly once — by the
+/// body — instead of once per view that covered it.
+#[test]
+fn walking_a_flat_list_registers_each_element_once() {
+    const N: usize = 64;
+    let mut arena = TestArena::new();
+    let records: Vec<NanValue> = (0..N)
+        .map(|_| NanValue::new_record(arena.push_record(1, Vec::new())))
+        .collect();
+    let list = NanValue::new_list(arena.push_list(records.clone()));
+
+    let mut current = list;
+    let mut seen = 0;
+    while let Some((head, tail)) = arena.list_uncons(current) {
+        assert_eq!(head.bits(), records[seen].bits());
+        seen += 1;
+        current = tail;
+    }
+    assert_eq!(seen, N);
+    for (index, record) in records.iter().enumerate() {
+        assert_eq!(
+            arena.record_holder_count(*record),
+            1,
+            "record {index} was registered once per tail view that covered it"
+        );
+    }
+
+    let mut current = list;
+    for step in 0..N {
+        assert_eq!(arena.list_len_value(current), N - step);
+        current = arena.list_drop(current, 1);
+    }
+    assert!(current.is_empty_list_immediate() || arena.list_len_value(current) == 0);
+    for record in &records {
+        assert_eq!(arena.record_holder_count(*record), 1);
+    }
+}

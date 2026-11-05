@@ -1227,6 +1227,34 @@ impl<T: ArenaTypes> Arena<T> {
             scan_receipt,
         }))
     }
+
+    /// Store another view over a body some list entry already holds — the
+    /// tail `list_uncons` hands out, the remainder `list_drop` hands out.
+    ///
+    /// This skips the holder marking [`Arena::push`] would do, and has to: that
+    /// marking walks `items[start..]`, so a walk that takes one tail per step
+    /// over a body of tuples, records, maps or vectors read the whole rest of
+    /// the body on every step and turned quadratic (`Map.entries` walked with
+    /// `[e, ..rest]` took 14 s at 100,000 entries).
+    ///
+    /// Nothing is lost by skipping it. The entry that first stored this body
+    /// came through `push` and marked every element of it, holder counts on
+    /// elements are only released by a tuple, box or record that empties
+    /// itself, never by a list, and a list body never changes. So every
+    /// element here already counts as held for as long as any view of the
+    /// body exists, which is all a second mark would say.
+    pub(crate) fn push_list_view(
+        &mut self,
+        items: Rc<ListBody>,
+        start: usize,
+        scan_receipt: LaneMark,
+    ) -> u32 {
+        self.push_heap(ArenaEntry::List(ArenaList::Flat {
+            items,
+            start,
+            scan_receipt,
+        }))
+    }
     /// Store a map, proving its `all_immediate` flag from the table itself and
     /// marking every map it holds as held by this entry.
     ///
