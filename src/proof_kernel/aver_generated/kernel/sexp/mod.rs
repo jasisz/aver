@@ -768,15 +768,12 @@ pub fn fresh(
     crate::proof_kernel::cancel_checkpoint();
     if n.starts_with('#') {
         if table.contains_key(&n) {
-            Err(aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(33usize);
-                    __b.push_display(&(n));
-                    __b
-                };
+            Err({
+                let __s = n;
+                let mut __b = aver_rt::Buffer::with_capacity(33usize);
                 __b.push_str(&::aver_rt::str_lit!(" is defined twice"));
-                __b
-            }))
+                __s.append_buffer(__b)
+            })
         } else {
             Ok(n)
         }
@@ -819,15 +816,10 @@ pub fn within(
             let a = a.clone();
             if a.starts_with('#') {
                 table.get(&a).cloned().ok_or_else(|| {
-                    aver_rt::AverStr::from({
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(46usize);
-                            __b.push_display(&(a));
-                            __b
-                        };
-                        __b.push_str(&::aver_rt::str_lit!(" is not defined before its use"));
-                        __b
-                    })
+                    let __s = a;
+                    let mut __b = aver_rt::Buffer::with_capacity(46usize);
+                    __b.push_str(&::aver_rt::str_lit!(" is not defined before its use"));
+                    __s.append_buffer(__b)
                 })
             } else {
                 Ok((s, aver_rt::AverInt::from_i64(1)))

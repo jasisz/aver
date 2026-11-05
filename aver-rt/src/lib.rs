@@ -209,6 +209,19 @@ impl AverStr {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// `"{acc}…"`: the rest of the interpolation, gathered in `tail`, is
+    /// appended to `acc`'s own node when `acc` is its only owner, as
+    /// `acc + part` is; a shared `acc` is left as it is and the whole is
+    /// one new node.
+    pub fn append_buffer(mut self, tail: Buffer) -> AverStr {
+        if self.is_empty() {
+            return AverStr::from(tail);
+        }
+        if tail.bytes.is_empty() || Rc::append(&mut self.0, &tail.bytes) {
+            return self;
+        }
+        AverStr::new(Rc::from_parts(|| [&*self, tail.bytes.as_str()].into_iter()))
+    }
 }
 
 impl std::ops::Deref for AverStr {
@@ -3372,6 +3385,29 @@ mod tests {
         let part = AverStr::from("part");
         let whole = AverStr::from("") + &part;
         assert!(crate::shared::Shared::ptr_eq(&whole.0, &part.0));
+    }
+
+    #[test]
+    fn appending_a_buffer_changes_only_a_string_with_one_owner() {
+        let tail = |text: &str| {
+            let mut buffer = Buffer::with_capacity(0);
+            buffer.push_str(text);
+            buffer
+        };
+        let mut acc = AverStr::from("");
+        for i in 0..200 {
+            acc = acc.append_buffer(tail(if i % 2 == 0 { "ab" } else { "é" }));
+        }
+        assert_eq!(acc.len(), 100 * 2 + 100 * 2);
+        let kept = acc.clone();
+        let grown = acc.append_buffer(tail("!"));
+        assert!(grown.ends_with("é!") && !kept.ends_with('!'));
+        assert_eq!(kept.len() + 1, grown.len());
+        let literal = crate::str_lit!("lit");
+        assert_eq!(&*literal.clone().append_buffer(tail("eral")), "literal");
+        assert_eq!(&*literal, "lit");
+        assert_eq!(&*kept.clone().append_buffer(tail("")), &*kept);
+        assert_eq!(&*AverStr::from("").append_buffer(tail("")), "");
     }
 
     #[test]

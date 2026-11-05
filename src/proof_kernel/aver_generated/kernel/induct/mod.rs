@@ -593,19 +593,13 @@ pub fn helperBody(
                 __b.push_str(&::aver_rt::str_lit!(" arguments"));
                 __b
             })),
-            (_, false) => Err(aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(66usize);
-                        __b.push_display(&(f));
-                        __b
-                    };
-                    __b.push_str(&::aver_rt::str_lit!(" recurses from a local binding of "));
-                    __b
-                };
+            (_, false) => Err({
+                let __s = f;
+                let mut __b = aver_rt::Buffer::with_capacity(66usize);
+                __b.push_str(&::aver_rt::str_lit!(" recurses from a local binding of "));
                 __b.push_display(&(h.name));
-                __b
-            })),
+                __s.append_buffer(__b)
+            }),
             _ => {
                 let __arg10 @ _ = {
                     let __arg8 @ _ = {
@@ -750,7 +744,7 @@ pub fn readOne(
 #[inline(always)]
 pub fn unread(mut ns @ _: aver_rt::AverList<AverStr>, h @ _: AverStr) -> Result<(), AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(ns, [] => Ok(()), [n, rest] => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(85usize); __b.push_display(&(h)); __b }; __b.push_str(&::aver_rt::str_lit!(" passes ")); __b }; __b.push_display(&(n)); __b }; __b.push_str(&::aver_rt::str_lit!(", which it does not bind, to a recursive call")); __b })) })
+    aver_list_match!(ns, [] => Ok(()), [n, rest] => { Err({ let __s = h; let mut __b = aver_rt::Buffer::with_capacity(85usize); __b.push_str(&::aver_rt::str_lit!(" passes ")); __b.push_display(&(n)); __b.push_str(&::aver_rt::str_lit!(", which it does not bind, to a recursive call")); __s.append_buffer(__b) }) })
 }
 
 /// Each parameter bound to its argument.

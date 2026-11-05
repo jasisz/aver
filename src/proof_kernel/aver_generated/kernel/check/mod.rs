@@ -2525,7 +2525,7 @@ pub fn transFrom(
             let __list_subject = __pat0;
             match aver_rt::list_uncons(&__list_subject) {
                 Some((a, __pat2)) => {
-                    ::aver_rt::aver_list_match_reuse!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(39usize); __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!("/trans.")); __b }; __b.push_display(&(i)); __b }); crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms, __list_slot] => { { let __list_subject = __pat1; match aver_rt::list_uncons(&__list_subject) { Some((p, moreSteps)) => { { let __arg13 @ _ = __list_slot.prepend(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } }, None => { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } } })
+                    ::aver_rt::aver_list_match_reuse!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = { let __s = path; let mut __b = aver_rt::Buffer::with_capacity(39usize); __b.push_str(&::aver_rt::str_lit!("/trans.")); __b.push_display(&(i)); __s.append_buffer(__b) }; crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms, __list_slot] => { { let __list_subject = __pat1; match aver_rt::list_uncons(&__list_subject) { Some((p, moreSteps)) => { { let __arg13 @ _ = __list_slot.prepend(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } }, None => { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } } })
                 }
                 None => crate::proof_kernel::aver_generated::kernel::check::refuse(
                     path,
@@ -4033,15 +4033,12 @@ pub fn enumStep(
     crate::proof_kernel::cancel_checkpoint();
     match crate::proof_kernel::aver_generated::kernel::check::finOfVar(v.clone(), env) {
         None => {
-            let __arg7 @ _ = aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(46usize);
-                    __b.push_display(&(v));
-                    __b
-                };
+            let __arg7 @ _ = {
+                let __s = v;
+                let mut __b = aver_rt::Buffer::with_capacity(46usize);
                 __b.push_str(&::aver_rt::str_lit!(" is not a given of finite type"));
-                __b
-            });
+                __s.append_buffer(__b)
+            };
             crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg7)
         }
         Some(f @ _) => {
@@ -5916,15 +5913,12 @@ pub fn induct(
                 }
                 Ok(__pat0 @ _) => match __pat0 {
                     None => {
-                        let __arg12 @ _ = aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(33usize);
-                                __b.push_display(&(f));
-                                __b
-                            };
+                        let __arg12 @ _ = {
+                            let __s = f;
+                            let mut __b = aver_rt::Buffer::with_capacity(33usize);
                             __b.push_str(&::aver_rt::str_lit!(" does not recurse"));
-                            __b
-                        });
+                            __s.append_buffer(__b)
+                        };
                         crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg12)
                     }
                     Some(r @ _) => crate::proof_kernel::aver_generated::kernel::check::inductOn(
@@ -6133,26 +6127,20 @@ pub fn measured(
                         crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyInt => {
                             Ok(())
                         }
-                        _ => Err(aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(43usize);
-                                __b.push_display(&(v));
-                                __b
-                            };
+                        _ => Err({
+                            let __s = v;
+                            let mut __b = aver_rt::Buffer::with_capacity(43usize);
                             __b.push_str(&::aver_rt::str_lit!(" is not a given of type Int"));
-                            __b
-                        })),
+                            __s.append_buffer(__b)
+                        }),
                     }
                 }
-                _ => Err(aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(43usize);
-                        __b.push_display(&(v));
-                        __b
-                    };
+                _ => Err({
+                    let __s = v;
+                    let mut __b = aver_rt::Buffer::with_capacity(43usize);
                     __b.push_str(&::aver_rt::str_lit!(" is not a given of type Int"));
-                    __b
-                })),
+                    __s.append_buffer(__b)
+                }),
             }
         }
     }
@@ -7618,27 +7606,21 @@ pub fn listInduct(
         );
         match __subject {
             (None, _) => {
-                let __arg13 @ _ = aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(44usize);
-                        __b.push_display(&(v));
-                        __b
-                    };
+                let __arg13 @ _ = {
+                    let __s = v;
+                    let mut __b = aver_rt::Buffer::with_capacity(44usize);
                     __b.push_str(&::aver_rt::str_lit!(" is not a given of list type"));
-                    __b
-                });
+                    __s.append_buffer(__b)
+                };
                 crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg13)
             }
             (_, true) => {
-                let __arg14 @ _ = aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(52usize);
-                        __b.push_display(&(v));
-                        __b
-                    };
+                let __arg14 @ _ = {
+                    let __s = v;
+                    let mut __b = aver_rt::Buffer::with_capacity(52usize);
                     __b.push_str(&::aver_rt::str_lit!(" is both inducted on and generalised"));
-                    __b
-                });
+                    __s.append_buffer(__b)
+                };
                 crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg14)
             }
             (Some(e), false) => {
@@ -7709,31 +7691,25 @@ pub fn lenInduct(
         );
         match __pat0 {
             None => {
-                let __arg18 @ _ = aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(44usize);
-                        __b.push_display(&(v));
-                        __b
-                    };
+                let __arg18 @ _ = {
+                    let __s = v;
+                    let mut __b = aver_rt::Buffer::with_capacity(44usize);
                     __b.push_str(&::aver_rt::str_lit!(" is not a given of list type"));
-                    __b
-                });
+                    __s.append_buffer(__b)
+                };
                 crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg18)
             }
             _ => {
                 if __pat1 {
                     {
-                        let __arg19 @ _ = aver_rt::AverStr::from({
-                            let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(52usize);
-                                __b.push_display(&(v));
-                                __b
-                            };
+                        let __arg19 @ _ = {
+                            let __s = v;
+                            let mut __b = aver_rt::Buffer::with_capacity(52usize);
                             __b.push_str(&::aver_rt::str_lit!(
                                 " is both inducted on and generalised"
                             ));
-                            __b
-                        });
+                            __s.append_buffer(__b)
+                        };
                         crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19)
                     }
                 } else {
@@ -7846,15 +7822,12 @@ pub fn lenCase(
             },
         );
         {
-            let __arg16 @ _ = aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(22usize);
-                    __b.push_display(&(path));
-                    __b
-                };
+            let __arg16 @ _ = {
+                let __s = path;
+                let mut __b = aver_rt::Buffer::with_capacity(22usize);
                 __b.push_str(&::aver_rt::str_lit!("/below"));
-                __b
-            });
+                __s.append_buffer(__b)
+            };
             crate::proof_kernel::aver_generated::kernel::check::caseProves(
                 c, &claim, __arg15, __arg16,
             )
@@ -8169,15 +8142,12 @@ pub fn listCases(
                 crate::proof_kernel::aver_generated::kernel::check::withHyps(&inCell, &__arg27)
             };
             {
-                let __arg30 @ _ = aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(21usize);
-                        __b.push_display(&(path));
-                        __b
-                    };
+                let __arg30 @ _ = {
+                    let __s = path;
+                    let mut __b = aver_rt::Buffer::with_capacity(21usize);
                     __b.push_str(&::aver_rt::str_lit!("/cons"));
-                    __b
-                });
+                    __s.append_buffer(__b)
+                };
                 crate::proof_kernel::aver_generated::kernel::check::caseProves(
                     c, &__arg28, __arg29, __arg30,
                 )
@@ -8227,15 +8197,12 @@ pub fn splitList(
         );
         match __subject {
             (None, _) => {
-                let __arg12 @ _ = aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(47usize);
-                        __b.push_display(&(v));
-                        __b
-                    };
+                let __arg12 @ _ = {
+                    let __s = v;
+                    let mut __b = aver_rt::Buffer::with_capacity(47usize);
                     __b.push_str(&::aver_rt::str_lit!(" is not a variable of list type"));
-                    __b
-                });
+                    __s.append_buffer(__b)
+                };
                 crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg12)
             }
             (_, false) => crate::proof_kernel::aver_generated::kernel::check::refuse(

@@ -924,15 +924,12 @@ pub fn valRepr(v @ _: &Val) -> AverStr {
             }
             crate::aver_generated::domain::value::Val__view::ValRecord(__name_fields) => {
                 let name = __name_fields.0.clone();
-                aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(21usize);
-                        __b.push_display(&(name));
-                        __b
-                    };
+                {
+                    let __s = name;
+                    let mut __b = aver_rt::Buffer::with_capacity(21usize);
                     __b.push_str(&::aver_rt::str_lit!("(...)"));
-                    __b
-                })
+                    __s.append_buffer(__b)
+                }
             }
             crate::aver_generated::domain::value::Val__view::ValTcpConnection(_) => {
                 ::aver_rt::str_lit!("Tcp.Connection(<resource>)")
@@ -1724,29 +1721,20 @@ pub fn valVariantReprTagged(fullName @ _: AverStr, fields @ _: &aver_rt::AverLis
         if __list_subject.is_empty() {
             fullName
         } else {
-            aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = {
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(34usize);
-                            __b.push_display(&(fullName));
-                            __b
-                        };
-                        __b.push_str(&::aver_rt::str_lit!("("));
-                        __b
-                    };
-                    __b.push_display(
-                        &(crate::aver_generated::domain::value::valFieldsRepr(
-                            fields,
-                            ::aver_rt::str_lit!(""),
-                            true,
-                        )),
-                    );
-                    __b
-                };
+            {
+                let __s = fullName;
+                let mut __b = aver_rt::Buffer::with_capacity(34usize);
+                __b.push_str(&::aver_rt::str_lit!("("));
+                __b.push_display(
+                    &(crate::aver_generated::domain::value::valFieldsRepr(
+                        fields,
+                        ::aver_rt::str_lit!(""),
+                        true,
+                    )),
+                );
                 __b.push_str(&::aver_rt::str_lit!(")"));
-                __b
-            })
+                __s.append_buffer(__b)
+            }
         }
     }
 }

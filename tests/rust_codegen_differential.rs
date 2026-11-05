@@ -2840,6 +2840,57 @@ fn main() -> Unit
     assert_eq!(rust, expected, "Rust strings diverged from the VM");
 }
 
+/// An interpolation that starts with a `String` local appends the rest to
+/// that string, in place when it is the local's last use: a tail loop that
+/// grows its accumulator as `"{acc}…"`, a string read again after it is
+/// extended (its copy must stay as it was), the local twice in one
+/// interpolation, the local not first, multibyte pieces, and an empty
+/// accumulator.
+#[test]
+fn interpolation_onto_a_leading_string_matches_vm() {
+    let src = r#"module InterpolationOntoLeadingString
+    intent = "Interpolations that start with a string local, grown in place or kept"
+    effects [Console.print]
+
+fn grow(n: Int, acc: String) -> String
+    ? "Append one line per step onto the accumulator."
+    match n <= 0
+        true -> acc
+        false -> grow(n - 1, "{acc}{n}: é😀{n * 2}\n")
+
+fn trail(n: Int, acc: String) -> String
+    ? "Append onto the accumulator from the other side."
+    match n <= 0
+        true -> acc
+        false -> trail(n - 1, "{n}ż{acc}")
+
+fn readOnly(acc: String) -> String
+    ? "Extend a string the caller still holds."
+    "{acc}!"
+
+fn main() -> Unit
+    ? "Print each shape so a drifting backend shows a diff."
+    ! [Console.print]
+    long = grow(2000, "")
+    Console.print("{String.len(long)}|{String.slice(long, 0, 12)}|{String.slice(long, String.len(long) - 12, String.len(long))}")
+    base = grow(3, "start\n")
+    more = "{base}more"
+    Console.print("{base}#{more}#{base}")
+    twice = "{base}{base}"
+    Console.print("{String.len(twice)}|{readOnly(base)}|{base}")
+    Console.print(trail(5, "") + "|" + trail(3, "é"))
+    empty = ""
+    Console.print("[{empty}][{empty}x][{empty}{empty}][{readOnly(empty)}]")
+"#;
+    let vm = run_vm_inline("interp_leading_string", src).expect("VM run");
+    let rust = build_run_rust_inline("interp_leading_string", src)
+        .expect("Rust compile + cargo build + run");
+    assert_eq!(
+        rust, vm,
+        "Rust interpolation onto a leading string diverged from the VM"
+    );
+}
+
 /// List build, on the shapes where the two backends could disagree.
 ///
 /// ORDER is the claim: `prepend` then `reverse` yields traversal order,
