@@ -1568,6 +1568,7 @@ pub fn print_module(
         fns: out,
         types: types.finish(),
         aint_eq_idx,
+        absent: Vec::new(),
     }
 }
 

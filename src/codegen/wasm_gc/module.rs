@@ -6962,7 +6962,16 @@ fn emit_module_pass(
     // as they are written, so only the finished module knows which of them a
     // program calls (`dead_functions.rs`). The canonical module, the one a
     // certificate binds, is the shrunk one.
-    let (bytes, renumbering) = super::dead_functions::drop_dead_functions(bytes)?;
+    //
+    // One root no section names: the certificate wall finds the bignum
+    // sub-routines through the `Int` add helper's calls (`aver-cert`
+    // `module_facts::derive_roles`), and a module exporting the box helper
+    // must carry it to have a host-role table at all.
+    let kept: Vec<u32> = builtin_registry
+        .lookup_wasm_fn_idx(BuiltinName::AintAdd)
+        .into_iter()
+        .collect();
+    let (bytes, renumbering) = super::dead_functions::drop_dead_functions(bytes, &kept)?;
     if renumbering.dropped() > 0
         && let Err(e) = validate(&bytes)
     {
@@ -7016,6 +7025,12 @@ fn emit_module_pass(
         registry.aint_eq_fn_idx.filter(|_| registry.bignum),
     );
     super::dead_functions::renumber_plans(&mut cert_plans, &renumbering);
+    cert_plans.absent = resolved_fn_defs
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| renumbering.get(import_count + 1 + *i as u32).is_none())
+        .map(|(_, rfd)| rfd.name.clone())
+        .collect();
     Ok(((bytes, mir_emitted, cert_plans), kept_names))
 }
 

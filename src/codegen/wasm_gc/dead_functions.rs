@@ -47,12 +47,17 @@ impl FnRenumbering {
 }
 
 /// The module without the defined functions none of its roots reaches, and
-/// where every function went. A module with nothing to drop is returned as it
-/// came, byte for byte.
-pub(super) fn drop_dead_functions(bytes: Vec<u8>) -> Result<(Vec<u8>, FnRenumbering), WasmGcError> {
-    let graph = CallGraph::read(&bytes).map_err(|e| {
+/// where every function went. `kept` are roots the module's own sections do
+/// not name but a reader of its bytes relies on. A module with nothing to
+/// drop is returned as it came, byte for byte.
+pub(super) fn drop_dead_functions(
+    bytes: Vec<u8>,
+    kept: &[u32],
+) -> Result<(Vec<u8>, FnRenumbering), WasmGcError> {
+    let mut graph = CallGraph::read(&bytes).map_err(|e| {
         WasmGcError::Validation(format!("dead-function pass: cannot read module: {e}"))
     })?;
+    graph.roots.extend_from_slice(kept);
     let live = graph.live();
     let mut new_index = Vec::with_capacity(graph.total() as usize);
     let mut next = 0u32;
@@ -93,7 +98,7 @@ pub(super) fn renumber_plans(plans: &mut crate::codegen::cert::ModulePlans, at: 
     use crate::codegen::cert::PlanExpr;
     fn walk(e: &mut PlanExpr, at: &FnRenumbering) -> Result<(), u32> {
         use crate::codegen::cert::PlanCallee;
-        let mut each = |args: &mut [PlanExpr]| args.iter_mut().try_for_each(|a| walk(a, at));
+        let each = |args: &mut [PlanExpr]| args.iter_mut().try_for_each(|a| walk(a, at));
         match e {
             PlanExpr::Literal(_)
             | PlanExpr::Local(_)
@@ -366,7 +371,7 @@ mod tests {
                 (func $dead call $helper)
                 (func $helper))"#,
         );
-        let (out, renumbering) = drop_dead_functions(bytes).unwrap();
+        let (out, renumbering) = drop_dead_functions(bytes, &[]).unwrap();
         wasmparser::validate(&out).unwrap();
         assert_eq!(defined_count(&out), 2);
         assert_eq!(renumbering.get(0), Some(0), "imports keep their index");
@@ -385,13 +390,13 @@ mod tests {
                 (func $a (export "a") (result i32) call $b)
                 (func $b (result i32) i32.const 7))"#,
         );
-        let (out, renumbering) = drop_dead_functions(bytes).unwrap();
+        let (out, renumbering) = drop_dead_functions(bytes, &[]).unwrap();
         wasmparser::validate(&out).unwrap();
         assert_eq!(renumbering.get(1), Some(0));
         assert_eq!(renumbering.get(2), Some(1));
-        let text = wasmprinter::print_bytes(&out).unwrap();
-        assert!(text.contains("call 1"), "{text}");
-        assert!(text.contains("(export \"a\" (func 0))"), "{text}");
+        let graph = CallGraph::read(&out).unwrap();
+        assert_eq!(graph.roots, [0], "the export follows `a` to index 0");
+        assert_eq!(graph.edges, [vec![1], vec![]], "`a` calls `b` at index 1");
     }
 
     #[test]
@@ -408,7 +413,7 @@ mod tests {
                 (func $callee)
                 (func $dead))"#,
         );
-        let (out, renumbering) = drop_dead_functions(bytes).unwrap();
+        let (out, renumbering) = drop_dead_functions(bytes, &[]).unwrap();
         wasmparser::validate(&out).unwrap();
         assert_eq!(defined_count(&out), 4);
         assert_eq!(renumbering.get(4), None);
@@ -423,10 +428,25 @@ mod tests {
                 (func $helper)
                 (func $dead))"#,
         );
-        let (out, _) = drop_dead_functions(bytes).unwrap();
+        let (out, _) = drop_dead_functions(bytes, &[]).unwrap();
         wasmparser::validate(&out).unwrap();
         assert_eq!(defined_count(&out), 3);
         assert_eq!(exported_names(&out), ["_start", "exposed"]);
+    }
+
+    #[test]
+    fn a_kept_function_survives_with_its_callees() {
+        let bytes = module(
+            r#"(module
+                (func $start (export "_start"))
+                (func $kept call $callee)
+                (func $callee)
+                (func $dead))"#,
+        );
+        let (out, renumbering) = drop_dead_functions(bytes, &[1]).unwrap();
+        wasmparser::validate(&out).unwrap();
+        assert_eq!(defined_count(&out), 3);
+        assert_eq!(renumbering.get(3), None);
     }
 
     #[test]
@@ -436,7 +456,7 @@ mod tests {
                 (func $start (export "_start") call $a)
                 (func $a))"#,
         );
-        let (out, renumbering) = drop_dead_functions(bytes.clone()).unwrap();
+        let (out, renumbering) = drop_dead_functions(bytes.clone(), &[]).unwrap();
         assert_eq!(out, bytes);
         assert_eq!(renumbering.dropped(), 0);
     }
@@ -448,7 +468,7 @@ mod tests {
                 (func $dead)
                 (func $kept (export "k")))"#,
         );
-        let (out, _) = drop_dead_functions(bytes).unwrap();
+        let (out, _) = drop_dead_functions(bytes, &[]).unwrap();
         let text = wasmprinter::print_bytes(&out).unwrap();
         assert!(text.contains("$kept"), "{text}");
         assert!(!text.contains("$dead"), "{text}");

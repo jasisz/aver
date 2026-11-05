@@ -47,9 +47,14 @@ pub struct Analysis {
     types: PlanTypeTable,
     certified: Vec<CertifiedExport>,
     declined: Vec<(String, String)>,
+    /// The user functions the module does not contain (`ModulePlans::absent`).
+    absent: Vec<String>,
     contracts: Vec<String>,
     module_envelope: ModuleEnvelopeFacts,
 }
+
+/// Why a user function the module does not contain is not certified.
+pub const ABSENT_FROM_MODULE: &str = "the function is not in the module: nothing reachable from the entry point or the exposed functions calls it";
 
 impl Analysis {
     pub fn certified_names(&self) -> Vec<String> {
@@ -1116,6 +1121,13 @@ pub fn analyze(
                 .unwrap_or_else(|| "no plan was printed for this function".to_string());
             (name.clone(), clean_reason(&reason))
         })
+        .chain(
+            plans
+                .absent
+                .iter()
+                .filter(|name| name.is_ascii() && !is_runtime_name(name))
+                .map(|name| (name.clone(), ABSENT_FROM_MODULE.to_string())),
+        )
         .collect();
 
     let certified_pairs: Vec<(String, u32)> = certified
@@ -1139,6 +1151,12 @@ pub fn analyze(
         types,
         certified,
         declined,
+        absent: plans
+            .absent
+            .iter()
+            .filter(|name| name.is_ascii() && !is_runtime_name(name))
+            .cloned()
+            .collect(),
         contracts,
         module_envelope,
     })
@@ -1227,6 +1245,7 @@ mod produce_tests {
             ],
             types: int_table(),
             aint_eq_idx: None,
+            absent: Vec::new(),
         }
     }
 
@@ -1442,6 +1461,7 @@ mod produce_tests {
             ],
             types,
             aint_eq_idx: None,
+            absent: Vec::new(),
         };
         let analysis =
             analyze(&fixture("variants"), &plans, crate::format::TARGET_WASM_GC).expect("analyzes");
@@ -1504,6 +1524,7 @@ mod produce_tests {
             ],
             types,
             aint_eq_idx: None,
+            absent: Vec::new(),
         };
         let analysis =
             analyze(&fixture("hello"), &plans, crate::format::TARGET_WASM_GC).expect("analyzes");
