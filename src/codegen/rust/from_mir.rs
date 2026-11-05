@@ -10410,6 +10410,86 @@ fn emit_mir_builtin_call(
     }
 }
 
+/// The statement that appends one piece of a string being built to the
+/// `Buffer` named `buffer`. An interpolated value is written straight into
+/// the buffer, without a string of its own.
+fn emit_buf_push(buffer: &str, piece: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    if let MirExpr::Call(call) = &piece.node
+        && let MirCallee::Intrinsic(BuiltinIntrinsic::ToStr) = &call.node.callee
+        && let [value] = call.node.args.as_slice()
+    {
+        let value = emit_mir_expr(value, ctx)?;
+        return Some(format!("{buffer}.push_display(&({value}));"));
+    }
+    let s = emit_mir_expr(piece, ctx)?;
+    Some(format!("{buffer}.push_str(&{s});"))
+}
+
+/// An interpolation that starts with a `String` local at its last use,
+/// `"{acc}{name}: {qty}"`: the other pieces are gathered in a buffer and
+/// appended to the local's own string, in place when nothing else holds
+/// it, as `acc + part` is. A loop that grows its accumulator this way then
+/// costs what the string holds, not the sum of every step. `None` for any
+/// other shape (the buffer then starts empty, as written); `Some(None)`
+/// when a piece cannot be emitted.
+fn emit_interpolation_onto_leading_string(
+    buf: &Spanned<MirExpr>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<Option<String>> {
+    fn intrinsic_args(
+        e: &Spanned<MirExpr>,
+        which: BuiltinIntrinsic,
+    ) -> Option<&[Spanned<MirExpr>]> {
+        match &e.node {
+            MirExpr::Call(call) if call.node.callee == MirCallee::Intrinsic(which) => {
+                Some(call.node.args.as_slice())
+            }
+            _ => None,
+        }
+    }
+    let mut pieces = Vec::new();
+    let mut at = buf;
+    let cap = loop {
+        if let Some([inner, piece]) = intrinsic_args(at, BuiltinIntrinsic::BufAppend) {
+            pieces.push(piece);
+            at = inner;
+        } else if let Some([cap]) = intrinsic_args(at, BuiltinIntrinsic::BufNew) {
+            break cap;
+        } else {
+            return None;
+        }
+    };
+    let first = pieces.pop()?;
+    let [lead] = intrinsic_args(first, BuiltinIntrinsic::ToStr)? else {
+        return None;
+    };
+    // Only a local this interpolation may take: a copy of a string read
+    // again later would be a new string anyway, so it is built as written.
+    let facts = super::ownership::value_facts(&lead.node, ctx);
+    if !matches!(lead.ty(), Some(Type::Str))
+        || local_of(&lead.node).is_none()
+        || facts.mode != super::ownership::RustValueMode::Owned
+        || !facts.can_move
+    {
+        return None;
+    }
+    let cap = literal_usize(cap)?;
+    Some((|| {
+        let lead_code = emit_mir_expr(lead, ctx)?;
+        let head = generated_ident("s");
+        let buffer = generated_ident("b");
+        let mut code = format!(
+            "{{ let {head} = {lead_code}; let mut {buffer} = aver_rt::Buffer::with_capacity({cap});"
+        );
+        for piece in pieces.iter().rev() {
+            code.push(' ');
+            code.push_str(&emit_buf_push(&buffer, piece, ctx)?);
+        }
+        code.push_str(&format!(" {head}.append_buffer({buffer}) }}"));
+        Some(code)
+    })())
+}
+
 /// Emit one of the 5 deforestation intrinsics from MIR, byte-identical
 /// to the HIR oracle's `emit_builtin_call_inner` intrinsic arms. Args
 /// are by-value (raw `emit_mir_expr`, no clone / borrow), matching the
@@ -10443,21 +10523,8 @@ fn emit_mir_intrinsic_call(
         BuiltinIntrinsic::BufAppend => {
             let buf = emit_mir_expr(&args[0], ctx)?;
             let buffer = generated_ident("b");
-            // An interpolated value is written straight into the buffer,
-            // without a string of its own.
-            if let MirExpr::Call(call) = &args[1].node
-                && let MirCallee::Intrinsic(BuiltinIntrinsic::ToStr) = &call.node.callee
-                && let [value] = call.node.args.as_slice()
-            {
-                let value = emit_mir_expr(value, ctx)?;
-                return Some(format!(
-                    "{{ let mut {buffer} = {buf}; {buffer}.push_display(&({value})); {buffer} }}"
-                ));
-            }
-            let s = emit_mir_expr(&args[1], ctx)?;
-            Some(format!(
-                "{{ let mut {buffer} = {buf}; {buffer}.push_str(&{s}); {buffer} }}"
-            ))
+            let push = emit_buf_push(&buffer, &args[1], ctx)?;
+            Some(format!("{{ let mut {buffer} = {buf}; {push} {buffer} }}"))
         }
         BuiltinIntrinsic::BufAppendSepUnlessFirst => {
             let buf = emit_mir_expr(&args[0], ctx)?;
@@ -10468,6 +10535,9 @@ fn emit_mir_intrinsic_call(
             ))
         }
         BuiltinIntrinsic::BufFinalize => {
+            if let Some(code) = emit_interpolation_onto_leading_string(&args[0], ctx) {
+                return code;
+            }
             let buf = emit_mir_expr(&args[0], ctx)?;
             Some(format!("aver_rt::AverStr::from({})", buf))
         }

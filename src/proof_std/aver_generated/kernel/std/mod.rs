@@ -1908,19 +1908,13 @@ pub fn joinPath(path @ _: AverStr, label @ _: AverStr) -> AverStr {
     if (&*path == "") {
         label
     } else {
-        aver_rt::AverStr::from({
-            let mut __b = {
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(33usize);
-                    __b.push_display(&(path));
-                    __b
-                };
-                __b.push_str(&::aver_rt::str_lit!("/"));
-                __b
-            };
+        {
+            let __s = path;
+            let mut __b = aver_rt::Buffer::with_capacity(33usize);
+            __b.push_str(&::aver_rt::str_lit!("/"));
             __b.push_display(&(label));
-            __b
-        })
+            __s.append_buffer(__b)
+        }
     }
 }
 
@@ -1931,19 +1925,13 @@ pub fn refuse(
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
     crate::proof_std::cancel_checkpoint();
     Err(
-        crate::proof_std::aver_generated::kernel::std::Stop::Refused(aver_rt::AverStr::from({
-            let mut __b = {
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(34usize);
-                    __b.push_display(&(path));
-                    __b
-                };
-                __b.push_str(&::aver_rt::str_lit!(": "));
-                __b
-            };
+        crate::proof_std::aver_generated::kernel::std::Stop::Refused({
+            let __s = path;
+            let mut __b = aver_rt::Buffer::with_capacity(34usize);
+            __b.push_str(&::aver_rt::str_lit!(": "));
             __b.push_display(&(why));
-            __b
-        })),
+            __s.append_buffer(__b)
+        }),
     )
 }
 
@@ -2135,21 +2123,15 @@ pub fn caseNode(
     match crate::proof_std::aver_generated::kernel::std::at(n.goal.clone(), v.clone(), x) {
         Ok(g @ _) => Ok({
             let __base = {
-                let __arg5 @ _ = aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = {
-                            let mut __b = aver_rt::Buffer::with_capacity(35usize);
-                            __b.push_display(&(v));
-                            __b
-                        };
-                        __b.push_str(&::aver_rt::str_lit!(" = "));
-                        __b
-                    };
+                let __arg5 @ _ = {
+                    let __s = v;
+                    let mut __b = aver_rt::Buffer::with_capacity(35usize);
+                    __b.push_str(&::aver_rt::str_lit!(" = "));
                     __b.push_display(
                         &(crate::proof_std::aver_generated::kernel::std::valueText(x)),
                     );
-                    __b
-                });
+                    __s.append_buffer(__b)
+                };
                 crate::proof_std::aver_generated::kernel::std::down(n, __arg5)
             };
             crate::proof_std::aver_generated::kernel::std::Node { goal: g, ..__base }
@@ -2252,15 +2234,12 @@ pub fn listStepRefusal(
             used.contains(&tl),
         );
         match __subject {
-            (false, _, _, _) => Some(aver_rt::AverStr::from({
-                let mut __b = {
-                    let mut __b = aver_rt::Buffer::with_capacity(44usize);
-                    __b.push_display(&(v));
-                    __b
-                };
+            (false, _, _, _) => Some({
+                let __s = v;
+                let mut __b = aver_rt::Buffer::with_capacity(44usize);
                 __b.push_str(&::aver_rt::str_lit!(" is not a list variable here"));
-                __b
-            })),
+                __s.append_buffer(__b)
+            }),
             (_, true, _, _) => Some(aver_rt::AverStr::from({
                 let mut __b = {
                     let mut __b = {
