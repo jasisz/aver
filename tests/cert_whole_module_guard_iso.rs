@@ -1801,6 +1801,8 @@ fn export_index_byte(bytes: &[u8], name: &str) -> (usize, u8) {
 ///   `sumTo` (its entry kept, its obligation gone) leaves its export
 ///   unaccounted for; the live check weakened to accept any function export
 ///   in the declared branch accepts it.
+/// * The certified labels are distinct, on both paths: a second `sumTo` is
+///   rejected, and the copies without the distinctness accept it.
 /// * No certified label is declared uncertified, on both paths: the slow
 ///   definition, and the large-module `ScaleExports.labelsDisjoint` the package
 ///   decides as `labels_disjoint` (which the checker's Rust pre-check would
@@ -1863,7 +1865,16 @@ fn certified_exports_are_bound_by_index_and_label() {
     let (_, start_idx) = export_index_byte(&wasm, "_start");
     stolen[sum_at] = start_idx;
     let stolen_hex = hex_le(&stolen);
-    const DISJOINT: &str = "          claimed.all (fun c =>\n            match _root_.AverCert.WasmSlice.seqKey c.2 with\n            | some k => !declaredIndex.contains k\n            | none => false) &&\n";
+    const DISJOINT: &str = "          labels.all (fun k => !declaredIndex.contains k) &&\n";
+    const LABELS_NODUP: &str = "          _root_.AverCert.WasmSlice.natListNodup labels &&\n";
+    assert_eq!(
+        of.matches(LABELS_NODUP).count(),
+        1,
+        "the label distinctness conjunct moved; refit the GuardIso surgery"
+    );
+    let no_label_nodup = of
+        .replace(LABELS_NODUP, "")
+        .replace("exportsAccountedOf", "exportsAccountedOfNoLabelNodup");
     assert_eq!(
         of.matches(DISJOINT).count(),
         1,
@@ -1872,15 +1883,24 @@ fn certified_exports_are_bound_by_index_and_label() {
     let scale = std::fs::read_to_string(cert.join("ScaleExports.lean"))
         .expect("the materialized wall has ScaleExports.lean");
     let labels = extract_wall_def(&scale, "labelsDisjoint");
-    const LOOKUP: &str = "| some k => !index.contains k";
+    const LOOKUP: &str = "lk.all (fun k => !index.contains k)";
+    const LK_NODUP: &str = "AverCert.WasmSlice.natListNodup lk && ";
     assert_eq!(
         labels.matches(LOOKUP).count(),
         1,
         "the label lookup moved; refit the GuardIso surgery"
     );
+    assert_eq!(
+        labels.matches(LK_NODUP).count(),
+        1,
+        "refit the GuardIso surgery"
+    );
     let labels_weak = labels
-        .replace(LOOKUP, "| some _ => true")
+        .replace(LOOKUP, "true")
         .replace("labelsDisjoint", "labelsDisjointWeak");
+    let labels_no_nodup = labels
+        .replace(LK_NODUP, "")
+        .replace("labelsDisjoint", "labelsDisjointNoNodup");
     let no_disjoint = of
         .replace(DISJOINT, "")
         .replace("exportsAccountedOf", "exportsAccountedOfNoDisjoint");
@@ -1901,14 +1921,20 @@ function export in the declared branch. -/
 /-! Live `exportsAccountedOf`, weakened by exactly the disjointness of the
 claimed labels and the declared names. -/
 {no_disjoint}
+/-! Live `exportsAccountedOf`, weakened by exactly the distinctness of the
+claimed labels. -/
+{no_label_nodup}
 
 end AverCert.AcceptedArtifact
 
 namespace AverCert.ScaleExports
 open AverCert.Schema AverCert.AcceptedArtifact
 /-! Live `labelsDisjoint` (the large-module path's disjointness, which the
-package's `labels_disjoint` decides), weakened by exactly the label lookup. -/
+package's `labels_disjoint` decides), weakened by exactly the label lookup,
+and by exactly the labels' distinctness. -/
 {labels_weak}
+
+{labels_no_nodup}
 end AverCert.ScaleExports
 
 example : AcceptedArtifact.exportsAccounted Artifact.data = true := Artifact.exports_ok
@@ -1978,6 +2004,27 @@ example : ScaleExports.labelsDisjoint countDownManifest = false := by decide +ke
 example : ScaleExports.labelsDisjointWeak stolenManifest = true := by decide +kernel
 -- The package's own theorem is the live definition at this manifest.
 example : ScaleExports.labelsDisjoint manifest = true := Artifact.labels_disjoint
+
+-- (f) Two certified functions under one label (the checker's Rust pre-check
+-- refuses a duplicate; the wall refuses it on its own): the claimed labels
+-- with a second `sumTo` at an unexported index, and a manifest whose
+-- obligations carry `sumTo` twice. The live definitions reject both; the
+-- copies without the distinctness accept them.
+def doubledLabels : List (Nat × List Nat) :=
+  AcceptedArtifact.claimedLabels manifest ++ [(999, AcceptedArtifact.stringBytes "sumTo")]
+example : AcceptedArtifact.exportsAccountedOf ArtifactBytes.modBytes ArtifactBytes.modLen
+    (AcceptedArtifact.claimedLabels manifest)
+    (AcceptedArtifact.declaredUncertifiedNames manifest) = true := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOf ArtifactBytes.modBytes ArtifactBytes.modLen
+    doubledLabels (AcceptedArtifact.declaredUncertifiedNames manifest) = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfNoLabelNodup ArtifactBytes.modBytes ArtifactBytes.modLen
+    doubledLabels (AcceptedArtifact.declaredUncertifiedNames manifest) = true := by decide +kernel
+def doubledManifest : Manifest :=
+  match manifest.obligations.find? (fun o => o.name == "sumTo") with
+  | some o => {{ manifest with obligations := manifest.obligations ++ [{{ o with self := 999 }}] }}
+  | none => manifest
+example : ScaleExports.labelsDisjoint doubledManifest = false := by decide +kernel
+example : ScaleExports.labelsDisjointNoNodup doubledManifest = true := by decide +kernel
 "#
     );
     assert_probe_holds(&cert, "ExportBindingGuardIso.lean", &lean);
