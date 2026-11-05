@@ -1,0 +1,64 @@
+module M
+    intent = "Int.div and Int.mod by a divisor that is no literal, under Result.withDefault: computed on the machine word and exactly, as the VM computes them."
+    effects [Console]
+
+fn trace(n: Int) -> Int
+    ? "Prints its argument and returns it, to see each leaf run once, in order."
+    ! [Console.print]
+    Console.print("leaf {n}")
+    n
+
+fn md(a: Int, b: Int) -> Int
+    ? "The remainder, or -1 on a zero divisor."
+    Result.withDefault(Int.mod(a, b), -1)
+
+fn dv(a: Int, b: Int) -> Int
+    ? "The quotient, or -1 on a zero divisor."
+    Result.withDefault(Int.div(a, b), -1)
+
+fn nested(a: Int, b: Int, d: Int) -> Int
+    ? "Operands and fallback that are trees themselves, inside a bigger tree."
+    Result.withDefault(Int.mod(a * 3 + 1, b - 2), d * d) + Result.withDefault(Int.div(a, b), 0) * 2
+
+fn gcd(a: Int, b: Int) -> Int
+    ? "Euclid, the remainder an argument of a tail call."
+    match b == 0
+        true -> a
+        false -> gcd(b, Result.withDefault(Int.mod(a, b), 0))
+
+fn boxed(a: Int, b: Int) -> String
+    ? "The Result taken apart by a match."
+    match Int.div(a, b)
+        Result.Ok(q) -> "ok {q}"
+        Result.Err(e) -> "err {e}"
+
+fn show(a: Int, b: Int) -> Unit
+    ? "Every shape for one pair of values."
+    ! [Console.print]
+    Console.print("{a} {b}: {md(a, b)} {dv(a, b)} {md(b, a)} {dv(b, a)} {nested(a, b, a)} {gcd(a, b)} {boxed(a, b)}")
+
+fn main() -> Unit
+    ? "Runs the shapes over signs, zero, the edges of the machine word and big values."
+    ! [Console.print]
+    big = Bits.shiftLeft(1, 70) + 3
+    min = -9223372036854775807 - 1
+    max = 9223372036854775807
+    show(7, 3)
+    show(-7, 3)
+    show(7, -3)
+    show(-7, -3)
+    show(7, 0)
+    show(0, 5)
+    show(-6, 3)
+    show(min, -1)
+    show(min, 1)
+    show(min, min)
+    show(min, max)
+    show(max, -1)
+    show(min, -2)
+    show(big, 7)
+    show(-big, -7)
+    show(big, big)
+    show(big, 0)
+    show(5, -big)
+    Console.print("{Result.withDefault(Int.div(trace(7), trace(0)), trace(5))} {Result.withDefault(Int.mod(trace(-7), trace(2)), trace(9))}")

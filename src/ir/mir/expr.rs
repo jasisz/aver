@@ -308,7 +308,20 @@ fn shell_places(shell: &mut Spanned<MirExpr>, n: usize) -> Vec<&mut Spanned<MirE
             vec![&mut *b.lhs, &mut *b.rhs]
         }
         MirExpr::Neg(x) => vec![&mut **x],
-        MirExpr::Call(c) => c.node.args.iter_mut().take(n).collect(),
+        // `Result.withDefault(Int.div(a, b), d)` (`IntWordOp::DivOr` /
+        // `ModOr`): `a`, `b`, `d`.
+        MirExpr::Call(c) => {
+            let nested = n == 3
+                && matches!(c.node.args.as_slice(), [res, _] if matches!(res.node, MirExpr::Call(_)));
+            if !nested {
+                return c.node.args.iter_mut().take(n).collect();
+            }
+            let (res, d) = c.node.args.split_at_mut(1);
+            let MirExpr::Call(inner) = &mut res[0].node else {
+                unreachable!("guarded: a call")
+            };
+            inner.node.args.iter_mut().take(2).chain(d).collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -316,6 +329,13 @@ fn shell_places(shell: &mut Spanned<MirExpr>, n: usize) -> Vec<&mut Spanned<MirE
 /// The operands of an exact expression built by [`IntWordNode::exact`].
 fn shell_operands(shell: &Spanned<MirExpr>, n: usize) -> Vec<&Spanned<MirExpr>> {
     match &shell.node {
+        MirExpr::Call(c) if n == 3 => match c.node.args.as_slice() {
+            [res, d] => match &res.node {
+                MirExpr::Call(inner) => inner.node.args.iter().take(2).chain([d]).collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        },
         MirExpr::BinOp(b) => vec![&*b.node.lhs, &*b.node.rhs],
         MirExpr::Neg(x) => vec![&**x],
         MirExpr::Call(c) => c.node.args.iter().take(n).collect(),

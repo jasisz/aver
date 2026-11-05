@@ -1,0 +1,16 @@
+module M
+    intent = "No Int tree but a quotient and a remainder by a divisor that is no literal."
+    effects [Console.print]
+
+fn md(a: Int, b: Int) -> Int
+    ? "The remainder, or 0 on a zero divisor."
+    Result.withDefault(Int.mod(a, b), 0)
+
+fn dv(a: Int, b: Int) -> Int
+    ? "The quotient, or 0 on a zero divisor."
+    Result.withDefault(Int.div(a, b), 0)
+
+fn main() -> Unit
+    ? "One call of each."
+    ! [Console.print]
+    Console.print("{md(17, 5)} {dv(17, 5)}")

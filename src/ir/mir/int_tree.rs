@@ -9,7 +9,10 @@ use crate::ir::hir::BuiltinIntrinsic;
 use super::expr::{MirCallee, MirExpr};
 
 /// `Div`/`Mod` divide by a nonzero literal; `Shl`/`Shr`/`Low` take a
-/// literal count.
+/// literal count. `DivOr`/`ModOr` are `Result.withDefault(Int.div(a, b), d)`
+/// and `Result.withDefault(Int.mod(a, b), d)` over three operands: `d` when
+/// `b` is zero, the Euclidean quotient or remainder otherwise
+/// ([`or_default_of`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum IntOp {
     Add,
@@ -28,6 +31,8 @@ pub enum IntOp {
     Shl(i64),
     Shr(i64),
     Low(i64),
+    DivOr,
+    ModOr,
 }
 
 impl IntOp {
@@ -115,4 +120,39 @@ pub fn op_of<'e>(e: Node<'e>, builtins: &[String]) -> Option<(IntOp, Node<'e>, O
         }
         _ => None,
     }
+}
+
+/// `Result.withDefault(Int.div(a, b), d)` or `Result.withDefault(Int.mod(a,
+/// b), d)` over `Int` operands, any divisor: the operation (`DivOr` /
+/// `ModOr`) and `[a, b, d]`, in evaluation order. Total: `d` on a zero
+/// divisor, the Euclidean quotient or remainder otherwise. A divisor that is
+/// a nonzero literal never comes here: it resolves to the `Int` intrinsic.
+pub fn or_default_of<'e>(e: Node<'e>, builtins: &[String]) -> Option<(IntOp, [Node<'e>; 3])> {
+    let MirExpr::Call(c) = &e.node else {
+        return None;
+    };
+    let MirCallee::Builtin(id) = c.node.callee else {
+        return None;
+    };
+    let [res, d] = c.node.args.as_slice() else {
+        return None;
+    };
+    if builtins.get(id.0 as usize)?.as_str() != "Result.withDefault" || !is_int(e) || !is_int(d) {
+        return None;
+    }
+    let MirExpr::Call(inner) = &res.node else {
+        return None;
+    };
+    let MirCallee::Builtin(inner_id) = inner.node.callee else {
+        return None;
+    };
+    let [a, b] = inner.node.args.as_slice() else {
+        return None;
+    };
+    let op = match builtins.get(inner_id.0 as usize)?.as_str() {
+        "Int.div" => IntOp::DivOr,
+        "Int.mod" => IntOp::ModOr,
+        _ => return None,
+    };
+    (is_int(a) && is_int(b)).then_some((op, [a, b, d]))
 }

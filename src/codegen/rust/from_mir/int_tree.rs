@@ -281,6 +281,9 @@ fn fast(e: Node<'_>, ahead: &Ahead<'_>, ctx: &MirEmitCtx<'_>) -> Option<String> 
             format!("(({x}) & {}i64)", ((1i128 << (w + 1)) - 1) as i64)
         }
         // Past the inline range: kept exact, the whole tree with it.
-        IntOp::Mod(_) | IntOp::Shl(_) | IntOp::Low(_) => return None,
+        // `op_of` gives neither (`or_default_of` does).
+        IntOp::Mod(_) | IntOp::Shl(_) | IntOp::Low(_) | IntOp::DivOr | IntOp::ModOr => {
+            return None;
+        }
     })
 }

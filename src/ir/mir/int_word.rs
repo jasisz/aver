@@ -12,8 +12,9 @@
 //!
 //! A tree is a nest of the pure, total `Int` operations of
 //! [`super::int_tree`] (`+`, `-`, `*`, negation, `Int.abs`, `Int.min`,
-//! `Int.max`, the `Bits` operations, and division, remainder and shifts by a
-//! literal). Its leaves are literals, `Int` locals (read in place), and any
+//! `Int.max`, the `Bits` operations, division, remainder and shifts by a
+//! literal, and a quotient or remainder by any divisor under
+//! `Result.withDefault`). Its leaves are literals, `Int` locals (read in place), and any
 //! other `Int` expression, evaluated once, in source order, ahead of the
 //! tree into a scratch local; the operations are pure and total, so running
 //! them after the leaves, or twice, cannot be observed.
@@ -354,6 +355,11 @@ impl Pass<'_> {
     /// The operation `e` is, with its operands, when the target computes it
     /// on `Int`s (not on raw `i64`s already).
     fn ops<'e>(&self, e: &'e Spanned<MirExpr>) -> Option<Ops<'e>> {
+        // A quotient or remainder by any divisor under `Result.withDefault`:
+        // the wall has no node for it, so a kept fn keeps the plain form.
+        if let Some((op, args)) = int_tree::or_default_of(e, self.target.builtins) {
+            return (!self.target.kept).then(|| (op, args.to_vec()));
+        }
         let (op, a, b) = int_tree::op_of(e, self.target.builtins)?;
         let raw = match &e.node {
             MirExpr::BinOp(b) => {

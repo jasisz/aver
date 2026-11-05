@@ -520,6 +520,9 @@ impl<'a> Twin<'a> {
             IntOp::Low(w) if w <= 62 => format!("({x} & {}i64)", (1i64 << w) - 1),
             // The low 63 bits or more of a non-negative word are the word.
             IntOp::Low(_) => format!("{K}(Some({x}).filter(|__v| *__v >= 0))"),
+            // `op_of` gives neither; the division under `Result.withDefault`
+            // is read by `division`.
+            IntOp::DivOr | IntOp::ModOr => return None,
         })
     }
 }

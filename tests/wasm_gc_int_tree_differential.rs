@@ -168,3 +168,39 @@ fn int_match_on_a_computed_subject_is_certified() {
         assert!(certified.contains(&name), "{name}: {manifest:#}");
     }
 }
+
+/// `Result.withDefault(Int.div(a, b), d)` and `Int.mod` with a divisor that
+/// is no literal: signs, a zero divisor, `i64::MIN / -1`, Big operands and
+/// fallbacks, trees as operands, a tail call, and leaves with effects, which
+/// run once each and in order.
+#[test]
+fn div_mod_by_a_variable_prints_what_the_vm_prints() {
+    let file = fixture("div_mod_by_variable.av");
+    let vm = run(&file, false);
+    assert!(
+        vm.contains("-9223372036854775808 -1: 0 9223372036854775808 "),
+        "{vm}"
+    );
+    assert!(
+        vm.ends_with("leaf 7\nleaf 0\nleaf 5\nleaf -7\nleaf 2\nleaf 9\n5 1\n"),
+        "{vm}"
+    );
+    assert_eq!(vm, run(&file, true));
+}
+
+/// The quotient and remainder by a divisor that is no literal are computed
+/// on `i64` in the fn: the machine division and remainder appear in the
+/// module besides the ones of the runtime's exact helper.
+#[test]
+fn div_mod_by_a_variable_runs_on_the_machine_word() {
+    let file = fixture("div_mod_word.av");
+    assert_eq!(run(&file, false), "2 3\n");
+    assert_eq!(run(&file, true), "2 3\n");
+    let count = |trees: bool, op: &str| {
+        let wat = wasmprinter::print_bytes(module(&file, trees)).expect("module prints");
+        wat.matches(op).count()
+    };
+    for op in ["i64.div_s", "i64.rem_s"] {
+        assert!(count(true, op) > count(false, op), "{op}");
+    }
+}
