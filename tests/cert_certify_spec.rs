@@ -2559,7 +2559,9 @@ fn certify_certifies_carrier_free_classes_in_a_module_without_int_helper() {
 #[test]
 fn certify_declines_name_the_blocker_that_actually_applies() {
     let (_out_dir, manifest) = certify_fixture(
-        "examples/data/fibonacci.av",
+        // The example with every function exposed: its `main` reaches only
+        // part of it, and a function nothing reaches is not in the module.
+        "tests/fixtures/cert_exposed/fibonacci.av",
         &[],
         "certify-decline-blockers",
     );

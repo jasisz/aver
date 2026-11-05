@@ -5722,7 +5722,8 @@ fn cert_verify_certifies_the_five_int_comparison_witnesses() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for (source, artifact, witnesses) in [
         (
-            "examples/formal/int_comparison_laws.av",
+            // The example with `atLeast` exposed, so the module contains it.
+            "tests/fixtures/cert_exposed/int_comparison_laws.av",
             "int_comparison_laws.wasm",
             &["sameKey", "atLeast"][..],
         ),
