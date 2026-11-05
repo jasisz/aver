@@ -224,13 +224,17 @@ impl<S: ThinSum> Thin<S> {
     /// sum some `lazy f(…)` returns, whose deferred calls keep their state
     /// there, and the low eight otherwise (`MAX_TAGS`), the rest holding the
     /// node's equality class (see [`crate::eq_classes`]).
-    const TAG_MASK: u32 = if S::LAZY { u32::MAX } else { 0xff };
+    const TAG_MASK: u32 = if S::LAZY || !cfg!(feature = "equality-classes") {
+        u32::MAX
+    } else {
+        0xff
+    };
 
     /// The node's equality class bits (see [`crate::eq_classes`]): 0 for a
     /// constructor without fields and in a sum some `lazy f(…)` returns.
     #[inline]
     pub fn class_bits(&self) -> u32 {
-        if S::LAZY || self.is_empty_ctor() {
+        if S::LAZY || !cfg!(feature = "equality-classes") || self.is_empty_ctor() {
             0
         } else {
             self.header().tag.load(Ordering::Relaxed) >> 8
@@ -242,7 +246,7 @@ impl<S: ThinSum> Thin<S> {
     /// and the tag, which never changes in a sum without `lazy`, with it.
     #[inline]
     pub fn set_class_bits(&self, bits: u32) {
-        if !S::LAZY && !self.is_empty_ctor() {
+        if !S::LAZY && cfg!(feature = "equality-classes") && !self.is_empty_ctor() {
             let tag = &self.header().tag;
             tag.store(
                 (tag.load(Ordering::Relaxed) & 0xff) | (bits << 8),
@@ -1569,6 +1573,13 @@ mod tests {
                 Some(T__Pairs::Leaf(a, b)) => a == b,
                 Some(T__Pairs::Nil | T__Pairs::Unit) => true,
                 Some(T__Pairs::Opt(a, b)) => a.0.walk_eq(&b.0, walk),
+                #[cfg(feature = "equality-classes")]
+                Some(T__Pairs::Pair(a, b)) => {
+                    walk.node_classed::<4, _>(self, other, true, |walk| {
+                        a.2 == b.2 && a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
+                    })
+                }
+                #[cfg(not(feature = "equality-classes"))]
                 Some(T__Pairs::Pair(a, b)) => walk.node(self, other, true, |walk| {
                     a.2 == b.2 && a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
@@ -1923,6 +1934,7 @@ mod tests {
     /// bits the node carries: view, match on a pair, taking the fields out,
     /// reusing the memory and freeing.
     #[test]
+    #[cfg(feature = "equality-classes")]
     fn class_bits_change_nothing_a_tag_decides() {
         let drops = Arc::new(AtomicUsize::new(0));
         let node = pair(
@@ -2175,6 +2187,13 @@ mod tests {
                 Some(L__Pairs::Leaf(a, b)) => a == b,
                 Some(L__Pairs::Nil) => true,
                 Some(L__Pairs::Held(a, b)) => a.0 == b.0,
+                #[cfg(feature = "equality-classes")]
+                Some(L__Pairs::Node(a, b)) => {
+                    walk.node_classed::<4, _>(self, other, true, |walk| {
+                        a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
+                    })
+                }
+                #[cfg(not(feature = "equality-classes"))]
                 Some(L__Pairs::Node(a, b)) => walk.node(self, other, true, |walk| {
                     a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
@@ -2226,6 +2245,7 @@ mod tests {
     /// call was made in keeps the call's state above its tag, and a deep
     /// comparison of such values, made and forced, writes nothing there.
     #[test]
+    #[cfg(feature = "equality-classes")]
     fn a_sum_with_deferred_calls_has_no_classes() {
         use crate::NodeId;
         static MADE: AtomicUsize = AtomicUsize::new(0);

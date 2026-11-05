@@ -6817,6 +6817,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         check,
         perf_notes,
         single_thread,
+        equality_classes,
         with_replay,
         policy_mode,
         guest_entry,
@@ -7001,6 +7002,9 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
                 .unwrap_or_default();
             if single_thread {
                 rust.threads = aver::config::RustThreads::One;
+            }
+            if let Some(n) = equality_classes {
+                rust.equality_classes = n;
             }
             rust
         },
@@ -8187,6 +8191,8 @@ pub(super) struct CompileOptions<'a> {
     pub(super) perf_notes: bool,
     /// `--single-thread`: as `[rust] threads = "one"`.
     pub(super) single_thread: bool,
+    /// `--equality-classes N`: as `[rust] equality_classes = N`.
+    pub(super) equality_classes: Option<u32>,
     pub(super) with_replay: bool,
     pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
     pub(super) guest_entry: Option<&'a str>,
@@ -13725,6 +13731,7 @@ error: build failed";
             recorded_source: None,
             emit_self_host_support: false,
             single_thread: false,
+            rust_equality_classes: 0,
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),

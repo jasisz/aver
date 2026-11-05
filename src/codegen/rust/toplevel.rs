@@ -844,6 +844,13 @@ fn emit_sum_type(
                 0 => "true".to_string(),
                 // Both nodes of one constructor: equal at once when they are
                 // one node and `==` is reflexive.
+                // With equality classes (`[rust] equality_classes`) the pair
+                // is looked up first and joins a class once found equal.
+                _ if walks_on(i) && thin && !lazy && ctx.rust_equality_classes > 0 => format!(
+                    "walk.node_classed::<{}, _>(self, other, {}, |walk| a0.walk_eq(b0, walk))",
+                    ctx.rust_equality_classes,
+                    capabilities.eq && !one_first
+                ),
                 _ if walks_on(i) && thin => format!(
                     "walk.node(self, other, {}, |walk| a0.walk_eq(b0, walk))",
                     capabilities.eq && !one_first
@@ -2706,6 +2713,7 @@ mod tests {
             recorded_source: None,
             emit_self_host_support: false,
             single_thread: false,
+            rust_equality_classes: 0,
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),
@@ -2845,6 +2853,34 @@ mod tests {
         assert!(
             emitted.contains("Tree::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)")
         );
+    }
+
+    #[test]
+    fn equality_classes_set_how_a_recursive_sum_compares_two_nodes() {
+        let td = TypeDef::Sum {
+            name: "Tree".to_string(),
+            variants: vec![
+                TypeVariant {
+                    name: "Empty".to_string(),
+                    fields: vec![],
+                },
+                TypeVariant {
+                    name: "Node".to_string(),
+                    fields: vec!["Tree".to_string(), "Int".to_string(), "Tree".to_string()],
+                },
+            ],
+            line: 1,
+        };
+        let mut ctx = empty_ctx();
+        ctx.type_defs.push(td.clone());
+        // `[rust] equality_classes = 0`: the walk as before.
+        let plain = emit_public_type_def(&td, &ctx);
+        assert!(plain.contains("walk.node(self, other, "));
+        assert!(!plain.contains("node_classed"));
+        // Above 0, the threshold is a constant of the generated code.
+        ctx.rust_equality_classes = 12;
+        let classed = emit_public_type_def(&td, &ctx);
+        assert!(classed.contains("walk.node_classed::<12, _>(self, other, "));
     }
 
     #[test]

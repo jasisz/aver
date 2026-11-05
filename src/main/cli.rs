@@ -513,6 +513,12 @@ pub(super) enum Commands {
         /// `[rust] threads = "one"` in aver.toml.
         #[arg(long)]
         single_thread: bool,
+        /// Rust only: how many pairs deep a comparison of two nodes of a
+        /// recursive sum must go before `==` keeps them as one equality class,
+        /// so that it does not compare them again; 0 keeps no classes. The
+        /// same as `[rust] equality_classes` in aver.toml, which it overrides.
+        #[arg(long, value_name = "N")]
+        equality_classes: Option<u32>,
         /// Emit optional record/replay runtime support into the generated project
         #[arg(long)]
         with_replay: bool,

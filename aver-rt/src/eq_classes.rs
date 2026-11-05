@@ -5,8 +5,11 @@
 //! node by node each time it meets them. When the same pairs come back —
 //! a term checked against its copy again and again — so does the work.
 //! Here a comparison that walked a pair of nodes of a recursive sum, went at
-//! least [`MIN_STEPS`] pairs deep and found them equal joins the two nodes
-//! into one class, in a union-find of this thread; a later comparison of
+//! least `MIN_STEPS` pairs deep (a parameter of
+//! [`Walk::node_classed`](crate::Walk::node_classed), which the code
+//! generator sets from `[rust] equality_classes`) and found them equal joins
+//! the two nodes into one class, in a union-find of this thread; a later
+//! comparison of
 //! two nodes of one class answers at once. Nothing is assumed: a class only
 //! ever holds nodes found equal, and structural equality is transitive, so
 //! any two nodes of a class are equal (for a sum holding `Float`s too: a
@@ -82,11 +85,6 @@
 use std::cell::{Cell, RefCell};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
-
-/// How many pairs a comparison of two nodes must walk below them, the two
-/// nodes counted, before they join one class: joining costs a little, and
-/// a shallow pair is cheap to compare again.
-pub const MIN_STEPS: u32 = 4;
 
 /// The bits of the class id (plus one) in a node's class bits.
 pub const ID_BITS: u32 = 20;

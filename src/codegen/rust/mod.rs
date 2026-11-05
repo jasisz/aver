@@ -180,6 +180,7 @@ fn transpile_project(
     ) {
         ctx.modules = modules;
     }
+    ctx.rust_equality_classes = rust.equality_classes;
     // Every refusal below is recorded on the context as it happens; this
     // transpile reports its own, not a previous one's.
     ctx.substituted_compile_errors.borrow_mut().clear();

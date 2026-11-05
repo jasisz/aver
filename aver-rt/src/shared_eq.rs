@@ -182,9 +182,35 @@ impl<'v> Walk<'_, 'v> {
         if reflexive && a.addr() == b.addr() {
             return true;
         }
-        #[cfg(feature = "equality-classes")]
+        let left = self.left.get();
+        if left == 0 {
+            // The pairs under way go on where they are; only the ones met
+            // from now on are remembered.
+            return self.remembering(a, b, fields_eq);
+        }
+        self.left.set(left - 1);
+        fields_eq(self)
+    }
+
+    /// [`Walk::node`] with equality classes (see [`crate::eq_classes`]):
+    /// two nodes that both carry a class of this thread are equal at once
+    /// when the classes meet, and two nodes found equal by a walk at least
+    /// `MIN_STEPS` pairs deep, the two counted, join one class. What the
+    /// generated `==` of a recursive sum calls when `[rust]
+    /// equality_classes` in `aver.toml` is `MIN_STEPS` above 0.
+    #[cfg(feature = "equality-classes")]
+    #[inline]
+    pub fn node_classed<const MIN_STEPS: u32, N: NodeId + WalkEq>(
+        self,
+        a: &'v N,
+        b: &'v N,
+        reflexive: bool,
+        fields_eq: impl FnOnce(Self) -> bool,
+    ) -> bool {
+        if reflexive && a.addr() == b.addr() {
+            return true;
+        }
         let (bits_a, bits_b) = (a.class_bits(), b.class_bits());
-        #[cfg(feature = "equality-classes")]
         if bits_a != 0 && bits_b != 0 && crate::eq_classes::same(a.addr(), bits_a, b.addr(), bits_b)
         {
             #[cfg(feature = "equality-classes-check")]
@@ -196,28 +222,21 @@ impl<'v> Walk<'_, 'v> {
         }
         let left = self.left.get();
         if left == 0 {
-            // The pairs under way go on where they are; only the ones met
-            // from now on are remembered.
             return self.remembering(a, b, fields_eq);
         }
         self.left.set(left - 1);
-        #[cfg(not(feature = "equality-classes"))]
-        return fields_eq(self);
-        #[cfg(feature = "equality-classes")]
+        let start = self.memory.steps.get();
+        self.memory.steps.set(start.wrapping_add(1));
+        let same = fields_eq(self);
+        // Joined only when the answer is final: no pair below was left for
+        // later, which happens only once the budget is spent.
+        if same
+            && self.memory.steps.get().wrapping_sub(start) >= MIN_STEPS
+            && self.memory.top.get() == 0
         {
-            let start = self.memory.steps.get();
-            self.memory.steps.set(start.wrapping_add(1));
-            let same = fields_eq(self);
-            // Joined only when the answer is final: no pair below was left
-            // for later, which happens only once the budget is spent.
-            if same
-                && self.memory.steps.get().wrapping_sub(start) >= crate::eq_classes::MIN_STEPS
-                && self.memory.top.get() == 0
-            {
-                crate::eq_classes::join(a, b);
-            }
-            same
+            crate::eq_classes::join(a, b);
         }
+        same
     }
 
     /// [`Walk::node`] with memory: a pair met [`DEEP`] bytes below where
