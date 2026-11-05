@@ -1987,6 +1987,7 @@ fn capped(i: Int) -> Int
     const CMP_SRC: &str = r#"
 module M
     intent = "t"
+    exposes [below, atZero]
 
 fn below(a: Int, b: Int) -> Bool
     a + 1 < b

@@ -749,8 +749,9 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        13,
-        "all 43 module exports must be certified or explicitly declared"
+        // 14 with `intDivGoal`, whose `Result` quotient declines.
+        14,
+        "all 45 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
         entry.as_object().is_some_and(|object| {
@@ -1118,16 +1119,18 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "idGoal",
         "listHeadGoal",
         "sumListGoal",
+        "intMulGoal",
+        "intDivGoal",
     ]
     .into_iter()
     .map(str::to_string)
     .collect();
-    let expected_backlog: BTreeSet<String> = ["floatAddGoal", "floatMulAddGoal"]
+    let expected_backlog: BTreeSet<String> = ["floatAddGoal", "floatMulAddGoal", "intDivGoal"]
         .into_iter()
         .map(str::to_string)
         .collect();
-    assert_eq!(planned_goal_names.len(), 32, "goal denominator changed");
-    assert_eq!(actual.len(), 30, "goal numerator changed");
+    assert_eq!(planned_goal_names.len(), 34, "goal denominator changed");
+    assert_eq!(actual.len(), 31, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()
@@ -1141,6 +1144,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             aver::codegen::cert::BOX_CONTRACT,
             aver::codegen::cert::INT_ADD_CONTRACT,
             aver::codegen::cert::INT_SUB_CONTRACT,
+            // `intMulGoal` multiplies two parameters; it is not total code.
+            aver::codegen::cert::INT_MUL_CONTRACT,
             aver::codegen::cert::STRING_EQ_CONTRACT,
             aver::codegen::cert::STRING_CONCAT_CONTRACT,
             aver::codegen::cert::INT_ADD_TOTAL_CONTRACT,

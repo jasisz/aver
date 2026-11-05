@@ -1,5 +1,5 @@
 module Fibonacci
-    exposes [FibStats, FibAcc, fibTR, fib, isEven, bigger, prependIfEven, finalizeFibStats, buildFibStatsTR, buildFibStats, nthOrZero, fibSpec, showListIntInner, showListInt, printStats, absF, approxEq, goldenApprox, showGolden]
+    exposes [nthOrZero, fibSpec, absF, approxEq, goldenApprox]
     intent =
         "Explores Fibonacci numbers and the golden ratio."
         "Single-pass stats builder computes fibs, sum, max, and evens in one traversal."
