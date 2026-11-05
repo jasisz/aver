@@ -508,6 +508,53 @@ fn compile_check_rejects_non_rust_target_before_codegen() {
     );
 }
 
+#[cfg(feature = "certify")]
+#[test]
+fn certify_without_entry_point_or_exposes_says_what_to_expose() {
+    // Nothing reaches a function of a module with no `main` and no `exposes`,
+    // so the module contains none and the certificate is empty. The compile
+    // says why and what to add, and names each function as not in the module.
+    let workspace = temp_output_dir("aver-certify-nothing-reachable");
+    fs::create_dir_all(&workspace).expect("create workspace");
+    let source = workspace.join("library.av");
+    fs::write(
+        &source,
+        "module Library\n    intent = \"A function nothing reaches.\"\n    effects []\n\nfn double(x: Int) -> Int\n    ? \"Twice x.\"\n    x + x\n\nverify double\n    double(2) => 4\n",
+    )
+    .expect("write source");
+    let output_dir = workspace.join("out");
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("compile")
+        .arg(&source)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("run aver compile --certify");
+    let report = format_output(&output);
+    assert!(output.status.success(), "{report}");
+    assert!(
+        report.contains("(0 certified, 1 source-level-only)"),
+        "{report}"
+    );
+    assert!(
+        report.contains("list the functions to certify in `exposes [...]`"),
+        "{report}"
+    );
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("cert").join("cert-manifest.json"))
+            .expect("certificate manifest exists"),
+    )
+    .expect("certificate manifest is JSON");
+    assert_eq!(
+        manifest["source_level_only"][0]["reason"],
+        "the function is not in the module: nothing reachable from the entry point or the exposed functions calls it"
+    );
+    let _ = fs::remove_dir_all(&workspace);
+}
+
 #[cfg(all(feature = "certify", feature = "wasip2"))]
 #[test]
 fn compile_wasip2_certify_emits_component_bound_package() {
