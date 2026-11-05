@@ -777,6 +777,24 @@ fn main() -> Unit
     );
 }
 
+/// A wasip2 core that keeps every user function (each exported by name), so
+/// a probe without an entry point still carries the helpers its functions
+/// call: a wasip2 module otherwise drops whatever its entry point does not
+/// reach.
+fn all_fns_wasip2_core(items: &[TopLevel]) -> Vec<u8> {
+    aver::codegen::wasm_gc::compile_to_wasm_gc_flattened_with_options(
+        items,
+        None,
+        None,
+        aver::codegen::wasm_gc::TargetMode::Wasip2,
+        &std::collections::HashMap::new(),
+        true,
+        aver::codegen::wasm_gc::FnExports::All,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 core compile: {e}"))
+    .bytes
+}
+
 /// GRADUATED CLOSE — the effect-gating counterpart of the test above.
 /// `shutdown` takes a `Tcp.Connection` the caller already owns and
 /// declares only `! [Tcp.close]`; the program never names `Tcp.connect`,
@@ -803,7 +821,10 @@ fn shutdown(conn: Tcp.Connection) -> Result<Unit, String>
     let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None)
         .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
 
-    let (segments, body_refs) = segments_and_body_data_refs(&bytes);
+    // Nothing reaches `shutdown` in a wasip2 core (the world's entry point is
+    // its only door), so the module drops it and the close helper with it.
+    // The emitted helpers are read from a build that keeps every function.
+    let (segments, body_refs) = segments_and_body_data_refs(&all_fns_wasip2_core(&items));
     let referenced = |seg: u32| -> bool { body_refs.iter().any(|refs| refs.contains(&seg)) };
 
     // Present: the close helper's own error segment. In a close-only
@@ -869,8 +890,9 @@ fn read(conn: Tcp.Connection, count: Int) -> Result<Bytes, String>
     let (items, _aliases) =
         parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
             .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
-    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None)
-        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+    // `read` is unreachable in a wasip2 core, so its helper is read from a
+    // build that keeps every function.
+    let bytes = all_fns_wasip2_core(&items);
 
     let (segments, body_refs) = segments_and_body_data_refs(&bytes);
     let read_limit = segment_idx(&segments, b"Tcp.readBytes: count exceeds the read limit");
