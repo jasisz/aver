@@ -7,12 +7,12 @@ expression: golden
   "schema_version": 10,
   "format": {"version": 1, "wall_id": "sha256:f19201e5645ee43a42a674373ecfe0df65d4b90ff751d600fb0e73432237e74d"},
   "wasm": "wasip2_carrierless.component.wasm",
-  "wasm_sha256": "755298fcabd68362f925447aa11bea2d9eecd07d8c039923add32350bbd40f2f",
+  "wasm_sha256": "732ec42972cc02e8ffab1329c0184b84d777459f32334ebea5e9015734b59c00",
   "target": "wasip2",
   "level": "L1",
   "profile": "AverUserProfile/v1",
   "abi": "aver-wasip2/0",
-  "wasip2ComponentEnvelope": {"kind": "prefix-core-suffix/v1", "prefix_len": 11, "embedded_core_module_len": 2549, "suffix_len": 478},
+  "wasip2ComponentEnvelope": {"kind": "prefix-core-suffix/v1", "prefix_len": 11, "embedded_core_module_len": 615, "suffix_len": 478},
   "final_theorem": "AverCert.Final.cert",
   "artifact_certificate_root": "AverCert.Artifact.certificate",
   "carrier_type_index": null,
@@ -36,7 +36,7 @@ expression: golden
   "capabilities": [],
   "start": {"present": false, "function_index": null},
   "hostRoleTable": null,
-  "stringHostRoles": [{"function_index": 4, "role": "stringConcat"}, {"function_index": 8, "role": "stringEq"}],
+  "stringHostRoles": [{"function_index": 4, "role": "stringConcat"}],
   "certified": [
     {"name": "greet", "funcIdx": 1, "class": "source-plan-v1", "facets": ["strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"},
     {"name": "shout", "funcIdx": 2, "class": "source-plan-v1", "facets": ["strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"},
@@ -46,4 +46,4 @@ expression: golden
 }
 
 == Artifact.data envelope ==
-    manifest := AverCert.manifest, wasip2ComponentEnvelope := some { prefixLen := 11, embeddedCoreModuleLen := 2549, suffixLen := 478 },
+    manifest := AverCert.manifest, wasip2ComponentEnvelope := some { prefixLen := 11, embeddedCoreModuleLen := 615, suffixLen := 478 },
