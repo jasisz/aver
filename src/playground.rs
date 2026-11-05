@@ -1339,6 +1339,7 @@ fn start(n: Int) -> Step
             "main.av".to_string(),
             r#"module Main
     intent = "entry writes and matches an imported constructor by its module path"
+    exposes [made]
     depends [TmpReviewC]
 
 fn made(n: Int) -> Step
@@ -1360,6 +1361,8 @@ fn main() -> Int
         let bytes = compile_project_to_wasm(&files, "main.av")
             .expect("multi-file wasm-gc project should compile");
         let wat = wasmprinter::print_bytes(&bytes).expect("wasm-gc bytes should print");
+        // A module exports `main` and what it `exposes`; `made` is exposed so
+        // its body can be found through its export.
         for exported in ["main", "made"] {
             assert_real_body(&wat, exported);
         }
