@@ -164,6 +164,7 @@ fn compile_flattened_with_packing(
         aver::codegen::wasm_gc::TargetMode::AverBridge,
         type_aliases,
         packed_sequences_enabled,
+        aver::codegen::wasm_gc::FnExports::All,
     )
     .map(|out| out.bytes)
 }

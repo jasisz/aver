@@ -525,12 +525,13 @@ fn main() -> Unit
         .collect();
     // Self-tail loops changed `total` and `words`. With that lowering off,
     // this fixture still produces the preceding pinned bytes; versions add
-    // no vector layout here. Keep pinning the current default output too.
+    // no vector layout here. Keep pinning the current default output too
+    // (which exports only `_start`, `main` and the host helpers).
     assert_eq!(
         (bytes.len(), digest.as_str()),
         (
-            10729,
-            "eb7107d59c0a059ed9ac442db937269c931bffec184d501bfecbff3e02e1b469"
+            10713,
+            "f5ef4203f893df2b5e5714e7941d9af2f31aad0346e19d9e0ff5601ffa6fcae5"
         ),
         "a module with no Vector value changed"
     );

@@ -1,5 +1,6 @@
 module M
     intent = "Int arithmetic the certificate reads keeps its ordinary lowering in a --certify build."
+    exposes [poly]
     effects [Console]
 
 fn poly(a: Int, b: Int, c: Int) -> Int

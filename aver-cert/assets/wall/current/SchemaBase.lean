@@ -267,8 +267,8 @@ def artifactIdentityAccepted (target profile abi : String) : Bool :=
   profile == expectedProfile && artifactTargetAbiAccepted target abi
 
 /-- What the artifact is: its pinned hash, explicit artifact target,
-    emitted-fragment profile, runtime ABI, artifact theorem root, the certified
-    and explicitly uncertified export names, the exact effect-import capability
+    emitted-fragment profile, runtime ABI, artifact theorem root, the
+    explicitly uncertified export names, the exact effect-import capability
     surface, byte-derived start status, and the runtime contracts every
     certificate is conditional on. Pure data, mirrored in `cert-manifest.json`.
 
@@ -292,7 +292,6 @@ structure Subject where
   profile      : String
   abi          : String
   artifactRoot : String
-  exports      : List String
   declaredUncertified : List (String × String)
   capabilities : List (String × String)
   start        : Option Nat

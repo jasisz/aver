@@ -488,104 +488,45 @@ theorem typeSectionMatches_of_confirmed {n len : Nat} {fts : List FnType}
 
 /-! ### One planned function against the declarations -/
 
-/-- What a plan entry declares about its function beyond the plan: its name
-    as characters (checked against the entry's name by `rfl`), the position
-    of its export entry in the export section, and the position of its
-    function type in the declared function types. -/
+/-- What a plan entry declares about its function beyond the plan: the
+    position of its function type in the declared function types. -/
 structure FnDecl where
-  name : List Char
-  exportPos : Nat
   sigPos : Nat
 
 /-- `entryAccepted` with every module fact read from a confirmed
-    declaration: the code entry from the layout (one slice), the type index
-    from the layout and its type from the declared function types, and an
-    exported function's export entry at its declared position. No section is
-    decoded and nothing is searched. -/
-def entryFast (n : Nat) (L : Layout) (fts : List FnType)
-    (E : List AverCert.WasmSlice.ExportEntry) (M : MCtx) (fns : List FnEntry)
+    declaration: the code entry from the layout (one slice), and the type
+    index from the layout and its type from the declared function types. No
+    section is decoded and nothing is searched. -/
+def entryFast (n : Nat) (L : Layout) (fts : List FnType) (M : MCtx) (fns : List FnEntry)
     (e : FnEntry) (d : FnDecl) : Bool :=
   planTyped M e.plan && callsOrdered fns e &&
   decide (L.imports ≤ e.funcIdx) && decide (e.funcIdx - L.imports < L.count) &&
   match codeEntryBytes M e.funcIdx e.plan, e.plan.sig.params.mapM (valTyD M), valTyD M e.plan.sig.ret with
   | some bytes, some ps, some r =>
       L.entry n (e.funcIdx - L.imports) == bytes &&
-      fts[d.sigPos]? == some (L.ty (e.funcIdx - L.imports), ps, [r]) &&
-      (!e.exported || E[d.exportPos]? == some ⟨d.name.map Char.toNat, 0, e.funcIdx⟩)
+      fts[d.sigPos]? == some (L.ty (e.funcIdx - L.imports), ps, [r])
   | _, _, _ => false
 
 theorem entryAccepted_of_fast {n len : Nat} {L : Layout} {fts : List FnType}
-    {E : List AverCert.WasmSlice.ExportEntry} {M : MCtx} {fns : List FnEntry}
-    {e : FnEntry} {d : FnDecl}
+    {M : MCtx} {fns : List FnEntry} {e : FnEntry} {d : FnDecl}
     (hL : layoutConfirmed n len L = true) (hT : fnTypesConfirmed n len fts = true)
-    (hE : CertDecode.decodeRawExports n len = some E) (hX : (E.map (·.name)).Nodup)
-    (hname : stringBytes e.name = d.name.map Char.toNat)
-    (h : entryFast n L fts E M fns e d = true) : entryAccepted n len M fns e = true := by
+    (h : entryFast n L fts M fns e d = true) : entryAccepted n len M fns e = true := by
   unfold entryFast at h
   simp only [Bool.and_eq_true, decide_eq_true_eq] at h
   obtain ⟨⟨⟨⟨htyped, hcalls⟩, hlo⟩, hhi⟩, hm⟩ := h
   have hbind := funcBindingByFuncIndex_of_layout hL hlo hhi
   split at hm
   · rename_i bytes ps r hbytes hps hr
-    simp only [Bool.and_eq_true, beq_iff_eq, Bool.or_eq_true, Bool.not_eq_true'] at hm
-    obtain ⟨⟨hcode, hsig⟩, hexp⟩ := hm
+    simp only [Bool.and_eq_true, beq_iff_eq] at hm
+    obtain ⟨hcode, hsig⟩ := hm
     have hmem : (L.ty (e.funcIdx - L.imports), ps, [r]) ∈ fts := List.mem_of_getElem? hsig
     have htype := typeSectionMatches_of_confirmed hT hmem
     simp only [entryAccepted, htyped, hcalls, Bool.true_and, Bool.and_true, boundFunction, hbytes]
     have hpin : sigPinned n len M e.plan.sig (L.ty (e.funcIdx - L.imports)) = true := by
       simp only [sigPinned, hps, hr]
       exact htype
-    cases hx : e.exported
-    · simp only [Bool.false_eq_true, ↓reduceIte, hbind, Option.filter_some, hcode, BEq.rfl,
-        hpin, Bool.and_self]
-    · have hpos : E[d.exportPos]? = some ⟨stringBytes e.name, 0, e.funcIdx⟩ := by
-        rw [hname]
-        rcases hexp with hno | hyes
-        · rw [hx] at hno; cases hno
-        · exact hyes
-      have hfind := findExportFuncIndex_of_pos hX hpos
-      simp only [↓reduceIte, AverCert.WasmSlice.exactFuncBindingForExport,
-        AverCert.WasmSlice.funcBindingForExport, AverCert.WasmSlice.exportFuncIndex, hE, hfind,
-        hbind, Option.filter_some, hcode, decide_true, ↓reduceIte, BEq.rfl, hpin, Bool.and_self]
+    simp only [hbind, Option.filter_some, hcode, BEq.rfl, hpin, Bool.and_self, ↓reduceIte]
   · cases hm
-
-/-- The per-entry checks of a run of plan entries, with the export section
-    decoded once for the run. -/
-def entriesFast (n len : Nat) (L : Layout) (fts : List FnType) (M : MCtx)
-    (fns : List FnEntry) (es : List FnEntry) (ds : List FnDecl) : Bool :=
-  match CertDecode.decodeRawExports n len with
-  | some E => es.length == ds.length && (es.zip ds).all (fun p => entryFast n L fts E M fns p.1 p.2)
-  | none => false
-
-theorem entries_of_fast {n len : Nat} {L : Layout} {fts : List FnType} {M : MCtx}
-    {fns : List FnEntry} {es : List FnEntry} {ds : List FnDecl}
-    (hL : layoutConfirmed n len L = true) (hT : fnTypesConfirmed n len fts = true)
-    (hX : exportNamesDistinct n len = true)
-    (hnames : es.map (·.name) = ds.map (fun d => String.ofList d.name))
-    (h : entriesFast n len L fts M fns es ds = true) :
-    es.all (entryAccepted n len M fns) = true := by
-  unfold entriesFast at h
-  unfold exportNamesDistinct at hX
-  split at h
-  · rename_i E hE
-    rw [hE] at hX
-    have hnd := byteSeqListNodup_nodup hX
-    simp only [Bool.and_eq_true, beq_iff_eq, List.all_eq_true] at h
-    obtain ⟨hlen, hall⟩ := h
-    apply List.all_eq_true.mpr
-    intro e he
-    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem he
-    have hi' : i < ds.length := hlen ▸ hi
-    have hz : (es[i], ds[i]) ∈ es.zip ds := by
-      rw [List.mem_iff_getElem]
-      exact ⟨i, by simp only [List.length_zip]; omega, by simp⟩
-    have hname : stringBytes es[i].name = ds[i].name.map Char.toNat := by
-      have := congrArg (fun l => l[i]?) hnames
-      simp only [List.getElem?_map, List.getElem?_eq_getElem hi, List.getElem?_eq_getElem hi',
-        Option.map_some, Option.some.injEq] at this
-      rw [this, stringBytes_ofList]
-    exact entryAccepted_of_fast hL hT hE hnd hname (hall _ hz)
-  · cases h
 
 
 /-! ### Closure isolation over the declared layout -/

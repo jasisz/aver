@@ -279,10 +279,23 @@ fn admitted_closure_indices(cert: &Path) -> BTreeSet<u32> {
         .collect()
 }
 
-fn certified_opcode_offsets(bytes: &[u8]) -> (usize, u32, usize) {
+/// The function index of the certified function labelled `name`, from the
+/// package's public manifest (a certified function need not be exported).
+fn certified_index(cert: &Path, name: &str) -> Option<u32> {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(cert.join("cert-manifest.json")).unwrap()).unwrap();
+    manifest["certified"]
+        .as_array()?
+        .iter()
+        .find(|entry| entry["name"] == name)
+        .and_then(|entry| entry["funcIdx"].as_u64())
+        .and_then(|idx| u32::try_from(idx).ok())
+}
+
+fn certified_opcode_offsets(bytes: &[u8], cert: &Path) -> (usize, u32, usize) {
     let mut imported_funcs = 0u32;
-    let mut json_int = None;
-    let mut json_entry_key = None;
+    let json_int = certified_index(cert, "jsonInt");
+    let json_entry_key = certified_index(cert, "jsonEntryKey");
     let mut code_ordinal = 0u32;
     let mut call = None;
     let mut local_get = None;
@@ -295,19 +308,6 @@ fn certified_opcode_offsets(bytes: &[u8]) -> (usize, u32, usize) {
                         if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
                             imported_funcs += 1;
                         }
-                    }
-                }
-            }
-            wasmparser::Payload::ExportSection(reader) => {
-                for export in reader {
-                    let export = export.expect("export must parse");
-                    if export.kind != wasmparser::ExternalKind::Func {
-                        continue;
-                    }
-                    match export.name {
-                        "jsonInt" => json_int = Some(export.index),
-                        "jsonEntryKey" => json_entry_key = Some(export.index),
-                        _ => {}
                     }
                 }
             }
@@ -698,7 +698,7 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
     .unwrap();
 
     let start_insert_offset = section_offset_after_export(&wasm);
-    let (call_offset, call_target, local_get_offset) = certified_opcode_offsets(&wasm);
+    let (call_offset, call_target, local_get_offset) = certified_opcode_offsets(&wasm, &cert);
     let capability_offset = wasm
         .windows(b"console_print".len())
         .position(|window| window == b"console_print")
@@ -1775,39 +1775,259 @@ example : AcceptedArtifact.plansAccepted hostileArtifact = false := by decide +k
     assert_probe_holds(&cert, "StringHostRoleGuardIso.lean", &lean);
 }
 
-/// The export accounting binds every obligation's `(export name, function
-/// kind, self index)` triple to the byte-decoded export section, so an
-/// obligation cannot claim a fabricated self index: the honest artifact passes
-/// `exportsAccounted`, and decoupling one obligation's `self` from the index
-/// its export name resolves to in the bytes fails it.
+/// The byte offset of the function index of the export named `name`, and
+/// that index (one LEB byte).
+fn export_index_byte(bytes: &[u8], name: &str) -> (usize, u8) {
+    let mut pattern = vec![u8::try_from(name.len()).unwrap()];
+    pattern.extend_from_slice(name.as_bytes());
+    pattern.push(0x00);
+    let at = bytes
+        .windows(pattern.len())
+        .position(|window| window == pattern.as_slice())
+        .unwrap_or_else(|| panic!("the module exports `{name}`"))
+        + pattern.len();
+    assert!(bytes[at] < 0x80, "a one-byte function index");
+    (at, bytes[at])
+}
+
+/// The export accounting of certified functions, two guards, each isolated:
+///
+/// * A function export of a claimed function must carry that function's
+///   label. The module's `sumTo` and `countDown` exports swapped to each
+///   other's function index (the reviewer's attack on #1892: the export a host
+///   calls as `sumTo` runs `countDown`) are rejected; a literal copy of the
+///   live check with the label comparison removed accepts them.
+/// * A function export of an unclaimed function must be declared. Unclaiming
+///   `sumTo` (its entry kept, its obligation gone) leaves its export
+///   unaccounted for; the live check weakened to accept any function export
+///   in the declared branch accepts it.
+/// * The certified labels are distinct, on both paths: a second `sumTo` is
+///   rejected, and the copies without the distinctness accept it.
+/// * No certified label is declared uncertified, on both paths: the slow
+///   definition, and the large-module `ScaleExports.labelsDisjoint` the package
+///   decides as `labels_disjoint` (which the checker's Rust pre-check would
+///   otherwise keep any end-to-end package from reaching). `sumTo` re-pointed at the
+///   uncertified `_start` function and declared uncertified, or declared
+///   uncertified beside its correct export, is rejected; the live check
+///   without the disjointness conjunct accepts both.
 #[test]
-fn self_index_is_kernel_bound_by_exports_accounted() {
+fn certified_exports_are_bound_by_index_and_label() {
     if !lake_available() {
-        eprintln!("skipping self-binding GuardIso test: `lake` not available");
+        eprintln!("skipping export-binding GuardIso test: `lake` not available");
         return;
     }
-    let (_out_dir, cert, _wasm) = built_package(
+    let (_out_dir, cert, wasm) = built_package(
         "tools/certkit/fixtures/certprobe2.av",
         &[],
-        "cert-self-index-binding",
+        "cert-export-binding",
     );
-    let lean = r#"import Artifact
+    let core = std::fs::read_to_string(cert.join("AcceptedArtifactCore.lean"))
+        .expect("the materialized wall has AcceptedArtifactCore.lean");
+    const LABEL: &str = "claimed.any (fun c =>\n      c.1 == entry.idx && _root_.AverCert.WasmSlice.seqKey c.2 == some entry.name)";
+    const DECLARED: &str = "else declaredIndex.contains entry.name";
+    let entry = extract_wall_def(&core, "exportEntryAccounted");
+    let of = extract_wall_def(&core, "exportsAccountedOf");
+    for conjunct in [LABEL, DECLARED] {
+        assert_eq!(
+            entry.matches(conjunct).count(),
+            1,
+            "`{conjunct}` moved; refit the GuardIso surgery"
+        );
+    }
+    assert_eq!(of.matches("exportEntryAccounted").count(), 1);
+    let weak = |suffix: &str, from: &str, to: &str| {
+        format!(
+            "{}\n\n{}\n",
+            entry.replace(from, to).replace(
+                "exportEntryAccounted",
+                &format!("exportEntryAccounted{suffix}")
+            ),
+            of.replace(
+                "exportEntryAccounted",
+                &format!("exportEntryAccounted{suffix}")
+            )
+            .replace("exportsAccountedOf", &format!("exportsAccountedOf{suffix}"))
+        )
+    };
+    let no_label = weak("NoLabel", LABEL, "true");
+    let any_function = weak(
+        "AnyFunction",
+        DECLARED,
+        "else (entry.kind == 0 || declaredIndex.contains entry.name)",
+    );
+    let mut swapped = wasm.clone();
+    let (sum_at, sum_idx) = export_index_byte(&wasm, "sumTo");
+    let (count_at, count_idx) = export_index_byte(&wasm, "countDown");
+    swapped[sum_at] = count_idx;
+    swapped[count_at] = sum_idx;
+    let swapped_hex = hex_le(&swapped);
+    let mut stolen = wasm.clone();
+    let (_, start_idx) = export_index_byte(&wasm, "_start");
+    stolen[sum_at] = start_idx;
+    let stolen_hex = hex_le(&stolen);
+    const DISJOINT: &str = "          labels.all (fun k => !declaredIndex.contains k) &&\n";
+    const LABELS_NODUP: &str = "          _root_.AverCert.WasmSlice.natListNodup labels &&\n";
+    assert_eq!(
+        of.matches(LABELS_NODUP).count(),
+        1,
+        "the label distinctness conjunct moved; refit the GuardIso surgery"
+    );
+    let no_label_nodup = of
+        .replace(LABELS_NODUP, "")
+        .replace("exportsAccountedOf", "exportsAccountedOfNoLabelNodup");
+    assert_eq!(
+        of.matches(DISJOINT).count(),
+        1,
+        "the label/declared disjointness conjunct moved; refit the GuardIso surgery"
+    );
+    let scale = std::fs::read_to_string(cert.join("ScaleExports.lean"))
+        .expect("the materialized wall has ScaleExports.lean");
+    let labels = extract_wall_def(&scale, "labelsDisjoint");
+    const LOOKUP: &str = "lk.all (fun k => !index.contains k)";
+    const LK_NODUP: &str = "AverCert.WasmSlice.natListNodup lk && ";
+    assert_eq!(
+        labels.matches(LOOKUP).count(),
+        1,
+        "the label lookup moved; refit the GuardIso surgery"
+    );
+    assert_eq!(
+        labels.matches(LK_NODUP).count(),
+        1,
+        "refit the GuardIso surgery"
+    );
+    let labels_weak = labels
+        .replace(LOOKUP, "true")
+        .replace("labelsDisjoint", "labelsDisjointWeak");
+    let labels_no_nodup = labels
+        .replace(LK_NODUP, "")
+        .replace("labelsDisjoint", "labelsDisjointNoNodup");
+    let no_disjoint = of
+        .replace(DISJOINT, "")
+        .replace("exportsAccountedOf", "exportsAccountedOfNoDisjoint");
+    let lean = format!(
+        r#"import Artifact
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000
 noncomputable section
 
+namespace AverCert.AcceptedArtifact
+/-! Live `exportEntryAccounted` / `exportsAccountedOf`, weakened by exactly the
+label comparison. -/
+{no_label}
+/-! Live `exportEntryAccounted` / `exportsAccountedOf`, weakened to accept any
+function export in the declared branch. -/
+{any_function}
+/-! Live `exportsAccountedOf`, weakened by exactly the disjointness of the
+claimed labels and the declared names. -/
+{no_disjoint}
+/-! Live `exportsAccountedOf`, weakened by exactly the distinctness of the
+claimed labels. -/
+{no_label_nodup}
+
+end AverCert.AcceptedArtifact
+
+namespace AverCert.ScaleExports
+open AverCert.Schema AverCert.AcceptedArtifact
+/-! Live `labelsDisjoint` (the large-module path's disjointness, which the
+package's `labels_disjoint` decides), weakened by exactly the label lookup,
+and by exactly the labels' distinctness. -/
+{labels_weak}
+
+{labels_no_nodup}
+end AverCert.ScaleExports
+
 example : AcceptedArtifact.exportsAccounted Artifact.data = true := Artifact.exports_ok
 
-def hostileSelfManifest : Manifest :=
-  match manifest.obligations with
-  | o :: rest => { manifest with obligations := { o with self := o.self + 1 } :: rest }
-  | [] => manifest
-def hostileSelfArtifact : AcceptedArtifact.ArtifactData :=
-  { Artifact.data with manifest := hostileSelfManifest }
-example : AcceptedArtifact.exportsAccounted hostileSelfArtifact = false := by decide +kernel
-"#;
-    assert_probe_holds(&cert, "SelfBindingGuardIso.lean", lean);
+-- (a) `sumTo` and `countDown` exported at each other's function index.
+def swappedBytes : Nat := 0x{swapped_hex}
+def swappedArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := swappedBytes }}
+example : AcceptedArtifact.exportsAccounted swappedArtifact = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfNoLabel swappedBytes ArtifactBytes.modLen
+    (AcceptedArtifact.claimedLabels manifest)
+    (AcceptedArtifact.declaredUncertifiedNames manifest) = true := by decide +kernel
+
+-- (b) `sumTo` unclaimed: its export points at a function without a theorem.
+def unclaim (e : FnEntry) : FnEntry :=
+  if e.name == "sumTo" then {{ e with claimed := false }} else e
+def unclaimedPlans : List FnEntry := manifest.fnPlans.map unclaim
+def unclaimedObligations : List Obligation :=
+  AcceptedArtifact.obligationsOf manifest.subject manifest.types unclaimedPlans
+def unclaimedManifest : Manifest :=
+  {{ manifest with fnPlans := unclaimedPlans, obligations := unclaimedObligations }}
+def unclaimedArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := unclaimedManifest }}
+-- One obligation fewer, every derived obligation still derived.
+example : unclaimedManifest.obligations.length + 1 = manifest.obligations.length := by
+  decide +kernel
+example : AcceptedArtifact.exportsAccounted unclaimedArtifact = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfAnyFunction unclaimedArtifact.modBytes
+    unclaimedArtifact.modLen (AcceptedArtifact.claimedLabels unclaimedManifest)
+    (AcceptedArtifact.declaredUncertifiedNames unclaimedManifest) = true := by decide +kernel
+
+-- (c) The export `sumTo` re-pointed at the uncertified `_start` function and
+-- declared uncertified (the second review of #1892): a host calling `sumTo`
+-- would run code the report does not certify, under a certified label.
+def stolenBytes : Nat := 0x{stolen_hex}
+def stolenManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with
+         declaredUncertified := manifest.subject.declaredUncertified ++ [("sumTo", "tampered")] }} }}
+def stolenArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := stolenBytes, manifest := stolenManifest }}
+example : AcceptedArtifact.exportsAccounted stolenArtifact = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfNoDisjoint stolenBytes ArtifactBytes.modLen
+    (AcceptedArtifact.claimedLabels stolenManifest)
+    (AcceptedArtifact.declaredUncertifiedNames stolenManifest) = true := by decide +kernel
+
+-- (d) The weaker variant: `sumTo` declared uncertified beside its correct export.
+def doubledArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := stolenManifest }}
+example : AcceptedArtifact.exportsAccounted doubledArtifact = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfNoDisjoint ArtifactBytes.modBytes ArtifactBytes.modLen
+    (AcceptedArtifact.claimedLabels stolenManifest)
+    (AcceptedArtifact.declaredUncertifiedNames stolenManifest) = true := by decide +kernel
+
+-- (e) The large-module path's disjointness, the live definition: the honest
+-- manifest passes; `sumTo` declared uncertified fails, and so does
+-- `countDown` declared beside its correct export; the copy without the
+-- label lookup accepts the declared `sumTo`.
+def countDownManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with
+         declaredUncertified :=
+           manifest.subject.declaredUncertified ++ [("countDown", "tampered")] }} }}
+example : ScaleExports.labelsDisjoint manifest = true := by decide +kernel
+example : ScaleExports.labelsDisjoint stolenManifest = false := by decide +kernel
+example : ScaleExports.labelsDisjoint countDownManifest = false := by decide +kernel
+example : ScaleExports.labelsDisjointWeak stolenManifest = true := by decide +kernel
+-- The package's own theorem is the live definition at this manifest.
+example : ScaleExports.labelsDisjoint manifest = true := Artifact.labels_disjoint
+
+-- (f) Two certified functions under one label (the checker's Rust pre-check
+-- refuses a duplicate; the wall refuses it on its own): the claimed labels
+-- with a second `sumTo` at an unexported index, and a manifest whose
+-- obligations carry `sumTo` twice. The live definitions reject both; the
+-- copies without the distinctness accept them.
+def doubledLabels : List (Nat × List Nat) :=
+  AcceptedArtifact.claimedLabels manifest ++ [(999, AcceptedArtifact.stringBytes "sumTo")]
+example : AcceptedArtifact.exportsAccountedOf ArtifactBytes.modBytes ArtifactBytes.modLen
+    (AcceptedArtifact.claimedLabels manifest)
+    (AcceptedArtifact.declaredUncertifiedNames manifest) = true := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOf ArtifactBytes.modBytes ArtifactBytes.modLen
+    doubledLabels (AcceptedArtifact.declaredUncertifiedNames manifest) = false := by decide +kernel
+example : AcceptedArtifact.exportsAccountedOfNoLabelNodup ArtifactBytes.modBytes ArtifactBytes.modLen
+    doubledLabels (AcceptedArtifact.declaredUncertifiedNames manifest) = true := by decide +kernel
+def doubledManifest : Manifest :=
+  match manifest.obligations.find? (fun o => o.name == "sumTo") with
+  | some o => {{ manifest with obligations := manifest.obligations ++ [{{ o with self := 999 }}] }}
+  | none => manifest
+example : ScaleExports.labelsDisjoint doubledManifest = false := by decide +kernel
+example : ScaleExports.labelsDisjointNoNodup doubledManifest = true := by decide +kernel
+"#
+    );
+    assert_probe_holds(&cert, "ExportBindingGuardIso.lean", &lean);
 }
 
 /// A minimal but REAL Int runtime: the canonical `__rt_aint_from_i64` helper

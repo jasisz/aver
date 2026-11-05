@@ -1,5 +1,5 @@
 /-
-ACCEPTANCE-SOUNDNESS ASSEMBLY (statement schema 9).
+ACCEPTANCE-SOUNDNESS ASSEMBLY (statement schema 10).
 
 `fn_claim_discharges`: every obligation the wall derives from the plans holds
 at its policy. One application of `GrammarSound.fn_certified_group` over ALL
@@ -328,8 +328,8 @@ def holdsAtHash (wasmSha256 : String) (m : Manifest) : Prop :=
   HoldsCore m
 
 /-- ROOT THEOREM. The manifest's obligations are the derived ones and the plans
-    pass the acceptance's byte facts, hence every certified export's emitted
-    function simulates its plan's model (`holds`), and every L3 export also
+    pass the acceptance's byte facts, hence the emitted code of every certified
+    function simulates its plan's model (`holds`), and every L3 function also
     returns at the checked fuel (`holdsTotal`), under exactly the named runtime
     contracts. The hash and target/profile/ABI identity are premises: they are
     fixed statement metadata, pinned by the checker. -/
@@ -353,11 +353,11 @@ theorem accept_sound
 
 `Obligation.holds` quantifies over well-typed source arguments. The
 acceptance's declaration check (`TypeTable.declsWellFormed`) makes that
-quantification non-empty: every certified export has well-typed arguments,
+quantification non-empty: every certified function has well-typed arguments,
 and its result type has a value, so no accepted obligation is true merely
 because its hypothesis cannot be met. -/
 
-/-- Every certified export of an accepted artifact has well-typed arguments
+/-- Every certified function of an accepted artifact has well-typed arguments
     (and its result type is inhabited): its obligation is not vacuous. -/
 theorem accepted_nonvacuous (artifact : ArtifactData)
     (hDerived : obligationsDerived artifact) (hPlans : plansAccepted artifact = true) :

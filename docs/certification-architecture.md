@@ -177,7 +177,7 @@ It does not depend on:
 
 User types need declarations the binary cannot supply. The type table says which struct index represents which source record, variant constructor, `Option`, `Result`, `List` or `Vector` instantiation. The wall confirms the layout of each entry against the type section, but a type id is still the plans' own name for a type: a wrong id renames a confirmed layout and cannot change it.
 
-A certificate about some exports says nothing about the rest of the module. Imports, the start function and uncertified exports are accounted for; behavioral claims cover only certified exports. Trace and replay recordings are not evidence and never reach the verdict.
+A certificate about some exports says nothing about the rest of the module. Imports, the start function and uncertified exports are accounted for; behavioral claims cover only certified functions, each identified by its function index, exported or not. Trace and replay recordings are not evidence and never reach the verdict.
 
 ## Fail-closed behavior
 

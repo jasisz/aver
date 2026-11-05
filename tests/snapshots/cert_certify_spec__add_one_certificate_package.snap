@@ -4,8 +4,8 @@ expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 9,
-  "format": {"version": 1, "wall_id": "sha256:7d577458dae255e1d07d57f7c70e51aabc376f7a5221ae9f661bf2d254eafb75"},
+  "schema_version": 10,
+  "format": {"version": 1, "wall_id": "sha256:f19201e5645ee43a42a674373ecfe0df65d4b90ff751d600fb0e73432237e74d"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "fec1011ea9502dba8815c68cb8ee138e9178e6be3f0d9470e6c553c8aa475445",
   "target": "wasm-gc",
@@ -42,7 +42,7 @@ expression: golden
   "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18, "cmp": null, "eq": null, "divmod": 12, "bitwise": null},
   "stringHostRoles": [],
   "certified": [
-    {"name": "addOne", "class": "source-plan-v1", "facets": [], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"}
+    {"name": "addOne", "funcIdx": 1, "class": "source-plan-v1", "facets": [], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"}
   ],
   "source_level_only": []
 }
@@ -75,7 +75,6 @@ def subject : Subject :=
   { artifactHash := "fec1011ea9502dba8815c68cb8ee138e9178e6be3f0d9470e6c553c8aa475445"
     target := "wasm-gc", profile := "AverUserProfile/v1", abi := "aver-wasm-gc/0"
     artifactRoot := "AverCert.Artifact.certificate"
-    exports := ["addOne"]
     declaredUncertified := Plans.subject_declaredUncertified_0
     capabilities := []
     start := none

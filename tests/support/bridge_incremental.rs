@@ -57,7 +57,7 @@ fn check(root: &Path, package: &Path, exports: usize) -> String {
     let report = format_output(&output);
     assert!(output.status.success(), "{report}");
     assert!(
-        report.contains(&format!("{exports} checked exports")),
+        report.contains(&format!("{exports} checked functions")),
         "{report}"
     );
     assert!(

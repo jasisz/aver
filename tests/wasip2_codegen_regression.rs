@@ -262,9 +262,14 @@ fn component_artifact_selects_aver_user_core_among_adapter_modules() {
         core_module_exports(&artifact.envelope.embedded_core_module, "__caller_fn_count"),
         "declared embedded module should be the Aver user core, not a wit-component shim"
     );
+    // A wasip2 core exports no user function (only its entry point and host
+    // helpers), so the Aver user core is recognised by its `run` export.
     assert!(
-        core_module_exports(&artifact.envelope.embedded_core_module, "main"),
-        "declared embedded user core should retain Aver exports"
+        core_module_exports(
+            &artifact.envelope.embedded_core_module,
+            "wasi:cli/run@0.2.4#run"
+        ),
+        "declared embedded user core should retain its Aver entry export"
     );
     wasmparser::Validator::new()
         .validate_all(&artifact.envelope.embedded_core_module)

@@ -154,12 +154,17 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// carries one `fnPlans` list (each planned function's optimized MIR body,
 /// printed 1:1), the declared type layout, and obligations the wall derives
 /// from the plans. Every certified export reports the one class
-/// [`PLAN_CLASS`] with facets derived in the wall. Schema 9 declares no
-/// law-claims and no source bridges yet; a package declaring either is
-/// refused.
-pub const CERT_SCHEMA_VERSION: u32 = 9;
+/// [`PLAN_CLASS`] with facets derived in the wall.
+///
+/// Schema 10 identifies every certified function by its function index alone:
+/// each `certified` entry carries the required `funcIdx`, the witness pins the
+/// obligations' indices and labels, and a bridge statement names its
+/// obligation by index. A certified function need not be exported; an export
+/// is accounted for by the function index it points at, and its name is not
+/// read. The subject no longer carries a list of certified export names.
+pub const CERT_SCHEMA_VERSION: u32 = 10;
 
-/// The one report class of a certified export (schema 9).
+/// The one report class of a certified function (schema 9 onward).
 pub const PLAN_CLASS: &str = "source-plan-v1";
 
 /// Longest a transported display string may be. Every declared-only candidate
@@ -180,7 +185,7 @@ pub const FN_CLAIM_DISCHARGE_THEOREM: &str = "AcceptanceSoundness.fn_claim_disch
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:7d577458dae255e1d07d57f7c70e51aabc376f7a5221ae9f661bf2d254eafb75";
+    "sha256:f19201e5645ee43a42a674373ecfe0df65d4b90ff751d600fb0e73432237e74d";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
@@ -521,7 +526,7 @@ mod tests {
         );
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD, "suffix_len");
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_KIND, "prefix-core-suffix/v1");
-        assert_eq!(CERT_SCHEMA_VERSION, 9);
+        assert_eq!(CERT_SCHEMA_VERSION, 10);
     }
 
     #[test]

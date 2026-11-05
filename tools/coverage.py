@@ -35,10 +35,10 @@ Multi-module entrypoints (e.g. ``examples/games/rogue/main.av``,
 ``projects/payment_ops/main.av``) are therefore compiled as projects: their
 dependency modules are loaded, flattened and re-included under module-prefixed
 names (``Types_tileGlyph``). Verdicts are read from the emitted
-``cert/cert-manifest.json`` (``certified`` and ``declaredUncertified``;
-runtime-glue exports ``__*``, ``_start`` and ``memory`` are not functions and
-are ignored — the remainder equals the manifest's ``source_level_only`` list,
-which carries the honest per-function decline reasons).
+``cert/cert-manifest.json`` (``certified`` and ``source_level_only``, which
+carries the honest per-function decline reasons; a certified function is
+identified by its index and need not be exported, so the uncertified exports
+are not a list of functions).
 
 COUNTING RULES (stated in the output as well):
   * HEADLINE — certified functions deduplicated by definition site
@@ -102,7 +102,6 @@ EXCLUDED = (
 # They stay in the corpus and are attempted every run; a failure matching a
 # prefix here is reported under its own heading instead of flagging the run.
 KNOWN_NONCOMPILING = ("projects/k5_fdiv/",)
-GLUE_EXPORTS = ("_start", "memory")  # plus anything starting with "__"
 DEPENDS_RE = re.compile(r"\bdepends\s*\[([^\]]*)\]")
 
 # Decline reasons are the classifier's exact strings
@@ -307,11 +306,10 @@ def sweep_unit(unit: Unit, aver: Path, workdir: Path, closure: bool) -> Unit:
         return unit
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     unit.certified = manifest.get("certified", [])
-    declared = manifest.get("declaredUncertified", [])
-    unit.declined = [
-        d for d in declared
-        if not d["name"].startswith("__") and d["name"] not in GLUE_EXPORTS
-    ]
+    # A certified function need not be exported, so the declined functions
+    # are read from `source_level_only` (one entry per user function without
+    # a certificate, with its reason), not from the uncertified exports.
+    unit.declined = manifest.get("source_level_only", [])
     unit.status = "ok"
     if closure:
         wasm = out / f"{unit.file.stem}.wasm"
@@ -496,7 +494,7 @@ def print_report(doc: dict) -> None:
         c = doc["closure"]
         print("## Closure (`aver cert check` per unit)")
         print(f"  closes with checked exports: {c['closes_with_checked_exports']}")
-        print(f"  closes vacuously (0 certified exports): {c['closes_vacuously_zero_exports']}")
+        print(f"  closes vacuously (0 certified functions): {c['closes_vacuously_zero_exports']}")
         print(f"  DOES NOT CLOSE: {c['does_not_close']}")
         print(f"  {c['note']}")
         print()

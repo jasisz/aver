@@ -7186,6 +7186,7 @@ fn cmd_compile_wasm_gc(
         &capability_wasm_gc_plan,
         packed_sequences_enabled,
         certify,
+        wasm_gc::FnExports::Exposed,
     ) {
         Ok(output) => output,
         Err(e) => {

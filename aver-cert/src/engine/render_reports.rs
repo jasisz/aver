@@ -33,7 +33,7 @@ fn render_report_blocks(analysis: &Analysis) -> Vec<(String, String)> {
         (
             "entries",
             "String × String",
-            "AverCert.manifest.obligations.map (fun o => (o.export_, AverCert.ClaimAxes.planClass))",
+            "AverCert.manifest.obligations.map (fun o => (o.name, AverCert.ClaimAxes.planClass))",
             entries,
         ),
         (

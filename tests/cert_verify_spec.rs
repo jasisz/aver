@@ -283,8 +283,8 @@ fn cert_verify_rebuilds_after_cached_olean_corruption() {
     );
 }
 
-/// The `fnPlans` entry of export `name` in an emitted `Plans.lean`:
-/// `⟨"name", exported, funcIdx, group, planDef⟩`.
+/// The `fnPlans` entry labelled `name` in an emitted `Plans.lean`:
+/// `⟨"name", claimed, funcIdx, group, planDef⟩`.
 fn plan_entry(plans: &str, name: &str) -> String {
     let head = format!("⟨\"{name}\", ");
     let at = plans
@@ -294,7 +294,7 @@ fn plan_entry(plans: &str, name: &str) -> String {
     plans[at..end].to_string()
 }
 
-/// The fields of a `fnPlans` entry: `(exported, funcIdx, group, planDef)`.
+/// The fields of a `fnPlans` entry: `(claimed, funcIdx, group, planDef)`.
 fn plan_entry_fields(plans: &str, name: &str) -> (bool, u32, u32, String) {
     let entry = plan_entry(plans, name);
     let inner = entry
@@ -583,7 +583,7 @@ fn cert_tripwire_accepts_clean_certificate_end_to_end() {
     assert!(ok, "expected clean certificate to verify, got:\n{report}");
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
     assert!(
-        report.contains("2 certified exports"),
+        report.contains("2 certified functions"),
         "expected exactly two certified exports:\n{report}"
     );
     // The green report names the actual boundary: exact bytes and manifest pass
@@ -705,7 +705,7 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
             "Bytes_take",
             "greet"
         ],
-        "wasip2 certified export set changed:\n{report}"
+        "wasip2 certified function set changed:\n{report}"
     );
 }
 
@@ -1177,11 +1177,14 @@ fn cert_tripwire_prints_a_component_name_with_a_newline_escaped() {
     }
 }
 
-/// A certified export lifted into the component. The certified `flip` is a
+/// A certified function lifted into the component. The certified `flip` is a
 /// claim about a core `i32` holding a Bool; lifted as `(u32) -> u32`, a caller
 /// can hand it 2, outside the certified domain. Aver lifts only its world
 /// entry points, so the checker knows no component signature for a certified
-/// export and DECLINES the lift before Lean runs, whatever type it carries.
+/// function and DECLINES the lift before Lean runs, whatever type it carries.
+/// A wasip2 core exports no user function, so the hostile core re-points its
+/// entry point's export at `flip`: the function is found by its index,
+/// whatever the export is called.
 #[cfg(feature = "wasip2")]
 #[test]
 fn cert_tripwire_declines_a_wasip2_lift_of_a_certified_export() {
@@ -1235,7 +1238,27 @@ fn cert_tripwire_declines_a_wasip2_lift_of_a_certified_export() {
         field("embedded_core_module_len"),
         field("suffix_len"),
     );
-    let honest_core = honest_component[prefix..prefix + core_len].to_vec();
+    let flip_idx = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "flip")
+        .and_then(|entry| entry["funcIdx"].as_u64())
+        .expect("`flip` carries its function index");
+    let mut honest_core = honest_component[prefix..prefix + core_len].to_vec();
+    // `<len> wasi:cli/run@0.2.4#run 0x00 <idx>`: the run export now points at
+    // `flip` (both indices are one LEB byte, so the length is unchanged), and
+    // the component lifts it as field `run` of `wasi:cli/run@0.2.4`, the name
+    // the binding gate pairs with that core export.
+    let run = b"wasi:cli/run@0.2.4#run";
+    let at = honest_core
+        .windows(run.len())
+        .position(|window| window == run)
+        .expect("the core exports its run entry point")
+        + run.len();
+    assert_eq!(honest_core[at], 0x00, "a function export");
+    assert!(honest_core[at + 1] < 0x80 && flip_idx < 0x80);
+    honest_core[at + 1] = u8::try_from(flip_idx).unwrap();
     let honest_lean_envelope = format!(
         "wasip2ComponentEnvelope := some {{ prefixLen := {prefix}, embeddedCoreModuleLen := {core_len}, suffixLen := {suffix} }}"
     );
@@ -1245,10 +1268,11 @@ fn cert_tripwire_declines_a_wasip2_lift_of_a_certified_export() {
                 r#"(component
                 (core module $honest)
                 (core instance $i (instantiate $honest))
-                (alias core export $i "flip" (core func $flip))
+                (alias core export $i "wasi:cli/run@0.2.4#run" (core func $flip))
                 (type $ft {ty})
                 (func $lifted (type $ft) (canon lift (core func $flip)))
-                (export "flip" (func $lifted)))"#
+                (instance $run (export "run" (func $lifted)))
+                (export "wasi:cli/run@0.2.4" (instance $run)))"#
             ),
             &honest_core,
         )
@@ -1269,14 +1293,16 @@ fn cert_tripwire_declines_a_wasip2_lift_of_a_certified_export() {
         let (ok, report) = aver_verify(&artifact, &dir.join("cert"));
         assert!(
             !ok,
-            "{label}: a lifted certified export must not verify:\n{report}"
+            "{label}: a lifted certified function must not verify:\n{report}"
         );
         assert!(
             !report.contains("CERTIFIED"),
-            "{label}: a lifted certified export printed a green verdict:\n{report}"
+            "{label}: a lifted certified function printed a green verdict:\n{report}"
         );
         assert!(
-            report.contains("wasip2 component lifts certified core export `flip`"),
+            report.contains(
+                "wasip2 component lifts core export `wasi:cli/run@0.2.4#run` of certified function `flip`"
+            ),
             "{label}: expected the certified-lift refusal:\n{report}"
         );
     }
@@ -1343,7 +1369,7 @@ fn cert_verify_accepts_nested_module_certificate() {
     );
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
     assert!(
-        report.contains("6 certified exports"),
+        report.contains("6 certified functions"),
         "expected the entry exports and all three nested-module exports:\n{report}"
     );
     assert!(
@@ -2334,6 +2360,7 @@ fn cert_tripwire_declines_json_claiming_an_extra_export() {
         .unwrap()
         .push(serde_json::json!({
             "name": "phantom",
+            "funcIdx": 4000,
             "class": "source-plan-v1",
             "facets": [],
             "policy": "simulatesModel",
@@ -2667,7 +2694,8 @@ fn cert_tripwire_declines_recursion_code_decouple() {
 }
 
 /// (t) Self decouple: `sumTo`'s `fnPlans` entry declares a wrong function
-/// index; the wall binds the entry to the export's byte-derived index.
+/// index; the wall binds the entry to the code entry at that index, and 999
+/// has none.
 #[test]
 fn cert_tripwire_declines_recursion_self_decouple() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-t") else {
@@ -2675,9 +2703,9 @@ fn cert_tripwire_declines_recursion_self_decouple() {
     };
 
     // (t) Self decouple: set `sumTo`'s declared function index to 999. The
-    //     export binding compares the bound function's index with the entry's,
-    //     and the plan's own self-call now targets an unplanned index, so this
-    //     fails closed without any bespoke simulation-proof replacement.
+    //     module has no function there to bind, and the plan's own self-call
+    //     now targets an unplanned index, so this fails closed without any
+    //     bespoke simulation-proof replacement.
     let dir = temp_dir("neg-t");
     copy_dir(&out_dir, &dir);
     let cert = dir.join("cert");
@@ -2707,52 +2735,76 @@ fn cert_tripwire_declines_recursion_self_decouple() {
     );
 }
 
-/// (u) Export-name relabel: an honest plan relabelled to a duplicate export
-/// name in the plans, the Lean subject and the JSON.
+/// (u) Label relabel. A certified function is its index, and its label is
+/// what the report credits. Relabelled to a duplicate, the checker refuses the
+/// manifest; relabelled in the JSON alone, the witness's label pin does not
+/// elaborate; relabelled consistently in the plans and the JSON, the module
+/// still exports the function as `sumTo`, and an export of a certified
+/// function must carry its label, so the export walk refuses it.
 #[test]
-fn cert_tripwire_declines_export_name_relabel() {
+fn cert_tripwire_declines_relabels() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-u") else {
         return;
     };
-
-    // (u) Export-name relabel: keep the byte-bound honest plan and index, but
-    //     relabel the first entry (and the subject and the JSON) to a
-    //     duplicate export name (`countDown`). The entry is bound to its code
-    //     through its export NAME, so the relabelled entry binds the other
-    //     function and its plan no longer lowers to that code entry; the
-    //     whole-module export accounting also refuses the duplicate → DECLINED.
-    let dir = temp_dir("neg-u");
-    copy_dir(&out_dir, &dir);
-    let plans = dir.join("cert").join("Plans.lean");
-    replace_once(&plans, "⟨\"sumTo\", ", "⟨\"countDown\", ");
-    let man = dir.join("cert").join("Manifest.lean");
-    replace_once(
-        &man,
-        "exports := [\"sumTo\", \"countDown\"]",
-        "exports := [\"countDown\", \"countDown\"]",
-    );
-    let mf = dir.join("cert").join("cert-manifest.json");
-    let mut m: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-    for c in m["certified"].as_array_mut().unwrap() {
-        if c["name"] == serde_json::json!("sumTo") {
-            c["name"] = serde_json::json!("countDown");
+    let relabel = |label: &str, plans_too: bool| {
+        let dir = temp_dir(&format!("neg-u-{label}-{plans_too}"));
+        copy_dir(&out_dir, &dir);
+        if plans_too {
+            // Every label the package writes: the plans, the plan checks and
+            // the report blocks.
+            for entry in std::fs::read_dir(dir.join("cert")).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_some_and(|ext| ext == "lean") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    std::fs::write(&path, text.replace("\"sumTo\"", &format!("\"{label}\"")))
+                        .unwrap();
+                }
+            }
         }
-    }
-    // The relabelled export's bridge goes with it: the bridge surface names
-    // certified exports only.
-    m["sourceBridges"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|b| b["export"] != serde_json::json!("sumTo"));
-    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-    assert!(!ok, "export-name relabel must be DECLINED (u):\n{out}");
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        for c in m["certified"].as_array_mut().unwrap() {
+            if c["name"] == serde_json::json!("sumTo") {
+                c["name"] = serde_json::json!(label);
+            }
+        }
+        // The relabelled function's bridge goes with it: its theorem is named
+        // after the label.
+        m["sourceBridges"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|b| b["export"] != serde_json::json!("sumTo"));
+        for law in m["laws"].as_array_mut().unwrap() {
+            law["bridges"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|b| b != &serde_json::json!("sumTo"));
+        }
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"))
+    };
+    let (ok, out) = relabel("countDown", true);
+    assert!(!ok, "a duplicate label must be DECLINED:\n{out}");
+    assert!(out.contains("twice"), "wrong reason (duplicate):\n{out}");
+    let (ok, out) = relabel("renamed", false);
     assert!(
-        out.contains("did not build") || out.contains("does not bind"),
-        "wrong reason (u):\n{out}"
+        !ok,
+        "a label changed in the JSON alone must be DECLINED:\n{out}"
     );
-    assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
+    assert!(
+        !out.contains("CHECKED \""),
+        "JSON-only relabel checked:\n{out}"
+    );
+    let (ok, out) = relabel("renamed", true);
+    assert!(
+        !ok,
+        "an exported function relabelled must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("walkExports") || out.contains("ExportChars.walk"),
+        "wrong reason (exported relabel):\n{out}"
+    );
 }
 
 /// (v) Plan decouple: `countDown`'s `fnPlans` entry points at a decoy plan
@@ -3355,7 +3407,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
-        report.contains("35 checked exports"),
+        report.contains("35 checked functions"),
         "json should certify the widened data-segment functions:\n{report}"
     );
     assert!(
@@ -3871,7 +3923,7 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         "expected clean stringeq certificate to verify:\n{report}"
     );
     assert!(
-        report.contains("2 checked exports"),
+        report.contains("2 checked functions"),
         "stringeq should certify quoteOrSelf plus bump:\n{report}"
     );
     assert!(
@@ -4058,7 +4110,7 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         );
     }
     assert!(
-        report.contains("2 checked exports"),
+        report.contains("2 checked functions"),
         "stringconcat should certify shout plus bump:\n{report}"
     );
     let manifest: serde_json::Value = serde_json::from_str(
@@ -4658,6 +4710,7 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         .unwrap()
         .push(serde_json::json!({
             "name": "withdrawAll",
+            "funcIdx": 4000,
             "class": "source-plan-v1",
             "facets": [],
             "policy": "simulatesModel",
@@ -5835,7 +5888,7 @@ fn cert_tripwire_declines_tampered_record_compute_signature() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "clean recordcompute certificate must verify:\n{report}");
     assert!(
-        report.contains("2 checked exports"),
+        report.contains("2 checked functions"),
         "recordcompute should certify combine and flip:\n{report}"
     );
 
@@ -5923,7 +5976,7 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
     let (ok, report) = aver_check(&out_dir.join("intcompare.wasm"), &cert);
     assert!(ok, "clean intcompare certificate must check:\n{report}");
     assert!(
-        report.contains("5 checked exports"),
+        report.contains("5 checked functions"),
         "intcompare should certify all five comparisons:\n{report}"
     );
 
@@ -6039,10 +6092,8 @@ fn explain_states_the_record_compute_faces_certified_domain() {
         explain.contains("SOURCE-BRIDGES")
             && explain
                 .contains("Domain_Rational_plus  ≡ Domain.Rational.plus  (exact)  [credited]")
-            && explain.contains(
-                "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest \
-                 \"Domain_Rational_plus\" (fun (x : "
-            ),
+            && explain
+                .contains("_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest (nat_lit "),
         "the rendered statement and its credit must be printed under SOURCE-BRIDGES:\n{explain}"
     );
 }
@@ -6114,7 +6165,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "clean k5 law-claims certificate must check:\n{report}");
     assert!(
-        report.contains("12 checked exports"),
+        report.contains("12 checked functions"),
         "k5 should keep its twelve certified exports:\n{report}"
     );
     assert!(
@@ -6221,7 +6272,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         "a law failing only its axiom audit must not sink the exports:\n{out}"
     );
     assert!(
-        out.contains("12 checked exports"),
+        out.contains("12 checked functions"),
         "the export verdict must stand unchanged beside an uncredited law:\n{out}"
     );
     assert!(
@@ -6436,7 +6487,7 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         "a bridge failing only its axiom audit must not sink the exports:\n{out}"
     );
     assert!(
-        out.contains("12 checked exports"),
+        out.contains("12 checked functions"),
         "the export verdict must stand beside an uncredited bridge:\n{out}"
     );
     assert!(
@@ -6533,7 +6584,7 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         "a step lemma that cannot close must not decline the package:\n{out}"
     );
     assert!(
-        out.contains("12 checked exports")
+        out.contains("12 checked functions")
             && out.contains("source-bridges: 11 of 12 credited")
             && out.contains(
                 "source-bridge not credited: Domain_Rational_isNonPos \

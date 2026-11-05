@@ -1,4 +1,4 @@
--- AverCert statement schema core (audited, fixed), statement schema 9.
+-- AverCert statement schema core (audited, fixed), statement schema 10.
 --
 -- The single final certificate theorem is
 --   `AverCert.Final.cert : AverCert.Schema.Holds manifest`.
@@ -11,7 +11,9 @@
 -- the model is the plan's fuel-indexed meaning, and the face is the plan's
 -- signature read through the byte-pinned layout (`Grammar.HasTy`,
 -- `Grammar.SRepr`). There are no per-family domains, codomains or
--- representation fields left for a producer to choose.
+-- representation fields left for a producer to choose. Schema 10 identifies
+-- every certified function by its function index alone: a function need not
+-- be exported to be certified, and a name is only a report label.
 import SchemaBase
 import Grammar
 
@@ -98,14 +100,17 @@ structure TypeTable where
 deriving Repr
 
 /-- One planned function: the plan is the function's MIR body printed 1:1
-    (`Grammar.FnPlan`). `exported` functions are bound to the module by their
-    export name, internal callees by their function index; `name` is the export
-    name, or `#<funcIdx>` for an internal callee. `group` is the function's
-    call group (its SCC, in callee-first order): a function calls only
-    functions of its own group or of an earlier one. -/
+    (`Grammar.FnPlan`). Every planned function is bound to the module by its
+    function index `funcIdx`, never by a name. A `claimed` function is an
+    obligation's root: the certificate states a theorem about it; an
+    unclaimed one is only a callee of one. `name` is a label for the report
+    (the source name, or `#<funcIdx>`) and identifies nothing: no check
+    reads it. `group` is the function's call group (its SCC, in callee-first
+    order): a function calls only functions of its own group or of an earlier
+    one. -/
 structure FnEntry where
   name : String
-  exported : Bool
+  claimed : Bool
   funcIdx : Nat
   group : Nat
   plan : FnPlan
@@ -181,7 +186,9 @@ structure HostTotal {C : Nat} (S : CarrierSpec C) (h : HostFns) (role : Totality
 
 /-! ### Obligations -/
 
-/-- One certified export. `code` / `host` / `self` pin the emitted function
+/-- One certified function. `self` is its function index in the module, the
+    only thing that identifies it; `name` is the report's label for it.
+    `code` / `host` / `self` pin the emitted function
     and its runtime wiring; `layout` is the byte-pinned module layout the
     representation is read at; `sig` is the plan's signature and `model` the
     plan's fuel-indexed meaning (at fuel `k + 1` the body runs with every
@@ -190,7 +197,7 @@ structure HostTotal {C : Nat} (S : CarrierSpec C) (h : HostFns) (role : Totality
     (`AcceptedArtifact.obligationsOf`), so none of these fields is a producer
     choice. -/
 structure Obligation where
-  export_ : String
+  name : String
   policy  : Policy
   termination? : Option TerminationWitness := none
   totalityRole : TotalityRole := .addSub
@@ -238,7 +245,7 @@ structure Manifest where
   obligations : List Obligation
 
 /-- The artifact-independent part of the audited certificate proposition:
-    each export satisfies the denotation selected by its policy. -/
+    each certified function satisfies the denotation selected by its policy. -/
 def HoldsCore (m : Manifest) : Prop :=
   ∀ o ∈ m.obligations,
     match o.policy with

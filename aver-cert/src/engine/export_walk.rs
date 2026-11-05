@@ -19,7 +19,7 @@ theorem asciiChars_eq (cs : List Char) :
   unfold List.utf8Encode
   rw [List.toList_data_toByteArray]
 
-def walk (cs : List Nat) (e0 cert : Nat) :
+def walk (cs : List Nat) (claimed : Nat) (label : Nat → Option String) :
     Option (List Nat) → Nat → List Nat → List (List Char × String) →
       Option (Option (List Nat) × Nat)
   | p, off, [], [] => some (p, off)
@@ -29,12 +29,14 @@ def walk (cs : List Nat) (e0 cert : Nat) :
       | none => none
       | some e =>
           if keyAfter p e.name then
-            if cert.testBit (off - e0) then walk cs e0 cert (some e.name) (off + l) ls ds
+            if claimedEntry claimed e then
+              if labelOk label e then walk cs claimed label (some e.name) (off + l) ls ds
+              else none
             else
               match ds with
               | d :: ds' =>
                   if asciiChars d.1 == some e.name then
-                    walk cs e0 cert (some e.name) (off + l) ls ds'
+                    walk cs claimed label (some e.name) (off + l) ls ds'
                   else none
               | [] => none
           else none
@@ -42,9 +44,9 @@ def walk (cs : List Nat) (e0 cert : Nat) :
 def names (ds : List (List Char × String)) : List (String × String) :=
   ds.map fun d => (String.ofList d.1, d.2)
 
-theorem walk_eq (cs : List Nat) (e0 cert : Nat) (ls : List Nat)
+theorem walk_eq (cs : List Nat) (claimed : Nat) (label : Nat → Option String) (ls : List Nat)
     (p : Option (List Nat)) (off : Nat) (ds : List (List Char × String)) :
-    walkExports cs e0 cert p off ls (names ds) = walk cs e0 cert p off ls ds := by
+    walkExports cs claimed label p off ls (names ds) = walk cs claimed label p off ls ds := by
   induction ls generalizing p off ds with
   | nil => cases ds <;> rfl
   | cons l ls ih =>
@@ -55,7 +57,9 @@ theorem walk_eq (cs : List Nat) (e0 cert : Nat) (ls : List Nat)
           simp only
           split
           · split
-            · exact ih _ _ _
+            · split
+              · exact ih _ _ _
+              · rfl
             · cases ds with
               | nil => rfl
               | cons d ds =>
@@ -92,14 +96,14 @@ struct ExportBlock {
 }
 
 impl ExportWalk {
-    /// The blocks of the export section. Every entry that is not a planned
-    /// export's is matched with the next declared-uncertified export; a
-    /// declared name that matches no entry goes to the last block's piece, so
-    /// the pieces always join to the declared list and the walk declines.
+    /// The blocks of the export section. Every entry that is not a function
+    /// export of a claimed index is matched with the next declared-uncertified
+    /// export; a declared name that matches no entry goes to the last block's
+    /// piece, so the pieces always join to the declared list and the walk
+    /// declines.
     fn new(
         layout: &ModuleLayout,
-        offsets: &[usize],
-        certified: &BTreeSet<usize>,
+        claimed: &BTreeSet<u32>,
         declared: Vec<(String, String)>,
     ) -> Self {
         let n = layout.export_cuts.len();
@@ -107,11 +111,15 @@ impl ExportWalk {
         let mut blocks = Vec::new();
         let mut prev: Option<Vec<u8>> = None;
         let mut k = 0;
+        let mut start = layout.export_start;
         loop {
             let end = (k + EXPORT_BLOCK).min(n);
             let mut piece = Vec::new();
-            for (offset, name_bytes) in offsets[k..end].iter().zip(&layout.export_names[k..end]) {
-                if certified.contains(offset) {
+            for (&(kind, index), name_bytes) in layout.export_targets[k..end]
+                .iter()
+                .zip(&layout.export_names[k..end])
+            {
+                if kind == 0 && claimed.contains(&index) {
                     continue;
                 }
                 if declared
@@ -122,11 +130,12 @@ impl ExportWalk {
                 }
             }
             blocks.push(ExportBlock {
-                start: offsets.get(k).copied().unwrap_or(layout.export_start),
+                start,
                 prev: prev.clone(),
                 cuts: layout.export_cuts[k..end].to_vec(),
                 declared: piece,
             });
+            start += layout.export_cuts[k..end].iter().sum::<usize>();
             if end > k {
                 prev = Some(layout.export_names[end - 1].clone());
             }
@@ -168,11 +177,11 @@ fn lean_prev(prev: &Option<Vec<u8>>) -> String {
 
 /// `ArtifactExports.lean`: the export section read in blocks, one
 /// declaration each, joined into the walk over the whole section; the export
-/// cut, the export names' distinctness and the planned exports' site bits,
-/// all read from it.
+/// cut, the export names' distinctness and the export accounting, all read
+/// from it.
 fn render_artifact_exports(walk: &ExportWalk) -> Vec<(String, String)> {
-    const WALK: &str = "AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks exportStart\n    \
-         exportCertified";
+    const WALK: &str = "AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks exportClaimed\n    \
+         (AverCert.AcceptedArtifact.labelAt AverCert.manifest)";
     let mut block_texts = Vec::new();
     for (b, block) in walk.blocks.iter().enumerate() {
         let (next_prev, next_start) = match walk.blocks.get(b + 1) {
@@ -240,9 +249,9 @@ fn render_artifact_exports(walk: &ExportWalk) -> Vec<(String, String)> {
     let main = format!(
         "-- The export section read in blocks of {EXPORT_BLOCK} entries, each entry on its\n\
          -- own chunk window (`ScaleExports.walkExports`): the names' keys increase,\n\
-         -- and every entry that is not a planned export's is the next\n\
-         -- declared-uncertified export. The export cut and the export names'\n\
-         -- distinctness are read from the walk.\n\
+         -- and every entry that is not a function export of a claimed index is\n\
+         -- the next declared-uncertified export. The export cut, the export\n\
+         -- names' distinctness and the export accounting are read from the walk.\n\
          import ArtifactLayout\n\
          import Manifest\n\
          import ScaleExports\n\
@@ -263,11 +272,21 @@ fn render_artifact_exports(walk: &ExportWalk) -> Vec<(String, String)> {
            AverCert.ByteWindow.decodeRawExports_eq_lazy exports_cut_ok\n\n\
          theorem export_names_ok : AverCert.DeclaredLayout.exportNamesDistinct {BYTES} = true :=\n  \
            AverCert.ScaleExports.exportNamesDistinct_of_walk bytes_eq chunks_fit exports_head exports_walk\n\n\
-         -- The planned exports' sites are distinct entry starts, and their bits are\n\
-         -- the ones the walk leaves to the plan checks.\n\
-         theorem cert_bits : AverCert.ScaleExports.certBitsOf exportStart AverCert.Plans.fnPlans\n    \
-           exportSites 0 = some exportCertified := by\n  \
+         -- No certified function's label is declared uncertified.\n\
+         theorem labels_disjoint : AverCert.ScaleExports.labelsDisjoint AverCert.manifest = true := by\n  \
            decide +kernel\n\n\
+         -- The claimed functions' indices are the bits the walk reads.\n\
+         theorem claimed_bits : AverCert.SortedKeys.bitsOf\n    \
+           (AverCert.AcceptedArtifact.claimedIndices AverCert.manifest) = exportClaimed := by\n  \
+           decide +kernel\n\n\
+         /-- The export accounting: every export is a function export of a claimed\n\
+         index under that function's label, or the next declared-uncertified export. -/\n\
+         theorem exports_accounted : AverCert.AcceptedArtifact.exportsAccountedOf\n    \
+           {BYTES}\n    \
+           (AverCert.AcceptedArtifact.claimedLabels AverCert.manifest)\n    \
+           (AverCert.AcceptedArtifact.declaredUncertifiedNames AverCert.manifest) = true :=\n  \
+           AverCert.ScaleExports.exportsAccounted_of_walk bytes_eq chunks_fit exports_head\n    \
+           exports_walk claimed_bits labels_disjoint\n\n\
          end AverCert.Artifact\n",
         lean_prev(&walk.end.0),
         walk.end.1,

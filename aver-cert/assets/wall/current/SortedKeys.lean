@@ -8,12 +8,12 @@ open AverCert.AcceptedArtifact
 
 /-! ### Merge sort on numbers
 
-The accounting checks index names in balanced trees (`WasmSlice.orderedSet`).
+The set checks index numbers in balanced trees (`WasmSlice.orderedSet`).
 The kernel pays each insertion with a walk through the tree's rebalancing
-code, a few thousand steps per name, while a merge of two sorted lists pays
+code, a few thousand steps per number, while a merge of two sorted lists pays
 one comparison of two numerals per element. The checks below sort the keys
 once and then walk the sorted lists; the lemmas show that what they decide
-implies the tree-based accounting. -/
+implies the tree-based check. -/
 
 def merge : Nat → List Nat → List Nat → List Nat
   | 0, xs, ys => xs ++ ys
@@ -135,96 +135,6 @@ theorem subsetW_mem : ∀ {f : Nat} {s t : List Nat}, subsetW f s t = true → �
       · split at h
         · exact List.mem_cons_of_mem _ (subsetW_mem h x hx)
         · cases h
-
-/-- No element of `s` is in `t`, walking both (strictly increasing) in order. -/
-def disjointW : Nat → List Nat → List Nat → Bool
-  | _, [], _ => true
-  | _, _ :: _, [] => true
-  | 0, _ :: _, _ :: _ => false
-  | f + 1, x :: xs, y :: ys =>
-      if x = y then false else if x < y then disjointW f xs (y :: ys) else disjointW f (x :: xs) ys
-
-theorem disjointW_sound : ∀ {f : Nat} {s t : List Nat}, strictly s = true → strictly t = true →
-    disjointW f s t = true → ∀ x ∈ s, x ∈ t → False
-  | _, [], _, _, _, _, _, hx, _ => by cases hx
-  | _, _ :: _, [], _, _, _, _, _, ht => by cases ht
-  | 0, _ :: _, _ :: _, _, _, h, _, _, _ => by simp [disjointW] at h
-  | f + 1, a :: as, b :: bs, hs, ht, h, x, hx, hmem => by
-      unfold disjointW at h
-      split at h
-      · cases h
-      · rename_i hne
-        split at h
-        · rename_i hlt
-          cases hx with
-          | head =>
-              cases hmem with
-              | head => exact hne rfl
-              | tail _ hmem' => exact Nat.lt_asymm hlt (strictly_lt ht _ hmem')
-          | tail _ hx' => exact disjointW_sound (strictly_tail hs) ht h x hx' hmem
-        · rename_i hge
-          cases hmem with
-          | head =>
-              cases hx with
-              | head => exact hne rfl
-              | tail _ hx' => exact Nat.lt_irrefl _ (Nat.lt_of_lt_of_le (strictly_lt hs _ hx')
-                  (Nat.le_of_not_lt (by omega)))
-          | tail _ hmem' => exact disjointW_sound hs (strictly_tail ht) h x hx hmem'
-
-/-- Every element of `as` is in `cs`, or its quotient by `2 ^ 64` is in `ds`:
-    a walk over three lists in order. -/
-def cover : Nat → List Nat → List Nat → List Nat → Bool
-  | _, [], _, _ => true
-  | 0, _ :: _, _, _ => false
-  | f + 1, a :: as, cs, ds =>
-      match cs, ds with
-      | c :: cs', ds =>
-          if a = c then cover f as cs' ds
-          else match ds with
-            | d :: ds' => if a / 18446744073709551616 = d then cover f as (c :: cs') ds' else false
-            | [] => false
-      | [], d :: ds' => if a / 18446744073709551616 = d then cover f as [] ds' else false
-      | [], [] => false
-
-theorem cover_sound : ∀ {f : Nat} {as cs ds : List Nat}, cover f as cs ds = true →
-    ∀ a ∈ as, a ∈ cs ∨ a / 18446744073709551616 ∈ ds
-  | _, [], _, _, _, _, ha => by cases ha
-  | 0, _ :: _, _, _, h, _, _ => by simp [cover] at h
-  | f + 1, x :: xs, cs, ds, h, a, ha => by
-      unfold cover at h
-      split at h
-      · rename_i c cs' ds0
-        split at h
-        · rename_i hxc
-          cases ha with
-          | head => exact Or.inl (hxc ▸ List.mem_cons_self)
-          | tail _ ha' =>
-              rcases cover_sound h a ha' with h1 | h1
-              · exact Or.inl (List.mem_cons_of_mem _ h1)
-              · exact Or.inr h1
-        · split at h
-          · rename_i d ds'
-            split at h
-            · rename_i hxd
-              cases ha with
-              | head => exact Or.inr (hxd ▸ List.mem_cons_self)
-              | tail _ ha' =>
-                  rcases cover_sound h a ha' with h1 | h1
-                  · exact Or.inl h1
-                  · exact Or.inr (List.mem_cons_of_mem _ h1)
-            · cases h
-          · cases h
-      · rename_i d ds'
-        split at h
-        · rename_i hxd
-          cases ha with
-          | head => exact Or.inr (hxd ▸ List.mem_cons_self)
-          | tail _ ha' =>
-              rcases cover_sound h a ha' with h1 | h1
-              · exact Or.inl h1
-              · exact Or.inr (List.mem_cons_of_mem _ h1)
-        · cases h
-      · cases h
 
 /-! ### Distinct small numbers, on a bitmap
 
@@ -360,132 +270,12 @@ theorem natListNodup_of_nodup {xs : List Nat} (h : xs.Nodup) :
   rw [foldl_size xs _ h (fun y _ => by simp)]
   simp
 
-/-- The derived order on export keys is lexicographic on its three numbers. -/
-theorem compare_exportKey (a b : ExportKey) :
-    compare a b = compareLex (compareOn ExportKey.name)
-      (compareLex (compareOn ExportKey.kind) (compareOn ExportKey.idx)) a b := by
-  cases a; cases b
-  simp only [compare, instOrdExportKey.ord, compareLex, compareOn]
-  rename_i n1 k1 i1 n2 k2 i2
-  generalize compareOfLessAndEq i1 i2 = o
-  cases o <;> rfl
-
-instance : Std.TransOrd ExportKey := by
-  have h : (compare : ExportKey → ExportKey → Ordering) = compareLex (compareOn ExportKey.name)
-      (compareLex (compareOn ExportKey.kind) (compareOn ExportKey.idx)) := by
-    funext a b; exact compare_exportKey a b
-  unfold Std.TransOrd
-  rw [h]
-  infer_instance
-
-instance : Std.LawfulEqOrd ExportKey where
-  eq_of_compare {a b} h := by
-    rw [compare_exportKey] at h
-    simp only [compareLex_eq_eq, compareOn, Std.LawfulEqCmp.compare_eq_iff_eq] at h
-    cases a; cases b
-    simp only at h
-    obtain ⟨h1, h2, h3⟩ := h
-    subst h1; subst h2; subst h3; rfl
-
-/-! ### The export accounting on sorted keys -/
-
-/-- An export key as one number: its name key above its kind and index. -/
-def entryNum (k : ExportKey) : Nat := k.name * 18446744073709551616 + k.kind * 4294967296 + k.idx
-
-def keyBounded (k : ExportKey) : Bool := decide (k.kind < 4294967296) && decide (k.idx < 4294967296)
-
-theorem entryNum_div {k : ExportKey} (h : keyBounded k = true) :
-    entryNum k / 18446744073709551616 = k.name := by
-  simp only [keyBounded, Bool.and_eq_true, decide_eq_true_eq] at h
-  unfold entryNum; omega
-
-theorem entryNum_inj {a b : ExportKey} (ha : keyBounded a = true) (hb : keyBounded b = true)
-    (h : entryNum a = entryNum b) : a = b := by
-  simp only [keyBounded, Bool.and_eq_true, decide_eq_true_eq] at ha hb
-  unfold entryNum at h
-  cases a; cases b
-  simp only [ExportKey.mk.injEq]
-  simp only at ha hb h
-  refine ⟨?_, ?_, ?_⟩ <;> omega
-
-/-- The accounting of the actual export keys `A` against the certified keys `C`
-    and the declared name keys `D`, decided on sorted lists. -/
-def accountedSorted (A C : List ExportKey) (D : List Nat) : Bool :=
-  let an := sortedOr (A.map (·.name))
-  let cn := sortedOr (C.map (·.name))
-  let dn := sortedOr D
-  let ae := sortedOr (A.map entryNum)
-  let ce := sortedOr (C.map entryNum)
-  A.all keyBounded && C.all keyBounded &&
-  strictly an && strictly cn && strictly dn &&
-  disjointW (cn.length + dn.length + 1) cn dn &&
-  cover (ae.length + 1) ae ce dn &&
-  subsetW (ce.length + ae.length + 1) ce ae &&
-  subsetW (dn.length + an.length + 1) dn an
-
-/-- `exportsAccountedOf`, with the module's export entries given. -/
-def exportsAccountedFast (actual certified : List AverCert.WasmSlice.ExportEntry)
-    (declared : List AverCert.WasmSlice.ByteSeq) : Bool :=
-  match actual.mapM exportEntryKey, certified.mapM exportEntryKey,
-      AverCert.WasmSlice.seqKeys declared with
-  | some A, some C, some D => accountedSorted A C D
-  | _, _, _ => false
-
 theorem mem_sortedOr {xs : List Nat} {x : Nat} : x ∈ sortedOr xs ↔ x ∈ xs := (sortedOr_perm xs).mem_iff
 
 theorem nodup_of_sortedOr {xs : List Nat} (h : strictly (sortedOr xs) = true) : xs.Nodup :=
   (sortedOr_perm xs).nodup_iff.mp (strictly_nodup h)
 
-theorem exportsAccountedOf_of_fast {n len : Nat}
-    {E : Option (List AverCert.WasmSlice.ExportEntry)}
-    (hE : AverCert.WasmSlice.enumExports n len = E)
-    {certified : List AverCert.WasmSlice.ExportEntry} {declared : List AverCert.WasmSlice.ByteSeq}
-    (h : (match E with
-      | some actual => exportsAccountedFast actual certified declared
-      | none => false) = true) :
-    exportsAccountedOf n len certified declared = true := by
-  unfold exportsAccountedOf
-  rw [hE]
-  cases E with
-  | none => cases h
-  | some actual =>
-      simp only at h ⊢
-      unfold exportsAccountedFast at h
-      split at h
-      · rename_i A C D hA hC hD
-        simp only [hA, hC, hD]
-        unfold accountedSorted at h
-        simp only [Bool.and_eq_true, List.all_eq_true] at h
-        obtain ⟨⟨⟨⟨⟨⟨⟨⟨hAb, hCb⟩, han⟩, hcn⟩, hdn⟩, hdis⟩, hcov⟩, hsub1⟩, hsub2⟩ := h
-        simp only [Bool.and_eq_true, List.all_eq_true, Bool.or_eq_true, Bool.not_eq_true',
-          orderedSet_contains]
-        refine ⟨⟨⟨⟨⟨⟨natListNodup_of_nodup (nodup_of_sortedOr han),
-          natListNodup_of_nodup (nodup_of_sortedOr hcn)⟩, natListNodup_of_nodup (nodup_of_sortedOr hdn)⟩,
-          ?_⟩, ?_⟩, ?_⟩, ?_⟩
-        · intro name hname
-          apply Bool.eq_false_iff.mpr
-          intro hmem
-          rw [orderedSet_contains] at hmem
-          exact disjointW_sound hcn hdn hdis name (mem_sortedOr.mpr hname) (mem_sortedOr.mpr hmem)
-        · intro e he
-          rcases cover_sound hcov (entryNum e) (mem_sortedOr.mpr (List.mem_map_of_mem he)) with h1 | h1
-          · left
-            obtain ⟨c, hc, hce⟩ := List.mem_map.mp (mem_sortedOr.mp h1)
-            rw [entryNum_inj (hCb c hc) (hAb e he) hce] at hc
-            exact hc
-          · right
-            rw [entryNum_div (hAb e he)] at h1
-            exact mem_sortedOr.mp h1
-        · intro c hc
-          have := subsetW_mem hsub1 (entryNum c) (mem_sortedOr.mpr (List.mem_map_of_mem hc))
-          obtain ⟨a, ha, hae⟩ := List.mem_map.mp (mem_sortedOr.mp this)
-          rw [← entryNum_inj (hAb a ha) (hCb c hc) hae]
-          exact ha
-        · intro d hd
-          exact mem_sortedOr.mp (subsetW_mem hsub2 d (mem_sortedOr.mpr hd))
-      · cases h
-
-/-! ### Distinct export names, from the accounting -/
+/-! ### Export names read through their keys -/
 
 theorem mapM_key_names : ∀ (es : List AverCert.WasmSlice.ExportEntry),
     (es.mapM exportEntryKey).map (fun ks => ks.map (·.name)) =
@@ -500,55 +290,6 @@ theorem mapM_key_names : ∀ (es : List AverCert.WasmSlice.ExportEntry),
       rw [hk]
       cases h1 : AverCert.WasmSlice.seqKey e.name <;>
         cases h2 : es.mapM exportEntryKey <;> simp_all <;> (rw [← ih]; rfl)
-
-/-- The accounting decides that the module's export names are distinct, so a
-    check that needs them distinct reads it from there instead of deciding it
-    again. -/
-theorem exportNamesDistinct_of_accounted {n len : Nat}
-    {certified : List AverCert.WasmSlice.ExportEntry} {declared : List AverCert.WasmSlice.ByteSeq}
-    (h : exportsAccountedOf n len certified declared = true) :
-    AverCert.DeclaredLayout.exportNamesDistinct n len = true := by
-  unfold exportsAccountedOf at h
-  unfold AverCert.DeclaredLayout.exportNamesDistinct byteSeqListNodup
-  unfold AverCert.WasmSlice.enumExports at h
-  cases hE : CertDecode.decodeRawExports n len with
-  | none => simp [hE] at h
-  | some actual =>
-      simp only [hE] at h ⊢
-      split at h
-      · rename_i A C D hA hC hD
-        have hk := mapM_key_names actual
-        rw [hA, Option.map_some] at hk
-        rw [← hk]
-        simp only [Bool.and_eq_true] at h
-        exact h.1.1.1.1.1.1
-      · cases h
-
-/-- The accounting also decides the obligations' export names distinct: it
-    requires the numeric keys of their bytes distinct, and a key identifies
-    its bytes (`seqKey_inj`), so two equal names would give two equal keys.
-    The source bridges read it from here instead of deciding it again. -/
-theorem obligationNamesNodup_of_accounted {artifact : ArtifactData}
-    (h : exportsAccounted artifact = true) :
-    (artifact.manifest.obligations.map (·.export_)).Nodup := by
-  unfold exportsAccounted exportsAccountedOf at h
-  split at h
-  · cases h
-  · split at h
-    · rename_i A C D _ hC _
-      simp only [Bool.and_eq_true] at h
-      have hk := mapM_key_names (certifiedExportEntries artifact.manifest)
-      rw [hC, Option.map_some] at hk
-      have hnd := AverCert.DeclaredLayout.mapM_seqKey_nodup hk.symm
-        (AverCert.DeclaredLayout.natListNodup_nodup h.1.1.1.1.1.2)
-      unfold certifiedExportEntries at hnd
-      rw [List.map_map, show ((fun e : AverCert.WasmSlice.ExportEntry => e.name) ∘
-          fun o : AverCert.Schema.Obligation =>
-            ({ name := stringBytes o.export_, kind := 0, idx := o.self } :
-              AverCert.WasmSlice.ExportEntry)) =
-          stringBytes ∘ (·.export_) from rfl, ← List.map_map] at hnd
-      exact List.Pairwise.of_map stringBytes (fun _ _ hne heq => hne (congrArg _ heq)) hnd
-    · cases h
 
 /-! ### Closure isolation on sorted lists and a membership bitmap -/
 

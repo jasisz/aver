@@ -151,7 +151,7 @@ struct CertifiedExport {
     name: String,
     policy: String,
     face: String,
-    /// What the certified model IS: under schema 9 always the export's plan
+    /// What the certified model IS: from schema 9 on always the function's plan
     /// (its optimized MIR body), until a credited source bridge identifies
     /// the plan with the transpiled source function.
     certified_model: String,
@@ -210,7 +210,11 @@ struct TrustedReport {
 }
 
 struct CertifiedCandidate {
+    /// Report label (the source name). The certificate identifies the
+    /// function by `func_idx` alone; the witness pins the pair.
     name: String,
+    /// The certified function's index in the core module.
+    func_idx: u32,
     class: String,
     /// Facets derived in the wall from the plan (`ClaimAxes.reportFacets`),
     /// pinned by the witness.
@@ -450,7 +454,7 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
         )
     };
     let text = format!(
-        "{} ({} {status} export{}, level {}{law_clause}{bridged_law_clause}{bridge_clause})",
+        "{} ({} {status} function{}, level {}{law_clause}{bridged_law_clause}{bridge_clause})",
         shown_path(artifact),
         count,
         if count == 1 { "" } else { "s" },
@@ -715,19 +719,30 @@ fn trusted_check(
     }
 
     let candidates = read_candidates(&manifest, identity, target_envelope.map(|env| env.inner))?;
-    // A certified export is a claim about core wasm values. Aver never lifts
-    // one into the component, so the checker has no component signature to
-    // hold a lift of it to, and a lift could hand it arguments outside the
-    // certified domain (a `u32` where the core expects a Bool).
-    if let Some(certified) = candidates
-        .certified
-        .iter()
-        .find(|candidate| lifted_core_exports.contains(&candidate.name))
-    {
-        return Err(format!(
-            "wasip2 component lifts certified core export `{}`; Aver lifts only its world entry points, so this checker admits no component signature for a certified export",
-            display_safe(&certified.name)
-        ));
+    // A certified function is a claim about core wasm values. Aver never
+    // lifts one into the component, so the checker has no component signature
+    // to hold a lift of it to, and a lift could hand it arguments outside the
+    // certified domain (a `u32` where the core expects a Bool). The function
+    // is identified by its index, so a lifted core export of a certified
+    // function is refused under whatever name it carries.
+    if !lifted_core_exports.is_empty() {
+        let exported = core_function_exports(core_module_bytes)?;
+        for name in &lifted_core_exports {
+            let Some(index) = exported.get(name) else {
+                continue;
+            };
+            if let Some(certified) = candidates
+                .certified
+                .iter()
+                .find(|candidate| candidate.func_idx == *index)
+            {
+                return Err(format!(
+                    "wasip2 component lifts core export `{}` of certified function `{}`; Aver lifts only its world entry points, so this checker admits no component signature for a certified function",
+                    display_safe(name),
+                    display_safe(&certified.name)
+                ));
+            }
+        }
     }
     let lean = LeanRunner::new(selected_wall.toolchain)?;
     let stage_started = std::time::Instant::now();
@@ -919,6 +934,26 @@ fn trusted_check(
     })
 }
 
+/// The function exports of a core module, by name.
+fn core_function_exports(
+    core_module_bytes: &[u8],
+) -> Result<std::collections::BTreeMap<String, u32>, String> {
+    let mut exports = std::collections::BTreeMap::new();
+    for payload in wasmparser::Parser::new(0).parse_all(core_module_bytes) {
+        if let wasmparser::Payload::ExportSection(reader) =
+            payload.map_err(|error| format!("core module parse error: {error}"))?
+        {
+            for export in reader {
+                let export = export.map_err(|error| format!("core module export: {error}"))?;
+                if export.kind == wasmparser::ExternalKind::Func {
+                    exports.insert(export.name.to_string(), export.index);
+                }
+            }
+        }
+    }
+    Ok(exports)
+}
+
 /// The witness declarations a credit rests on: the accepted root, the report
 /// pins, and every law, bridged-law and bridge pin whose audit is clean.
 fn credited_roots(
@@ -962,7 +997,7 @@ fn report_face(candidate: &CertifiedCandidate) -> String {
     }
 }
 
-/// What the export's certified model IS. Schema 9 states every obligation
+/// What the function's certified model IS. Schema 9 states every obligation
 /// over the plan, so the line says `plan`; a credited source bridge (not
 /// carried by schema 9 yet) would say `plan ≡ <fn>`. Credit is never granted
 /// on a declaration.
@@ -982,7 +1017,7 @@ fn certified_model_line(candidate: &CertifiedCandidate, bridges: &[BridgeOutcome
                 display_safe(&bridge.model)
             ),
         },
-        None => "model: plan (the export's optimized MIR body)".to_string(),
+        None => "model: plan (the function's optimized MIR body)".to_string(),
     }
 }
 
@@ -1036,6 +1071,17 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             .iter()
             .map(|candidate| candidate.name.clone())
             .collect::<Vec<_>>(),
+    );
+    // The certified functions' indices, in obligation order: the identity of
+    // each certified function, paired with its label by position.
+    let indices = format!(
+        "[{}]",
+        candidates
+            .certified
+            .iter()
+            .map(|candidate| lean_nat(candidate.func_idx))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     let report_entries = lean_string_pair_list(
         &candidates
@@ -1290,8 +1336,8 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             ),
             "rfl",
         ),
-        (format!("{} = {names}", obligations("export_")), "rfl"),
-        (format!("{} = {names}", subject("exports")), "rfl"),
+        (format!("{} = {names}", obligations("name")), "rfl"),
+        (format!("{} = {indices}", obligations("self")), "rfl"),
         (
             format!("_root_.AverCert.ClaimAxes.reportEntries {data} = {report_entries}"),
             KERNEL_REPORT_PROOF,
@@ -1884,6 +1930,25 @@ fn read_candidates(
     let mut certified = Vec::with_capacity(certified_json.len());
     for entry in certified_json {
         let name = required_string(entry, "name", "certified[]")?;
+        let func_idx = entry
+            .get("funcIdx")
+            .and_then(Value::as_u64)
+            .and_then(|idx| u32::try_from(idx).ok())
+            .ok_or_else(|| {
+                format!(
+                    "cert-manifest.json `certified[].funcIdx` of `{}` must be a u32",
+                    display_safe(&name)
+                )
+            })?;
+        if certified
+            .iter()
+            .any(|seen: &CertifiedCandidate| seen.name == name || seen.func_idx == func_idx)
+        {
+            return Err(format!(
+                "cert-manifest.json `certified` declares `{}` (function {func_idx}) twice",
+                display_safe(&name)
+            ));
+        }
         let class = required_string(entry, "class", "certified[]")?;
         let policy = required_string(entry, "policy", "certified[]")?;
         let policy_lean = match policy.as_str() {
@@ -1937,6 +2002,7 @@ fn read_candidates(
             .collect::<Result<Vec<_>, _>>()?;
         certified.push(CertifiedCandidate {
             name,
+            func_idx,
             class,
             facets,
             policy,
@@ -1946,16 +2012,12 @@ fn read_candidates(
     }
 
     // The source-bridge surface is read BEFORE the laws: a law entry names the
-    // bridges its corollary conjoins by export, and those must resolve to a
+    // bridges its corollary conjoins by label, and those must resolve to a
     // declared bridge.
     let bridges_json = manifest
         .get("sourceBridges")
         .and_then(Value::as_array)
         .ok_or_else(|| "cert-manifest.json is missing array field `sourceBridges`".to_string())?;
-    let certified_names: Vec<&str> = certified
-        .iter()
-        .map(|candidate| candidate.name.as_str())
-        .collect();
     let mut source_bridges: Vec<SourceBridgeCandidate> = Vec::with_capacity(bridges_json.len());
     for (index, entry) in bridges_json.iter().enumerate() {
         let context = format!("sourceBridges[{index}]");
@@ -1989,8 +2051,22 @@ fn read_candidates(
                 &format!("{context}.params[{position}]"),
             )?);
         }
+        let export = required_string(entry, "export", &context)?;
+        // The statement names the function by its index: the one the pinned
+        // certified list pairs with this label.
+        let func_idx = certified
+            .iter()
+            .find(|candidate| candidate.name == export)
+            .map(|candidate| candidate.func_idx)
+            .ok_or_else(|| {
+                format!(
+                    "source-bridge names `{}`, which is not a certified function",
+                    display_safe(&export)
+                )
+            })?;
         let bridge = RawSourceBridge {
-            export: required_string(entry, "export", &context)?,
+            export,
+            func_idx,
             theorem: required_string(entry, "theorem", &context)?,
             corollary: required_string(entry, "corollary", &context)?,
             model: required_string(entry, "model", &context)?,
@@ -1999,12 +2075,6 @@ fn read_candidates(
             result: read_source_encoder(&entry["result"], &format!("{context}.result"))?,
         };
         let bridge = validate_source_bridge_candidate(bridge)?;
-        if !certified_names.contains(&bridge.export.as_str()) {
-            return Err(format!(
-                "source-bridge names `{}`, which is not a certified export",
-                display_safe(&bridge.export)
-            ));
-        }
         if source_bridges
             .iter()
             .any(|seen| seen.export == bridge.export)
@@ -2111,6 +2181,18 @@ fn read_candidates(
     let contracts = string_array(manifest, "runtime_contracts")?;
     let declared_uncertified =
         object_pair_array(manifest, "declaredUncertified", "name", "reason")?;
+    // A certified function's label is the name a host calls it by; an export
+    // under that name declared uncertified would stand in for it. The wall
+    // refuses the overlap (`exportsAccountedOf`); refuse it here first.
+    if let Some((name, _)) = declared_uncertified
+        .iter()
+        .find(|(name, _)| certified.iter().any(|candidate| &candidate.name == name))
+    {
+        return Err(format!(
+            "cert-manifest.json declares `{}` uncertified, but it is the label of a certified function",
+            display_safe(name)
+        ));
+    }
     let capabilities = object_pair_array(manifest, "capabilities", "module", "name")?;
     let start_object = manifest
         .get("start")
@@ -2266,6 +2348,9 @@ fn statement_is_single_plain_line(statement: &str) -> bool {
 /// checker renders its statement.
 struct RawSourceBridge {
     export: String,
+    /// The index of the certified function `export` labels, from the pinned
+    /// certified list: what the rendered statement names.
+    func_idx: u32,
     theorem: String,
     corollary: String,
     model: String,
@@ -2338,7 +2423,7 @@ fn validate_source_bridge_candidate(
         }
     }
     let statement = render_bridge_statement(
-        &bridge.export,
+        bridge.func_idx,
         &bridge.model,
         bridge.kind,
         &bridge.params,
@@ -3669,6 +3754,7 @@ mod tests {
     fn raw_bridge(export: &str) -> RawSourceBridge {
         RawSourceBridge {
             export: export.to_string(),
+            func_idx: 7,
             theorem: format!("{BRIDGE_NAMESPACE}.{export}"),
             corollary: format!("{BRIDGE_NAMESPACE}.{export}{BRIDGE_COROLLARY_SUFFIX}"),
             model: format!("Domain.{export}"),
@@ -3868,7 +3954,7 @@ mod tests {
         assert_eq!(
             candidate.statement,
             render_bridge_statement(
-                "Domain_Rational_plus",
+                7,
                 "Domain.Rational.plus",
                 BridgeKind::Exact,
                 &[fraction_encoder(), fraction_encoder()],
@@ -3879,9 +3965,9 @@ mod tests {
         assert!(
             candidate.statement.starts_with(
                 "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest \
-                 \"Domain_Rational_plus\""
+                 (nat_lit 7)"
             ),
-            "the claim's left-hand side is the export's own obligation model: {}",
+            "the claim's left-hand side is the indexed function's own obligation model: {}",
             candidate.statement
         );
         // The weaker kind renders a different claim too.
@@ -3892,9 +3978,11 @@ mod tests {
         adequate.result = fraction_encoder();
         let adequate = validate_source_bridge_candidate(adequate).expect("it still validates");
         assert_ne!(adequate.statement, candidate.statement);
-        // Naming a different export renders a different claim, so the pin no
-        // longer has the package corollary's type — a decline, not a credit.
+        // Naming a different function renders a different claim, so the pin
+        // no longer has the package corollary's type — a decline, not a
+        // credit. The function is its index; the label names only the theorem.
         let mut renamed = raw_bridge("Domain_Rational_minus");
+        renamed.func_idx = 8;
         renamed.model = "Domain.Rational.plus".to_string();
         renamed.params = vec![fraction_encoder(), fraction_encoder()];
         renamed.result = fraction_encoder();
@@ -4053,7 +4141,7 @@ mod tests {
         );
         assert_eq!(
             summary.text,
-            "\"app.wasm\" (0 checked exports, level L1; source-bridges: 1 of 2 credited)"
+            "\"app.wasm\" (0 checked functions, level L1; source-bridges: 1 of 2 credited)"
         );
         assert_eq!(
             summary.uncredited_bridges,
@@ -4079,7 +4167,7 @@ mod tests {
             },
             "checked",
         );
-        assert_eq!(bare.text, "\"app.wasm\" (0 checked exports, level L1)");
+        assert_eq!(bare.text, "\"app.wasm\" (0 checked functions, level L1)");
         assert!(bare.uncredited_laws.is_empty());
     }
 
@@ -4112,7 +4200,7 @@ mod tests {
         );
         assert_eq!(
             summary.text,
-            "\"app.wasm\" (0 checked exports, level L1; law-claims: 1 of 2 credited)"
+            "\"app.wasm\" (0 checked functions, level L1; law-claims: 1 of 2 credited)"
         );
         assert_eq!(
             summary.uncredited_laws,
@@ -4161,7 +4249,7 @@ mod tests {
         );
         assert_eq!(
             summary.text,
-            "\"app.wasm\" (0 checked exports, level L1; law-claims: 2 of 2 credited; \
+            "\"app.wasm\" (0 checked functions, level L1; law-claims: 2 of 2 credited; \
              bridged-laws: 1 of 2 credited)"
         );
         assert!(summary.uncredited_laws.is_empty());
@@ -4206,6 +4294,7 @@ mod tests {
     fn report_face_prints_only_kernel_pinned_facts() {
         let candidate = CertifiedCandidate {
             name: "sumTo".to_string(),
+            func_idx: 4,
             class: format::PLAN_CLASS.to_string(),
             facets: vec!["recursive".to_string(), "calls".to_string()],
             policy: "simulatesModelTotally".to_string(),
@@ -4218,7 +4307,7 @@ mod tests {
         );
         assert_eq!(
             certified_model_line(&candidate, &[]),
-            "model: plan (the export's optimized MIR body)"
+            "model: plan (the function's optimized MIR body)"
         );
         let bare = CertifiedCandidate {
             facets: Vec::new(),
@@ -4788,6 +4877,7 @@ mod tests {
         Candidates {
             certified: vec![CertifiedCandidate {
                 name: "Domain_plus".to_string(),
+                func_idx: 7,
                 class: format::PLAN_CLASS.to_string(),
                 facets: vec!["recursive".to_string()],
                 policy: "simulatesModelTotally".to_string(),

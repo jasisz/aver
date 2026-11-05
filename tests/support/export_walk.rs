@@ -58,7 +58,7 @@ fn certify_export_walk_characters_across_blocks_kernel_clean() {
          example : asciiChars [Char.ofNat 233] = none := by decide +kernel\n\
          example : asciiChars [Char.ofNat 20013] = none := by decide +kernel\n\
          example : asciiChars [Char.ofNat 129408] = none := by decide +kernel\n\
-         example : walk [] 0 0 none 0 [] [] = some (none, 0) := rfl\n",
+         example : walk [] 0 (fun _ => none) none 0 [] [] = some (none, 0) := rfl\n",
     );
     let mut blocks = 0;
     for line in exports.lines() {

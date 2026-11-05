@@ -132,6 +132,18 @@ pub enum TargetMode {
     Wasip2,
 }
 
+/// Which user functions a module exports by name.
+///
+/// An artifact exports only what a host calls: the entry point, the host
+/// helpers, `main` and the entry module's `exposes` (`Exposed`). An
+/// in-process host that calls any function by name (`aver run --wasm-gc
+/// --expr`, `aver verify --wasm-gc`) asks for `All`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FnExports {
+    Exposed,
+    All,
+}
+
 #[derive(Debug)]
 pub enum WasmGcError {
     Unimplemented(&'static str),
@@ -199,6 +211,7 @@ pub fn compile_to_wasm_gc(
         None,
         true,
         false,
+        FnExports::Exposed,
     )
     .map(|(bytes, _, _)| bytes)
 }
@@ -219,7 +232,15 @@ pub fn compile_to_wasm_gc_flattened(
     target: TargetMode,
     type_aliases: &HashMap<String, String>,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
-    compile_to_wasm_gc_flattened_with_options(items, _analysis, handler, target, type_aliases, true)
+    compile_to_wasm_gc_flattened_with_options(
+        items,
+        _analysis,
+        handler,
+        target,
+        type_aliases,
+        true,
+        FnExports::Exposed,
+    )
 }
 
 /// Internal differential hook for exercising the representation-independent
@@ -232,6 +253,7 @@ pub fn compile_to_wasm_gc_flattened_with_options(
     target: TargetMode,
     type_aliases: &HashMap<String, String>,
     packed_sequences_enabled: bool,
+    fn_exports: FnExports,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
     module::emit_module_with(
         items,
@@ -242,6 +264,7 @@ pub fn compile_to_wasm_gc_flattened_with_options(
         None,
         packed_sequences_enabled,
         false,
+        fn_exports,
     )
     .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,
@@ -269,6 +292,7 @@ pub fn compile_to_wasm_gc_flattened_with_capabilities(
         None,
         true,
         certify,
+        FnExports::Exposed,
     )
     .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,
@@ -294,6 +318,7 @@ pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
         None,
         true,
         true,
+        FnExports::Exposed,
     )
     .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,
@@ -327,12 +352,14 @@ pub fn compile_to_wasm_gc_for_wasip2(
         None,
         true,
         false,
+        FnExports::Exposed,
     )
     .map(|(bytes, _, _)| bytes)
 }
 
 /// Compile a flattened browser/Workers wasm-gc module whose custom
 /// capability imports are derived from complete source contracts.
+#[allow(clippy::too_many_arguments)]
 pub fn compile_to_wasm_gc_flattened_with_custom_capabilities(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
@@ -341,6 +368,7 @@ pub fn compile_to_wasm_gc_flattened_with_custom_capabilities(
     capabilities: &CapabilityWasmGcPlan,
     packed_sequences_enabled: bool,
     certify: bool,
+    fn_exports: FnExports,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
     module::emit_module_with(
         items,
@@ -351,6 +379,7 @@ pub fn compile_to_wasm_gc_flattened_with_custom_capabilities(
         Some(capabilities),
         packed_sequences_enabled,
         certify,
+        fn_exports,
     )
     .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,

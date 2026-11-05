@@ -166,6 +166,7 @@ pub(super) fn emit_module_with(
     capability_wasm_gc_plan: Option<&super::CapabilityWasmGcPlan>,
     packed_sequences_enabled: bool,
     certify: bool,
+    fn_exports: super::FnExports,
 ) -> Result<ModuleOutput, WasmGcError> {
     let pass = |certify| {
         emit_module_pass(
@@ -177,6 +178,7 @@ pub(super) fn emit_module_with(
             capability_wasm_gc_plan,
             packed_sequences_enabled,
             certify,
+            fn_exports,
         )
     };
     if !certify {
@@ -199,6 +201,7 @@ fn emit_module_pass(
     capability_wasm_gc_plan: Option<&super::CapabilityWasmGcPlan>,
     packed_sequences_enabled: bool,
     twins_for: Certify<'_>,
+    fn_exports: super::FnExports,
 ) -> Result<(ModuleOutput, std::collections::HashSet<String>), WasmGcError> {
     let certify = !matches!(twins_for, Certify::Off);
     // The fns the build keeps for the certificate: none in a plain build, the
@@ -3920,11 +3923,39 @@ fn emit_module_pass(
         (super::TargetMode::Wasip2, true) => "wasi:http/incoming-handler@0.2.4#handle",
     };
     exports.export(start_export_name, ExportKind::Func, start_wasm_idx);
-    // The structural equality functions (`eq_fns`) are the module's own,
-    // called only from inside it.
+    // User functions a host calls by name. On `AverBridge` that is `main`
+    // (whose result `_start` drops, and which a host reads as the program's
+    // answer), the generated external host driver (`__workHost*`, which
+    // `tools/wasm-work` runs a coordinator through) and every function the
+    // entry module `exposes`; on wasip2 a host
+    // reaches the program only through the world's entry point. Every other
+    // function is the module's own: an export would only stop `wasm-opt` from
+    // removing it once nothing calls it, and the certificate identifies a
+    // function by its index, never by an export. In-process hosts that call
+    // any function by name (`aver run --wasm-gc --expr`, `aver verify
+    // --wasm-gc`) build with `FnExports::All`. The structural equality
+    // functions (`eq_fns`) are never exported.
+    const HOST_DRIVER_PREFIX: &str = "__workHost";
+    let exposed: std::collections::HashSet<&str> = match target {
+        super::TargetMode::AverBridge => crate::visibility::module_decl(items)
+            .map(|module| module.exposes.iter().map(String::as_str).collect())
+            .unwrap_or_default(),
+        super::TargetMode::Wasip2 => std::collections::HashSet::new(),
+    };
     for (i, fd) in fn_defs.iter().enumerate().take(user_fn_count) {
-        let wasm_idx = import_count + 1 + (i as u32);
-        exports.export(&fd.name, ExportKind::Func, wasm_idx);
+        let exported = match fn_exports {
+            super::FnExports::All => true,
+            super::FnExports::Exposed => {
+                matches!(target, super::TargetMode::AverBridge)
+                    && (fd.name == "main"
+                        || fd.name.starts_with(HOST_DRIVER_PREFIX)
+                        || exposed.contains(fd.name.as_str()))
+            }
+        };
+        if exported {
+            let wasm_idx = import_count + 1 + (i as u32);
+            exports.export(&fd.name, ExportKind::Func, wasm_idx);
+        }
     }
     if let Some(b) = &bridge {
         // The four `__rt_*` exports are JS-host-callable only — wasip2

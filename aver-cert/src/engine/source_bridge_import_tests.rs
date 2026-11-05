@@ -43,6 +43,7 @@ fn plan_with_functions(count: u32) -> BridgePlan {
                     theorem: SourceBridge::theorem_name(&export),
                     corollary: SourceBridge::corollary_name(&export),
                     export,
+                    func_idx: b.func_idx,
                     model: b.model.clone(),
                     kind: BridgeKind::Adequate,
                     params: b.params.clone(),
@@ -75,7 +76,7 @@ fn plan_with_functions(count: u32) -> BridgePlan {
 
 fn proof_imports(plan: &BridgePlan) -> Vec<Vec<usize>> {
     let roots = vec!["AverModel.M".to_string()];
-    let (bridge, parts) = render_bridge_lean(plan, &roots, "ArtifactInterface");
+    let (bridge, parts) = render_bridge_lean(plan, &roots);
     assert!(bridge.contains("import AverModel.M\n"));
     parts
         .iter()
@@ -127,7 +128,7 @@ fn internal_callees_import_once_in_numeric_slice_order() {
 #[test]
 fn expensive_step_bodies_do_not_import_program_wide_tables() {
     let plan = plan_with_functions(48);
-    let (_, parts) = render_bridge_lean(&plan, &["AverModel.M".into()], "ArtifactInterface");
+    let (_, parts) = render_bridge_lean(&plan, &["AverModel.M".into()]);
     let bodies: Vec<_> = parts.iter().filter(|(name, _)| name.starts_with("BridgeBodies")).collect();
     assert_eq!(bodies.len(), 2, "heavy body proofs have independently cached modules");
     for (_, text) in bodies {
@@ -145,7 +146,7 @@ fn image_slices_import_the_recorded_model_files_not_namespaces() {
     for (ordinal, b) in plan.fns.values_mut().enumerate() {
         b.model_root = if ordinal < 24 { "AverModel.Left" } else { "AverModel.Right" }.into();
     }
-    let (_, parts) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let (_, parts) = render_bridge_lean(&plan, &[]);
     let part = |name: &str| &parts.iter().find(|(path, _)| path == name).unwrap().1;
     assert!(part("BridgeImages0.lean").contains("import AverModel.Left\n"));
     assert!(!part("BridgeImages0.lean").contains("import AverModel.Right\n"));
@@ -156,7 +157,7 @@ fn image_slices_import_the_recorded_model_files_not_namespaces() {
 
     // A cross-slice call adds the callee's image, but not its proof body.
     plan.fns.get_mut(&index(0)).unwrap().callees.push(index(24));
-    let (_, changed) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let (_, changed) = render_bridge_lean(&plan, &[]);
     let body = &changed.iter().find(|(path, _)| path == "BridgeBodies0.lean").unwrap().1;
     assert!(body.contains("import BridgeImages1\n"));
     assert!(!body.contains("import BridgeBodies1\n"));
@@ -165,9 +166,9 @@ fn image_slices_import_the_recorded_model_files_not_namespaces() {
 #[test]
 fn changing_one_body_leaves_disjoint_heavy_slices_identical() {
     let mut plan = plan_with_functions(48);
-    let (_, before) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let (_, before) = render_bridge_lean(&plan, &[]);
     plan.fns.get_mut(&index(0)).unwrap().body = PlanExpr::Literal(PlanLit::Int(1)).lean();
-    let (_, after) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let (_, after) = render_bridge_lean(&plan, &[]);
     let changed: Vec<_> = before.iter().zip(&after)
         .filter_map(|((name, old), (new_name, new))| {
             assert_eq!(name, new_name);
@@ -184,7 +185,7 @@ fn export_assembly_is_parametric_and_imports_only_its_own_images() {
     // The first export also calls an internal function in the last image
     // slice. Assembly assumes its step, without importing its body or image.
     plan.fns.get_mut(&index(0)).unwrap().callees.push(index(72));
-    let (_, parts) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let (_, parts) = render_bridge_lean(&plan, &[]);
     let assembly: Vec<_> = parts.iter()
         .filter(|(name, _)| name.starts_with("BridgeAssembly")).collect();
     assert_eq!(assembly.len(), 2);
@@ -211,10 +212,10 @@ fn exact_assembly_carries_only_its_closures_depths() {
     let mut plan = plan_with_functions(2);
     plan.bridges[0].0.kind = BridgeKind::Exact;
     plan.depth.insert(index(0), 0);
-    let (_, before) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let (_, before) = render_bridge_lean(&plan, &[]);
     // An unrelated function's depth must not invalidate this proof.
     plan.depth.insert(index(1), 99);
-    let (_, after) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let (_, after) = render_bridge_lean(&plan, &[]);
     let assembly = |parts: Vec<(String, String)>| parts.into_iter()
         .find(|(name, _)| name == "BridgeAssembly0.lean").unwrap().1;
     let first = assembly(before);

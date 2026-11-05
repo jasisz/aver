@@ -164,6 +164,7 @@ fn assert_plans_lean_is_the_only_public_plan_data(
             fields.keys().all(|field| matches!(
                 field.as_str(),
                 "name"
+                    | "funcIdx"
                     | "class"
                     | "facets"
                     | "policy"
@@ -581,8 +582,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(9),
-        "schema 9 is the one plan grammar with its plan-equals-source and law-claim surfaces"
+        Some(10),
+        "schema 10 binds certified functions by index, over the one plan grammar"
     );
     assert_eq!(
         manifest["target"].as_str(),
@@ -599,7 +600,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         Some(aver::codegen::cert::RUNTIME_ABI),
         "the wasm-gc runtime ABI is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 9);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 10);
     // Every certified export carries a plan-equals-source bridge, in obligation
     // order, unless one of its parameters has no decoder in this version — in
     // which case it is listed, with that reason, under `sourceBridgesDeclined`.
@@ -1500,7 +1501,7 @@ fn assert_hostile_manifest_model_shard_is_declined(shard: usize) {
         let honest = "obligations := AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans";
         let hostile = format!(
             "obligations := (AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans).map \
-             (fun o => if o.export_ = \"{victim}\" then {{ o with model := {hostile_model} }} else o)"
+             (fun o => if o.name = \"{victim}\" then {{ o with model := {hostile_model} }} else o)"
         );
         let edited = source.replacen(honest, &hostile, 1);
         assert_ne!(
@@ -1546,7 +1547,7 @@ fn assert_hostile_source_model_loses_bridges(prefix: &str, edits: &[(&str, &str)
 
     let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        ok && report.contains("30 checked exports"),
+        ok && report.contains("30 checked functions"),
         "a wrong source definition must not touch the export verdict:\n{report}"
     );
     assert!(
@@ -1882,7 +1883,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
         "import ArtifactCertificate\n\
          set_option maxRecDepth 200000\n\
          open AverCert\n\n\
-         example : AverCert.manifest.obligations.map (·.export_) =\n    \
+         example : AverCert.manifest.obligations.map (·.name) =\n    \
          [\"sumFrom\", \"constPlus\", \"backward\", \"factorial\", \"countDown\"] := by decide +kernel\n\
          example : AverCert.manifest.obligations.map (·.totalityRole) =\n    \
          [.addSub, .addSub, .addSub, .mul, .addSub] := by decide +kernel\n\
@@ -1919,7 +1920,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
 
         let (ok, report) = check_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
         assert!(
-            ok && report.contains("5 checked exports")
+            ok && report.contains("5 checked functions")
                 && report.contains("source-bridges: 4 of 5 credited")
                 && report.contains(&format!(
                     "source-bridge not credited: {name} (proof depends on sorryAx)"
@@ -2540,7 +2541,7 @@ fn certify_certifies_carrier_free_classes_in_a_module_without_int_helper() {
     );
 }
 
-/// Each declined export must be told what is actually stopping it. The plan
+/// Each declined function must be told what is actually stopping it. The plan
 /// printer declines by naming the MIR node it has no grammar for (a builtin,
 /// a pattern, an operator, an interpolation part), the producer declines a
 /// plan that does not type or a call to an unplanned function by saying so,
@@ -2553,9 +2554,11 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
         &[],
         "certify-decline-blockers",
     );
-    let declared: BTreeMap<String, String> = manifest["declaredUncertified"]
+    // Every declined function, exported or not (`source_level_only`): a
+    // function need not be exported to be certified, or to be declined.
+    let declared: BTreeMap<String, String> = manifest["source_level_only"]
         .as_array()
-        .expect("declaredUncertified report is an array")
+        .expect("source_level_only report is an array")
         .iter()
         .map(|entry| {
             (
@@ -2826,6 +2829,7 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         manifest["certified"],
         serde_json::json!([{
             "name": "addOne",
+            "funcIdx": 1,
             "class": "source-plan-v1",
             "facets": [],
             "policy": "simulatesModel",
@@ -3067,7 +3071,7 @@ fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
     }
     let (ok, report) = check_certificate(&out_dir.join("clockrange.wasm"), &out_dir.join("cert"));
     assert!(
-        ok && report.contains("1 checked export"),
+        ok && report.contains("1 checked function"),
         "the producer's offer must be accepted by the wall:\n{report}"
     );
 }
@@ -3118,7 +3122,7 @@ fn cert_projects_payment_ops_package_checks() {
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
     assert!(
-        report.contains("165 checked exports"),
+        report.contains("165 checked functions"),
         "payment_ops must keep the 165 exports it certifies:\n{report}"
     );
     // The project's single `verify … law` is universal by design but its
@@ -3393,7 +3397,7 @@ fn cert_when_law_with_steps_is_a_claim_and_broken_steps_cost_only_that_law() {
     std::fs::write(broken.join("cert/AverModel/EqualSides.lean"), tampered).unwrap();
     let (ok, report) = check_certificate(&broken.join("equal_sides.wasm"), &broken.join("cert"));
     assert!(
-        ok && report.contains("5 checked exports"),
+        ok && report.contains("5 checked functions"),
         "broken steps must not touch the export verdict:\n{report}"
     );
     assert!(
