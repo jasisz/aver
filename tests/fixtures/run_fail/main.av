@@ -1,6 +1,7 @@
 module Main
     intent = "Two processes that each give up on their third tick. Both give up in the same turn, and the run answers the reason of the one the turn served first; the loop's own main exits with it."
     depends [Clock, Ticks]
+    exposes [first, second, counting, giveUpTurn]
     effects [Clock.tick, Console.print, Run.fail]
 
 fn first() -> Unit
@@ -21,3 +22,10 @@ fn counting(name: String, turn: Int) -> Unit
     match turn >= 3
         true -> Run.fail("{name} gave up in turn {turn}")
         false -> counting(name, turn + 1)
+
+fn giveUpTurn() -> Int
+    ? "The turn a process gives up in: a pure function such a program still certifies."
+    3
+
+verify giveUpTurn
+    giveUpTurn() => 3

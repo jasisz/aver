@@ -1011,6 +1011,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         // tail (numerator moved deliberately).
         ("listHeadGoal", facets(&[])),
         ("sumListGoal", facets(&["recursive", "calls"])),
+        // The module holds only the Int helpers its functions call, so the
+        // multiplication and division goals keep the `mul` and `divmod` roles
+        // declared; the product certifies, the quotient (a `Result`) does not.
+        ("intMulGoal", facets(&[])),
     ]
     .into_iter()
     .map(|(name, facets)| (name.to_string(), facets))
@@ -1439,7 +1443,8 @@ fn hostile_models_baseline(prefix: &str) -> Option<ScratchDir> {
         "developer preflight must never emit the certification verdict:\n{clean_report}"
     );
     assert!(
-        clean_report.contains("source-bridges: 25 of 25 credited"),
+        // 26 since `intMulGoal` keeps the `mul` helper in the module.
+        clean_report.contains("source-bridges: 26 of 26 credited"),
         "the honest baseline credits every goals bridge:\n{clean_report}"
     );
 
@@ -1546,13 +1551,13 @@ fn assert_hostile_source_model_loses_bridges(prefix: &str, edits: &[(&str, &str)
 
     let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        ok && report.contains("30 checked functions"),
+        ok && report.contains("31 checked functions"),
         "a wrong source definition must not touch the export verdict:\n{report}"
     );
     assert!(
         report.contains(&format!(
-            "source-bridges: {} of 25 credited",
-            25 - lost.len()
+            "source-bridges: {} of 26 credited",
+            26 - lost.len()
         )),
         "exactly the bridges through the wrong definition must lose their credit:\n{report}"
     );
@@ -2846,15 +2851,26 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         "add_one's runtime contracts must be unchanged"
     );
 
-    // The host-role table stays a concrete OBJECT — never `null` — and every
-    // arithmetic role is bound for the full Int runtime, the name-bound ones
-    // at their exports.
+    // The host-role table stays a concrete OBJECT — never `null`. The module
+    // holds only the Int helpers something reaches: the box and index exports
+    // and the add helper `addOne` calls (kept as a root, the wall finds the
+    // bignum sub-routines through it) bind, the name-bound ones at their
+    // exports. `addOne` neither multiplies, subtracts nor divides, so those
+    // helpers are not in the module and their roles are declared absent,
+    // truthfully. The goal matrix (`certify_goal_matrix_manifest_tracks_current_surface`)
+    // binds `mul` and `divmod` where a function calls them.
     let wasm = std::fs::read(out_dir.join("add_one.wasm")).expect("wasm artifact exists");
     let table = &manifest["hostRoleTable"];
-    for role in ["box", "add", "mul", "sub", "toIndex", "divmod"] {
+    for role in ["box", "add", "toIndex"] {
         assert!(
             table[role].is_u64(),
-            "add_one carries the full Int arithmetic runtime; `{role}` must bind: {table}"
+            "add_one carries the `{role}` helper; its role must bind: {table}"
+        );
+    }
+    for role in ["mul", "sub", "divmod"] {
+        assert!(
+            table[role].is_null(),
+            "add_one does not carry the `{role}` helper; its role must be absent: {table}"
         );
     }
     assert_eq!(
@@ -2881,8 +2897,8 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
     let expected_roles = format!(
-        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {}, toIndex := some {}, cmp := none, eq := none, divmod := some {}, bitwise := none }} : CertDecode.AddSub.Roles)",
-        table["box"], table["add"], table["mul"], table["sub"], table["toIndex"], table["divmod"],
+        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := none, sub := none, toIndex := some {}, cmp := none, eq := none, divmod := none, bitwise := none }} : CertDecode.AddSub.Roles)",
+        table["box"], table["add"], table["toIndex"],
     );
     assert!(
         manifest_lean.contains(&expected_roles),

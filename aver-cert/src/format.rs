@@ -515,7 +515,7 @@ pub const ABSENT_FROM_MODULE: &str = "the function is not in the module: nothing
 
 /// What a certificate with no certified function says when the reason is
 /// that the module left its functions out.
-pub const ABSENT_FROM_MODULE_HINT: &str = "no function of the program is in the module: nothing the entry point or the entry module's `exposes` reaches calls one; list the functions to certify in `exposes [...]`";
+pub const ABSENT_FROM_MODULE_HINT: &str = "no function is certified, and the functions nothing the entry point or the entry module's `exposes` reaches are not in the module; list the functions to certify in `exposes [...]`";
 
 #[cfg(test)]
 mod tests {

@@ -3788,10 +3788,13 @@ impl MCtx<'_> {
     fn bytes_sig(&self, r: PlanBytesRole) -> Option<(Vec<ValT>, Vec<ValT>)> {
         let rn = |i: u64| u32::try_from(i).ok().map(ValT::RefNull);
         let b = rn(self.bytes_arr)?;
-        let l = rn(self.list_struct(&PlanTy::Int))?;
+        // Only `pack` and `unpack` name the `List<Int>` struct; a module whose
+        // plans never mention `List<Int>` still has `concat`, `take` and
+        // `drop` signatures, as `AcceptedArtifact.bytesSig` reads them.
+        let l = || rn(self.list_struct(&PlanTy::Int));
         Some(match r {
-            PlanBytesRole::Pack => (vec![l], vec![b]),
-            PlanBytesRole::Unpack => (vec![b], vec![l]),
+            PlanBytesRole::Pack => (vec![l()?], vec![b]),
+            PlanBytesRole::Unpack => (vec![b], vec![l()?]),
             PlanBytesRole::Concat => (vec![b, b], vec![b]),
             PlanBytesRole::Take | PlanBytesRole::Drop => (vec![b, ValT::I64], vec![b]),
         })
