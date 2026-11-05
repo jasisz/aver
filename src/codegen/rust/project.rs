@@ -40,6 +40,7 @@ pub fn generate_cargo_toml(
     provider_composition: &ProviderComposition,
     has_library: bool,
     rust: RustOptions,
+    plain_counts: bool,
 ) -> String {
     let mut lines = Vec::new();
     lines.push("[package]".to_string());
@@ -70,6 +71,9 @@ pub fn generate_cargo_toml(
     }
     if rust.allocator == RustAllocator::Mimalloc {
         rt_features.push("mimalloc");
+    }
+    if plain_counts {
+        rt_features.push("plain-counts");
     }
     rt_features.sort();
 
@@ -247,6 +251,7 @@ mod tests {
             &ProviderComposition::default(),
             false,
             RustOptions::default(),
+            false,
         );
 
         assert!(manifest.contains("[profile.release]\nlto = true\ncodegen-units = 1"));
@@ -273,6 +278,7 @@ mod tests {
                     panic,
                     ..Default::default()
                 },
+                false,
             )
         };
         assert!(!manifest(RustPanic::Unwind).contains("panic = "));

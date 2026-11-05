@@ -4814,6 +4814,26 @@ fn emit_mir_independent_product(
     let has_replay = emit_ctx.codegen.is_some_and(|c| c.emit_replay_runtime);
     let unwrap = ip.unwrap_results;
 
+    // A single-thread build (`[rust] threads = "one"`): the elements run
+    // one after another, left to right, on the thread that reaches the
+    // product, a schedule the language allows for every product. With no
+    // product on threads of its own the program counts references with
+    // plain instructions (aver-rt's `plain-counts`).
+    if !has_replay && emit_ctx.codegen.is_some_and(|c| c.single_thread) {
+        let mut code = String::from("{ ");
+        for (i, part) in parts.iter().enumerate() {
+            code.push_str(&format!("let {result_prefix}{i} = {part}; "));
+        }
+        if unwrap {
+            code.push_str(&emit_result_tuple_unwrap(&result_prefix, &value_prefix, n));
+            code.push_str("? }");
+        } else {
+            code.push_str(&emit_tuple_from_vars(&result_prefix, n));
+            code.push_str(" }");
+        }
+        return Some(code);
+    }
+
     let mut code = String::new();
     if has_replay {
         // Runtime branch: if recording/replaying, execute sequentially

@@ -150,6 +150,20 @@ A panic unwinds the stack, as in any Rust program. `[rust]` `panic = "abort"` in
 - `[independence] mode = "cancel"`, `--with-replay` and `--policy runtime` are refused with this option, since a cancelled branch stops by unwinding.
 - `cargo test`, which runs the `verify` cases, still unwinds: a false case fails its own test and the others run.
 
+### One thread: `--single-thread`
+
+A value of a recursive sum, a list or a map can be reached from several threads: the branches of an independent product `(a, b)!` run on threads of their own. So `aver-rt` changes reference counts as `Arc` does, with atomic instructions. On x86 each of them is a `lock`ed instruction, which waits for the core's earlier stores and holds back its later loads; on ARM it is a `ldadd` with release order. A program that walks shared trees pays that on every clone and drop. Pestka, a Lean kernel checker written in Aver, makes one such change per 55 to 66 instructions.
+
+`aver compile --single-thread`, or `[rust]` `threads = "one"` in `aver.toml` (the default is `"many"`; any other value is an error), builds a program that runs its Aver code on one thread at a time:
+
+- Every independent product runs its elements one after another, left to right, on the thread that reaches it. The language allows that schedule for every product, so the answers are the same (see [independence](independence.md)); only the time the product takes changes.
+- A program that uses a service other than `Args`, `Console`, `Disk`, `Env`, `Random`, `Terminal` and `Time` is refused, since another service (such as `Http`, `Tcp` or `Work`) may run Aver code on threads of its own. `--with-replay` and `--policy runtime` are refused too.
+- `Cargo.toml` turns on the `plain-counts` feature of `aver-rt`, under which a count changes with plain instructions: on x86 `inc`/`dec` on memory and a branch on the flags, where an atomic count has `lock inc`/`lock dec` and the same branch.
+
+Why plain counts are sound then. A count is changed by a thread that holds an owner of the node. With products in sequence and no service running Aver code elsewhere, the only threads that run Aver code are `main`'s and the thread it starts with a larger stack, and `main` waits for that thread (`join`) before it reads anything again. Every change of a count therefore happens before the next one, as on one thread. Without the option nothing changes: counts stay atomic, and threads may share values as before.
+
+On a Lean kernel checker (Pestka, one worker, Apple M2), plain counts took 9 to 13% of the cycles off small inputs and 3% off Mathlib. On ARM they cost 1 to 1.6% more instructions, since `ldadd` is one instruction and a plain update is three. On x86 the update of a count is one instruction either way.
+
 When developing the runtime inside the Aver repository, set `AVER_RUNTIME_PATH` before running `aver compile`. The generated project then uses a path dependency instead of the crates.io release:
 
 ```bash

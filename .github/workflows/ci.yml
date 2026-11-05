@@ -238,6 +238,9 @@ jobs:
       - name: Test aver-rt
         run: cargo test -p aver-rt
 
+      - name: Test aver-rt with plain counts
+        run: cargo test -p aver-rt --lib --features plain-counts
+
       # The nodes of user values and of the runtime's collections are
       # reference counted by hand-written unsafe code; Miri checks it for
       # undefined behaviour and data races. Only those modules and the list
@@ -249,6 +252,11 @@ jobs:
 
       - name: Miri on the reference-counted nodes
         run: cargo +nightly miri test -p aver-rt --lib -- shared::tests shared_eq::tests thin::tests tests::list_node tests::owned_prepend_and_uncons tests::uncons_reuse_builds
+
+      # The same with the counts a single-thread build uses: plain loads and
+      # stores, so a test that shares nodes between threads is left out.
+      - name: Miri on the reference-counted nodes, plain counts
+        run: cargo +nightly miri test -p aver-rt --lib --features plain-counts -- shared::tests shared_eq::tests thin::tests tests::list_node tests::owned_prepend_and_uncons tests::uncons_reuse_builds
 
   wasm_lanes:
     name: WASM (${{ matrix.lane }})

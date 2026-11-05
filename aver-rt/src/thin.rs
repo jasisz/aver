@@ -47,11 +47,8 @@ use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
-use std::sync::atomic::{self, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
-
-/// Past it, a clone aborts rather than let the count wrap around.
-const MAX_REFCOUNT: u32 = i32::MAX as u32;
 
 /// The most constructors a sum laid out this way can have. A value of a
 /// constructor without fields is a pointer to address `tag + 1`, so every
@@ -285,11 +282,7 @@ impl<S: ThinSum> Thin<S> {
         // A plain load first: a shared node, the common case where values
         // are kept in maps, then costs no atomic write.
         let count = &self.header().count;
-        if count.load(Ordering::Relaxed) != 1
-            || count
-                .compare_exchange(1, 0, Ordering::Acquire, Ordering::Relaxed)
-                .is_err()
-        {
+        if !crate::counts::take32(count) {
             return Err(self);
         }
         let this = ManuallyDrop::new(self);
@@ -313,11 +306,7 @@ impl<S: ThinSum> Thin<S> {
         }
         // As in `try_take`.
         let count = &self.header().count;
-        if count.load(Ordering::Relaxed) != 1
-            || count
-                .compare_exchange(1, 0, Ordering::Acquire, Ordering::Relaxed)
-                .is_err()
-        {
+        if !crate::counts::take32(count) {
             return Err(self);
         }
         let this = ManuallyDrop::new(self);
@@ -374,13 +363,12 @@ impl<S: ThinSum> Thin<S> {
     }
 
     /// The last owner's part of `drop`, kept out of line as
-    /// `Arc::drop_slow` is: the `Acquire` fence makes every other owner's
-    /// use of the fields, and a call made in the node, happen before they
-    /// are dropped.
+    /// `Arc::drop_slow` is. The decrement that found the last owner
+    /// ([`crate::counts`]) made every other owner's use of the fields, and a
+    /// call made in the node, happen before they are dropped.
     #[cold]
     #[inline(never)]
     fn drop_slow(&mut self) {
-        atomic::fence(Ordering::Acquire);
         let tag = self.header().tag.load(Ordering::Relaxed);
         let mut put_aside = Vec::new();
         unsafe { S::free(self.ptr, tag, Pending::new(&mut put_aside)) };
@@ -487,10 +475,9 @@ type Owner = (NonNull<Header>, unsafe fn(NonNull<Header>, Pending<'_>));
 #[inline]
 unsafe fn release<S: ThinSum>(node: NonNull<Header>, pending: Pending<'_>) {
     let header = unsafe { node.as_ref() };
-    if header.count.fetch_sub(1, Ordering::Release) != 1 {
+    if !crate::counts::dec32(&header.count) {
         return;
     }
-    atomic::fence(Ordering::Acquire);
     unsafe { S::free(node, header.tag.load(Ordering::Relaxed), pending) }
 }
 
@@ -1041,9 +1028,7 @@ impl<S: ThinSum> Clone for Thin<S> {
     /// from an existing one, which keeps the node alive meanwhile.
     #[inline]
     fn clone(&self) -> Self {
-        if !self.is_empty_ctor()
-            && self.header().count.fetch_add(1, Ordering::Relaxed) > MAX_REFCOUNT
-        {
+        if !self.is_empty_ctor() && crate::counts::inc32(&self.header().count) {
             std::process::abort();
         }
         Self::from_ptr(self.ptr)
@@ -1057,7 +1042,7 @@ impl<S: ThinSum> Drop for Thin<S> {
         if self.is_empty_ctor() {
             return;
         }
-        if self.header().count.fetch_sub(1, Ordering::Release) != 1 {
+        if !crate::counts::dec32(&self.header().count) {
             return;
         }
         self.drop_slow();
@@ -1888,6 +1873,7 @@ mod tests {
         assert_eq!(sum(&kept), 1);
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn clones_dropped_on_many_threads_free_once() {
         let drops = Arc::new(AtomicUsize::new(0));
@@ -2086,6 +2072,7 @@ mod tests {
         assert_eq!(again.addr(), super::Thin::addr(&below.0));
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn a_call_shared_by_many_threads_is_made_once() {
         static MADE: AtomicUsize = AtomicUsize::new(0);
@@ -2196,6 +2183,7 @@ mod tests {
         assert_eq!(failing.deferred_known(1), None, "panicked");
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn threads_reading_what_a_call_knows_and_making_it_agree() {
         static MADE: AtomicUsize = AtomicUsize::new(0);
@@ -2326,6 +2314,7 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 2);
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn many_threads_making_one_call_see_it_made_once() {
         static RUNS: AtomicUsize = AtomicUsize::new(0);
@@ -2356,6 +2345,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn a_call_that_panicked_panics_every_look_on_every_thread() {
         static RUNS: AtomicUsize = AtomicUsize::new(0);
@@ -2379,6 +2369,7 @@ mod tests {
         assert_eq!(RUNS.load(Ordering::SeqCst), 1);
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn last_owner_on_another_thread_frees() {
         let drops = Arc::new(AtomicUsize::new(0));

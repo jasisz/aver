@@ -6816,6 +6816,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         target,
         check,
         perf_notes,
+        single_thread,
         with_replay,
         policy_mode,
         guest_entry,
@@ -6993,10 +6994,16 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         project_config
             .as_ref()
             .and_then(|config| config.work_max_jobs),
-        project_config
-            .as_ref()
-            .map(|config| config.rust)
-            .unwrap_or_default(),
+        {
+            let mut rust = project_config
+                .as_ref()
+                .map(|config| config.rust)
+                .unwrap_or_default();
+            if single_thread {
+                rust.threads = aver::config::RustThreads::One;
+            }
+            rust
+        },
     ) {
         Ok(output) => output,
         Err(error) => {
@@ -8172,6 +8179,8 @@ pub(super) struct CompileOptions<'a> {
     pub(super) target: super::cli::CompileTarget,
     pub(super) check: bool,
     pub(super) perf_notes: bool,
+    /// `--single-thread`: as `[rust] threads = "one"`.
+    pub(super) single_thread: bool,
     pub(super) with_replay: bool,
     pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
     pub(super) guest_entry: Option<&'a str>,
@@ -13709,6 +13718,7 @@ error: build failed";
             guest_entry: None,
             recorded_source: None,
             emit_self_host_support: false,
+            single_thread: false,
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),

@@ -22,6 +22,10 @@ http = ["dep:ureq"]
 mimalloc = ["dep:libmimalloc-sys"]
 random = ["dep:rand"]
 terminal = ["dep:crossterm"]
+# Reference counts changed with plain loads and stores instead of atomic
+# read-modify-writes, for a program that runs Aver code on one thread at a
+# time. Only the code generator turns it on (see `counts`).
+plain-counts = []
 
 [package.metadata.docs.rs]
 all-features = true
