@@ -350,7 +350,7 @@ pub fn verify_with(artifact: &Path, cert_dir: &Path, kernels: Kernels) -> Result
     let report = trusted_check(artifact, cert_dir, kernels.replay_mode())?;
     let summary = summarize_report(artifact, report, "certified");
     if summary.count == 0 {
-        Ok(Verdict::NoExports(summary.text))
+        Ok(Verdict::NoExports(with_absent_hint(summary.text, cert_dir)))
     } else {
         Ok(Verdict::Certified {
             summary: summary.text,
@@ -373,7 +373,10 @@ pub fn check(artifact: &Path, cert_dir: &Path) -> Result<CheckVerdict, String> {
     let report = trusted_check(artifact, cert_dir, ReplayMode::TrustBuiltOleans)?;
     let summary = summarize_report(artifact, report, "checked");
     if summary.count == 0 {
-        Ok(CheckVerdict::NoExports(summary.text))
+        Ok(CheckVerdict::NoExports(with_absent_hint(
+            summary.text,
+            cert_dir,
+        )))
     } else {
         Ok(CheckVerdict::Checked {
             summary: summary.text,
@@ -392,6 +395,33 @@ struct ReportSummary {
     uncredited_bridged_laws: Vec<String>,
     uncredited_bridges: Vec<String>,
     count: usize,
+}
+
+/// An empty certificate whose package declares functions the module does not
+/// contain says so: those functions were left out because nothing reaches
+/// them, which `exposes` fixes. Informational, read from the declared
+/// `source_level_only` reasons; it changes no verdict.
+fn with_absent_hint(text: String, cert_dir: &Path) -> String {
+    let absent = std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|manifest| {
+            manifest
+                .get("source_level_only")
+                .and_then(Value::as_array)
+                .map(|declined| {
+                    declined.iter().any(|entry| {
+                        entry.get("reason").and_then(Value::as_str)
+                            == Some(format::ABSENT_FROM_MODULE)
+                    })
+                })
+        })
+        .unwrap_or(false);
+    if absent {
+        format!("{text}\n  {}", format::ABSENT_FROM_MODULE_HINT)
+    } else {
+        text
+    }
 }
 
 fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str) -> ReportSummary {

@@ -1,4 +1,5 @@
 module EqualSides
+    exposes [eqOrNe, swappedNe, swappedEq, strictBoth, aboveBound]
     intent =
         "Comparisons decided under a true equality between two Int variables:"
         "the equality rewrites one side to the other, and a comparison is first"

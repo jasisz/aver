@@ -1,7 +1,7 @@
 module Main
     depends [Node, Validation, Wait, Work]
     intent = "The work_jobs coordinator, compiled with --certify: its module imports aver:work/v1 and its job body certifies."
-    exposes [main]
+    exposes [main, bonus]
     effects [Console.print, Validation.begin, Validation.take, Wait.poll]
 
 fn main() -> Result<Unit, String>
@@ -81,3 +81,10 @@ fn readyCount(items: Map<Int, Wait.Item>) -> Int
 verify readyCount law anEmptyWaitSetReportsNoKey
     given items: Map<Int, Wait.Item> = [{}]
     readyCount(items) => 0
+
+fn bonus(score: Int) -> Int
+    ? "A score with one bonus point: certified Int arithmetic, so the bignum helpers are in the certified closure beside the work imports."
+    score + 1
+
+verify bonus
+    bonus(7) => 8

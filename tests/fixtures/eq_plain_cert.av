@@ -1,4 +1,5 @@
 module EqPlainCert
+    exposes [Color, Point, sameColor, samePoint, differ, hasRed, sameOpt, sameList, inc]
     intent =
         "Fixture: == and != on a record, a sum, an Option and a List of a"
         "type that does not reach itself, and List.contains over it. On"

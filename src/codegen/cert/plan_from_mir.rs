@@ -1568,6 +1568,7 @@ pub fn print_module(
         fns: out,
         types: types.finish(),
         aint_eq_idx,
+        absent: Vec::new(),
     }
 }
 
@@ -1986,6 +1987,7 @@ fn capped(i: Int) -> Int
     const CMP_SRC: &str = r#"
 module M
     intent = "t"
+    exposes [below, atZero]
 
 fn below(a: Int, b: Int) -> Bool
     a + 1 < b

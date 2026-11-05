@@ -7548,6 +7548,12 @@ fn emit_artifact_certificate(
     );
     if !certified.is_empty() {
         println!("    certified: {}", certified.join(", "));
+    } else if analysis
+        .declined()
+        .iter()
+        .any(|(_, reason)| reason == cert::format::ABSENT_FROM_MODULE)
+    {
+        println!("    {}", cert::format::ABSENT_FROM_MODULE_HINT);
     }
     for (label, reason) in &declines.law_claims {
         println!("    law-claim declined: {label} — {reason}");

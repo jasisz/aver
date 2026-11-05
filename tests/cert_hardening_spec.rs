@@ -2193,19 +2193,64 @@ fn code_body_and_imports(
     (body.unwrap_or(0..0), import_range)
 }
 
+/// The offsets of every `call target` instruction in the module's bodies.
+fn call_offsets(bytes: &[u8], target: u32) -> Vec<usize> {
+    let mut hits = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::CodeSectionEntry(body) = payload.expect("parses") {
+            let mut operators = body.get_operators_reader().expect("operators");
+            while !operators.eof() {
+                let at = operators.original_position();
+                if let wasmparser::Operator::Call { function_index } =
+                    operators.read().expect("operator")
+                    && function_index == target
+                {
+                    hits.push(at);
+                }
+            }
+        }
+    }
+    hits
+}
+
 fn validate(bytes: &[u8]) {
     wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all())
         .validate_all(bytes)
         .expect("the tampered module stays valid WebAssembly");
 }
 
+/// The tiny module with a quotient by a parameter, the one call that keeps
+/// `__aint_divmod` in the module (a function nothing calls is left out). The
+/// quotient is a `Result`, so it is not certified.
+const TINY_WITH_QUOTIENT: &str = "module Tiny
+    intent = \"Two bridged exports with one law each, and a quotient.\"
+    exposes [addTwo, double, quotient]
+
+fn addTwo(x: Int) -> Int
+    ? \"Adds two.\"
+    x + 2
+
+fn double(x: Int) -> Int
+    ? \"Doubles.\"
+    x + x
+
+fn quotient(a: Int, b: Int) -> Result<Int, String>
+    ? \"a divided by b.\"
+    Int.div(a, b)
+
+verify quotient
+    quotient(7, 2) => Result.Ok(3)
+";
+
 /// The module's type of `__aint_divmod` widened to a supertype result
-/// (`anyref` for the carrier). The body is unchanged, so its template still
-/// matches and the module stays valid (nothing in it calls the helper);
-/// `roleTypesPinned` fixes the exact type `carrier carrier i32 -> carrier`.
+/// (`anyref` for the carrier). The helper's only call, in the uncertified
+/// quotient, becomes `unreachable; nop` first, so nothing in the module calls
+/// the helper and the module stays valid. The helper body is unchanged, so its
+/// template still matches; `roleTypesPinned` fixes the exact type
+/// `carrier carrier i32 -> carrier`.
 #[test]
 fn cert_hardening_declines_divmod_at_a_supertype_signature() {
-    let Some((_dir, wasm, cert)) = baseline("certharden-divmod") else {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-divmod", TINY_WITH_QUOTIENT) else {
         return;
     };
     let manifest: serde_json::Value =
@@ -2223,6 +2268,14 @@ fn cert_hardening_declines_divmod_at_a_supertype_signature() {
         0x60, 3, 0x63, carrier, 0x63, carrier, 0x7f, 1, 0x63, carrier,
     ];
     let mut bytes = std::fs::read(&wasm).unwrap();
+    let divmod = manifest["hostRoleTable"]["divmod"].as_u64().unwrap() as u32;
+    let calls = call_offsets(&bytes, divmod);
+    assert_eq!(calls.len(), 1, "the quotient is the helper's one caller");
+    // `call divmod` (two bytes while the index fits one LEB byte) becomes
+    // `unreachable; nop`: the rest of the caller is dead code and validates.
+    assert!(divmod < 0x80, "the divmod index fits one LEB byte");
+    bytes[calls[0]] = 0x00;
+    bytes[calls[0] + 1] = 0x01;
     let at: Vec<usize> = bytes
         .windows(exact.len())
         .enumerate()
@@ -3885,9 +3938,9 @@ fn bytes_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
 }
 
 /// The honest certificate checks: every `Bytes` helper is declared, pinned
-/// to its template and run by the wall, and the probe's six functions, the
-/// six `Bytes` functions they call and the `Bytes` module's other certified
-/// functions (20 in all) check.
+/// to its template and run by the wall, and the probe's six functions and
+/// the six `Bytes` functions they call check. The `Bytes` module's other
+/// functions are not in the module: nothing the probe exposes calls them.
 #[test]
 fn cert_hardening_accepts_bytes_helpers() {
     let Some((_dir, wasm, cert)) = bytes_baseline("certharden-bytes-clean") else {
@@ -3911,7 +3964,7 @@ fn cert_hardening_accepts_bytes_helpers() {
     assert!(ok, "the Bytes-helper certificate must check:\n{report}");
     // `Bytes_fromList` interpolates an Int into its error, which now certifies,
     // and `Bytes_get` certifies as an ordinary list match.
-    assert!(report.contains("22 checked functions"), "{report}");
+    assert!(report.contains("12 checked functions"), "{report}");
 }
 
 /// A role row naming another helper of the same type: `take` declared at the

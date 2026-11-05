@@ -517,6 +517,10 @@ pub struct ModulePlans {
     pub fns: Vec<PlannedFn>,
     pub types: PlanTypeTable,
     pub aint_eq_idx: Option<u32>,
+    /// The user functions the module does not contain: nothing its exports,
+    /// start function or element segments reach calls them, so the compiler
+    /// left them out. Each is reported as declined, never planned.
+    pub absent: Vec<String>,
 }
 
 // ---- Lean rendering ---------------------------------------------------------

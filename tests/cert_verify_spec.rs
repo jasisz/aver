@@ -683,11 +683,11 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
         report.contains("CERTIFIED"),
         "missing CERTIFIED for the wasip2 component:\n{report}"
     );
-    // Disk brings in Bytes, and the embedded core exports its pure helper too.
-    // List-pattern admission makes allInRange certifiable, and the packed
-    // Bytes helpers make concat, drop, empty and take certifiable. Pin the
-    // names in the manifest the verifier just checked, including any
-    // unexpected extras.
+    // The core keeps `greet` because the entry module exposes it (a wasip2
+    // core does not export it; `exposes` keeps it as a root). Disk brings in
+    // the Bytes module, but nothing the entry point or `exposes` reaches calls
+    // its functions, so they are not in the core. Pin the names in the
+    // manifest the verifier just checked, including any unexpected extras.
     let mut certified_exports: Vec<_> = manifest["certified"]
         .as_array()
         .expect("certified export list")
@@ -697,14 +697,7 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
     certified_exports.sort_unstable();
     assert_eq!(
         certified_exports,
-        [
-            "Bytes_allInRange",
-            "Bytes_concat",
-            "Bytes_drop",
-            "Bytes_empty",
-            "Bytes_take",
-            "greet"
-        ],
+        ["greet"],
         "wasip2 certified function set changed:\n{report}"
     );
 }
@@ -1369,7 +1362,8 @@ fn cert_verify_accepts_nested_module_certificate() {
     );
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
     assert!(
-        report.contains("6 certified functions"),
+        // Seven: the module holds what the entry's `exposes` reaches.
+        report.contains("7 certified functions"),
         "expected the entry exports and all three nested-module exports:\n{report}"
     );
     assert!(
@@ -2927,10 +2921,14 @@ fn function_opcode_offsets(bytes: &[u8], func_idx: u32, opcode: u8) -> Vec<usize
 /// `__aint_divmod` body changed (`i64.div_s` -> `i64.div_u`, a valid module
 /// with every export, index and type unchanged) declines the package even
 /// though no plan of this fixture divides — a declared helper is pinned
-/// whether or not a plan calls it.
+/// whether or not a plan calls it. `certprobe`'s quotient is declined (a
+/// `Result`), and its call is what keeps the helper in the module.
 #[test]
 fn cert_tripwire_declines_flipped_divmod_helper_byte() {
-    let Some(out_dir) = tripwire_baseline("certverify-divmod-template") else {
+    let Some(out_dir) = tripwire_baseline_of(
+        "certverify-divmod-template",
+        "tools/certkit/fixtures/certprobe.av",
+    ) else {
         return;
     };
     let manifest: serde_json::Value = serde_json::from_str(
@@ -2939,11 +2937,11 @@ fn cert_tripwire_declines_flipped_divmod_helper_byte() {
     .unwrap();
     let divmod_idx = manifest["hostRoleTable"]["divmod"]
         .as_u64()
-        .expect("certprobe2 declares the divmod helper") as u32;
-    let wasm = std::fs::read(out_dir.join("certprobe2.wasm")).unwrap();
+        .expect("certprobe declares the divmod helper") as u32;
+    let wasm = std::fs::read(out_dir.join("certprobe.wasm")).unwrap();
     let hits = function_opcode_offsets(&wasm, divmod_idx, 0x7f);
     assert_eq!(hits.len(), 1, "the divmod template carries one i64.div_s");
-    assert_rebound_byte_tamper_declines(&out_dir, "certprobe2.wasm", "divmod body", &|bytes| {
+    assert_rebound_byte_tamper_declines(&out_dir, "certprobe.wasm", "divmod body", &|bytes| {
         bytes[hits[0]] = 0x80;
     });
 }
@@ -3386,9 +3384,12 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // six more (`Bytes.empty`, `len`, `octets`, `concat`, `take`, `drop`):
     // 30 of 162. Int interpolation certifies `Bytes.fromList`: 31 of 162.
     // Computing Int trees on the machine word certifies four more and adds
-    // one function without a claim: 35 of 163.
+    // one function without a claim: 35 of 163. The module now leaves out the
+    // functions nothing reachable from `main` calls (fifteen certified ones
+    // among them, the parser half `main` does not use), and each is declared
+    // source-level-only as not in the module: 20 of 163.
     assert!(
-        compile_report.contains("(35 certified, 128 source-level-only)"),
+        compile_report.contains("(20 certified, 143 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
@@ -3407,7 +3408,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
-        report.contains("35 checked functions"),
+        report.contains("20 checked functions"),
         "json should certify the widened data-segment functions:\n{report}"
     );
     assert!(
@@ -5714,7 +5715,8 @@ fn cert_verify_certifies_the_five_int_comparison_witnesses() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for (source, artifact, witnesses) in [
         (
-            "examples/formal/int_comparison_laws.av",
+            // The example with `atLeast` exposed, so the module contains it.
+            "tests/fixtures/cert_exposed/int_comparison_laws.av",
             "int_comparison_laws.wasm",
             &["sameKey", "atLeast"][..],
         ),
@@ -6146,10 +6148,13 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // conjoined with `Holds`, and the `_bridged` one that also conjoins the
     // plan-equals-source identities. They are kept apart so a bridge that
     // cannot be closed costs the second and never the first.
+    // Functions `main` does not reach are not in the module (absInt,
+    // absFraction, lessThan, isNonNeg, isNonPos), so the when-law about
+    // `isNonNeg` has no bridge and no bridged corollary: 11 + 10.
     assert_eq!(
         laws_lean.matches("/-- law-claim `").count(),
-        22,
-        "k5 package must carry eleven law corollaries and eleven bridged ones"
+        21,
+        "k5 package must carry eleven law corollaries and ten bridged ones"
     );
     assert_eq!(
         laws_lean.matches("theorem _root_.AverCert.Laws.").count()
@@ -6165,8 +6170,8 @@ fn cert_tripwire_declines_tampered_law_claims() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "clean k5 law-claims certificate must check:\n{report}");
     assert!(
-        report.contains("12 checked functions"),
-        "k5 should keep its twelve certified exports:\n{report}"
+        report.contains("7 checked functions"),
+        "k5 should keep the seven certified functions `main` reaches:\n{report}"
     );
     assert!(
         report.contains("law-claims: 11 of 11 credited"),
@@ -6177,11 +6182,11 @@ fn cert_tripwire_declines_tampered_law_claims() {
         "a clean package names no uncredited law:\n{report}"
     );
     assert!(
-        report.contains("bridged-laws: 11 of 11 credited"),
-        "every k5 law must be bridged to the bytes on a clean package:\n{report}"
+        report.contains("bridged-laws: 10 of 10 credited"),
+        "every bridged k5 law must be bridged to the bytes on a clean package:\n{report}"
     );
     assert!(
-        report.contains("source-bridges: 12 of 12 credited"),
+        report.contains("source-bridges: 7 of 7 credited"),
         "every k5 export must carry a credited plan-equals-source bridge:\n{report}"
     );
 
@@ -6272,7 +6277,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         "a law failing only its axiom audit must not sink the exports:\n{out}"
     );
     assert!(
-        out.contains("12 checked functions"),
+        out.contains("7 checked functions"),
         "the export verdict must stand unchanged beside an uncredited law:\n{out}"
     );
     assert!(
@@ -6287,7 +6292,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         "the uncredited law must be named together with the axiom that sank it:\n{out}"
     );
     assert!(
-        out.contains("source-bridges: 12 of 12 credited"),
+        out.contains("source-bridges: 7 of 7 credited"),
         "a law losing its credit must not take the bridges it cited down:\n{out}"
     );
     assert!(
@@ -6306,7 +6311,8 @@ fn cert_tripwire_declines_tampered_law_claims() {
 }
 
 /// The same tripwire for the plan-equals-source bridge surface (schema 9), on
-/// the k5 package whose twelve exports are all bridged (`exact` kind: no k5
+/// the k5 package whose seven certified functions (those `main` reaches; the
+/// rest are not in the module) are all bridged (`exact` kind: no k5
 /// call closure recurses).
 ///
 /// (A) and (B) are the ways a manifest can try to state something other than
@@ -6324,8 +6330,8 @@ fn cert_tripwire_declines_tampered_law_claims() {
 /// BRIDGED corollary of every law that mentions its function — and nothing
 /// else: the exports keep their verdict and the plain law-claims keep their
 /// credit, which is what keeping `Laws.<c>` and `Laws.<c>_bridged` apart is
-/// for. `isNonNeg` is mentioned by exactly one k5 law, so the two law counters
-/// separate visibly.
+/// for. `oneFraction` is mentioned by exactly one k5 law, so the two law
+/// counters separate visibly.
 ///
 /// (D) A law-claim that declares MORE bridges than its bridged corollary
 /// proves loses the pinned type and declines. Declaring fewer is the opposite
@@ -6334,8 +6340,9 @@ fn cert_tripwire_declines_tampered_law_claims() {
 ///
 /// (E) A per-function STEP lemma that does not close falls to `sorry` instead
 /// of failing the build, and it costs exactly the bridges whose call closure
-/// contains that function. `isNonPos` calls nothing and no other export calls
-/// it, and no k5 law mentions it, so (E) isolates one bridge's credit.
+/// contains that function. `oneFraction` calls nothing and no other export
+/// calls it, and one k5 law mentions it, so (E) costs exactly its bridge and
+/// that law's bridged corollary.
 ///
 /// The audit LINES themselves are covered where they are read, by the parser
 /// unit tests in `aver-cert`.
@@ -6376,11 +6383,11 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         bridge_lean
             .matches("/-- plan-equals-source bridge for `")
             .count(),
-        12,
-        "k5 package must carry twelve bridge theorems"
+        7,
+        "k5 package must carry seven bridge theorems"
     );
     assert!(
-        manifest.contains("\"export\": \"Domain_Rational_isNonPos\"")
+        manifest.contains("\"export\": \"Domain_Rational_negate\"")
             && manifest.contains("\"kind\": \"exact\""),
         "the bridge surface must name every certified export, in the exact kind"
     );
@@ -6416,18 +6423,15 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     );
 
     // Tamper A': point one bridge at a different source function. The checker
-    // renders the claim about `isNonPos` where the package proved one about
-    // `isNonNeg`, so the pin fails to elaborate.
-    let honest_model = "\"model\": \"Domain.Rational.isNonNeg\"";
-    assert!(
-        manifest.contains(honest_model),
-        "expected the isNonNeg bridge"
-    );
+    // renders the claim about `times` where the package proved one about
+    // `plus`, so the pin fails to elaborate.
+    let honest_model = "\"model\": \"Domain.Rational.plus\"";
+    assert!(manifest.contains(honest_model), "expected the plus bridge");
     let dir = temp_dir("cert-k5-bridge-other-model");
     copy_dir(&out_dir, &dir);
     std::fs::write(
         dir.join("cert").join("cert-manifest.json"),
-        manifest.replacen(honest_model, "\"model\": \"Domain.Rational.isNonPos\"", 1),
+        manifest.replacen(honest_model, "\"model\": \"Domain.Rational.times\"", 1),
     )
     .unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
@@ -6448,9 +6452,9 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         (
             "a declared statement",
             manifest.replacen(
-                "{\"export\": \"Domain_Rational_isNonPos\"",
-                "{\"statement\": \"_root_.Domain.Rational.isNonPos = _root_.Domain.Rational.isNonPos\", \
-                 \"export\": \"Domain_Rational_isNonPos\"",
+                "{\"export\": \"Domain_Rational_negate\"",
+                "{\"statement\": \"_root_.Domain.Rational.negate = _root_.Domain.Rational.negate\", \
+                 \"export\": \"Domain_Rational_negate\"",
                 1,
             ),
         ),
@@ -6475,7 +6479,7 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     // the rendered statement, so the pin elaborates and only the axiom audit
     // fails — and it costs the bridge and the bridged law-claim that mentions
     // it, never the law-claim itself.
-    let theorem = "_root_.AverCert.Bridge.Domain_Rational_isNonNeg";
+    let theorem = "_root_.AverCert.Bridge.Domain_Rational_oneFraction";
     let slice = bridge_slices::bridge_proof_slice_of(&cert, theorem);
     let sorried = sorry_out_theorem(&std::fs::read_to_string(&slice).unwrap(), theorem);
     let dir = temp_dir("cert-k5-bridge-sorry-tamper");
@@ -6487,21 +6491,21 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         "a bridge failing only its axiom audit must not sink the exports:\n{out}"
     );
     assert!(
-        out.contains("12 checked functions"),
+        out.contains("7 checked functions"),
         "the export verdict must stand beside an uncredited bridge:\n{out}"
     );
     assert!(
-        out.contains("source-bridges: 11 of 12 credited"),
+        out.contains("source-bridges: 6 of 7 credited"),
         "the sorry'd bridge must lose exactly its own credit:\n{out}"
     );
     assert!(
         out.contains(
-            "source-bridge not credited: Domain_Rational_isNonNeg \
+            "source-bridge not credited: Domain_Rational_oneFraction \
              (proof depends on sorryAx)"
         ),
         "the uncredited bridge must be named with the axiom that sank it:\n{out}"
     );
-    // The decoupling this surface exists for: the law about `isNonNeg` is a
+    // The decoupling this surface exists for: the law about `oneFraction` is a
     // claim about the SOURCE model, proved without any bridge, so it keeps its
     // credit while the bridged corollary that cites the broken bridge loses
     // exactly one.
@@ -6510,12 +6514,12 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         "a broken bridge must not cost a law its credit:\n{out}"
     );
     assert!(
-        out.contains("bridged-laws: 10 of 11 credited"),
+        out.contains("bridged-laws: 9 of 10 credited"),
         "the bridged corollary of the law that mentions it loses credit:\n{out}"
     );
     assert!(
         out.contains(
-            "bridged law-claim not credited: Domain.Rational.isNonNeg.nonNegOfPositive \
+            "bridged law-claim not credited: Domain.Rational.times.oneIsNeutral \
              (proof depends on sorryAx)"
         ),
         "the uncredited bridged claim must be named:\n{out}"
@@ -6534,7 +6538,7 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     std::fs::write(
         dir.join("cert").join("cert-manifest.json"),
         format!(
-            "{}{}, \"Domain_Rational_isNonPos\"{}",
+            "{}{}, \"Domain_Rational_negate\"{}",
             &manifest[..at],
             &manifest[at..end],
             &manifest[end..]
@@ -6551,13 +6555,13 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         "an over-declared law-claim surface credited:\n{out}"
     );
 
-    // Tamper E: the per-function step lemma of `isNonPos`, degraded to `sorry`.
+    // Tamper E: the per-function step lemma of `oneFraction`, degraded to `sorry`.
     // The `first | … | sorry` in the emitted proof is what makes a step that
     // cannot close a not-credited bridge instead of a failed build, and the
     // step is cited only by the bridges whose call closure reaches it. The
     // expensive body lemmas are emitted in `BridgeBodies<k>.lean` and
     // bound to Plans by BridgeSteps, so find the body slice carrying this one.
-    let step_doc = "/-- One step of `Domain.Rational.isNonPos`";
+    let step_doc = "/-- One step of `Domain.Rational.oneFraction`";
     let (steps_file, steps_lean) = std::fs::read_dir(&cert)
         .unwrap()
         .filter_map(|entry| {
@@ -6569,7 +6573,7 @@ fn cert_tripwire_declines_tampered_source_bridges() {
             (name, text)
         })
         .find(|(_, text)| text.contains(step_doc))
-        .expect("expected the isNonPos step lemma in a BridgeBodies slice");
+        .expect("expected the oneFraction step lemma in a BridgeBodies slice");
     let at = steps_lean.find(step_doc).unwrap();
     let name_at = steps_lean[at..].find("theorem ").expect("the step lemma") + at + 8;
     let name_end = steps_lean[name_at..].find(' ').expect("its name ends") + name_at;
@@ -6584,18 +6588,18 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         "a step lemma that cannot close must not decline the package:\n{out}"
     );
     assert!(
-        out.contains("12 checked functions")
-            && out.contains("source-bridges: 11 of 12 credited")
+        out.contains("7 checked functions")
+            && out.contains("source-bridges: 6 of 7 credited")
             && out.contains(
-                "source-bridge not credited: Domain_Rational_isNonPos \
+                "source-bridge not credited: Domain_Rational_oneFraction \
                  (proof depends on sorryAx)"
             ),
         "the unclosed step costs exactly its own bridge:\n{out}"
     );
     assert!(
         out.contains("law-claims: 11 of 11 credited")
-            && out.contains("bridged-laws: 11 of 11 credited"),
-        "no k5 law mentions isNonPos, so every law keeps both credits:\n{out}"
+            && out.contains("bridged-laws: 9 of 10 credited"),
+        "only the one law that mentions oneFraction loses its bridged credit:\n{out}"
     );
 }
 

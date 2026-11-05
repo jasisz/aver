@@ -1,4 +1,5 @@
 module AffineWrapper
+    exposes [scaleCore, inWindow, boundedScale]
     intent =
         "Genericity guard for the validated-wrapper arm's AFFINE-guard closer: a"
         "synthetic, non-K5 error-checking wrapper whose dispatch branches not on a"

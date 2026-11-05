@@ -1275,15 +1275,8 @@ fn decoder_shapes(
 /// `_root_.` name (the only spelling a law cites a bridge by), closed over
 /// the calls of the plans, since a bridge needs the bridges of its callees.
 /// `None` under [`BridgeScope::Every`].
-fn law_cone(
-    analysis: &Analysis,
-    model: &SourceModel,
-    info: &ModelInfo,
-    law_claims: &[LawClaim],
-) -> Option<BTreeSet<u32>> {
-    if model.bridge_scope == BridgeScope::Every {
-        return None;
-    }
+/// The source definitions the law-claims' statements name, qualified.
+fn law_mentioned<'a>(info: &'a ModelInfo, law_claims: &[LawClaim]) -> BTreeSet<&'a str> {
     let mut mentioned: BTreeSet<&str> = BTreeSet::new();
     for claim in law_claims {
         for token in crate::bridge_statement::statement_tokens(&claim.statement) {
@@ -1294,6 +1287,19 @@ fn law_cone(
             }
         }
     }
+    mentioned
+}
+
+fn law_cone(
+    analysis: &Analysis,
+    model: &SourceModel,
+    info: &ModelInfo,
+    law_claims: &[LawClaim],
+) -> Option<BTreeSet<u32>> {
+    if model.bridge_scope == BridgeScope::Every {
+        return None;
+    }
+    let mentioned = law_mentioned(info, law_claims);
     let mut work: Vec<u32> = analysis
         .entries
         .iter()
@@ -1571,6 +1577,19 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel, law_claims: &[LawClaim
             continue;
         }
         plan.bridges.push((bridge, c.func_idx));
+    }
+    // A function the module does not contain has no bytes to bridge. One a
+    // law-claim names (or any, when every function is in scope) is declined
+    // with that reason rather than left out without a word.
+    let mentioned = law_mentioned(&info, law_claims);
+    for name in &analysis.absent {
+        let in_scope = model.bridge_scope == BridgeScope::Every
+            || info
+                .def_for(name)
+                .is_ok_and(|def| mentioned.contains(def.qualified.as_str()));
+        if in_scope {
+            declined.push((name.clone(), crate::format::ABSENT_FROM_MODULE.to_string()));
+        }
     }
     plan.declined = declined
         .into_iter()

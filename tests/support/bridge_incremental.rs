@@ -23,6 +23,25 @@ fn leaf_module(module: &str, prefix: &str, edited: bool) -> String {
     source
 }
 
+/// The entry of the cache fixture: one function per module summing all its
+/// leaves, so every leaf is in the module (a function nothing reaches is left
+/// out) and no function joins the two modules. Each sum is wider than a
+/// bridge proof unfolds, so the two entries are certified without a bridge
+/// and the leaf bridges of one module fill slices of their own.
+fn entry_module() -> String {
+    let mut bodies = String::new();
+    for (module, prefix, side) in [("Left", "a", "L"), ("Right", "b", "R")] {
+        let terms = (0..96)
+            .map(|i| format!("Cache.{module}.{prefix}{i}(x)"))
+            .collect::<Vec<_>>()
+            .join(" + ");
+        bodies.push_str(&format!("fn entry{side}(x: Int) -> Int\n    {terms}\n\n"));
+    }
+    format!(
+        "module StepCache\n    intent = \"Join two independent modules.\"\n    depends [Cache.Left, Cache.Right]\n    exposes [entryL, entryR]\n\n{bodies}"
+    )
+}
+
 fn compile(root: &Path, name: &str) -> PathBuf {
     let out = root.join(name);
     let output = aver_command()
@@ -43,7 +62,7 @@ fn compile(root: &Path, name: &str) -> PathBuf {
     out
 }
 
-fn check(root: &Path, package: &Path, exports: usize) -> String {
+fn check(root: &Path, package: &Path, exports: usize, bridges: usize) -> String {
     let output = aver_command()
         .args(["cert", "check"])
         .arg(package.join("main.wasm"))
@@ -61,7 +80,7 @@ fn check(root: &Path, package: &Path, exports: usize) -> String {
         "{report}"
     );
     assert!(
-        report.contains(&format!("source-bridges: {exports} of {exports} credited")),
+        report.contains(&format!("source-bridges: {bridges} of {bridges} credited")),
         "{report}"
     );
     report
@@ -76,9 +95,7 @@ pub fn check_independent_edit() {
         leaf_module("Right", "b", false),
     )
     .unwrap();
-    std::fs::write(root.join("main.av"),
-        "module StepCache\n    intent = \"Join two independent modules.\"\n    depends [Cache.Left, Cache.Right]\n    exposes [entry]\n\nfn entry(x: Int) -> Int\n    Cache.Left.a0(x) + Cache.Right.b0(x)\n"
-    ).unwrap();
+    std::fs::write(root.join("main.av"), entry_module()).unwrap();
     let before = compile(&root, "before");
     // Pick a pure Right slice without assuming where the entry function is
     // placed in the compiler's function-index order.
@@ -95,7 +112,7 @@ pub fn check_independent_edit() {
             let text = std::fs::read_to_string(path).unwrap();
             text.contains("`Cache.Right.")
                 && !text.contains("`Cache.Left.")
-                && !text.contains("`StepCache.entry`")
+                && !text.contains("`StepCache.")
                 // Export and image partitions have different widths. An
                 // export-only Right slice may still import a mixed image
                 // slice at the Left/Right boundary and legitimately rebuild.
@@ -117,7 +134,7 @@ pub fn check_independent_edit() {
             "an independent Right {prefix} slice"
         );
     }
-    let first = check(&root, &before, 193);
+    let first = check(&root, &before, 194, 192);
     for part in &parts {
         let name = part.file_stem().unwrap().to_str().unwrap();
         assert!(first.contains(&format!("Built {name} (")), "{first}");
@@ -130,7 +147,7 @@ pub fn check_independent_edit() {
         std::fs::read(before.join("main.wasm")).unwrap(),
         std::fs::read(after.join("main.wasm")).unwrap()
     );
-    let second = check(&root, &after, 193);
+    let second = check(&root, &after, 194, 192);
     for part in &parts {
         assert_eq!(
             std::fs::read_to_string(part).unwrap(),
@@ -167,5 +184,5 @@ pub fn check_decoded_sum_calls() {
         .replace("fn pressed", &format!("{}fn pressed", padding(24)));
     std::fs::write(root.join("main.av"), source).unwrap();
     let package = compile(&root, "compiled");
-    check(&root, &package, 53);
+    check(&root, &package, 53, 53);
 }

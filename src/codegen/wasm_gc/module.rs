@@ -6957,6 +6957,47 @@ fn emit_module_pass(
             path.display()
         )));
     }
+    // Every defined function the module's roots cannot reach goes: helper
+    // families are registered per instantiated type and their indices fixed
+    // as they are written, so only the finished module knows which of them a
+    // program calls (`dead_functions.rs`). The canonical module, the one a
+    // certificate binds, is the shrunk one.
+    //
+    // One root no section names: the certificate wall finds the bignum
+    // sub-routines through the `Int` add helper's calls (`aver-cert`
+    // `module_facts::derive_roles`), and a module exporting the box helper
+    // must carry it to have a host-role table at all.
+    //
+    // A wasip2 core exports only its world's entry points, never the entry
+    // module's `exposes`; the functions listed there are kept all the same,
+    // as roots without an export, so `exposes` keeps a function in the
+    // artifact (and so in its certificate) on both targets.
+    let mut kept: Vec<u32> = builtin_registry
+        .lookup_wasm_fn_idx(BuiltinName::AintAdd)
+        .into_iter()
+        .collect();
+    if matches!(target, super::TargetMode::Wasip2) {
+        let exposed: std::collections::HashSet<&str> = crate::visibility::module_decl(items)
+            .map(|module| module.exposes.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        kept.extend(
+            fn_defs
+                .iter()
+                .enumerate()
+                .take(user_fn_count)
+                .filter(|(_, fd)| exposed.contains(fd.name.as_str()))
+                .map(|(i, _)| import_count + 1 + i as u32),
+        );
+    }
+    let (bytes, renumbering) = super::dead_functions::drop_dead_functions(bytes, &kept)?;
+    if renumbering.dropped() > 0
+        && let Err(e) = validate(&bytes)
+    {
+        return Err(WasmGcError::Validation(format!(
+            "{e} after dropping {} dead functions",
+            renumbering.dropped()
+        )));
+    }
     // Second return value: how many fns the MIR body emitter actually
     // rendered (the real `emit_fn_body_via_mir` Some/None decision fixed
     // in the pre-pass, NOT the structural `coverage_report` predicate).
@@ -6976,9 +7017,12 @@ fn emit_module_pass(
     if !certify {
         return Ok(((bytes, mir_emitted, Default::default()), kept_names));
     }
+    // A plan is printed for every user fn the module still contains, against
+    // the emission-time indices, and then moved onto the shrunk module's.
     let planned: Vec<_> = resolved_fn_defs
         .iter()
         .enumerate()
+        .filter(|(i, _)| renumbering.get(import_count + 1 + *i as u32).is_some())
         .map(|(i, rfd)| {
             (
                 import_count + 1 + i as u32,
@@ -6993,11 +7037,18 @@ fn emit_module_pass(
             )
         })
         .collect();
-    let cert_plans = crate::codegen::cert::print_module(
+    let mut cert_plans = crate::codegen::cert::print_module(
         &planned,
         &cert_layout,
         registry.aint_eq_fn_idx.filter(|_| registry.bignum),
     );
+    super::dead_functions::renumber_plans(&mut cert_plans, &renumbering);
+    cert_plans.absent = resolved_fn_defs
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| renumbering.get(import_count + 1 + *i as u32).is_none())
+        .map(|(_, rfd)| rfd.name.clone())
+        .collect();
     Ok(((bytes, mir_emitted, cert_plans), kept_names))
 }
 

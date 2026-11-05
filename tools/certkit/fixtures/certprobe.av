@@ -4,8 +4,9 @@ module CertProbe
         "one value-versus-value comparison of each kind, so the module really"
         "calls both Int comparison helpers and therefore exports both of them:"
         "the host-role gates read this fixture for a module whose declared"
-        "comparison roles can be checked against bytes that have them."
-    exposes [addTwo, atLeast, sameKey]
+        "comparison roles can be checked against bytes that have them. A"
+        "quotient by a parameter keeps the Euclidean division helper in it too."
+    exposes [addTwo, atLeast, sameKey, quotient]
 
 fn addTwo(x: Int) -> Int
     ? "Adds two."
@@ -19,6 +20,10 @@ fn sameKey(a: Int, b: Int) -> Bool
     ? "Do two keys compare equal?"
     a == b
 
+fn quotient(a: Int, b: Int) -> Result<Int, String>
+    ? "a divided by b, rounded toward negative infinity for a positive b."
+    Int.div(a, b)
+
 verify addTwo
     addTwo(1) => 3
     addTwo(-5) => -3
@@ -30,3 +35,6 @@ verify atLeast
 verify sameKey
     sameKey(2, 2) => true
     sameKey(2, 3) => false
+
+verify quotient
+    quotient(7, 2) => Result.Ok(3)

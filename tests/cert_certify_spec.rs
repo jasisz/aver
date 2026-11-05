@@ -354,7 +354,9 @@ fn is_arithmetic_nan_bits(bits: u64) -> bool {
 /// and the bridges each law-claim cites are the same in both modes.
 #[test]
 fn certify_bridges_only_the_law_cone_without_examples() {
-    let fixture = "projects/k5_fdiv/main.av";
+    // k5 no longer fits: its module holds only what `main` reaches, and the
+    // laws mention all of that, so its law cone is everything. Song's is not.
+    let fixture = "projects/song/main.av";
     let compile = |extra: &[&str], prefix: &str| {
         let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let out_dir = temp_dir(prefix);
@@ -362,7 +364,7 @@ fn certify_bridges_only_the_law_cone_without_examples() {
             .current_dir(&repo_root)
             .arg("compile")
             .arg(fixture)
-            .args(["--module-root", "projects/k5_fdiv"])
+            .args(["--module-root", "projects/song"])
             .args(["--target", "wasm-gc", "--certify"])
             .args(extra)
             .arg("-o")
@@ -427,16 +429,13 @@ fn certify_bridges_only_the_law_cone_without_examples() {
         cone_bridges.is_subset(&every_bridges) && cone_bridges.len() < every_bridges.len(),
         "the law cone is a strict subset: {cone_bridges:?} vs {every_bridges:?}"
     );
-    assert!(
-        every_bridges.contains("Domain_Rational_absInt"),
-        "{every_bridges:?}"
-    );
+    assert!(every_bridges.contains("Wave_degreeHz"), "{every_bridges:?}");
     let declined = cone["sourceBridgesDeclined"]
         .as_array()
         .expect("sourceBridgesDeclined is an array")
         .iter()
-        .find(|d| d["export"] == "Domain_Rational_absInt")
-        .unwrap_or_else(|| panic!("absInt outside the law cone is declined: {cone:#}"));
+        .find(|d| d["export"] == "Wave_degreeHz")
+        .unwrap_or_else(|| panic!("degreeHz outside the law cone is declined: {cone:#}"));
     assert!(
         declined["reason"]
             .as_str()
@@ -750,8 +749,9 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        13,
-        "all 43 module exports must be certified or explicitly declared"
+        // 14 with `intDivGoal`, whose `Result` quotient declines.
+        14,
+        "all 45 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
         entry.as_object().is_some_and(|object| {
@@ -1012,6 +1012,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         // tail (numerator moved deliberately).
         ("listHeadGoal", facets(&[])),
         ("sumListGoal", facets(&["recursive", "calls"])),
+        // The module holds only the Int helpers its functions call, so the
+        // multiplication and division goals keep the `mul` and `divmod` roles
+        // declared; the product certifies, the quotient (a `Result`) does not.
+        ("intMulGoal", facets(&[])),
     ]
     .into_iter()
     .map(|(name, facets)| (name.to_string(), facets))
@@ -1115,16 +1119,18 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "idGoal",
         "listHeadGoal",
         "sumListGoal",
+        "intMulGoal",
+        "intDivGoal",
     ]
     .into_iter()
     .map(str::to_string)
     .collect();
-    let expected_backlog: BTreeSet<String> = ["floatAddGoal", "floatMulAddGoal"]
+    let expected_backlog: BTreeSet<String> = ["floatAddGoal", "floatMulAddGoal", "intDivGoal"]
         .into_iter()
         .map(str::to_string)
         .collect();
-    assert_eq!(planned_goal_names.len(), 32, "goal denominator changed");
-    assert_eq!(actual.len(), 30, "goal numerator changed");
+    assert_eq!(planned_goal_names.len(), 34, "goal denominator changed");
+    assert_eq!(actual.len(), 31, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()
@@ -1138,6 +1144,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             aver::codegen::cert::BOX_CONTRACT,
             aver::codegen::cert::INT_ADD_CONTRACT,
             aver::codegen::cert::INT_SUB_CONTRACT,
+            // `intMulGoal` multiplies two parameters; it is not total code.
+            aver::codegen::cert::INT_MUL_CONTRACT,
             aver::codegen::cert::STRING_EQ_CONTRACT,
             aver::codegen::cert::STRING_CONCAT_CONTRACT,
             aver::codegen::cert::INT_ADD_TOTAL_CONTRACT,
@@ -1440,7 +1448,8 @@ fn hostile_models_baseline(prefix: &str) -> Option<ScratchDir> {
         "developer preflight must never emit the certification verdict:\n{clean_report}"
     );
     assert!(
-        clean_report.contains("source-bridges: 25 of 25 credited"),
+        // 26 since `intMulGoal` keeps the `mul` helper in the module.
+        clean_report.contains("source-bridges: 26 of 26 credited"),
         "the honest baseline credits every goals bridge:\n{clean_report}"
     );
 
@@ -1547,13 +1556,13 @@ fn assert_hostile_source_model_loses_bridges(prefix: &str, edits: &[(&str, &str)
 
     let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        ok && report.contains("30 checked functions"),
+        ok && report.contains("31 checked functions"),
         "a wrong source definition must not touch the export verdict:\n{report}"
     );
     assert!(
         report.contains(&format!(
-            "source-bridges: {} of 25 credited",
-            25 - lost.len()
+            "source-bridges: {} of 26 credited",
+            26 - lost.len()
         )),
         "exactly the bridges through the wrong definition must lose their credit:\n{report}"
     );
@@ -2550,7 +2559,9 @@ fn certify_certifies_carrier_free_classes_in_a_module_without_int_helper() {
 #[test]
 fn certify_declines_name_the_blocker_that_actually_applies() {
     let (_out_dir, manifest) = certify_fixture(
-        "examples/data/fibonacci.av",
+        // The example with every function exposed: its `main` reaches only
+        // part of it, and a function nothing reaches is not in the module.
+        "tests/fixtures/cert_exposed/fibonacci.av",
         &[],
         "certify-decline-blockers",
     );
@@ -2847,15 +2858,26 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         "add_one's runtime contracts must be unchanged"
     );
 
-    // The host-role table stays a concrete OBJECT — never `null` — and every
-    // arithmetic role is bound for the full Int runtime, the name-bound ones
-    // at their exports.
+    // The host-role table stays a concrete OBJECT — never `null`. The module
+    // holds only the Int helpers something reaches: the box and index exports
+    // and the add helper `addOne` calls (kept as a root, the wall finds the
+    // bignum sub-routines through it) bind, the name-bound ones at their
+    // exports. `addOne` neither multiplies, subtracts nor divides, so those
+    // helpers are not in the module and their roles are declared absent,
+    // truthfully. The goal matrix (`certify_goal_matrix_manifest_tracks_current_surface`)
+    // binds `mul` and `divmod` where a function calls them.
     let wasm = std::fs::read(out_dir.join("add_one.wasm")).expect("wasm artifact exists");
     let table = &manifest["hostRoleTable"];
-    for role in ["box", "add", "mul", "sub", "toIndex", "divmod"] {
+    for role in ["box", "add", "toIndex"] {
         assert!(
             table[role].is_u64(),
-            "add_one carries the full Int arithmetic runtime; `{role}` must bind: {table}"
+            "add_one carries the `{role}` helper; its role must bind: {table}"
+        );
+    }
+    for role in ["mul", "sub", "divmod"] {
+        assert!(
+            table[role].is_null(),
+            "add_one does not carry the `{role}` helper; its role must be absent: {table}"
         );
     }
     assert_eq!(
@@ -2882,8 +2904,8 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
     let expected_roles = format!(
-        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {}, toIndex := some {}, cmp := none, eq := none, divmod := some {}, bitwise := none }} : CertDecode.AddSub.Roles)",
-        table["box"], table["add"], table["mul"], table["sub"], table["toIndex"], table["divmod"],
+        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := none, sub := none, toIndex := some {}, cmp := none, eq := none, divmod := none, bitwise := none }} : CertDecode.AddSub.Roles)",
+        table["box"], table["add"], table["toIndex"],
     );
     assert!(
         manifest_lean.contains(&expected_roles),
@@ -2985,7 +3007,9 @@ fn certify_nested_module_models_close_end_to_end() {
         "nestedmods --certify failed:\n{report}"
     );
     assert!(
-        report.contains("6 certified"),
+        // The module holds what the entry's `exposes` reaches: four entry
+        // functions and the three nested ones they call.
+        report.contains("7 certified"),
         "nestedmods must certify the entry exports and all three nested-module exports:\n{report}"
     );
     assert!(
@@ -3122,9 +3146,12 @@ fn cert_projects_payment_ops_package_checks() {
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
     assert!(
-        report.contains("165 checked functions"),
-        "payment_ops must keep the 165 exports it certifies:\n{report}"
+        report.contains("119 checked functions"),
+        "payment_ops must keep the 119 functions it certifies:\n{report}"
     );
+    // 165 before the module left out the functions nothing reachable from
+    // `main` calls: those 46 are now declared source-level-only, not in the
+    // module.
     // The project's single `verify … law` is universal by design but its
     // emitted proof ladder has no `String.replace` theory and lands on its
     // `sorry` floor. That law is not credited — and the exports beside it
