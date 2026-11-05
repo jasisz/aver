@@ -251,7 +251,7 @@ jobs:
           components: miri
 
       - name: Miri on the reference-counted nodes
-        run: cargo +nightly miri test -p aver-rt --lib -- shared::tests shared_eq::tests thin::tests tests::list_node tests::owned_prepend_and_uncons tests::uncons_reuse_builds
+        run: cargo +nightly miri test -p aver-rt --lib -- shared::tests shared_eq::tests eq_classes::tests thin::tests tests::list_node tests::owned_prepend_and_uncons tests::uncons_reuse_builds
 
       # The same with the counts a single-thread build uses: plain loads and
       # stores, so a test that shares nodes between threads is left out.

@@ -17,7 +17,12 @@ name = "aver_rt"
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["equality-classes"]
+# `==` on recursive sums remembers pairs of nodes found equal (see
+# `aver_rt::eq_classes`).
+equality-classes = []
+# Every answer from an equality class is compared in full as well.
+equality-classes-check = ["equality-classes"]
 http = ["dep:ureq"]
 mimalloc = ["dep:libmimalloc-sys"]
 random = ["dep:rand"]
