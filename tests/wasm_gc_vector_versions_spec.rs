@@ -528,12 +528,13 @@ fn main() -> Unit
     // no vector layout here. Keep pinning the current default output too
     // (which exports only `_start`, `main` and the host helpers, and since
     // the emitter drops the functions nothing reaches, carries no unused
-    // helper either).
+    // helper either). `words` also holds its `String` accumulator as a
+    // buffer (`body/from_mir/str_builder.rs`), which is not a vector layout.
     assert_eq!(
         (bytes.len(), digest.as_str()),
         (
-            4026,
-            "24b248f7ddf5613093927eba62a7f4fb2bc13581b8f7c1c6c9ce4a20772b0d9f"
+            4223,
+            "dfec765e85e1931ff4f326d8f358fcf3c20381b58a35d6221f582b9a37b33c39"
         ),
         "a module with no Vector value changed"
     );
