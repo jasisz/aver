@@ -162,7 +162,7 @@ A value of a recursive sum, a list or a map can be reached from several threads:
 
 Why plain counts are sound then. A count is changed by a thread that holds an owner of the node. With products in sequence and no service running Aver code elsewhere, the only threads that run Aver code are `main`'s and the thread it starts with a larger stack, and `main` waits for that thread (`join`) before it reads anything again. Every change of a count therefore happens before the next one, as on one thread. Without the option nothing changes: counts stay atomic, and threads may share values as before.
 
-On a Lean kernel checker (Pestka, one worker, Apple M2), plain counts took 9 to 13% of the cycles off small inputs and 3% off Mathlib. On ARM they cost 1 to 1.6% more instructions, since `ldadd` is one instruction and a plain update is three. On x86 the update of a count is one instruction either way.
+On a Lean kernel checker (Pestka, one worker, Apple M2), plain counts took 7 to 13% of the cycles off small inputs and 3 to 8% off Mathlib (wall 6 to 10%). On ARM they cost 1 to 1.6% more instructions, since `ldadd` is one instruction and a plain update is three. On x86 the update of a count is one instruction either way: callgrind counts 0.1 to 0.25% more instructions in all on a profile-guided x86-64 build, from the compiler arranging the code around the counts differently, while 1.6% of the instructions it runs stop being `lock`ed.
 
 When developing the runtime inside the Aver repository, set `AVER_RUNTIME_PATH` before running `aver compile`. The generated project then uses a path dependency instead of the crates.io release:
 
