@@ -3122,9 +3122,12 @@ fn cert_projects_payment_ops_package_checks() {
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
     assert!(
-        report.contains("165 checked functions"),
-        "payment_ops must keep the 165 exports it certifies:\n{report}"
+        report.contains("119 checked functions"),
+        "payment_ops must keep the 119 functions it certifies:\n{report}"
     );
+    // 165 before the module left out the functions nothing reachable from
+    // `main` calls: those 46 are now declared source-level-only, not in the
+    // module.
     // The project's single `verify … law` is universal by design but its
     // emitted proof ladder has no `String.replace` theory and lands on its
     // `sorry` floor. That law is not credited — and the exports beside it

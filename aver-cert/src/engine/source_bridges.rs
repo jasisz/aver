@@ -1588,7 +1588,7 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel, law_claims: &[LawClaim
                 .def_for(name)
                 .is_ok_and(|def| mentioned.contains(def.qualified.as_str()));
         if in_scope {
-            declined.push((name.clone(), ABSENT_FROM_MODULE.to_string()));
+            declined.push((name.clone(), crate::format::ABSENT_FROM_MODULE.to_string()));
         }
     }
     plan.declined = declined

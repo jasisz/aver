@@ -3386,9 +3386,12 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // six more (`Bytes.empty`, `len`, `octets`, `concat`, `take`, `drop`):
     // 30 of 162. Int interpolation certifies `Bytes.fromList`: 31 of 162.
     // Computing Int trees on the machine word certifies four more and adds
-    // one function without a claim: 35 of 163.
+    // one function without a claim: 35 of 163. The module now leaves out the
+    // functions nothing reachable from `main` calls (fifteen certified ones
+    // among them, the parser half `main` does not use), and each is declared
+    // source-level-only as not in the module: 20 of 163.
     assert!(
-        compile_report.contains("(35 certified, 128 source-level-only)"),
+        compile_report.contains("(20 certified, 143 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
@@ -3407,7 +3410,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
-        report.contains("35 checked functions"),
+        report.contains("20 checked functions"),
         "json should certify the widened data-segment functions:\n{report}"
     );
     assert!(

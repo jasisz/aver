@@ -746,3 +746,13 @@ mod tests {
         );
     }
 }
+
+/// Why a user function the module does not contain is not certified: the
+/// compiler leaves out every function nothing the module's exports, start
+/// function or element segments reach. Declared under `source_level_only`,
+/// and the verifier reads it back to explain an empty certificate.
+pub const ABSENT_FROM_MODULE: &str = "the function is not in the module: nothing reachable from the entry point or the exposed functions calls it";
+
+/// What a certificate with no certified function says when the reason is
+/// that the module left its functions out.
+pub const ABSENT_FROM_MODULE_HINT: &str = "no function of the program is in the module: nothing the entry point or the entry module's `exposes` reaches calls one; list the functions to certify in `exposes [...]`";

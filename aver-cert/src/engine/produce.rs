@@ -53,9 +53,6 @@ pub struct Analysis {
     module_envelope: ModuleEnvelopeFacts,
 }
 
-/// Why a user function the module does not contain is not certified.
-pub const ABSENT_FROM_MODULE: &str = "the function is not in the module: nothing reachable from the entry point or the exposed functions calls it";
-
 impl Analysis {
     pub fn certified_names(&self) -> Vec<String> {
         self.certified.iter().map(|c| c.name.clone()).collect()
@@ -1126,7 +1123,7 @@ pub fn analyze(
                 .absent
                 .iter()
                 .filter(|name| name.is_ascii() && !is_runtime_name(name))
-                .map(|name| (name.clone(), ABSENT_FROM_MODULE.to_string())),
+                .map(|name| (name.clone(), crate::format::ABSENT_FROM_MODULE.to_string())),
         )
         .collect();
 
