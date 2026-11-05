@@ -411,12 +411,20 @@ fn emit_args(
     target: crate::ir::FnId,
     args: &[Spanned<MirExpr>],
     twin: &TwinEntry,
+    tail: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
     let mut refs = Vec::new();
     let mut fields = Vec::new();
     for (j, arg) in args.iter().enumerate() {
+        if tail {
+            match super::str_builder::emit_tail_arg(func, target, j, arg, slots, ctx)? {
+                Some(Some(())) => continue,
+                Some(None) => return Ok(None),
+                None => {}
+            }
+        }
         if let Some(layout) = twin.records.get(j).and_then(Option::as_ref) {
             let Some(values) = super::record_views::emit_arg(func, arg, layout, slots, ctx)? else {
                 return Ok(None);
@@ -458,7 +466,7 @@ pub(crate) fn emit_call(
     let MirCallee::Fn(id) = call.callee else {
         return Ok(None);
     };
-    if emit_args(func, id, &call.args, twin, slots, ctx)?.is_none() {
+    if emit_args(func, id, &call.args, twin, false, slots, ctx)?.is_none() {
         return Ok(None);
     }
     func.instruction(&I::Call(twin.wasm_idx));
@@ -474,7 +482,7 @@ pub(crate) fn emit_tail_call(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
-    if emit_args(func, target, args, twin, slots, ctx)?.is_none() {
+    if emit_args(func, target, args, twin, true, slots, ctx)?.is_none() {
         return Ok(None);
     }
     emit_return_call_insn(func, twin.wasm_idx, ctx.self_wasm_idx);

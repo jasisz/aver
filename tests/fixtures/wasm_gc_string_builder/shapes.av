@@ -1,0 +1,114 @@
+module M
+    intent = "A String param a self loop grows by appending: wasm-gc agrees with the VM."
+    effects [Console]
+
+record Row
+    name: String
+    qty: Int
+
+fn repeat(i: Int, n: Int, piece: String, acc: String) -> String
+    ? "Appends piece n times; Int params give the fn a twin."
+    match i >= n
+        true -> acc
+        false -> repeat(i + 1, n, piece, acc + piece)
+
+fn digits(i: Int, n: Int, acc: String) -> String
+    ? "Several pieces per step, literals and values."
+    match i >= n
+        true -> acc
+        false -> digits(i + 1, n, acc + String.fromInt(i) + ",")
+
+fn render(rows: List<Row>, acc: String) -> String
+    ? "An interpolation that starts with the param; no Int param, so no twin."
+    match rows
+        [] -> acc
+        [r, ..rest] -> render(rest, "{acc}{r.name}: {r.qty} {r.qty > 1}\n")
+
+fn makeRows(i: Int, acc: List<Row>) -> List<Row>
+    ? "Rows to render."
+    match i
+        0 -> acc
+        _ -> makeRows(i - 1, List.prepend(Row(name = "ząb🦀", qty = i), acc))
+
+fn capped(i: Int, acc: String) -> String
+    ? "Reads the param every step before appending, and stops on its length."
+    size = String.len(acc)
+    match size >= 40
+        true -> "{acc}|{size}"
+        false -> capped(i + 1, acc + String.fromInt(i))
+
+fn steps(i: Int, acc: String) -> String
+    ? "Appends, passes the param on unchanged, and replaces it."
+    match i
+        0 -> acc
+        _ -> match Int.mod(i, 3)
+            0 -> steps(i - 1, acc)
+            1 -> steps(i - 1, acc + "a" + "")
+            _ -> match Int.mod(i, 7)
+                0 -> steps(i - 1, "<" + acc + ">")
+                _ -> steps(i - 1, acc + "b")
+
+fn aliased(i: Int, acc: String, prev: String) -> String
+    ? "The param is read in another argument: kept plain."
+    match i
+        0 -> "{prev}/{acc}"
+        _ -> aliased(i - 1, acc + "x", acc)
+
+fn doubled(i: Int, acc: String) -> String
+    ? "A piece reads the param: kept plain."
+    match i
+        0 -> acc
+        _ -> doubled(i - 1, acc + acc)
+
+fn inner(i: Int, acc: String) -> String
+    ? "A builder called from another builder's piece."
+    match i
+        0 -> acc
+        _ -> inner(i - 1, acc + "i")
+
+fn outer(i: Int, acc: String) -> String
+    ? "Each piece is built by its own loop."
+    match i
+        0 -> acc
+        _ -> outer(i - 1, acc + inner(i, "[") + "]")
+
+fn pair(i: Int, a: String, b: String) -> String
+    ? "Two params held as buffers in one loop."
+    match i
+        0 -> "{a}+{b}"
+        _ -> pair(i - 1, a + "a", b + "bb")
+
+fn mixed(n: Int, acc: String) -> String
+    ? "A self call that is not a tail call sees the value at that point."
+    match n
+        0 -> acc
+        1 -> mixed(0, acc + "q") + "|" + acc
+        _ -> mixed(n - 1, acc + "z")
+
+fn uni(i: Int, acc: String) -> String
+    ? "Multi-byte pieces."
+    match i
+        0 -> acc
+        _ -> uni(i - 1, acc + "żó" + "🦀")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("[{repeat(0, 0, "x", "")}]")
+    Console.print("[{repeat(0, 5, "", "")}]")
+    Console.print(repeat(0, 3, "ab", "start:"))
+    long = repeat(0, 100000, "xy", "")
+    Console.print(String.fromInt(String.len(long)))
+    Console.print(String.fromInt(String.len(long + long)))
+    Console.print(String.slice(long, 0, 6))
+    Console.print(digits(0, 25, ""))
+    Console.print(String.fromInt(String.len(digits(0, 30000, ""))))
+    Console.print(render(makeRows(3, []), ""))
+    Console.print(capped(0, ""))
+    Console.print(steps(30, "s"))
+    Console.print(aliased(4, "", "-"))
+    Console.print(doubled(4, "ab"))
+    Console.print(outer(4, ""))
+    Console.print(pair(3, "", ""))
+    Console.print(mixed(4, "m"))
+    Console.print(uni(3, "ł"))
+    Console.print(String.fromInt(String.len(uni(20000, ""))))

@@ -53,6 +53,7 @@ pub use from_mir::{CoverageReport, coverage_report};
 pub(super) use from_mir::{
     PROOF_ONLY_BRANCH_PATH, emit_fn_body_via_mir, mark_int_words, take_unsupported_reason,
 };
+pub(super) use from_mir::{set_string_builders, string_builder_locals};
 pub(super) use slots::SlotTable;
 
 /// What `__eq_memo` and `__eq_scope` lower to (`eq_fns`): the lookup,

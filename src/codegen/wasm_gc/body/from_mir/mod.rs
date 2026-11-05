@@ -92,6 +92,10 @@ mod pattern_match;
 mod record_views;
 mod records;
 pub(crate) use record_views::entry_locals as record_entry_locals;
+mod str_builder;
+pub(crate) use str_builder::{
+    carried_locals as string_builder_locals, set_allowed as set_string_builders,
+};
 mod strings;
 pub(crate) mod twin;
 
@@ -431,6 +435,8 @@ pub(crate) fn emit_fn_body_via_mir(
         &return_type_str,
     );
 
+    // A `String` param the self loop grows by appending is held as a buffer.
+    let _held = str_builder::begin(mir_fn, &slots, &ctx);
     // A twin first reads the params it takes unpacked.
     if twin::self_kind().is_some() {
         twin::emit_entry(&slots, &ctx);
@@ -751,6 +757,10 @@ pub(crate) fn emit_mir_expr(
             // slot is value-producing. Preserve the strict Unit check for
             // ordinary stamped locals while accepting that closed shape.
             let produces_value = expr.ty().is_none() || aver_type_str_of(expr).trim() != "Unit";
+            // A `String` param held as a buffer.
+            if str_builder::emit_read(func, local.node.slot.0, slots, ctx)?.is_some() {
+                return Ok(Some(true));
+            }
             // A slot a twin holds: returned as it is from an `Int` twin,
             // boxed once where it is wanted packed.
             if twin::held(local.node.slot.0).is_some() {
@@ -1732,6 +1742,11 @@ pub(crate) fn emit_mir_expr(
             // target's own functype (whose bare param is `i64`). A boxed
             // param keeps the `$AverInt` path.
             for (i, arg) in tc.args.iter().enumerate() {
+                match str_builder::emit_tail_arg(func, tc.target, i, arg, slots, ctx)? {
+                    Some(Some(())) => continue,
+                    Some(None) => return Ok(None),
+                    None => {}
+                }
                 if ctx.callee_param_is_bare(tc.target, i) {
                     if emit_mir_int_raw(func, arg, slots, ctx)?.is_none() {
                         return Ok(None);

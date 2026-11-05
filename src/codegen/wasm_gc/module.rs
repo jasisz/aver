@@ -204,6 +204,9 @@ fn emit_module_pass(
     fn_exports: super::FnExports,
 ) -> Result<(ModuleOutput, std::collections::HashSet<String>), WasmGcError> {
     let certify = !matches!(twins_for, Certify::Off);
+    // A `String` param a self loop grows by appending is held as a buffer,
+    // except in a `--certify` build (`body/from_mir/str_builder.rs`).
+    super::body::set_string_builders(!certify);
     // The fns the build keeps for the certificate: none in a plain build, the
     // printer's superset on a first pass, the kept ones on the second.
     let for_certificate = |fd: &FnDef| match twins_for {
@@ -4565,6 +4568,7 @@ fn emit_module_pass(
             });
             super::body::set_twin_self(None);
             let (func, extra, entry, record_entry) = emitted?;
+            let mut carried = super::body::string_builder_locals();
             let func = with_twin_params(
                 &func,
                 &extra,
@@ -4573,9 +4577,15 @@ fn emit_module_pass(
                 &record_entry,
                 &twin.records,
                 &registry,
+                &mut carried,
             )?;
             twin_codes.push(if mir_fn.repr.self_tail_loop && mir_dispatch[i] {
-                super::self_tail_loop::lower(func, twin.wasm_idx, twin_params[i].len() as u32)?
+                super::self_tail_loop::lower(
+                    func,
+                    twin.wasm_idx,
+                    twin_params[i].len() as u32,
+                    &carried,
+                )?
             } else {
                 func
             });
@@ -4587,7 +4597,12 @@ fn emit_module_pass(
             word_locals_for[i] = super::body::int_word_locals();
             let func = if mir_dispatch[i] && mir_fn_for[i].is_some_and(|f| f.repr.self_tail_loop) {
                 let params = super::types::param_types(&fn_defs[i].params, Some(&registry))?;
-                super::self_tail_loop::lower(func, self_wasm_idx, params.len() as u32)?
+                super::self_tail_loop::lower(
+                    func,
+                    self_wasm_idx,
+                    params.len() as u32,
+                    &super::body::string_builder_locals(),
+                )?
             } else {
                 func
             };
@@ -7156,7 +7171,9 @@ fn emit_twin_wrapper(
 /// Remap a body emitted with the source function's parameter slots into its
 /// twin's convention. Record refs disappear; unpacked Int refs and record
 /// fields follow the remaining params. The prologue reads these into the
-/// body's field/word locals, and every local instruction is remapped once.
+/// body's field/word locals, and every local instruction is remapped once,
+/// as are the `carried` locals of its self tail loop.
+#[allow(clippy::too_many_arguments)]
 fn with_twin_params(
     body: &Function,
     locals: &[ValType],
@@ -7165,6 +7182,7 @@ fn with_twin_params(
     record_entry: &[u32],
     records: &[Option<super::twins::RecordFields>],
     registry: &TypeRegistry,
+    carried: &mut [u32],
 ) -> Result<Function, WasmGcError> {
     let source_param = |k: usize| {
         params[..k]
@@ -7196,6 +7214,9 @@ fn with_twin_params(
                 })
         }
     };
+    for local in carried.iter_mut() {
+        *local = moved(*local)?;
+    }
     let aint = registry.aint_struct_idx.unwrap_or_default();
     let mut f = Function::new(locals.iter().map(|v| (1, *v)));
     for (j, (k, packed, big)) in entry.iter().enumerate() {
