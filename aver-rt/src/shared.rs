@@ -27,7 +27,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
 use std::sync::Arc;
-use std::sync::atomic::{self, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A soft limit on the count, as in `Arc`: past it, a clone aborts rather
 /// than let the count wrap around (it would take `isize::MAX` leaked clones).
@@ -211,8 +211,7 @@ impl<T: ?Sized> Clone for Shared<T> {
     /// only from an existing one, which keeps the node alive meanwhile.
     #[inline]
     fn clone(&self) -> Self {
-        let old = self.node().count.fetch_add(1, Ordering::Relaxed);
-        if old > MAX_REFCOUNT {
+        if crate::counts::inc(&self.node().count) {
             std::process::abort();
         }
         Self::from_node(self.ptr)
@@ -225,10 +224,9 @@ impl<T: ?Sized> Drop for Shared<T> {
     /// every other owner's use happen before it frees the node.
     #[inline]
     fn drop(&mut self) {
-        if self.node().count.fetch_sub(1, Ordering::Release) != 1 {
+        if !crate::counts::dec(&self.node().count) {
             return;
         }
-        atomic::fence(Ordering::Acquire);
         drop(unsafe { Box::from_raw(self.ptr.as_ptr()) });
     }
 }
@@ -441,6 +439,7 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn clones_dropped_on_many_threads_free_once() {
         let drops = Arc::new(AtomicUsize::new(0));
@@ -468,6 +467,7 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn last_owner_on_another_thread_frees() {
         let drops = Arc::new(AtomicUsize::new(0));
@@ -507,6 +507,7 @@ mod tests {
         assert_eq!(Shared::strong_count(&b), 1);
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn make_mut_after_other_threads_drop_their_clones() {
         let mut a = Shared::new(vec![0u64; 4]);
@@ -551,6 +552,7 @@ mod tests {
         assert_eq!(Arc::strong_count(&arc), 1);
     }
 
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
     #[test]
     fn a_str_is_one_node() {
         assert_eq!(size_of::<Shared<str>>(), 2 * size_of::<usize>());

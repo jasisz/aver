@@ -290,6 +290,16 @@ fn assert_plain_parity_then(
     module_root: Option<&str>,
     then: impl FnOnce(&Path, &str) -> Result<(), String>,
 ) -> Result<(), String> {
+    assert_parity_compiled_with(relative, module_root, &[], then)
+}
+
+/// [`assert_plain_parity_then`], with `extra` passed to `aver compile`.
+fn assert_parity_compiled_with(
+    relative: &str,
+    module_root: Option<&str>,
+    extra: &[&str],
+    then: impl FnOnce(&Path, &str) -> Result<(), String>,
+) -> Result<(), String> {
     let file = repo_root().join(relative);
     if !file.exists() {
         return Err(format!("{relative}: corpus file missing"));
@@ -303,7 +313,7 @@ fn assert_plain_parity_then(
     let name = format!("p_{}", sanitise(relative));
 
     let result = (|| {
-        compile_rust(&file, &project, &name, root.as_deref(), &[])?;
+        compile_rust(&file, &project, &name, root.as_deref(), extra)?;
         let bin = cargo_build(&project, &name)?;
         let out = Command::new(&bin)
             .output()
@@ -378,6 +388,27 @@ fn deep_recursion_in_a_product_branch_matches_main_on_rust_and_vm() {
 fn module_bindings_read_first_on_product_branches_match_vm() {
     assert_plain_parity("tests/fixtures/module_bindings_on_threads_app.av", None)
         .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A build for one thread (`--single-thread`) runs every product in
+/// sequence and counts references with plain instructions; what the program
+/// prints is the VM's, products, deep branches and module bindings included.
+#[test]
+fn single_thread_builds_match_vm() {
+    let mut failures = Vec::new();
+    for relative in [
+        "examples/core/independent_fanout.av",
+        "tests/fixtures/deep_recursion_in_product_app.av",
+        "tests/fixtures/module_bindings_on_threads_app.av",
+        "examples/core/lists.av",
+    ] {
+        let checked =
+            assert_parity_compiled_with(relative, None, &["--single-thread"], |_, _| Ok(()));
+        if let Err(e) = checked {
+            failures.push(e);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// An `Int` in an interpolated string writes its digits straight into the

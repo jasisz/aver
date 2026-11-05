@@ -489,6 +489,11 @@ pub struct CodegenContext {
     pub recorded_source: Option<RecordedSource>,
     /// Emit extra generated helpers needed only by the cached self-host helper.
     pub emit_self_host_support: bool,
+    /// Rust: the program runs its Aver code on one thread at a time
+    /// (`[rust] threads = "one"`, `aver compile --single-thread`):
+    /// independent products are emitted in sequence and aver-rt counts
+    /// references with plain instructions (`plain-counts`).
+    pub single_thread: bool,
     /// Functions that are part of a mutual-TCO SCC group (emitted as
     /// trampoline + wrappers). Functions NOT in this set but with
     /// TailCalls are emitted as plain self-TCO loops. Keyed by opaque
@@ -1174,6 +1179,7 @@ pub fn build_context(
         guest_entry: None,
         recorded_source: None,
         emit_self_host_support: false,
+        single_thread: false,
         mutual_tco_members,
         recursive_fns,
         buffer_build_sinks,
@@ -1723,6 +1729,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         guest_entry: None,
         recorded_source: None,
         emit_self_host_support: false,
+        single_thread: false,
         mutual_tco_members: std::collections::HashSet::new(),
         recursive_fns: std::collections::HashSet::new(),
         buffer_build_sinks: std::collections::HashMap::new(),

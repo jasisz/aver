@@ -506,6 +506,13 @@ pub(super) enum Commands {
         /// boxed into an `Int` at every call of a function).
         #[arg(long)]
         perf_notes: bool,
+        /// Rust only: build a program that runs its Aver code on one thread.
+        /// Independent products run in sequence, a service that runs Aver
+        /// code on threads of its own is refused, and reference counts change
+        /// with plain instructions instead of atomic ones. The same as
+        /// `[rust] threads = "one"` in aver.toml.
+        #[arg(long)]
+        single_thread: bool,
         /// Emit optional record/replay runtime support into the generated project
         #[arg(long)]
         with_replay: bool,

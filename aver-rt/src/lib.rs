@@ -4,6 +4,7 @@ pub mod provider;
 
 pub mod bytebuilder;
 mod counted;
+mod counts;
 pub mod crypto;
 mod display;
 #[cfg(feature = "http")]

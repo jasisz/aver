@@ -332,11 +332,27 @@ pub enum RustPanic {
     Abort,
 }
 
+/// `[rust] threads`: on how many threads at once the crate that
+/// `aver compile --target rust` generates runs Aver code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RustThreads {
+    /// Independent products run on threads of their own, and reference
+    /// counts change with atomic instructions.
+    #[default]
+    Many,
+    /// One thread at a time (`aver compile --single-thread`): independent
+    /// products run in sequence, a service that runs Aver code on threads of
+    /// its own is refused, and reference counts change with plain
+    /// instructions (aver-rt's `plain-counts`).
+    One,
+}
+
 /// The `[rust]` table of `aver.toml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RustOptions {
     pub allocator: RustAllocator,
     pub panic: RustPanic,
+    pub threads: RustThreads,
 }
 
 /// Project-level configuration loaded from `aver.toml`.
@@ -2790,11 +2806,29 @@ helpers = 30
             both.rust,
             RustOptions {
                 allocator: RustAllocator::Mimalloc,
-                panic: RustPanic::Abort
+                panic: RustPanic::Abort,
+                threads: RustThreads::Many,
             }
         );
         let unknown = ProjectConfig::parse("[rust]\npanic = \"exit\"\n").unwrap_err();
         assert!(unknown.contains("[rust].panic must be \"unwind\" or \"abort\", got \"exit\""));
+    }
+
+    #[test]
+    fn rust_threads_defaults_to_many_and_names_its_values() {
+        assert_eq!(
+            ProjectConfig::parse("").unwrap().rust.threads,
+            RustThreads::Many
+        );
+        assert_eq!(
+            ProjectConfig::parse("[rust]\nthreads = \"one\"\n")
+                .unwrap()
+                .rust
+                .threads,
+            RustThreads::One
+        );
+        let unknown = ProjectConfig::parse("[rust]\nthreads = \"two\"\n").unwrap_err();
+        assert!(unknown.contains("[rust].threads must be \"many\" or \"one\", got \"two\""));
     }
 
     #[test]
@@ -2840,7 +2874,8 @@ fn parse_work_max_jobs(table: &toml::Table) -> Result<Option<usize>, String> {
 }
 
 /// `[rust] allocator`: `"system"` (the default) or `"mimalloc"`;
-/// `[rust] panic`: `"unwind"` (the default) or `"abort"`.
+/// `[rust] panic`: `"unwind"` (the default) or `"abort"`;
+/// `[rust] threads`: `"many"` (the default) or `"one"`.
 fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
     let Some(value) = table.get("rust") else {
         return Ok(RustOptions::default());
@@ -2850,7 +2885,7 @@ fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
         .ok_or_else(|| "aver.toml: [rust] must be a table".to_string())?;
     if let Some(key) = rust
         .keys()
-        .find(|key| !["allocator", "panic"].contains(&key.as_str()))
+        .find(|key| !["allocator", "panic", "threads"].contains(&key.as_str()))
     {
         return Err(format!("aver.toml: [rust] has no key '{key}'"));
     }
@@ -2878,6 +2913,10 @@ fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
         panic: match choice("panic", ["unwind", "abort"])? {
             true => RustPanic::Abort,
             false => RustPanic::Unwind,
+        },
+        threads: match choice("threads", ["many", "one"])? {
+            true => RustThreads::One,
+            false => RustThreads::Many,
         },
     })
 }

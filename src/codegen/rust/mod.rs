@@ -140,6 +140,14 @@ pub fn transpile_with_provider_manifest_for_project(
             ));
         }
     }
+    if rust.threads == crate::config::RustThreads::One {
+        if let Some(why) = single_thread_refusal(ctx, &detect_used_services(ctx)) {
+            return Err(format!(
+                "[rust] threads = \"one\" (--single-thread) cannot be used: {why}"
+            ));
+        }
+        ctx.single_thread = true;
+    }
     let required = provider::required_operations(ctx);
     let composition =
         composition::plan_for_project(&ctx.capabilities, &required, manifest, known_capabilities)?;
@@ -315,6 +323,7 @@ fn transpile_project(
                 &provider_composition,
                 library_crate.is_some(),
                 rust,
+                ctx.single_thread,
             ),
         ),
         (
@@ -1088,6 +1097,37 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
     }
 
     sections
+}
+
+/// Services whose operations run no Aver code on a thread of their own,
+/// the only ones a single-thread build (`[rust] threads = "one"`) may use.
+const SINGLE_THREAD_SERVICES: &[&str] = &[
+    "Args", "Console", "Disk", "Env", "Random", "Terminal", "Time",
+];
+
+/// Why a program cannot be built to run on one thread, if it cannot: it
+/// records or replays its effects, loads its policy when it starts, or uses
+/// a service that may run Aver code on threads of its own.
+fn single_thread_refusal(ctx: &CodegenContext, services: &HashSet<String>) -> Option<String> {
+    if ctx.emit_replay_runtime || ctx.runtime_policy_from_env {
+        return Some("--with-replay and --policy runtime keep scoped state per thread".to_string());
+    }
+    let mut others: Vec<&str> = services
+        .iter()
+        .map(|service| service.split_once('.').map_or(service.as_str(), |(s, _)| s))
+        .filter(|name| !SINGLE_THREAD_SERVICES.contains(name))
+        .collect();
+    others.sort_unstable();
+    others.dedup();
+    if others.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "the program uses {}, which may run Aver code on threads of its own; one thread allows only {}",
+            others.join(", "),
+            SINGLE_THREAD_SERVICES.join(", ")
+        ))
+    }
 }
 
 /// Detect which effectful services are used in the program (including modules).
@@ -3619,6 +3659,56 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
                 assert_eq!(generated_file(&mimalloc, path), content, "{path}");
             }
         }
+    }
+
+    /// `[rust] threads = "one"`: the product runs in sequence on the thread
+    /// that reaches it, aver-rt counts references plainly, and nothing else
+    /// of the program changes. A service that may run Aver code on threads of
+    /// its own is refused.
+    #[cfg(feature = "runtime")]
+    #[test]
+    fn one_thread_runs_products_in_sequence_and_counts_plainly() {
+        use crate::config::RustThreads;
+        let source = "module Demo\n\nfn twice(n: Int) -> Int\n    n + n\n\nfn both(n: Int) -> Int\n    match (twice(n), twice(n + 1))!\n        (a, b) -> a + b\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(String.fromInt(both(3)))\n";
+        let emit = |source: &str, threads| {
+            let mut ctx = ctx_from_source(source, "demo");
+            super::transpile_with_provider_manifest_for_project(
+                &mut ctx,
+                None,
+                &std::collections::BTreeSet::new(),
+                None,
+                crate::config::RustOptions {
+                    threads,
+                    ..Default::default()
+                },
+            )
+        };
+        let many = emit(source, RustThreads::Many).expect("transpile");
+        let one = emit(source, RustThreads::One).expect("transpile");
+        let entry = |out: &crate::codegen::ProjectOutput| {
+            generated_file(out, "src/aver_generated/entry/mod.rs").to_string()
+        };
+
+        assert!(
+            entry(&many).contains("std::thread::scope"),
+            "{}",
+            entry(&many)
+        );
+        assert!(
+            !entry(&one).contains("std::thread::scope"),
+            "{}",
+            entry(&one)
+        );
+        assert!(!entry(&one).contains("spawn_scoped"), "{}", entry(&one));
+        assert!(!generated_file(&many, "Cargo.toml").contains("plain-counts"));
+        assert!(generated_file(&one, "Cargo.toml").contains("\"plain-counts\""));
+
+        let threaded = "module Demo\n\nfn main() -> Unit\n    ! [Tcp.connect, Console.print]\n    match Tcp.connect(\"localhost\", 1)\n        Result.Ok(_) -> Console.print(\"up\")\n        Result.Err(e) -> Console.print(e)\n";
+        let Err(refused) = emit(threaded, RustThreads::One) else {
+            panic!("Tcp is refused on one thread");
+        };
+        assert!(refused.contains("uses Tcp"), "{refused}");
+        assert!(emit(threaded, RustThreads::Many).is_ok());
     }
 
     /// A program that reaches a capability is a library plus a binary. Only
