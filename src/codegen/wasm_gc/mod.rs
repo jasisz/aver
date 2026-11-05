@@ -64,6 +64,7 @@ mod capability_abi;
 mod capability_imports;
 mod capability_plan;
 mod cert_layout;
+mod dead_functions;
 pub(crate) mod effects;
 pub(crate) mod eq_fns;
 mod equality_order;
