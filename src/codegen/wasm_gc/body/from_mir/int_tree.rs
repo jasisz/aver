@@ -630,7 +630,7 @@ fn emit_div_mod_or(func: &mut Function, op: Op, temps: [u32; 3]) {
     } else {
         // r + (|b| if r < 0); |b| wraps for `i64::MIN`, the sum does not.
         seq(func, &[I::LocalTee(t0), g0, I::I64Const(63), I::I64ShrS]);
-        seq(func, &[g1.clone()]);
+        func.instruction(&g1);
         seq(func, &sign);
         func.instruction(&I::I64Xor);
         seq(func, &sign);
