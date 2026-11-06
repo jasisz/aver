@@ -529,14 +529,15 @@ fn main() -> Unit
     // (which exports only `_start`, `main` and the host helpers, and since
     // the emitter drops the functions nothing reaches, carries no unused
     // helper either). `words` also holds its `String` accumulator as a
-    // buffer (`body/from_mir/str_builder.rs`), and its string literals are
-    // shared through globals (`body/from_mir/strings.rs`); neither is a
+    // buffer (`body/from_mir/str_builder.rs`), its string literals are
+    // shared through globals (`body/from_mir/strings.rs`), and its twin loops
+    // only while its Int params are words (`self_tail_loop.rs`); none is a
     // vector layout.
     assert_eq!(
         (bytes.len(), digest.as_str()),
         (
-            4325,
-            "1f800391ee8f76be7a07b2ca5f0ae85feca21b8bd7f258d44e576191dbf2de29"
+            4539,
+            "400d8df97c9404e7f91eaa5c5420771c3802d4f633452ad27850d53d1e0d3ca2"
         ),
         "a module with no Vector value changed"
     );
