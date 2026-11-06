@@ -1,0 +1,37 @@
+module MulEdges
+    intent = "A word times a word on wasm-gc: operands inside and outside the i32 range, products on the edge of the machine word."
+    effects [Console]
+
+fn prod(a: Int, b: Int) -> Int
+    ? "The product of two Ints, as an Int tree."
+    a * b + 0
+
+fn show(a: Int, b: Int) -> Unit
+    ? "Print a product and its negation."
+    ! [Console.print]
+    Console.print("{a} * {b} = {prod(a, b)}, {0 - a} * {b} = {prod(0 - a, b)}")
+
+fn walk(i: Int, a: Int, acc: Int) -> Int
+    ? "A self loop multiplying a growing factor."
+    match i
+        0 -> acc
+        _ -> walk(i - 1, a + a, acc + a * i)
+
+fn main() -> Unit
+    ? "Print the edges."
+    ! [Console.print]
+    show(2147483647, 2147483647)
+    show(2147483648, 2147483647)
+    show(-2147483648, -2147483648)
+    show(-2147483648, 2147483648)
+    show(3037000499, 3037000499)
+    show(3037000500, 3037000500)
+    show(4294967296, 2147483648)
+    show(4294967296, -2147483648)
+    show(-1, -9223372036854775808)
+    show(-9223372036854775808, -1)
+    show(-9223372036854775808, 1)
+    show(0, 123456789012345678901234567890)
+    show(-1, 9223372036854775807)
+    show(65536, 65536)
+    Console.print("walk {walk(80, 3, 0)}")

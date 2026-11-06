@@ -34,6 +34,10 @@ thread_local! {
     /// leaves out of a fn `kept_by_printer` (`module.rs` decides): a shared
     /// boxed literal, a builtin's word result held as a word, a twin's word.
     static ALLOWED: Cell<bool> = const { Cell::new(true) };
+    /// Whether a word `*` first tests both operands for `i32` range, so the
+    /// division of the overflow test runs only on wider operands: not in a
+    /// `--certify` build, whose bytes the certificate wall reads.
+    static WORD_MUL_FAST: Cell<bool> = const { Cell::new(false) };
     /// The boxed `Int` literals emitted while recording (`module.rs` records
     /// each fn's in its pre-pass), and the global holding each one shared.
     static LITERALS: RefCell<Option<std::collections::BTreeSet<i64>>> = const { RefCell::new(None) };
@@ -72,6 +76,10 @@ pub(crate) fn allowed() -> bool {
 /// Whether an exact path is being emitted.
 pub(crate) fn in_exact() -> bool {
     EXACT.with(|d| d.get() > 0)
+}
+
+pub(crate) fn set_word_mul_fast(on: bool) {
+    WORD_MUL_FAST.with(|a| a.set(on));
 }
 
 pub(crate) fn set_allowed(allowed: bool) {
@@ -657,7 +665,8 @@ fn emit_small(func: &mut Function, local: u32, ctx: &EmitCtx<'_>) {
 /// overflow test of `builtins/bignum.rs`: the operands are parked in the
 /// first two `temps` and the result in the third; an overflow leaves the
 /// `i64` path (`br_if 0`). The Lean wall's `GrammarLower.treeOpW` is this
-/// sequence.
+/// sequence; outside a `--certify` build a `*` of two operands within `i32`
+/// skips the division.
 fn emit_word_op(func: &mut Function, op: Op, temps: [u32; 3]) {
     let [t0, t1, t2] = temps;
     let (g0, g1, g2) = (I::LocalGet(t0), I::LocalGet(t1), I::LocalGet(t2));
@@ -690,10 +699,22 @@ fn emit_word_op(func: &mut Function, op: Op, temps: [u32; 3]) {
             // As `bignum.rs` tests it: for a ∉ {-1, 0} the product overflowed
             // iff p / a != b; for a = -1 iff b = i64::MIN; for a = 0 never.
             // The divisor is 1 for a ∈ {-1, 0}, so `div_s` cannot trap.
-            seq(
-                func,
-                &[I::I64Mul, I::LocalTee(t2), g0.clone(), I::I64Const(1)],
-            );
+            let fast = WORD_MUL_FAST.with(Cell::get);
+            if fast {
+                // Both operands within i32: the product fits, no division.
+                let half = I::I64Const(1 << 31);
+                seq(
+                    func,
+                    &[I::I64Mul, I::LocalSet(t2), g0.clone(), half.clone()],
+                );
+                seq(func, &[I::I64Add, g1.clone(), half, I::I64Add, I::I64Or]);
+                seq(func, &[I::I64Const(1 << 32), I::I64GeU]);
+                seq(func, &[I::If(BlockType::Empty), g2.clone()]);
+            } else {
+                func.instruction(&I::I64Mul);
+                func.instruction(&I::LocalTee(t2));
+            }
+            seq(func, &[g0.clone(), I::I64Const(1)]);
             seq(func, &general);
             seq(func, &[I::Select, I::I64DivS, g1.clone(), I::I64Ne, g0]);
             seq(
@@ -702,7 +723,11 @@ fn emit_word_op(func: &mut Function, op: Op, temps: [u32; 3]) {
             );
             seq(func, &[I::I64Eq, I::I32And]);
             seq(func, &general);
-            seq(func, &[I::Select, I::BrIf(0), g2]);
+            seq(func, &[I::Select, I::BrIf(u32::from(fast))]);
+            if fast {
+                func.instruction(&I::End);
+            }
+            func.instruction(&g2);
         }
     }
 }

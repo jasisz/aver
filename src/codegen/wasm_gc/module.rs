@@ -207,6 +207,7 @@ fn emit_module_pass(
     // A `String` param a self loop grows by appending is held as a buffer,
     // except in a `--certify` build (`body/from_mir/str_builder.rs`).
     super::body::set_string_builders(!certify);
+    super::body::set_word_mul_fast(!certify && std::env::var_os("AVER_NO_WORD_MUL").is_none());
     // The fns the build keeps for the certificate: none in a plain build, the
     // printer's superset on a first pass, the kept ones on the second.
     let for_certificate = |fd: &FnDef| match twins_for {

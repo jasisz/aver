@@ -204,3 +204,35 @@ fn div_mod_by_a_variable_runs_on_the_machine_word() {
         assert!(count(true, op) > count(false, op), "{op}");
     }
 }
+
+// Outside a `--certify` build a word `*` skips the division of its overflow
+// test when both operands are within `i32`. The fixture multiplies on both
+// sides of that range and on the edge of the machine word.
+#[test]
+fn word_products_print_what_the_vm_prints() {
+    let file = fixture("mul_edges.av");
+    let vm = run(&file, false);
+    assert_eq!(vm, run(&file, true));
+    let compile = |on: bool| {
+        let out_dir = tempfile::tempdir().expect("compile directory");
+        let mut cmd = Command::new(aver_cmd::aver_bin());
+        cmd.current_dir(aver_cmd::repo_root())
+            .arg("compile")
+            .arg(&file)
+            .args(["--target", "wasm-gc", "-o"])
+            .arg(out_dir.path());
+        if !on {
+            cmd.env("AVER_NO_WORD_MUL", "1");
+        }
+        let out = cmd.output().expect("aver compile executes");
+        assert!(out.status.success(), "{}", aver_cmd::format_output(&out));
+        std::fs::read(
+            out_dir
+                .path()
+                .join(file.with_extension("wasm").file_name().expect("name")),
+        )
+        .expect("module written")
+    };
+    // Not vacuous: the plain build takes the fast form.
+    assert_ne!(compile(true), compile(false));
+}
