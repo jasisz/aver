@@ -1027,7 +1027,7 @@ impl<T: Clone> AverVector<T> {
         T: Clone,
     {
         Self {
-            inner: list.into_block(),
+            inner: list.to_block(),
         }
     }
 
@@ -1833,7 +1833,7 @@ impl<T> AverList<T> {
     /// The block of the list's elements — shared, O(1), when the list is
     /// flat from its first element; otherwise one new block the elements
     /// are cloned into, O(n), with no vector in between.
-    pub(crate) fn into_block(&self) -> block::Block<T>
+    pub(crate) fn to_block(&self) -> block::Block<T>
     where
         T: Clone,
     {
@@ -2878,7 +2878,7 @@ mod tests {
         assert!(empty.iter().next().is_none());
         assert_eq!(empty.as_slice(), Some(&[][..]));
         assert!(empty.drop_first(3).is_empty());
-        assert!(empty.into_block().is_empty());
+        assert!(empty.to_block().is_empty());
     }
 
     /// One step off a flat list allocates nothing: the tail is the node it was
