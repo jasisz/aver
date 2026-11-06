@@ -1,0 +1,39 @@
+module ConcatChainWalks
+    intent =
+        "Walk lists built by many List.concat calls, one tail at a time, in the frame that built them."
+        "The VM re-summed the remaining pieces on every step, quadratic in the number of pieces."
+    effects [Console.print]
+
+fn piece(i: Int) -> List<Int>
+    ? "A small list."
+    [i, i + 1, i + 2]
+
+fn walk(xs: List<Int>, acc: Int) -> Int
+    ? "Order-sensitive checksum, stepping with a pattern."
+    match xs
+        [] -> acc
+        [x, ..rest] -> walk(rest, Int.mod(acc * 31 + x, 1000000007))
+
+fn walkDropped(xs: List<Int>, acc: Int) -> Int
+    ? "The same checksum, stepping with List.drop."
+    match List.take(xs, 1)
+        [] -> acc
+        [x, .._] -> walkDropped(List.drop(xs, 1), Int.mod(acc * 31 + x, 1000000007))
+
+fn build(i: Int, n: Int, acc: List<Int>) -> Int
+    ? "Concatenate n small lists, then walk the result without returning it."
+    match i >= n
+        true -> walk(acc, 0)
+        false -> build(i + 1, n, List.concat(acc, piece(i)))
+
+fn buildDropped(i: Int, n: Int, acc: List<Int>) -> Int
+    ? "Concatenate n small lists, then walk the result with List.drop."
+    match i >= n
+        true -> walkDropped(acc, 0)
+        false -> buildDropped(i + 1, n, List.concat(acc, piece(i)))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("pattern {build(0, 4000, [])}")
+    Console.print("drop {buildDropped(0, 4000, [])}")
+    Console.print("empty {build(0, 0, [])}")

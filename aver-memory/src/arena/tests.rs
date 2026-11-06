@@ -652,3 +652,53 @@ fn walking_a_flat_list_registers_each_element_once() {
         assert_eq!(arena.record_holder_count(*record), 1);
     }
 }
+
+#[test]
+fn walking_a_list_of_many_concatenated_pieces_carries_its_length() {
+    const PIECES: usize = 500;
+    const PER_PIECE: usize = 3;
+
+    let mut arena = TestArena::new();
+    let mut list = NanValue::EMPTY_LIST;
+    let mut expected = Vec::new();
+    for piece in 0..PIECES {
+        let items = (0..PER_PIECE)
+            .map(|offset| {
+                let value = (piece * PER_PIECE + offset) as i64;
+                expected.push(value);
+                NanValue::new_int(value, &mut arena)
+            })
+            .collect::<Vec<_>>();
+        let part = NanValue::new_list(arena.push_list(items));
+        list = NanValue::new_list(arena.push_list_concat(list, part));
+    }
+
+    let before = arena.list_segment_lengths_read();
+    let mut seen = Vec::new();
+    let mut remaining = PIECES * PER_PIECE;
+    let mut drop_reads = 0;
+    while let Some((head, tail)) = arena.list_uncons(list) {
+        seen.push(head.as_int(&arena));
+        remaining -= 1;
+        assert_eq!(arena.list_len_value(tail), remaining);
+        if remaining > 0 && remaining.is_multiple_of(7) {
+            // `List.drop` steps through the same node shape.
+            let reads = arena.list_segment_lengths_read();
+            let dropped = arena.list_drop(tail, 2);
+            drop_reads += arena.list_segment_lengths_read() - reads;
+            assert_eq!(arena.list_len_value(dropped), remaining - 2);
+        }
+        list = tail;
+    }
+    assert_eq!(seen, expected);
+    assert!(
+        arena.list_segment_lengths_read() - before - drop_reads <= 2 * PIECES as u64,
+        "a walk must read each segment's length a bounded number of times, \
+         not once per remaining segment per step: read {}",
+        arena.list_segment_lengths_read() - before - drop_reads
+    );
+    assert!(
+        drop_reads <= (PIECES * PER_PIECE) as u64,
+        "a List.drop inside the walk must not re-sum the remaining segments: read {drop_reads}"
+    );
+}

@@ -44,6 +44,7 @@ impl<T: ArenaTypes> Arena<T> {
             list_elements_copied: 0,
             list_elements_scanned: 0,
             list_elements_flattened: SharedCount::default(),
+            list_segment_lengths_read: 0,
             map_entries_copied: 0,
             vector_elements_copied: 0,
             map_entries_scanned: 0,
@@ -105,6 +106,7 @@ impl<T: ArenaTypes> Arena<T> {
             list_elements_copied: 0,
             list_elements_scanned: 0,
             list_elements_flattened: SharedCount::default(),
+            list_segment_lengths_read: 0,
             map_entries_copied: 0,
             vector_elements_copied: 0,
             map_entries_scanned: 0,
@@ -800,6 +802,14 @@ impl<T: ArenaTypes> Arena<T> {
         self.list_elements_flattened.get()
     }
 
+    /// Segment lengths read to size a `Segments` node from its parts; see the
+    /// field. A walk that re-sums the remaining segments on every step makes
+    /// it quadratic in the number of segments.
+    #[inline]
+    pub fn list_segment_lengths_read(&self) -> u64 {
+        self.list_segment_lengths_read
+    }
+
     /// Record that `elements` were flattened out of a shared body into a fresh
     /// vector.
     #[inline]
@@ -864,6 +874,7 @@ impl<T: ArenaTypes> Arena<T> {
         self.list_elements_scanned += child.list_elements_scanned;
         self.list_elements_flattened
             .add(child.list_elements_flattened.get());
+        self.list_segment_lengths_read += child.list_segment_lengths_read;
         self.map_entries_copied += child.map_entries_copied;
         self.vector_elements_copied += child.vector_elements_copied;
         self.map_entries_scanned += child.map_entries_scanned;
