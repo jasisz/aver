@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.33.0 "Trim" (unreleased)
+## 0.33.0 "Trim" — 2026-11-06
 
 > _Compiled code does less: smaller wasm-gc modules, `Int` on machine words in more places, and Rust that skips atomics when one thread is enough._
 
