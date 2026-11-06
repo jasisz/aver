@@ -693,6 +693,13 @@ pub struct CodegenContext {
     /// rewrites, so every signature and every call site read the same
     /// decision; empty (borrow by default) everywhere else.
     pub rust_owned_record_params: HashMap<crate::ir::FnId, Vec<bool>>,
+    /// The `String` params each function only reads in place, so Rust
+    /// borrows them (`s: &AverStr`): reads by a string built-in or an
+    /// indexed read, `==`/`!=`, a self-tail call that hands the param on
+    /// unchanged, and calls that hand it to a param of another function
+    /// lent the same way. Indexed by param position; computed once by the
+    /// Rust transpile before the record params above, empty everywhere else.
+    pub rust_lent_strings: HashMap<crate::ir::FnId, Vec<bool>>,
     /// The boxed records (by backend type key) the program may copy, kept
     /// behind a counted pointer instead of a `Box` (see
     /// `rust::representation::is_counted_record`). Computed once by the
@@ -1190,6 +1197,7 @@ pub fn build_context(
         rust_i64_carrier_ctors: HashMap::new(),
         bare_i64,
         rust_owned_record_params: Default::default(),
+        rust_lent_strings: Default::default(),
         rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
         rust_word_spec: Default::default(),
@@ -1756,6 +1764,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         mir_program: None,
         bare_i64: Default::default(),
         rust_owned_record_params: Default::default(),
+        rust_lent_strings: Default::default(),
         rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
         rust_word_spec: Default::default(),

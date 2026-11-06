@@ -107,25 +107,25 @@ pub fn digitVal(c @ _: AverStr) -> aver_rt::AverInt {
 /// Read consecutive digits from pos, return (number, newPos).
 #[inline(always)]
 pub fn readNumberLoop(
-    src @ _: AverStr,
+    src @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     acc @ _: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     let __arg3 @ _ = aver_rt::string_index_build(&src);
-    crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(src, pos, acc, __arg3)
+    crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(src, pos, acc, &__arg3)
 }
 
 /// Read consecutive digits from pos, return (number, newPos).
 #[inline(always)]
 pub fn readNumber(
-    src @ _: AverStr,
+    src @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     acc @ _: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     let __arg3 @ _ = aver_rt::string_index_build(&src);
-    crate::aver_generated::domain::lexer::chars::readNumber__indexed(src, pos, acc, __arg3)
+    crate::aver_generated::domain::lexer::chars::readNumber__indexed(src, pos, acc, &__arg3)
 }
 
 /// Check if character can continue a dotted identifier (alphanumeric, underscore, or dot).
@@ -149,38 +149,40 @@ pub fn isIdentCharPlain(c @ _: AverStr) -> bool {
 /// Read identifier including dots (for qualified names like List.prepend).
 #[inline(always)]
 pub fn readIdentLoopDotted(
-    src @ _: AverStr,
+    src @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     acc @ _: AverStr,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     let __arg3 @ _ = aver_rt::string_index_build(&src);
-    crate::aver_generated::domain::lexer::chars::readIdentLoopDotted__indexed(src, pos, acc, __arg3)
+    crate::aver_generated::domain::lexer::chars::readIdentLoopDotted__indexed(
+        src, pos, acc, &__arg3,
+    )
 }
 
 /// Read identifier without dots (for local variables).
 #[inline(always)]
 pub fn readIdentLoopPlain(
-    src @ _: AverStr,
+    src @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     acc @ _: AverStr,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     let __arg3 @ _ = aver_rt::string_index_build(&src);
-    crate::aver_generated::domain::lexer::chars::readIdentLoopPlain__indexed(src, pos, acc, __arg3)
+    crate::aver_generated::domain::lexer::chars::readIdentLoopPlain__indexed(src, pos, acc, &__arg3)
 }
 
 /// Read identifier, dotted if starts with uppercase.
 #[inline(always)]
 pub fn readIdent(
-    src @ _: AverStr,
+    src @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     acc @ _: AverStr,
     dotted @ _: bool,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     let __arg4 @ _ = aver_rt::string_index_build(&src);
-    crate::aver_generated::domain::lexer::chars::readIdent__indexed(src, pos, acc, dotted, __arg4)
+    crate::aver_generated::domain::lexer::chars::readIdent__indexed(src, pos, acc, dotted, &__arg4)
 }
 
 /// Classify an identifier as keyword or plain ident.
@@ -256,10 +258,10 @@ pub fn keywordOrIdent(s @ _: AverStr) -> crate::aver_generated::domain::token::T
 /// Synthesized indexed worker of `readNumberLoop`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn readNumberLoop__indexed(
-    mut src @ _: AverStr,
+    src @ _: &AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverInt,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
     {
@@ -325,10 +327,10 @@ pub fn readNumberLoop__indexed(
 /// Synthesized indexed worker of `readNumber`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn readNumber__indexed(
-    src @ _: AverStr,
+    src @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     acc @ _: aver_rt::AverInt,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(src, pos, acc, __str_index)
@@ -337,10 +339,10 @@ pub fn readNumber__indexed(
 /// Synthesized indexed worker of `readIdentLoopDotted`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn readIdentLoopDotted__indexed(
-    mut src @ _: AverStr,
+    src @ _: &AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut acc @ _: AverStr,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
     let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
     {
@@ -386,10 +388,10 @@ pub fn readIdentLoopDotted__indexed(
 /// Synthesized indexed worker of `readIdentLoopPlain`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn readIdentLoopPlain__indexed(
-    mut src @ _: AverStr,
+    src @ _: &AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut acc @ _: AverStr,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
     let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
     {
@@ -435,11 +437,11 @@ pub fn readIdentLoopPlain__indexed(
 /// Synthesized indexed worker of `readIdent`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline]
 pub fn readIdent__indexed(
-    src @ _: AverStr,
+    src @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     acc @ _: AverStr,
     dotted @ _: bool,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     if dotted {

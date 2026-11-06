@@ -2775,7 +2775,9 @@ fn main() -> Unit
         "only `moved` builds its slice:\n{entry}"
     );
     assert!(
-        entry.contains("aver_rt::string_index_slice_str(&text, &__str_index, pos, (pos + 2i64))"),
+        entry.contains(
+            "aver_rt::string_index_slice_eq(&text, &__str_index, pos, (pos + 2i64), \"ąb\")"
+        ),
         "the indexed loop compares in place with raw positions:\n{entry}"
     );
 }
@@ -5984,9 +5986,9 @@ fn dying_lists_and_read_strings_match_vm() {
         "::aver_rt::aver_list_match_reuse!(stack, [] =>",
         "[c, others, __list_slot] => { { let __arg",
         "fn digitAt__indexed(s @ _: &AverStr,",
-        "digitAt__indexed(&s, ",
+        "digitAt__indexed(s, ",
         "fn sameAt(s @ _: &AverStr, i @ _: aver_rt::AverInt, t @ _: &AverStr)",
-        "sameAt(&s, ",
+        "sameAt(s, ",
         "aver_rt::string_split_byte(&::aver_rt::str_lit!(\"12\\n345\\n6x7\\n\\n89\"), 10u8)",
     ] {
         assert!(
@@ -6494,7 +6496,7 @@ fn a_loop_borrows_the_params_it_only_reads() {
         "fn getAt(t @ _: &Tree,",
         "fn findIn(bucket @ _: &aver_rt::AverList<",
         "fn known(st @ _: &St,",
-        "fn sameAs(names @ _: &aver_rt::AverList<AverStr>, mut name @ _: AverStr)",
+        "fn sameAs(names @ _: &aver_rt::AverList<AverStr>, name @ _: &AverStr)",
         "fn keep(names @ _: &aver_rt::AverList<AverStr>, mut acc @ _: aver_rt::AverList<AverStr>)",
     ] {
         assert!(
@@ -6525,7 +6527,7 @@ fn a_loop_borrows_the_params_it_only_reads() {
     // `findBefore` compares a field of every head and copies the one it
     // finds, once.
     assert!(
-        emitted.contains("match aver_rt::list_uncons_lent_head(__list_subject) { Some((p, rest)) => { if (p.name == n) { return placedBefore(p.clone(), upTo); }"),
+        emitted.contains("match aver_rt::list_uncons_lent_head(__list_subject) { Some((p, rest)) => { if (&(p.name) == n) { return placedBefore(p.clone(), upTo); }"),
         "the head `findBefore` hands on in one branch must be borrowed:\n{emitted}"
     );
     // A borrowed head, or a field of one, pushed into a list being built is

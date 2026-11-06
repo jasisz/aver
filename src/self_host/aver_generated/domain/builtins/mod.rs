@@ -63,7 +63,7 @@ pub fn callBuiltin(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::builtins::callBuiltin__indexed(name, args, __arg2)
+    crate::aver_generated::domain::builtins::callBuiltin__indexed(name, args, &__arg2)
 }
 
 /// Fast exact-match dispatch for the hottest builtins.
@@ -170,7 +170,7 @@ pub fn callBuiltinAfterList(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::builtins::callBuiltinAfterList__indexed(name, args, __arg2)
+    crate::aver_generated::domain::builtins::callBuiltinAfterList__indexed(name, args, &__arg2)
 }
 
 /// Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, and variant constructors.
@@ -180,7 +180,7 @@ pub fn callBuiltinOther(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::builtins::callBuiltinOther__indexed(name, args, __arg2)
+    crate::aver_generated::domain::builtins::callBuiltinOther__indexed(name, args, &__arg2)
 }
 
 /// Console.print(v) -> print any value and return Unit.
@@ -738,7 +738,7 @@ pub fn callBuiltinServices(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::builtins::callBuiltinServices__indexed(name, args, __arg2)
+    crate::aver_generated::domain::builtins::callBuiltinServices__indexed(name, args, &__arg2)
 }
 
 /// Random.int(min, max) -> random integer.
@@ -1752,27 +1752,27 @@ pub fn tryVariantConstructor(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __arg2)
+    crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, &__arg2)
 }
 
 /// Split 'Type.Ctor' into (Type, Ctor). Returns None if no dot.
 #[inline(always)]
-pub fn splitDotted(name @ _: AverStr) -> Option<(AverStr, AverStr)> {
+pub fn splitDotted(name @ _: &AverStr) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
     let __arg1 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::builtins::splitDotted__indexed(name, __arg1)
+    crate::aver_generated::domain::builtins::splitDotted__indexed(name, &__arg1)
 }
 
 /// Find first dot and split.
 #[inline(always)]
 pub fn splitDottedLoop(
-    name @ _: AverStr,
+    name @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     total @ _: aver_rt::AverInt,
 ) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
     let __arg3 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::builtins::splitDottedLoop__indexed(name, pos, total, __arg3)
+    crate::aver_generated::domain::builtins::splitDottedLoop__indexed(name, pos, total, &__arg3)
 }
 
 /// Bool.or(a, b) -> a || b.
@@ -3566,13 +3566,13 @@ pub fn builtinTcpClose(
 pub fn callBuiltin__indexed(
     name @ _: AverStr,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::builtins::callBuiltinFast__indexed(
         name.clone(),
         args,
-        &__str_index,
+        __str_index,
     ) {
         Some(result @ _) => result,
         None => {
@@ -3698,7 +3698,7 @@ pub fn callBuiltinFast__indexed(
 pub fn callBuiltinAfterList__indexed(
     name @ _: AverStr,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     if name.starts_with("Vector.") {
@@ -3728,7 +3728,7 @@ pub fn callBuiltinAfterList__indexed(
 pub fn callBuiltinOther__indexed(
     name @ _: AverStr,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -3823,7 +3823,7 @@ pub fn callBuiltinOther__indexed(
 pub fn callBuiltinServices__indexed(
     name @ _: AverStr,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -3907,7 +3907,7 @@ pub fn callBuiltinServices__indexed(
                                                                             {
                                                                                 crate::aver_generated::domain::builtins::builtinTcpPeerAddress(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "Tcp.poll" { crate::aver_generated::domain::builtins::builtinTcpPoll(args) } else { if &*__dispatch_subject == "Tcp.writeLine" { crate::aver_generated::domain::builtins::builtinTcpWriteLine(args) } else { if &*__dispatch_subject == "Tcp.readLine" { crate::aver_generated::domain::builtins::builtinTcpReadLine(args) } else { if &*__dispatch_subject == "Tcp.close" { crate::aver_generated::domain::builtins::builtinTcpClose(args) } else { if &*__dispatch_subject == "Tcp.closeDial" { crate::aver_generated::domain::builtins::builtinTcpCloseDial(args) } else { if &*__dispatch_subject == "Tcp.closeListener" { crate::aver_generated::domain::builtins::builtinTcpCloseListener(args) } else { if &*__dispatch_subject == "Terminal.clear" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, &__str_index) } else { if &*__dispatch_subject == "Terminal.flush" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, &__str_index) } else { if &*__dispatch_subject == "Terminal.enableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, &__str_index) } else { if &*__dispatch_subject == "Terminal.disableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, &__str_index) } else { if &*__dispatch_subject == "Terminal.hideCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, &__str_index) } else { if &*__dispatch_subject == "Terminal.showCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, &__str_index) } else { if &*__dispatch_subject == "Terminal.resetColor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, &__str_index) } else { if &*__dispatch_subject == "Terminal.readKey" { crate::aver_generated::domain::builtins::builtinTerminalReadKey(args) } else { if &*__dispatch_subject == "Terminal.size" { crate::aver_generated::domain::builtins::builtinTerminalSize(args) } else { if &*__dispatch_subject == "Terminal.print" { crate::aver_generated::domain::builtins::builtinTerminalPrint(args) } else { if &*__dispatch_subject == "Terminal.setColor" { crate::aver_generated::domain::builtins::builtinTerminalSetColor(args) } else { if &*__dispatch_subject == "Terminal.moveTo" { crate::aver_generated::domain::builtins::builtinTerminalMoveTo(args) } else { crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __str_index) } } } } } } } } } } } } } } } } } }
+                                                                                if &*__dispatch_subject == "Tcp.poll" { crate::aver_generated::domain::builtins::builtinTcpPoll(args) } else { if &*__dispatch_subject == "Tcp.writeLine" { crate::aver_generated::domain::builtins::builtinTcpWriteLine(args) } else { if &*__dispatch_subject == "Tcp.readLine" { crate::aver_generated::domain::builtins::builtinTcpReadLine(args) } else { if &*__dispatch_subject == "Tcp.close" { crate::aver_generated::domain::builtins::builtinTcpClose(args) } else { if &*__dispatch_subject == "Tcp.closeDial" { crate::aver_generated::domain::builtins::builtinTcpCloseDial(args) } else { if &*__dispatch_subject == "Tcp.closeListener" { crate::aver_generated::domain::builtins::builtinTcpCloseListener(args) } else { if &*__dispatch_subject == "Terminal.clear" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.flush" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.enableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.disableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.hideCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.showCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.resetColor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.readKey" { crate::aver_generated::domain::builtins::builtinTerminalReadKey(args) } else { if &*__dispatch_subject == "Terminal.size" { crate::aver_generated::domain::builtins::builtinTerminalSize(args) } else { if &*__dispatch_subject == "Terminal.print" { crate::aver_generated::domain::builtins::builtinTerminalPrint(args) } else { if &*__dispatch_subject == "Terminal.setColor" { crate::aver_generated::domain::builtins::builtinTerminalSetColor(args) } else { if &*__dispatch_subject == "Terminal.moveTo" { crate::aver_generated::domain::builtins::builtinTerminalMoveTo(args) } else { crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __str_index) } } } } } } } } } } } } } } } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -3985,13 +3985,10 @@ pub fn builtinTerminalNoArg__indexed(
 pub fn tryVariantConstructor__indexed(
     name @ _: AverStr,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::builtins::splitDotted__indexed(
-        name.clone(),
-        __str_index.clone(),
-    ) {
+    match crate::aver_generated::domain::builtins::splitDotted__indexed(&name, __str_index) {
         Some(_) => Ok(crate::aver_generated::domain::value::Val::ValVariant(
             crate::aver_generated::domain::value::Val__ValVariant(
                 crate::aver_generated::domain::ast::ctorNameToTag__indexed(
@@ -4017,12 +4014,12 @@ pub fn tryVariantConstructor__indexed(
 /// Synthesized indexed worker of `splitDotted`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn splitDotted__indexed(
-    name @ _: AverStr,
-    mut __str_index @ _: aver_rt::StringIndex,
+    name @ _: &AverStr,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::splitDottedLoop__indexed(
-        name.clone(),
+        name,
         aver_rt::AverInt::from_i64(0),
         aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)),
         __str_index,
@@ -4032,10 +4029,10 @@ pub fn splitDotted__indexed(
 /// Synthesized indexed worker of `splitDottedLoop`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn splitDottedLoop__indexed(
-    mut name @ _: AverStr,
+    name @ _: &AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut total @ _: aver_rt::AverInt,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Option<(AverStr, AverStr)> {
     let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
     {

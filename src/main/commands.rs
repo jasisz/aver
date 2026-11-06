@@ -13751,6 +13751,7 @@ error: build failed";
             mir_program: None,
             bare_i64: Default::default(),
             rust_owned_record_params: Default::default(),
+            rust_lent_strings: Default::default(),
             rust_counted_records: Default::default(),
             rust_lent_options: Default::default(),
             rust_word_spec: Default::default(),

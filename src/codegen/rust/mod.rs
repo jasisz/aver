@@ -232,6 +232,7 @@ fn transpile_project(
         // The by-value facts ask which sums have deferred calls: a match
         // never takes the fields out of a node of one.
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
+        ctx.rust_lent_strings = from_mir::compute_lent_strings(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
         ctx.rust_counted_records = counted_records::compute(ctx);
         ctx.rust_lent_options = lent_option::compute(ctx);
@@ -1698,6 +1699,45 @@ fn both(xs: List<Int>) -> Int
             "{entry}"
         );
         assert!(entry.contains("__hold0 = __tco0;"), "{entry}");
+    }
+
+    #[test]
+    fn a_string_a_loop_only_reads_is_lent_along_the_calls_that_hand_it_on() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn digits(s: String, i: Int, acc: Int) -> Int
+    match String.charAt(s, i)
+        Option.Some("1") -> digits(s, i + 1, acc * 10 + 1)
+        Option.Some("2") -> digits(s, i + 1, acc * 10 + 2)
+        Option.Some(_) -> acc
+        Option.None -> acc
+
+fn after(s: String, i: Int) -> Int
+    match String.startsWith(s, "x")
+        true -> digits(s, i + 1, 0)
+        false -> digits(s, i, 0)
+
+fn keep(s: String) -> String
+    s
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // The loop reads its text and hands it on unchanged, so it borrows
+        // it, and so does the function that only passes it to the loop.
+        assert!(
+            entry.contains("fn digits__indexed(s @ _: &AverStr"),
+            "{entry}"
+        );
+        assert!(entry.contains("fn after(s @ _: &AverStr"), "{entry}");
+        assert!(!entry.contains("s.clone()"), "{entry}");
+        // A string returned is taken by value.
+        assert!(entry.contains("fn keep(s @ _: AverStr"), "{entry}");
     }
 
     #[test]

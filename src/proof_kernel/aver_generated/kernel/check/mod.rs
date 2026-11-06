@@ -1700,7 +1700,7 @@ pub fn declarationsAcyclic(
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
                     if {
-                        let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::check::constantDeclarationDeps(c.name.clone(), cs, ds, cs);
+                        let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::check::constantDeclarationDeps(&c.name, cs, ds, cs);
                         {
                             let __arg7 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::term::Term::TVar(
@@ -1829,7 +1829,7 @@ pub fn declarationDeps(
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__n_fields) => {
                 let n = __n_fields.0.clone();
                 crate::proof_kernel::aver_generated::kernel::check::constantDeclarationDeps(
-                    n, cs, ds, cs,
+                    &n, cs, ds, cs,
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
@@ -1838,7 +1838,7 @@ pub fn declarationDeps(
                 {
                     let __list_subject = __pat0;
                     if __list_subject.is_empty() {
-                        crate::proof_kernel::aver_generated::kernel::check::definitionDeclarationDeps(f, ds, ds, cs)
+                        crate::proof_kernel::aver_generated::kernel::check::definitionDeclarationDeps(&f, ds, ds, cs)
                     } else {
                         aver_rt::AverList::empty()
                     }
@@ -1852,7 +1852,7 @@ pub fn declarationDeps(
 /// The declarations read by a named module-level binding.
 #[inline(always)]
 pub fn constantDeclarationDeps(
-    mut name @ _: AverStr,
+    name @ _: &AverStr,
     todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
@@ -1867,7 +1867,7 @@ pub fn constantDeclarationDeps(
             let __list_subject = todo;
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((c, rest)) => {
-                    if (c.name == name) {
+                    if (&(c.name) == name) {
                         {
                             let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
                             return crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(&c.value, &__arg6, ds, cs);
@@ -1899,7 +1899,7 @@ pub fn constantDeclarationDeps(
 /// The declarations read by a named definition.
 #[inline(always)]
 pub fn definitionDeclarationDeps(
-    mut name @ _: AverStr,
+    name @ _: &AverStr,
     todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
@@ -1913,7 +1913,7 @@ pub fn definitionDeclarationDeps(
             let __list_subject = todo;
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((d, rest)) => {
-                    if (d.name == name) {
+                    if (&(d.name) == name) {
                         return crate::proof_kernel::aver_generated::kernel::check::definitionDeps(
                             d, ds, cs,
                         );
@@ -2020,7 +2020,7 @@ pub fn constDependencyNodes(
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
     loop {
         crate::proof_kernel::cancel_checkpoint();
-        aver_list_match!(names, [] => { return aver_rt::AverList::empty(); }, [n, rest] => { if crate::proof_kernel::aver_generated::kernel::check::isConst(n.clone(), cs) { return aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n)), crate::proof_kernel::aver_generated::kernel::check::constDependencyNodes(rest, cs)); } else { {
+        aver_list_match!(names, [] => { return aver_rt::AverList::empty(); }, [n, rest] => { if crate::proof_kernel::aver_generated::kernel::check::isConst(&n, cs) { return aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n)), crate::proof_kernel::aver_generated::kernel::check::constDependencyNodes(rest, cs)); } else { {
             let __tco0 = rest;
             names = __tco0;
             continue;
@@ -2042,8 +2042,7 @@ pub fn definitionDependencyNodes(
             let __list_subject = names;
             match aver_rt::list_uncons_cloned(__list_subject) {
                 Some((n, rest)) => {
-                    match crate::proof_kernel::aver_generated::kernel::proof::findDef(n.clone(), ds)
-                    {
+                    match crate::proof_kernel::aver_generated::kernel::proof::findDef(&n, ds) {
                         Some(d @ _) => {
                             return aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TCall({ let __field0 = n; let __field1 = aver_rt::AverList::empty(); crate::proof_kernel::aver_generated::kernel::term::Term__TCall(__field1, __field0) }), crate::proof_kernel::aver_generated::kernel::check::definitionDependencyNodes(&rest, ds));
                         }
@@ -2787,7 +2786,7 @@ pub fn projUpdate(
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     ty.clone()?;
-    match crate::proof_kernel::aver_generated::kernel::check::findField(fs, f.clone()) {
+    match crate::proof_kernel::aver_generated::kernel::check::findField(fs, &f) {
         Some(x @ _) => {
             Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: t, rhs: x })
         }
@@ -2804,7 +2803,7 @@ pub fn projUpdate(
 #[inline(always)]
 pub fn findField(
     fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
-    mut f @ _: AverStr,
+    f @ _: &AverStr,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::term::Term> {
     let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>;
     let mut fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field> =
@@ -2815,7 +2814,7 @@ pub fn findField(
             let __list_subject = fs;
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((x, rest)) => {
-                    if (x.name == f) {
+                    if (&(x.name) == f) {
                         return Some(x.value.clone());
                     } else {
                         {
@@ -4264,7 +4263,7 @@ pub fn unfold(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match crate::proof_kernel::aver_generated::kernel::proof::findDef(f.clone(), &env.defs) {
+    match crate::proof_kernel::aver_generated::kernel::proof::findDef(&f, &env.defs) {
         None => {
             let __arg10 @ _ = aver_rt::AverStr::from({
                 let mut __b = {
@@ -5525,7 +5524,7 @@ pub fn ruleConclusion(
 /// A cited law by key.
 #[inline(always)]
 pub fn findLaw(
-    mut key @ _: AverStr,
+    key @ _: &AverStr,
     ls @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::proof::Law> {
     let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>;
@@ -5537,7 +5536,7 @@ pub fn findLaw(
             let __list_subject = ls;
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((l, rest)) => {
-                    if (l.key == key) {
+                    if (&(l.key) == key) {
                         return Some(l.clone());
                     } else {
                         {
@@ -5573,7 +5572,7 @@ pub fn lawStep(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match crate::proof_kernel::aver_generated::kernel::check::findLaw(key.clone(), &env.laws) {
+    match crate::proof_kernel::aver_generated::kernel::check::findLaw(&key, &env.laws) {
         None => {
             let __arg6 @ _ = aver_rt::AverStr::from({
                 let mut __b = {
@@ -5893,7 +5892,7 @@ pub fn induct(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match crate::proof_kernel::aver_generated::kernel::proof::findDef(f.clone(), &env.defs) {
+    match crate::proof_kernel::aver_generated::kernel::proof::findDef(&f, &env.defs) {
         None => {
             let __arg11 @ _ = aver_rt::AverStr::from({
                 let mut __b = {
@@ -6348,10 +6347,8 @@ pub fn sameNameCounts(
         let __list_subject = left;
         match aver_rt::list_uncons_cloned(__list_subject) {
             Some((n, rest)) => {
-                ((crate::proof_kernel::aver_generated::kernel::check::countName(
-                    n.clone(),
-                    allLeft,
-                ) == crate::proof_kernel::aver_generated::kernel::check::countName(n, right))
+                ((crate::proof_kernel::aver_generated::kernel::check::countName(&n, allLeft)
+                    == crate::proof_kernel::aver_generated::kernel::check::countName(&n, right))
                     && crate::proof_kernel::aver_generated::kernel::check::sameNameCounts(
                         &rest, allLeft, right,
                     ))
@@ -6363,10 +6360,7 @@ pub fn sameNameCounts(
 
 /// How often want occurs in names.
 #[inline(always)]
-pub fn countName(
-    mut want @ _: AverStr,
-    names @ _: &aver_rt::AverList<AverStr>,
-) -> aver_rt::AverInt {
+pub fn countName(want @ _: &AverStr, names @ _: &aver_rt::AverList<AverStr>) -> aver_rt::AverInt {
     let mut __hold1: aver_rt::AverList<AverStr>;
     let mut names @ _: &aver_rt::AverList<AverStr> = names;
     loop {
@@ -6375,7 +6369,7 @@ pub fn countName(
             let __list_subject = names;
             match aver_rt::list_uncons_cloned(__list_subject) {
                 Some((n, rest)) => {
-                    if (n == want) {
+                    if (&(n) == want) {
                         return aver_rt::AverInt::from_i64(1).add(
                             &crate::proof_kernel::aver_generated::kernel::check::countName(
                                 want, &rest,
@@ -6581,7 +6575,7 @@ pub fn freshAll(
                     || crate::proof_kernel::aver_generated::kernel::proof::givenNames(&env.vars)
                         .contains(&b))
                     || (crate::proof_kernel::aver_generated::kernel::check::isConst(
-                        b.clone(),
+                        &b,
                         &env.consts,
                     ) || before.contains(&b))))
                     && {
@@ -6599,7 +6593,7 @@ pub fn freshAll(
 /// Whether n names a module-level binding.
 #[inline(always)]
 pub fn isConst(
-    n @ _: AverStr,
+    n @ _: &AverStr,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
@@ -6607,7 +6601,7 @@ pub fn isConst(
         let __list_subject = cs;
         match aver_rt::list_uncons(__list_subject) {
             Some((c, rest)) => {
-                ((c.name == n)
+                ((&(c.name) == n)
                     || crate::proof_kernel::aver_generated::kernel::check::isConst(n, &rest))
             }
             None => false,
