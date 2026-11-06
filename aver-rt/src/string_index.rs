@@ -273,6 +273,27 @@ pub fn string_index_slice_str<'a>(
     &text[from..to]
 }
 
+/// Indexed `String.slice(text, from, to) == other`, without cutting the
+/// slice out: an ASCII text compares its bytes from `from` on, any other
+/// text the slice its boundaries give.
+#[inline]
+pub fn string_index_slice_eq(
+    text: &str,
+    index: &StringIndex,
+    from: i64,
+    to: i64,
+    other: &str,
+) -> bool {
+    if index.blocks.is_some() {
+        return string_index_slice_str(text, index, from, to) == other;
+    }
+    let len = text.len();
+    let (from, to) = (clamp_position(from, len), clamp_position(to, len));
+    // An empty or reversed range is the empty slice.
+    let width = to.saturating_sub(from);
+    width == other.len() && text.as_bytes()[from..from + width] == *other.as_bytes()
+}
+
 fn clamp_position(position: i64, len: usize) -> usize {
     usize::try_from(position).map_or(0, |position| position.min(len))
 }

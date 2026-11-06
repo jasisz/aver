@@ -7619,6 +7619,32 @@ fn mir_emit_slice_equality(bop: &crate::ir::mir::MirBinOp, ctx: &MirEmitCtx<'_>)
     } else {
         "!="
     };
+    // An indexed slice against a string that is not one compares the bytes
+    // where the slice would start, without cutting it out first.
+    let indexed_against = |slice: Option<(&[Spanned<MirExpr>], bool)>,
+                           other: &Spanned<MirExpr>,
+                           other_slice: Option<(&[Spanned<MirExpr>], bool)>| {
+        let (args, true) = slice? else {
+            return None;
+        };
+        if other_slice.is_some() {
+            return None;
+        }
+        let text = emit_mir_expr(&args[0], ctx)?;
+        let index = emit_mir_expr(&args[1], ctx)?;
+        let from = emit_string_position(&args[2], ctx)?;
+        let to = emit_string_position(&args[3], ctx)?;
+        let other = mir_as_str(&other.node, &emit_mir_expr(other, ctx)?, ctx);
+        let not = if matches!(bop.op, BinOp::Eq) { "" } else { "!" };
+        Some(format!(
+            "{not}aver_rt::string_index_slice_eq(&{text}, &{index}, {from}, {to}, {other})"
+        ))
+    };
+    if let Some(code) =
+        indexed_against(lhs, &bop.rhs, rhs).or_else(|| indexed_against(rhs, &bop.lhs, lhs))
+    {
+        return Some(code);
+    }
     Some(format!(
         "({} {op} {})",
         side(&bop.lhs, lhs)?,
