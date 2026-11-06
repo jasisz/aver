@@ -266,12 +266,7 @@ pub(in crate::codegen::wasm_gc) fn emit_string_literal_bytes(
         .ok_or(WasmGcError::Validation(
             "String literal needs string slot allocated".into(),
         ))?;
-    func.instruction(&Instruction::I32Const(0)); // offset
-    func.instruction(&Instruction::I32Const(bytes.len() as i32));
-    func.instruction(&Instruction::ArrayNewData {
-        array_type_index: s_idx,
-        array_data_index: segment_idx,
-    });
+    super::from_mir::emit_literal_string(func, segment_idx, bytes.len(), s_idx);
     Ok(())
 }
 

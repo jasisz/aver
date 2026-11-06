@@ -97,6 +97,7 @@ pub(crate) use str_builder::{
     carried_locals as string_builder_locals, set_allowed as set_string_builders,
 };
 mod strings;
+pub(crate) use strings::{emit_literal_string, set_literal_pool as set_string_literal_pool};
 pub(crate) mod twin;
 
 pub(super) use builtins::*;
@@ -237,6 +238,30 @@ fn emit_mir_int_stringify(
     enum Raw<'a> {
         Inner(&'a Spanned<MirExpr>),
         CarrierProject(&'a Spanned<MirExpr>),
+    }
+    // A param a twin or self tail loop holds as its machine word: the word
+    // goes to the LEAN formatter unless the Big flag says the value came
+    // packed, so stringifying it builds no box.
+    if ctx.registry.bignum
+        && let MirExpr::Local(l) = &arg.node
+        && let Some((packed, big)) = twin::held(l.node.slot.0)
+        && let (Some(&lean), Some(&boxed)) = (
+            ctx.fn_map.builtins.get("__wasmgc_string_from_int_i64"),
+            ctx.fn_map.builtins.get("String.fromInt"),
+        )
+        && let Some(string_ty) = ctx.registry.string_array_type_idx
+    {
+        func.instruction(&Instruction::LocalGet(big));
+        func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+            crate::codegen::wasm_gc::types::struct_ref(string_ty),
+        )));
+        func.instruction(&Instruction::LocalGet(packed));
+        func.instruction(&Instruction::Call(boxed));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(slots.local(l.node.slot.0)));
+        func.instruction(&Instruction::Call(lean));
+        func.instruction(&Instruction::End);
+        return Ok(Some(()));
     }
     let raw: Option<Raw<'_>> = match &arg.node {
         MirExpr::Box(inner) if mir_renders_raw_i64(&inner.node, ctx) => Some(Raw::Inner(inner)),
@@ -739,12 +764,7 @@ pub(crate) fn emit_mir_expr(
                         .ok_or(WasmGcError::Validation(
                             "String literal reachable but no String type slot allocated".into(),
                         ))?;
-                func.instruction(&Instruction::I32Const(0));
-                func.instruction(&Instruction::I32Const(bytes.len() as i32));
-                func.instruction(&Instruction::ArrayNewData {
-                    array_type_index: string_type_idx,
-                    array_data_index: seg_idx,
-                });
+                strings::emit_literal_string(func, seg_idx, bytes.len(), string_type_idx);
                 Ok(Some(true))
             }
         },

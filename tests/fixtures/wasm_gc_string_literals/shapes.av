@@ -1,0 +1,58 @@
+module M
+    intent = "String literals shared through globals and Int params stringified on their word: wasm-gc agrees with the VM."
+    effects [Console]
+
+fn greeting() -> String
+    ? "A bare literal, read on every call."
+    "hello"
+
+fn label(i: Int) -> String
+    ? "An interpolation with constant pieces around an Int param."
+    "item {i} of {i + 1}, done"
+
+fn grow(i: Int, acc: String) -> String
+    ? "A self loop that grows its accumulator, started from a literal."
+    match i
+        0 -> acc
+        _ -> grow(i - 1, acc + "-")
+
+fn count(i: Int, n: Int, acc: String) -> String
+    ? "A self loop that stringifies its Int params in an interpolation."
+    match i >= n
+        true -> acc
+        false -> count(i + 1, n, "{acc}<{i}>")
+
+fn edges(xs: List<Int>, acc: String) -> String
+    ? "Int params at the ends of the machine word and past it."
+    match xs
+        [] -> acc
+        [x, ..rest] -> edges(rest, "{acc}{x};")
+
+fn classify(s: String) -> String
+    ? "Literal patterns next to literal results."
+    match s
+        "hello" -> "greeting"
+        "start" -> "a start"
+        _ -> "other"
+
+fn same(i: Int, acc: Bool) -> Bool
+    ? "The literal read many times is equal to itself each time."
+    match i
+        0 -> acc
+        _ -> same(i - 1, Bool.and(acc, greeting() == "hello"))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(greeting() + greeting())
+    Console.print(label(1))
+    Console.print(label(-9223372036854775808))
+    Console.print(grow(3, "start"))
+    Console.print(grow(2, "start"))
+    Console.print("start")
+    Console.print(classify(grow(0, "start")))
+    Console.print(classify(greeting()))
+    Console.print(count(0, 5, ""))
+    Console.print(count(-3, 0, "neg:"))
+    Console.print(edges([0, -1, 9223372036854775807, -9223372036854775807, -9223372036854775808, 9223372036854775808, -9223372036854775809, 100000000000000000000], ""))
+    Console.print(String.fromInt(String.len(count(0, 20000, ""))))
+    Console.print("{same(1000, true)}")
