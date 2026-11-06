@@ -5,7 +5,8 @@
 //! `hash`, `eq` and canonical three-way comparator bodies across every
 //! `Map<K, *>` that uses the same K. `keys`, `values` and `entries` collect
 //! occupied bucket indices once and heapsort that scratch permutation by K;
-//! none of them exposes hash-bucket topology to Aver.
+//! none of them exposes hash-bucket topology to Aver. A `Map<Int, V>` whose
+//! keys are all Small is sorted on machine words (`maps/word_order.rs`).
 //!
 //! Open-addressing layout, small initial capacity, doubling on load:
 //!
@@ -85,6 +86,7 @@ use super::wat_helper;
 
 mod order;
 mod versions;
+mod word_order;
 
 use versions::{VersionedWrite, emit_versioned_write};
 pub(super) use versions::{emit_no_diff, emit_reroot_local};
@@ -217,6 +219,11 @@ pub(super) struct MapKVHelpers {
 
 #[derive(Default)]
 pub(super) struct MapHelperRegistry {
+    /// Order `Int` keys on machine words when every key is Small: the key
+    /// comparator's word test (`order.rs`) and the word sort of
+    /// `maps/word_order.rs`. Off in a `--certify` build, which keeps the
+    /// plain forms, and under `AVER_NO_WORD_KEYS=1`.
+    pub(super) word_keys: bool,
     /// K (Aver type string) → its hash+eq fn indices.
     key: HashMap<String, KeyHelpers>,
     /// Canonical `Map<K, V>` → its monomorphized helper indices.
@@ -1028,7 +1035,12 @@ impl MapHelperRegistry {
             )?);
         }
         for k_aver in &self.cmp_order {
-            codes.function(&order::emit_cmp_for(k_aver, registry, &self.cmp)?);
+            codes.function(&order::emit_cmp_for(
+                k_aver,
+                registry,
+                &self.cmp,
+                self.word_keys,
+            )?);
         }
         for canonical in &self.kv_order {
             let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
@@ -1069,6 +1081,7 @@ impl MapHelperRegistry {
                 registry,
                 helpers.order_sift,
                 reroot,
+                self.word_keys,
             )?);
             codes.function(&emit_map_keys(
                 canonical,
@@ -2912,6 +2925,7 @@ fn emit_map_order_slots(
     registry: &TypeRegistry,
     sift_fn: u32,
     reroot_fn: u32,
+    word_keys: bool,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let order_idx = registry
@@ -2928,8 +2942,21 @@ fn emit_map_order_slots(
         heap_type: HeapType::Concrete(order_idx),
     });
     // params: 0=map. locals: 1=keys, 2=indices, 3=count, 4=cap,
-    // 5=slot, 6=used, 7=start, 8=end, 9=tmp.
-    let mut f = Function::new([(1, keys_ref), (1, order_ref), (7, ValType::I32)]);
+    // 5=slot, 6=used, 7=start, 8=end, 9=tmp; an `Int` key adds the word
+    // sort's locals from 10 (see `maps/word_order.rs`).
+    let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(WasmGcError::Validation(
+        format!("Map order: cannot parse `{canonical}`"),
+    ))?;
+    let words = if word_keys {
+        word_order::WordSort::for_key(k_aver, registry, 10)?
+    } else {
+        None
+    };
+    let mut locals = vec![(1, keys_ref), (1, order_ref), (7, ValType::I32)];
+    if let Some(words) = &words {
+        locals.extend(words.locals());
+    }
+    let mut f = Function::new(locals);
     emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
@@ -2945,6 +2972,9 @@ fn emit_map_order_slots(
     f.instruction(&Instruction::LocalTee(3));
     f.instruction(&Instruction::ArrayNewDefault(order_idx));
     f.instruction(&Instruction::LocalSet(2));
+    if let Some(words) = &words {
+        words.emit_alloc(&mut f, 3);
+    }
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -2969,6 +2999,9 @@ fn emit_map_order_slots(
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
+    if let Some(words) = &words {
+        words.emit_collect(&mut f, slots.keys_array, 1, 5, 6);
+    }
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(6));
     f.instruction(&Instruction::LocalGet(5));
@@ -2985,6 +3018,10 @@ fn emit_map_order_slots(
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
+
+    if let Some(words) = &words {
+        words.emit_sort_and_return(&mut f, order_idx, 2, 3, 7);
+    }
 
     // Heapify: start at the last parent and sift toward the root.
     f.instruction(&Instruction::LocalGet(3));

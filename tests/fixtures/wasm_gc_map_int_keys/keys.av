@@ -1,0 +1,61 @@
+module Keys
+    intent = "Int keys of every size, read back in key order."
+    effects [Console.print]
+
+fn show(ks: List<Int>, acc: String) -> String
+    ? "Keys joined with commas."
+    match ks
+        [] -> acc
+        [k, ..rest] -> show(rest, "{acc},{k}")
+
+fn scatter(m: Map<Int, Int>, i: Int, n: Int) -> Map<Int, Int>
+    ? "Insert n scattered keys, half of them negative."
+    match i == n
+        true -> m
+        false -> scatter(Map.set(m, Int.mod(i * 7919, 1009) - 504, i), i + 1, n)
+
+fn sorted(ks: List<Int>, prev: Int, count: Int) -> Int
+    ? "How many keys follow a smaller one; -1 once one does not."
+    match ks
+        [] -> count
+        [k, ..rest] -> match k > prev
+            true -> sorted(rest, k, count + 1)
+            false -> -1
+
+fn pairs(es: List<Tuple<Int, Int>>, acc: String) -> String
+    ? "Entries joined."
+    match es
+        [] -> acc
+        [e, ..rest] -> match e
+            (k, v) -> pairs(rest, "{acc} {k}={v}")
+
+fn firsts(es: List<Tuple<Tuple<Int, Int>, Int>>, acc: String) -> String
+    ? "The values of tuple-keyed entries, in key order."
+    match es
+        [] -> acc
+        [e, ..rest] -> match e
+            (k, v) -> firsts(rest, "{acc},{v}")
+
+fn main() -> Unit
+    ! [Console.print]
+    max = 9223372036854775807
+    min = 0 - max - 1
+    big = max + 1
+    huge = big * big * 3
+    small = Map.set(Map.set(Map.set(Map.set(Map.set(Map.set({}, 5, 1), -1, 2), 0, 3), max, 4), min, 5), -7, 6)
+    Console.print("small: {show(Map.keys(small), "")} len {Map.len(small)}")
+    same = Map.set(small, big - 1, 40)
+    Console.print("same: {show(Map.values(same), "")} len {Map.len(same)} get {Option.withDefault(Map.get(same, max), 0)}")
+    mixed = Map.set(Map.set(Map.set(Map.set(small, big, 7), 0 - big - 1, 8), huge, 9), 0 - huge, 10)
+    Console.print("mixed: {show(Map.keys(mixed), "")} len {Map.len(mixed)}")
+    back = Map.remove(Map.remove(Map.remove(Map.remove(mixed, huge), 0 - huge), big), 0 - big - 1)
+    Console.print("back: {show(Map.keys(back), "")} values {show(Map.values(back), "")}")
+    gone = Map.remove(Map.remove(back, 0), min)
+    Console.print("gone: {show(Map.keys(gone), "")} has0 {Map.has(gone, 0)} hasMin {Map.has(gone, min)}")
+    many = scatter({}, 0, 1500)
+    Console.print("many: {Map.len(many)} sorted {sorted(Map.keys(many), 0 - 1000, 0)} first {show(List.take(Map.keys(many), 4), "")}")
+    manyBig = Map.set(many, big, 0)
+    Console.print("manyBig: {Map.len(manyBig)} sorted {sorted(Map.keys(manyBig), 0 - 1000, 0)}")
+    Console.print("entries: {pairs(Map.entries(Map.set(Map.set({}, 2, 20), -2, 30)), "")}")
+    pairsKeyed = Map.set(Map.set(Map.set(Map.set({}, (big, 1), 1), (0 - 3, 2), 2), (0 - 3, 0 - big), 3), (max, 0), 4)
+    Console.print("tuples: {firsts(Map.entries(pairsKeyed), "")}")
