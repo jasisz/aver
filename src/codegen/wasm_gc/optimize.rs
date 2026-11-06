@@ -30,6 +30,24 @@ impl OptimizationMode {
             Self::Size => "-Oz",
         }
     }
+
+    /// Inlining limits that go with the level flag.
+    ///
+    /// For speed, Binaryen's default inlines every function that has one
+    /// caller, whatever its size and even when it holds a loop. Aver lowers
+    /// self tail recursion to a loop, so that moves hot loops into a caller
+    /// that runs once, often `main`. V8 does not replace a running wasm
+    /// function with its optimized version, so that loop then stays in the
+    /// baseline tier; under Wasmtime the merged body is just larger. Both
+    /// made `speed` slower than the unoptimized module on loop-heavy
+    /// programs. With the one-caller limit at 0 such a function is inlined
+    /// only by the ordinary size rules, which skip functions with loops.
+    const fn inlining_flags(self) -> &'static [&'static str] {
+        match self {
+            Self::Speed => &["--one-caller-inline-max-function-size", "0"],
+            Self::Size => &[],
+        }
+    }
 }
 
 /// Byte sizes observed around one successful optimization pass.
@@ -58,6 +76,7 @@ pub fn optimize_artifact(
     // intentionally use this exact proposal set.
     let output = std::process::Command::new("wasm-opt")
         .arg(opt_flag)
+        .args(mode.inlining_flags())
         .arg("--converge")
         .arg("--strip-producers")
         .arg("--strip-target-features")
@@ -137,5 +156,10 @@ mod tests {
         assert_eq!(OptimizationMode::Speed.wasm_opt_flag(), "-O3");
         assert_eq!(OptimizationMode::Size.label(), "size");
         assert_eq!(OptimizationMode::Size.wasm_opt_flag(), "-Oz");
+        assert_eq!(
+            OptimizationMode::Speed.inlining_flags(),
+            ["--one-caller-inline-max-function-size", "0"]
+        );
+        assert!(OptimizationMode::Size.inlining_flags().is_empty());
     }
 }
