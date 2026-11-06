@@ -2416,9 +2416,8 @@ pub fn headersToVal(
     crate::aver_generated::domain::value::Val::ValMap(
         crate::aver_generated::domain::value::Val__ValMap({
             let __arg1 @ _ = {
-                let mut ks: Vec<_> = headers.keys().cloned().collect();
-                ks.sort();
-                aver_rt::AverList::from_vec(ks)
+                let __map = &(headers);
+                aver_rt::AverList::from_items_sorted(__map.len(), __map.keys().cloned())
             };
             {
                 let __arg2 @ _ =
