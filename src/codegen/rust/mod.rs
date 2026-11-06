@@ -232,6 +232,7 @@ fn transpile_project(
         // The by-value facts ask which sums have deferred calls: a match
         // never takes the fields out of a node of one.
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
+        ctx.rust_lent_strings = from_mir::compute_lent_strings(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
         ctx.rust_counted_records = counted_records::compute(ctx);
         ctx.rust_lent_options = lent_option::compute(ctx);

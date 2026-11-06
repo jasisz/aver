@@ -1408,7 +1408,7 @@ fn emit_fn_def_with_visibility(
             .as_ref()
             .and_then(|p| Some((p.fn_by_id(resolved_fd.fn_id)?, &p.builtins)))
             .map(|(mir_fn, builtins)| {
-                super::from_mir::lent_string_params(mir_fn, &resolved_fd.params, builtins)
+                super::from_mir::lent_string_params_in(ctx, mir_fn, &resolved_fd.params, builtins)
             })
             .unwrap_or_default();
         let lent_options: HashSet<usize> = (0..fd.params.len())
@@ -2732,6 +2732,7 @@ mod tests {
             mir_program: None,
             bare_i64: Default::default(),
             rust_owned_record_params: Default::default(),
+            rust_lent_strings: Default::default(),
             rust_counted_records: Default::default(),
             rust_lent_options: Default::default(),
             rust_word_spec: Default::default(),

@@ -1500,7 +1500,7 @@ fn owned_params_with(
             let lends = |i: usize| {
                 !mutual
                     && !guest
-                    && should_borrow_param(&resolved.params[i].1)
+                    && (should_borrow_param(&resolved.params[i].1) || lent_string(ctx, *id, i))
                     && mir_fn.params.get(i).is_some()
             };
             if !mutual {
@@ -1687,6 +1687,7 @@ fn builtin_takes_local(expr: &MirExpr, slot: LocalId, builtins: &[String]) -> bo
                 && call.node.args.iter().enumerate().any(|(i, arg)| {
                     local_of(&arg.node).is_some_and(|local| local.slot == slot)
                         && !(i == 0 && builtin_only_reads(&call.node.callee, builtins))
+                        && !reads_argument_in_place(&call.node.callee, i, builtins)
                 })
         }
         _ => false,
@@ -1753,11 +1754,104 @@ pub(super) fn lent_string_params(
         .collect()
 }
 
-/// Whether every read of the `String` local in `slot` within `expr` is one
-/// [`lent_string_params`] allows.
-fn reads_string_in_place(expr: &MirExpr, slot: LocalId, builtins: &[String]) -> bool {
-    let is_slot = |e: &MirExpr| local_of(e).is_some_and(|local| local.slot == slot);
-    let reads_text = |callee: &MirCallee| match callee {
+/// [`lent_string_params`] as the whole program decided it (see
+/// [`compute_lent_strings`]): also the params handed on to a param of another
+/// function that lends it. Falls back to the function's own body where the
+/// program facts were not computed.
+pub(super) fn lent_string_params_in(
+    ctx: &CodegenContext,
+    mir_fn: &crate::ir::mir::MirFn,
+    params: &[(String, Type)],
+    builtins: &[String],
+) -> HashSet<String> {
+    let Some(facts) = ctx.rust_lent_strings.get(&mir_fn.fn_id) else {
+        return lent_string_params(mir_fn, params, builtins);
+    };
+    params
+        .iter()
+        .zip(facts)
+        .filter(|(_, lent)| **lent)
+        .map(|((name, _), _)| aver_name_to_rust(name))
+        .collect()
+}
+
+/// Which `String` params each function only reads in place, the program
+/// over: as [`lent_string_params`] reads one body, and besides handed to a
+/// param that is lent itself, of another function or, unchanged in its own
+/// place, of the loop's next step. A loop that only reads its text then
+/// takes it as `&AverStr`, and the functions that only pass the text on to
+/// it lend theirs too, where each call counted a copy of the string and
+/// dropped it again. Starts from every `String` param and drops the ones a
+/// body reads otherwise until none changes, so a cycle of functions that
+/// only pass a string around lends it the whole way. Mutual tail-call groups
+/// and a guest entry keep the ABI they have.
+pub(super) fn compute_lent_strings(ctx: &CodegenContext) -> HashMap<crate::ir::FnId, Vec<bool>> {
+    let Some(program) = ctx.mir_program.as_ref() else {
+        return HashMap::new();
+    };
+    let mut lent: HashMap<crate::ir::FnId, Vec<bool>> = HashMap::new();
+    for (id, mir_fn) in program.iter() {
+        let Some(resolved) = ctx.resolved_program.fn_by_id(*id) else {
+            continue;
+        };
+        if ctx.mutual_tco_members.contains(id)
+            || ctx.guest_entry.as_deref() == Some(resolved.name.as_str())
+            || resolved.params.len() != mir_fn.params.len()
+        {
+            continue;
+        }
+        let flags: Vec<bool> = resolved
+            .params
+            .iter()
+            .map(|(_, ty)| matches!(ty, Type::Str))
+            .collect();
+        if flags.iter().any(|f| *f) {
+            lent.insert(*id, flags);
+        }
+    }
+    loop {
+        let mut dropped = Vec::new();
+        for (id, flags) in &lent {
+            let Some(mir_fn) = program.fn_by_id(*id) else {
+                continue;
+            };
+            for (i, flag) in flags.iter().enumerate() {
+                if !*flag {
+                    continue;
+                }
+                let lent_at = |callee: crate::ir::FnId, j: usize, tail: bool| {
+                    if tail && callee == *id {
+                        return j == i;
+                    }
+                    lent.get(&callee).and_then(|f| f.get(j)).copied().unwrap_or(false)
+                };
+                if !reads_string_in_place_by(
+                    &mir_fn.body.node,
+                    mir_fn.params[i].local,
+                    &program.builtins,
+                    &lent_at,
+                ) {
+                    dropped.push((*id, i));
+                }
+            }
+        }
+        if dropped.is_empty() {
+            break;
+        }
+        for (id, i) in dropped {
+            if let Some(f) = lent.get_mut(&id).and_then(|f| f.get_mut(i)) {
+                *f = false;
+            }
+        }
+    }
+    lent
+}
+
+/// Whether `callee` reads the text it is given first in place, and its other
+/// arguments as they are (see [`lent_string_params`]): a string built-in, or
+/// an indexed read, which reads the hidden `String.Index` second in place too.
+fn reads_text_in_place(callee: &MirCallee, builtins: &[String]) -> bool {
+    match callee {
         MirCallee::Builtin(id) => matches!(
             builtins.get(id.0 as usize).map(String::as_str),
             Some(
@@ -1783,29 +1877,90 @@ fn reads_string_in_place(expr: &MirExpr, slot: LocalId, builtins: &[String]) -> 
                 | BuiltinIntrinsic::StrIndexLen
         ),
         _ => false,
-    };
+    }
+}
+
+/// Whether the argument at `position` of `callee` is read in place: the
+/// text of [`reads_text_in_place`], or the index an indexed read takes
+/// second (`&{index}` in each of their Rust forms).
+fn reads_argument_in_place(callee: &MirCallee, position: usize, builtins: &[String]) -> bool {
+    let indexed = matches!(
+        callee,
+        MirCallee::Intrinsic(
+            BuiltinIntrinsic::StrIndexCharAt
+                | BuiltinIntrinsic::StrIndexCodeAt
+                | BuiltinIntrinsic::StrIndexSlice
+                | BuiltinIntrinsic::StrIndexLen
+        )
+    );
+    (position == 0 && reads_text_in_place(callee, builtins)) || (position == 1 && indexed)
+}
+
+/// Whether every read of the `String` local in `slot` within `expr` is one
+/// [`lent_string_params`] allows.
+fn reads_string_in_place(expr: &MirExpr, slot: LocalId, builtins: &[String]) -> bool {
+    reads_string_in_place_by(expr, slot, builtins, &|_, _, _| false)
+}
+
+/// [`reads_string_in_place`], where the local may also be handed to param
+/// `j` of `callee` when `lent_at(callee, j, tail)` says that param is lent;
+/// `tail` tells a tail call.
+fn reads_string_in_place_by(
+    expr: &MirExpr,
+    slot: LocalId,
+    builtins: &[String],
+    lent_at: &dyn Fn(crate::ir::FnId, usize, bool) -> bool,
+) -> bool {
+    let is_slot = |e: &MirExpr| local_of(e).is_some_and(|local| local.slot == slot);
+    let recur = |e: &MirExpr| reads_string_in_place_by(e, slot, builtins, lent_at);
     match expr {
         MirExpr::Local(local) => local.node.slot != slot,
         // A branch of `(a, b)!` runs on another thread.
         MirExpr::IndependentProduct(_) => false,
-        MirExpr::Call(call) if reads_text(&call.node.callee) => {
-            call.node.args.iter().enumerate().all(|(i, arg)| {
-                (i == 0 && is_slot(&arg.node)) || reads_string_in_place(&arg.node, slot, builtins)
-            })
+        MirExpr::Call(call) if reads_text_in_place(&call.node.callee, builtins) => {
+            call.node
+                .args
+                .iter()
+                .enumerate()
+                .all(|(i, arg)| (i == 0 && is_slot(&arg.node)) || recur(&arg.node))
         }
-        MirExpr::BinOp(op) if matches!(op.node.op, BinOp::Eq | BinOp::Neq) => {
-            [&op.node.lhs, &op.node.rhs].iter().all(|side| {
-                is_slot(&side.node) || reads_string_in_place(&side.node, slot, builtins)
-            })
+        MirExpr::Call(call) if matches!(call.node.callee, MirCallee::Fn(_)) => {
+            let MirCallee::Fn(callee) = call.node.callee else {
+                return false;
+            };
+            call.node
+                .args
+                .iter()
+                .enumerate()
+                .all(|(j, arg)| (is_slot(&arg.node) && lent_at(callee, j, false)) || recur(&arg.node))
         }
+        MirExpr::TailCall(call) => call
+            .node
+            .args
+            .iter()
+            .enumerate()
+            .all(|(j, arg)| (is_slot(&arg.node) && lent_at(call.node.target, j, true)) || recur(&arg.node)),
+        MirExpr::BinOp(op) if matches!(op.node.op, BinOp::Eq | BinOp::Neq) => [&op.node.lhs, &op.node.rhs]
+            .iter()
+            .all(|side| is_slot(&side.node) || recur(&side.node)),
         _ => {
             let mut only = true;
             crate::ir::mir::expr::walk_children(expr, &mut |child| {
-                only = only && reads_string_in_place(child, slot, builtins);
+                only = only && recur(child);
             });
             only
         }
     }
+}
+
+/// Whether `String` param `index` of `fn_id` is lent (see
+/// [`compute_lent_strings`]).
+fn lent_string(ctx: &CodegenContext, fn_id: crate::ir::FnId, index: usize) -> bool {
+    ctx.rust_lent_strings
+        .get(&fn_id)
+        .and_then(|facts| facts.get(index))
+        .copied()
+        .unwrap_or(false)
 }
 
 /// Whether lone self-tail-recursive function `fn_id` borrows param `index`.
@@ -1824,7 +1979,7 @@ pub(super) fn self_loop_lends(ctx: &CodegenContext, fn_id: crate::ir::FnId, inde
                 && fd
                     .params
                     .get(index)
-                    .is_some_and(|(_, ty)| should_borrow_param(ty))
+                    .is_some_and(|(_, ty)| should_borrow_param(ty) || lent_string(ctx, fn_id, index))
         })
         && ctx
             .rust_owned_record_params
@@ -2206,7 +2361,7 @@ fn thin_match_takes_fields(m: &MirMatch, cx: &Consumption<'_>) -> bool {
         let lent = program
             .and_then(|program| program.fn_by_id(id))
             .filter(|_| !cx.codegen.mutual_tco_members.contains(&id))
-            .map(|mir_fn| lent_string_params(mir_fn, &resolved.params, cx.builtins))
+            .map(|mir_fn| lent_string_params_in(cx.codegen, mir_fn, &resolved.params, cx.builtins))
             .unwrap_or_default();
         resolved
             .params
@@ -7784,7 +7939,8 @@ pub(super) fn emit_mir_fn_body_routed(
 ) -> Option<String> {
     let mut policy = MirFnEmitPolicy::from_resolved(resolved, scope, borrow_by_default);
     if borrow_by_default {
-        policy.borrowed_params.extend(lent_string_params(
+        policy.borrowed_params.extend(lent_string_params_in(
+            ctx,
             mir_fn,
             &resolved.params,
             ctx.mir_program
