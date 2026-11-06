@@ -303,6 +303,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn slice_equality_answers_as_the_slice_it_does_not_cut() {
+        for text in ["{\"fn\":12}", "a\u{105}\u{1F600}z\"fn\":"] {
+            let text = AverStr::from(text);
+            let index = string_index_build(&text);
+            let len = index.char_len() as i64;
+            for from in -2..=len + 2 {
+                for to in -2..=len + 2 {
+                    for other in ["", "\"fn\":", "{", "z", "\u{1F600}z", "12}"] {
+                        assert_eq!(
+                            string_index_slice_eq(&text, &index, from, to, other),
+                            string_index_slice_str(&text, &index, from, to) == other,
+                            "{text:?} {from}..{to} {other:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn unicode_positions_are_codepoints_and_slice_uses_the_same_boundaries() {
         let text = AverStr::from("aą😀z");
         let index = string_index_build(&text);
