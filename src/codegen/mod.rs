@@ -500,6 +500,9 @@ pub struct CodegenContext {
     /// [`crate::ir::FnId`] from the symbol table — entry-module fns
     /// and dep-module fns with the same bare name can't accidentally
     /// merge under bare-name keying.
+    /// Rust: `MIN_STEPS` of the equality classes the generated `==` of a
+    /// recursive sum keeps (`[rust] equality_classes`), 0 for none.
+    pub rust_equality_classes: u32,
     pub mutual_tco_members: HashSet<crate::ir::FnId>,
     /// Functions that call themselves directly or transitively. Set-
     /// form union of `entry_analysis.recursive_fns` plus each
@@ -1187,6 +1190,7 @@ pub fn build_context(
         recorded_source: None,
         emit_self_host_support: false,
         single_thread: false,
+        rust_equality_classes: 0,
         mutual_tco_members,
         recursive_fns,
         buffer_build_sinks,
@@ -1738,6 +1742,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         recorded_source: None,
         emit_self_host_support: false,
         single_thread: false,
+        rust_equality_classes: 0,
         mutual_tco_members: std::collections::HashSet::new(),
         recursive_fns: std::collections::HashSet::new(),
         buffer_build_sinks: std::collections::HashMap::new(),

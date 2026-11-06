@@ -371,6 +371,7 @@ mod tests {
             recorded_source: None,
             emit_self_host_support: false,
             single_thread: false,
+            rust_equality_classes: 0,
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),

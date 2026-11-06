@@ -18,6 +18,12 @@ path = "src/lib.rs"
 
 [features]
 default = []
+# `==` on recursive sums can remember nodes it found equal
+# (`Walk::node_classed`, see `aver_rt::eq_classes`). The code generator turns
+# it on for `[rust] equality_classes` above 0.
+equality-classes = []
+# Every answer from an equality class is compared in full as well.
+equality-classes-check = ["equality-classes"]
 http = ["dep:ureq"]
 mimalloc = ["dep:libmimalloc-sys"]
 random = ["dep:rand"]

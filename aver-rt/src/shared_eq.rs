@@ -38,6 +38,10 @@ struct Memory<'v> {
     top: Cell<usize>,
     /// Empty until a pair is remembered or left for later.
     spent: Cell<Option<Box<Spent<'v>>>>,
+    /// How many pairs of nodes the comparison has met, which tells how deep
+    /// a pair went (see [`crate::eq_classes`]).
+    #[cfg(feature = "equality-classes")]
+    steps: Cell<u32>,
 }
 
 #[derive(Default)]
@@ -99,6 +103,17 @@ pub fn walk_eq<T: WalkEq>(a: &T, b: &T) -> bool {
 pub trait NodeId {
     fn addr(&self) -> usize;
     fn count(&self) -> usize;
+
+    /// The node's equality class bits (see [`crate::eq_classes`]); 0 for a
+    /// node that cannot keep any.
+    #[inline]
+    fn class_bits(&self) -> u32 {
+        0
+    }
+
+    /// Writes the node's equality class bits, where it can keep them.
+    #[inline]
+    fn set_class_bits(&self, _bits: u32) {}
 }
 
 /// The payload of a shared constructor of a sum that is not thin, compared
@@ -175,6 +190,53 @@ impl<'v> Walk<'_, 'v> {
         }
         self.left.set(left - 1);
         fields_eq(self)
+    }
+
+    /// [`Walk::node`] with equality classes (see [`crate::eq_classes`]):
+    /// two nodes that both carry a class of this thread are equal at once
+    /// when the classes meet, and two nodes found equal by a walk at least
+    /// `MIN_STEPS` pairs deep, the two counted, join one class. What the
+    /// generated `==` of a recursive sum calls when `[rust]
+    /// equality_classes` in `aver.toml` is `MIN_STEPS` above 0.
+    #[cfg(feature = "equality-classes")]
+    #[inline]
+    pub fn node_classed<const MIN_STEPS: u32, N: NodeId + WalkEq>(
+        self,
+        a: &'v N,
+        b: &'v N,
+        reflexive: bool,
+        fields_eq: impl FnOnce(Self) -> bool,
+    ) -> bool {
+        if reflexive && a.addr() == b.addr() {
+            return true;
+        }
+        let (bits_a, bits_b) = (a.class_bits(), b.class_bits());
+        if bits_a != 0 && bits_b != 0 && crate::eq_classes::same(a.addr(), bits_a, b.addr(), bits_b)
+        {
+            #[cfg(feature = "equality-classes-check")]
+            assert!(
+                crate::eq_classes::checking(|| fields_eq(self)),
+                "an equality class held two unequal nodes"
+            );
+            return true;
+        }
+        let left = self.left.get();
+        if left == 0 {
+            return self.remembering(a, b, fields_eq);
+        }
+        self.left.set(left - 1);
+        let start = self.memory.steps.get();
+        self.memory.steps.set(start.wrapping_add(1));
+        let same = fields_eq(self);
+        // Joined only when the answer is final: no pair below was left for
+        // later, which happens only once the budget is spent.
+        if same
+            && self.memory.steps.get().wrapping_sub(start) >= MIN_STEPS
+            && self.memory.top.get() == 0
+        {
+            crate::eq_classes::join(a, b);
+        }
+        same
     }
 
     /// [`Walk::node`] with memory: a pair met [`DEEP`] bytes below where

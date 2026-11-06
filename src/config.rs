@@ -346,13 +346,33 @@ pub enum RustThreads {
     /// instructions (aver-rt's `plain-counts`).
     One,
 }
+/// `[rust] equality_classes` when `aver.toml` does not set it: the
+/// `MIN_STEPS` of the equality classes `==` on a recursive sum keeps (see
+/// `aver_rt::eq_classes`), measured best on a Lean kernel checker (8 to 16
+/// were within 0.2% of each other on Mathlib, 12 the best on small inputs).
+pub const DEFAULT_EQUALITY_CLASSES: u32 = 12;
 
 /// The `[rust]` table of `aver.toml`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RustOptions {
     pub allocator: RustAllocator,
     pub panic: RustPanic,
     pub threads: RustThreads,
+    /// `[rust] equality_classes`: how many pairs deep a comparison of two
+    /// nodes of a recursive sum must go before the nodes it found equal join
+    /// one equality class; 0 keeps no classes.
+    pub equality_classes: u32,
+}
+
+impl Default for RustOptions {
+    fn default() -> Self {
+        RustOptions {
+            allocator: RustAllocator::default(),
+            panic: RustPanic::default(),
+            threads: RustThreads::default(),
+            equality_classes: DEFAULT_EQUALITY_CLASSES,
+        }
+    }
 }
 
 /// Project-level configuration loaded from `aver.toml`.
@@ -2795,6 +2815,22 @@ helpers = 30
     }
 
     #[test]
+    fn rust_equality_classes_defaults_and_takes_a_whole_number() {
+        assert_eq!(
+            ProjectConfig::parse("").unwrap().rust.equality_classes,
+            DEFAULT_EQUALITY_CLASSES
+        );
+        let off = ProjectConfig::parse("[rust]\nequality_classes = 0\n").unwrap();
+        assert_eq!(off.rust.equality_classes, 0);
+        let deep = ProjectConfig::parse("[rust]\nequality_classes = 16\n").unwrap();
+        assert_eq!(deep.rust.equality_classes, 16);
+        let wrong = ProjectConfig::parse("[rust]\nequality_classes = \"on\"\n").unwrap_err();
+        assert!(wrong.contains("[rust].equality_classes must be a whole number"));
+        let negative = ProjectConfig::parse("[rust]\nequality_classes = -1\n").unwrap_err();
+        assert!(negative.contains("got -1"));
+    }
+
+    #[test]
     fn rust_panic_defaults_to_unwind_and_names_its_values() {
         assert_eq!(
             ProjectConfig::parse("").unwrap().rust.panic,
@@ -2808,6 +2844,7 @@ helpers = 30
                 allocator: RustAllocator::Mimalloc,
                 panic: RustPanic::Abort,
                 threads: RustThreads::Many,
+                equality_classes: DEFAULT_EQUALITY_CLASSES,
             }
         );
         let unknown = ProjectConfig::parse("[rust]\npanic = \"exit\"\n").unwrap_err();
@@ -2885,7 +2922,7 @@ fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
         .ok_or_else(|| "aver.toml: [rust] must be a table".to_string())?;
     if let Some(key) = rust
         .keys()
-        .find(|key| !["allocator", "panic", "threads"].contains(&key.as_str()))
+        .find(|key| !["allocator", "panic", "threads", "equality_classes"].contains(&key.as_str()))
     {
         return Err(format!("aver.toml: [rust] has no key '{key}'"));
     }
@@ -2917,6 +2954,15 @@ fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
         threads: match choice("threads", ["many", "one"])? {
             true => RustThreads::One,
             false => RustThreads::Many,
+        },
+        equality_classes: match rust.get("equality_classes") {
+            None => DEFAULT_EQUALITY_CLASSES,
+            Some(toml::Value::Integer(n)) if (0..=1024).contains(n) => *n as u32,
+            Some(other) => {
+                return Err(format!(
+                    "aver.toml: [rust].equality_classes must be a whole number from 0 to 1024, got {other}"
+                ));
+            }
         },
     })
 }

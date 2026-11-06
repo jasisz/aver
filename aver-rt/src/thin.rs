@@ -97,6 +97,13 @@ pub unsafe trait ThinSum: Sized + 'static {
     /// The value's pointer, for the code of a deferred call.
     fn into_thin(self) -> Thin<Self>;
 
+    /// Whether some `lazy f(…)` returns the sum. Deferred calls exist only
+    /// in such a sum (its `deferred` constructors are made by `thin_sum!`
+    /// for it alone), and a node a call was made in keeps their state in the
+    /// upper bits of its tag word after the call, so the sum has no
+    /// equality classes (see [`crate::eq_classes`]).
+    const LAZY: bool = false;
+
     /// For a sum some `lazy f(…)` returns: the most bytes a node of any of
     /// its constructors takes, which a node a call was deferred in has room
     /// for (see [`Lazy`]).
@@ -209,7 +216,42 @@ impl<S: ThinSum> Thin<S> {
         if self.is_empty_ctor() {
             (self.ptr.as_ptr().addr() - 1) as u32
         } else {
-            self.header().tag.load(Ordering::Relaxed)
+            self.header().tag.load(Ordering::Relaxed) & Self::TAG_MASK
+        }
+    }
+
+    /// The bits of the tag word a constructor's tag takes: all of them in a
+    /// sum some `lazy f(…)` returns, whose deferred calls keep their state
+    /// there, and the low eight otherwise (`MAX_TAGS`), the rest holding the
+    /// node's equality class (see [`crate::eq_classes`]).
+    const TAG_MASK: u32 = if S::LAZY || !cfg!(feature = "equality-classes") {
+        u32::MAX
+    } else {
+        0xff
+    };
+
+    /// The node's equality class bits (see [`crate::eq_classes`]): 0 for a
+    /// constructor without fields and in a sum some `lazy f(…)` returns.
+    #[inline]
+    pub fn class_bits(&self) -> u32 {
+        if S::LAZY || !cfg!(feature = "equality-classes") || self.is_empty_ctor() {
+            0
+        } else {
+            self.header().tag.load(Ordering::Relaxed) >> 8
+        }
+    }
+
+    /// Writes the node's equality class bits, keeping its tag. Another
+    /// thread may write them at the same time; one of the writes is kept,
+    /// and the tag, which never changes in a sum without `lazy`, with it.
+    #[inline]
+    pub fn set_class_bits(&self, bits: u32) {
+        if !S::LAZY && cfg!(feature = "equality-classes") && !self.is_empty_ctor() {
+            let tag = &self.header().tag;
+            tag.store(
+                (tag.load(Ordering::Relaxed) & 0xff) | (bits << 8),
+                Ordering::Relaxed,
+            );
         }
     }
 
@@ -369,7 +411,7 @@ impl<S: ThinSum> Thin<S> {
     #[cold]
     #[inline(never)]
     fn drop_slow(&mut self) {
-        let tag = self.header().tag.load(Ordering::Relaxed);
+        let tag = self.header().tag.load(Ordering::Relaxed) & Self::TAG_MASK;
         let mut put_aside = Vec::new();
         unsafe { S::free(self.ptr, tag, Pending::new(&mut put_aside)) };
         while let Some((node, release)) = put_aside.pop() {
@@ -478,7 +520,13 @@ unsafe fn release<S: ThinSum>(node: NonNull<Header>, pending: Pending<'_>) {
     if !crate::counts::dec32(&header.count) {
         return;
     }
-    unsafe { S::free(node, header.tag.load(Ordering::Relaxed), pending) }
+    unsafe {
+        S::free(
+            node,
+            header.tag.load(Ordering::Relaxed) & Thin::<S>::TAG_MASK,
+            pending,
+        )
+    }
 }
 
 /// How the drop of a value frees its nodes.
@@ -1059,6 +1107,15 @@ impl<S: ThinSum> crate::NodeId for Thin<S> {
     fn count(&self) -> usize {
         Thin::strong_count(self)
     }
+    #[inline]
+    fn class_bits(&self) -> u32 {
+        Thin::class_bits(self)
+    }
+
+    #[inline]
+    fn set_class_bits(&self, bits: u32) {
+        Thin::set_class_bits(self, bits)
+    }
 }
 
 /// A recursive sum laid out as a [`Thin`] pointer.
@@ -1339,6 +1396,16 @@ macro_rules! thin_sum {
             fn count(&self) -> usize {
                 $crate::thin::Thin::strong_count(self.made().0)
             }
+
+            #[inline]
+            fn class_bits(&self) -> u32 {
+                $crate::thin::Thin::class_bits(self.made().0)
+            }
+
+            #[inline]
+            fn set_class_bits(&self, bits: u32) {
+                $crate::thin::Thin::set_class_bits(self.made().0, bits)
+            }
         }
     };
 
@@ -1368,6 +1435,8 @@ macro_rules! thin_sum {
     }};
     (@lazy $name:ident ; $( $tag:literal $( ( $fields:ty ) )? ),+) => {};
     (@lazy $name:ident $lazy:literal ; $( $tag:literal $( ( $fields:ty ) )? ),+) => {
+        const LAZY: bool = true;
+
         const ROOM: usize = {
             let mut room = 0;
             $( $(
@@ -1504,6 +1573,13 @@ mod tests {
                 Some(T__Pairs::Leaf(a, b)) => a == b,
                 Some(T__Pairs::Nil | T__Pairs::Unit) => true,
                 Some(T__Pairs::Opt(a, b)) => a.0.walk_eq(&b.0, walk),
+                #[cfg(feature = "equality-classes")]
+                Some(T__Pairs::Pair(a, b)) => {
+                    walk.node_classed::<4, _>(self, other, true, |walk| {
+                        a.2 == b.2 && a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
+                    })
+                }
+                #[cfg(not(feature = "equality-classes"))]
                 Some(T__Pairs::Pair(a, b)) => walk.node(self, other, true, |walk| {
                     a.2 == b.2 && a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
@@ -1844,6 +1920,134 @@ mod tests {
         assert!(T::view_pair(&a, &T::Nil).is_none());
     }
 
+    /// A chain `depth` pairs deep over leaves `n`, built apart each time.
+    #[cfg(feature = "equality-classes")]
+    fn chain(drops: &Arc<AtomicUsize>, n: u64, depth: u8) -> T {
+        let mut t = leaf(drops, n);
+        for i in 0..depth {
+            t = pair(t, leaf(drops, n), i);
+        }
+        t
+    }
+
+    /// Every reader of the tag sees the constructor alone, whatever class
+    /// bits the node carries: view, match on a pair, taking the fields out,
+    /// reusing the memory and freeing.
+    #[test]
+    #[cfg(feature = "equality-classes")]
+    fn class_bits_change_nothing_a_tag_decides() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let node = pair(
+            leaf(&drops, 1),
+            pair(leaf(&drops, 2), leaf(&drops, 3), 4),
+            5,
+        );
+        let other = pair(
+            leaf(&drops, 1),
+            pair(leaf(&drops, 2), leaf(&drops, 3), 4),
+            5,
+        );
+        for t in [&node, &other] {
+            t.0.set_class_bits(0xff_ffff);
+            if let T__View::Pair(p) = t.view() {
+                p.1.0.set_class_bits(0xab_cdef);
+            }
+        }
+        assert_eq!(node.tag(), 2);
+        assert!(matches!(node.view(), T__View::Pair(_)));
+        assert!(T::view_pair(&node, &other).is_some());
+        assert_eq!(sum(&node), 15);
+        let address = super::Thin::addr(&node.0);
+        let Ok((T__Pair(x, y, n), token)) = node.try_take_reusing::<T__Pair>() else {
+            panic!("only owner");
+        };
+        let again = T::new_in([&token], T__Pair(y, x, n));
+        assert_eq!(super::Thin::addr(&again.0), address);
+        assert_eq!(
+            again.0.class_bits(),
+            0,
+            "a node made in reused memory has no class"
+        );
+        assert_eq!(sum(&again), 15);
+        drop(token);
+        drop(again);
+        drop(other);
+        assert_eq!(drops.load(Ordering::SeqCst), 6);
+    }
+
+    #[test]
+    #[cfg(feature = "equality-classes")]
+    fn equal_nodes_found_equal_join_a_class_and_keep_their_tags() {
+        use crate::NodeId;
+        let drops = Arc::new(AtomicUsize::new(0));
+        let (a, b, c) = (
+            chain(&drops, 1, 8),
+            chain(&drops, 1, 8),
+            chain(&drops, 1, 8),
+        );
+        assert!(walk_eq(&a, &b));
+        assert!(a.class_bits() != 0 && b.class_bits() != 0);
+        assert!(walk_eq(&b, &c));
+        // `a` and `c` meet in one class now; the answer stays right, and
+        // the tags under the class bits are read as before.
+        assert!(walk_eq(&a, &c));
+        assert_eq!(a.tag(), 2);
+        assert_eq!(sum(&a), sum(&c));
+        assert!(!walk_eq(&a, &chain(&drops, 2, 8)));
+        assert!(!walk_eq(&a, &chain(&drops, 1, 7)));
+    }
+
+    #[test]
+    #[cfg(feature = "equality-classes")]
+    fn a_node_made_where_a_freed_one_was_has_no_class() {
+        use crate::NodeId;
+        let drops = Arc::new(AtomicUsize::new(0));
+        let keep = chain(&drops, 1, 8);
+        for round in 0..64u64 {
+            // Equal to `keep`, joined with it, then freed: the allocator
+            // hands its memory to the next chains, equal or not.
+            let twin = chain(&drops, 1, 8);
+            assert!(walk_eq(&keep, &twin));
+            drop(twin);
+            let other = chain(&drops, 2 + round, 8);
+            assert_eq!(other.class_bits(), 0);
+            assert!(!walk_eq(&keep, &other));
+            assert!(walk_eq(&keep, &chain(&drops, 1, 8)));
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "equality-classes")]
+    fn threads_comparing_shared_nodes_answer_right() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let ones: Vec<T> = (0..4).map(|_| chain(&drops, 1, 8)).collect();
+        let twos: Vec<T> = (0..4).map(|_| chain(&drops, 2, 8)).collect();
+        std::thread::scope(|scope| {
+            for t in 0..4 {
+                let (ones, twos) = (&ones, &twos);
+                scope.spawn(move || {
+                    for i in 0..200 {
+                        let (x, y) = (i % 4, (i + t + 1) % 4);
+                        assert!(walk_eq(&ones[x], &ones[y]));
+                        assert!(walk_eq(&twos[x], &twos[y]));
+                        assert!(!walk_eq(&ones[x], &twos[y]));
+                    }
+                });
+            }
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "equality-classes-check")]
+    #[should_panic(expected = "an equality class held two unequal nodes")]
+    fn the_check_feature_compares_every_answer_from_a_class() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let (a, b) = (chain(&drops, 1, 8), chain(&drops, 2, 8));
+        // A class no comparison could make: the check finds it out.
+        crate::eq_classes::join(&a, &b);
+        walk_eq(&a, &b);
+    }
+
     #[test]
     fn walk_eq_compares_values_and_shares_equal_nodes() {
         let drops = Arc::new(AtomicUsize::new(0));
@@ -1983,6 +2187,13 @@ mod tests {
                 Some(L__Pairs::Leaf(a, b)) => a == b,
                 Some(L__Pairs::Nil) => true,
                 Some(L__Pairs::Held(a, b)) => a.0 == b.0,
+                #[cfg(feature = "equality-classes")]
+                Some(L__Pairs::Node(a, b)) => {
+                    walk.node_classed::<4, _>(self, other, true, |walk| {
+                        a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
+                    })
+                }
+                #[cfg(not(feature = "equality-classes"))]
                 Some(L__Pairs::Node(a, b)) => walk.node(self, other, true, |walk| {
                     a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
@@ -2028,6 +2239,33 @@ mod tests {
             };
             at = next;
         }
+    }
+
+    /// A sum some `lazy f(…)` returns has no equality classes: a node a
+    /// call was made in keeps the call's state above its tag, and a deep
+    /// comparison of such values, made and forced, writes nothing there.
+    #[test]
+    #[cfg(feature = "equality-classes")]
+    fn a_sum_with_deferred_calls_has_no_classes() {
+        use crate::NodeId;
+        static MADE: AtomicUsize = AtomicUsize::new(0);
+        let deep =
+            |n: u64| L::deferred((super::Kept(n), ()), |(super::Kept(n), ())| spine(n, &MADE));
+        let (a, b) = (deep(12), deep(12));
+        for _ in 0..3 {
+            assert!(walk_eq(&a, &b));
+            assert!(!walk_eq(&a, &deep(11)));
+        }
+        let mut at = a.clone();
+        loop {
+            assert_eq!(at.class_bits(), 0);
+            let next = match at.view() {
+                L__View::Node(node) => node.1.clone(),
+                _ => break,
+            };
+            at = next;
+        }
+        assert_eq!(l_sum(&a), l_sum(&b));
     }
 
     #[test]

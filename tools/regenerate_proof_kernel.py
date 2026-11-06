@@ -92,6 +92,9 @@ def generate(aver_bin: Path, entry: str, module: str, destination: Path) -> None
                 entry,
                 "--target",
                 "rust",
+                # The aver crate builds aver-rt without equality classes.
+                "--equality-classes",
+                "0",
                 "--module-root",
                 ".",
                 "-o",
