@@ -75,6 +75,9 @@ pub fn generate_cargo_toml(
     if plain_counts {
         rt_features.push("plain-counts");
     }
+    if rust.equality_classes > 0 {
+        rt_features.push("equality-classes");
+    }
     rt_features.sort();
 
     let mut deps = Vec::new();
@@ -258,6 +261,30 @@ mod tests {
         assert!(manifest.contains(
             "[profile.iteration]\ninherits = \"release\"\nopt-level = 1\nlto = false\ncodegen-units = 256\nincremental = true"
         ));
+    }
+
+    /// `[rust] equality_classes` above 0 turns on aver-rt's
+    /// `equality-classes`; 0 leaves it off.
+    #[test]
+    fn equality_classes_turn_on_the_runtime_feature() {
+        let manifest = |equality_classes| {
+            generate_cargo_toml(
+                "demo",
+                &HashSet::new(),
+                false,
+                false,
+                false,
+                &ProviderComposition::default(),
+                false,
+                RustOptions {
+                    equality_classes,
+                    ..Default::default()
+                },
+                false,
+            )
+        };
+        assert!(manifest(8).contains("\"equality-classes\""));
+        assert!(!manifest(0).contains("equality-classes"));
     }
 
     /// `[rust] panic = "abort"` turns unwinding off in the profiles that run

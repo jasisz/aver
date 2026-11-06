@@ -248,9 +248,13 @@ fn a_certified_build_compares_slices_in_place_outside_kept_functions() {
         file: "tests/fixtures/cert_one_build/slice_eq.av".into(),
         module_root: None,
     };
-    // Without trees, twins and self-tail loops, so that a difference can
-    // only come from the kept functions or the slice comparison.
-    let env = [("AVER_NO_SELF_TAIL_LOOPS", "1")];
+    // Without trees, twins, self-tail loops and shared string literals, so
+    // that a difference can only come from the kept functions or the slice
+    // comparison.
+    let env = [
+        ("AVER_NO_SELF_TAIL_LOOPS", "1"),
+        ("AVER_NO_STRING_LITERAL_POOL", "1"),
+    ];
     let (plain, _) = compile_with_env(&repo_root, &entry, &[], false, &env).unwrap();
     let (certified, names) =
         compile_with_env(&repo_root, &entry, &["--certify"], false, &env).unwrap();

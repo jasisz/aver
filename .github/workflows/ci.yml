@@ -241,6 +241,11 @@ jobs:
       - name: Test aver-rt with plain counts
         run: cargo test -p aver-rt --lib --features plain-counts
 
+      # Equality classes (`[rust] equality_classes`), every answer from a
+      # class compared in full as well.
+      - name: Test aver-rt with equality classes
+        run: cargo test -p aver-rt --lib --features equality-classes-check
+
       # The nodes of user values and of the runtime's collections are
       # reference counted by hand-written unsafe code; Miri checks it for
       # undefined behaviour and data races. Only those modules and the list
@@ -252,6 +257,9 @@ jobs:
 
       - name: Miri on the reference-counted nodes
         run: cargo +nightly miri test -p aver-rt --lib -- shared::tests shared_eq::tests thin::tests tests::list_node tests::owned_prepend_and_uncons tests::uncons_reuse_builds
+
+      - name: Miri on equality classes
+        run: cargo +nightly miri test -p aver-rt --lib --features equality-classes -- eq_classes::tests thin::tests::class_bits thin::tests::equal_nodes_found thin::tests::a_node_made_where thin::tests::threads_comparing thin::tests::a_sum_with_deferred
 
       # The same with the counts a single-thread build uses: plain loads and
       # stores, so a test that shares nodes between threads is left out.
@@ -440,6 +448,7 @@ jobs:
             wasm_gc_int_tree_differential \
             wasm_gc_twins_differential \
             wasm_gc_string_builder_differential \
+            wasm_gc_string_literal_pool \
             wasm_gc_record_views \
             wasm_gc_map_versions_spec \
             wasm_gc_map_int_keys_differential \

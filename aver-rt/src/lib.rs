@@ -7,6 +7,8 @@ mod counted;
 mod counts;
 pub mod crypto;
 mod display;
+#[cfg(feature = "equality-classes")]
+pub mod eq_classes;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod int;

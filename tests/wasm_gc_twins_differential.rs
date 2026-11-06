@@ -111,3 +111,36 @@ fn self_tail_loops_apply_to_certified_builds() {
     assert_ne!(compile(false, true), compile(false, false));
     assert_ne!(compile(true, true), compile(true, false));
 }
+
+// Outside a `--certify` build a twin's self loop runs only while every `Int`
+// param is a machine word (`self_tail_loop::lower_split`); a call or a turn
+// that brings a Big one runs the body outside the loop. The fixture crosses
+// both ways and stays Big for long runs.
+#[test]
+fn self_loops_on_words_print_what_the_vm_prints() {
+    let file = fixture("word_loop.av");
+    let vm = run(&file, false);
+    assert_eq!(vm, run(&file, true));
+    let compile = |on: bool| {
+        let out_dir = tempfile::tempdir().expect("compile directory");
+        let mut cmd = Command::new(aver_cmd::aver_bin());
+        cmd.current_dir(aver_cmd::repo_root())
+            .arg("compile")
+            .arg(&file)
+            .args(["--target", "wasm-gc", "-o"])
+            .arg(out_dir.path());
+        if !on {
+            cmd.env("AVER_NO_WORD_LOOP", "1");
+        }
+        let out = cmd.output().expect("aver compile executes");
+        assert!(out.status.success(), "{}", aver_cmd::format_output(&out));
+        std::fs::read(
+            out_dir
+                .path()
+                .join(file.with_extension("wasm").file_name().expect("name")),
+        )
+        .expect("module written")
+    };
+    // Not vacuous: the plain build takes the fast form.
+    assert_ne!(compile(true), compile(false));
+}

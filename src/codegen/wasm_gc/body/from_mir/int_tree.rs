@@ -96,6 +96,7 @@ impl Drop for IntTreeReset {
         twin::set_self(None);
         set_allowed(true);
         set_literal_pool(HashMap::new());
+        super::set_string_literal_pool(HashMap::new());
         record_literals(false);
     }
 }

@@ -57,6 +57,7 @@ fn empty_ctx() -> CodegenContext {
         recorded_source: None,
         emit_self_host_support: false,
         single_thread: false,
+        rust_equality_classes: 0,
         mutual_tco_members: HashSet::<crate::ir::FnId>::new(),
         recursive_fns: HashSet::<crate::ir::FnId>::new(),
         buffer_build_sinks: HashMap::new(),

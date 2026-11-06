@@ -4,6 +4,47 @@
 
 use super::*;
 
+use std::cell::RefCell;
+
+thread_local! {
+    /// The global holding the shared `String` of each literal data segment,
+    /// by segment index; empty in a `--certify` build, which builds every
+    /// literal where it is read.
+    static LITERAL_POOL: RefCell<HashMap<u32, u32>> = RefCell::new(HashMap::new());
+}
+
+/// The globals holding the shared literal strings, empty to stop sharing.
+pub(crate) fn set_literal_pool(pool: HashMap<u32, u32>) {
+    LITERAL_POOL.with(|p| *p.borrow_mut() = pool);
+}
+
+/// Push the `String` of literal data segment `seg`, `len` bytes long. With
+/// the segment pooled, the string is built on the first read into its
+/// global (which starts null) and shared by every later read: no code
+/// writes into a `String` it did not just allocate, so one array serves
+/// every use of the literal. Otherwise it is built where it is read.
+pub(crate) fn emit_literal_string(func: &mut Function, seg: u32, len: usize, string_ty: u32) {
+    let make = |func: &mut Function| {
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::I32Const(len as i32));
+        func.instruction(&Instruction::ArrayNewData {
+            array_type_index: string_ty,
+            array_data_index: seg,
+        });
+    };
+    let Some(global) = LITERAL_POOL.with(|p| p.borrow().get(&seg).copied()) else {
+        make(func);
+        return;
+    };
+    func.instruction(&Instruction::GlobalGet(global));
+    func.instruction(&Instruction::RefIsNull);
+    func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    make(func);
+    func.instruction(&Instruction::GlobalSet(global));
+    func.instruction(&Instruction::End);
+    func.instruction(&Instruction::GlobalGet(global));
+}
+
 /// Emit one value through the primitive-only String coercion shared by native
 /// interpolation and the compiler-fabricated `__to_str` intrinsic.
 ///
@@ -140,12 +181,7 @@ pub(crate) fn emit_mir_interpolated_str(
                         .ok_or(WasmGcError::Validation(format!(
                             "Interpolation literal `{s:?}` not in segment table"
                         )))?;
-                func.instruction(&Instruction::I32Const(0));
-                func.instruction(&Instruction::I32Const(bytes.len() as i32));
-                func.instruction(&Instruction::ArrayNewData {
-                    array_type_index: string_type_idx,
-                    array_data_index: seg_idx,
-                });
+                emit_literal_string(func, seg_idx, bytes.len(), string_type_idx);
             }
             MirStrPart::Expr(inner) => {
                 if emit_mir_primitive_to_string(func, inner, slots, ctx)?.is_none() {
