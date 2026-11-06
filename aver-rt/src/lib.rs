@@ -2,6 +2,7 @@
 
 pub mod provider;
 
+mod block;
 pub mod bytebuilder;
 mod counted;
 mod counts;
@@ -324,9 +325,17 @@ pub fn char_str(c: char) -> AverStr {
     AverStr::from(&*c.encode_utf8(&mut [0; 4]))
 }
 
-/// `String.chars`: one string per character, built in one pass.
+/// `String.chars`: one string per character, built in one pass into the
+/// list's block (room for one per byte, exact on ASCII text).
 pub fn string_chars(text: &str) -> AverList<AverStr> {
-    AverList::from_vec(text.chars().map(char_str).collect())
+    if text.is_empty() {
+        return AverList::empty();
+    }
+    let mut items = block::Block::with_capacity(text.len());
+    for c in text.chars() {
+        items.push_built(char_str(c));
+    }
+    AverList::from_block(items)
 }
 
 /// `String.split` on a separator of one byte, an ASCII character: the parts
@@ -334,14 +343,14 @@ pub fn string_chars(text: &str) -> AverList<AverStr> {
 /// word at a time; the text itself when it does not occur.
 pub fn string_split_byte(text: &AverStr, separator: u8) -> AverList<AverStr> {
     debug_assert!(separator.is_ascii(), "a separator of one byte is ASCII");
-    let mut parts = Vec::new();
+    let mut parts = block::Block::with_capacity(4);
     let mut start = 0;
     while let Some(at) = find_byte(text.as_bytes(), start, separator) {
-        parts.push(AverStr::from(&text[start..at]));
+        parts.push_built(AverStr::from(&text[start..at]));
         start = at + 1;
     }
-    parts.push(string_part(text, &text[start..]));
-    AverList::from_vec(parts)
+    parts.push_built(string_part(text, &text[start..]));
+    AverList::from_block(parts)
 }
 
 /// The position of the first `byte` in `bytes` at or after `from`, looked
@@ -940,14 +949,18 @@ pub fn vector_size_error_message() -> String {
     format!("Vector.new: size must be between 0 and {MAX_MATERIALIZED_VECTOR_ELEMENTS}")
 }
 
+/// One allocation holds the count, the length and the elements
+/// ([`block::Block`]), the same body a flat list has, so `List.fromVector`
+/// and `Vector.fromList` of a flat list share it rather than copy.
 pub struct AverVector<T> {
-    inner: Rc<Vec<T>>,
+    inner: block::Block<T>,
 }
 
 impl<T> Clone for AverVector<T> {
+    #[inline]
     fn clone(&self) -> Self {
         Self {
-            inner: Rc::clone(&self.inner),
+            inner: self.inner.clone(),
         }
     }
 }
@@ -955,7 +968,7 @@ impl<T> Clone for AverVector<T> {
 impl<T: Clone> AverVector<T> {
     pub fn new(size: usize, default: T) -> Self {
         Self {
-            inner: Rc::new(vec![default; size]),
+            inner: block::Block::filled(size, default),
         }
     }
 
@@ -968,7 +981,7 @@ impl<T: Clone> AverVector<T> {
     /// Caller must ensure `index < len()`.
     pub fn set_unchecked(mut self, index: usize, value: T) -> Self {
         debug_assert!(index < self.inner.len());
-        Rc::make_mut(&mut self.inner)[index] = value;
+        self.inner.make_mut()[index] = value;
         self
     }
 
@@ -994,16 +1007,18 @@ impl<T: Clone> AverVector<T> {
     }
 
     pub fn from_vec(v: Vec<T>) -> Self {
-        Self { inner: Rc::new(v) }
+        Self {
+            inner: block::Block::from_vec(v),
+        }
     }
 
     pub fn to_vec(&self) -> Vec<T> {
-        self.inner.as_ref().clone()
+        self.inner.to_vec()
     }
 
-    /// O(1) — shares Rc<Vec<T>> with the resulting Flat AverList.
+    /// O(1) — shares the block with the resulting Flat AverList.
     pub fn to_list(&self) -> AverList<T> {
-        AverList::from_rc_vec(Rc::clone(&self.inner))
+        AverList::from_block(self.inner.clone())
     }
 
     /// O(1) if list is Flat with start=0 (e.g. after List.reverse), O(n) otherwise.
@@ -1012,7 +1027,7 @@ impl<T: Clone> AverVector<T> {
         T: Clone,
     {
         Self {
-            inner: list.into_rc_vec(),
+            inner: list.to_block(),
         }
     }
 
@@ -1077,8 +1092,13 @@ struct TraversalSegment<T> {
 }
 
 enum TraversalSource<T> {
-    Flat { items: Rc<Vec<T>>, start: usize },
-    PrependHead { node: Rc<AverListInner<T>> },
+    Flat {
+        items: block::Block<T>,
+        start: usize,
+    },
+    PrependHead {
+        node: Rc<AverListInner<T>>,
+    },
 }
 
 impl<T> Clone for TraversalSegment<T> {
@@ -1086,7 +1106,7 @@ impl<T> Clone for TraversalSegment<T> {
         Self {
             source: match &self.source {
                 TraversalSource::Flat { items, start } => TraversalSource::Flat {
-                    items: Rc::clone(items),
+                    items: items.clone(),
                     start: *start,
                 },
                 TraversalSource::PrependHead { node } => TraversalSource::PrependHead {
@@ -1120,7 +1140,7 @@ impl<T> TraversalSegment<T> {
 /// (a longer join is built as an `Indexed` table, [`AverList::concat_node`]).
 enum AverListInner<T> {
     Flat {
-        items: Rc<Vec<T>>,
+        items: block::Block<T>,
     },
     Prepend {
         head: T,
@@ -1330,7 +1350,7 @@ impl<T> AverList<T> {
         match self.shape() {
             Some(AverListInner::Flat { items }) => {
                 let len = items.len().saturating_sub(start);
-                Self::push_flat_segment(&mut parts, Rc::clone(items), start, len);
+                Self::push_flat_segment(&mut parts, items.clone(), start, len);
             }
             Some(AverListInner::Indexed { parts: table, .. }) => {
                 Self::push_indexed_view(&mut parts, table, start, segment_index);
@@ -1372,7 +1392,7 @@ impl<T> AverList<T> {
 
     fn push_flat_segment(
         parts: &mut Vec<TraversalSegment<T>>,
-        items: Rc<Vec<T>>,
+        items: block::Block<T>,
         start: usize,
         len: usize,
     ) {
@@ -1408,7 +1428,7 @@ impl<T> AverList<T> {
         let end = Self::next_segment_end(parts, len);
         let source = match &segment.source {
             TraversalSource::Flat { items, start } => TraversalSource::Flat {
-                items: Rc::clone(items),
+                items: items.clone(),
                 start: start + skip,
             },
             TraversalSource::PrependHead { node } => {
@@ -1455,7 +1475,7 @@ impl<T> AverList<T> {
             }
             match node.as_ref() {
                 AverListInner::Flat { items } => {
-                    Self::push_flat_segment(&mut parts, Rc::clone(items), list.start(), list.len());
+                    Self::push_flat_segment(&mut parts, items.clone(), list.start(), list.len());
                 }
                 AverListInner::Prepend { tail, .. } => {
                     pending.push(tail);
@@ -1759,23 +1779,67 @@ impl<T> AverList<T> {
             return Self::empty();
         }
         Self::node(AverListInner::Flat {
-            items: Rc::new(items),
+            items: block::Block::from_vec(items),
         })
     }
 
-    /// O(1) if Flat with start=0, wraps existing Rc<Vec<T>> directly.
-    pub fn from_rc_vec(items: Rc<Vec<T>>) -> Self {
+    /// The items an iterator yields, gathered straight into one block (see
+    /// `Block::from_iter_grow`); none is `[]`.
+    pub fn from_items(items: impl IntoIterator<Item = T>) -> Self {
+        let items = block::Block::from_iter_grow(items);
+        if items.is_empty() {
+            return Self::empty();
+        }
+        Self::from_block(items)
+    }
+
+    /// The first `len` items an iterator yields, in a block of exactly that
+    /// room: for an iterator whose length the caller knows (`List.zip`,
+    /// `List.take`) but whose size hint does not tell it.
+    pub fn from_items_len(len: usize, items: impl IntoIterator<Item = T>) -> Self {
+        if len == 0 {
+            return Self::empty();
+        }
+        Self::from_block(block::Block::from_iter_len(len, items))
+    }
+
+    /// The `len` items an iterator yields, sorted, in one block: `Map.keys`.
+    pub fn from_items_sorted(len: usize, items: impl IntoIterator<Item = T>) -> Self
+    where
+        T: Ord + Clone,
+    {
+        let mut items = block::Block::from_iter_len(len, items);
+        if items.is_empty() {
+            return Self::empty();
+        }
+        items.as_mut_slice().sort();
+        Self::from_block(items)
+    }
+
+    /// A list literal: its items moved into one block, with no vector
+    /// in between (two allocations, the block and the node over it).
+    pub fn from_array<const N: usize>(items: [T; N]) -> Self {
+        if N == 0 {
+            return Self::empty();
+        }
+        Self::from_block(block::Block::from_iter_len(N, items))
+    }
+
+    /// O(1): a flat list over the block, shared.
+    pub(crate) fn from_block(items: block::Block<T>) -> Self {
         Self::node(AverListInner::Flat { items })
     }
 
-    /// Extract the backing Rc<Vec<T>> — O(1) if Flat with start=0, O(n) otherwise.
-    pub fn into_rc_vec(&self) -> Rc<Vec<T>>
+    /// The block of the list's elements — shared, O(1), when the list is
+    /// flat from its first element; otherwise one new block the elements
+    /// are cloned into, O(n), with no vector in between.
+    pub(crate) fn to_block(&self) -> block::Block<T>
     where
         T: Clone,
     {
         match self.shape() {
-            Some(AverListInner::Flat { items }) if self.start == 0 => Rc::clone(items),
-            _ => Rc::new(self.to_vec()),
+            Some(AverListInner::Flat { items }) if self.start == 0 => items.clone(),
+            _ => block::Block::from_iter_len(self.len(), self.iter().cloned()),
         }
     }
 
@@ -1946,17 +2010,26 @@ impl<T> AverList<T> {
     where
         T: Clone,
     {
-        let mut out = self.to_vec();
-        out.reverse();
-        Self::from_vec(out)
+        if self.is_empty() {
+            return Self::empty();
+        }
+        let mut out = block::Block::from_iter_len(self.len(), self.iter().cloned());
+        out.as_mut_slice().reverse();
+        Self::from_block(out)
     }
 
-    /// `reverse` of a list the caller hands over.
+    /// `reverse` of a list the caller hands over, gathered straight into
+    /// the block of the new flat list.
     pub fn reverse_owned(self) -> Self
     where
         T: Clone,
     {
-        Self::from_vec(self.into_reversed_vec())
+        if self.is_empty() {
+            return Self::empty();
+        }
+        let mut out = block::Block::with_capacity(self.len());
+        self.reversed_into(&mut out);
+        Self::from_block(out)
     }
 
     /// The elements last to first, from a list the caller hands over: nodes
@@ -1967,6 +2040,15 @@ impl<T> AverList<T> {
         T: Clone,
     {
         let mut out = Vec::with_capacity(self.len());
+        self.reversed_into(&mut out);
+        out
+    }
+
+    /// [`Self::into_reversed_vec`] into any [`Gather`].
+    fn reversed_into<G: Gather<T>>(self, out: &mut G)
+    where
+        T: Clone,
+    {
         let mut rest = self;
         loop {
             let unique = rest.start == 0 && rest.inner.as_mut().and_then(Rc::get_mut).is_some();
@@ -1975,29 +2057,27 @@ impl<T> AverList<T> {
                     let Some((head, tail)) = rest.uncons_owned() else {
                         unreachable!("a prepend node has a head")
                     };
-                    out.push(head);
+                    out.gather(head);
                     rest = tail;
                 }
                 Some(AverListInner::Flat { .. }) => {
                     let start = rest.start();
-                    if let Some(AverListInner::Flat { items }) =
-                        rest.inner.as_mut().and_then(Rc::get_mut)
-                        && let Some(items) = Rc::get_mut(items)
-                    {
-                        out.extend(items.drain(start..));
-                    } else {
-                        out.extend(rest.iter().cloned());
+                    let moved = match rest.inner.as_mut().and_then(Rc::get_mut) {
+                        Some(AverListInner::Flat { items }) => out.take_tail(items, start),
+                        _ => false,
+                    };
+                    if !moved {
+                        rest.iter().cloned().for_each(|x| out.gather(x));
                     }
                     break;
                 }
                 _ => {
-                    out.extend(rest.iter().cloned());
+                    rest.iter().cloned().for_each(|x| out.gather(x));
                     break;
                 }
             }
         }
-        out.reverse();
-        out
+        out.reverse_gathered();
     }
 
     pub fn contains(&self, item: &T) -> bool
@@ -2005,6 +2085,44 @@ impl<T> AverList<T> {
         T: PartialEq,
     {
         self.iter().any(|x| x == item)
+    }
+}
+
+/// Where [`AverList::reversed_into`] gathers the elements it takes apart:
+/// a vector, or the block of a new flat list that its builder holds alone.
+trait Gather<T> {
+    fn gather(&mut self, item: T);
+    /// Moves the elements of `items` from `start` on over when that block
+    /// is held alone; false, and nothing changed, otherwise.
+    fn take_tail(&mut self, items: &mut block::Block<T>, start: usize) -> bool;
+    fn reverse_gathered(&mut self);
+}
+
+impl<T> Gather<T> for Vec<T> {
+    #[inline]
+    fn gather(&mut self, item: T) {
+        self.push(item);
+    }
+    fn take_tail(&mut self, items: &mut block::Block<T>, start: usize) -> bool {
+        items.drain_tail_into(start, self)
+    }
+    fn reverse_gathered(&mut self) {
+        self.reverse();
+    }
+}
+
+impl<T: Clone> Gather<T> for block::Block<T> {
+    #[inline]
+    fn gather(&mut self, item: T) {
+        if self.push_unique(item).is_err() {
+            unreachable!("a block being gathered is held alone");
+        }
+    }
+    fn take_tail(&mut self, items: &mut block::Block<T>, start: usize) -> bool {
+        items.drain_tail_into_block(start, self)
+    }
+    fn reverse_gathered(&mut self) {
+        self.as_mut_slice().reverse();
     }
 }
 
@@ -2481,6 +2599,49 @@ mod tests {
         assert_eq!(onto_spent.len(), 1);
     }
 
+    /// Lists gathered from an iterator straight into a block: none is `[]`,
+    /// more than the first room grows it, sorted ones come out in order, and
+    /// `String.chars` and `String.split` give what the vector path gave.
+    #[test]
+    fn lists_gathered_from_iterators_hold_their_items() {
+        use crate::shared::Shared as Rc;
+        use crate::{string_chars, string_split_byte};
+        let none = AverList::<i64>::from_items(std::iter::empty());
+        assert!(none.is_empty() && none == AverList::empty());
+        let many = AverList::from_items((0..37i64).filter(|n| n % 2 == 0));
+        assert_eq!(
+            many.iter().copied().collect::<Vec<_>>(),
+            (0..37).step_by(2).collect::<Vec<_>>()
+        );
+        let counted = Rc::new(5);
+        let held = AverList::from_items((0..9).map(|_| counted.clone()));
+        assert_eq!(Rc::strong_count(&counted), 10);
+        drop(held);
+        assert_eq!(Rc::strong_count(&counted), 1);
+        let sorted = AverList::from_items_sorted(5, [5i64, 1, 4, 2, 3]);
+        assert_eq!(
+            sorted.iter().copied().collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5]
+        );
+        assert!(AverList::<i64>::from_items_sorted(0, []).is_empty());
+        let first = AverList::from_items_len(3, (0..10i64).map(|n| n * n));
+        assert_eq!(first.iter().copied().collect::<Vec<_>>(), vec![0, 1, 4]);
+        assert!(AverList::<i64>::from_items_len(0, 0..10).is_empty());
+
+        let chars = string_chars("aż b");
+        assert_eq!(
+            chars.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+            vec!["a", "ż", " ", "b"]
+        );
+        assert!(string_chars("").is_empty());
+        let parts = string_split_byte(&AverStr::from("a,,bc,d,e,f,g"), b',');
+        assert_eq!(
+            parts.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+            vec!["a", "", "bc", "d", "e", "f", "g"]
+        );
+        assert_eq!(string_split_byte(&AverStr::from("x"), b',').len(), 1);
+    }
+
     /// A unique `Prepend` node taken apart by `uncons_reuse` holds the next
     /// node built in its slot; a shared node, another shape or an unused
     /// slot leave every list as it was and free what they should.
@@ -2717,7 +2878,7 @@ mod tests {
         assert!(empty.iter().next().is_none());
         assert_eq!(empty.as_slice(), Some(&[][..]));
         assert!(empty.drop_first(3).is_empty());
-        assert!(empty.into_rc_vec().is_empty());
+        assert!(empty.to_block().is_empty());
     }
 
     /// One step off a flat list allocates nothing: the tail is the node it was
@@ -2983,6 +3144,52 @@ mod tests {
         assert_eq!(list.to_vec(), vec![1, 2, 3, 4]);
         assert_eq!(written.get(3), Some(&99));
         assert_eq!(vector.get(3), Some(&4));
+    }
+
+    /// A vector and a flat list share one block both ways, and a list
+    /// literal is that block from the start.
+    #[test]
+    fn a_vector_and_a_flat_list_share_one_block() {
+        let list = AverList::from_array([String::from("a"), String::from("b"), String::from("c")]);
+        let vector = super::AverVector::from_list(&list);
+        assert!(std::ptr::eq(vector.get(0).unwrap(), list.get(0).unwrap()));
+        let back = vector.to_list();
+        assert!(std::ptr::eq(back.get(2).unwrap(), list.get(2).unwrap()));
+        // A sole owner writes in place; a shared one copies first.
+        let written = vector.set_owned(1, String::from("x")).unwrap();
+        assert_eq!(list.to_vec(), ["a", "b", "c"]);
+        assert_eq!(back.to_vec(), ["a", "b", "c"]);
+        assert_eq!(written.get(1).map(String::as_str), Some("x"));
+        drop((list, back));
+        let before = written.get(0).unwrap() as *const String;
+        let again = written.set_owned(2, String::from("y")).unwrap();
+        assert!(std::ptr::eq(again.get(0).unwrap(), before));
+        assert_eq!(
+            again.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["a", "x", "y"]
+        );
+        // A prepended list is gathered into a new block.
+        let chain = AverList::prepend(1, &AverList::prepend(2, &AverList::empty()));
+        assert_eq!(super::AverVector::from_list(&chain).to_vec(), vec![1, 2]);
+        assert!(AverList::<u8>::from_array([]).is_empty());
+    }
+
+    /// Reversing a list it alone holds moves its prepended heads and its flat
+    /// body into the new block; a shared body is cloned and left whole.
+    #[test]
+    fn reversing_an_owned_list_gathers_into_one_block() {
+        let s = |x: &str| String::from(x);
+        let body = AverList::from_array([s("c"), s("d"), s("e")]);
+        let shared = body.clone();
+        let owned = AverList::prepend_owned(s("a"), AverList::prepend_owned(s("b"), body));
+        let reversed = owned.reverse_owned();
+        assert_eq!(reversed.to_vec(), ["e", "d", "c", "b", "a"]);
+        assert_eq!(shared.to_vec(), ["c", "d", "e"]);
+        let alone = AverList::from_array([s("x"), s("y"), s("z")]).drop_first(1);
+        let tail = AverList::prepend_owned(s("w"), alone).reverse_owned();
+        assert_eq!(tail.to_vec(), ["z", "y", "w"]);
+        assert_eq!(reversed.reverse().to_vec(), ["a", "b", "c", "d", "e"]);
+        assert!(AverList::<String>::empty().reverse_owned().is_empty());
     }
 
     #[test]

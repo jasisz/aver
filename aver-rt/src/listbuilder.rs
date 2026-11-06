@@ -29,7 +29,10 @@ use crate::{AverList, AverListInner};
 /// A fresh builder, with room for `capacity` elements if the caller has
 /// a useful guess and no harm done when it does not.
 pub fn list_builder_new<T>(capacity: usize) -> AverList<T> {
-    AverList::from_vec(Vec::with_capacity(capacity))
+    if capacity == 0 {
+        return AverList::empty();
+    }
+    AverList::from_block(crate::block::Block::with_capacity(capacity))
 }
 
 /// Append `item`, consuming the builder and handing back the one that
@@ -39,17 +42,24 @@ pub fn list_builder_new<T>(capacity: usize) -> AverList<T> {
 /// its own beginning — the shape [`list_builder_new`] produces and every
 /// push preserves. Otherwise a copy, which is what `AverList::append`
 /// would have done anyway.
-pub fn list_builder_push<T: Clone>(mut builder: AverList<T>, item: T) -> AverList<T> {
+pub fn list_builder_push<T: Clone>(mut builder: AverList<T>, mut item: T) -> AverList<T> {
     if builder.start == 0
         && let Some(AverListInner::Flat { items }) = builder.inner.as_mut().and_then(Rc::get_mut)
-        && let Some(vec) = Rc::get_mut(items)
     {
-        vec.push(item);
-        return builder;
+        match items.push_unique(item) {
+            Ok(()) => return builder,
+            Err(back) => item = back,
+        }
     }
-    let mut copied = builder.to_vec();
-    copied.push(item);
-    AverList::from_vec(copied)
+    // Room for as many again, as a vector's push would leave, so the next
+    // pushes go in place.
+    let mut copied = crate::block::Block::with_capacity((builder.len() * 2).max(4));
+    for x in builder.iter().cloned().chain(std::iter::once(item)) {
+        if copied.push_unique(x).is_err() {
+            unreachable!("a new block is held alone");
+        }
+    }
+    AverList::from_block(copied)
 }
 
 /// The list the builder collected, in the order it was appended.

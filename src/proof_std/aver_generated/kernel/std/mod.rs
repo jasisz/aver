@@ -1328,9 +1328,9 @@ pub fn close(
     )?;
     if (l.to == r.to) {
         {
-            let __arg6 @ _ = aver_rt::AverList::from_vec(vec![lhs, l.to.clone(), rhs]);
+            let __arg6 @ _ = aver_rt::AverList::from_array([lhs, l.to.clone(), rhs]);
             {
-                let __arg7 @ _ = aver_rt::AverList::from_vec(vec![
+                let __arg7 @ _ = aver_rt::AverList::from_array([
                     l.proof,
                     crate::proof_std::aver_generated::kernel::proof::Proof::PSymm(
                         crate::proof_std::aver_generated::kernel::proof::Proof__PSymm(r.proof),
@@ -2409,7 +2409,7 @@ pub fn listCases(
     };
     let ih @ _ = {
         let __arg25 @ _ = aver_rt::AverList::concat(
-            &aver_rt::AverList::from_vec(vec![h.clone(), tl.clone()]),
+            &aver_rt::AverList::from_array([h.clone(), tl.clone()]),
             &used.clone(),
         );
         crate::proof_std::aver_generated::kernel::lib::fresh(::aver_rt::str_lit!("ih"), &__arg25)
@@ -2650,7 +2650,7 @@ pub fn opened(
     let elem @ _ =
         crate::proof_std::aver_generated::kernel::std::elemType(&goal.obligation.givens, v);
     let __arg6 @ _ = crate::proof_std::aver_generated::kernel::std::withoutList(goal, v);
-    let __arg7 @ _ = aver_rt::AverList::from_vec(vec![
+    let __arg7 @ _ = aver_rt::AverList::from_array([
         crate::proof_std::aver_generated::kernel::term::typed(h, elem.clone()),
         {
             let __arg5 @ _ = crate::proof_std::aver_generated::kernel::term::Ty::TyList(

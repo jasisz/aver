@@ -199,7 +199,7 @@ fn __mutual_tco_trampoline_2(
                 if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                     __MutualTco2::TokenizeStringAt__indexed(src, pos, acc)
                 } else {
-                    return aver_rt::AverList::from_vec(vec![
+                    return aver_rt::AverList::from_array([
                         crate::aver_generated::domain::token::Token::TkStr(acc),
                         crate::aver_generated::domain::token::Token::TkEof,
                     ]);
@@ -224,7 +224,7 @@ fn __mutual_tco_trampoline_2(
                         }
                     }
                     None => {
-                        return aver_rt::AverList::from_vec(vec![
+                        return aver_rt::AverList::from_array([
                             crate::aver_generated::domain::token::Token::TkStr(acc),
                             crate::aver_generated::domain::token::Token::TkEof,
                         ]);
@@ -277,7 +277,7 @@ fn __mutual_tco_trampoline_2(
                         }
                     }
                     None => {
-                        return aver_rt::AverList::from_vec(vec![
+                        return aver_rt::AverList::from_array([
                             crate::aver_generated::domain::token::Token::TkStr(acc),
                             crate::aver_generated::domain::token::Token::TkEof,
                         ]);
@@ -509,7 +509,7 @@ fn __mutual_tco_trampoline_3(
                 if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                     __MutualTco3::TokenizeInterpExprAt__indexed(src, pos)
                 } else {
-                    return aver_rt::AverList::from_vec(vec![
+                    return aver_rt::AverList::from_array([
                         crate::aver_generated::domain::token::Token::TkInterpEnd,
                         crate::aver_generated::domain::token::Token::TkEof,
                     ]);
@@ -524,7 +524,7 @@ fn __mutual_tco_trampoline_3(
                 ) {
                     Some(c @ _) => __MutualTco3::TokenizeInterpExprC__indexed(src, pos, c),
                     None => {
-                        return aver_rt::AverList::from_vec(vec![
+                        return aver_rt::AverList::from_array([
                             crate::aver_generated::domain::token::Token::TkInterpEnd,
                             crate::aver_generated::domain::token::Token::TkEof,
                         ]);

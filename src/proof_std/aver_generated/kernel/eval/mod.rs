@@ -1037,7 +1037,7 @@ pub fn sliced(l @ _: &Option<Val>, n @ _: &Option<Val>, front @ _: bool) -> Opti
                             Some(__pat3) => match __pat3 {
                                 crate::proof_std::aver_generated::kernel::eval::Val::VInt(k) => {
                                     if front {
-                                        Some(crate::proof_std::aver_generated::kernel::eval::Val::VList({ let __xs = &(vs); let __n = aver_rt::clamp_list_count(&(k)); aver_rt::AverList::from_vec(__xs.iter().take(__n).cloned().collect::<Vec<_>>()) }))
+                                        Some(crate::proof_std::aver_generated::kernel::eval::Val::VList({ let __xs = &(vs); let __n = aver_rt::clamp_list_count(&(k)); aver_rt::AverList::from_items_len(__xs.len().min(__n), __xs.iter().cloned()) }))
                                     } else {
                                         Some(crate::proof_std::aver_generated::kernel::eval::Val::VList({ let __xs = &(vs); let __n = aver_rt::clamp_list_count(&(k)); __xs.drop_first(__n) }))
                                     }

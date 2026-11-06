@@ -485,12 +485,12 @@ pub fn partsOf(
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                aver_rt::AverList::from_vec(vec![a.clone(), b.clone()])
+                aver_rt::AverList::from_array([a.clone(), b.clone()])
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyMap(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                aver_rt::AverList::from_vec(vec![a.clone(), b.clone()])
+                aver_rt::AverList::from_array([a.clone(), b.clone()])
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyTuple(__xs_fields) => {
                 let xs = &__xs_fields.0;
@@ -1159,7 +1159,7 @@ pub fn ctorFields(
             (__str_lit0, __str_lit1)
                 if str::eq(&__str_lit0, "cons") && str::eq(&__str_lit1, "List") =>
             {
-                Ok(aver_rt::AverList::from_vec(vec![
+                Ok(aver_rt::AverList::from_array([
                     {
                         let __arg5 @ _ =
                             crate::proof_kernel::aver_generated::kernel::types::partsOf(subject);
@@ -1320,14 +1320,14 @@ pub fn ctorsOf(
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyList(__a_fields) => {
                 let a = __a_fields.0.clone();
-                aver_rt::AverList::from_vec(vec![
+                aver_rt::AverList::from_array([
                     ::aver_rt::str_lit!("nil"),
                     ::aver_rt::str_lit!("cons"),
                 ])
             }
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyOption(__a_fields) => {
                 let a = __a_fields.0.clone();
-                aver_rt::AverList::from_vec(vec![
+                aver_rt::AverList::from_array([
                     ::aver_rt::str_lit!("Option.None"),
                     ::aver_rt::str_lit!("Option.Some"),
                 ])
@@ -1335,7 +1335,7 @@ pub fn ctorsOf(
             crate::proof_kernel::aver_generated::kernel::term::Ty__view::TyResult(__a_fields) => {
                 let a = __a_fields.0.clone();
                 let b = __a_fields.1.clone();
-                aver_rt::AverList::from_vec(vec![
+                aver_rt::AverList::from_array([
                     ::aver_rt::str_lit!("Result.Err"),
                     ::aver_rt::str_lit!("Result.Ok"),
                 ])
@@ -2671,16 +2671,16 @@ pub fn opType(
     let t @ _ = crate::proof_kernel::aver_generated::kernel::types::operands(o.clone(), a, b)?;
     {
         let __subject = (
-            aver_rt::AverList::from_vec(vec![::aver_rt::str_lit!("=="), ::aver_rt::str_lit!("!=")])
+            aver_rt::AverList::from_array([::aver_rt::str_lit!("=="), ::aver_rt::str_lit!("!=")])
                 .contains(&o),
-            aver_rt::AverList::from_vec(vec![
+            aver_rt::AverList::from_array([
                 ::aver_rt::str_lit!("<"),
                 ::aver_rt::str_lit!("<="),
                 ::aver_rt::str_lit!(">"),
                 ::aver_rt::str_lit!(">="),
             ])
             .contains(&o),
-            aver_rt::AverList::from_vec(vec![
+            aver_rt::AverList::from_array([
                 ::aver_rt::str_lit!("+"),
                 ::aver_rt::str_lit!("-"),
                 ::aver_rt::str_lit!("*"),
@@ -2918,7 +2918,7 @@ pub fn patVars(
             },
             crate::proof_kernel::aver_generated::kernel::term::Pat::PCons(h, t) => match &*__pat1 {
                 "List" => Ok({
-                    let __arg21 @ _ = aver_rt::AverList::from_vec(vec![h, t]);
+                    let __arg21 @ _ = aver_rt::AverList::from_array([h, t]);
                     {
                         let __arg22 @ _ =
                             crate::proof_kernel::aver_generated::kernel::types::ctorFields(

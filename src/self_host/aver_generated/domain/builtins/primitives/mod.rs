@@ -1415,11 +1415,7 @@ pub fn builtinStringSplitInner(
     crate::cancel_checkpoint();
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let sep @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(sepV)?;
-    let parts @ _ = aver_rt::AverList::from_vec(
-        s.split(&*sep)
-            .map(aver_rt::AverStr::from)
-            .collect::<Vec<_>>(),
-    );
+    let parts @ _ = aver_rt::AverList::from_items(s.split(&*sep).map(aver_rt::AverStr::from));
     Ok(crate::aver_generated::domain::value::Val::ValList(
         crate::aver_generated::domain::value::Val__ValList({
             let __arg5 @ _ = aver_rt::list_builder_new(0usize);

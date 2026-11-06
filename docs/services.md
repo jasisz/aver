@@ -77,7 +77,7 @@ List is a recursive structure. Use it for sequential processing with `prepend`, 
 
 Source: `src/types/vector.rs`
 
-Vector is a persistent indexed sequence. Use it for grids, buffers, lookup tables and anywhere else you need O(1) access by index. It is backed by `Rc<Vec<T>>` with copy-on-write: `set` mutates in place when the vector has a single owner and clones otherwise.
+Vector is a persistent indexed sequence. Use it for grids, buffers, lookup tables and anywhere else you need O(1) access by index. It is backed by one reference-counted block that holds the count, the length and the elements in a single allocation, with copy-on-write: `set` mutates in place when the vector has a single owner and clones otherwise.
 
 | Function | Signature | Notes |
 |---|---|---|

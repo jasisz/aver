@@ -145,7 +145,7 @@ pub fn patNames(
             let h = h.clone();
             let t = t.clone();
             {
-                let __arg8 @ _ = aver_rt::AverList::from_vec(vec![h, t]);
+                let __arg8 @ _ = aver_rt::AverList::from_array([h, t]);
                 crate::proof_kernel::aver_generated::kernel::subst::dropWild(&__arg8)
             }
         }

@@ -9,7 +9,7 @@ pub fn values(
     crate::proof_std::cancel_checkpoint();
     match f {
         crate::proof_std::aver_generated::kernel::term::Fin::FBool => {
-            aver_rt::AverList::from_vec(vec![
+            aver_rt::AverList::from_array([
                 crate::proof_std::aver_generated::kernel::term::Term::TBool(
                     crate::proof_std::aver_generated::kernel::term::Term__TBool(false),
                 ),

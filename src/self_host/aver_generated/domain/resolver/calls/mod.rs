@@ -647,7 +647,7 @@ pub fn resolveBuiltinCall(
     if crate::aver_generated::domain::resolver::calls::isLiteralDivisorCall(&name, resolvedArgs) {
         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
             let __field0 = ::aver_rt::str_lit!("Result.withDefault");
-            let __field1 = aver_rt::AverList::from_vec(vec![
+            let __field1 = aver_rt::AverList::from_array([
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                     let __field0 = name;
                     let __field1 = resolvedArgs.clone();
@@ -746,7 +746,7 @@ pub fn isBareNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Ex
 #[inline]
 pub fn isBuiltinCallName(name @ _: &AverStr) -> bool {
     crate::cancel_checkpoint();
-    let __arg1 @ _ = aver_rt::AverList::from_vec(vec![
+    let __arg1 @ _ = aver_rt::AverList::from_array([
         ::aver_rt::str_lit!("Args.get"),
         ::aver_rt::str_lit!("Bool.and"),
         ::aver_rt::str_lit!("Bool.not"),
