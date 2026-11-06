@@ -1730,7 +1730,10 @@ fn keep(s: String) -> String
 
         // The loop reads its text and hands it on unchanged, so it borrows
         // it, and so does the function that only passes it to the loop.
-        assert!(entry.contains("fn digits__indexed(s @ _: &AverStr"), "{entry}");
+        assert!(
+            entry.contains("fn digits__indexed(s @ _: &AverStr"),
+            "{entry}"
+        );
         assert!(entry.contains("fn after(s @ _: &AverStr"), "{entry}");
         assert!(!entry.contains("s.clone()"), "{entry}");
         // A string returned is taken by value.

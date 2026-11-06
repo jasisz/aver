@@ -236,7 +236,12 @@ pub(super) fn param_borrow_mask(
         && let Some(program) = ctx.mir_program.as_ref()
         && let Some(mir_fn) = program.fn_by_id(fn_id)
     {
-        let lent = super::from_mir::lent_string_params_in(ctx, mir_fn, &resolved.params, &program.builtins);
+        let lent = super::from_mir::lent_string_params_in(
+            ctx,
+            mir_fn,
+            &resolved.params,
+            &program.builtins,
+        );
         for (borrowed, (name, _)) in mask.iter_mut().zip(&resolved.params) {
             *borrowed |= lent.contains(&aver_name_to_rust(name));
         }

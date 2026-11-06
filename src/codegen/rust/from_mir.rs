@@ -1823,7 +1823,10 @@ pub(super) fn compute_lent_strings(ctx: &CodegenContext) -> HashMap<crate::ir::F
                     if tail && callee == *id {
                         return j == i;
                     }
-                    lent.get(&callee).and_then(|f| f.get(j)).copied().unwrap_or(false)
+                    lent.get(&callee)
+                        .and_then(|f| f.get(j))
+                        .copied()
+                        .unwrap_or(false)
                 };
                 if !reads_string_in_place_by(
                     &mir_fn.body.node,
@@ -1917,32 +1920,28 @@ fn reads_string_in_place_by(
         MirExpr::Local(local) => local.node.slot != slot,
         // A branch of `(a, b)!` runs on another thread.
         MirExpr::IndependentProduct(_) => false,
-        MirExpr::Call(call) if reads_text_in_place(&call.node.callee, builtins) => {
-            call.node
-                .args
-                .iter()
-                .enumerate()
-                .all(|(i, arg)| (i == 0 && is_slot(&arg.node)) || recur(&arg.node))
-        }
-        MirExpr::Call(call) if matches!(call.node.callee, MirCallee::Fn(_)) => {
-            let MirCallee::Fn(callee) = call.node.callee else {
-                return false;
-            };
-            call.node
-                .args
-                .iter()
-                .enumerate()
-                .all(|(j, arg)| (is_slot(&arg.node) && lent_at(callee, j, false)) || recur(&arg.node))
-        }
-        MirExpr::TailCall(call) => call
+        MirExpr::Call(call) if reads_text_in_place(&call.node.callee, builtins) => call
             .node
             .args
             .iter()
             .enumerate()
-            .all(|(j, arg)| (is_slot(&arg.node) && lent_at(call.node.target, j, true)) || recur(&arg.node)),
-        MirExpr::BinOp(op) if matches!(op.node.op, BinOp::Eq | BinOp::Neq) => [&op.node.lhs, &op.node.rhs]
-            .iter()
-            .all(|side| is_slot(&side.node) || recur(&side.node)),
+            .all(|(i, arg)| (i == 0 && is_slot(&arg.node)) || recur(&arg.node)),
+        MirExpr::Call(call) if matches!(call.node.callee, MirCallee::Fn(_)) => {
+            let MirCallee::Fn(callee) = call.node.callee else {
+                return false;
+            };
+            call.node.args.iter().enumerate().all(|(j, arg)| {
+                (is_slot(&arg.node) && lent_at(callee, j, false)) || recur(&arg.node)
+            })
+        }
+        MirExpr::TailCall(call) => call.node.args.iter().enumerate().all(|(j, arg)| {
+            (is_slot(&arg.node) && lent_at(call.node.target, j, true)) || recur(&arg.node)
+        }),
+        MirExpr::BinOp(op) if matches!(op.node.op, BinOp::Eq | BinOp::Neq) => {
+            [&op.node.lhs, &op.node.rhs]
+                .iter()
+                .all(|side| is_slot(&side.node) || recur(&side.node))
+        }
         _ => {
             let mut only = true;
             crate::ir::mir::expr::walk_children(expr, &mut |child| {
@@ -1976,10 +1975,9 @@ pub(super) fn self_loop_lends(ctx: &CodegenContext, fn_id: crate::ir::FnId, inde
     !ctx.mutual_tco_members.contains(&fn_id)
         && ctx.resolved_program.fn_by_id(fn_id).is_some_and(|fd| {
             super::toplevel::resolved_fn_has_self_tailcall(fd)
-                && fd
-                    .params
-                    .get(index)
-                    .is_some_and(|(_, ty)| should_borrow_param(ty) || lent_string(ctx, fn_id, index))
+                && fd.params.get(index).is_some_and(|(_, ty)| {
+                    should_borrow_param(ty) || lent_string(ctx, fn_id, index)
+                })
         })
         && ctx
             .rust_owned_record_params
@@ -7621,25 +7619,26 @@ fn mir_emit_slice_equality(bop: &crate::ir::mir::MirBinOp, ctx: &MirEmitCtx<'_>)
     };
     // An indexed slice against a string that is not one compares the bytes
     // where the slice would start, without cutting it out first.
-    let indexed_against = |slice: Option<(&[Spanned<MirExpr>], bool)>,
-                           other: &Spanned<MirExpr>,
-                           other_slice: Option<(&[Spanned<MirExpr>], bool)>| {
-        let (args, true) = slice? else {
-            return None;
+    let indexed_against =
+        |slice: Option<(&[Spanned<MirExpr>], bool)>,
+         other: &Spanned<MirExpr>,
+         other_slice: Option<(&[Spanned<MirExpr>], bool)>| {
+            let (args, true) = slice? else {
+                return None;
+            };
+            if other_slice.is_some() {
+                return None;
+            }
+            let text = emit_mir_expr(&args[0], ctx)?;
+            let index = emit_mir_expr(&args[1], ctx)?;
+            let from = emit_string_position(&args[2], ctx)?;
+            let to = emit_string_position(&args[3], ctx)?;
+            let other = mir_as_str(&other.node, &emit_mir_expr(other, ctx)?, ctx);
+            let not = if matches!(bop.op, BinOp::Eq) { "" } else { "!" };
+            Some(format!(
+                "{not}aver_rt::string_index_slice_eq(&{text}, &{index}, {from}, {to}, {other})"
+            ))
         };
-        if other_slice.is_some() {
-            return None;
-        }
-        let text = emit_mir_expr(&args[0], ctx)?;
-        let index = emit_mir_expr(&args[1], ctx)?;
-        let from = emit_string_position(&args[2], ctx)?;
-        let to = emit_string_position(&args[3], ctx)?;
-        let other = mir_as_str(&other.node, &emit_mir_expr(other, ctx)?, ctx);
-        let not = if matches!(bop.op, BinOp::Eq) { "" } else { "!" };
-        Some(format!(
-            "{not}aver_rt::string_index_slice_eq(&{text}, &{index}, {from}, {to}, {other})"
-        ))
-    };
     if let Some(code) =
         indexed_against(lhs, &bop.rhs, rhs).or_else(|| indexed_against(rhs, &bop.lhs, lhs))
     {
