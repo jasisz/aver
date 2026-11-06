@@ -2775,7 +2775,9 @@ fn main() -> Unit
         "only `moved` builds its slice:\n{entry}"
     );
     assert!(
-        entry.contains("aver_rt::string_index_slice_eq(&text, &__str_index, pos, (pos + 2i64), \"ąb\")"),
+        entry.contains(
+            "aver_rt::string_index_slice_eq(&text, &__str_index, pos, (pos + 2i64), \"ąb\")"
+        ),
         "the indexed loop compares in place with raw positions:\n{entry}"
     );
 }
