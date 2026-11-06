@@ -49,6 +49,8 @@ def compile_self_host(aver_bin: Path, output: Path) -> None:
             "rust",
             # The aver crate builds aver-rt without equality classes and with
             # atomic counts (no plain-counts), whatever `auto` would choose.
+            # Classes were measured here and buy nothing: proofs ±0%, the
+            # self-host +0.6…1.2% instructions.
             "--equality-classes",
             "0",
             "--threads",
