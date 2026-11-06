@@ -7,6 +7,15 @@
             (local $bm (ref null $mag)) (local $bs i32)
             (local $alen i32) (local $blen i32)
             (local $cmp i32) (local $j i32) (local $umag i64)
+            ;; Two Small operands (no limbs) compare as machine words, with no
+            ;; limb arrays built.
+            (if (i32.and (ref.is_null (struct.get $aint $magf (local.get $a)))
+                         (ref.is_null (struct.get $aint $magf (local.get $b))))
+              (then
+                (return
+                  (i32.sub
+                    (i64.gt_s (struct.get $aint $small (local.get $a)) (struct.get $aint $small (local.get $b)))
+                    (i64.lt_s (struct.get $aint $small (local.get $a)) (struct.get $aint $small (local.get $b)))))))
             {decomp_a}
             {decomp_b}
             (if (result i32) (i32.ne (local.get $as_) (local.get $bs))

@@ -646,12 +646,11 @@ fn emit_cmp_primitive(
 /// Order of two `Int` keys. Two Small keys (no limbs, the value in `$small`)
 /// compare as machine words; any Big key goes to `__aint_cmp`.
 ///
-/// The fast path is what makes sorting a map cheap: `__aint_cmp` builds a
-/// limb array for each Small operand before it compares, so a heapsort over
-/// `n` keys allocated two arrays per comparison. Comparing the words is exact
-/// because a canonical Int is Small exactly when it fits in an `i64`, so two
-/// Small keys are ordered as their words are. `__aint_cmp` itself is not
-/// changed: the certificate wall pins its bytes.
+/// Comparing the words is exact because a canonical Int is Small exactly when
+/// it fits in an `i64`, so two Small keys are ordered as their words are.
+/// `__aint_cmp` takes two Small operands on their words as well; doing it here
+/// saves the call on every step of the sort (measured a few percent on a
+/// heapsort of 100k keys with one Big key).
 ///
 /// A `--certify` build (`word_keys` off) keeps the plain call.
 fn emit_cmp_aint(registry: &TypeRegistry, word_keys: bool) -> Result<Function, WasmGcError> {

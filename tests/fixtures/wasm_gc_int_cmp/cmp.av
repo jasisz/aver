@@ -1,0 +1,60 @@
+module IntCmp
+    intent = "Int comparisons across the machine-word edge: every pair of a value set, by operator, Int.min/Int.max and map key order."
+    effects [Console.print]
+
+fn signOf(a: Int, b: Int) -> Int
+    ? "Three-way comparison through the operators."
+    match a < b
+        true -> -1
+        false -> match a > b
+            true -> 1
+            false -> 0
+
+fn row(a: Int, bs: List<Int>, acc: String) -> String
+    ? "One value against every value: sign, <=, >=, min and max."
+    match bs
+        [] -> acc
+        [b, ..rest] -> row(a, rest, "{acc} {signOf(a, b)}{a <= b}{a >= b}:{Int.min(a, b)}/{Int.max(a, b)}")
+
+fn table(as_: List<Int>, all: List<Int>) -> Unit
+    ? "Every pair of the value set."
+    ! [Console.print]
+    match as_
+        [] -> Unit
+        [a, ..rest] -> table2(a, rest, all)
+
+fn table2(a: Int, rest: List<Int>, all: List<Int>) -> Unit
+    ? "Print one row, then the rest."
+    ! [Console.print]
+    Console.print("{a}:{row(a, all, "")}")
+    table(rest, all)
+
+fn fill(m: Map<Int, Int>, ks: List<Int>, i: Int) -> Map<Int, Int>
+    ? "Each value as a key."
+    match ks
+        [] -> m
+        [k, ..rest] -> fill(Map.set(m, k, i), rest, i + 1)
+
+fn fillPairs(m: Map<Tuple<Int, Int>, Int>, ks: List<Int>, i: Int) -> Map<Tuple<Int, Int>, Int>
+    ? "Each value paired with its position mod 3 as a key."
+    match ks
+        [] -> m
+        [k, ..rest] -> fillPairs(Map.set(m, (Int.mod(i, 3), k), i), rest, i + 1)
+
+fn show(ks: List<Int>, acc: String) -> String
+    ? "Join."
+    match ks
+        [] -> acc
+        [k, ..rest] -> show(rest, "{acc},{k}")
+
+fn main() -> Unit
+    ! [Console.print]
+    max = 9223372036854775807
+    min = 0 - max - 1
+    big = max + 1
+    huge = big * big
+    back = big - 1
+    values = [0, 1, -1, 7, -7, max, min, max - 1, min + 1, big, 0 - big, 0 - big - 1, huge, 0 - huge, huge + 1, back]
+    table(values, values)
+    Console.print("keys: {show(Map.keys(fill({}, values, 0)), "")}")
+    Console.print("pairs: {show(Map.values(fillPairs({}, values, 0)), "")}")

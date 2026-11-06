@@ -1611,10 +1611,12 @@ example : uleb32Bytes 500 = [0xf4, 0x03] := by decide
 example : s33Bytes 100 = [0xe4, 0x00] := by decide
 example : uleb32Bytes 100 = [0x64] := by decide
 
--- LENGTH ARITHMETIC: seven holes in `cmp`, nine in `eq`, and each one grows by
--- exactly one byte. A hole spliced as a raw byte would not move at all.
-example : (cmpTemplateBody narrowParams).length = 101 := by decide
-example : (cmpTemplateBody wideParams).length = 101 + 7 := by decide
+-- LENGTH ARITHMETIC: thirteen holes in `cmp` (six `carrier` holes in its
+-- Small fast path, then two `limb`, two `decompose`, two `strip` and one
+-- `umagCmp`), nine in `eq`, and each one grows by exactly one byte. A hole
+-- spliced as a raw byte would not move at all.
+example : (cmpTemplateBody narrowParams).length = 147 := by decide
+example : (cmpTemplateBody wideParams).length = 147 + 13 := by decide
 example : (eqTemplateBody narrowParams).length = 157 := by decide
 example : (eqTemplateBody wideParams).length = 157 + 9 := by decide
 
@@ -1626,7 +1628,7 @@ example : (eqTemplateBody wideParams).take 5 = [0x02, 0x02, 0x63, 0x82, 0x01] :=
 -- POSITION, last call hole of `cmp`: `call $umag_cmp` followed by the store to
 -- the verdict local, so the two-byte target did not displace the instruction
 -- after it.
-example : ((cmpTemplateBody wideParams).drop 84).take 5 = [0x10, 0xf4, 0x03, 0x21, 0x08] := by
+example : ((cmpTemplateBody wideParams).drop 136).take 5 = [0x10, 0xf4, 0x03, 0x21, 0x08] := by
   decide
 
 -- POSITION, first carrier hole of `eq`: `struct.get $aint $magf` reads the
@@ -1641,7 +1643,7 @@ example : (eqTemplateBody wideParams).drop 159 = [0x20, 0x06, 0x0b, 0x0b, 0x0b, 
 -- ENCODER SEPARATION at `limb = 100`. `cmp` mentions `limb` at two s33 holes
 -- and nowhere else, so its body grows by exactly two; an unsigned splice would
 -- have left it at the narrow length, since `uleb32Bytes 100` is one byte.
-example : (cmpTemplateBody bandParams).length = 101 + 2 := by decide
+example : (cmpTemplateBody bandParams).length = 147 + 2 := by decide
 example : (cmpTemplateBody bandParams).take 12 =
     [0x05, 0x01, 0x63, 0xe4, 0x00, 0x01, 0x7f, 0x01, 0x63, 0xe4, 0x00, 0x05] := by decide
 

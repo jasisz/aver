@@ -779,7 +779,8 @@ def toIndexRef : List WVal → Option WVal
 
     WHERE IT IS ASSUMED: `Obligation.holds` quantifies this contract over a
     CANONICAL CARRIER PAIR — two represented operands that are both in the
-    runtime's normal form (`CarrierSpec.Canon`). `wat/cmp.wat` decides first on
+    runtime's normal form (`CarrierSpec.Canon`). `wat/cmp.wat` compares two
+    limbless operands on their `$small` words, and otherwise decides first on
     the raw SIGN FIELDS of its two operands, so over ARBITRARY represented
     words it is not exact; canonicity is what pins the shape choice, because
     `CarrierSpec.canonBig` puts every canonical limb-carrying word outside the
