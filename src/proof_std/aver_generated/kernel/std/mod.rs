@@ -858,8 +858,7 @@ fn __mutual_tco_trampoline_1(
                 crate::proof_std::cancel_checkpoint();
                 let here @ _ =
                     crate::proof_std::aver_generated::kernel::std::down(n.clone(), label);
-                match crate::proof_std::aver_generated::kernel::std::lookup(&*answers, key.clone())
-                {
+                match crate::proof_std::aver_generated::kernel::std::lookup(&*answers, &key) {
                     None => {
                         return Err(crate::proof_std::aver_generated::kernel::std::Stop::Ask(
                             key,
@@ -1184,7 +1183,7 @@ pub fn at(
     Ok({
         let __field0 = claim;
         let __field1 =
-            crate::proof_std::aver_generated::kernel::std::withoutGiven(&goal.finite, v.clone());
+            crate::proof_std::aver_generated::kernel::std::withoutGiven(&goal.finite, &v);
         let __field2 = crate::proof_std::aver_generated::kernel::std::substHyps(&goal.hyps, v, x)?;
         goal.obligation = __field0;
         goal.finite = __field1;
@@ -1197,7 +1196,7 @@ pub fn at(
 #[inline(always)]
 pub fn withoutGiven(
     gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given>,
-    mut v @ _: AverStr,
+    v @ _: &AverStr,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given> {
     let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given>;
     let mut gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Given> = gs;
@@ -1207,7 +1206,7 @@ pub fn withoutGiven(
             let __list_subject = gs;
             match aver_rt::list_uncons(__list_subject) {
                 Some((g, rest)) => {
-                    if (g.name == v) {
+                    if (&(g.name) == v) {
                         {
                             let __tco0 = rest;
                             __hold0 = __tco0;
@@ -1937,7 +1936,7 @@ pub fn refuse(
 
 /// The compiler's answer to the question key, if it gave one.
 #[inline(always)]
-pub fn lookup(answers @ _: &aver_rt::AverList<Answer>, mut key @ _: AverStr) -> Option<Reply> {
+pub fn lookup(answers @ _: &aver_rt::AverList<Answer>, key @ _: &AverStr) -> Option<Reply> {
     let mut __hold0: aver_rt::AverList<Answer>;
     let mut answers @ _: &aver_rt::AverList<Answer> = answers;
     loop {
@@ -1946,7 +1945,7 @@ pub fn lookup(answers @ _: &aver_rt::AverList<Answer>, mut key @ _: AverStr) -> 
             let __list_subject = answers;
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((a, rest)) => {
-                    if (a.key == key) {
+                    if (&(a.key) == key) {
                         return Some(a.reply.clone());
                     } else {
                         {
@@ -2379,7 +2378,7 @@ pub fn listCases(
             };
             crate::proof_std::aver_generated::kernel::std::substituted(&n, &__arg18)
         }?;
-        crate::proof_std::aver_generated::kernel::std::withoutList(__arg19, v.clone())
+        crate::proof_std::aver_generated::kernel::std::withoutList(__arg19, &v)
     };
     let cellGoal @ _ = {
         let __arg24 @ _ = {
@@ -2406,12 +2405,7 @@ pub fn listCases(
             };
             crate::proof_std::aver_generated::kernel::std::substituted(&n, &__arg23)
         }?;
-        crate::proof_std::aver_generated::kernel::std::opened(
-            __arg24,
-            v.clone(),
-            h.clone(),
-            tl.clone(),
-        )
+        crate::proof_std::aver_generated::kernel::std::opened(__arg24, &v, h.clone(), tl.clone())
     };
     let ih @ _ = {
         let __arg25 @ _ = aver_rt::AverList::concat(
@@ -2589,14 +2583,14 @@ pub fn withIhOf(
 /// The goal once v is gone: no longer a given or a list variable.
 pub fn withoutList(
     mut goal @ _: crate::proof_std::aver_generated::kernel::proof::Goal,
-    v @ _: AverStr,
+    v @ _: &AverStr,
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
     crate::proof_std::cancel_checkpoint();
     {
         let __field0 = crate::proof_std::aver_generated::kernel::proof::Law {
             givens: crate::proof_std::aver_generated::kernel::std::withoutVar(
                 &goal.obligation.givens,
-                v.clone(),
+                v,
             ),
             ..goal.obligation
         };
@@ -2611,7 +2605,7 @@ pub fn withoutList(
 #[inline(always)]
 pub fn withoutVar(
     gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
-    mut v @ _: AverStr,
+    v @ _: &AverStr,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> {
     let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>;
     let mut gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
@@ -2622,7 +2616,7 @@ pub fn withoutVar(
             let __list_subject = gs;
             match aver_rt::list_uncons(__list_subject) {
                 Some((g, rest)) => {
-                    if (g.name == v) {
+                    if (&(g.name) == v) {
                         {
                             let __tco0 = rest;
                             __hold0 = __tco0;
@@ -2648,13 +2642,13 @@ pub fn withoutVar(
 #[inline(always)]
 pub fn opened(
     mut goal @ _: crate::proof_std::aver_generated::kernel::proof::Goal,
-    v @ _: AverStr,
+    v @ _: &AverStr,
     h @ _: AverStr,
     tl @ _: AverStr,
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
     crate::proof_std::cancel_checkpoint();
     let elem @ _ =
-        crate::proof_std::aver_generated::kernel::std::elemType(&goal.obligation.givens, v.clone());
+        crate::proof_std::aver_generated::kernel::std::elemType(&goal.obligation.givens, v);
     let __arg6 @ _ = crate::proof_std::aver_generated::kernel::std::withoutList(goal, v);
     let __arg7 @ _ = aver_rt::AverList::from_vec(vec![
         crate::proof_std::aver_generated::kernel::term::typed(h, elem.clone()),
@@ -2672,7 +2666,7 @@ pub fn opened(
 #[inline(always)]
 pub fn elemType(
     gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
-    mut v @ _: AverStr,
+    v @ _: &AverStr,
 ) -> crate::proof_std::aver_generated::kernel::term::Ty {
     let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>;
     let mut gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
@@ -2683,7 +2677,7 @@ pub fn elemType(
             let __list_subject = gs;
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((g, rest)) => {
-                    if (g.name == v) {
+                    if (&(g.name) == v) {
                         return crate::proof_std::aver_generated::kernel::types::elemOf(&g.ty)
                             .unwrap_or(crate::proof_std::aver_generated::kernel::term::Ty::TyAny);
                     } else {
@@ -2712,10 +2706,7 @@ pub fn elemType(
 
 /// The names other than v.
 #[inline(always)]
-pub fn without(
-    ns @ _: &aver_rt::AverList<AverStr>,
-    mut v @ _: AverStr,
-) -> aver_rt::AverList<AverStr> {
+pub fn without(ns @ _: &aver_rt::AverList<AverStr>, v @ _: &AverStr) -> aver_rt::AverList<AverStr> {
     let mut __hold0: aver_rt::AverList<AverStr>;
     let mut ns @ _: &aver_rt::AverList<AverStr> = ns;
     loop {
@@ -2724,7 +2715,7 @@ pub fn without(
             let __list_subject = ns;
             match aver_rt::list_uncons_cloned(__list_subject) {
                 Some((n, rest)) => {
-                    if (n == v) {
+                    if (&(n) == v) {
                         {
                             let __tco0 = rest;
                             __hold0 = __tco0;

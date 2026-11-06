@@ -2806,7 +2806,7 @@ pub fn givenNames(
 
 /// A definition by name.
 #[inline(always)]
-pub fn findDef(mut name @ _: AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option<Def> {
+pub fn findDef(name @ _: &AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option<Def> {
     let mut __hold1: aver_rt::AverList<Def>;
     let mut ds @ _: &aver_rt::AverList<Def> = ds;
     loop {
@@ -2815,7 +2815,7 @@ pub fn findDef(mut name @ _: AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option
             let __list_subject = ds;
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((d, rest)) => {
-                    if (d.name == name) {
+                    if (&(d.name) == name) {
                         return Some(d.clone());
                     } else {
                         {

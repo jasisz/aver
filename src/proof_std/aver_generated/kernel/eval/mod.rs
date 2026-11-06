@@ -183,7 +183,7 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__d_fields) => {
             let d = __d_fields.1.clone();
             let ys = &__d_fields.0;
-            { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(xs.len() as i64).add(&aver_rt::AverInt::from_i64(ys.len() as i64)); crate::proof_std::aver_generated::kernel::eval::sameCtor(c, d, __arg14) }; crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
+            { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(xs.len() as i64).add(&aver_rt::AverInt::from_i64(ys.len() as i64)); crate::proof_std::aver_generated::kernel::eval::sameCtor(&c, &d, __arg14) }; crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
         },
         _ => {
             { let __arg16 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a); { let __arg17 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(b); crate::proof_std::aver_generated::kernel::eval::evalOp(o, &__arg16, &__arg17) } }
@@ -243,15 +243,15 @@ pub fn ctorOp(o @ _: AverStr, same @ _: &Option<bool>) -> Option<Val> {
 }
 
 /// Two different constructors of one type differ whatever they hold; one constructor with no fields equals itself. The type is the name up to its last dot, so a constructor spelled two ways is never decided.
-pub fn sameCtor(c @ _: AverStr, d @ _: AverStr, fields @ _: aver_rt::AverInt) -> Option<bool> {
+pub fn sameCtor(c @ _: &AverStr, d @ _: &AverStr, fields @ _: aver_rt::AverInt) -> Option<bool> {
     crate::proof_std::cancel_checkpoint();
     {
         let __subject = (
             (c == d),
             (fields == aver_rt::AverInt::from_i64(0)),
-            ((crate::proof_std::aver_generated::kernel::eval::typeOf(&c)
-                == crate::proof_std::aver_generated::kernel::eval::typeOf(&d))
-                && (&*crate::proof_std::aver_generated::kernel::eval::typeOf(&c) != "")),
+            ((crate::proof_std::aver_generated::kernel::eval::typeOf(c)
+                == crate::proof_std::aver_generated::kernel::eval::typeOf(d))
+                && (&*crate::proof_std::aver_generated::kernel::eval::typeOf(c) != "")),
         );
         match __subject {
             (true, true, _) => Some(true),

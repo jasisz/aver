@@ -88,7 +88,7 @@ pub fn captureOne(
 /// The term bound to a name, if any.
 #[inline(always)]
 pub fn lookup(
-    mut name @ _: AverStr,
+    name @ _: &AverStr,
     bs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>;
@@ -100,7 +100,7 @@ pub fn lookup(
             let __list_subject = bs;
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((b, rest)) => {
-                    if (b.name == name) {
+                    if (&(b.name) == name) {
                         return Some(b.value.clone());
                     } else {
                         {
@@ -560,11 +560,11 @@ pub fn subst(
         match __t.view() {
             crate::proof_std::aver_generated::kernel::term::Term__view::TVar(__n_fields) => {
                 let n = __n_fields.0.clone();
-                Ok(crate::proof_std::aver_generated::kernel::subst::lookup(n, bs).unwrap_or(t))
+                Ok(crate::proof_std::aver_generated::kernel::subst::lookup(&n, bs).unwrap_or(t))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::THole => {
                 Ok(crate::proof_std::aver_generated::kernel::subst::lookup(
-                    ::aver_rt::str_lit!("□"),
+                    &::aver_rt::str_lit!("□"),
                     bs,
                 )
                 .unwrap_or(t))
