@@ -43,6 +43,7 @@ pub(super) use emit::{emit_caller_fn_idx, emit_default_value, emit_string_litera
 pub(super) use from_mir::int_tree::{
     IntTreeReset, int_word_locals, record_literals as record_int_literals,
     set_allowed as set_int_trees_allowed, set_literal_pool as set_int_literal_pool,
+    set_word_mul_fast,
 };
 pub(super) use from_mir::record_entry_locals as twin_record_entry_locals;
 pub(super) use from_mir::twin::{
