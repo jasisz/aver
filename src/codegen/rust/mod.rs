@@ -2242,7 +2242,8 @@ fn width(s: Shape) -> Int
             "#[derive(Clone, Eq, Hash)]\n#[repr(C)]\npub struct Tree__Node(pub aver_rt::AverInt, pub Tree, pub Tree);",
             "impl PartialEq for Tree__Node {\n    fn eq(&self, other: &Self) -> bool {\n        std::ptr::eq(self, other) || self.0 == other.0 && self.1 == other.1 && self.2 == other.2\n    }\n}",
             "Tree::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)",
-            "Some(Tree__pair::Node(a0, b0)) => walk.node(self, other, false, |walk| a0.walk_eq(b0, walk)),",
+            // `[rust] equality_classes` is on by default (12 pairs).
+            "Some(Tree__pair::Node(a0, b0)) => walk.node_classed::<12, _>(self, other, false, |walk| a0.walk_eq(b0, walk)),",
             "Some(Tree__pair::Leaf(a0, b0)) => a0 == b0,",
             "impl aver_rt::WalkEq for Tree__Node {\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {\n        self.0 == other.0 && self.1.walk_eq(&other.1, walk) && self.2.walk_eq(&other.2, walk)\n    }\n}",
             "(Cell::Cell(a0, a1, a2), Cell::Cell(b0, b1, b2)) => a1 == b1 && a2 == b2 && a0 == b0,",
@@ -3675,8 +3676,11 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
                 None,
                 &std::collections::BTreeSet::new(),
                 None,
+                // No equality classes, so that the allocator is the only
+                // runtime feature either manifest names.
                 crate::config::RustOptions {
                     allocator,
+                    equality_classes: 0,
                     ..Default::default()
                 },
             )
