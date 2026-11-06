@@ -2,6 +2,7 @@
 
 pub mod provider;
 
+mod block;
 pub mod bytebuilder;
 mod counted;
 mod counts;
@@ -940,14 +941,18 @@ pub fn vector_size_error_message() -> String {
     format!("Vector.new: size must be between 0 and {MAX_MATERIALIZED_VECTOR_ELEMENTS}")
 }
 
+/// One allocation holds the count, the length and the elements
+/// ([`block::Block`]), the same body a flat list has, so `List.fromVector`
+/// and `Vector.fromList` of a flat list share it rather than copy.
 pub struct AverVector<T> {
-    inner: Rc<Vec<T>>,
+    inner: block::Block<T>,
 }
 
 impl<T> Clone for AverVector<T> {
+    #[inline]
     fn clone(&self) -> Self {
         Self {
-            inner: Rc::clone(&self.inner),
+            inner: self.inner.clone(),
         }
     }
 }
@@ -955,7 +960,7 @@ impl<T> Clone for AverVector<T> {
 impl<T: Clone> AverVector<T> {
     pub fn new(size: usize, default: T) -> Self {
         Self {
-            inner: Rc::new(vec![default; size]),
+            inner: block::Block::filled(size, default),
         }
     }
 
@@ -968,7 +973,7 @@ impl<T: Clone> AverVector<T> {
     /// Caller must ensure `index < len()`.
     pub fn set_unchecked(mut self, index: usize, value: T) -> Self {
         debug_assert!(index < self.inner.len());
-        Rc::make_mut(&mut self.inner)[index] = value;
+        self.inner.make_mut()[index] = value;
         self
     }
 
@@ -994,16 +999,18 @@ impl<T: Clone> AverVector<T> {
     }
 
     pub fn from_vec(v: Vec<T>) -> Self {
-        Self { inner: Rc::new(v) }
+        Self {
+            inner: block::Block::from_vec(v),
+        }
     }
 
     pub fn to_vec(&self) -> Vec<T> {
-        self.inner.as_ref().clone()
+        self.inner.to_vec()
     }
 
-    /// O(1) — shares Rc<Vec<T>> with the resulting Flat AverList.
+    /// O(1) — shares the block with the resulting Flat AverList.
     pub fn to_list(&self) -> AverList<T> {
-        AverList::from_rc_vec(Rc::clone(&self.inner))
+        AverList::from_block(self.inner.clone())
     }
 
     /// O(1) if list is Flat with start=0 (e.g. after List.reverse), O(n) otherwise.
@@ -1012,7 +1019,7 @@ impl<T: Clone> AverVector<T> {
         T: Clone,
     {
         Self {
-            inner: list.into_rc_vec(),
+            inner: list.into_block(),
         }
     }
 
@@ -1077,8 +1084,13 @@ struct TraversalSegment<T> {
 }
 
 enum TraversalSource<T> {
-    Flat { items: Rc<Vec<T>>, start: usize },
-    PrependHead { node: Rc<AverListInner<T>> },
+    Flat {
+        items: block::Block<T>,
+        start: usize,
+    },
+    PrependHead {
+        node: Rc<AverListInner<T>>,
+    },
 }
 
 impl<T> Clone for TraversalSegment<T> {
@@ -1086,7 +1098,7 @@ impl<T> Clone for TraversalSegment<T> {
         Self {
             source: match &self.source {
                 TraversalSource::Flat { items, start } => TraversalSource::Flat {
-                    items: Rc::clone(items),
+                    items: items.clone(),
                     start: *start,
                 },
                 TraversalSource::PrependHead { node } => TraversalSource::PrependHead {
@@ -1120,7 +1132,7 @@ impl<T> TraversalSegment<T> {
 /// (a longer join is built as an `Indexed` table, [`AverList::concat_node`]).
 enum AverListInner<T> {
     Flat {
-        items: Rc<Vec<T>>,
+        items: block::Block<T>,
     },
     Prepend {
         head: T,
@@ -1330,7 +1342,7 @@ impl<T> AverList<T> {
         match self.shape() {
             Some(AverListInner::Flat { items }) => {
                 let len = items.len().saturating_sub(start);
-                Self::push_flat_segment(&mut parts, Rc::clone(items), start, len);
+                Self::push_flat_segment(&mut parts, items.clone(), start, len);
             }
             Some(AverListInner::Indexed { parts: table, .. }) => {
                 Self::push_indexed_view(&mut parts, table, start, segment_index);
@@ -1372,7 +1384,7 @@ impl<T> AverList<T> {
 
     fn push_flat_segment(
         parts: &mut Vec<TraversalSegment<T>>,
-        items: Rc<Vec<T>>,
+        items: block::Block<T>,
         start: usize,
         len: usize,
     ) {
@@ -1408,7 +1420,7 @@ impl<T> AverList<T> {
         let end = Self::next_segment_end(parts, len);
         let source = match &segment.source {
             TraversalSource::Flat { items, start } => TraversalSource::Flat {
-                items: Rc::clone(items),
+                items: items.clone(),
                 start: start + skip,
             },
             TraversalSource::PrependHead { node } => {
@@ -1455,7 +1467,7 @@ impl<T> AverList<T> {
             }
             match node.as_ref() {
                 AverListInner::Flat { items } => {
-                    Self::push_flat_segment(&mut parts, Rc::clone(items), list.start(), list.len());
+                    Self::push_flat_segment(&mut parts, items.clone(), list.start(), list.len());
                 }
                 AverListInner::Prepend { tail, .. } => {
                     pending.push(tail);
@@ -1759,23 +1771,25 @@ impl<T> AverList<T> {
             return Self::empty();
         }
         Self::node(AverListInner::Flat {
-            items: Rc::new(items),
+            items: block::Block::from_vec(items),
         })
     }
 
-    /// O(1) if Flat with start=0, wraps existing Rc<Vec<T>> directly.
-    pub fn from_rc_vec(items: Rc<Vec<T>>) -> Self {
+    /// O(1): a flat list over the block, shared.
+    pub(crate) fn from_block(items: block::Block<T>) -> Self {
         Self::node(AverListInner::Flat { items })
     }
 
-    /// Extract the backing Rc<Vec<T>> — O(1) if Flat with start=0, O(n) otherwise.
-    pub fn into_rc_vec(&self) -> Rc<Vec<T>>
+    /// The block of the list's elements — shared, O(1), when the list is
+    /// flat from its first element; otherwise one new block the elements
+    /// are cloned into, O(n), with no vector in between.
+    pub(crate) fn into_block(&self) -> block::Block<T>
     where
         T: Clone,
     {
         match self.shape() {
-            Some(AverListInner::Flat { items }) if self.start == 0 => Rc::clone(items),
-            _ => Rc::new(self.to_vec()),
+            Some(AverListInner::Flat { items }) if self.start == 0 => items.clone(),
+            _ => block::Block::from_iter_len(self.len(), self.iter().cloned()),
         }
     }
 
@@ -1980,12 +1994,13 @@ impl<T> AverList<T> {
                 }
                 Some(AverListInner::Flat { .. }) => {
                     let start = rest.start();
-                    if let Some(AverListInner::Flat { items }) =
-                        rest.inner.as_mut().and_then(Rc::get_mut)
-                        && let Some(items) = Rc::get_mut(items)
-                    {
-                        out.extend(items.drain(start..));
-                    } else {
+                    let moved = match rest.inner.as_mut().and_then(Rc::get_mut) {
+                        Some(AverListInner::Flat { items }) => {
+                            items.drain_tail_into(start, &mut out)
+                        }
+                        _ => false,
+                    };
+                    if !moved {
                         out.extend(rest.iter().cloned());
                     }
                     break;
@@ -2717,7 +2732,7 @@ mod tests {
         assert!(empty.iter().next().is_none());
         assert_eq!(empty.as_slice(), Some(&[][..]));
         assert!(empty.drop_first(3).is_empty());
-        assert!(empty.into_rc_vec().is_empty());
+        assert!(empty.into_block().is_empty());
     }
 
     /// One step off a flat list allocates nothing: the tail is the node it was

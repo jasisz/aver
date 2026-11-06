@@ -97,7 +97,7 @@ impl<'a, T> Iterator for Held<'a, T> {
                 Some((head, self.alone))
             }
             AverListInner::Flat { items } => {
-                self.alone &= Rc::strong_count(items) == 1;
+                self.alone &= crate::block::Block::strong_count(items) == 1;
                 self.flat = items.get(list.start()..).unwrap_or(&[]).iter();
                 self.next()
             }
@@ -128,7 +128,9 @@ impl<T> Alone for AverList<T> {
                 return false;
             }
             match &**node {
-                AverListInner::Flat { items } => return Rc::strong_count(items) == 1,
+                AverListInner::Flat { items } => {
+                    return crate::block::Block::strong_count(items) == 1;
+                }
                 AverListInner::Prepend { tail, .. } => list = tail,
                 _ => return false,
             }
@@ -138,7 +140,7 @@ impl<T> Alone for AverList<T> {
 
 impl<T> Alone for AverVector<T> {
     fn alone(&self) -> bool {
-        Rc::strong_count(&self.inner) == 1
+        crate::block::Block::strong_count(&self.inner) == 1
     }
 }
 

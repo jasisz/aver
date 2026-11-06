@@ -39,13 +39,14 @@ pub fn list_builder_new<T>(capacity: usize) -> AverList<T> {
 /// its own beginning — the shape [`list_builder_new`] produces and every
 /// push preserves. Otherwise a copy, which is what `AverList::append`
 /// would have done anyway.
-pub fn list_builder_push<T: Clone>(mut builder: AverList<T>, item: T) -> AverList<T> {
+pub fn list_builder_push<T: Clone>(mut builder: AverList<T>, mut item: T) -> AverList<T> {
     if builder.start == 0
         && let Some(AverListInner::Flat { items }) = builder.inner.as_mut().and_then(Rc::get_mut)
-        && let Some(vec) = Rc::get_mut(items)
     {
-        vec.push(item);
-        return builder;
+        match items.push_unique(item) {
+            Ok(()) => return builder,
+            Err(back) => item = back,
+        }
     }
     let mut copied = builder.to_vec();
     copied.push(item);
