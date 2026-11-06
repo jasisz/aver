@@ -2,6 +2,32 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.33.0 "Trim" (unreleased)
+
+> _Compiled code does less: smaller wasm-gc modules, `Int` on machine words in more places, and Rust that skips atomics when one thread is enough._
+
+### Highlights
+
+- **Smaller wasm-gc modules, certified by index.** A wasm-gc module now holds only what its entry point, its host helpers and the entry module's `exposes` reach (12–67% smaller on the examples), and exports only those. A certificate names each certified function by its index, so certified code no longer has to be exported.
+- **Faster wasm-gc.** Self-recursive `Int` loops run about twice as fast while their values fit in a machine word; string literals are built once, so interpolation in hot code is about twice as fast; division and remainder by a variable, multiplication, `match` on a computed `Int` and `Int`-keyed maps compute on machine words; building a `String` in a loop is linear instead of quadratic; `Vector.set` behind `Option.withDefault` writes in place; `--optimize speed` is no longer slower than the plain module on loop-heavy code.
+- **Faster compiled Rust.** A program that runs no Aver code on threads of its own is built for one thread and changes reference counts without atomics (`[rust] threads = "auto"`, the new default). `==` on recursive sums remembers nodes it has already found equal (`[rust] equality_classes`, default 12). A `String` that a function only reads is borrowed instead of copied, and a `Vector` or flat list keeps its elements in one allocation.
+
+Certificates from 0.32 must be produced again (certificate schema 10).
+
+### Changed
+
+- `[rust] threads` takes `"auto"` (default), `"one"` or `"many"`; `aver compile --threads auto|one|many` (or `--single-thread`) overrides it. A one-thread build refuses services other than `Args`, `Console`, `Disk`, `Env`, `Random`, `Terminal` and `Time`, and refuses `--with-replay` and `--policy runtime`. `"auto"` picks many threads when the program has an independent product `(a, b)!`, such a service, or `verify` cases together with a module-level binding.
+- `[rust] equality_classes = N` / `aver compile --equality-classes N` (0 to 1024, default 12; 0 turns it off).
+- A function that only `verify` blocks call is not in the wasm-gc module and is not certified. A module with no entry point and no `exposes` gets an empty certificate with a hint to list the functions to certify in `exposes`.
+- Certificate reports name the declined function a caller depends on, instead of reporting the caller's bytes as differing from its plan.
+- Under `--certify`, wasm-gc functions with a `match` on a computed `Int` are certified instead of declined.
+
+### Fixed
+
+- VM: walking lists of tuples or records returned by builtins such as `Map.entries`, `Map.values` and `List.reverse` is linear instead of quadratic.
+- VM: walking a list built from many `List.concat` calls is linear again.
+- Rust backend: building a string by interpolation that starts with the accumulator (`"{acc}..."`) in a loop is linear instead of quadratic.
+
 ## 0.32.0 "Tight" — 2026-11-04
 
 > _Certified code computes `Int` on machine words, and compiled Rust copies far less._
