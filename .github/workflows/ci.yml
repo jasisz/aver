@@ -443,6 +443,7 @@ jobs:
             wasm_gc_record_views \
             wasm_gc_map_versions_spec \
             wasm_gc_map_int_keys_differential \
+            wasm_gc_int_cmp_differential \
             wasm_gc_match_shapes_regression \
             wasm_gc_no_trap_stubs \
             wasm_gc_vector_versions_spec \

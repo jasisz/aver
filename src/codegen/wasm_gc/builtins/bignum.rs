@@ -730,8 +730,9 @@ pub(super) fn emit_aint_low_u64(registry: &TypeRegistry) -> Result<Function, Was
     wat_helper::compile_wat_helper(&wat)
 }
 
-/// `__aint_cmp(a, b) -> i32` (-1/0/1). Sign first, then unsigned
-/// magnitude (flipped for two negatives). Mirrors `AverInt::cmp`.
+/// `__aint_cmp(a, b) -> i32` (-1/0/1). Two Small operands compare as
+/// machine words; otherwise sign first, then unsigned magnitude (flipped for
+/// two negatives). Mirrors `AverInt::cmp`.
 pub(super) fn emit_aint_cmp(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
     let decomp_a = decompose(registry, "a", "am", "as_", "umag");
