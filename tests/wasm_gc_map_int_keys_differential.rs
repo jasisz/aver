@@ -4,8 +4,10 @@
 //! zero, the smallest and largest machine words, keys past them mixed with
 //! small ones, a key built past the word and brought back equal to a small
 //! one, overwrite, removal back to an all-small map, a map of a thousand
-//! scattered keys with and without one Big key, entries, and tuple keys with
-//! Big components.
+//! scattered keys with and without one Big key, entries, tuple keys with Big
+//! components, equality of maps built in different orders or grown and shrunk
+//! back, and maps of maps keyed by Big and negative keys. A plain build holds
+//! the `$AverInt` keys unboxed; a `--certify` build keeps them boxed.
 
 #![cfg(feature = "wasm")]
 
@@ -60,6 +62,8 @@ many: 1009 sorted 1009 first ,-504,-503,-502,-501
 manyBig: 1010 sorted 1010
 entries:  -2=30 2=20
 tuples: ,3,2,4,1
+equal: true changed false shrunk true grown true has true false
+nested: ,-1,9223372036854775808,255211775190703847597530955573826158592 inner 4 equal true gone 0
 ";
 
 #[test]

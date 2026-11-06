@@ -1421,7 +1421,9 @@ fn emit_eq_primitive(k_aver: &str, registry: &TypeRegistry) -> Result<Function, 
 /// Wasm value type used as the `keys` array element. Primitive K, a carrier K
 /// held as `i64` and List K store boxed refs so the open-addressing
 /// `keys[i] == null` marker cannot collide with either an unboxable scalar or
-/// List's valid null `[]` value.
+/// List's valid null `[]` value. A full-ℤ `Int` key is a `$AverInt` ref that
+/// is never null, so outside `--certify` it is stored as it is
+/// (`TypeRegistry::int_keys_boxed`).
 fn key_storage_val_type(k_aver: &str, registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         Ok(ValType::Ref(RefType {
@@ -1465,6 +1467,12 @@ fn emit_box_key(f: &mut Function, k_aver: &str, registry: &TypeRegistry) {
 fn key_storage_null_heap(k_aver: &str, registry: &TypeRegistry) -> HeapType {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         return HeapType::Concrete(box_idx);
+    }
+    // An unboxed full-ℤ `Int` key: the keys array holds `$AverInt` refs.
+    if k_aver.trim() == "Int"
+        && let Some(aint) = registry.aint_struct_idx
+    {
+        return HeapType::Concrete(aint);
     }
     if k_aver == "String"
         && let Some(s) = registry.string_array_type_idx

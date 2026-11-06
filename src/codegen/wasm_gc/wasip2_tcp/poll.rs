@@ -35,7 +35,9 @@ pub(in crate::codegen::wasm_gc) struct TcpPollIndices {
     pub map_type_idx: u32,
     pub map_keys_array_type_idx: u32,
     pub map_values_array_type_idx: u32,
-    pub int_key_box_type_idx: u32,
+    /// The box an `Int` key sits in, `None` when the keys array holds the
+    /// `$AverInt` refs themselves.
+    pub int_key_box_type_idx: Option<u32>,
     pub tcp_socket_type_idx: u32,
     pub tcp_connected_variant_type_idx: u32,
     pub tcp_sending_variant_type_idx: u32,
@@ -70,15 +72,17 @@ fn emit_key_at(
     keys_local: u32,
     map_index_local: u32,
     keys_array_type_idx: u32,
-    key_box_type_idx: u32,
+    key_box_type_idx: Option<u32>,
 ) {
     function.instruction(&Instruction::LocalGet(keys_local));
     function.instruction(&Instruction::LocalGet(map_index_local));
     function.instruction(&Instruction::ArrayGet(keys_array_type_idx));
-    function.instruction(&Instruction::StructGet {
-        struct_type_index: key_box_type_idx,
-        field_index: 0,
-    });
+    if let Some(key_box_type_idx) = key_box_type_idx {
+        function.instruction(&Instruction::StructGet {
+            struct_type_index: key_box_type_idx,
+            field_index: 0,
+        });
+    }
 }
 
 fn emit_drop_pollables(
@@ -146,7 +150,11 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     });
     let key_box_ref = ValType::Ref(RefType {
         nullable: true,
-        heap_type: HeapType::Concrete(indices.int_key_box_type_idx),
+        heap_type: HeapType::Concrete(
+            indices
+                .int_key_box_type_idx
+                .unwrap_or(indices.aint_struct_type_idx),
+        ),
     });
     let list_ref = ValType::Ref(RefType {
         nullable: true,

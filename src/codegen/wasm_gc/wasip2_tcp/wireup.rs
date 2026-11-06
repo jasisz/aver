@@ -983,7 +983,8 @@ fn allocate_poll_over(
     } else {
         registry.map_slots("Map<Int,Tcp.Socket>")?
     };
-    let key_box_idx = registry.primitive_key_box_idx("Int")?;
+    // `None` when the keys array holds the `$AverInt` refs themselves.
+    let key_box_idx = registry.primitive_key_box_idx("Int");
     let socket_idx = registry.sum_root_type_idx("Tcp.Socket")?;
     let connected_idx = registry
         .variant_in("Tcp.Socket", "Connected")
