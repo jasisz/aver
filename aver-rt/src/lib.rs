@@ -1775,6 +1775,15 @@ impl<T> AverList<T> {
         })
     }
 
+    /// A list literal: its items moved into one block, with no vector
+    /// in between (two allocations, the block and the node over it).
+    pub fn from_array<const N: usize>(items: [T; N]) -> Self {
+        if N == 0 {
+            return Self::empty();
+        }
+        Self::from_block(block::Block::from_iter_len(N, items))
+    }
+
     /// O(1): a flat list over the block, shared.
     pub(crate) fn from_block(items: block::Block<T>) -> Self {
         Self::node(AverListInner::Flat { items })
@@ -2998,6 +3007,34 @@ mod tests {
         assert_eq!(list.to_vec(), vec![1, 2, 3, 4]);
         assert_eq!(written.get(3), Some(&99));
         assert_eq!(vector.get(3), Some(&4));
+    }
+
+    /// A vector and a flat list share one block both ways, and a list
+    /// literal is that block from the start.
+    #[test]
+    fn a_vector_and_a_flat_list_share_one_block() {
+        let list = AverList::from_array([String::from("a"), String::from("b"), String::from("c")]);
+        let vector = super::AverVector::from_list(&list);
+        assert!(std::ptr::eq(vector.get(0).unwrap(), list.get(0).unwrap()));
+        let back = vector.to_list();
+        assert!(std::ptr::eq(back.get(2).unwrap(), list.get(2).unwrap()));
+        // A sole owner writes in place; a shared one copies first.
+        let written = vector.set_owned(1, String::from("x")).unwrap();
+        assert_eq!(list.to_vec(), ["a", "b", "c"]);
+        assert_eq!(back.to_vec(), ["a", "b", "c"]);
+        assert_eq!(written.get(1).map(String::as_str), Some("x"));
+        drop((list, back));
+        let before = written.get(0).unwrap() as *const String;
+        let again = written.set_owned(2, String::from("y")).unwrap();
+        assert!(std::ptr::eq(again.get(0).unwrap(), before));
+        assert_eq!(
+            again.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["a", "x", "y"]
+        );
+        // A prepended list is gathered into a new block.
+        let chain = AverList::prepend(1, &AverList::prepend(2, &AverList::empty()));
+        assert_eq!(super::AverVector::from_list(&chain).to_vec(), vec![1, 2]);
+        assert!(AverList::<u8>::from_array([]).is_empty());
     }
 
     #[test]

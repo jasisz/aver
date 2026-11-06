@@ -378,7 +378,7 @@ pub fn zipListsAcc(
                             let __tco2 = aver_rt::AverList::prepend_owned(
                                 crate::aver_generated::domain::value::Val::ValTuple(
                                     crate::aver_generated::domain::value::Val__ValTuple(
-                                        aver_rt::AverList::from_vec(vec![x.clone(), y.clone()]),
+                                        aver_rt::AverList::from_array([x.clone(), y.clone()]),
                                     ),
                                 ),
                                 acc,

@@ -3372,6 +3372,14 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     "aver_rt::AverList::prepend_owned({item}, aver_rt::AverList::empty())"
                 ));
             }
+            // Longer ones move into one block from an array: the block and
+            // the node over it, without a vector's buffer to copy and free.
+            if list_type == "aver_rt::AverList" {
+                return Some(format!(
+                    "aver_rt::AverList::from_array([{}])",
+                    parts.join(", ")
+                ));
+            }
             Some(format!("{list_type}::from_vec(vec![{}])", parts.join(", ")))
         }
         MirExpr::MapLiteral(entries) => {
@@ -11921,14 +11929,14 @@ mod tests {
     }
 
     #[test]
-    fn emits_nonempty_list_as_from_vec() {
+    fn emits_nonempty_list_as_one_block() {
         let a = span(MirExpr::Literal(span(crate::ast::Literal::Int(1))));
         let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(2))));
         let expr = span(MirExpr::List(vec![a, b]));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("list should emit");
         assert_eq!(
             emit,
-            "aver_rt::AverList::from_vec(vec![aver_rt::AverInt::from_i64(1), aver_rt::AverInt::from_i64(2)])"
+            "aver_rt::AverList::from_array([aver_rt::AverInt::from_i64(1), aver_rt::AverInt::from_i64(2)])"
         );
     }
 

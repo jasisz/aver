@@ -432,7 +432,7 @@ pub fn fastMapSetSlotInner(
                         crate::aver_generated::domain::value::Val::new_in(
                             [&__tok0],
                             crate::aver_generated::domain::value::Val__ValTuple(
-                                aver_rt::AverList::from_vec(vec![keyV, valueV]),
+                                aver_rt::AverList::from_array([keyV, valueV]),
                             ),
                         ),
                     )),

@@ -929,7 +929,7 @@ pub fn rewriteInternalOptionWithDefaultArgs(
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                                     let __field0 = ::aver_rt::str_lit!("Option.withDefault");
                                     let __field1 =
-                                        aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]);
+                                        aver_rt::AverList::from_array([optionExpr, defaultExpr]);
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                                         __field1, __field0,
                                     )
@@ -938,8 +938,7 @@ pub fn rewriteInternalOptionWithDefaultArgs(
                         }
                         _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                             let __field0 = ::aver_rt::str_lit!("Option.withDefault");
-                            let __field1 =
-                                aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]);
+                            let __field1 = aver_rt::AverList::from_array([optionExpr, defaultExpr]);
                             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                                 __field1, __field0,
                             )
@@ -949,7 +948,7 @@ pub fn rewriteInternalOptionWithDefaultArgs(
             }
             _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                 let __field0 = ::aver_rt::str_lit!("Option.withDefault");
-                let __field1 = aver_rt::AverList::from_vec(vec![optionExpr, defaultExpr]);
+                let __field1 = aver_rt::AverList::from_array([optionExpr, defaultExpr]);
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0)
             }),
         }
@@ -967,11 +966,11 @@ pub fn rewriteInternalVectorGetOrInt(
         match aver_rt::list_uncons_cloned(__list_subject) {
             Some((vecExpr, rest)) => {
                 let __list_subject = rest;
-                match aver_rt::list_uncons(&__list_subject) { Some((idxExpr, ignored)) => { crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrIntArgs(vecExpr, idxExpr.clone(), defaultValue) }, None => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({ let __field0 = ::aver_rt::str_lit!("Option.withDefault"); let __field1 = aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({ let __field0 = ::aver_rt::str_lit!("Vector.get"); let __field1 = args.clone(); crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0) }), crate::aver_generated::domain::ast::Expr::ExprInt(crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue))]); crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0) }) } }
+                match aver_rt::list_uncons(&__list_subject) { Some((idxExpr, ignored)) => { crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrIntArgs(vecExpr, idxExpr.clone(), defaultValue) }, None => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({ let __field0 = ::aver_rt::str_lit!("Option.withDefault"); let __field1 = aver_rt::AverList::from_array([crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({ let __field0 = ::aver_rt::str_lit!("Vector.get"); let __field1 = args.clone(); crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0) }), crate::aver_generated::domain::ast::Expr::ExprInt(crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue))]); crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0) }) } }
             }
             None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                 let __field0 = ::aver_rt::str_lit!("Option.withDefault");
-                let __field1 = aver_rt::AverList::from_vec(vec![
+                let __field1 = aver_rt::AverList::from_array([
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                         let __field0 = ::aver_rt::str_lit!("Vector.get");
                         let __field1 = args.clone();
@@ -1017,10 +1016,10 @@ pub fn rewriteInternalVectorGetOrIntArgs(
         } else {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                 let __field0 = ::aver_rt::str_lit!("Option.withDefault");
-                let __field1 = aver_rt::AverList::from_vec(vec![
+                let __field1 = aver_rt::AverList::from_array([
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                         let __field0 = ::aver_rt::str_lit!("Vector.get");
-                        let __field1 = aver_rt::AverList::from_vec(vec![vecExpr, idxExpr]);
+                        let __field1 = aver_rt::AverList::from_array([vecExpr, idxExpr]);
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                             __field1, __field0,
                         )
@@ -1081,7 +1080,7 @@ pub fn rewriteInternalResultWithDefaultArgs(
                                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                                     let __field0 = ::aver_rt::str_lit!("Result.withDefault");
                                     let __field1 =
-                                        aver_rt::AverList::from_vec(vec![resultExpr, defaultExpr]);
+                                        aver_rt::AverList::from_array([resultExpr, defaultExpr]);
                                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                                         __field1, __field0,
                                     )
@@ -1090,8 +1089,7 @@ pub fn rewriteInternalResultWithDefaultArgs(
                         }
                         _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                             let __field0 = ::aver_rt::str_lit!("Result.withDefault");
-                            let __field1 =
-                                aver_rt::AverList::from_vec(vec![resultExpr, defaultExpr]);
+                            let __field1 = aver_rt::AverList::from_array([resultExpr, defaultExpr]);
                             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                                 __field1, __field0,
                             )
@@ -1101,7 +1099,7 @@ pub fn rewriteInternalResultWithDefaultArgs(
             }
             _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                 let __field0 = ::aver_rt::str_lit!("Result.withDefault");
-                let __field1 = aver_rt::AverList::from_vec(vec![resultExpr, defaultExpr]);
+                let __field1 = aver_rt::AverList::from_array([resultExpr, defaultExpr]);
                 crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0)
             }),
         }
@@ -1119,11 +1117,11 @@ pub fn rewriteInternalIntModOrInt(
         match aver_rt::list_uncons_cloned(__list_subject) {
             Some((a, rest)) => {
                 let __list_subject = rest;
-                match aver_rt::list_uncons(&__list_subject) { Some((b, ignored)) => { crate::aver_generated::domain::resolver::rewrite::rewriteInternalIntModOrIntArgs(a, b.clone(), defaultValue) }, None => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({ let __field0 = ::aver_rt::str_lit!("Result.withDefault"); let __field1 = aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({ let __field0 = ::aver_rt::str_lit!("Int.mod"); let __field1 = args.clone(); crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0) }), crate::aver_generated::domain::ast::Expr::ExprInt(crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue))]); crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0) }) } }
+                match aver_rt::list_uncons(&__list_subject) { Some((b, ignored)) => { crate::aver_generated::domain::resolver::rewrite::rewriteInternalIntModOrIntArgs(a, b.clone(), defaultValue) }, None => { crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({ let __field0 = ::aver_rt::str_lit!("Result.withDefault"); let __field1 = aver_rt::AverList::from_array([crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({ let __field0 = ::aver_rt::str_lit!("Int.mod"); let __field1 = args.clone(); crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0) }), crate::aver_generated::domain::ast::Expr::ExprInt(crate::aver_generated::domain::ast::Expr__ExprInt(defaultValue))]); crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0) }) } }
             }
             None => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                 let __field0 = ::aver_rt::str_lit!("Result.withDefault");
-                let __field1 = aver_rt::AverList::from_vec(vec![
+                let __field1 = aver_rt::AverList::from_array([
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                         let __field0 = ::aver_rt::str_lit!("Int.mod");
                         let __field1 = args.clone();
@@ -1161,10 +1159,10 @@ pub fn rewriteInternalIntModOrIntArgs(
         } else {
             crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                 let __field0 = ::aver_rt::str_lit!("Result.withDefault");
-                let __field1 = aver_rt::AverList::from_vec(vec![
+                let __field1 = aver_rt::AverList::from_array([
                     crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                         let __field0 = ::aver_rt::str_lit!("Int.mod");
-                        let __field1 = aver_rt::AverList::from_vec(vec![a, b]);
+                        let __field1 = aver_rt::AverList::from_array([a, b]);
                         crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(
                             __field1, __field0,
                         )

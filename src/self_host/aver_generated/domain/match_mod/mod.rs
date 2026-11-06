@@ -248,7 +248,7 @@ pub fn matchPatCons(
                 {
                     let __list_subject = items;
                     match aver_rt::list_uncons(__list_subject) {
-                        Some((head, tail)) => Ok(aver_rt::AverList::from_vec(vec![
+                        Some((head, tail)) => Ok(aver_rt::AverList::from_array([
                             (h, head.clone()),
                             (
                                 t,

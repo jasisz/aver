@@ -218,7 +218,7 @@ fn __mutual_tco_trampoline_3(
                         let __arg9 @ _ = aver_rt::AverList::prepend_owned(
                             crate::aver_generated::domain::ast::Expr::ExprTuple(
                                 crate::aver_generated::domain::ast::Expr__ExprTuple(
-                                    aver_rt::AverList::from_vec(vec![keyExpr, valExpr]),
+                                    aver_rt::AverList::from_array([keyExpr, valExpr]),
                                 ),
                             ),
                             acc,

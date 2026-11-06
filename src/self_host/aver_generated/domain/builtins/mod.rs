@@ -33,7 +33,7 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::TuplesToMapOne(mut parts @ _, mut rest @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(parts, [] => __MutualTco1::TuplesToMap(rest, acc), [kV, tail] => { aver_list_match!(tail, [] => __MutualTco1::TuplesToMap(rest, acc), [vV, ignored] => { { let __arg7 @ _ = acc.insert_owned(crate::aver_generated::domain::value::mapKeyRepr(&kV), crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![kV, vV])))); __MutualTco1::TuplesToMap(rest, __arg7) } }) })
+                aver_list_match!(parts, [] => __MutualTco1::TuplesToMap(rest, acc), [kV, tail] => { aver_list_match!(tail, [] => __MutualTco1::TuplesToMap(rest, acc), [vV, ignored] => { { let __arg7 @ _ = acc.insert_owned(crate::aver_generated::domain::value::mapKeyRepr(&kV), crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_array([kV, vV])))); __MutualTco1::TuplesToMap(rest, __arg7) } }) })
             }
         };
     }
@@ -1209,7 +1209,7 @@ pub fn builtinTerminalSize(
                 crate::aver_generated::domain::value::Val::ValRecord(
                     crate::aver_generated::domain::value::Val__ValRecord(
                         ::aver_rt::str_lit!("TerminalSize"),
-                        aver_rt::AverList::from_vec(vec![
+                        aver_rt::AverList::from_array([
                             (
                                 ::aver_rt::str_lit!("width"),
                                 crate::aver_generated::domain::value::Val::ValInt(
@@ -1956,7 +1956,7 @@ pub fn builtinMapSetInner(
                         crate::aver_generated::domain::value::mapKeyRepr(&keyV),
                         crate::aver_generated::domain::value::Val::ValTuple(
                             crate::aver_generated::domain::value::Val__ValTuple(
-                                aver_rt::AverList::from_vec(vec![keyV, valV]),
+                                aver_rt::AverList::from_array([keyV, valV]),
                             ),
                         ),
                     )),
@@ -2367,7 +2367,7 @@ pub fn httpResponseToVal(
                 crate::aver_generated::domain::value::Val::ValRecord(
                     crate::aver_generated::domain::value::Val__ValRecord(
                         ::aver_rt::str_lit!("Http.Response"),
-                        aver_rt::AverList::from_vec(vec![
+                        aver_rt::AverList::from_array([
                             (
                                 ::aver_rt::str_lit!("status"),
                                 crate::aver_generated::domain::value::Val::ValInt(
@@ -2446,7 +2446,7 @@ pub fn headersToValMap(
                 Some((name, rest)) => match (headers).get(&name) {
                     Some(values @ _) => {
                         let __tco1 = rest;
-                        let __tco2 = acc.insert_owned(name.clone(), crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(name)), crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new(0usize); crate::aver_generated::domain::builtins::stringsToValStrs__collected(values, __arg6) }))]))));
+                        let __tco2 = acc.insert_owned(name.clone(), crate::aver_generated::domain::value::Val::ValTuple(crate::aver_generated::domain::value::Val__ValTuple(aver_rt::AverList::from_array([crate::aver_generated::domain::value::Val::ValStr(crate::aver_generated::domain::value::Val__ValStr(name)), crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::value::Val__ValList({ let __arg6 @ _ = aver_rt::list_builder_new(0usize); crate::aver_generated::domain::builtins::stringsToValStrs__collected(values, __arg6) }))]))));
                         match __tco1 {
                             aver_rt::ListRest::Lent(__rest) => {
                                 names = __rest;
@@ -2465,7 +2465,7 @@ pub fn headersToValMap(
                             name.clone(),
                             crate::aver_generated::domain::value::Val::ValTuple(
                                 crate::aver_generated::domain::value::Val__ValTuple(
-                                    aver_rt::AverList::from_vec(vec![
+                                    aver_rt::AverList::from_array([
                                         crate::aver_generated::domain::value::Val::ValStr(
                                             crate::aver_generated::domain::value::Val__ValStr(name),
                                         ),

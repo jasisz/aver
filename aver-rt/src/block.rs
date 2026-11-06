@@ -120,7 +120,15 @@ impl<T> Block<T> {
         // SAFETY: room for `len` elements, which move over bitwise; the
         // vector forgets them before it frees its buffer.
         unsafe {
-            ptr::copy_nonoverlapping(items.as_ptr(), block.data(), len);
+            // A short vector, the common one, moves item by item: a call
+            // to `memcpy` costs more than the few words it copies.
+            if len <= 4 {
+                for i in 0..len {
+                    block.data().add(i).write(items.as_ptr().add(i).read());
+                }
+            } else {
+                ptr::copy_nonoverlapping(items.as_ptr(), block.data(), len);
+            }
             items.set_len(0);
             (*block.ptr.as_ptr()).len = len;
         }
