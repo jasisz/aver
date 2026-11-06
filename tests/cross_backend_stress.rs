@@ -1581,6 +1581,31 @@ fn map_list_walks_wasm_gc() {
     );
 }
 
+/// Lists built by many `List.concat` calls and walked in the frame that built
+/// them, by pattern and by `List.drop`. The VM re-summed the remaining pieces
+/// on every step; this pins that carrying the length keeps every answer.
+/// `tests/rust_codegen_differential.rs` holds Rust to the same output.
+const CONCAT_CHAIN_WALKS_SRC: &str = include_str!("fixtures/concat_chain_walks.av");
+const CONCAT_CHAIN_WALKS_OUT: &str = include_str!("fixtures/concat_chain_walks.expected");
+
+#[test]
+fn concat_chain_walks_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-concatchain-vm", CONCAT_CHAIN_WALKS_SRC),
+        CONCAT_CHAIN_WALKS_OUT.trim(),
+    );
+}
+
+#[test]
+fn concat_chain_walks_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-concatchain-wasmgc", CONCAT_CHAIN_WALKS_SRC),
+        CONCAT_CHAIN_WALKS_OUT.trim(),
+    );
+}
+
 // ─── Bits.popCount ─────────────────────────────────────────────────────
 
 /// `Bits.popCount` on both signs, across the 64-bit seam and at the width

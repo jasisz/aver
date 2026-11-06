@@ -1587,6 +1587,10 @@ pub struct Arena<T: ArenaTypes> {
     /// `Arena::list_drop` read only what they step over, and counting them here
     /// would blur exactly the distinction the counter exists to draw.
     list_elements_flattened: SharedCount,
+    /// Total segment lengths read to size a `Segments` node from its parts.
+    /// Stepping through a `Segments` list carries the length instead, so a
+    /// walk keeps this at the number of segments, not segments times steps.
+    list_segment_lengths_read: u64,
     /// Total map entries duplicated because a table was rebuilt instead of
     /// written into — `Map.set` and `Map.remove` on a target the ownership
     /// analysis could not prove unshared, any map builder that rebuilds its

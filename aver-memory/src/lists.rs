@@ -400,13 +400,13 @@ impl<T: ArenaTypes> Arena<T> {
                     current: head_segment,
                     rest,
                     start,
-                    ..
+                    len,
                 } => {
                     let (head, tail) = self.list_uncons(head_segment)?;
                     if rights.is_empty() {
                         return Some((
                             head,
-                            self.push_list_segments_rc(tail, Rc::clone(&rest), start),
+                            self.push_list_segments_rc(tail, Rc::clone(&rest), start, len - 1),
                         ));
                     }
                     // This Segments node was reached down the left spine of a
@@ -485,8 +485,9 @@ impl<T: ArenaTypes> Arena<T> {
                     current: head_segment,
                     rest,
                     start,
-                    ..
+                    len,
                 } => {
+                    let left_after = len - remaining;
                     let mut segment = head_segment;
                     let mut index = start;
                     loop {
@@ -510,7 +511,12 @@ impl<T: ArenaTypes> Arena<T> {
                     }
                     let stepped = self.list_drop(segment, remaining);
                     if rights.is_empty() {
-                        return self.push_list_segments_rc(stepped, Rc::clone(&rest), index);
+                        return self.push_list_segments_rc(
+                            stepped,
+                            Rc::clone(&rest),
+                            index,
+                            left_after,
+                        );
                     }
                     // Same fold as `list_uncons`: the right-siblings collected
                     // down the concat spine follow this node's own remaining
@@ -533,14 +539,25 @@ impl<T: ArenaTypes> Arena<T> {
             .into_iter()
             .filter(|part| !self.list_is_empty_value(*part))
             .collect();
-        self.push_list_segments_rc(current, Rc::new(ListBody::new(filtered)), 0)
+        self.list_segment_lengths_read += filtered.len() as u64;
+        let len = self.list_len_value(current)
+            + filtered
+                .iter()
+                .map(|part| self.list_len_value(*part))
+                .sum::<usize>();
+        self.push_list_segments_rc(current, Rc::new(ListBody::new(filtered)), 0, len)
     }
 
+    /// `len` is the element count of `current` plus `rest[start..]`. Callers
+    /// carry it from the node they step through instead of re-summing the
+    /// remaining segments, which made each step cost the number of segments
+    /// and a walk over a list built by many `List.concat` calls quadratic.
     fn push_list_segments_rc(
         &mut self,
         mut current: NanValue,
         rest: Rc<ListBody>,
         mut start: usize,
+        len: usize,
     ) -> NanValue {
         while self.list_is_empty_value(current) {
             if let Some(next) = rest.get(start).copied() {
@@ -555,11 +572,6 @@ impl<T: ArenaTypes> Arena<T> {
             return current;
         }
 
-        let len = self.list_len_value(current)
-            + rest[start..]
-                .iter()
-                .map(|part| self.list_len_value(*part))
-                .sum::<usize>();
         let idx = self.push(ArenaEntry::List(ArenaList::Segments {
             current,
             rest,

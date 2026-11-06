@@ -3804,6 +3804,24 @@ fn rust_map_list_walks_match_vm() {
     );
 }
 
+/// `List.concat` chains walked on the Rust backend: the program
+/// `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_concat_chain_walks_match_vm() {
+    let src = include_str!("fixtures/concat_chain_walks.av");
+    let expected = include_str!("fixtures/concat_chain_walks.expected").trim();
+
+    let vm = run_vm_inline("concat_chain_walks", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("concat_chain_walks", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM concat chain walks changed");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust concat chain walks diverged from the VM"
+    );
+}
+
 /// `Float.toBits` / `Float.fromBits` on the Rust backend: the program
 /// `cross_backend_stress` runs on the VM and wasm-gc.
 #[test]
