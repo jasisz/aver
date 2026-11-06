@@ -92,9 +92,12 @@ def generate(aver_bin: Path, entry: str, module: str, destination: Path) -> None
                 entry,
                 "--target",
                 "rust",
-                # The aver crate builds aver-rt without equality classes.
+                # The aver crate builds aver-rt without equality classes and with
+                # atomic counts (no plain-counts), whatever `auto` would choose.
                 "--equality-classes",
                 "0",
+                "--threads",
+                "many",
                 "--module-root",
                 ".",
                 "-o",

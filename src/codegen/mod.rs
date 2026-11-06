@@ -494,15 +494,19 @@ pub struct CodegenContext {
     /// independent products are emitted in sequence and aver-rt counts
     /// references with plain instructions (`plain-counts`).
     pub single_thread: bool,
+    /// Rust: `MIN_STEPS` of the equality classes the generated `==` of a
+    /// recursive sum keeps (`[rust] equality_classes`), 0 for none.
+    pub rust_equality_classes: u32,
+    /// Rust: the generated code calls `aver_rt::Walk::node_classed`, set by
+    /// the emitter of a recursive sum's `==` when it writes the call. Only
+    /// then does `Cargo.toml` turn on aver-rt's `equality-classes`.
+    pub rust_classed_eq: std::cell::Cell<bool>,
     /// Functions that are part of a mutual-TCO SCC group (emitted as
     /// trampoline + wrappers). Functions NOT in this set but with
     /// TailCalls are emitted as plain self-TCO loops. Keyed by opaque
     /// [`crate::ir::FnId`] from the symbol table — entry-module fns
     /// and dep-module fns with the same bare name can't accidentally
     /// merge under bare-name keying.
-    /// Rust: `MIN_STEPS` of the equality classes the generated `==` of a
-    /// recursive sum keeps (`[rust] equality_classes`), 0 for none.
-    pub rust_equality_classes: u32,
     pub mutual_tco_members: HashSet<crate::ir::FnId>,
     /// Functions that call themselves directly or transitively. Set-
     /// form union of `entry_analysis.recursive_fns` plus each
@@ -892,6 +896,9 @@ pub struct ProjectOutput {
     /// Universal law-claims the emission carries, in emit order. Populated by
     /// the certificate-model Lean emission only; empty everywhere else.
     pub law_claims: Vec<UniversalLawClaim>,
+    /// Rust, `[rust] threads = "auto"`: what it chose and why, one line
+    /// that `aver compile` prints.
+    pub threads: Option<String>,
 }
 
 impl ProjectOutput {
@@ -905,6 +912,7 @@ impl ProjectOutput {
             notes: Vec::new(),
             perf_notes: Vec::new(),
             law_claims: Vec::new(),
+            threads: None,
         }
     }
 
@@ -1191,6 +1199,7 @@ pub fn build_context(
         emit_self_host_support: false,
         single_thread: false,
         rust_equality_classes: 0,
+        rust_classed_eq: std::cell::Cell::new(false),
         mutual_tco_members,
         recursive_fns,
         buffer_build_sinks,
@@ -1743,6 +1752,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         emit_self_host_support: false,
         single_thread: false,
         rust_equality_classes: 0,
+        rust_classed_eq: std::cell::Cell::new(false),
         mutual_tco_members: std::collections::HashSet::new(),
         recursive_fns: std::collections::HashSet::new(),
         buffer_build_sinks: std::collections::HashMap::new(),

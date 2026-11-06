@@ -41,6 +41,7 @@ pub fn generate_cargo_toml(
     has_library: bool,
     rust: RustOptions,
     plain_counts: bool,
+    classed_eq: bool,
 ) -> String {
     let mut lines = Vec::new();
     lines.push("[package]".to_string());
@@ -75,7 +76,9 @@ pub fn generate_cargo_toml(
     if plain_counts {
         rt_features.push("plain-counts");
     }
-    if rust.equality_classes > 0 {
+    // Only code that calls `Walk::node_classed` keeps classes; without it
+    // the feature would only mask every read of a node's tag.
+    if classed_eq {
         rt_features.push("equality-classes");
     }
     rt_features.sort();
@@ -255,6 +258,7 @@ mod tests {
             false,
             RustOptions::default(),
             false,
+            false,
         );
 
         assert!(manifest.contains("[profile.release]\nlto = true\ncodegen-units = 1"));
@@ -263,11 +267,11 @@ mod tests {
         ));
     }
 
-    /// `[rust] equality_classes` above 0 turns on aver-rt's
-    /// `equality-classes`; 0 leaves it off.
+    /// aver-rt's `equality-classes` is on only when the generated code calls
+    /// `node_classed`, whatever `[rust] equality_classes` says.
     #[test]
-    fn equality_classes_turn_on_the_runtime_feature() {
-        let manifest = |equality_classes| {
+    fn equality_classes_turn_on_the_runtime_feature_only_for_classed_code() {
+        let manifest = |classed_eq| {
             generate_cargo_toml(
                 "demo",
                 &HashSet::new(),
@@ -276,15 +280,13 @@ mod tests {
                 false,
                 &ProviderComposition::default(),
                 false,
-                RustOptions {
-                    equality_classes,
-                    ..Default::default()
-                },
+                RustOptions::default(),
                 false,
+                classed_eq,
             )
         };
-        assert!(manifest(8).contains("\"equality-classes\""));
-        assert!(!manifest(0).contains("equality-classes"));
+        assert!(manifest(true).contains("\"equality-classes\""));
+        assert!(!manifest(false).contains("equality-classes"));
     }
 
     /// `[rust] panic = "abort"` turns unwinding off in the profiles that run
@@ -305,6 +307,7 @@ mod tests {
                     panic,
                     ..Default::default()
                 },
+                false,
                 false,
             )
         };

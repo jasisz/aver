@@ -181,6 +181,26 @@ fn transpile_project(
         ctx.modules = modules;
     }
     ctx.rust_equality_classes = rust.equality_classes;
+    // Set by the emitter of a recursive sum's `==` when it calls
+    // `node_classed`; `Cargo.toml` is written after every module for it.
+    ctx.rust_classed_eq.set(false);
+    // `[rust] threads = "auto"`: one thread when nothing in the program runs
+    // Aver code on a thread of its own, and `aver compile` says why.
+    let threads_choice = match rust.threads {
+        crate::config::RustThreads::Auto => {
+            let why_many = first_threaded_construct(ctx);
+            ctx.single_thread = why_many.is_none();
+            Some(match why_many {
+                None => "threads: one (auto: no independent product, no service that runs Aver code on threads of its own)".to_string(),
+                Some(why) => format!("threads: many (auto: {why})"),
+            })
+        }
+        crate::config::RustThreads::Many => {
+            ctx.single_thread = false;
+            None
+        }
+        crate::config::RustThreads::One => None,
+    };
     // Every refusal below is recorded on the context as it happens; this
     // transpile reports its own, not a previous one's.
     ctx.substituted_compile_errors.borrow_mut().clear();
@@ -314,20 +334,6 @@ fn transpile_project(
         .collect();
 
     let mut files = vec![
-        (
-            "Cargo.toml".to_string(),
-            project::generate_cargo_toml(
-                &ctx.project_name,
-                &used_services,
-                has_embedded_policy,
-                has_runtime_policy,
-                ctx.emit_replay_runtime,
-                &provider_composition,
-                library_crate.is_some(),
-                rust,
-                ctx.single_thread,
-            ),
-        ),
         (
             "README.md".to_string(),
             project::generate_readme(&ctx.project_name),
@@ -479,6 +485,23 @@ fn transpile_project(
         "src/aver_generated",
         &rust_modules,
     ));
+    // Last, once every `==` the program has is written: the manifest turns
+    // on equality classes only for code that calls `node_classed`.
+    files.push((
+        "Cargo.toml".to_string(),
+        project::generate_cargo_toml(
+            &ctx.project_name,
+            &used_services,
+            has_embedded_policy,
+            has_runtime_policy,
+            ctx.emit_replay_runtime,
+            &provider_composition,
+            library_crate.is_some(),
+            rust,
+            ctx.single_thread,
+            ctx.rust_classed_eq.get(),
+        ),
+    ));
     files.sort_by(|left, right| left.0.cmp(&right.0));
 
     ProjectOutput {
@@ -488,6 +511,7 @@ fn transpile_project(
         notes: carrier_notes,
         perf_notes: perf_notes::collect(ctx, boxing_notes),
         law_claims: Vec::new(),
+        threads: threads_choice,
     }
 }
 
@@ -1129,6 +1153,118 @@ fn single_thread_refusal(ctx: &CodegenContext, services: &HashSet<String>) -> Op
             others.join(", "),
             SINGLE_THREAD_SERVICES.join(", ")
         ))
+    }
+}
+
+/// What makes a build for `[rust] threads = "auto"` run on many threads: the
+/// first construct of the program, entry first and then its modules in
+/// order, that runs Aver code on a thread other than `main`'s and the one
+/// `main` joins. `None` when there is none, and the program is built for one
+/// thread.
+///
+/// - `--with-replay` / `--policy runtime`, and a service other than
+///   [`SINGLE_THREAD_SERVICES`]: what a one-thread build refuses
+///   ([`single_thread_refusal`]).
+/// - An independent product `(a, b)!` / `(a, b)?!`. A one-thread build runs
+///   it in sequence, so this is for speed, not soundness: the program asked
+///   for its branches to be able to run at once.
+/// - Verify cases next to a module-level binding. `cargo test` runs the
+///   cases on threads of their own, and a binding's value is one value
+///   (a `static`) that every test reading it clones and drops.
+fn first_threaded_construct(ctx: &CodegenContext) -> Option<String> {
+    use crate::ast::{Expr, Stmt};
+    if ctx.emit_replay_runtime || ctx.runtime_policy_from_env {
+        return Some("--with-replay or --policy runtime keeps scoped state per thread".to_string());
+    }
+    let place = |module: Option<&str>, line: usize| match module {
+        None => format!("line {line}"),
+        Some(module) => format!("module {module}, line {line}"),
+    };
+    let product_line = |expr: &crate::ast::Spanned<Expr>| {
+        let mut line = None;
+        crate::codegen::expr_walk::any(expr, &mut |e| {
+            let found = matches!(e.node, Expr::IndependentProduct(..));
+            if found {
+                line = Some(e.line);
+            }
+            found
+        });
+        line
+    };
+    let product = |expr: &crate::ast::Spanned<Expr>, owner: &str, module: Option<&str>| {
+        product_line(expr).map(|line| {
+            format!(
+                "the independent product in {owner} ({})",
+                place(module, line)
+            )
+        })
+    };
+    let in_fn = |fd: &FnDef, module: Option<&str>| -> Option<String> {
+        for effect in &fd.effects {
+            let service = effect
+                .node
+                .split_once('.')
+                .map_or(effect.node.as_str(), |(service, _)| service);
+            if !SINGLE_THREAD_SERVICES.contains(&service) {
+                return Some(format!(
+                    "fn {} uses {} ({}), which may run Aver code on threads of its own",
+                    fd.name,
+                    effect.node,
+                    place(module, effect.line)
+                ));
+            }
+        }
+        fd.body.stmts().iter().find_map(|stmt| match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                product(expr, &format!("fn {}", fd.name), module)
+            }
+        })
+    };
+    let mut first_binding: Option<String> = None;
+    for item in &ctx.items {
+        let found = match item {
+            TopLevel::FnDef(fd) => in_fn(fd, None),
+            TopLevel::Stmt(Stmt::Binding(name, _, expr)) => {
+                first_binding
+                    .get_or_insert_with(|| format!("`{name}` ({})", place(None, expr.line)));
+                product(expr, &format!("the binding `{name}`"), None)
+            }
+            TopLevel::Stmt(Stmt::Expr(expr)) => product(expr, "a top-level statement", None),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    for module in &ctx.modules {
+        let prefix = Some(module.prefix.as_str());
+        for fd in &module.fn_defs {
+            if let Some(found) = in_fn(fd, prefix) {
+                return Some(found);
+            }
+        }
+        for binding in &module.bindings {
+            first_binding.get_or_insert_with(|| {
+                format!("`{}` ({})", binding.name, place(prefix, binding.value.line))
+            });
+            if let Some(found) = product(
+                &binding.value,
+                &format!("the binding `{}`", binding.name),
+                prefix,
+            ) {
+                return Some(found);
+            }
+        }
+    }
+    let has_tests = ctx
+        .items
+        .iter()
+        .any(|item| matches!(item, TopLevel::Verify(_)));
+    match first_binding {
+        Some(binding) if has_tests => Some(format!(
+            "cargo test runs the verify cases on threads of their own, and they share the module-level binding {binding}"
+        )),
+        _ => None,
     }
 }
 
@@ -3676,11 +3812,11 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
                 None,
                 &std::collections::BTreeSet::new(),
                 None,
-                // No equality classes, so that the allocator is the only
-                // runtime feature either manifest names.
+                // Many threads, so that the allocator is the only runtime
+                // feature either manifest names.
                 crate::config::RustOptions {
                     allocator,
-                    equality_classes: 0,
+                    threads: crate::config::RustThreads::Many,
                     ..Default::default()
                 },
             )
@@ -3754,6 +3890,138 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         };
         assert!(refused.contains("uses Tcp"), "{refused}");
         assert!(emit(threaded, RustThreads::Many).is_ok());
+    }
+
+    /// `[rust] threads = "auto"` builds for one thread a program in which
+    /// nothing runs Aver code on a thread of its own, and for many one with
+    /// an independent product (in a module too), a service other than the
+    /// one-thread ones, or verify cases next to a module-level binding; it
+    /// says which and why. `"many"` keeps threads for a program without
+    /// any, and `"one"` runs a product in sequence.
+    #[cfg(feature = "runtime")]
+    #[test]
+    fn auto_threads_choose_one_only_when_nothing_runs_on_threads_of_its_own() {
+        use crate::config::RustThreads;
+        let emit = |ctx: &mut crate::codegen::CodegenContext, threads| {
+            super::transpile_with_provider_manifest_for_project(
+                ctx,
+                None,
+                &std::collections::BTreeSet::new(),
+                None,
+                crate::config::RustOptions {
+                    threads,
+                    ..Default::default()
+                },
+            )
+            .expect("transpile")
+        };
+        let plain = |out: &crate::codegen::ProjectOutput| {
+            generated_file(out, "Cargo.toml").contains("\"plain-counts\"")
+        };
+        let from = |source: &str, threads| emit(&mut ctx_from_source(source, "demo"), threads);
+
+        let quiet = "module Demo\n\nfn twice(n: Int) -> Int\n    n + n\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(String.fromInt(twice(3)))\n";
+        let auto = from(quiet, RustThreads::Auto);
+        assert!(plain(&auto));
+        assert_eq!(
+            auto.threads.as_deref(),
+            Some(
+                "threads: one (auto: no independent product, no service that runs Aver code on threads of its own)"
+            )
+        );
+        let many = from(quiet, RustThreads::Many);
+        assert!(!plain(&many));
+        assert_eq!(many.threads, None);
+
+        let product = "module Demo\n\nfn twice(n: Int) -> Int\n    n + n\n\nfn both(n: Int) -> Int\n    match (twice(n), twice(n + 1))!\n        (a, b) -> a + b\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(String.fromInt(both(3)))\n";
+        let auto = from(product, RustThreads::Auto);
+        assert!(!plain(&auto));
+        assert_eq!(
+            auto.threads.as_deref(),
+            Some("threads: many (auto: the independent product in fn both (line 7))")
+        );
+        assert!(
+            generated_file(&auto, "src/aver_generated/entry/mod.rs").contains("std::thread::scope")
+        );
+        let one = from(product, RustThreads::One);
+        assert!(plain(&one));
+        assert!(
+            !generated_file(&one, "src/aver_generated/entry/mod.rs").contains("std::thread::scope")
+        );
+
+        let tcp = "module Demo\n\nfn main() -> Unit\n    ! [Tcp.connect, Console.print]\n    match Tcp.connect(\"localhost\", 1)\n        Result.Ok(_) -> Console.print(\"up\")\n        Result.Err(e) -> Console.print(e)\n";
+        let auto = from(tcp, RustThreads::Auto);
+        assert!(!plain(&auto));
+        let why = auto.threads.unwrap_or_default();
+        assert!(
+            why.starts_with("threads: many (auto: fn main uses Tcp.connect (line 4)"),
+            "{why}"
+        );
+
+        let tested = "module Demo\n\nbase = 40\n\nfn plus(n: Int) -> Int\n    n + base\n\nverify plus\n    plus(2) => 42\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(String.fromInt(plus(2)))\n";
+        let auto = from(tested, RustThreads::Auto);
+        assert!(!plain(&auto));
+        let why = auto.threads.unwrap_or_default();
+        assert!(
+            why.contains("the module-level binding `base` (line 3)"),
+            "{why}"
+        );
+
+        // A product in a module the entry depends on decides as one in the
+        // entry does.
+        let mut ctx = ctx_from_multi(
+            "module Entry\n    depends [Worker]\n    intent = \"Entry.\"\n    effects []\n\nfn main() -> Int\n    Worker.both(3)\n",
+            &[(
+                "Worker",
+                "module Worker\n    exposes [both]\n    intent = \"Worker.\"\n    effects []\n\nfn twice(n: Int) -> Int\n    n + n\n\nfn both(n: Int) -> Int\n    match (twice(n), twice(n + 1))!\n        (a, b) -> a + b\n",
+            )],
+            "demo",
+        );
+        let auto = emit(&mut ctx, RustThreads::Auto);
+        assert!(!plain(&auto));
+        assert_eq!(
+            auto.threads.as_deref(),
+            Some(
+                "threads: many (auto: the independent product in fn both (module Worker, line 10))"
+            )
+        );
+    }
+
+    /// aver-rt's `equality-classes` is on only in a crate whose generated
+    /// `==` calls `node_classed`: a recursive sum's, unless
+    /// `[rust] equality_classes = 0`.
+    #[cfg(feature = "runtime")]
+    #[test]
+    fn equality_classes_feature_follows_node_classed_calls() {
+        let emit = |source: &str, equality_classes| {
+            let mut ctx = ctx_from_source(source, "demo");
+            super::transpile_with_provider_manifest_for_project(
+                &mut ctx,
+                None,
+                &std::collections::BTreeSet::new(),
+                None,
+                crate::config::RustOptions {
+                    equality_classes,
+                    ..Default::default()
+                },
+            )
+            .expect("transpile")
+        };
+        let classed = |out: &crate::codegen::ProjectOutput| {
+            let calls = out
+                .files
+                .iter()
+                .any(|(path, text)| path.ends_with(".rs") && text.contains("node_classed"));
+            let feature = generated_file(out, "Cargo.toml").contains("\"equality-classes\"");
+            assert_eq!(calls, feature, "{}", generated_file(out, "Cargo.toml"));
+            feature
+        };
+        let flat =
+            "module Demo\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"hi\")\n";
+        assert!(!classed(&emit(flat, 12)));
+        let tree = "module Demo\n\ntype Tree\n    Leaf(Int)\n    Node(Tree, Tree)\n\nfn same(a: Tree, b: Tree) -> Bool\n    a == b\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(String.fromBool(same(Tree.Leaf(1), Tree.Node(Tree.Leaf(1), Tree.Leaf(2)))))\n";
+        assert!(classed(&emit(tree, 12)));
+        assert!(!classed(&emit(tree, 0)));
     }
 
     /// A program that reaches a capability is a library plus a binary. Only

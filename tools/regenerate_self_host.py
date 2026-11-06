@@ -47,9 +47,12 @@ def compile_self_host(aver_bin: Path, output: Path) -> None:
             "self_hosted/main.av",
             "--target",
             "rust",
-            # The aver crate builds aver-rt without equality classes.
+            # The aver crate builds aver-rt without equality classes and with
+            # atomic counts (no plain-counts), whatever `auto` would choose.
             "--equality-classes",
             "0",
+            "--threads",
+            "many",
             "--output",
             str(output),
             "--module-root",
