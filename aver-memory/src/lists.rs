@@ -377,11 +377,8 @@ impl<T: ArenaTypes> Arena<T> {
                     let tail = if start + 1 >= items.len() {
                         self.empty_list_value()
                     } else {
-                        let tail_idx = self.push(ArenaEntry::List(ArenaList::Flat {
-                            items: Rc::clone(&items),
-                            start: start + 1,
-                            scan_receipt,
-                        }));
+                        let tail_idx =
+                            self.push_list_view(Rc::clone(&items), start + 1, scan_receipt);
                         NanValue::new_list(tail_idx)
                     };
                     rights.reverse();
@@ -471,11 +468,8 @@ impl<T: ArenaTypes> Arena<T> {
                     start,
                     scan_receipt,
                 } => {
-                    let view_idx = self.push(ArenaEntry::List(ArenaList::Flat {
-                        items: Rc::clone(&items),
-                        start: start + remaining,
-                        scan_receipt,
-                    }));
+                    let view_idx =
+                        self.push_list_view(Rc::clone(&items), start + remaining, scan_receipt);
                     rights.reverse();
                     return self.push_list_segments(NanValue::new_list(view_idx), rights);
                 }

@@ -1,0 +1,60 @@
+module MapListWalks
+    intent =
+        "Walk the lists Map.keys, Map.values and Map.entries return, one tail at a time."
+        "The VM walked these in quadratic time when the elements were tuples or records."
+    effects [Console.print]
+
+record Pt
+    x: Int
+    y: Int
+
+fn build(i: Int, n: Int, acc: Map<Int, Pt>) -> Map<Int, Pt>
+    ? "Map from i to a point built from i."
+    match i >= n
+        true -> acc
+        false -> build(i + 1, n, Map.set(acc, Int.mod(i * 37, 3001), Pt(x = i, y = i * 2)))
+
+fn sumKeys(ks: List<Int>, acc: Int) -> Int
+    ? "Order-sensitive checksum of the keys."
+    match ks
+        [] -> acc
+        [k, ..rest] -> sumKeys(rest, Int.mod(acc * 31 + k, 1000000007))
+
+fn sumPts(ps: List<Pt>, acc: Int) -> Int
+    ? "Order-sensitive checksum of the points."
+    match ps
+        [] -> acc
+        [p, ..rest] -> sumPts(rest, Int.mod(acc * 31 + p.x + 3 * p.y, 1000000007))
+
+fn sumEntries(es: List<Tuple<Int, Pt>>, acc: Int) -> Int
+    ? "Order-sensitive checksum of the entries."
+    match es
+        [] -> acc
+        [e, ..rest] -> match e
+            (k, p) -> sumEntries(rest, Int.mod(acc * 31 + k + 5 * p.x, 1000000007))
+
+fn sumDropped(es: List<Tuple<Int, Pt>>, acc: Int) -> Int
+    ? "The same checksum, stepping with List.drop instead of a pattern."
+    match List.take(es, 1)
+        [] -> acc
+        [e, .._] -> match e
+            (k, p) -> sumDropped(List.drop(es, 1), Int.mod(acc * 31 + k + 5 * p.x, 1000000007))
+
+fn firstEntries(es: List<Tuple<Int, Pt>>, left: Int) -> String
+    ? "The first few entries, spelled out."
+    match left <= 0
+        true -> ""
+        false -> match es
+            [] -> ""
+            [e, ..rest] -> match e
+                (k, p) -> "{k}:{p.x},{p.y};{firstEntries(rest, left - 1)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    m = build(0, 3000, {})
+    Console.print("keys {sumKeys(Map.keys(m), 0)}")
+    Console.print("values {sumPts(Map.values(m), 0)}")
+    Console.print("entries {sumEntries(Map.entries(m), 0)}")
+    Console.print("dropped {sumDropped(Map.entries(m), 0)}")
+    Console.print("reversed {sumPts(List.reverse(Map.values(m)), 0)}")
+    Console.print("first {firstEntries(Map.entries(m), 4)}")

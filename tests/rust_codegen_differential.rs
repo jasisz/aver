@@ -3785,6 +3785,25 @@ fn rust_bits_pop_count_matches_vm() {
     assert_eq!(rust.trim(), expected, "Rust popCount diverged from the VM");
 }
 
+/// The walks over `Map.keys`, `Map.values`, `Map.entries` and
+/// `List.reverse` on the Rust backend: the program `cross_backend_stress`
+/// runs on the VM and wasm-gc.
+#[test]
+fn rust_map_list_walks_match_vm() {
+    let src = include_str!("fixtures/map_list_walks.av");
+    let expected = include_str!("fixtures/map_list_walks.expected").trim();
+
+    let vm = run_vm_inline("map_list_walks", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("map_list_walks", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM map list walks changed");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust map list walks diverged from the VM"
+    );
+}
+
 /// `Float.toBits` / `Float.fromBits` on the Rust backend: the program
 /// `cross_backend_stress` runs on the VM and wasm-gc.
 #[test]
