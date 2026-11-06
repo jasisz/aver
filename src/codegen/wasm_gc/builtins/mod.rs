@@ -1012,6 +1012,7 @@ fn emit_string_from_int(registry: &TypeRegistry) -> Result<Function, WasmGcError
             (local $i i32)
             (local $arr (ref null $string))
             (local $neg i32)
+            (local $digit i32)
 
             ;; Fast path: n == 0 → ['0']
             local.get $n
@@ -1026,18 +1027,13 @@ fn emit_string_from_int(registry: &TypeRegistry) -> Result<Function, WasmGcError
                 local.get $n
                 i64.const 0
                 i64.lt_s
-                local.tee $neg
-
-                (if
-                  (then
-                    ;; abs_n = 0 - n
-                    i64.const 0
-                    local.get $n
-                    i64.sub
-                    local.set $abs_n)
-                  (else
-                    local.get $n
-                    local.set $abs_n))
+                local.set $neg
+                ;; The digits are taken off `n` itself: `i64.div_s` and
+                ;; `i64.rem_s` round toward zero, so a negative `n` gives the
+                ;; negated digits, and `i64::MIN`, which has no negation,
+                ;; needs no case of its own.
+                local.get $n
+                local.set $abs_n
 
                 ;; Count digits.
                 local.get $abs_n
@@ -1087,14 +1083,21 @@ fn emit_string_from_int(registry: &TypeRegistry) -> Result<Function, WasmGcError
                     i32.lt_s
                     br_if $fill_done
 
-                    ;; arr[i] = '0' + (copy % 10)
+                    ;; arr[i] = '0' + |copy % 10|
                     local.get $arr
                     local.get $i
                     local.get $copy
                     i64.const 10
                     i64.rem_s
                     i32.wrap_i64
+                    local.set $digit
                     i32.const 48
+                    i32.const 0
+                    local.get $digit
+                    i32.sub
+                    local.get $digit
+                    local.get $neg
+                    select
                     i32.add
                     array.set $string
 

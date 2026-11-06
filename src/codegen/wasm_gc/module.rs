@@ -3853,6 +3853,32 @@ fn emit_module_pass(
             next_global_idx += 1;
         }
     }
+    // One global per String literal, filled the first time a read builds it
+    // (`strings::emit_literal_string`), so a literal or an interpolation's
+    // constant pieces are not built again on every call. Null initializers,
+    // for the same reason as the Int literal pool. A `--certify` build keeps
+    // each literal built where it is read.
+    let mut string_literal_pool = HashMap::new();
+    if !certify
+        && std::env::var_os("AVER_NO_STRING_LITERAL_POOL").is_none()
+        && let Some(string_ty) = registry.string_array_type_idx
+    {
+        let mut segments: Vec<u32> = registry.string_literal_idx.values().copied().collect();
+        segments.sort_unstable();
+        for seg in segments {
+            let ty = wasm_encoder::GlobalType {
+                val_type: super::types::struct_ref(string_ty),
+                mutable: true,
+                shared: false,
+            };
+            globals.global(
+                ty,
+                &wasm_encoder::ConstExpr::ref_null(HeapType::Concrete(string_ty)),
+            );
+            string_literal_pool.insert(seg, next_global_idx);
+            next_global_idx += 1;
+        }
+    }
     // The shared empty map of each `Map<K, V>`, after every other global.
     let map_empty_globals =
         map_helpers.emit_empty_globals(&mut globals, &mut next_global_idx, &registry)?;
@@ -3860,6 +3886,7 @@ fn emit_module_pass(
         module.section(&globals);
     }
     super::body::set_int_literal_pool(literal_pool);
+    super::body::set_string_literal_pool(string_literal_pool);
 
     // `fn_map` records a helper the moment the emitter resolves its index to
     // put a `call` in front of it. A fn that later bails to a trap stub can
