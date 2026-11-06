@@ -4609,12 +4609,17 @@ fn emit_module_pass(
                 &mut carried,
             )?;
             twin_codes.push(if mir_fn.repr.self_tail_loop && mir_dispatch[i] {
-                super::self_tail_loop::lower(
-                    func,
-                    twin.wasm_idx,
-                    twin_params[i].len() as u32,
-                    &carried,
-                )?
+                // Outside a `--certify` build the loop runs only while every
+                // `Int` param comes as its machine word (`self_tail_loop.rs`).
+                let total = twin_params[i].len() as u32;
+                let first_ref = total - (entry.len() + record_entry.len()) as u32;
+                let packed: Vec<u32> = if certify || std::env::var_os("AVER_NO_WORD_LOOP").is_some()
+                {
+                    Vec::new()
+                } else {
+                    (first_ref..first_ref + entry.len() as u32).collect()
+                };
+                super::self_tail_loop::lower_split(func, twin.wasm_idx, total, &carried, &packed)?
             } else {
                 func
             });

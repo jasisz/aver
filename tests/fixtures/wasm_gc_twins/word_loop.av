@@ -1,0 +1,45 @@
+module WordLoop
+    intent = "Self loops on wasm-gc whose Int params cross between the machine word and Big: the loop runs while every one is a word, a call or a turn that brings a Big one runs outside it."
+    depends []
+    effects [Console]
+
+fn collatz(n: Int, steps: Int) -> Int
+    ? "Steps to reach 1."
+    match n == 1
+        true -> steps
+        false -> match Int.mod(n, 2) == 0
+            true -> collatz(Int.div(n, 2), steps + 1)
+            false -> collatz(3 * n + 1, steps + 1)
+
+fn fact(n: Int, acc: Int) -> Int
+    ? "Factorial, goes Big."
+    match n
+        0 -> acc
+        _ -> fact(n - 1, acc * n)
+
+fn shrink(x: Int, k: Int, acc: Int) -> Int
+    ? "Squares then halves: word to Big and back."
+    match k
+        0 -> acc + x
+        _ -> match x > 1000000000000
+            true -> shrink(Int.div(x, 1000003), k - 1, acc + 1)
+            false -> shrink(x * x + 7, k - 1, acc)
+
+fn stay(n: Int, x: Int) -> Int
+    ? "A long loop on a Big param: each turn runs outside the loop, and the stack must not grow."
+    match n
+        0 -> x
+        _ -> stay(n - 1, x + 1)
+
+fn main() -> Unit
+    ? "Print results."
+    ! [Console.print]
+    Console.print(String.fromInt(collatz(27, 0)))
+    Console.print(String.fromInt(collatz(9223372036854775807, 0)))
+    Console.print(String.fromInt(collatz(123456789012345678901234567890, 0)))
+    Console.print(String.fromInt(fact(30, 1)))
+    Console.print(String.fromInt(fact(25, 9223372036854775807)))
+    Console.print(String.fromInt(shrink(3, 200, 0)))
+    Console.print(String.fromInt(shrink(9223372036854775806, 50, -9223372036854775807)))
+    Console.print(String.fromInt(stay(300000, 1180591620717411303424)))
+    Console.print(String.fromInt(stay(300000, 9223372036854000000)))
