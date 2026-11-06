@@ -336,9 +336,14 @@ pub enum RustPanic {
 /// `aver compile --target rust` generates runs Aver code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RustThreads {
+    /// `One` when nothing in the program runs Aver code on a thread of its
+    /// own (no independent product, only services that run none, no
+    /// `--with-replay` or `--policy runtime`), `Many` otherwise. `aver
+    /// compile` says which it chose and why.
+    #[default]
+    Auto,
     /// Independent products run on threads of their own, and reference
     /// counts change with atomic instructions.
-    #[default]
     Many,
     /// One thread at a time (`aver compile --single-thread`): independent
     /// products run in sequence, a service that runs Aver code on threads of
@@ -2843,7 +2848,7 @@ helpers = 30
             RustOptions {
                 allocator: RustAllocator::Mimalloc,
                 panic: RustPanic::Abort,
-                threads: RustThreads::Many,
+                threads: RustThreads::Auto,
                 equality_classes: DEFAULT_EQUALITY_CLASSES,
             }
         );
@@ -2852,20 +2857,27 @@ helpers = 30
     }
 
     #[test]
-    fn rust_threads_defaults_to_many_and_names_its_values() {
+    fn rust_threads_defaults_to_auto_and_names_its_values() {
         assert_eq!(
             ProjectConfig::parse("").unwrap().rust.threads,
-            RustThreads::Many
+            RustThreads::Auto
         );
-        assert_eq!(
-            ProjectConfig::parse("[rust]\nthreads = \"one\"\n")
+        let threads = |value: &str| {
+            ProjectConfig::parse(&format!("[rust]\nthreads = \"{value}\"\n"))
                 .unwrap()
                 .rust
-                .threads,
-            RustThreads::One
-        );
+                .threads
+        };
+        assert_eq!(threads("auto"), RustThreads::Auto);
+        assert_eq!(threads("many"), RustThreads::Many);
+        assert_eq!(threads("one"), RustThreads::One);
         let unknown = ProjectConfig::parse("[rust]\nthreads = \"two\"\n").unwrap_err();
-        assert!(unknown.contains("[rust].threads must be \"many\" or \"one\", got \"two\""));
+        assert!(
+            unknown.contains("[rust].threads must be \"auto\", \"many\" or \"one\", got \"two\""),
+            "{unknown}"
+        );
+        let wrong = ProjectConfig::parse("[rust]\nthreads = 1\n").unwrap_err();
+        assert!(wrong.contains("[rust].threads must be a string"), "{wrong}");
     }
 
     #[test]
@@ -2912,7 +2924,7 @@ fn parse_work_max_jobs(table: &toml::Table) -> Result<Option<usize>, String> {
 
 /// `[rust] allocator`: `"system"` (the default) or `"mimalloc"`;
 /// `[rust] panic`: `"unwind"` (the default) or `"abort"`;
-/// `[rust] threads`: `"many"` (the default) or `"one"`.
+/// `[rust] threads`: `"auto"` (the default), `"many"` or `"one"`.
 fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
     let Some(value) = table.get("rust") else {
         return Ok(RustOptions::default());
@@ -2951,9 +2963,24 @@ fn parse_rust_options(table: &toml::Table) -> Result<RustOptions, String> {
             true => RustPanic::Abort,
             false => RustPanic::Unwind,
         },
-        threads: match choice("threads", ["many", "one"])? {
-            true => RustThreads::One,
-            false => RustThreads::Many,
+        threads: match rust.get("threads") {
+            None => RustThreads::Auto,
+            Some(toml::Value::String(name)) => match name.as_str() {
+                "auto" => RustThreads::Auto,
+                "many" => RustThreads::Many,
+                "one" => RustThreads::One,
+                other => {
+                    return Err(format!(
+                        "aver.toml: [rust].threads must be \"auto\", \"many\" or \"one\", got {other:?}"
+                    ));
+                }
+            },
+            Some(_) => {
+                return Err(
+                    "aver.toml: [rust].threads must be a string, \"auto\", \"many\" or \"one\""
+                        .to_string(),
+                );
+            }
         },
         equality_classes: match rust.get("equality_classes") {
             None => DEFAULT_EQUALITY_CLASSES,

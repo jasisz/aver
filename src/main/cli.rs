@@ -67,6 +67,28 @@ pub(super) enum DeployPreset {
     Cloudflare,
 }
 
+/// `aver compile --threads`: as `[rust] threads` in aver.toml.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum RustThreadsArg {
+    /// One thread when nothing in the program runs Aver code on a thread of
+    /// its own, many otherwise.
+    Auto,
+    /// Independent products on threads of their own; atomic reference counts.
+    Many,
+    /// One thread at a time; plain reference counts.
+    One,
+}
+
+impl RustThreadsArg {
+    pub(super) const fn threads(self) -> aver::config::RustThreads {
+        match self {
+            RustThreadsArg::Auto => aver::config::RustThreads::Auto,
+            RustThreadsArg::Many => aver::config::RustThreads::Many,
+            RustThreadsArg::One => aver::config::RustThreads::One,
+        }
+    }
+}
+
 /// Optional post-pass optimization mode for generated WASM modules.
 /// Runs Binaryen to a fixed point and strips producer/target metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -510,9 +532,16 @@ pub(super) enum Commands {
         /// Independent products run in sequence, a service that runs Aver
         /// code on threads of its own is refused, and reference counts change
         /// with plain instructions instead of atomic ones. The same as
-        /// `[rust] threads = "one"` in aver.toml.
-        #[arg(long)]
+        /// `--threads one` and `[rust] threads = "one"` in aver.toml.
+        #[arg(long, conflicts_with = "threads")]
         single_thread: bool,
+        /// Rust only: on how many threads the program runs its Aver code.
+        /// `auto` (the default) builds for one thread when nothing in the
+        /// program runs Aver code on a thread of its own, and for many
+        /// otherwise; `one` is `--single-thread`; `many` keeps threads and
+        /// atomic reference counts. Overrides `[rust] threads` in aver.toml.
+        #[arg(long, value_enum, value_name = "MODE")]
+        threads: Option<RustThreadsArg>,
         /// Rust only: how many pairs deep a comparison of two nodes of a
         /// recursive sum must go before `==` keeps them as one equality class,
         /// so that it does not compare them again; 0 keeps no classes. The

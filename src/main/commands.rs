@@ -4428,6 +4428,9 @@ fn report_codegen_output(
             println!("    {}", note.dimmed());
         }
     }
+    if let Some(threads) = &output.threads {
+        println!("  {}", threads.dimmed());
+    }
     if !output.notes.is_empty() {
         println!("  {}", "notes:".yellow());
         for note in &output.notes {
@@ -6817,6 +6820,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         check,
         perf_notes,
         single_thread,
+        threads,
         equality_classes,
         with_replay,
         policy_mode,
@@ -7002,6 +7006,9 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
                 .unwrap_or_default();
             if single_thread {
                 rust.threads = aver::config::RustThreads::One;
+            }
+            if let Some(threads) = threads {
+                rust.threads = threads;
             }
             if let Some(n) = equality_classes {
                 rust.equality_classes = n;
@@ -8191,6 +8198,8 @@ pub(super) struct CompileOptions<'a> {
     pub(super) perf_notes: bool,
     /// `--single-thread`: as `[rust] threads = "one"`.
     pub(super) single_thread: bool,
+    /// `--threads MODE`: as `[rust] threads = MODE`.
+    pub(super) threads: Option<aver::config::RustThreads>,
     /// `--equality-classes N`: as `[rust] equality_classes = N`.
     pub(super) equality_classes: Option<u32>,
     pub(super) with_replay: bool,
@@ -13732,6 +13741,7 @@ error: build failed";
             emit_self_host_support: false,
             single_thread: false,
             rust_equality_classes: 0,
+            rust_classed_eq: std::cell::Cell::new(false),
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
             buffer_build_sinks: HashMap::new(),

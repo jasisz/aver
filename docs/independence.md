@@ -221,7 +221,7 @@ They do not give element-by-element streaming, demand-driven backpressure, chann
 
 ## What Aver does not have
 
-The Rust backend runs every element of a product on a thread of its own, except in a build for one thread (`aver compile --single-thread`, `[rust] threads = "one"`), which runs them in sequence, left to right; see [the Rust backend](rust.md#one-thread---single-thread).
+The Rust backend runs every element of a product on a thread of its own, except in a build for one thread (`aver compile --single-thread`, `[rust] threads = "one"`; `"auto"`, the default, builds a program with a product for many), which runs them in sequence, left to right; see [the Rust backend](rust.md#one-thread---single-thread).
 
 Tasks, futures, async/await, channels, streams, thread pools and executors are not language concepts in Aver. The language has products and independence, and the runtime picks the execution strategy.
 
