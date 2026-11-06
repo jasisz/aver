@@ -179,16 +179,13 @@ pub fn mergeRecordFieldsAcc(
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (k, v) = pair.clone();
-                    match crate::aver_generated::domain::eval::records::findOverride(
-                        k.clone(),
-                        &overrides,
-                    ) {
+                    match crate::aver_generated::domain::eval::records::findOverride(&k, &overrides)
+                    {
                         Some(__stp0 @ _) => {
                             let __tco0 = rest;
                             let __tco1 =
                                 crate::aver_generated::domain::eval::records::removeOverride(
-                                    k.clone(),
-                                    &overrides,
+                                    &k, &overrides,
                                 );
                             let __tco2 = aver_rt::AverList::prepend_owned((k, __stp0), acc);
                             match __tco0 {
@@ -239,10 +236,10 @@ pub fn mergeOneField(
     acc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::eval::records::findOverride(k.clone(), overrides) {
+    match crate::aver_generated::domain::eval::records::findOverride(&k, overrides) {
         Some(newV @ _) => {
             let __arg6 @ _ =
-                crate::aver_generated::domain::eval::records::removeOverride(k.clone(), overrides);
+                crate::aver_generated::domain::eval::records::removeOverride(&k, overrides);
             {
                 let __arg7 @ _ = aver_rt::AverList::prepend((k, newV), acc);
                 crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
@@ -264,7 +261,7 @@ pub fn mergeOneField(
 /// Find a field value in the overrides list.
 #[inline(always)]
 pub fn findOverride(
-    mut k @ _: AverStr,
+    k @ _: &AverStr,
     overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Option<crate::aver_generated::domain::value::Val> {
     let mut __hold1: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
@@ -279,7 +276,7 @@ pub fn findOverride(
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (ok, ov) = pair.clone();
-                    if (ok == k) {
+                    if (&(ok) == k) {
                         return Some(ov);
                     } else {
                         {
@@ -308,7 +305,7 @@ pub fn findOverride(
 /// Remove a field from overrides list.
 #[inline(always)]
 pub fn removeOverride(
-    k @ _: AverStr,
+    k @ _: &AverStr,
     overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
@@ -320,7 +317,7 @@ pub fn removeOverride(
 /// Accumulate non-matching fields, then concat remainder when match found.
 #[inline(always)]
 pub fn removeOverrideAcc(
-    mut k @ _: AverStr,
+    k @ _: &AverStr,
     overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
@@ -337,7 +334,7 @@ pub fn removeOverrideAcc(
             match aver_rt::list_uncons(__list_subject) {
                 Some((pair, rest)) => {
                     let (ok, ov) = pair.clone();
-                    if (ok == k) {
+                    if (&(ok) == k) {
                         return aver_rt::AverList::concat(&reversed, &rest);
                     } else {
                         {
@@ -375,16 +372,13 @@ pub fn mergeRecordFieldsAcc__collected(
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((pair, rest)) => {
                     let (k, v) = pair.clone();
-                    match crate::aver_generated::domain::eval::records::findOverride(
-                        k.clone(),
-                        &overrides,
-                    ) {
+                    match crate::aver_generated::domain::eval::records::findOverride(&k, &overrides)
+                    {
                         Some(__stp0 @ _) => {
                             let __tco0 = rest;
                             let __tco1 =
                                 crate::aver_generated::domain::eval::records::removeOverride(
-                                    k.clone(),
-                                    &overrides,
+                                    &k, &overrides,
                                 );
                             let __tco2 = aver_rt::list_builder_push(acc, (k, __stp0));
                             match __tco0 {

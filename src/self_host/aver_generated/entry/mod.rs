@@ -236,7 +236,11 @@ pub fn loadOneModule(
 }
 
 /// Find module file, trying root then parent dirs.
-pub fn findModulePath(dep @ _: AverStr, root @ _: AverStr, depth @ _: aver_rt::AverInt) -> AverStr {
+pub fn findModulePath(
+    dep @ _: &AverStr,
+    root @ _: AverStr,
+    depth @ _: aver_rt::AverInt,
+) -> AverStr {
     crate::cancel_checkpoint();
     let __arg3 @ _ = aver_rt::string_index_build(&dep);
     findModulePath__indexed(dep, root, depth, &__arg3)
@@ -244,23 +248,23 @@ pub fn findModulePath(dep @ _: AverStr, root @ _: AverStr, depth @ _: aver_rt::A
 
 /// Convert Module.Name to file path: Domain.Foo -> domain/foo.av
 #[inline(always)]
-pub fn modulePathFromName(name @ _: AverStr, moduleRoot @ _: AverStr) -> AverStr {
+pub fn modulePathFromName(name @ _: &AverStr, moduleRoot @ _: AverStr) -> AverStr {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
-    modulePathFromName__indexed(name, moduleRoot, __arg2)
+    modulePathFromName__indexed(name, moduleRoot, &__arg2)
 }
 
 /// Replace dots with slashes and lowercase first char of each segment.
 #[inline(always)]
 pub fn dotToSlash(
-    name @ _: AverStr,
+    name @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     total @ _: aver_rt::AverInt,
     acc @ _: AverStr,
 ) -> AverStr {
     crate::cancel_checkpoint();
     let __arg4 @ _ = aver_rt::string_index_build(&name);
-    dotToSlash__indexed(name, pos, total, acc, __arg4)
+    dotToSlash__indexed(name, pos, total, acc, &__arg4)
 }
 
 /// Register functions with both qualified (Domain.Foo.bar) and unqualified (bar) names.
@@ -1270,7 +1274,7 @@ pub fn loadOneModule__indexed(
 > {
     crate::cancel_checkpoint();
     let path @ _ = findModulePath__indexed(
-        dep.clone(),
+        &dep,
         moduleRoot.clone(),
         aver_rt::AverInt::from_i64(0),
         __str_index,
@@ -1319,14 +1323,14 @@ pub fn loadOneModule__indexed(
 
 /// Synthesized indexed worker of `findModulePath`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn findModulePath__indexed(
-    mut dep @ _: AverStr,
+    dep @ _: &AverStr,
     mut root @ _: AverStr,
     mut depth @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        let path @ _ = modulePathFromName__indexed(dep.clone(), root.clone(), __str_index.clone());
+        let path @ _ = modulePathFromName__indexed(dep, root.clone(), __str_index);
         if {
             let __provider_arg0: AverStr = path.clone();
             crate::cancel_checkpoint_now();
@@ -1368,14 +1372,14 @@ pub fn findModulePath__indexed(
 
 /// Synthesized indexed worker of `modulePathFromName`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn modulePathFromName__indexed(
-    name @ _: AverStr,
+    name @ _: &AverStr,
     moduleRoot @ _: AverStr,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> AverStr {
     crate::cancel_checkpoint();
     (((moduleRoot + &::aver_rt::str_lit!("/"))
         + &dotToSlash__indexed(
-            name.clone(),
+            name,
             aver_rt::AverInt::from_i64(0),
             aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)),
             ::aver_rt::str_lit!(""),
@@ -1387,11 +1391,11 @@ pub fn modulePathFromName__indexed(
 /// Synthesized indexed worker of `dotToSlash`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn dotToSlash__indexed(
-    mut name @ _: AverStr,
+    name @ _: &AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut total @ _: aver_rt::AverInt,
     mut acc @ _: AverStr,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();

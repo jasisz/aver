@@ -105,7 +105,7 @@ pub fn matchPattern(
             let tag = tag.clone();
             let ctorName = ctorName.clone();
             crate::aver_generated::domain::match_mod::matchPatConstructorById(
-                tag, ctorName, bindings, &v,
+                tag, &ctorName, bindings, &v,
             )
         }
         crate::aver_generated::domain::ast::Pattern::PatTuple(pats) => {
@@ -301,7 +301,7 @@ pub fn matchPatConstructor(
                         crate::aver_generated::domain::match_mod::matchNonePat(v)
                     } else {
                         crate::aver_generated::domain::match_mod::matchGenericConstructor(
-                            ctorName, bindings, v,
+                            &ctorName, bindings, v,
                         )
                     }
                 }
@@ -345,7 +345,7 @@ pub fn matchPatTupleItems(
 
 /// Match a generic variant constructor pattern using the full name stored in the value.
 pub fn matchGenericConstructor(
-    ctorName @ _: AverStr,
+    ctorName @ _: &AverStr,
     bindings @ _: &aver_rt::AverList<AverStr>,
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
@@ -357,7 +357,7 @@ pub fn matchGenericConstructor(
                 let fullName = __fullName_fields.1.clone();
                 let fields = &__fullName_fields.2;
                 crate::aver_generated::domain::match_mod::matchGenericCtorCheck(
-                    &ctorName, &fullName, bindings, fields,
+                    ctorName, &fullName, bindings, fields,
                 )
             }
             _ => Err(::aver_rt::str_lit!("no match")),
@@ -387,7 +387,7 @@ pub fn matchGenericCtorCheck(
 #[inline]
 pub fn matchPatConstructorById(
     tag @ _: aver_rt::AverInt,
-    ctorName @ _: AverStr,
+    ctorName @ _: &AverStr,
     bindings @ _: &aver_rt::AverList<AverStr>,
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
@@ -412,7 +412,7 @@ pub fn matchPatConstructorById(
             ),
             Some(4i64) => crate::aver_generated::domain::match_mod::matchNonePat(v),
             _ => crate::aver_generated::domain::match_mod::matchGenericCtorById(
-                tag, &ctorName, bindings, v,
+                tag, ctorName, bindings, v,
             ),
         }
     }

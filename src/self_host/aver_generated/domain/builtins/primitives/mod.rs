@@ -749,7 +749,7 @@ pub fn builtinStringChars(
                 let __arg4 @ _ =
                     <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
                 crate::aver_generated::domain::builtins::primitives::stringToCharList(
-                    s,
+                    &s,
                     aver_rt::AverInt::from_i64(0),
                     __arg3,
                     __arg4,
@@ -762,7 +762,7 @@ pub fn builtinStringChars(
 /// Split string into list of ValStr chars.
 #[inline(always)]
 pub fn stringToCharList(
-    s @ _: AverStr,
+    s @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     total @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
@@ -774,7 +774,7 @@ pub fn stringToCharList(
         pos.to_i64().expect("Int out of i64 range"),
         total,
         acc,
-        __arg4,
+        &__arg4,
     )
 }
 
@@ -1546,11 +1546,11 @@ pub fn builtinStringReplaceAllDo(
 /// Synthesized indexed worker of `stringToCharList`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn stringToCharList__indexed(
-    mut s @ _: AverStr,
+    s @ _: &AverStr,
     mut pos @ _: i64,
     mut total @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();

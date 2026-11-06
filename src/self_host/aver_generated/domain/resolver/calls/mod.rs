@@ -620,7 +620,7 @@ pub fn resolveOneCall(
                     crate::aver_generated::domain::ast::Expr__ExprCall(__field1, __field0)
                 })
             } else {
-                if crate::aver_generated::domain::resolver::calls::isBuiltinCallName(name.clone()) {
+                if crate::aver_generated::domain::resolver::calls::isBuiltinCallName(&name) {
                     crate::aver_generated::domain::resolver::calls::resolveBuiltinCall(
                         name,
                         &resolvedArgs,
@@ -744,7 +744,7 @@ pub fn isBareNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Ex
 
 /// Return whether a call name is one of the exact builtin/service entrypoints.
 #[inline]
-pub fn isBuiltinCallName(name @ _: AverStr) -> bool {
+pub fn isBuiltinCallName(name @ _: &AverStr) -> bool {
     crate::cancel_checkpoint();
     let __arg1 @ _ = aver_rt::AverList::from_vec(vec![
         ::aver_rt::str_lit!("Args.get"),
@@ -888,7 +888,7 @@ pub fn isBuiltinCallName(name @ _: AverStr) -> bool {
 /// Check builtin/service call names recursively by exact match.
 #[inline(always)]
 pub fn isBuiltinCallNameFrom(
-    mut name @ _: AverStr,
+    name @ _: &AverStr,
     knownNames @ _: &aver_rt::AverList<AverStr>,
 ) -> bool {
     let mut __hold1: aver_rt::AverList<AverStr>;
@@ -899,7 +899,7 @@ pub fn isBuiltinCallNameFrom(
             let __list_subject = knownNames;
             match aver_rt::list_uncons_lent(__list_subject) {
                 Some((knownName, rest)) => {
-                    if (name == knownName) {
+                    if (name == &(knownName)) {
                         return true;
                     } else {
                         {

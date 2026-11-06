@@ -4040,27 +4040,27 @@ pub fn userTagSpan() -> aver_rt::AverInt {
 pub fn ctorNameToTag(name @ _: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let __arg1 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::ast::ctorNameToTag__indexed(name, __arg1)
+    crate::aver_generated::domain::ast::ctorNameToTag__indexed(name, &__arg1)
 }
 
 /// Compute a stable non-zero offset for a user-defined constructor tag from its full dotted name.
 #[inline(always)]
-pub fn userCtorTagOffset(name @ _: AverStr) -> aver_rt::AverInt {
+pub fn userCtorTagOffset(name @ _: &AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let __arg1 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::ast::userCtorTagOffset__indexed(name, __arg1)
+    crate::aver_generated::domain::ast::userCtorTagOffset__indexed(name, &__arg1)
 }
 
 /// Walk the constructor name and accumulate a bounded rolling hash.
 #[inline(always)]
 pub fn userCtorTagOffsetLoop(
-    name @ _: AverStr,
+    name @ _: &AverStr,
     pos @ _: aver_rt::AverInt,
     acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let __arg3 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::ast::userCtorTagOffsetLoop__indexed(name, pos, acc, __arg3)
+    crate::aver_generated::domain::ast::userCtorTagOffsetLoop__indexed(name, pos, acc, &__arg3)
 }
 
 /// Update the user constructor rolling hash and keep it in a bounded range.
@@ -4126,10 +4126,10 @@ pub fn canonicalCtorNameAtBothDots(
 
 /// Whether the trailing two segments spell Type.Variant. Both begin with an uppercase letter, the same rule the surface parser applies to constructor patterns.
 #[inline(always)]
-pub fn isTypeVariantTail(typeName @ _: AverStr, variantName @ _: AverStr) -> bool {
+pub fn isTypeVariantTail(typeName @ _: &AverStr, variantName @ _: &AverStr) -> bool {
     crate::cancel_checkpoint();
-    (crate::aver_generated::domain::ast::beginsUppercase(&typeName)
-        && crate::aver_generated::domain::ast::beginsUppercase(&variantName))
+    (crate::aver_generated::domain::ast::beginsUppercase(typeName)
+        && crate::aver_generated::domain::ast::beginsUppercase(variantName))
 }
 
 /// Whether a dotted-name segment begins with an uppercase letter.
@@ -4148,10 +4148,10 @@ pub fn beginsUppercase(segment @ _: &AverStr) -> bool {
 
 /// Index of the last '.' at or before pos, or -1 when that prefix holds none.
 #[inline(always)]
-pub fn lastDotAtOrBefore(name @ _: AverStr, pos @ _: aver_rt::AverInt) -> aver_rt::AverInt {
+pub fn lastDotAtOrBefore(name @ _: &AverStr, pos @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
-    crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(name, pos, __arg2)
+    crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(name, pos, &__arg2)
 }
 
 /// Map builtin function names to integer IDs for fast dispatch.
@@ -4253,7 +4253,7 @@ pub fn builtinNameToId(name @ _: AverStr) -> Option<aver_rt::AverInt> {
 #[inline(always)]
 pub fn ctorNameToTag__indexed(
     name @ _: AverStr,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
@@ -4272,7 +4272,7 @@ pub fn ctorNameToTag__indexed(
                     } else {
                         aver_rt::AverInt::from_i64(100).add(
                             &crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
-                                name,
+                                &name,
                                 __str_index,
                             ),
                         )
@@ -4286,8 +4286,8 @@ pub fn ctorNameToTag__indexed(
 /// Synthesized indexed worker of `userCtorTagOffset`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn userCtorTagOffset__indexed(
-    name @ _: AverStr,
-    mut __str_index @ _: aver_rt::StringIndex,
+    name @ _: &AverStr,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::userCtorTagOffsetLoop__indexed(
@@ -4301,10 +4301,10 @@ pub fn userCtorTagOffset__indexed(
 /// Synthesized indexed worker of `userCtorTagOffsetLoop`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn userCtorTagOffsetLoop__indexed(
-    mut name @ _: AverStr,
+    name @ _: &AverStr,
     mut pos @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverInt,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverInt {
     let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
     {
@@ -4359,9 +4359,9 @@ pub fn canonicalCtorName__indexed(
     crate::cancel_checkpoint();
     let total @ _ = aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index));
     let __arg3 @ _ = crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
-        name.clone(),
+        &name,
         total.sub(&aver_rt::AverInt::from_i64(1)),
-        __str_index.clone(),
+        __str_index,
     );
     crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot__indexed(
         name,
@@ -4383,9 +4383,9 @@ pub fn canonicalCtorNameAtLastDot__indexed(
     if (lastDot > aver_rt::AverInt::from_i64(0)) {
         {
             let __arg4 @ _ = crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
-                name.clone(),
+                &name,
                 lastDot.sub(&aver_rt::AverInt::from_i64(1)),
-                __str_index.clone(),
+                __str_index,
             );
             crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots__indexed(
                 name,
@@ -4427,7 +4427,7 @@ pub fn canonicalCtorNameAtBothDots__indexed(
                     aver_rt::string_position(&lastDot.add(&aver_rt::AverInt::from_i64(1))),
                     total,
                 );
-                crate::aver_generated::domain::ast::isTypeVariantTail(__arg5, __arg6)
+                crate::aver_generated::domain::ast::isTypeVariantTail(&__arg5, &__arg6)
             }
         } {
             aver_rt::string_index_slice_i64(
@@ -4445,9 +4445,9 @@ pub fn canonicalCtorNameAtBothDots__indexed(
 /// Synthesized indexed worker of `lastDotAtOrBefore`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn lastDotAtOrBefore__indexed(
-    mut name @ _: AverStr,
+    name @ _: &AverStr,
     mut pos @ _: aver_rt::AverInt,
-    mut __str_index @ _: aver_rt::StringIndex,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverInt {
     let mut pos @ _: i64 = match aver_rt::string_position_within(&pos, 0i64, 9223372036854775798i64)
     {
