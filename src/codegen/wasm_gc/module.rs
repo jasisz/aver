@@ -303,6 +303,7 @@ fn emit_module_pass(
         force_bignum,
         &capability_boundary_types,
         job_kinds,
+        certify,
     );
     // Identity-preserving qualified spellings for sole-declarer dep types,
     // derived by `flatten_multimodule` from its collision info. Entry-side
@@ -9795,14 +9796,16 @@ fn allocate_factory_exports(
                 .ok_or(WasmGcError::Validation(
                     "Tcp.poll requires the Map<Int, Tcp.Socket> slots".into(),
                 ))?;
-            // The keys this poll reads are boxed `Int`s, so the slot has to be
-            // there; nothing below names it, the presence is the whole check.
-            registry
-                .primitive_key_box
-                .get("Int")
-                .ok_or(WasmGcError::Validation(
-                    "Tcp.poll requires the boxed Int map-key slot".into(),
-                ))?;
+            // The keys this poll reads are `Int`s, boxed exactly when the
+            // registry boxes `Int` keys; the box slot must then be there.
+            if registry.int_keys_boxed {
+                registry
+                    .primitive_key_box
+                    .get("Int")
+                    .ok_or(WasmGcError::Validation(
+                        "Tcp.poll requires the boxed Int map-key slot".into(),
+                    ))?;
+            }
             let map_ref = ref_null(map.map);
             let int_ref = registry
                 .aint_struct_idx
@@ -11471,11 +11474,6 @@ fn emit_factory_tcp_poll_key_at(
     let map = registry
         .map_slots("Map<Int,Tcp.Socket>")
         .expect("checked at allocation");
-    let key_box = registry
-        .primitive_key_box
-        .get("Int")
-        .copied()
-        .expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
@@ -11484,10 +11482,12 @@ fn emit_factory_tcp_poll_key_at(
     });
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::ArrayGet(map.keys_array));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: key_box,
-        field_index: 0,
-    });
+    if let Some(key_box) = registry.primitive_key_box_idx("Int") {
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: key_box,
+            field_index: 0,
+        });
+    }
     f.instruction(&Instruction::End);
     Ok(f)
 }

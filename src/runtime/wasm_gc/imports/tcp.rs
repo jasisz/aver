@@ -1037,9 +1037,10 @@ fn decode_map_entries(
     };
 
     // A key of the program's own type sits in the map directly while a
-    // primitive key sits boxed, so the guest reads a bucket for this host
-    // whenever it exports the accessor. The socket poll reads the boxed
-    // layout in place, because its keys are whole numbers by contract.
+    // primitive key may sit boxed, so the guest reads a bucket for this host
+    // whenever it exports the accessor. The socket poll reads its keys in
+    // place, because they are whole numbers by contract: a `$AverInt`
+    // itself, or (in a `--certify` build) the one-field box around it.
     let key_at = match bucket_order {
         Some(_) => Some(
             caller
@@ -1065,19 +1066,24 @@ fn decode_map_entries(
                 out[0]
             }
             None => {
-                let key_box_ref = match keys.get(&mut *caller, index)? {
+                let slot = keys.get(&mut *caller, index)?;
+                let slot_ref = match slot {
                     Val::AnyRef(Some(value)) => value,
                     Val::AnyRef(None) => continue,
                     _ => {
                         return Err(wasmtime::Error::msg(format!(
-                            "{operation}: malformed Int key box"
+                            "{operation}: malformed Int key"
                         )));
                     }
                 };
-                let key_box = key_box_ref.as_struct(&*caller)?.ok_or_else(|| {
-                    wasmtime::Error::msg(format!("{operation}: malformed Int key box"))
+                let slot_struct = slot_ref.as_struct(&*caller)?.ok_or_else(|| {
+                    wasmtime::Error::msg(format!("{operation}: malformed Int key"))
                 })?;
-                key_box.field(&mut *caller, 0)?
+                if slot_struct.ty(&*caller)?.fields().len() == 1 {
+                    slot_struct.field(&mut *caller, 0)?
+                } else {
+                    slot
+                }
             }
         };
         if matches!(key, Val::AnyRef(None)) {

@@ -141,6 +141,11 @@ pub(super) struct TypeRegistry {
     /// pass raw `K_val` and box on insert / unbox on read.
     pub(super) primitive_key_box: HashMap<String, u32>,
     pub(super) primitive_key_box_order: Vec<String>,
+    /// Whether `Map<Int, _>` holds its keys in a box. A scalar `i64` `Int`
+    /// has no null to mark an unused bucket, so it needs one; a full-ℤ
+    /// `Int` is a `$AverInt` ref that is never null and sits in the keys
+    /// array as it is. A `--certify` build keeps the box, its plain layout.
+    pub(super) int_keys_boxed: bool,
     /// Proof-derived packed representations for opaque `List<Int>`
     /// refinements. Keyed by bare nominal type name. Unlike ordinary record
     /// newtyping this changes the carrier shape, so construct/project sites
@@ -401,9 +406,11 @@ impl TypeRegistry {
             false,
             &[],
             &[],
+            false,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_with_handler_and_capabilities(
         items: &[TopLevel],
         resolved_fn_defs: &[crate::ir::hir::ResolvedFnDef],
@@ -412,6 +419,7 @@ impl TypeRegistry {
         force_bignum: bool,
         capability_boundary_types: &[String],
         job_kinds: &[crate::capability::work::JobKindPlan],
+        certify: bool,
     ) -> Self {
         // _handler_active is consumed by `items_reference_name`
         // overrides below so the rest of the builder stays
@@ -1169,13 +1177,13 @@ impl TypeRegistry {
         // Eagerly register a key box whenever raw K cannot share the table's
         // ref-null occupancy marker. Primitives have no null value; List has
         // the opposite collision because its valid empty value is null.
+        let int_keys_boxed = !bignum || certify;
         let mut primitive_key_box: HashMap<String, u32> = HashMap::new();
         let mut primitive_key_box_order: Vec<String> = Vec::new();
         for canonical in map_order.iter() {
             if let Some((k, _)) = parse_map_kv(canonical) {
                 let k_trim = normalize_compound(k);
-                if (matches!(k_trim.as_str(), "Int" | "Float" | "Bool")
-                    || k_trim.starts_with("List<"))
+                if Self::map_key_needs_box(&k_trim, int_keys_boxed)
                     && !primitive_key_box.contains_key(&k_trim)
                 {
                     primitive_key_box.insert(k_trim.clone(), next_idx);
@@ -1537,6 +1545,7 @@ impl TypeRegistry {
             tuple_order,
             primitive_key_box,
             primitive_key_box_order,
+            int_keys_boxed,
             packed_sequences: HashMap::new(),
             packed_sequence_order: Vec::new(),
             // Populated post-build by `module.rs` from the aliases
@@ -1733,6 +1742,18 @@ impl TypeRegistry {
     /// True for scalar K kinds whose map hash/eq helpers operate on raw wasm
     /// values. They are boxed for storage, but List has a storage box too and
     /// deliberately is not a primitive for helper dispatch.
+    /// Whether raw K cannot share the keys array's null "unused bucket"
+    /// marker and so is held in a one-field box: a scalar has no null, and
+    /// `List`'s valid `[]` is null. `Int` is a scalar only when
+    /// `int_keys_boxed` says so (see the field).
+    pub(super) fn map_key_needs_box(k: &str, int_keys_boxed: bool) -> bool {
+        match k {
+            "Int" => int_keys_boxed,
+            "Float" | "Bool" => true,
+            _ => k.starts_with("List<"),
+        }
+    }
+
     pub(super) fn is_primitive_map_key(k_aver: &str) -> bool {
         matches!(k_aver.trim(), "Int" | "Float" | "Bool")
     }

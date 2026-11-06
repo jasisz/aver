@@ -140,7 +140,7 @@ impl TypeRegistry {
         if self.map_order_indices_type_idx.is_none() {
             self.map_order_indices_type_idx = Some(self.next_slot());
         }
-        if (matches!(k.as_str(), "Int" | "Float" | "Bool") || k.starts_with("List<"))
+        if Self::map_key_needs_box(&k, self.int_keys_boxed)
             && !self.primitive_key_box.contains_key(&k)
         {
             let idx = self.next_slot();
