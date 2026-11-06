@@ -1969,17 +1969,26 @@ impl<T> AverList<T> {
     where
         T: Clone,
     {
-        let mut out = self.to_vec();
-        out.reverse();
-        Self::from_vec(out)
+        if self.is_empty() {
+            return Self::empty();
+        }
+        let mut out = block::Block::from_iter_len(self.len(), self.iter().cloned());
+        out.as_mut_slice().reverse();
+        Self::from_block(out)
     }
 
-    /// `reverse` of a list the caller hands over.
+    /// `reverse` of a list the caller hands over, gathered straight into
+    /// the block of the new flat list.
     pub fn reverse_owned(self) -> Self
     where
         T: Clone,
     {
-        Self::from_vec(self.into_reversed_vec())
+        if self.is_empty() {
+            return Self::empty();
+        }
+        let mut out = block::Block::with_capacity(self.len());
+        self.reversed_into(&mut out);
+        Self::from_block(out)
     }
 
     /// The elements last to first, from a list the caller hands over: nodes
@@ -1990,6 +1999,15 @@ impl<T> AverList<T> {
         T: Clone,
     {
         let mut out = Vec::with_capacity(self.len());
+        self.reversed_into(&mut out);
+        out
+    }
+
+    /// [`Self::into_reversed_vec`] into any [`Gather`].
+    fn reversed_into<G: Gather<T>>(self, out: &mut G)
+    where
+        T: Clone,
+    {
         let mut rest = self;
         loop {
             let unique = rest.start == 0 && rest.inner.as_mut().and_then(Rc::get_mut).is_some();
@@ -1998,30 +2016,27 @@ impl<T> AverList<T> {
                     let Some((head, tail)) = rest.uncons_owned() else {
                         unreachable!("a prepend node has a head")
                     };
-                    out.push(head);
+                    out.gather(head);
                     rest = tail;
                 }
                 Some(AverListInner::Flat { .. }) => {
                     let start = rest.start();
                     let moved = match rest.inner.as_mut().and_then(Rc::get_mut) {
-                        Some(AverListInner::Flat { items }) => {
-                            items.drain_tail_into(start, &mut out)
-                        }
+                        Some(AverListInner::Flat { items }) => out.take_tail(items, start),
                         _ => false,
                     };
                     if !moved {
-                        out.extend(rest.iter().cloned());
+                        rest.iter().cloned().for_each(|x| out.gather(x));
                     }
                     break;
                 }
                 _ => {
-                    out.extend(rest.iter().cloned());
+                    rest.iter().cloned().for_each(|x| out.gather(x));
                     break;
                 }
             }
         }
-        out.reverse();
-        out
+        out.reverse_gathered();
     }
 
     pub fn contains(&self, item: &T) -> bool
@@ -2029,6 +2044,44 @@ impl<T> AverList<T> {
         T: PartialEq,
     {
         self.iter().any(|x| x == item)
+    }
+}
+
+/// Where [`AverList::reversed_into`] gathers the elements it takes apart:
+/// a vector, or the block of a new flat list that its builder holds alone.
+trait Gather<T> {
+    fn gather(&mut self, item: T);
+    /// Moves the elements of `items` from `start` on over when that block
+    /// is held alone; false, and nothing changed, otherwise.
+    fn take_tail(&mut self, items: &mut block::Block<T>, start: usize) -> bool;
+    fn reverse_gathered(&mut self);
+}
+
+impl<T> Gather<T> for Vec<T> {
+    #[inline]
+    fn gather(&mut self, item: T) {
+        self.push(item);
+    }
+    fn take_tail(&mut self, items: &mut block::Block<T>, start: usize) -> bool {
+        items.drain_tail_into(start, self)
+    }
+    fn reverse_gathered(&mut self) {
+        self.reverse();
+    }
+}
+
+impl<T: Clone> Gather<T> for block::Block<T> {
+    #[inline]
+    fn gather(&mut self, item: T) {
+        if self.push_unique(item).is_err() {
+            unreachable!("a block being gathered is held alone");
+        }
+    }
+    fn take_tail(&mut self, items: &mut block::Block<T>, start: usize) -> bool {
+        items.drain_tail_into_block(start, self)
+    }
+    fn reverse_gathered(&mut self) {
+        self.as_mut_slice().reverse();
     }
 }
 
@@ -3035,6 +3088,24 @@ mod tests {
         let chain = AverList::prepend(1, &AverList::prepend(2, &AverList::empty()));
         assert_eq!(super::AverVector::from_list(&chain).to_vec(), vec![1, 2]);
         assert!(AverList::<u8>::from_array([]).is_empty());
+    }
+
+    /// Reversing a list it alone holds moves its prepended heads and its flat
+    /// body into the new block; a shared body is cloned and left whole.
+    #[test]
+    fn reversing_an_owned_list_gathers_into_one_block() {
+        let s = |x: &str| String::from(x);
+        let body = AverList::from_array([s("c"), s("d"), s("e")]);
+        let shared = body.clone();
+        let owned = AverList::prepend_owned(s("a"), AverList::prepend_owned(s("b"), body));
+        let reversed = owned.reverse_owned();
+        assert_eq!(reversed.to_vec(), ["e", "d", "c", "b", "a"]);
+        assert_eq!(shared.to_vec(), ["c", "d", "e"]);
+        let alone = AverList::from_array([s("x"), s("y"), s("z")]).drop_first(1);
+        let tail = AverList::prepend_owned(s("w"), alone).reverse_owned();
+        assert_eq!(tail.to_vec(), ["z", "y", "w"]);
+        assert_eq!(reversed.reverse().to_vec(), ["a", "b", "c", "d", "e"]);
+        assert!(AverList::<String>::empty().reverse_owned().is_empty());
     }
 
     #[test]

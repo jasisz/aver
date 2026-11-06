@@ -231,6 +231,40 @@ impl<T> Block<T> {
         unsafe { (*ptr.as_ptr()).cap = cap };
     }
 
+    /// Moves the elements from `start` on to the end of `out`, another block
+    /// its builder holds alone, when this is the only owner; false, and
+    /// nothing changed, when this block is shared.
+    pub(crate) fn drain_tail_into_block(&mut self, start: usize, out: &mut Block<T>) -> bool {
+        if !self.is_unique() {
+            return false;
+        }
+        let len = self.header().len;
+        let start = start.min(len);
+        let moved = len - start;
+        let (out_len, out_cap) = (out.header().len, out.header().cap);
+        if out_cap - out_len < moved {
+            out.grow(out_len + moved);
+        }
+        // SAFETY: both held alone; the moved elements leave this block (its
+        // length drops to `start` first) and land in room just made.
+        unsafe {
+            self.set_len(start);
+            ptr::copy_nonoverlapping(self.data().add(start), out.data().add(out_len), moved);
+            out.set_len(out_len + moved);
+        }
+        true
+    }
+
+    /// The elements, mutably, of a block its builder holds alone (one it
+    /// made itself, not yet shared). Shared, it is copied first.
+    #[inline]
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [T]
+    where
+        T: Clone,
+    {
+        self.make_mut()
+    }
+
     /// Moves the elements from `start` on to the end of `out` when this is
     /// the only owner, and keeps the ones before it; false, and nothing
     /// changed, when the block is shared.
