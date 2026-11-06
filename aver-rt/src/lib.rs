@@ -325,9 +325,17 @@ pub fn char_str(c: char) -> AverStr {
     AverStr::from(&*c.encode_utf8(&mut [0; 4]))
 }
 
-/// `String.chars`: one string per character, built in one pass.
+/// `String.chars`: one string per character, built in one pass into the
+/// list's block (room for one per byte, exact on ASCII text).
 pub fn string_chars(text: &str) -> AverList<AverStr> {
-    AverList::from_vec(text.chars().map(char_str).collect())
+    if text.is_empty() {
+        return AverList::empty();
+    }
+    let mut items = block::Block::with_capacity(text.len());
+    for c in text.chars() {
+        items.push_built(char_str(c));
+    }
+    AverList::from_block(items)
 }
 
 /// `String.split` on a separator of one byte, an ASCII character: the parts
@@ -335,14 +343,14 @@ pub fn string_chars(text: &str) -> AverList<AverStr> {
 /// word at a time; the text itself when it does not occur.
 pub fn string_split_byte(text: &AverStr, separator: u8) -> AverList<AverStr> {
     debug_assert!(separator.is_ascii(), "a separator of one byte is ASCII");
-    let mut parts = Vec::new();
+    let mut parts = block::Block::with_capacity(4);
     let mut start = 0;
     while let Some(at) = find_byte(text.as_bytes(), start, separator) {
-        parts.push(AverStr::from(&text[start..at]));
+        parts.push_built(AverStr::from(&text[start..at]));
         start = at + 1;
     }
-    parts.push(string_part(text, &text[start..]));
-    AverList::from_vec(parts)
+    parts.push_built(string_part(text, &text[start..]));
+    AverList::from_block(parts)
 }
 
 /// The position of the first `byte` in `bytes` at or after `from`, looked
@@ -1775,6 +1783,39 @@ impl<T> AverList<T> {
         })
     }
 
+    /// The items an iterator yields, gathered straight into one block (see
+    /// `Block::from_iter_grow`); none is `[]`.
+    pub fn from_items(items: impl IntoIterator<Item = T>) -> Self {
+        let items = block::Block::from_iter_grow(items);
+        if items.is_empty() {
+            return Self::empty();
+        }
+        Self::from_block(items)
+    }
+
+    /// The first `len` items an iterator yields, in a block of exactly that
+    /// room: for an iterator whose length the caller knows (`List.zip`,
+    /// `List.take`) but whose size hint does not tell it.
+    pub fn from_items_len(len: usize, items: impl IntoIterator<Item = T>) -> Self {
+        if len == 0 {
+            return Self::empty();
+        }
+        Self::from_block(block::Block::from_iter_len(len, items))
+    }
+
+    /// The `len` items an iterator yields, sorted, in one block: `Map.keys`.
+    pub fn from_items_sorted(len: usize, items: impl IntoIterator<Item = T>) -> Self
+    where
+        T: Ord + Clone,
+    {
+        let mut items = block::Block::from_iter_len(len, items);
+        if items.is_empty() {
+            return Self::empty();
+        }
+        items.as_mut_slice().sort();
+        Self::from_block(items)
+    }
+
     /// A list literal: its items moved into one block, with no vector
     /// in between (two allocations, the block and the node over it).
     pub fn from_array<const N: usize>(items: [T; N]) -> Self {
@@ -2556,6 +2597,49 @@ mod tests {
 
         let onto_spent = AverList::prepend_owned(Rc::new(9), flat.drop_first(2));
         assert_eq!(onto_spent.len(), 1);
+    }
+
+    /// Lists gathered from an iterator straight into a block: none is `[]`,
+    /// more than the first room grows it, sorted ones come out in order, and
+    /// `String.chars` and `String.split` give what the vector path gave.
+    #[test]
+    fn lists_gathered_from_iterators_hold_their_items() {
+        use crate::shared::Shared as Rc;
+        use crate::{string_chars, string_split_byte};
+        let none = AverList::<i64>::from_items(std::iter::empty());
+        assert!(none.is_empty() && none == AverList::empty());
+        let many = AverList::from_items((0..37i64).filter(|n| n % 2 == 0));
+        assert_eq!(
+            many.iter().copied().collect::<Vec<_>>(),
+            (0..37).step_by(2).collect::<Vec<_>>()
+        );
+        let counted = Rc::new(5);
+        let held = AverList::from_items((0..9).map(|_| counted.clone()));
+        assert_eq!(Rc::strong_count(&counted), 10);
+        drop(held);
+        assert_eq!(Rc::strong_count(&counted), 1);
+        let sorted = AverList::from_items_sorted(5, [5i64, 1, 4, 2, 3]);
+        assert_eq!(
+            sorted.iter().copied().collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5]
+        );
+        assert!(AverList::<i64>::from_items_sorted(0, []).is_empty());
+        let first = AverList::from_items_len(3, (0..10i64).map(|n| n * n));
+        assert_eq!(first.iter().copied().collect::<Vec<_>>(), vec![0, 1, 4]);
+        assert!(AverList::<i64>::from_items_len(0, 0..10).is_empty());
+
+        let chars = string_chars("aż b");
+        assert_eq!(
+            chars.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+            vec!["a", "ż", " ", "b"]
+        );
+        assert!(string_chars("").is_empty());
+        let parts = string_split_byte(&AverStr::from("a,,bc,d,e,f,g"), b',');
+        assert_eq!(
+            parts.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+            vec!["a", "", "bc", "d", "e", "f", "g"]
+        );
+        assert_eq!(string_split_byte(&AverStr::from("x"), b',').len(), 1);
     }
 
     /// A unique `Prepend` node taken apart by `uncons_reuse` holds the next

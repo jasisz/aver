@@ -148,6 +148,31 @@ impl<T> Block<T> {
         block
     }
 
+    /// The items `items` yields, however many: room for the iterator's
+    /// lower bound first, doubled when it runs out, so a list gathered from
+    /// an iterator needs no vector in between.
+    pub(crate) fn from_iter_grow(items: impl IntoIterator<Item = T>) -> Self {
+        let items = items.into_iter();
+        let mut block = Self::with_capacity(items.size_hint().0);
+        for item in items {
+            block.push_built(item);
+        }
+        block
+    }
+
+    /// Appends `item` to a block its builder holds alone (one it made
+    /// itself, not yet shared), growing it when it has no room left.
+    #[inline]
+    pub(crate) fn push_built(&mut self, item: T) {
+        debug_assert_eq!(Self::strong_count(self), 1);
+        let (len, cap) = (self.header().len, self.header().cap);
+        if len == cap {
+            self.grow(cap.saturating_mul(2).max(4));
+        }
+        // SAFETY: room for one more; the builder holds the block alone.
+        unsafe { self.push_within(item) };
+    }
+
     /// `len` copies of `item`.
     pub(crate) fn filled(len: usize, item: T) -> Self
     where

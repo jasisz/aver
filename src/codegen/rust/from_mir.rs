@@ -10181,7 +10181,7 @@ fn emit_mir_builtin_call(
             match mir_one_byte_literal(&args[1]) {
                 Some(byte) => format!("aver_rt::string_split_byte(&{s}, {byte}u8)"),
                 None => format!(
-                    "aver_rt::AverList::from_vec({}.split({}).map(aver_rt::AverStr::from).collect::<Vec<_>>())",
+                    "aver_rt::AverList::from_items({}.split({}).map(aver_rt::AverStr::from))",
                     s,
                     mir_str_pattern_arg(&args[1], ctx)?
                 ),
@@ -10294,7 +10294,7 @@ fn emit_mir_builtin_call(
                 )
             } else {
                 format!(
-                    "{{ let {list_temp} = &({list}); let {count_temp} = {count}; aver_rt::AverList::from_vec({list_temp}.iter().take({count_temp}).cloned().collect::<Vec<_>>()) }}"
+                    "{{ let {list_temp} = &({list}); let {count_temp} = {count}; aver_rt::AverList::from_items_len({list_temp}.len().min({count_temp}), {list_temp}.iter().cloned()) }}"
                 )
             }
         }
@@ -10342,17 +10342,23 @@ fn emit_mir_builtin_call(
         "List.zip" => {
             let a = arg!(0);
             let b = arg!(1);
+            // Both lists are read twice, for the length and the items, so
+            // the pairs go straight into a block of the shorter length.
+            let left = generated_ident("left");
+            let right = generated_ident("right");
             let a_iter = if type_is_int_list(args[0].ty()) {
-                format!("({a}).iter_cloned()")
+                format!("{left}.iter_cloned()")
             } else {
-                format!("({a}).iter().cloned()")
+                format!("{left}.iter().cloned()")
             };
             let b_iter = if type_is_int_list(args[1].ty()) {
-                format!("({b}).iter_cloned()")
+                format!("{right}.iter_cloned()")
             } else {
-                format!("({b}).iter().cloned()")
+                format!("{right}.iter().cloned()")
             };
-            format!("aver_rt::AverList::from_vec({a_iter}.zip({b_iter}).collect::<Vec<_>>())")
+            format!(
+                "{{ let {left} = &({a}); let {right} = &({b}); aver_rt::AverList::from_items_len({left}.len().min({right}.len()), {a_iter}.zip({b_iter})) }}"
+            )
         }
         "List.fromVector" => {
             if type_is_int_vector(args[0].ty()) {
@@ -10404,10 +10410,19 @@ fn emit_mir_builtin_call(
             } else {
                 "aver_rt::AverList"
             };
-            format!(
-                "{{ let mut ks: Vec<_> = {}.keys().cloned().collect(); ks.sort(); {list_type}::from_vec(ks) }}",
-                arg!(0)
-            )
+            if list_type == "aver_rt::AverList" {
+                // Gathered and sorted in the list's own block.
+                let map = generated_ident("map");
+                format!(
+                    "{{ let {map} = &({}); aver_rt::AverList::from_items_sorted({map}.len(), {map}.keys().cloned()) }}",
+                    arg!(0)
+                )
+            } else {
+                format!(
+                    "{{ let mut ks: Vec<_> = {}.keys().cloned().collect(); ks.sort(); {list_type}::from_vec(ks) }}",
+                    arg!(0)
+                )
+            }
         }
         // Sorted by key, like `Map.keys` and `Map.entries` above and like
         // the VM. Walking `HashMap::values()` directly gave a per-process
