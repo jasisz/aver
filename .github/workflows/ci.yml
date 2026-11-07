@@ -280,7 +280,7 @@ jobs:
       fail-fast: false
       matrix:
         lane: [checks, wasm-gc]
-    timeout-minutes: 45
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 90 || 45 }}
     env:
       # The wasm/wasip2 feature set pulls in wasmtime + component-model
       # crates and several large integration-test binaries. Keep each lane's
@@ -389,7 +389,9 @@ jobs:
         if: matrix.lane == 'wasm-gc'
         # Compilation has stalled for hours after `Compiling aver-lang`
         # (jasisz/aver#1339); retain the bounded step after splitting lanes.
-        timeout-minutes: 35
+        # The nightly 2000-case proptest sweep alone takes 17-29 minutes, so
+        # scheduled and dispatched runs get a longer bound than pull requests.
+        timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 75 || 35 }}
         # Run the wasm-gc integration surface explicitly under `wasm`, not
         # the whole package under `wasm,wasip2`. The old package-wide command
         # also built unrelated integration tests and bins with the full
