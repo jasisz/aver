@@ -550,8 +550,18 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             // proves it in range. "This literal discharges" and "the packed
             // carrier can store this literal" are therefore one predicate,
             // not two that happen to agree today.
+            //
+            // The same type-stamp guard as the divisor discharge above
+            // applies: a call the typechecker typed as `Result` keeps the
+            // call. The `escape` pass splices a callee's body into its
+            // caller after the check, so `match depthOf(d) { Result.Ok(_)
+            // -> …; Result.Err(_) -> … }` written over a parameter can
+            // reach this resolver as `depthOf(1)`. Discharging it then
+            // hands the bare record to a `match` written for a `Result`,
+            // and the VM took the `Err` arm for an in-range literal.
             let mut resolved_args = resolved_args;
             if let ResolvedCallee::Fn(fn_id) = &resolved_callee
+                && !typed_partial
                 && let Some(ctor) = ctx.symbols.literal_refinements().discharge(*fn_id, args)
                 && resolved_args.len() == 1
             {

@@ -4002,3 +4002,33 @@ fn a_division_typed_as_result_stays_a_result_when_inlining_makes_its_divisor_lit
     let got = run_pipeline_lookup(src, "percentOf(Progress(done = 75, target = 200))", "Int");
     assert_eq!(got, Value::int(37));
 }
+
+// ---------------------------------------------------------------------------
+// A smart-constructor argument that becomes a literal only after the typecheck
+// ---------------------------------------------------------------------------
+
+const DEPTH_REFINEMENT_SRC: &str = "module Depths\n    intent = \"A refinement whose constructor is matched over a parameter.\"\n    exposes opaque [Depth]\n\nrecord Depth\n    value: Int\n\nrecord Shift\n    by: Int\n\ntype Op\n    Lift(Int)\n    Lower(Int)\n\nfn depthOf(n: Int) -> Result<Depth, String>\n    ? \"A depth below 2^40.\"\n    match Bool.and(n >= 0, n < 1099511627776)\n        true -> Result.Ok(Depth(value = n))\n        false -> Result.Err(\"depth out of range\")\n\nfn liftable(op: Op) -> Bool\n    ? \"Whether a lift's amount is a depth.\"\n    match op\n        Op.Lift(d) -> match depthOf(d)\n            Result.Ok(_) -> true\n            Result.Err(_) -> false\n        Op.Lower(_) -> false\n\nfn shiftable(s: Shift) -> Bool\n    ? \"Whether a shift's amount is a depth.\"\n    match depthOf(s.by)\n        Result.Ok(_) -> true\n        Result.Err(_) -> false\n";
+
+#[test]
+fn a_smart_constructor_typed_as_result_stays_a_result_when_a_variant_splice_makes_its_argument_literal()
+ {
+    // `escape` splices the `Op.Lift` arm into the caller, so the call
+    // reaches the resolver as `depthOf(1)`. The typechecker had typed it
+    // `Result<Depth, String>`; discharging it to the bare record then
+    // handed the `match` a value no `Result` arm matches, and the VM took
+    // the `Err` arm.
+    let got = run_pipeline_lookup(DEPTH_REFINEMENT_SRC, "liftable(Op.Lift(1))", "Bool");
+    assert_eq!(got, Value::Bool(true));
+    let got = run_pipeline_lookup(DEPTH_REFINEMENT_SRC, "liftable(Op.Lift(-1))", "Bool");
+    assert_eq!(got, Value::Bool(false));
+}
+
+#[test]
+fn a_smart_constructor_typed_as_result_stays_a_result_when_a_record_splice_makes_its_argument_literal()
+ {
+    // The same through a record: `escape` inlines `s.by` as `1`.
+    let got = run_pipeline_lookup(DEPTH_REFINEMENT_SRC, "shiftable(Shift(by = 1))", "Bool");
+    assert_eq!(got, Value::Bool(true));
+    let got = run_pipeline_lookup(DEPTH_REFINEMENT_SRC, "shiftable(Shift(by = -1))", "Bool");
+    assert_eq!(got, Value::Bool(false));
+}
