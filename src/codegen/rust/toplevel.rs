@@ -1372,6 +1372,91 @@ fn emit_fn_def_with_visibility(
     scope: Option<&str>,
     public: bool,
 ) -> String {
+    let fn_id = resolved_fd.fn_id;
+    if !ctx.rust_dual_fns.contains(&fn_id) {
+        return emit_fn_def_one(fd, resolved_fd, ctx, scope, public, None);
+    }
+    // Two versions (see `from_mir::compute_dual_fns`): the by-value one,
+    // whose root match hands a shared node to the lent one.
+    let rust_name = aver_name_to_rust(&fd.name);
+    let lent_name = super::from_mir::lent_name(&rust_name);
+    let lent_mask = {
+        let _w = super::from_mir::LentWorld::enter(true);
+        super::expr::param_borrow_mask(fn_id, resolved_fd, ctx)
+    };
+    let by_value_mask = super::expr::param_borrow_mask(fn_id, resolved_fd, ctx);
+    let mir_fn = ctx.mir_program.as_ref().and_then(|p| p.fn_by_id(fn_id));
+    let params: Vec<(crate::ir::mir::LocalId, String, bool)> = fd
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| {
+            let slot = mir_fn
+                .and_then(|f| f.params.get(i))
+                .map(|p| p.local)
+                .unwrap_or(crate::ir::mir::LocalId(u32::MAX));
+            let lent = lent_mask.get(i).copied().unwrap_or(false)
+                && !by_value_mask.get(i).copied().unwrap_or(false);
+            (slot, aver_name_to_rust(name), lent)
+        })
+        .collect();
+    let args: Vec<String> = params
+        .iter()
+        .map(|(_, name, lent)| match lent {
+            true => format!("&{name}"),
+            false => name.clone(),
+        })
+        .collect();
+    let before = super::from_mir::set_delegate(Some(super::from_mir::Delegate {
+        fn_id,
+        head: lent_name.clone(),
+        params,
+        root: 0,
+        used: false,
+    }));
+    let by_value = emit_fn_def_one(fd, resolved_fd, ctx, scope, public, None);
+    let delegate = super::from_mir::set_delegate(before);
+    let lent = {
+        let _w = super::from_mir::LentWorld::enter(true);
+        emit_fn_def_one(fd, resolved_fd, ctx, scope, public, Some(lent_name.clone()))
+    };
+    let keeps_body = delegate.is_some_and(|d| d.used) || by_value.contains(".try_take");
+    let by_value = if keeps_body {
+        by_value
+    } else {
+        // No node taken apart: the by-value version only lends its params.
+        let head = format!("fn {rust_name}(");
+        let mut out = Vec::new();
+        let mut found = false;
+        for line in by_value.lines() {
+            if line.starts_with("#[inline") {
+                continue;
+            }
+            out.push(line.to_string());
+            if line.contains(&head) && line.trim_end().ends_with('{') {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return format!("{by_value}\n\n{lent}");
+        }
+        out.insert(out.len() - 1, "#[inline(always)]".to_string());
+        out.push(format!("    {lent_name}({})", args.join(", ")));
+        out.push("}".to_string());
+        out.join("\n")
+    };
+    format!("{by_value}\n\n{lent}")
+}
+
+fn emit_fn_def_one(
+    fd: &FnDef,
+    resolved_fd: &crate::ir::hir::ResolvedFnDef,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    public: bool,
+    name_override: Option<String>,
+) -> String {
     let mut lines = Vec::new();
 
     // Doc comment from description
@@ -1447,7 +1532,9 @@ fn emit_fn_def_with_visibility(
     // point; its exact body is renamed (`speculation`).
     let fn_id = resolved_fd.fn_id;
     let wrapped = ctx.rust_word_spec.wrapped.contains(&fn_id);
-    let fn_name = if wrapped {
+    let fn_name = if let Some(name) = name_override {
+        name
+    } else if wrapped {
         super::speculation::exact_name(&fd.name)
     } else {
         aver_name_to_rust(&fd.name)
@@ -2746,6 +2833,8 @@ mod tests {
             bare_i64: Default::default(),
             rust_owned_record_params: Default::default(),
             rust_lent_strings: Default::default(),
+            rust_lent_spines: Default::default(),
+            rust_dual_fns: Default::default(),
             rust_counted_records: Default::default(),
             rust_lent_options: Default::default(),
             rust_word_spec: Default::default(),

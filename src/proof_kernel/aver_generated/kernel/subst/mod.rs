@@ -585,24 +585,36 @@ pub fn holeCountArms(
 }
 
 /// Replace free variables (and the hole, bound under the name of the hole) by terms.
+#[inline(always)]
 pub fn subst(
     mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Term, AverStr> {
+    __lent_subst(&t, bs)
+}
+
+/// Replace free variables (and the hole, bound under the name of the hole) by terms.
+pub fn __lent_subst(
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Term, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __t = &t;
+        let __t = t;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__n_fields) => {
                 let n = __n_fields.0.clone();
-                Ok(crate::proof_kernel::aver_generated::kernel::subst::lookup(&n, bs).unwrap_or(t))
+                Ok(
+                    crate::proof_kernel::aver_generated::kernel::subst::lookup(&n, bs)
+                        .unwrap_or_else(|| t.clone()),
+                )
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::THole => {
                 Ok(crate::proof_kernel::aver_generated::kernel::subst::lookup(
                     &::aver_rt::str_lit!("□"),
                     bs,
                 )
-                .unwrap_or(t))
+                .unwrap_or_else(|| t.clone()))
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TGet(__o_fields) => {
                 let o = &__o_fields.0;
@@ -610,9 +622,8 @@ pub fn subst(
                 Ok(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TGet(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TGet(
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(
-                                o.clone(),
-                                bs,
+                            crate::proof_kernel::aver_generated::kernel::subst::__lent_subst(
+                                o, bs,
                             )?,
                             f,
                         ),
@@ -655,13 +666,11 @@ pub fn subst(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
                             o,
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(
-                                a.clone(),
-                                bs,
+                            crate::proof_kernel::aver_generated::kernel::subst::__lent_subst(
+                                a, bs,
                             )?,
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(
-                                b.clone(),
-                                bs,
+                            crate::proof_kernel::aver_generated::kernel::subst::__lent_subst(
+                                b, bs,
                             )?,
                         ),
                     ),
@@ -672,9 +681,8 @@ pub fn subst(
                 Ok(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TNeg(
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(
-                                a.clone(),
-                                bs,
+                            crate::proof_kernel::aver_generated::kernel::subst::__lent_subst(
+                                a, bs,
                             )?,
                         ),
                     ),
@@ -700,9 +708,8 @@ pub fn subst(
                 Ok(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TMatch(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TMatch(
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(
-                                s.clone(),
-                                bs,
+                            crate::proof_kernel::aver_generated::kernel::subst::__lent_subst(
+                                s, bs,
                             )?,
                             crate::proof_kernel::aver_generated::kernel::subst::substArms(
                                 arms, bs,
@@ -763,9 +770,8 @@ pub fn subst(
                     crate::proof_kernel::aver_generated::kernel::term::Term::TUpd(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TUpd(
                             n,
-                            crate::proof_kernel::aver_generated::kernel::subst::subst(
-                                b.clone(),
-                                bs,
+                            crate::proof_kernel::aver_generated::kernel::subst::__lent_subst(
+                                b, bs,
                             )?,
                             crate::proof_kernel::aver_generated::kernel::subst::substFields(
                                 fs, bs,
@@ -774,7 +780,7 @@ pub fn subst(
                     ),
                 )
             }
-            _ => Ok(t),
+            _ => Ok(t.clone()),
         }
     }
 }

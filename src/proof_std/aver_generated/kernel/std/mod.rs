@@ -1755,12 +1755,24 @@ pub fn opWith(
     left @ _: Option<&crate::proof_std::aver_generated::kernel::term::Term>,
     target @ _: &crate::proof_std::aver_generated::kernel::term::Term,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
+    __lent_opWith(o, a, &b, left, target)
+}
+
+/// An operator with the hole on the left, else on the right.
+#[inline(always)]
+pub fn __lent_opWith(
+    o @ _: AverStr,
+    mut a @ _: crate::proof_std::aver_generated::kernel::term::Term,
+    b @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    left @ _: Option<&crate::proof_std::aver_generated::kernel::term::Term>,
+    target @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
     crate::proof_std::cancel_checkpoint();
     match left {
         Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TOp(
-            crate::proof_std::aver_generated::kernel::term::Term__TOp(o, c.clone(), b),
+            crate::proof_std::aver_generated::kernel::term::Term__TOp(o, c.clone(), b.clone()),
         )),
-        None => match crate::proof_std::aver_generated::kernel::std::holeAt(&b, target) {
+        None => match crate::proof_std::aver_generated::kernel::std::holeAt(b, target) {
             Some(c @ _) => Some(crate::proof_std::aver_generated::kernel::term::Term::TOp(
                 crate::proof_std::aver_generated::kernel::term::Term__TOp(o, a, c),
             )),

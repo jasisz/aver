@@ -571,9 +571,19 @@ pub fn evalWithin(
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
+    __lent_evalWithin(s, &t, depth)
+}
+
+/// evaluate, nested at most depth deep.
+#[inline(always)]
+pub fn __lent_evalWithin(
+    s @ _: &Scope,
+    t @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    depth @ _: aver_rt::AverInt,
+) -> Result<Rw, AverStr> {
     crate::proof_std::cancel_checkpoint();
     if (depth > aver_rt::AverInt::from_i64(0)) {
-        crate::proof_std::aver_generated::kernel::lib::evalNode(
+        crate::proof_std::aver_generated::kernel::lib::__lent_evalNode(
             s,
             t,
             depth.sub(&aver_rt::AverInt::from_i64(1)),
@@ -584,14 +594,24 @@ pub fn evalWithin(
 }
 
 /// One node: its parts first, then one step at its head.
+#[inline(always)]
 pub fn evalNode(
     s @ _: &Scope,
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
+    __lent_evalNode(s, &t, depth)
+}
+
+/// One node: its parts first, then one step at its head.
+pub fn __lent_evalNode(
+    s @ _: &Scope,
+    t @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    depth @ _: aver_rt::AverInt,
+) -> Result<Rw, AverStr> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __t = &t;
+        let __t = t;
         match __t.view() {
             crate::proof_std::aver_generated::kernel::term::Term__view::TVar(__x_fields) => {
                 let x = __x_fields.0.clone();
@@ -600,7 +620,7 @@ pub fn evalNode(
                         crate::proof_std::aver_generated::kernel::lib::lookupKnown(&x, &s.known);
                     crate::proof_std::aver_generated::kernel::lib::evalVar(
                         s,
-                        t,
+                        t.clone(),
                         (&__arg18).as_ref(),
                         depth,
                     )
@@ -611,27 +631,31 @@ pub fn evalNode(
                 {
                     let __list_subject = __pat0;
                     match aver_rt::list_uncons(&__list_subject) {
-                        Some((x, rest)) => Ok({
-                            let __arg22 @ _ = crate::proof_std::aver_generated::kernel::lib::Rw { to: { let __arg19 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(rest.clone())); crate::proof_std::aver_generated::kernel::lib::cons(x.clone(), __arg19) }, proof: crate::proof_std::aver_generated::kernel::proof::Proof::PCell(crate::proof_std::aver_generated::kernel::proof::Proof__PCell(t.clone())) };
-                            {
-                                let __arg23 @ _ = {
-                                    let __arg21 @ _ = {
-                                        let __arg20 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(rest));
-                                        crate::proof_std::aver_generated::kernel::lib::cons(
-                                            x.clone(),
-                                            __arg20,
-                                        )
-                                    };
-                                    crate::proof_std::aver_generated::kernel::lib::evalWithin(
-                                        s, __arg21, depth,
+                        Some((x, rest)) => {
+                            Ok({
+                                let __arg22 @ _ = crate::proof_std::aver_generated::kernel::lib::Rw { to: { let __arg19 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(rest.clone())); crate::proof_std::aver_generated::kernel::lib::cons(x.clone(), __arg19) }, proof: crate::proof_std::aver_generated::kernel::proof::Proof::PCell(crate::proof_std::aver_generated::kernel::proof::Proof__PCell(t.clone())) };
+                                {
+                                    let __arg23 @ _ = {
+                                        let __arg21 @ _ = {
+                                            let __arg20 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TList(crate::proof_std::aver_generated::kernel::term::Term__TList(rest));
+                                            crate::proof_std::aver_generated::kernel::lib::cons(
+                                                x.clone(),
+                                                __arg20,
+                                            )
+                                        };
+                                        crate::proof_std::aver_generated::kernel::lib::__lent_evalWithin(s, &__arg21, depth)
+                                    }?;
+                                    crate::proof_std::aver_generated::kernel::lib::chain(
+                                        t.clone(),
+                                        __arg22,
+                                        __arg23,
                                     )
-                                }?;
-                                crate::proof_std::aver_generated::kernel::lib::chain(
-                                    t, __arg22, __arg23,
-                                )
-                            }
-                        }),
-                        None => Ok(crate::proof_std::aver_generated::kernel::lib::refl(t)),
+                                }
+                            })
+                        }
+                        None => Ok(crate::proof_std::aver_generated::kernel::lib::refl(
+                            t.clone(),
+                        )),
                     }
                 }
             }
@@ -652,7 +676,12 @@ pub fn evalNode(
                             depth.clone(),
                         )
                     }?;
-                    crate::proof_std::aver_generated::kernel::lib::afterArgs(s, t, __arg25, depth)
+                    crate::proof_std::aver_generated::kernel::lib::afterArgs(
+                        s,
+                        t.clone(),
+                        __arg25,
+                        depth,
+                    )
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
@@ -672,41 +701,53 @@ pub fn evalNode(
                             depth.clone(),
                         )
                     }?;
-                    crate::proof_std::aver_generated::kernel::lib::afterArgs(s, t, __arg27, depth)
+                    crate::proof_std::aver_generated::kernel::lib::afterArgs(
+                        s,
+                        t.clone(),
+                        __arg27,
+                        depth,
+                    )
                 }
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
                 let o = __o_fields.0.clone();
                 let a = &__o_fields.1;
                 let b = &__o_fields.2;
-                crate::proof_std::aver_generated::kernel::lib::evalOp(
-                    s,
-                    o,
-                    a.clone(),
-                    b.clone(),
-                    depth,
-                )
+                crate::proof_std::aver_generated::kernel::lib::__lent_evalOp(s, o, a, b, depth)
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TMatch(
                 __subject_fields,
             ) => {
                 let subject = __subject_fields.0.clone();
                 let arms = __subject_fields.1.clone();
-                crate::proof_std::aver_generated::kernel::lib::evalMatch(
-                    s, t, subject, &arms, depth,
+                crate::proof_std::aver_generated::kernel::lib::__lent_evalMatch(
+                    s,
+                    t.clone(),
+                    &subject,
+                    &arms,
+                    depth,
                 )
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TGet(__r_fields) => {
                 let r = __r_fields.0.clone();
                 let f = __r_fields.1.clone();
-                crate::proof_std::aver_generated::kernel::lib::evalGet(s, t, r, f, depth)
+                crate::proof_std::aver_generated::kernel::lib::__lent_evalGet(
+                    s,
+                    t.clone(),
+                    &r,
+                    f,
+                    depth,
+                )
             }
-            _ => Ok(crate::proof_std::aver_generated::kernel::lib::refl(t)),
+            _ => Ok(crate::proof_std::aver_generated::kernel::lib::refl(
+                t.clone(),
+            )),
         }
     }
 }
 
 /// A field read: the record evaluated in place, then the field of a record literal by projection.
+#[inline(always)]
 pub fn evalGet(
     s @ _: &Scope,
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
@@ -714,8 +755,20 @@ pub fn evalGet(
     f @ _: AverStr,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
+    __lent_evalGet(s, t, &r, f, depth)
+}
+
+/// A field read: the record evaluated in place, then the field of a record literal by projection.
+pub fn __lent_evalGet(
+    s @ _: &Scope,
+    mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
+    r @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    f @ _: AverStr,
+    depth @ _: aver_rt::AverInt,
+) -> Result<Rw, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    let rr @ _ = crate::proof_std::aver_generated::kernel::lib::evalWithin(s, r, depth.clone())?;
+    let rr @ _ =
+        crate::proof_std::aver_generated::kernel::lib::__lent_evalWithin(s, r, depth.clone())?;
     let inner @ _ = if crate::proof_std::aver_generated::kernel::lib::isRefl(&rr.proof) {
         crate::proof_std::aver_generated::kernel::lib::refl(t.clone())
     } else {
@@ -842,6 +895,7 @@ pub fn fieldOf(
 }
 
 /// A match term: its subject evaluated, then the arm that value decides, evaluated further.
+#[inline(always)]
 pub fn evalMatch(
     s @ _: &Scope,
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
@@ -849,9 +903,23 @@ pub fn evalMatch(
     arms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
+    __lent_evalMatch(s, t, &subject, arms, depth)
+}
+
+/// A match term: its subject evaluated, then the arm that value decides, evaluated further.
+pub fn __lent_evalMatch(
+    s @ _: &Scope,
+    mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
+    subject @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    arms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
+    depth @ _: aver_rt::AverInt,
+) -> Result<Rw, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    let r @ _ =
-        crate::proof_std::aver_generated::kernel::lib::evalWithin(s, subject, depth.clone())?;
+    let r @ _ = crate::proof_std::aver_generated::kernel::lib::__lent_evalWithin(
+        s,
+        subject,
+        depth.clone(),
+    )?;
     match crate::proof_std::aver_generated::kernel::lib::selectArm(arms, r.to) {
         None => Ok(crate::proof_std::aver_generated::kernel::lib::refl(t)),
         Some(__pat0 @ _) => {
@@ -862,7 +930,9 @@ pub fn evalMatch(
                         arm.pattern,
                         &parts,
                     );
-                    crate::proof_std::aver_generated::kernel::subst::subst(arm.body, &__arg10)
+                    crate::proof_std::aver_generated::kernel::subst::__lent_subst(
+                        &arm.body, &__arg10,
+                    )
                 }?;
                 {
                     let __arg12 @ _ = crate::proof_std::aver_generated::kernel::proof::Proof::PArm(
@@ -1140,6 +1210,7 @@ pub fn afterArgs(
 }
 
 /// Both operands rewritten in place, then computed once both are literals.
+#[inline(always)]
 pub fn evalOp(
     s @ _: &Scope,
     o @ _: AverStr,
@@ -1147,12 +1218,23 @@ pub fn evalOp(
     mut b @ _: crate::proof_std::aver_generated::kernel::term::Term,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
+    __lent_evalOp(s, o, &a, &b, depth)
+}
+
+/// Both operands rewritten in place, then computed once both are literals.
+pub fn __lent_evalOp(
+    s @ _: &Scope,
+    o @ _: AverStr,
+    a @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    b @ _: &crate::proof_std::aver_generated::kernel::term::Term,
+    depth @ _: aver_rt::AverInt,
+) -> Result<Rw, AverStr> {
     crate::proof_std::cancel_checkpoint();
     let ra @ _ =
-        crate::proof_std::aver_generated::kernel::lib::evalWithin(s, a.clone(), depth.clone())?;
-    let rb @ _ = crate::proof_std::aver_generated::kernel::lib::evalWithin(s, b.clone(), depth)?;
+        crate::proof_std::aver_generated::kernel::lib::__lent_evalWithin(s, a, depth.clone())?;
+    let rb @ _ = crate::proof_std::aver_generated::kernel::lib::__lent_evalWithin(s, b, depth)?;
     let t @ _ = crate::proof_std::aver_generated::kernel::term::Term::TOp(
-        crate::proof_std::aver_generated::kernel::term::Term__TOp(o.clone(), a, b.clone()),
+        crate::proof_std::aver_generated::kernel::term::Term__TOp(o.clone(), a.clone(), b.clone()),
     );
     let mid @ _ = crate::proof_std::aver_generated::kernel::term::Term::TOp(
         crate::proof_std::aver_generated::kernel::term::Term__TOp(
@@ -1175,7 +1257,7 @@ pub fn evalOp(
                         crate::proof_std::aver_generated::kernel::term::Term__TOp(
                             o.clone(),
                             crate::proof_std::aver_generated::kernel::term::Term::THole,
-                            b,
+                            b.clone(),
                         ),
                     ),
                     ra.proof,
