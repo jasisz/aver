@@ -707,6 +707,15 @@ pub struct CodegenContext {
     /// lent the same way. Indexed by param position; computed once by the
     /// Rust transpile before the record params above, empty everywhere else.
     pub rust_lent_strings: HashMap<crate::ir::FnId, Vec<bool>>,
+    /// The params of a recursive traversal its recursion lends a part of
+    /// the value it was lent (see `rust::from_mir::compute_lent_spines`),
+    /// as `(function, param position)`. Taken by reference even where the
+    /// function returns or keeps the value, which it then copies. Computed
+    /// once by the Rust transpile; empty everywhere else.
+    pub rust_lent_spines: HashSet<(crate::ir::FnId, usize)>,
+    /// The functions emitted in a by-value and a lent version (see
+    /// `rust::from_mir::compute_dual_fns`).
+    pub rust_dual_fns: HashSet<crate::ir::FnId>,
     /// The boxed records (by backend type key) the program may copy, kept
     /// behind a counted pointer instead of a `Box` (see
     /// `rust::representation::is_counted_record`). Computed once by the
@@ -1211,6 +1220,8 @@ pub fn build_context(
         bare_i64,
         rust_owned_record_params: Default::default(),
         rust_lent_strings: Default::default(),
+        rust_lent_spines: Default::default(),
+        rust_dual_fns: Default::default(),
         rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
         rust_word_spec: Default::default(),
@@ -1780,6 +1791,8 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         bare_i64: Default::default(),
         rust_owned_record_params: Default::default(),
         rust_lent_strings: Default::default(),
+        rust_lent_spines: Default::default(),
+        rust_dual_fns: Default::default(),
         rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
         rust_word_spec: Default::default(),

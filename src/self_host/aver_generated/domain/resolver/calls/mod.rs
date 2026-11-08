@@ -163,13 +163,22 @@ pub fn resolveCallsInStmt(
 }
 
 /// Replace ExprCall with ExprCallDirect for known user functions.
+#[inline(always)]
 pub fn resolveCallsInExpr(
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
+    __lent_resolveCallsInExpr(&expr, fnMap)
+}
+
+/// Replace ExprCall with ExprCallDirect for known user functions.
+pub fn __lent_resolveCallsInExpr(
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     {
-        let __t = &expr;
+        let __t = expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(__cond_fields) => {
                 let cond = &__cond_fields.0;
@@ -177,17 +186,14 @@ pub fn resolveCallsInExpr(
                 let elseExpr = &__cond_fields.2;
                 crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
                     crate::aver_generated::domain::ast::Expr__ExprBoolBranch(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            cond.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            cond, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            thenExpr.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            thenExpr, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            elseExpr.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            elseExpr, fnMap,
                         ),
                     ),
                 )
@@ -247,7 +253,7 @@ pub fn resolveCallsInExpr(
                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltinId(__field1, __field0)
                 })
             }
-            _ => crate::aver_generated::domain::resolver::calls::resolveCallsInExprInternal(
+            _ => crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExprInternal(
                 expr, fnMap,
             ),
         }
@@ -255,18 +261,27 @@ pub fn resolveCallsInExpr(
 }
 
 /// Continue direct-call linking for specialized internal and arithmetic forms.
+#[inline(always)]
 pub fn resolveCallsInExprInternal(
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
+    __lent_resolveCallsInExprInternal(&expr, fnMap)
+}
+
+/// Continue direct-call linking for specialized internal and arithmetic forms.
+pub fn __lent_resolveCallsInExprInternal(
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     {
-        let __t = &expr;
+        let __t = expr;
         match __t.view() {
-            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlotInt(_) => expr,
-            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlots(_) => expr,
-            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlotInt(_) => expr,
-            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlots(_) => expr,
+            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlotInt(_) => expr.clone(),
+            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlots(_) => expr.clone(),
+            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlotInt(_) => expr.clone(),
+            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlots(_) => expr.clone(),
             crate::aver_generated::domain::ast::Expr__view::ExprVectorGetOrInt(
                 __vecExpr_fields,
             ) => {
@@ -275,13 +290,11 @@ pub fn resolveCallsInExprInternal(
                 let defaultValue = __vecExpr_fields.2.clone();
                 crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
                     crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            vecExpr.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            vecExpr, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            idxExpr.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            idxExpr, fnMap,
                         ),
                         defaultValue,
                     ),
@@ -293,13 +306,11 @@ pub fn resolveCallsInExprInternal(
                 let defaultValue = __a_fields.2.clone();
                 crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
                     crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                         defaultValue,
                     ),
@@ -310,13 +321,11 @@ pub fn resolveCallsInExprInternal(
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprAdd(
                     crate::aver_generated::domain::ast::Expr__ExprAdd(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -326,13 +335,11 @@ pub fn resolveCallsInExprInternal(
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprSub(
                     crate::aver_generated::domain::ast::Expr__ExprSub(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -342,13 +349,11 @@ pub fn resolveCallsInExprInternal(
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprMul(
                     crate::aver_generated::domain::ast::Expr__ExprMul(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -358,13 +363,11 @@ pub fn resolveCallsInExprInternal(
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprDiv(
                     crate::aver_generated::domain::ast::Expr__ExprDiv(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -373,41 +376,47 @@ pub fn resolveCallsInExprInternal(
                 let inner = &__inner_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprNeg(
                     crate::aver_generated::domain::ast::Expr__ExprNeg(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            inner.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            inner, fnMap,
                         ),
                     ),
                 )
             }
-            _ => {
-                crate::aver_generated::domain::resolver::calls::resolveCallsInExprTail(expr, fnMap)
-            }
+            _ => crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExprTail(
+                expr, fnMap,
+            ),
         }
     }
 }
 
 /// Finish direct-call linking for comparisons, aggregates, and product forms.
+#[inline(always)]
 pub fn resolveCallsInExprTail(
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
+    __lent_resolveCallsInExprTail(&expr, fnMap)
+}
+
+/// Finish direct-call linking for comparisons, aggregates, and product forms.
+pub fn __lent_resolveCallsInExprTail(
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     {
-        let __t = &expr;
+        let __t = expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprEq(
                     crate::aver_generated::domain::ast::Expr__ExprEq(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -417,13 +426,11 @@ pub fn resolveCallsInExprTail(
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprNeq(
                     crate::aver_generated::domain::ast::Expr__ExprNeq(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -433,13 +440,11 @@ pub fn resolveCallsInExprTail(
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprLt(
                     crate::aver_generated::domain::ast::Expr__ExprLt(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -449,13 +454,11 @@ pub fn resolveCallsInExprTail(
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprGt(
                     crate::aver_generated::domain::ast::Expr__ExprGt(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -465,13 +468,11 @@ pub fn resolveCallsInExprTail(
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprLte(
                     crate::aver_generated::domain::ast::Expr__ExprLte(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -481,13 +482,11 @@ pub fn resolveCallsInExprTail(
                 let b = &__a_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprGte(
                     crate::aver_generated::domain::ast::Expr__ExprGte(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            a.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            a, fnMap,
                         ),
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            b.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            b, fnMap,
                         ),
                     ),
                 )
@@ -497,9 +496,8 @@ pub fn resolveCallsInExprTail(
                 let arms = &__subj_fields.1;
                 crate::aver_generated::domain::ast::Expr::ExprMatch(
                     crate::aver_generated::domain::ast::Expr__ExprMatch(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            subj.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            subj, fnMap,
                         ),
                         {
                             let __arg26 @ _ = aver_rt::list_builder_new(0usize);
@@ -512,9 +510,8 @@ pub fn resolveCallsInExprTail(
                 let inner = &__inner_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprPropagate(
                     crate::aver_generated::domain::ast::Expr__ExprPropagate(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            inner.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            inner, fnMap,
                         ),
                     ),
                 )
@@ -576,15 +573,14 @@ pub fn resolveCallsInExprTail(
                 let field = __obj_fields.1.clone();
                 crate::aver_generated::domain::ast::Expr::ExprFieldAccess(
                     crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
-                        crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                            obj.clone(),
-                            fnMap,
+                        crate::aver_generated::domain::resolver::calls::__lent_resolveCallsInExpr(
+                            obj, fnMap,
                         ),
                         field,
                     ),
                 )
             }
-            _ => expr,
+            _ => expr.clone(),
         }
     }
 }

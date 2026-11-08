@@ -2342,13 +2342,22 @@ pub fn bindVar(
 }
 
 /// A type with its variables replaced by what they are bound to; an unbound one is a hole.
+#[inline(always)]
 pub fn instantiate(
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Ty,
     bound @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
 ) -> crate::proof_std::aver_generated::kernel::term::Ty {
+    __lent_instantiate(&t, bound)
+}
+
+/// A type with its variables replaced by what they are bound to; an unbound one is a hole.
+pub fn __lent_instantiate(
+    t @ _: &crate::proof_std::aver_generated::kernel::term::Ty,
+    bound @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
+) -> crate::proof_std::aver_generated::kernel::term::Ty {
     crate::proof_std::cancel_checkpoint();
     {
-        let __t = &t;
+        let __t = t;
         match __t.view() {
             crate::proof_std::aver_generated::kernel::term::Ty__view::TyVar(__n_fields) => {
                 let n = __n_fields.0.clone();
@@ -2360,9 +2369,8 @@ pub fn instantiate(
                 let a = &__a_fields.0;
                 crate::proof_std::aver_generated::kernel::term::Ty::TyList(
                     crate::proof_std::aver_generated::kernel::term::Ty__TyList(
-                        crate::proof_std::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
+                        crate::proof_std::aver_generated::kernel::types::__lent_instantiate(
+                            a, bound,
                         ),
                     ),
                 )
@@ -2371,9 +2379,8 @@ pub fn instantiate(
                 let a = &__a_fields.0;
                 crate::proof_std::aver_generated::kernel::term::Ty::TyOption(
                     crate::proof_std::aver_generated::kernel::term::Ty__TyOption(
-                        crate::proof_std::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
+                        crate::proof_std::aver_generated::kernel::types::__lent_instantiate(
+                            a, bound,
                         ),
                     ),
                 )
@@ -2382,9 +2389,8 @@ pub fn instantiate(
                 let a = &__a_fields.0;
                 crate::proof_std::aver_generated::kernel::term::Ty::TyVector(
                     crate::proof_std::aver_generated::kernel::term::Ty__TyVector(
-                        crate::proof_std::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
+                        crate::proof_std::aver_generated::kernel::types::__lent_instantiate(
+                            a, bound,
                         ),
                     ),
                 )
@@ -2394,13 +2400,11 @@ pub fn instantiate(
                 let b = &__a_fields.1;
                 crate::proof_std::aver_generated::kernel::term::Ty::TyResult(
                     crate::proof_std::aver_generated::kernel::term::Ty__TyResult(
-                        crate::proof_std::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
+                        crate::proof_std::aver_generated::kernel::types::__lent_instantiate(
+                            a, bound,
                         ),
-                        crate::proof_std::aver_generated::kernel::types::instantiate(
-                            b.clone(),
-                            bound,
+                        crate::proof_std::aver_generated::kernel::types::__lent_instantiate(
+                            b, bound,
                         ),
                     ),
                 )
@@ -2410,13 +2414,11 @@ pub fn instantiate(
                 let b = &__a_fields.1;
                 crate::proof_std::aver_generated::kernel::term::Ty::TyMap(
                     crate::proof_std::aver_generated::kernel::term::Ty__TyMap(
-                        crate::proof_std::aver_generated::kernel::types::instantiate(
-                            a.clone(),
-                            bound,
+                        crate::proof_std::aver_generated::kernel::types::__lent_instantiate(
+                            a, bound,
                         ),
-                        crate::proof_std::aver_generated::kernel::types::instantiate(
-                            b.clone(),
-                            bound,
+                        crate::proof_std::aver_generated::kernel::types::__lent_instantiate(
+                            b, bound,
                         ),
                     ),
                 )
@@ -2429,7 +2431,7 @@ pub fn instantiate(
                     ),
                 )
             }
-            _ => t,
+            _ => t.clone(),
         }
     }
 }

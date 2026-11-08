@@ -289,6 +289,11 @@ pub(super) fn clear_owned_param_borrows_of(
     }
 }
 
+/// The function a call by `name` reaches.
+pub(super) fn callee_fn_id(name: &str, ctx: &CodegenContext) -> Option<crate::ir::FnId> {
+    resolved_callee(name, ctx).map(|(id, _)| id)
+}
+
 fn resolved_callee<'a>(
     name: &str,
     ctx: &'a CodegenContext,

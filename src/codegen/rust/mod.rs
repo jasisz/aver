@@ -254,6 +254,7 @@ fn transpile_project(
         // never takes the fields out of a node of one.
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);
         ctx.rust_lent_strings = from_mir::compute_lent_strings(ctx);
+        ctx.rust_lent_spines = from_mir::compute_lent_spines(ctx);
         ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
         ctx.rust_counted_records = counted_records::compute(ctx);
         ctx.rust_lent_options = lent_option::compute(ctx);
@@ -261,6 +262,7 @@ fn transpile_project(
         ctx.rust_knowing = knowing::compute(ctx);
         ctx.rust_field_layout = field_layout::compute(ctx);
         speculation::choose_wrapped(ctx);
+        ctx.rust_dual_fns = from_mir::compute_dual_fns(ctx);
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
@@ -1875,6 +1877,132 @@ fn keep(s: String) -> String
         assert!(!entry.contains("s.clone()"), "{entry}");
         // A string returned is taken by value.
         assert!(entry.contains("fn keep(s @ _: AverStr"), "{entry}");
+    }
+
+    #[test]
+    fn a_traversal_lends_the_tree_down_its_recursion() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Tree
+    Leaf(Int)
+    Node(Tree, Tree)
+
+fn bump(t: Tree, k: Int) -> Tree
+    match t
+        Tree.Leaf(n) -> match n < k
+            true -> t
+            false -> Tree.Leaf(n + 1)
+        Tree.Node(l, r) -> Tree.Node(bump(l, k), bump(r, k))
+
+fn bumpAll(t: Tree) -> Tree
+    bump(t, 0)
+
+fn grow(t: Tree, n: Int) -> Tree
+    match n == 0
+        true -> t
+        false -> Tree.Node(grow(Tree.Node(t, t), n - 1), Tree.Leaf(n))
+
+fn keep(t: Tree) -> Tree
+    t
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // Each recursive call of bump passes a part of the node it was lent,
+        // so its lent version borrows the tree and copies it only where it
+        // returns it. Its by-value version takes no node apart: it only
+        // lends its params to the lent one.
+        assert!(entry.contains("fn __lent_bump(t @ _: &Tree"), "{entry}");
+        assert!(entry.contains("__lent_bump(&t, k)"), "{entry}");
+        assert!(!entry.contains("l.clone()"), "{entry}");
+        assert!(entry.contains("t.clone()"), "{entry}");
+        // Its caller, off the recursion, calls the by-value version.
+        assert!(entry.contains("fn bumpAll(mut t @ _: Tree"), "{entry}");
+        // A recursion that passes a value it builds, and a function that
+        // returns its param, take the tree by value.
+        assert!(entry.contains("fn grow(mut t @ _: Tree"), "{entry}");
+        assert!(entry.contains("fn keep(mut t @ _: Tree"), "{entry}");
+    }
+
+    #[test]
+    fn a_map_over_a_tree_reuses_owned_nodes_and_lends_shared_ones() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Tree
+    Leaf
+    Node(Tree, Int, Tree)
+
+fn incr(t: Tree) -> Tree
+    match t
+        Tree.Leaf -> Tree.Leaf
+        Tree.Node(l, v, r) -> Tree.Node(incr(l), v + 1, incr(r))
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // The by-value version takes a node it owns alone apart and builds
+        // in its memory; a shared node goes to the lent version, which
+        // borrows the children instead of copying them out.
+        assert!(
+            entry.contains("pub fn incr(mut t @ _: Tree) -> Tree"),
+            "{entry}"
+        );
+        assert!(
+            entry.contains("try_take_reusing::<Tree__Node>()"),
+            "{entry}"
+        );
+        assert!(
+            entry.contains("Err(__t) => return __lent_incr(&__t)"),
+            "{entry}"
+        );
+        assert!(
+            entry.contains("pub fn __lent_incr(t @ _: &Tree) -> Tree"),
+            "{entry}"
+        );
+        assert!(entry.contains("__lent_incr(l)"), "{entry}");
+    }
+
+    #[test]
+    fn a_lent_fallback_is_copied_only_when_it_is_the_result() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Tree
+    Leaf(Int)
+    Node(Tree, Tree)
+
+fn small(n: Int, k: Int) -> Option<Tree>
+    match n < k
+        true -> Option.Some(Tree.Leaf(n + 1))
+        false -> Option.None
+
+fn bump(t: Tree, k: Int) -> Tree
+    match t
+        Tree.Leaf(n) -> Option.withDefault(small(n, k), t)
+        Tree.Node(l, r) -> Tree.Node(bump(l, k), bump(r, k))
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // bump borrows the tree; the fallback copies it, so the copy waits
+        // until the value is missing.
+        assert!(entry.contains("fn bump(t @ _: &Tree"), "{entry}");
+        assert!(entry.contains(".unwrap_or_else(|| t.clone())"), "{entry}");
+        assert!(!entry.contains(".unwrap_or(t.clone())"), "{entry}");
     }
 
     #[test]

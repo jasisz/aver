@@ -638,7 +638,7 @@ fn params_owned(id: FnId, ctx: &CodegenContext) -> Vec<bool> {
         .map(|(i, (_, ty))| {
             !super::emit_ctx::should_borrow_param(ty)
                 || consumed.and_then(|c| c.get(i)).copied() == Some(true)
-                || super::from_mir::param_handed_on(ty, mir_fn, i, consumed)
+                || super::from_mir::param_handed_on(ty, mir_fn, i, consumed, ctx)
                 || super::from_mir::collection_graduates(ty, mir_fn, i, ctx)
         })
         .collect()

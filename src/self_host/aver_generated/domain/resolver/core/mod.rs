@@ -919,6 +919,7 @@ pub fn resolveStmtBindFinish(
 }
 
 /// Resolve an expression. Returns (resolved expr, slots with any new pattern bindings).
+#[inline(always)]
 pub fn resolveExpr(
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -926,9 +927,20 @@ pub fn resolveExpr(
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
+    __lent_resolveExpr(&expr, slots)
+}
+
+/// Resolve an expression. Returns (resolved expr, slots with any new pattern bindings).
+pub fn __lent_resolveExpr(
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> (
+    crate::aver_generated::domain::ast::Expr,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
     crate::cancel_checkpoint();
     {
-        let __t = &expr;
+        let __t = expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(__cond_fields) => {
                 let cond = &__cond_fields.0;
@@ -937,16 +949,16 @@ pub fn resolveExpr(
                 (
                     crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
                         crate::aver_generated::domain::ast::Expr__ExprBoolBranch(
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                cond.clone(),
+                            crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
+                                cond,
                                 slots.clone(),
                             ),
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                thenExpr.clone(),
+                            crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
+                                thenExpr,
                                 slots.clone(),
                             ),
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                elseExpr.clone(),
+                            crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
+                                elseExpr,
                                 slots.clone(),
                             ),
                         ),
@@ -961,17 +973,20 @@ pub fn resolveExpr(
                     slots,
                 )
             }
-            crate::aver_generated::domain::ast::Expr__view::ExprInt(_) => (expr, slots),
-            crate::aver_generated::domain::ast::Expr__view::ExprFloat(_) => (expr, slots),
-            crate::aver_generated::domain::ast::Expr__view::ExprStr(_) => (expr, slots),
-            crate::aver_generated::domain::ast::Expr__view::ExprBool(_) => (expr, slots),
-            crate::aver_generated::domain::ast::Expr__view::ExprSlot(_) => (expr, slots),
-            _ => crate::aver_generated::domain::resolver::core::resolveExprAfterLeaf(expr, slots),
+            crate::aver_generated::domain::ast::Expr__view::ExprInt(_) => (expr.clone(), slots),
+            crate::aver_generated::domain::ast::Expr__view::ExprFloat(_) => (expr.clone(), slots),
+            crate::aver_generated::domain::ast::Expr__view::ExprStr(_) => (expr.clone(), slots),
+            crate::aver_generated::domain::ast::Expr__view::ExprBool(_) => (expr.clone(), slots),
+            crate::aver_generated::domain::ast::Expr__view::ExprSlot(_) => (expr.clone(), slots),
+            _ => crate::aver_generated::domain::resolver::core::__lent_resolveExprAfterLeaf(
+                expr, slots,
+            ),
         }
     }
 }
 
 /// Continue expression resolution after simple leaf forms.
+#[inline(always)]
 pub fn resolveExprAfterLeaf(
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -979,14 +994,33 @@ pub fn resolveExprAfterLeaf(
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
+    __lent_resolveExprAfterLeaf(&expr, slots)
+}
+
+/// Continue expression resolution after simple leaf forms.
+pub fn __lent_resolveExprAfterLeaf(
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> (
+    crate::aver_generated::domain::ast::Expr,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
     crate::cancel_checkpoint();
     {
-        let __t = &expr;
+        let __t = expr;
         match __t.view() {
-            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlotInt(_) => (expr, slots),
-            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlots(_) => (expr, slots),
-            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlotInt(_) => (expr, slots),
-            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlots(_) => (expr, slots),
+            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlotInt(_) => {
+                (expr.clone(), slots)
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprBinopSlots(_) => {
+                (expr.clone(), slots)
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlotInt(_) => {
+                (expr.clone(), slots)
+            }
+            crate::aver_generated::domain::ast::Expr__view::ExprCmpSlots(_) => {
+                (expr.clone(), slots)
+            }
             crate::aver_generated::domain::ast::Expr__view::ExprVectorGetOrInt(
                 __vecExpr_fields,
             ) => {
@@ -996,12 +1030,12 @@ pub fn resolveExprAfterLeaf(
                 (
                     crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
                         crate::aver_generated::domain::ast::Expr__ExprVectorGetOrInt(
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                vecExpr.clone(),
+                            crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
+                                vecExpr,
                                 slots.clone(),
                             ),
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                idxExpr.clone(),
+                            crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
+                                idxExpr,
                                 slots.clone(),
                             ),
                             defaultValue,
@@ -1017,12 +1051,12 @@ pub fn resolveExprAfterLeaf(
                 (
                     crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
                         crate::aver_generated::domain::ast::Expr__ExprIntModOrInt(
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                a.clone(),
+                            crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
+                                a,
                                 slots.clone(),
                             ),
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                b.clone(),
+                            crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
+                                b,
                                 slots.clone(),
                             ),
                             defaultValue,
@@ -1034,9 +1068,9 @@ pub fn resolveExprAfterLeaf(
             crate::aver_generated::domain::ast::Expr__view::ExprAdd(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("add"),
                 )
@@ -1044,9 +1078,9 @@ pub fn resolveExprAfterLeaf(
             crate::aver_generated::domain::ast::Expr__view::ExprSub(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("sub"),
                 )
@@ -1054,9 +1088,9 @@ pub fn resolveExprAfterLeaf(
             crate::aver_generated::domain::ast::Expr__view::ExprMul(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("mul"),
                 )
@@ -1064,9 +1098,9 @@ pub fn resolveExprAfterLeaf(
             crate::aver_generated::domain::ast::Expr__view::ExprDiv(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("div"),
                 )
@@ -1076,8 +1110,8 @@ pub fn resolveExprAfterLeaf(
                 (
                     crate::aver_generated::domain::ast::Expr::ExprNeg(
                         crate::aver_generated::domain::ast::Expr__ExprNeg(
-                            crate::aver_generated::domain::resolver::core::resolveExprSimple(
-                                inner.clone(),
+                            crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
+                                inner,
                                 slots.clone(),
                             ),
                         ),
@@ -1088,9 +1122,9 @@ pub fn resolveExprAfterLeaf(
             crate::aver_generated::domain::ast::Expr__view::ExprEq(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("eq"),
                 )
@@ -1098,19 +1132,22 @@ pub fn resolveExprAfterLeaf(
             crate::aver_generated::domain::ast::Expr__view::ExprNeq(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("neq"),
                 )
             }
-            _ => crate::aver_generated::domain::resolver::core::resolveExprAfterArith(expr, slots),
+            _ => crate::aver_generated::domain::resolver::core::__lent_resolveExprAfterArith(
+                expr, slots,
+            ),
         }
     }
 }
 
 /// Continue expression resolution after arithmetic forms.
+#[inline(always)]
 pub fn resolveExprAfterArith(
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1118,16 +1155,27 @@ pub fn resolveExprAfterArith(
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
+    __lent_resolveExprAfterArith(&expr, slots)
+}
+
+/// Continue expression resolution after arithmetic forms.
+pub fn __lent_resolveExprAfterArith(
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> (
+    crate::aver_generated::domain::ast::Expr,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
     crate::cancel_checkpoint();
     {
-        let __t = &expr;
+        let __t = expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprLt(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("lt"),
                 )
@@ -1135,9 +1183,9 @@ pub fn resolveExprAfterArith(
             crate::aver_generated::domain::ast::Expr__view::ExprGt(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("gt"),
                 )
@@ -1145,9 +1193,9 @@ pub fn resolveExprAfterArith(
             crate::aver_generated::domain::ast::Expr__view::ExprLte(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("lte"),
                 )
@@ -1155,9 +1203,9 @@ pub fn resolveExprAfterArith(
             crate::aver_generated::domain::ast::Expr__view::ExprGte(__a_fields) => {
                 let a = &__a_fields.0;
                 let b = &__a_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveBinExpr(
-                    a.clone(),
-                    b.clone(),
+                crate::aver_generated::domain::resolver::core::__lent_resolveBinExpr(
+                    a,
+                    b,
                     slots,
                     ::aver_rt::str_lit!("gte"),
                 )
@@ -1231,15 +1279,13 @@ pub fn resolveExprAfterArith(
             crate::aver_generated::domain::ast::Expr__view::ExprMatch(__subj_fields) => {
                 let subj = &__subj_fields.0;
                 let arms = &__subj_fields.1;
-                crate::aver_generated::domain::resolver::core::resolveMatchExpr(
-                    subj.clone(),
-                    arms,
-                    slots,
+                crate::aver_generated::domain::resolver::core::__lent_resolveMatchExpr(
+                    subj, arms, slots,
                 )
             }
             crate::aver_generated::domain::ast::Expr__view::ExprPropagate(__inner_fields) => {
                 let inner = &__inner_fields.0;
-                crate::aver_generated::domain::resolver::core::resolvePropExpr(inner.clone(), slots)
+                crate::aver_generated::domain::resolver::core::__lent_resolvePropExpr(inner, slots)
             }
             crate::aver_generated::domain::ast::Expr__view::ExprConcat(__parts_fields) => {
                 let parts = &__parts_fields.0;
@@ -1249,7 +1295,7 @@ pub fn resolveExprAfterArith(
                 let exprs = &__exprs_fields.0;
                 crate::aver_generated::domain::resolver::core::resolveTupleExpr(exprs, slots)
             }
-            _ => crate::aver_generated::domain::resolver::core::resolveExprAfterAggregate(
+            _ => crate::aver_generated::domain::resolver::core::__lent_resolveExprAfterAggregate(
                 expr, slots,
             ),
         }
@@ -1257,6 +1303,7 @@ pub fn resolveExprAfterArith(
 }
 
 /// Finish expression resolution for aggregate forms.
+#[inline(always)]
 pub fn resolveExprAfterAggregate(
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1264,9 +1311,20 @@ pub fn resolveExprAfterAggregate(
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
+    __lent_resolveExprAfterAggregate(&expr, slots)
+}
+
+/// Finish expression resolution for aggregate forms.
+pub fn __lent_resolveExprAfterAggregate(
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> (
+    crate::aver_generated::domain::ast::Expr,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
     crate::cancel_checkpoint();
     {
-        let __t = &expr;
+        let __t = expr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprIndependentProduct(
                 __exprs_fields,
@@ -1291,13 +1349,11 @@ pub fn resolveExprAfterAggregate(
             crate::aver_generated::domain::ast::Expr__view::ExprFieldAccess(__obj_fields) => {
                 let obj = &__obj_fields.0;
                 let field = __obj_fields.1.clone();
-                crate::aver_generated::domain::resolver::core::resolveFieldExpr(
-                    obj.clone(),
-                    field,
-                    slots,
+                crate::aver_generated::domain::resolver::core::__lent_resolveFieldExpr(
+                    obj, field, slots,
                 )
             }
-            _ => (expr, slots),
+            _ => (expr.clone(), slots),
         }
     }
 }
@@ -1313,9 +1369,25 @@ pub fn resolveBinExpr(
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
+    __lent_resolveBinExpr(&a, &b, slots, op)
+}
+
+/// Resolve binary expression and rebuild.
+#[inline(always)]
+pub fn __lent_resolveBinExpr(
+    a @ _: &crate::aver_generated::domain::ast::Expr,
+    b @ _: &crate::aver_generated::domain::ast::Expr,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    op @ _: AverStr,
+) -> (
+    crate::aver_generated::domain::ast::Expr,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
     crate::cancel_checkpoint();
-    let ra @ _ = crate::aver_generated::domain::resolver::core::resolveExprSimple(a, slots.clone());
-    let rb @ _ = crate::aver_generated::domain::resolver::core::resolveExprSimple(b, slots.clone());
+    let ra @ _ =
+        crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(a, slots.clone());
+    let rb @ _ =
+        crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(b, slots.clone());
     {
         let __dispatch_subject = op;
         if &*__dispatch_subject == "add" {
@@ -1407,13 +1479,22 @@ pub fn resolveBinExpr(
 }
 
 /// Resolve expression, discarding slots update (for non-match contexts).
+#[inline(always)]
 pub fn resolveExprSimple(
     mut expr @ _: crate::aver_generated::domain::ast::Expr,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
+    __lent_resolveExprSimple(&expr, slots)
+}
+
+/// Resolve expression, discarding slots update (for non-match contexts).
+pub fn __lent_resolveExprSimple(
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     {
-        let (e, _) = crate::aver_generated::domain::resolver::core::resolveExpr(expr, slots);
+        let (e, _) = crate::aver_generated::domain::resolver::core::__lent_resolveExpr(expr, slots);
         e
     }
 }
@@ -1446,6 +1527,7 @@ pub fn resolveCallExpr(
 }
 
 /// Resolve match expression, collecting pattern slots.
+#[inline(always)]
 pub fn resolveMatchExpr(
     mut subj @ _: crate::aver_generated::domain::ast::Expr,
     arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
@@ -1454,9 +1536,23 @@ pub fn resolveMatchExpr(
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
+    __lent_resolveMatchExpr(&subj, arms, slots)
+}
+
+/// Resolve match expression, collecting pattern slots.
+pub fn __lent_resolveMatchExpr(
+    subj @ _: &crate::aver_generated::domain::ast::Expr,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> (
+    crate::aver_generated::domain::ast::Expr,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
     crate::cancel_checkpoint();
-    let rs @ _ =
-        crate::aver_generated::domain::resolver::core::resolveExprSimple(subj, slots.clone());
+    let rs @ _ = crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
+        subj,
+        slots.clone(),
+    );
     let armsResult @ _ = {
         let __arg7 @ _ = aver_rt::list_builder_new(0usize);
         crate::aver_generated::domain::resolver::core::resolveArms__collected(arms, slots, __arg7)
@@ -1473,8 +1569,20 @@ pub fn resolveMatchExpr(
 }
 
 /// Resolve ? propagation.
+#[inline(always)]
 pub fn resolvePropExpr(
     mut inner @ _: crate::aver_generated::domain::ast::Expr,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> (
+    crate::aver_generated::domain::ast::Expr,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
+    __lent_resolvePropExpr(&inner, slots)
+}
+
+/// Resolve ? propagation.
+pub fn __lent_resolvePropExpr(
+    inner @ _: &crate::aver_generated::domain::ast::Expr,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
@@ -1484,7 +1592,7 @@ pub fn resolvePropExpr(
     (
         crate::aver_generated::domain::ast::Expr::ExprPropagate(
             crate::aver_generated::domain::ast::Expr__ExprPropagate(
-                crate::aver_generated::domain::resolver::core::resolveExprSimple(
+                crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
                     inner,
                     slots.clone(),
                 ),
@@ -1620,8 +1728,21 @@ pub fn resolveRecordExpr(
 }
 
 /// Resolve field access.
+#[inline(always)]
 pub fn resolveFieldExpr(
     mut obj @ _: crate::aver_generated::domain::ast::Expr,
+    field @ _: AverStr,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) -> (
+    crate::aver_generated::domain::ast::Expr,
+    aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+) {
+    __lent_resolveFieldExpr(&obj, field, slots)
+}
+
+/// Resolve field access.
+pub fn __lent_resolveFieldExpr(
+    obj @ _: &crate::aver_generated::domain::ast::Expr,
     field @ _: AverStr,
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
@@ -1632,7 +1753,7 @@ pub fn resolveFieldExpr(
     (
         crate::aver_generated::domain::ast::Expr::ExprFieldAccess(
             crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
-                crate::aver_generated::domain::resolver::core::resolveExprSimple(
+                crate::aver_generated::domain::resolver::core::__lent_resolveExprSimple(
                     obj,
                     slots.clone(),
                 ),

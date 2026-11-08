@@ -732,7 +732,7 @@ impl MirFnEmitPolicy {
             let Some(ty) = self.local_types.get(&param.name) else {
                 continue;
             };
-            let hands_on = param_handed_on(ty, mir_fn, i, consumed);
+            let hands_on = param_handed_on(ty, mir_fn, i, consumed, ctx);
             // `own_param`'s `prone`/clearing both index `aliased_slots`
             // by PARAM POSITION `i` (its `(0..nparams).filter(|&i| …)`),
             // matching `MirParam.local = LocalId(i)`; match that exactly.
@@ -892,7 +892,11 @@ pub(super) fn param_handed_on(
     mir_fn: &crate::ir::mir::MirFn,
     index: usize,
     consumed: Option<&Vec<bool>>,
+    ctx: &CodegenContext,
 ) -> bool {
+    if in_lent_world() && ctx.rust_lent_spines.contains(&(mir_fn.fn_id, index)) {
+        return false;
+    }
     let consumed = consumed.and_then(|owned| owned.get(index)).copied() == Some(true);
     ((matches!(ty, Type::Named { .. }) || is_owned_collection_candidate(ty))
         && (consumed
@@ -984,7 +988,7 @@ pub(super) fn owned_collection_param_names(
     let consumed = ctx.rust_owned_record_params.get(&mir_fn.fn_id);
     let mut out = HashSet::new();
     for (i, (name, ty)) in param_types.iter().enumerate() {
-        let hands_on = param_handed_on(ty, mir_fn, i, consumed);
+        let hands_on = param_handed_on(ty, mir_fn, i, consumed, ctx);
         let collection_graduated = collection_graduates(ty, mir_fn, i, ctx);
         if !collection_graduated && !hands_on {
             continue;
@@ -1044,6 +1048,190 @@ pub(super) fn compute_owned_record_params(
         thins.retain(|&(id, index)| thin_param_fed_owned(program, &calls, &owned, id, index));
         if (lists.len(), thins.len()) == before {
             return owned;
+        }
+    }
+}
+
+/// The params a recursive traversal lends down its recursion, as
+/// `(function, param position)`.
+///
+/// A function that returns a param as it is (or keeps it in the record it
+/// returns) takes it by value, so that a caller at its last use moves it in.
+/// In a traversal of a tree that is not what its callers have: each
+/// recursive call passes a part of the node it was given, a field the match
+/// on a borrowed node binds by reference, so the caller copies the part for
+/// the call (a count up) and, when the callee builds a new node instead of
+/// returning the part, the callee drops it again (a count down), on every
+/// node the traversal visits. Lent instead, the callee copies the value only
+/// where it keeps or returns it, and a node it rebuilds costs no count.
+///
+/// The params are read off a graph of params: an edge from param `j` of a
+/// caller to param `i` of a callee when a call passes, at `i`, the caller's
+/// param `j` itself or a field its match binds out of it and hands only to
+/// lent params. A param is lent
+/// when it lies on a cycle of that graph that takes a field somewhere, the
+/// recursion of a traversal that descends. Every call within the cycle then
+/// passes what it was lent or a part of it, which a by-value callee would
+/// have been given as a copy; and a by-value callee copies again at every
+/// use that keeps the value but the last, where a lent one copies at each
+/// use that keeps it and at nothing else, so no call on the cycle copies
+/// more. These params are borrowed only in the lent version of their
+/// function (see [`compute_dual_fns`]); a call from off the cycle (the root
+/// of a traversal) reaches the by-value version. A function used as a
+/// value, `main`, a guest entry, a mutual tail-call member and a self-tail
+/// loop (see [`self_loop_lends`]) keep the ABI they have.
+pub(super) fn compute_lent_spines(ctx: &CodegenContext) -> HashSet<(crate::ir::FnId, usize)> {
+    let Some(program) = ctx.mir_program.as_ref() else {
+        return HashSet::new();
+    };
+    let calls = ProgramCalls::new(program);
+    let mut values = HashSet::new();
+    for (_, mir_fn) in program.iter() {
+        collect_fn_values(&mir_fn.body.node, &mut values);
+    }
+    let mut candidates: HashSet<(crate::ir::FnId, usize)> = HashSet::new();
+    for (id, mir_fn) in program.iter() {
+        let Some(resolved) = ctx.resolved_program.fn_by_id(*id) else {
+            continue;
+        };
+        if values.contains(&mir_fn.name)
+            || mir_fn.name == "main"
+            || ctx.guest_entry.as_deref() == Some(resolved.name.as_str())
+            || ctx.mutual_tco_members.contains(id)
+            || super::toplevel::resolved_fn_has_self_tailcall(resolved)
+            || resolved.params.len() != mir_fn.params.len()
+        {
+            continue;
+        }
+        for (i, (_, ty)) in resolved.params.iter().enumerate() {
+            // A sum: a record lent and then updated would copy what it holds
+            // where a by-value one moves along.
+            if let Type::Named { id: type_id, name } = ty
+                && matches!(
+                    super::representation::named_type_def(*type_id, name, ctx, None),
+                    Some(crate::ast::TypeDef::Sum { .. })
+                )
+            {
+                candidates.insert((*id, i));
+            }
+        }
+    }
+    // Edges of the param graph; one that passes a field carries the local
+    // the caller's match binds it to.
+    type Param = (crate::ir::FnId, usize);
+    struct Edge {
+        from: Param,
+        to: Param,
+        field: Option<(crate::ir::FnId, LocalId)>,
+    }
+    let mut edges: Vec<Edge> = Vec::new();
+    for (caller, mir_fn) in program.iter() {
+        let param_at = |slot: LocalId| {
+            mir_fn
+                .params
+                .iter()
+                .position(|p| p.local == slot)
+                .filter(|&j| candidates.contains(&(*caller, j)))
+        };
+        for &(callee, args) in calls.of(*caller) {
+            for (i, arg) in args.iter().enumerate() {
+                if !candidates.contains(&(callee, i)) {
+                    continue;
+                }
+                let MirExpr::Local(local) = &arg.node else {
+                    continue;
+                };
+                let (from, field) = match param_at(local.node.slot) {
+                    Some(j) => (j, None),
+                    None => match calls
+                        .bound_from
+                        .get(caller)
+                        .and_then(|subjects| subjects.get(&local.node.slot))
+                    {
+                        Some(MirExpr::Local(base)) => match param_at(base.node.slot) {
+                            Some(j) => (j, Some((*caller, local.node.slot))),
+                            None => continue,
+                        },
+                        _ => continue,
+                    },
+                };
+                edges.push(Edge {
+                    from: (*caller, from),
+                    to: (callee, i),
+                    field,
+                });
+            }
+        }
+    }
+    let mut nodes: Vec<Param> = candidates.iter().copied().collect();
+    nodes.sort();
+    // A field edge holds while the caller only hands the field to lent
+    // params: one it also keeps, or gives to a param taken by value, is
+    // copied out of the node first, and lending that copy would only add a
+    // drop. Dropping edges only shrinks the cycles, so this ends.
+    loop {
+        let mut graph: HashMap<Param, Vec<Param>> = HashMap::new();
+        for edge in &edges {
+            graph.entry(edge.from).or_default().push(edge.to);
+        }
+        let mut lent: HashSet<Param> = HashSet::new();
+        for scc in crate::scc::tarjan_sccs(&nodes, &graph) {
+            let members: HashSet<Param> = scc.iter().copied().collect();
+            let descends = edges.iter().any(|edge| {
+                edge.field.is_some() && members.contains(&edge.from) && members.contains(&edge.to)
+            });
+            if descends {
+                lent.extend(members);
+            }
+        }
+        let before = edges.len();
+        edges.retain(|edge| {
+            edge.field.is_none_or(|(caller, slot)| {
+                program.fn_by_id(caller).is_some_and(|mir_fn| {
+                    only_handed_to(&mir_fn.body.node, slot, &|callee, i| {
+                        lent.contains(&(callee, i))
+                    })
+                })
+            })
+        });
+        if edges.len() == before {
+            return lent;
+        }
+    }
+}
+
+/// Whether every read of the local in `slot` within `expr` is an argument
+/// of a direct call at a param `lent(callee, position)` says is lent.
+fn only_handed_to(
+    expr: &MirExpr,
+    slot: LocalId,
+    lent: &dyn Fn(crate::ir::FnId, usize) -> bool,
+) -> bool {
+    let is_slot = |e: &MirExpr| local_of(e).is_some_and(|local| local.slot == slot);
+    let args_ok = |callee: crate::ir::FnId, args: &[Spanned<MirExpr>]| {
+        args.iter().enumerate().all(|(i, arg)| {
+            (is_slot(&arg.node) && lent(callee, i)) || only_handed_to(&arg.node, slot, lent)
+        })
+    };
+    match expr {
+        MirExpr::Local(local) => local.node.slot != slot,
+        MirExpr::Call(call) => match call.node.callee {
+            MirCallee::Fn(callee) => args_ok(callee, &call.node.args),
+            _ => {
+                let mut only = true;
+                crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                    only = only && only_handed_to(child, slot, lent);
+                });
+                only
+            }
+        },
+        MirExpr::TailCall(call) => args_ok(call.node.target, &call.node.args),
+        _ => {
+            let mut only = true;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                only = only && only_handed_to(child, slot, lent);
+            });
+            only
         }
     }
 }
@@ -5983,8 +6171,13 @@ fn emit_mir_match_with(
         };
         let body = arm_bodies[idx].clone();
         if taken[idx]
-            && let Some((pat, rebindings)) =
-                take_fields(&arm.pattern, &subject_temp, tokens[idx].as_deref(), codegen)
+            && let Some((pat, rebindings)) = take_fields(
+                &arm.pattern,
+                &subject_temp,
+                tokens[idx].as_deref(),
+                delegate_call(m, &subject_temp).as_deref(),
+                codegen,
+            )
         {
             arm_strs.push(format!(
                 "        {pat} => {{\n            {rebindings}\n            {body}\n        }}"
@@ -6168,6 +6361,7 @@ fn take_fields(
     pattern: &ResolvedPattern,
     subject: &str,
     token: Option<&str>,
+    delegate: Option<&str>,
     codegen: &CodegenContext,
 ) -> Option<(String, String)> {
     let ResolvedPattern::Ctor(ctor, binding_names) = pattern else {
@@ -6197,14 +6391,24 @@ fn take_fields(
         .iter()
         .map(|(idx, _)| format!("{part}.{idx}.clone()"))
         .collect();
+    // A shared node: its fields are copied out of the view, or, in the
+    // by-value version of a function with two versions, the whole call goes
+    // to the lent version (see [`compute_dual_fns`]).
+    let shared_branch = |cloned: &[String]| match delegate {
+        Some(call) => format!("return {call}"),
+        None => format!(
+            "match {subject}.view() {{ {view}({part}) => ({},), _ => unreachable!() }}",
+            cloned.join(", ")
+        ),
+    };
     let Some(token) = token else {
         return Some((
             format!("{view}(_)"),
             format!(
-                "let ({},) = match {subject}.try_take::<{fields}>() {{ Ok({part}) => ({},), Err({subject}) => match {subject}.view() {{ {view}({part}) => ({},), _ => unreachable!() }} }};",
+                "let ({},) = match {subject}.try_take::<{fields}>() {{ Ok({part}) => ({},), Err({subject}) => {} }};",
                 names.join(", "),
                 moved.join(", "),
-                cloned.join(", "),
+                shared_branch(&cloned),
             ),
         ));
     };
@@ -6214,10 +6418,10 @@ fn take_fields(
     Some((
         format!("{view}(_)"),
         format!(
-            "let ({},) = match {subject}.try_take_reusing::<{fields}>() {{ Ok(({part}, {token})) => ({},), Err({subject}) => match {subject}.view() {{ {view}({part}) => ({},), _ => unreachable!() }} }};",
+            "let ({},) = match {subject}.try_take_reusing::<{fields}>() {{ Ok(({part}, {token})) => ({},), Err({subject}) => {} }};",
             names.join(", "),
             moved.join(", "),
-            cloned.join(", "),
+            shared_branch(&cloned),
         ),
     ))
 }
@@ -8002,6 +8206,15 @@ pub(super) fn emit_mir_fn_body_routed(
     );
     policy.apply_lent_options(mir_fn, ctx);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+    if let MirExpr::Match(m) = &mir_fn.body.node {
+        DELEGATE.with(|c| {
+            if let Some(d) = c.borrow_mut().as_mut()
+                && d.fn_id == mir_fn.fn_id
+            {
+                d.root = &m.node as *const MirMatch as usize;
+            }
+        });
+    }
     let body = emit_mir_fn_body(&mir_fn.body, &emit_ctx)?;
     let Some(prologue) = post_checkpoint_prologue else {
         return Some(body);
@@ -9313,11 +9526,146 @@ fn emit_named_call_to(
         };
         arg_strs.push(s);
     }
-    Some(format!(
-        "{}({})",
-        exact_callee_head(callee).unwrap_or_else(|| named_call_head(name, ctx)),
-        arg_strs.join(", ")
-    ))
+    let head = exact_callee_head(callee).unwrap_or_else(|| named_call_head(name, ctx));
+    let head = match in_lent_world()
+        && ctx.codegen.is_some_and(|cg| {
+            callee
+                .or_else(|| super::expr::callee_fn_id(name, cg))
+                .is_some_and(|id| cg.rust_dual_fns.contains(&id))
+        }) {
+        true => match head.rsplit_once("::") {
+            Some((path, last)) => format!("{path}::{}", lent_name(last)),
+            None => lent_name(&head),
+        },
+        false => head,
+    };
+    Some(format!("{}({})", head, arg_strs.join(", ")))
+}
+
+thread_local! {
+    /// Whether the body being emitted is the lent version of a traversal
+    /// (see [`compute_dual_fns`]): there the params of `rust_lent_spines`
+    /// are borrowed and a call of a function with two versions goes to its
+    /// lent one. Everywhere else every function keeps its by-value ABI.
+    static LENT_WORLD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// While the by-value version of a function with two versions is
+    /// emitted: how its root match hands a shared node to the lent version.
+    static DELEGATE: std::cell::RefCell<Option<Delegate>> = const { std::cell::RefCell::new(None) };
+}
+
+/// See [`DELEGATE`].
+pub(super) struct Delegate {
+    pub fn_id: crate::ir::FnId,
+    /// The lent version's name.
+    pub head: String,
+    /// Per param: its slot, its Rust name, and whether the lent version
+    /// borrows it where this one takes it by value.
+    pub params: Vec<(LocalId, String, bool)>,
+    /// The root match of the body (by address), once the body is emitted.
+    pub root: usize,
+    /// Whether some arm handed a shared node to the lent version.
+    pub used: bool,
+}
+
+pub(super) fn in_lent_world() -> bool {
+    LENT_WORLD.with(|w| w.get())
+}
+
+/// Emits within the lent world, until dropped.
+pub(super) struct LentWorld(bool);
+
+impl LentWorld {
+    pub(super) fn enter(on: bool) -> Self {
+        LentWorld(LENT_WORLD.with(|w| w.replace(on)))
+    }
+}
+
+impl Drop for LentWorld {
+    fn drop(&mut self) {
+        LENT_WORLD.with(|w| w.set(self.0));
+    }
+}
+
+pub(super) fn set_delegate(d: Option<Delegate>) -> Option<Delegate> {
+    DELEGATE.with(|c| std::mem::replace(&mut *c.borrow_mut(), d))
+}
+
+/// The name of the lent version of a function with two versions.
+pub(super) fn lent_name(rust_name: &str) -> String {
+    format!("__lent_{rust_name}")
+}
+
+/// The functions emitted in two versions: a traversal whose by-value ABI
+/// takes some param of `rust_lent_spines` by value. The by-value version
+/// keeps its name, its ABI and its body, so a match on a node it owns alone
+/// still takes the node apart and builds in its memory; where the node
+/// turns out shared (`try_take` fails), it hands the whole call to the lent
+/// version, which borrows the tree all the way down instead of copying the
+/// children out of the shared node. A by-value version whose body takes no
+/// node apart is only a wrapper that lends its params to the lent version.
+/// The lent version's calls of functions with two versions go to their lent
+/// versions; every other call goes to the by-value ones.
+pub(super) fn compute_dual_fns(ctx: &CodegenContext) -> HashSet<crate::ir::FnId> {
+    let ids: BTreeMap<crate::ir::FnId, ()> = ctx
+        .rust_lent_spines
+        .iter()
+        .map(|(id, _)| (*id, ()))
+        .collect();
+    let mut out = HashSet::new();
+    for id in ids.keys() {
+        if ctx.rust_word_spec.wrapped.contains(id) {
+            continue;
+        }
+        let Some(resolved) = ctx.resolved_program.fn_by_id(*id) else {
+            continue;
+        };
+        if super::toplevel::resolved_fn_has_self_tailcall(resolved) {
+            continue;
+        }
+        let by_value = {
+            let _w = LentWorld::enter(false);
+            super::expr::param_borrow_mask(*id, resolved, ctx)
+        };
+        let lent = {
+            let _w = LentWorld::enter(true);
+            super::expr::param_borrow_mask(*id, resolved, ctx)
+        };
+        if by_value != lent {
+            out.insert(*id);
+        }
+    }
+    out
+}
+
+/// The call of the lent version a by-value version hands a shared node to,
+/// for a match on `subject` (bound to `temp`), when `m` is the root match of
+/// the body being emitted and its subject a param the lent version borrows.
+fn delegate_call(m: &MirMatch, temp: &str) -> Option<String> {
+    let MirExpr::Local(local) = &m.subject.node else {
+        return None;
+    };
+    let slot = local.node.slot;
+    DELEGATE.with(|c| {
+        let mut d = c.borrow_mut();
+        let d = d.as_mut()?;
+        if d.root != m as *const MirMatch as usize {
+            return None;
+        }
+        if !d.params.iter().any(|(s, _, lent)| *s == slot && *lent) {
+            return None;
+        }
+        let args: Vec<String> = d
+            .params
+            .iter()
+            .map(|(s, name, lent)| match (*s == slot, lent) {
+                (true, _) => format!("&{temp}"),
+                (false, true) => format!("&{name}"),
+                (false, false) => name.clone(),
+            })
+            .collect();
+        d.used = true;
+        Some(format!("{}({})", d.head, args.join(", ")))
+    })
 }
 
 thread_local! {
@@ -9423,7 +9771,13 @@ fn emit_deferred_call(
 ) -> Option<String> {
     let resolved = codegen.resolved_program.fn_by_id(callee)?;
     let scope = codegen.symbol_table.fn_entry(callee).key.scope_str();
-    let borrowed = callee_borrow_mask(name, args.len(), codegen);
+    // The thunk owns its arguments and calls the by-value version of a
+    // function with two versions (see [`compute_dual_fns`]), so its ABI is
+    // the by-value one, also in a lent version's body.
+    let borrowed = {
+        let _by_value = LentWorld::enter(false);
+        callee_borrow_mask(name, args.len(), codegen)
+    };
     let bare = callee_bare_facts(callee, codegen);
     let (mut values, mut pattern) = ("()".to_string(), "()".to_string());
     let mut passed = Vec::with_capacity(args.len());
@@ -9508,10 +9862,13 @@ fn emit_deferred_call(
                 .fn_entry(law.projection)
                 .key
                 .canonical();
+            // The projection is called by its by-value path.
+            let by_value = LentWorld::enter(false);
             let of_made = match callee_borrow_mask(&projection_name, 1, codegen)[0] {
                 true => format!("&{made}"),
                 false => format!("{made}.clone()"),
             };
+            drop(by_value);
             let holds =
                 match callee_bare_facts(law.projection, codegen).is_some_and(|f| f.bare_return) {
                     true => format!("{projected} == {kept}"),
@@ -9958,13 +10315,19 @@ fn emit_mir_builtin_call(
 
     // The fallback of a `withDefault` or a `fromOption` goes in a closure
     // when it may run only when the value is missing (see
-    // `MirProgram::fallback_runs_only_when_missing`).
+    // `MirProgram::fallback_runs_only_when_missing`), and so does a quiet
+    // fallback the owned form copies, such as a lent value: the copy is
+    // made only when it is the result.
     let lazy_fallback = || {
         ctx.codegen
             .and_then(|codegen| codegen.mir_program.as_ref())
             .zip(args.get(1))
             .is_some_and(|(program, fallback)| {
                 program.fallback_runs_only_when_missing(&fallback.node)
+                    || (!program.fallback_has_effect(&fallback.node)
+                        && emit_operand(fallback).is_some_and(|raw| {
+                            mir_clone_arg(raw.clone(), &fallback.node, ctx) != raw
+                        }))
             })
     };
 

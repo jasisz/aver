@@ -96,13 +96,22 @@ pub fn samePolynomial(
 }
 
 /// t as a polynomial over atoms, with the atoms it adds.
+#[inline(always)]
 pub fn readPoly(
     mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Read {
+    __lent_readPoly(&t, atoms)
+}
+
+/// t as a polynomial over atoms, with the atoms it adds.
+pub fn __lent_readPoly(
+    t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+) -> Read {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __t = &t;
+        let __t = t;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(__n_fields) => {
                 let n = __n_fields.0.clone();
@@ -121,65 +130,79 @@ pub fn readPoly(
                     match __dispatch_subject.to_i64() {
                         Some(43i64) => {
                             let __arg7 @ _ =
-                                crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                                    a, atoms,
+                                crate::proof_kernel::aver_generated::kernel::ring::__lent_readPoly(
+                                    &a, atoms,
                                 );
-                            crate::proof_kernel::aver_generated::kernel::ring::combine(
+                            crate::proof_kernel::aver_generated::kernel::ring::__lent_combine(
                                 __arg7,
-                                b,
+                                &b,
                                 aver_rt::AverInt::from_i64(0),
                             )
                         }
                         Some(45i64) => {
                             let __arg8 @ _ =
-                                crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                                    a, atoms,
+                                crate::proof_kernel::aver_generated::kernel::ring::__lent_readPoly(
+                                    &a, atoms,
                                 );
-                            crate::proof_kernel::aver_generated::kernel::ring::combine(
+                            crate::proof_kernel::aver_generated::kernel::ring::__lent_combine(
                                 __arg8,
-                                b,
+                                &b,
                                 aver_rt::AverInt::from_i64(1),
                             )
                         }
                         Some(42i64) => {
                             let __arg9 @ _ =
-                                crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                                    a, atoms,
+                                crate::proof_kernel::aver_generated::kernel::ring::__lent_readPoly(
+                                    &a, atoms,
                                 );
-                            crate::proof_kernel::aver_generated::kernel::ring::combine(
+                            crate::proof_kernel::aver_generated::kernel::ring::__lent_combine(
                                 __arg9,
-                                b,
+                                &b,
                                 aver_rt::AverInt::from_i64(2),
                             )
                         }
-                        _ => crate::proof_kernel::aver_generated::kernel::ring::atom(t, atoms),
+                        _ => crate::proof_kernel::aver_generated::kernel::ring::atom(
+                            t.clone(),
+                            atoms,
+                        ),
                     }
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
                 let a = &__a_fields.0;
                 {
-                    let __arg10 @ _ = crate::proof_kernel::aver_generated::kernel::ring::readPoly(
-                        a.clone(),
-                        atoms,
-                    );
+                    let __arg10 @ _ =
+                        crate::proof_kernel::aver_generated::kernel::ring::__lent_readPoly(
+                            a, atoms,
+                        );
                     crate::proof_kernel::aver_generated::kernel::ring::negated(&__arg10)
                 }
             }
-            _ => crate::proof_kernel::aver_generated::kernel::ring::atom(t, atoms),
+            _ => crate::proof_kernel::aver_generated::kernel::ring::atom(t.clone(), atoms),
         }
     }
 }
 
 /// The left polynomial joined with b's: added (0), subtracted (1) or multiplied (2).
-#[inline]
+#[inline(always)]
 pub fn combine(
     mut left @ _: Read,
     mut b @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     how @ _: aver_rt::AverInt,
 ) -> Read {
+    __lent_combine(left, &b, how)
+}
+
+/// The left polynomial joined with b's: added (0), subtracted (1) or multiplied (2).
+#[inline]
+pub fn __lent_combine(
+    mut left @ _: Read,
+    b @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    how @ _: aver_rt::AverInt,
+) -> Read {
     crate::proof_kernel::cancel_checkpoint();
-    let right @ _ = crate::proof_kernel::aver_generated::kernel::ring::readPoly(b, &left.atoms);
+    let right @ _ =
+        crate::proof_kernel::aver_generated::kernel::ring::__lent_readPoly(b, &left.atoms);
     {
         let __dispatch_subject = how;
         match __dispatch_subject.to_i64() {
