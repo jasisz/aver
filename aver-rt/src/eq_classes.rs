@@ -168,18 +168,13 @@ impl Classes {
             let back = FREE_SLOTS.lock().ok().and_then(|mut free| free.pop());
             self.slot = match back {
                 Some(slot) => slot,
-                None => {
-                    let next = NEXT_SLOT.load(Ordering::Relaxed);
-                    if next <= SLOTS
-                        && NEXT_SLOT
-                            .compare_exchange(next, next + 1, Ordering::Relaxed, Ordering::Relaxed)
-                            .is_ok()
-                    {
-                        next
-                    } else {
-                        NO_SLOT
-                    }
-                }
+                // A thread that loses the race to another taking a slot
+                // tries the next one; only all slots taken is none.
+                None => NEXT_SLOT
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                        (next <= SLOTS).then_some(next + 1)
+                    })
+                    .unwrap_or(NO_SLOT),
             };
         }
         self.slot != NO_SLOT
@@ -360,6 +355,25 @@ mod tests {
             .unwrap();
             assert_eq!(refused, (true, false));
         }
+    }
+
+    #[test]
+    fn threads_taking_slots_at_once_each_get_one() {
+        // Threads that ask for their first slot together race on the next
+        // slot never used; a thread that loses takes the one after.
+        let threads = 4;
+        let start = std::sync::Barrier::new(threads);
+        std::thread::scope(|scope| {
+            for t in 0..threads {
+                let start = &start;
+                scope.spawn(move || {
+                    let (x, y) = (fake(0x2_0000 + t * 0x2000), fake(0x2_1000 + t * 0x2000));
+                    start.wait();
+                    join(&x, &y);
+                    assert!(same_nodes(&x, &y));
+                });
+            }
+        });
     }
 
     #[test]
