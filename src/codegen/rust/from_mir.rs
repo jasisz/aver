@@ -9771,7 +9771,13 @@ fn emit_deferred_call(
 ) -> Option<String> {
     let resolved = codegen.resolved_program.fn_by_id(callee)?;
     let scope = codegen.symbol_table.fn_entry(callee).key.scope_str();
-    let borrowed = callee_borrow_mask(name, args.len(), codegen);
+    // The thunk owns its arguments and calls the by-value version of a
+    // function with two versions (see [`compute_dual_fns`]), so its ABI is
+    // the by-value one, also in a lent version's body.
+    let borrowed = {
+        let _by_value = LentWorld::enter(false);
+        callee_borrow_mask(name, args.len(), codegen)
+    };
     let bare = callee_bare_facts(callee, codegen);
     let (mut values, mut pattern) = ("()".to_string(), "()".to_string());
     let mut passed = Vec::with_capacity(args.len());
@@ -9856,10 +9862,13 @@ fn emit_deferred_call(
                 .fn_entry(law.projection)
                 .key
                 .canonical();
+            // The projection is called by its by-value path.
+            let by_value = LentWorld::enter(false);
             let of_made = match callee_borrow_mask(&projection_name, 1, codegen)[0] {
                 true => format!("&{made}"),
                 false => format!("{made}.clone()"),
             };
+            drop(by_value);
             let holds =
                 match callee_bare_facts(law.projection, codegen).is_some_and(|f| f.bare_return) {
                     true => format!("{projected} == {kept}"),
