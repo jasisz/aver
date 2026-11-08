@@ -1096,8 +1096,7 @@ fn rewrite_call_args(
             }
             if callee_facts.is_some_and(|f| param_bare(f, i))
                 || super::bare_i64::intrinsic_accepts_raw_code_arg(callee, i)
-                || (super::bare_i64::intrinsic_accepts_raw_position_arg(callee, i)
-                    && renders_raw(&a.node, ctx.facts))
+                || (ctx.facts.raw_ops.takes_position(callee, i) && renders_raw(&a.node, ctx.facts))
             {
                 rewrite_raw(a, ctx)
             } else {

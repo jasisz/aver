@@ -6442,9 +6442,16 @@ fn literal_usize(expr: &Spanned<MirExpr>) -> Option<String> {
 
 /// A count of list elements as `aver_rt::clamp_list_count` makes it, read
 /// off a literal while emitting rather than built as an `Int` and clamped
-/// at each call.
-fn emit_list_count(count: &Spanned<MirExpr>, emitted: String) -> String {
-    literal_usize(count).unwrap_or_else(|| format!("aver_rt::clamp_list_count(&({emitted}))"))
+/// at each call. A count the facts hold as a raw `i64` is clamped as one
+/// (`aver_rt::clamp_list_count_i64`), never boxed to be clamped.
+fn emit_list_count(count: &Spanned<MirExpr>, emitted: String, ctx: &MirEmitCtx<'_>) -> String {
+    if let Some(n) = literal_usize(count) {
+        return n;
+    }
+    match mir_expr_is_bare_i64(count, ctx) {
+        true => format!("aver_rt::clamp_list_count_i64({emitted})"),
+        false => format!("aver_rt::clamp_list_count(&({emitted}))"),
+    }
 }
 
 /// `match List.drop(xs, k)` with arms `[x, .._]` and `[]` (or `_`) reads
@@ -6503,7 +6510,7 @@ fn emit_dropped_head_match(
     Some(format!(
         "match ({}).get({}) {{ {} }}",
         emit_mir_expr(list, ctx)?,
-        emit_list_count(count, emit_mir_expr(count, ctx)?),
+        emit_list_count(count, emit_mir_expr(count, ctx)?, ctx),
         rendered.join(", ")
     ))
 }
@@ -10641,7 +10648,7 @@ fn emit_mir_builtin_call(
         }
         "List.take" => {
             let list = arg!(0);
-            let count = emit_list_count(&args[1], arg!(1));
+            let count = emit_list_count(&args[1], arg!(1), ctx);
             let count_temp = generated_ident("n");
             let list_temp = generated_ident("xs");
             // `clamp_list_count` is the same clamp the VM and the interpreter
@@ -10663,7 +10670,7 @@ fn emit_mir_builtin_call(
         }
         "List.drop" => {
             let list = arg!(0);
-            let count = emit_list_count(&args[1], arg!(1));
+            let count = emit_list_count(&args[1], arg!(1), ctx);
             let count_temp = generated_ident("n");
             let list_temp = generated_ident("xs");
             // `drop_first` shares the body and advances the offset, so the

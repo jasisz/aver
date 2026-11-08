@@ -291,12 +291,12 @@ pub fn concat(mut left @ _: Bytes, right @ _: &Bytes) -> Bytes {
 }
 
 /// At most count octets from the front; non-positive counts give empty bytes.
-pub fn take(mut bytes @ _: Bytes, count @ _: aver_rt::AverInt) -> Bytes {
+pub fn take(mut bytes @ _: Bytes, count @ _: i64) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8({
             let __xs = &(aver_rt::AverIntList::from_packed(bytes.values));
-            let __n = aver_rt::clamp_list_count(&(count));
+            let __n = aver_rt::clamp_list_count_i64(count);
             __xs.take_first(__n)
         })
         .expect("proof-packed U8 construction escaped its refinement gate"),
@@ -304,12 +304,12 @@ pub fn take(mut bytes @ _: Bytes, count @ _: aver_rt::AverInt) -> Bytes {
 }
 
 /// The octets after count positions; non-positive counts preserve all bytes.
-pub fn drop(mut bytes @ _: Bytes, count @ _: aver_rt::AverInt) -> Bytes {
+pub fn drop(mut bytes @ _: Bytes, count @ _: i64) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8({
             let __xs = &(aver_rt::AverIntList::from_packed(bytes.values));
-            let __n = aver_rt::clamp_list_count(&(count));
+            let __n = aver_rt::clamp_list_count_i64(count);
             __xs.drop_first(__n)
         })
         .expect("proof-packed U8 construction escaped its refinement gate"),

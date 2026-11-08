@@ -5959,7 +5959,7 @@ fn borrowed_payloads_and_handed_lists_match_vm() {
         "match o { Some(e @ _) => { weight(e) }",
         "aver_rt::AverList::prepend_owned(mk(i), acc)",
         "Bucket::Entries(aver_rt::AverList::prepend(entry.clone(), es))",
-        "match (xs).get(aver_rt::clamp_list_count(&(k))) { Some(x) => { x.clone() }, None =>",
+        "match (xs).get(aver_rt::clamp_list_count_i64(k)) { Some(x) => { x.clone() }, None =>",
         "aver_rt::AverList::prepend_owned(envOf(&env, n.clone()), stack); __MutualTco1::Ev(env, __arg",
     ] {
         assert!(

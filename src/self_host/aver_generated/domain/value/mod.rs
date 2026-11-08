@@ -253,7 +253,7 @@ impl aver_rt::WalkEq for Val {
             Some(Val__pair::ValTcpDial(a0, b0)) => a0 == b0,
             Some(Val__pair::ValTcpListener(a0, b0)) => a0 == b0,
             Some(Val__pair::ValVariant(a0, b0)) => {
-                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+                a0.0 == b0.0 && walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Val__pair::ValMap(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))

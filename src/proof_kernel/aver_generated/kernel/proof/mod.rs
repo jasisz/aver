@@ -1386,11 +1386,11 @@ impl Proof {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PUnfold(a0, b0)) => {
-                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+                a0.0 == b0.0 && walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PConst(a0, b0)) => a0 == b0,
             Some(Proof__pair::PArm(a0, b0)) => {
-                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+                a0.0 == b0.0 && walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PProj(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
@@ -1439,7 +1439,7 @@ impl Proof {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Proof__pair::PLinear(a0, b0)) => {
-                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+                a0.0 == b0.0 && walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             None => false,
         }
