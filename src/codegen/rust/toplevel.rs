@@ -840,6 +840,38 @@ fn emit_sum_type(
                     format!("({})", names.join(", "))
                 }
             };
+            // Two nodes of a thin constructor whose scalar fields differ are
+            // different: those fields are read before the pair is looked up
+            // among the equality classes or counted against the walk's
+            // budget, which only ever answer for equal nodes. A name or a
+            // term that carries its hash is told apart from another by one
+            // compare.
+            let scalars_first = match thin && walks_on(i) && !lazy {
+                true => {
+                    let types: Vec<&str> = v.fields.iter().map(String::as_str).collect();
+                    let positions = positions_of(i);
+                    let plan = super::field_layout::eq_plan(
+                        &types,
+                        eq_orders[i].as_deref(),
+                        positions,
+                        ctx,
+                        scope,
+                    );
+                    match plan.block_fields() {
+                        [] => String::new(),
+                        block => format!(
+                            "{} && ",
+                            fields_equal(
+                                block,
+                                None,
+                                |d| format!("a0.{}", at(positions, d)),
+                                |d| format!("b0.{}", at(positions, d)),
+                            )
+                        ),
+                    }
+                }
+                false => String::new(),
+            };
             let test = match order.len() {
                 0 => "true".to_string(),
                 // Both nodes of one constructor: equal at once when they are
@@ -850,13 +882,13 @@ fn emit_sum_type(
                     // `Cargo.toml` turns on aver-rt's `equality-classes`.
                     ctx.rust_classed_eq.set(true);
                     format!(
-                        "walk.node_classed::<{}, _>(self, other, {}, |walk| a0.walk_eq(b0, walk))",
+                        "{scalars_first}walk.node_classed::<{}, _>(self, other, {}, |walk| a0.walk_eq(b0, walk))",
                         ctx.rust_equality_classes,
                         capabilities.eq && !one_first
                     )
                 }
                 _ if walks_on(i) && thin => format!(
-                    "walk.node(self, other, {}, |walk| a0.walk_eq(b0, walk))",
+                    "{scalars_first}walk.node(self, other, {}, |walk| a0.walk_eq(b0, walk))",
                     capabilities.eq && !one_first
                 ),
                 _ if walks_on(i) => fields_equal(

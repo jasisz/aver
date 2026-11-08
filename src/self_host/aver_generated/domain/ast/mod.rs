@@ -709,10 +709,10 @@ impl aver_rt::WalkEq for Expr {
             Some(Expr__pair::ExprCmpSlotInt(a0, b0)) => a0 == b0,
             Some(Expr__pair::ExprCmpSlots(a0, b0)) => a0 == b0,
             Some(Expr__pair::ExprVectorGetOrInt(a0, b0)) => {
-                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+                a0.2 == b0.2 && walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Expr__pair::ExprIntModOrInt(a0, b0)) => {
-                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+                a0.2 == b0.2 && walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Expr__pair::ExprAdd(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
@@ -766,13 +766,13 @@ impl aver_rt::WalkEq for Expr {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Expr__pair::ExprCallDirect(a0, b0)) => {
-                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+                a0.1 == b0.1 && walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Expr__pair::ExprCallBuiltin(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Expr__pair::ExprCallBuiltinId(a0, b0)) => {
-                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+                a0.1 == b0.1 && walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Expr__pair::ExprMatch(a0, b0)) => {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
@@ -781,7 +781,7 @@ impl aver_rt::WalkEq for Expr {
                 walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             Some(Expr__pair::ExprIndependentProduct(a0, b0)) => {
-                walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
+                a0.1 == b0.1 && walk.node(self, other, false, |walk| a0.walk_eq(b0, walk))
             }
             None => false,
         }

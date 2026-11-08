@@ -166,6 +166,9 @@ impl RawOp {
 pub struct RawOps {
     on: bool,
     builtins: HashMap<crate::ir::BuiltinId, RawOp>,
+    /// `List.take` and `List.drop`, whose count the Rust backend clamps to
+    /// a `usize` from either representation (see [`RawOps::takes_count`]).
+    counts: HashSet<crate::ir::BuiltinId>,
 }
 
 impl RawOps {
@@ -177,7 +180,36 @@ impl RawOps {
                 .collect(),
             false => HashMap::new(),
         };
-        RawOps { on, builtins }
+        let counts = match on {
+            true => (0..program.builtins.len() as u32)
+                .map(crate::ir::BuiltinId)
+                .filter(|&id| matches!(program.builtin_name(id), "List.take" | "List.drop"))
+                .collect(),
+            false => HashSet::new(),
+        };
+        RawOps {
+            on,
+            builtins,
+            counts,
+        }
+    }
+
+    /// Whether argument `i` of a call of `callee` is a count of list
+    /// elements: the second of `List.take` and `List.drop`. A count is
+    /// clamped to a `usize` (`aver_rt::clamp_list_count`, or its `i64`
+    /// form), which answers the same for a value and for it saturated to
+    /// `i64`, so it takes a position in either representation.
+    pub fn takes_count(&self, callee: &MirCallee, i: usize) -> bool {
+        match callee {
+            MirCallee::Builtin(id) => self.on && i == 1 && self.counts.contains(id),
+            _ => false,
+        }
+    }
+
+    /// [`intrinsic_accepts_raw_position_arg`], or a count of list elements
+    /// ([`RawOps::takes_count`]).
+    pub fn takes_position(&self, callee: &MirCallee, i: usize) -> bool {
+        intrinsic_accepts_raw_position_arg(callee, i) || self.takes_count(callee, i)
     }
 
     /// The op a call of `callee` computes raw, if any. The literal forms
@@ -1025,12 +1057,12 @@ fn compute_summary(
     }
     // A param only read at as a position takes any `i64`: callers with a
     // boxed position saturate it.
+    let raw_ops = std::sync::Arc::new(RawOps::of(program, rust_positions));
     let read_only = std::rc::Rc::new(match rust_positions {
-        true => read_only_positions(program, &address_taken, &edges),
+        true => read_only_positions(program, &address_taken, &edges, &raw_ops),
         false => HashSet::new(),
     });
     let checked = std::rc::Rc::new(ranges.checked);
-    let raw_ops = std::sync::Arc::new(RawOps::of(program, rust_positions));
     for &(id, i) in read_only.iter() {
         if let Some(cell) = bare_param_intervals.get_mut(&id).and_then(|v| v.get_mut(i)) {
             *cell = Some(i64_interval());
@@ -2508,6 +2540,7 @@ fn read_only_positions(
     program: &MirProgram,
     address_taken: &HashSet<String>,
     edges: &[CallEdge],
+    raw_ops: &RawOps,
 ) -> HashSet<(FnId, usize)> {
     let nodes: Vec<FnId> = program.iter().map(|(id, _)| *id).collect();
     let mut graph: HashMap<FnId, Vec<FnId>> = HashMap::new();
@@ -2521,7 +2554,7 @@ fn read_only_positions(
             continue;
         }
         for (i, p) in f.params.iter().enumerate() {
-            let read = |e: &MirExpr| read_at(e, p.local);
+            let read = |e: &MirExpr| read_at(e, p.local, raw_ops);
             if ty_str_is_int(&p.ty) && read(&f.body.node) == Some(true) {
                 out.insert((*id, i));
             }
@@ -2533,17 +2566,17 @@ fn read_only_positions(
 /// Is every use of `slot` in `e` the position of an indexed read:
 /// `Some(true)` when there is at least one, `Some(false)` when there is none,
 /// `None` when some other use reads it.
-fn read_at(e: &MirExpr, slot: LocalId) -> Option<bool> {
+fn read_at(e: &MirExpr, slot: LocalId, raw_ops: &RawOps) -> Option<bool> {
     if subject_is_local(e, slot) {
         return None;
     }
     let mut seen = false;
     if let MirExpr::Call(c) = e {
         for (k, a) in c.node.args.iter().enumerate() {
-            let at = intrinsic_accepts_raw_position_arg(&c.node.callee, k);
+            let at = raw_ops.takes_position(&c.node.callee, k);
             match (
                 at && subject_is_local(&a.node, slot),
-                read_at(&a.node, slot),
+                read_at(&a.node, slot, raw_ops),
             ) {
                 (true, _) => seen = true,
                 (false, None) => return None,
@@ -2553,7 +2586,7 @@ fn read_at(e: &MirExpr, slot: LocalId) -> Option<bool> {
         return Some(seen);
     }
     let mut other = false;
-    visit_children(e, &mut |c| match read_at(c, slot) {
+    visit_children(e, &mut |c| match read_at(c, slot, raw_ops) {
         None => other = true,
         Some(r) => seen |= r,
     });
@@ -3559,7 +3592,7 @@ fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet
                 for (i, a) in c.node.args.iter().enumerate() {
                     if !raw_op
                         && !intrinsic_accepts_raw_code_arg(&c.node.callee, i)
-                        && !intrinsic_accepts_raw_position_arg(&c.node.callee, i)
+                        && !summary.raw_ops.takes_position(&c.node.callee, i)
                     {
                         mark_operand_escapes_deep(&a.node, out);
                     }

@@ -2299,6 +2299,17 @@ pub fn clamp_list_count(n: &AverInt) -> usize {
     }
 }
 
+/// [`clamp_list_count`] of a count held as a raw `i64`: the same clamp,
+/// with no `Int` made for it.
+#[inline(always)]
+pub fn clamp_list_count_i64(n: i64) -> usize {
+    if n <= 0 {
+        0
+    } else {
+        usize::try_from(n).unwrap_or(usize::MAX)
+    }
+}
+
 #[inline]
 pub fn list_uncons<T>(list: &AverList<T>) -> Option<(&T, AverList<T>)> {
     list.uncons()
@@ -2469,8 +2480,21 @@ pub fn string_join(parts: &AverList<AverStr>, sep: &str) -> AverStr {
 mod tests {
     use super::{
         AverInt, AverIntList, AverList, AverListInner, AverMap, AverStr, Buffer, ListRest,
-        aver_display, env_set, list_uncons_lent, string_slice, string_split_byte,
+        aver_display, clamp_list_count, clamp_list_count_i64, env_set, list_uncons_lent,
+        string_slice, string_split_byte,
     };
+
+    /// A count held as a raw `i64` clamps as the same `Int` does.
+    #[test]
+    fn a_raw_count_clamps_as_the_int_does() {
+        for n in [i64::MIN, -5, -1, 0, 1, 7, 1 << 40, i64::MAX] {
+            assert_eq!(
+                clamp_list_count_i64(n),
+                clamp_list_count(&AverInt::from_i64(n)),
+                "{n}"
+            );
+        }
+    }
 
     /// A split on one byte gives the parts `str::split` gives, the last
     /// included: an empty text, separators at either end and side by side,
