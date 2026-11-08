@@ -2,6 +2,17 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.33.1 (unreleased)
+
+### Fixed
+
+- `aver verify`, `aver run` and the other VM paths could take the `Result.Err` arm of a `match` on a smart constructor called with a valid value, once inlining had turned its argument into a literal. Compiled Rust was not affected.
+
+### Changed
+
+- Rust backend: a recursive function that walks a tree still reuses the nodes it owns alone, and now borrows the shared ones instead of copying them (5–7% fewer instructions on tree maps).
+- Rust backend: `==` on a recursive sum compares a node's scalar fields before anything else, and `List.take` / `List.drop` take their count as a machine integer when it fits.
+
 ## 0.33.0 "Trim" — 2026-11-06
 
 > _Compiled code does less: smaller wasm-gc modules, `Int` on machine words in more places, and Rust that skips atomics when one thread is enough._
