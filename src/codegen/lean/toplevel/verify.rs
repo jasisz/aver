@@ -297,11 +297,20 @@ pub fn emit_verify_block(
                     // charges as a sorry, and not the build of the whole
                     // module. The name begins with `__`, which no source
                     // identifier can, so no user function takes it.
+                    let theorem_name =
+                        isolated_case_theorem_name(&vb.fn_name, case_index_start + idx + 1);
+                    let unmeasured = decidability.unmeasured_recursion_reachable(&left, ctx);
+                    if !unmeasured.is_empty() {
+                        ctx.unmeasured_case_reach.borrow_mut().insert(
+                            format!("{}.{}", emitted_namespace(ctx), theorem_name),
+                            unmeasured,
+                        );
+                    }
                     lines.push(crate::codegen::lean::isolate::ISOLATION_GUARD.to_string());
                     lines.push(format!(
                         "{}theorem {}{} : {} = {} := by {}",
                         synth_budget_for_case(&left, ctx),
-                        isolated_case_theorem_name(&vb.fn_name, case_index_start + idx + 1),
+                        theorem_name,
                         theorem_param_text,
                         left_str,
                         right_str,
