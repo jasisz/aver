@@ -1032,6 +1032,12 @@ impl Env<'_> {
         if let Some(proof) = self.conjunct_of_hyp(cur) {
             return Ok(Some(Step::Progress(Box::new((proof, term::boolean(true))))));
         }
+        if let Some(proof) = self.disjunct_of_hyp(cur) {
+            return Ok(Some(Step::Progress(Box::new((
+                proof,
+                term::boolean(false),
+            )))));
+        }
         if let Some(proof) = self.view_for(cur) {
             return Ok(Some(Step::Progress(Box::new((proof, term::boolean(true))))));
         }
@@ -2144,7 +2150,9 @@ impl Env<'_> {
     }
 
     /// `t`, a call of a definition, evaluated at its head (at most `steps`
-    /// steps, each at a call of a definition) until it is a call of `want`.
+    /// steps, each at a call of a definition or at the `match` one opened
+    /// to, which a definition that matches twice leaves: `match hasParam(l)`
+    /// then `match l`) until it is a call of `want`.
     fn open_to_call_of(
         &mut self,
         t: &Term,
@@ -2154,15 +2162,17 @@ impl Env<'_> {
         let mut chain = Chain::new(t);
         for _ in 0..=steps {
             let cur = chain.cur().clone();
-            let ResolvedExpr::Call(ResolvedCallee::Fn(id), _) = &cur.node else {
-                return Ok(None);
-            };
-            if *id == want {
-                if chain.is_empty() {
-                    return Ok(None);
+            match &cur.node {
+                ResolvedExpr::Call(ResolvedCallee::Fn(id), _) if *id == want => {
+                    if chain.is_empty() {
+                        return Ok(None);
+                    }
+                    let (to, proof) = chain.finish();
+                    return Ok(Some((proof, to)));
                 }
-                let (to, proof) = chain.finish();
-                return Ok(Some((proof, to)));
+                ResolvedExpr::Call(ResolvedCallee::Fn(_), _) => {}
+                ResolvedExpr::Match { .. } if !chain.is_empty() => {}
+                _ => return Ok(None),
             }
             match self.head_step(&cur)? {
                 Step::Progress(step) => {
@@ -2849,6 +2859,86 @@ impl Env<'_> {
             (term::bool_value(&e.rhs) == Some(true))
                 .then(|| find(&t, &e.lhs, Proof::Hyp(name.clone())))
                 .flatten()
+        })
+    }
+
+    /// `t = false` where `t` is a disjunct of a `Bool.or` a hypothesis
+    /// states false, at any depth: were `t` true, the disjunction would be
+    /// (`bool.or.true_l`, `_r`), so by cases on `t` it is false.
+    pub(crate) fn disjunct_of_hyp(&mut self, t: &Term) -> Option<Proof> {
+        /// For the disjunct `t` of `part`: the chain from `part` to `true`
+        /// under `h: t = true`, as its terms after `part` and its steps.
+        fn find(t: &Term, part: &Term, h: &str) -> Option<(Vec<Term>, Vec<Proof>)> {
+            if *term::canon_ref(part) == *t {
+                return Some((vec![term::boolean(true)], vec![Proof::Hyp(h.to_string())]));
+            }
+            let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &part.node else {
+                return None;
+            };
+            if b != "Bool.or" || args.len() != 2 {
+                return None;
+            }
+            let (a, c) = (canon(&args[0]), canon(&args[1]));
+            let truth = term::boolean(true);
+            for (i, rule, binder, other) in [
+                (0, WallRule::OrTrueL, "b", &c),
+                (1, WallRule::OrTrueR, "a", &a),
+            ] {
+                let Some((terms, steps)) = find(t, &args[i], h) else {
+                    continue;
+                };
+                // The disjunct brought to `true` inside the disjunction,
+                // then the disjunction with `true` on that side.
+                let within = |x: Term| match i {
+                    0 => canon(&term::bool_or(x, c.clone())),
+                    _ => canon(&term::bool_or(a.clone(), x)),
+                };
+                let ctx = within(term::hole());
+                let mut out_terms: Vec<Term> = terms.into_iter().map(&within).collect();
+                let mut out_steps: Vec<Proof> = steps
+                    .into_iter()
+                    .map(|p| Proof::Congr {
+                        ctx: ctx.clone(),
+                        inner: Box::new(p),
+                    })
+                    .collect();
+                out_terms.push(truth.clone());
+                out_steps.push(Proof::Rule {
+                    rule,
+                    subst: vec![(binder.to_string(), other.clone())],
+                    premises: Vec::new(),
+                });
+                return Some((out_terms, out_steps));
+            }
+            None
+        }
+        if is_bool_value(t) {
+            return None;
+        }
+        let t = canon(t);
+        let (name, whole) = self.hyps.iter().rev().find_map(|(name, e)| {
+            let stated_false = term::bool_value(&e.rhs) == Some(false)
+                && matches!(&e.lhs.node,
+                    ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)
+                        if b == "Bool.or" && args.len() == 2)
+                && *term::canon_ref(&e.lhs) != t;
+            (stated_false && find(&t, &e.lhs, "").is_some()).then(|| (name.clone(), canon(&e.lhs)))
+        })?;
+        let h = self.fresh_hyp();
+        let (mut terms, mut steps) = find(&t, &whole, &h)?;
+        // `false = whole = … = true` under `h`.
+        terms.insert(0, whole);
+        terms.insert(0, term::boolean(false));
+        steps.insert(0, Proof::Symm(Box::new(Proof::Hyp(name))));
+        Some(Proof::Cases {
+            on: t.clone(),
+            hyp: h.clone(),
+            if_true: Box::new(Proof::Absurd {
+                contradiction: Box::new(Proof::Trans { terms, steps }),
+                lhs: t,
+                rhs: term::boolean(false),
+            }),
+            if_false: Box::new(Proof::Hyp(h)),
         })
     }
 

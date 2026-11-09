@@ -674,12 +674,73 @@ impl Renderer<'_> {
                 )?;
                 let mut haves = String::new();
                 let mut taken = Vec::new();
+                let mut held_laws: Vec<String> = Vec::new();
                 for (k, ((ih, e), (part, at))) in stated_case.ihs.iter().zip(&sources).enumerate() {
                     if ih == "_" {
                         continue;
                     }
                     if !recursive[*part] {
                         return Err("induct: a call recurses on a field of another type".into());
+                    }
+                    // A hypothesis over the varied givens: the field's own
+                    // induction hypothesis, stated as the law the steps
+                    // cite, its premise the conjunction they prove.
+                    if stated_case.over[k] {
+                        let tau = &stated_case.at[k];
+                        let mut facts = Vec::new();
+                        for (name, c) in &stated {
+                            if term::bool_value(&c.rhs) != Some(true) {
+                                return Err(format!("induct: {name} is not a fact"));
+                            }
+                            facts.push(term::subst(&c.lhs, tau)?);
+                        }
+                        let types = &self.script.obligation.types;
+                        let law = induct::ih_law(ih, general, types, &facts, &e.lhs, &e.rhs);
+                        let mut ih_type = String::from("∀");
+                        for (_, g) in general {
+                            ih_type.push(' ');
+                            ih_type.push_str(&match types.iter().find(|(n, _)| n == g) {
+                                Some((_, ty)) => format!(
+                                    "({} : {})",
+                                    lean(g),
+                                    super::types::term_type_to_lean(ty)
+                                ),
+                                None => lean(g),
+                            });
+                        }
+                        ih_type.push_str(", ");
+                        if let Some(premise) = &law.premise {
+                            ih_type.push_str(&format!(
+                                "{} → ",
+                                self.eqn(&Eqn::new(premise.clone(), term::boolean(true)))
+                            ));
+                        }
+                        ih_type.push_str(&self.eqn(e));
+                        let mut params = gs.clone();
+                        let mut applied = vec![field_ih(*part)];
+                        applied.extend(gs.iter().cloned());
+                        if law.premise.is_some() {
+                            params.push("steps_p".to_string());
+                            let mut rest = "steps_p".to_string();
+                            for i in 0..facts.len() {
+                                if i + 1 == facts.len() {
+                                    applied.push(rest.clone());
+                                } else {
+                                    applied.push(format!("(AverSteps.and_elim_l _ _ {rest})"));
+                                    rest = format!("(AverSteps.and_elim_r _ _ {rest})");
+                                }
+                            }
+                        }
+                        haves.push_str(&format!(
+                            "have {} : {ih_type} := (fun {} => {}); ",
+                            lean(ih),
+                            params.join(" "),
+                            applied.join(" ")
+                        ));
+                        self.local_laws.push(law);
+                        self.laws.insert(ih.clone(), lean(ih));
+                        held_laws.push(ih.clone());
+                        continue;
                     }
                     let mut app = field_ih(*part);
                     for a in at {
@@ -722,7 +783,12 @@ impl Renderer<'_> {
                 }
                 let mut inner = scope.clone();
                 inner.extend(taken);
-                let body = self.proof(&case.proof, &inner)?;
+                let body = self.proof(&case.proof, &inner);
+                for ih in &held_laws {
+                    self.laws.remove(ih);
+                    self.local_laws.pop();
+                }
+                let body = body?;
                 minors[at] = Some(if names.is_empty() {
                     format!("({haves}{body})")
                 } else {
@@ -1726,6 +1792,17 @@ impl Renderer<'_> {
                 )?;
                 let arms = crate::ir::proof_steps::induct::recursion_arms(def, &self.script.defs)
                     .ok_or("induct: the body is not a match")?;
+                let over =
+                    crate::ir::proof_steps::induct::over_inner(def, &self.script.defs, &general);
+                if over
+                    && (rec.guard.is_some()
+                        || crate::ir::proof_steps::induct::drops(def, &self.script.defs))
+                {
+                    return Err(
+                        "induct: a hypothesis over the varied givens is followed only along the parts of a value"
+                            .into(),
+                    );
+                }
                 if rec.guard.is_some() {
                     self.induct_toward_zero(
                         def, &rec, args, &v, &general, arms, carried, cases, &eq, hyps,
@@ -1735,6 +1812,7 @@ impl Renderer<'_> {
                         def, &rec, args, &v, &general, arms, carried, cases, &eq, hyps,
                     )?
                 } else if crate::ir::proof_steps::induct::nested_split(def, &self.script.defs)
+                    || over
                     || !carried.is_empty()
                     || cases.iter().any(|c| !c.more.is_empty())
                 {
@@ -2370,7 +2448,11 @@ impl Renderer<'_> {
             // the definition names that match's equation for its
             // termination (`match h_N : l`), the statement does not, so
             // `ite_eq_left` does not fit. The `if` is split; the other branch
-            // contradicts the premise, and the two matches agree arm by arm.
+            // contradicts the premise, and the two matches agree arm by arm:
+            // by `rfl` where they are written alike, else at the constructor
+            // the definition's arm names, and under its last `_`, which the
+            // statement writes as the one constructor left, by the
+            // statement's own arms.
             let guarded = ruled.is_empty()
                 && crate::ir::proof_steps::induct::guarded_recursion(def, &self.script.defs)
                 && matches!(pat, ResolvedPattern::Literal(crate::ast::Literal::Bool(_)))
@@ -2379,7 +2461,7 @@ impl Renderer<'_> {
             // definition's, so the two need not be equal by `rfl` alone.
             tactic = match arm_tactic(pat, &subject, "h")?.as_str() {
                 _ if guarded => {
-                    "split <;> first | (split <;> rfl) | contradiction | simp_all".to_string()
+                    "split <;> first | (split <;> rfl) | (split <;> first | rfl | (subst_vars; rfl) | (split <;> first | rfl | contradiction | simp_all)) | contradiction | simp_all".to_string()
                 }
                 // Each earlier literal arm is refuted by its premise:
                 // `contradiction` reads `(253 == 253) = false` as false by

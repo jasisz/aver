@@ -470,7 +470,10 @@ pub struct IhAt {
 /// pattern variables, one hypothesis name per recursive call in the arm
 /// (in the order [`induct::self_calls`] lists them; `_` for a call whose
 /// hypothesis the case does without), for each the proofs of the carried
-/// hypotheses at that call's arguments, further hypotheses each at the part
+/// hypotheses at that call's arguments (none for a call that passes at a
+/// varied place a name an inner match binds: its name is the key of a law,
+/// [`induct::ih_law`], cited with [`Proof::Law`] and its premise proved
+/// there), further hypotheses each at the part
 /// one of those calls recurses on and other values of the varied givens
 /// (the call's place and the values, in the order the givens vary), and
 /// the proof of the claim at the arm's pattern under all of them.

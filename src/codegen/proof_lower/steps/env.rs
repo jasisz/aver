@@ -46,6 +46,15 @@ pub(crate) struct Env<'a> {
     /// Every law the author cited, also those that would loop as rewrite
     /// rules: one instance may still prove an equation outright.
     pub cited_all: Vec<LawRef>,
+    /// The keys of the laws in `rewrite_laws` and `cited_all` that a case
+    /// of an induction in progress holds
+    /// ([`crate::ir::proof_steps::induct::ih_law`]): the induction step
+    /// states them, so the script does not carry them.
+    pub local_laws: Vec<String>,
+    /// The list givens an induction in progress varies along the one it
+    /// follows: a `match` stopped at one of them is split on it as `[]`
+    /// and as a cell (see `Env::split_list_var_under_match`).
+    pub varied_lists: Vec<String>,
     /// The builtin facts evaluation rewrites with where it stops and no
     /// cited law applies, cited or not
     /// ([`crate::ir::proof_steps::facts::NORMALIZING`]).
@@ -441,6 +450,8 @@ impl<'a> Env<'a> {
             laws: Vec::new(),
             rewrite_laws: Vec::new(),
             cited_all: Vec::new(),
+            local_laws: Vec::new(),
+            varied_lists: Vec::new(),
             fact_rules: Vec::new(),
             hint_laws: Vec::new(),
             auto_laws: Vec::new(),
@@ -510,6 +521,9 @@ impl<'a> Env<'a> {
     pub(crate) fn use_law(&mut self, law: LawRef) {
         if self.trace.is_some() {
             self.traced(super::memo::Effect::Law(Box::new(law.clone())));
+        }
+        if self.local_laws.contains(&law.key) {
+            return;
         }
         if !self.laws.iter().any(|l| l.key == law.key) {
             self.laws.push(law);
@@ -819,6 +833,13 @@ impl<'a> Env<'a> {
             }
         }
         let body = read(body, &locals);
+        // A recursive definition is inducted along arm by arm: a last `_`
+        // that stands for one constructor is that constructor's arm.
+        let body = if self.inputs.recursive_fns.contains(&id) {
+            super::split::name_last_arms(&body, self.inputs)
+        } else {
+            body
+        };
         let name = match scope {
             Some(prefix) => format!("{prefix}.{}", key.name),
             None => key.name.clone(),

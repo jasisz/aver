@@ -2426,10 +2426,9 @@ fn an_induction_toward_zero_generalises_what_the_call_changes() {
             givens,
         )
     };
-    refused(
-        &on(var("ys"), &["ys"]),
-        "a recursive call reads a name an inner match binds",
-    );
+    // Where `xs` is a given that varies, the call passes `t` at its place:
+    // the hypothesis is a law over the given, which this case does without.
+    accepted(&on(var("ys"), &["ys"]));
     accepted(&on(term::nil(), &[]));
 }
 

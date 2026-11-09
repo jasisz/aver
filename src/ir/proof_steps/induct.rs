@@ -33,7 +33,12 @@
 //! case's one name is the hypothesis that the comparison has the arm's
 //! value. Each recursive call in the arm gives one induction hypothesis,
 //! the claim at that call's arguments: a part of the value, or an Int
-//! closer to zero where the comparison lets the call happen.
+//! closer to zero where the comparison lets the call happen. A call that
+//! passes at a generalised place a name an inner match binds (`urest` in
+//! `lookup(n, prest, urest, dflt)` under `match us`) has no such
+//! hypothesis where the case starts; it gives a law instead, the claim at
+//! the part for every value of the generalised givens ([`ih_law`]), which
+//! the case cites where the name is in scope.
 
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedMatchArm};
 use crate::ir::identity::FnId;
@@ -865,18 +870,33 @@ pub fn case(
     }
     let mut out = Vec::new();
     let mut at = Vec::new();
+    let mut over = Vec::new();
     for ((call, inner), ih) in calls.iter().zip(ihs) {
         // Only the argument at the recursive place and those at the varied
         // places enter the hypothesis; a name an inner match binds may sit
         // anywhere else.
         let mut fv = Vec::new();
-        for (k, a) in call.iter().enumerate() {
-            if k == j || general.iter().any(|(g, _)| *g == k) {
-                term::free_vars(a, &mut fv);
-            }
-        }
+        term::free_vars(&call[j], &mut fv);
         if fv.iter().any(|n| inner.contains(n)) {
             return Err("a recursive call reads a name an inner match binds".into());
+        }
+        // A name an inner match binds at a varied place is not in scope
+        // where the case starts: the hypothesis is then the claim at the
+        // part for every value of the varied givens, a law the case cites
+        // where the name is in scope ([`ih_law`]).
+        let mut fv = Vec::new();
+        for (k, _) in general {
+            term::free_vars(&call[*k], &mut fv);
+        }
+        if fv.iter().any(|n| inner.contains(n)) {
+            let tau = vec![(v.to_string(), term::subst(&call[j], &map)?)];
+            out.push((
+                ih.clone(),
+                Eqn::new(term::subst(lhs, &tau)?, term::subst(rhs, &tau)?),
+            ));
+            at.push(tau);
+            over.push(true);
+            continue;
         }
         let c: Vec<Term> = call
             .iter()
@@ -889,6 +909,7 @@ pub fn case(
             Eqn::new(term::subst(lhs, &tau)?, term::subst(rhs, &tau)?),
         ));
         at.push(tau);
+        over.push(false);
     }
     Ok(Case {
         value,
@@ -896,7 +917,63 @@ pub fn case(
         guard,
         ihs: out,
         at,
+        over,
     })
+}
+
+/// The law a case of an [`super::Proof::Induct`] step holds for a
+/// recursive call that passes, at a varied place, a name an inner match
+/// binds ([`Case::over`]): over the varied givens `general`, with the
+/// types `types` gives them, the claim `lhs = rhs` at the part the call
+/// recurses on (`at`, which binds the given inducted on alone), where
+/// each of `facts`, what the carried hypotheses say is true there, holds.
+pub fn ih_law(
+    ih: &str,
+    general: &[(usize, String)],
+    types: &[(String, crate::ast::Type)],
+    facts: &[Term],
+    lhs: &Term,
+    rhs: &Term,
+) -> super::LawRef {
+    let givens: Vec<String> = general.iter().map(|(_, g)| g.clone()).collect();
+    let mut parts: Vec<Term> = facts.to_vec();
+    let premise = parts.pop().map(|mut premise| {
+        while let Some(p) = parts.pop() {
+            premise = term::bool_and(p, premise);
+        }
+        term::canon(&premise)
+    });
+    super::LawRef {
+        key: ih.to_string(),
+        types: givens
+            .iter()
+            .filter_map(|g| types.iter().find(|(n, _)| n == g).cloned())
+            .collect(),
+        givens,
+        premise,
+        refined: Vec::new(),
+        lhs: term::canon(lhs),
+        rhs: term::canon(rhs),
+        fact: None,
+    }
+}
+
+/// Whether some recursive call of `def` passes, at one of the varied
+/// places `general`, a name an inner match binds: its hypothesis is then
+/// a law ([`ih_law`]).
+pub fn over_inner(def: &Def, ds: &[Def], general: &[(usize, String)]) -> bool {
+    self_calls(&def.body, def.fn_id, ds)
+        .unwrap_or_default()
+        .iter()
+        .any(|(call, inner)| {
+            let mut fv = Vec::new();
+            for (k, _) in general {
+                if let Some(a) = call.get(*k) {
+                    term::free_vars(a, &mut fv);
+                }
+            }
+            fv.iter().any(|n| inner.contains(n))
+        })
 }
 
 /// One case of an induction, as [`case`] states it.
@@ -913,6 +990,12 @@ pub struct Case {
     pub ihs: Vec<(String, Eqn)>,
     /// For each, the substitution that puts the claim there.
     pub at: Vec<Vec<(String, Term)>>,
+    /// For each, whether the call passes at a varied place a name an inner
+    /// match binds. Its hypothesis is then no equation in scope but the
+    /// law [`ih_law`] states: its entry of `ihs` is the claim at the part
+    /// with the varied givens left as they are, and its entry of `at` puts
+    /// the given inducted on alone.
+    pub over: Vec<bool>,
 }
 
 /// For each recursive call in `arm`, in the order of [`case`]'s
