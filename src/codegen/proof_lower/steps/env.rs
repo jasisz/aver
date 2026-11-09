@@ -256,7 +256,7 @@ pub(crate) enum Shut {
 }
 
 /// The recursion shapes steps follow, in the words a refusal uses.
-const OPENED_SHAPES: &str = "steps open a recursive function only when its body is one `match` on a parameter and each recursive call passes a part of the matched value (a list's tail, a field of a variant, or `List.drop` of one), or when it is a `match` on `n <= 0` or `n > 0` for an Int parameter `n` and each recursive call passes `n - 1` or `n / k` for a literal `k` of at least 2";
+const OPENED_SHAPES: &str = "steps open a recursive function only when its body is one `match` on a parameter and each recursive call passes a part of the matched value (a list's tail, a field of a variant, or `List.drop` of one), that `match` standing as the body or as the one recursing arm, binding no name, of a `match` on something else, or when it is a `match` on `n <= 0` or `n > 0` for an Int parameter `n` and each recursive call passes `n - 1` or `n / k` for a literal `k` of at least 2";
 
 impl Shut {
     /// What a refusal says about a call of the recursive `name` that steps

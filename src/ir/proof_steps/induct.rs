@@ -10,7 +10,11 @@
 //! most 0 without a recursive call, and every call in the other passing
 //! `p - 1` or `p / k` (a literal `k` of at least 2) in `p`'s place, which
 //! for `p > 0` is at least 0 and below `p`; it stops for every Int, a
-//! negative one included. The gate returns what it checked
+//! negative one included. The match on a parameter may also stand in
+//! the one arm with recursive calls of a match on something else, an arm
+//! that binds no name (`match hasParam(l)` then `true -> match l`); its
+//! arms are then the recursion's ([`recursion_arms`]), and the recursion
+//! stops for the reason it would without the match around it. The gate returns what it checked
 //! ([`recursion`]), and both opening a definition ([`super::Proof::Unfold`])
 //! and inducting along it ([`super::Proof::Induct`]) read that.
 //! A call of another definition that calls back into the one checked
@@ -458,7 +462,8 @@ pub enum Descent {
 /// no inner arm rebinds, or on `p <= 0` / `p > 0` for a parameter `p`, one
 /// arm per truth value, the arm where `p` is at most 0 without a recursive
 /// call and every call in the other descending ([`descent`]) at `p`'s
-/// place, `p` not rebound around it. The recursive calls are those
+/// place, `p` not rebound around it; or on something else, with the match
+/// on a parameter in its one arm that recurses ([`guarded`]). The recursive calls are those
 /// [`self_calls`] lists, a recursion through other definitions of `ds`
 /// included.
 pub fn recursion(def: &Def, ds: &[Def]) -> Result<Option<Recursion>, String> {
@@ -522,25 +527,119 @@ pub fn recursion(def: &Def, ds: &[Def]) -> Result<Option<Recursion>, String> {
             }),
         }));
     }
-    if let ResolvedExpr::BinOp(..) = &subject.node {
-        return refuse("outside a match on a parameter");
-    }
     let ResolvedExpr::Ident(p) = &subject.node else {
-        return refuse("on a match whose subject is not a parameter");
+        return guarded(def, ds, subject, arms).map(Some);
     };
-    let Some(j) = place(p) else {
+    on_parts(def, ds, p, arms).map(Some)
+}
+
+/// The gate for a match on a parameter `p`: every recursive call passes,
+/// at `p`'s place, a part of the value matched (the kernel's `onParts`).
+fn on_parts(
+    def: &Def,
+    ds: &[Def],
+    p: &str,
+    arms: &[ResolvedMatchArm],
+) -> Result<Recursion, String> {
+    let refuse = |why: &str| Err(format!("{} recurses {why}", def.name));
+    let Some(j) = def.params.iter().position(|n| n == p) else {
         return refuse("on a match whose subject is not a parameter");
     };
     for arm in arms {
         let parts = term::pattern_binders(&arm.pattern);
-        for (args, inner) in self_calls(&arm.body, f, ds)? {
+        for (args, inner) in self_calls(&arm.body, def.fn_id, ds)? {
             let smaller = args.get(j).is_some_and(|a| smaller(a, &parts, &inner));
             if args.len() != def.params.len() || !smaller {
                 return refuse("on something that is not a part of the value it matches");
             }
         }
     }
-    Ok(Some(Recursion { at: j, guard: None }))
+    Ok(Recursion { at: j, guard: None })
+}
+
+/// The gate for a body that matches something other than a parameter
+/// first (the kernel's `guarded`): the subject makes no recursive call,
+/// and of the arms exactly one does, binds no name, and is a match on a
+/// parameter whose calls pass a part of the value matched ([`on_parts`]).
+/// That inner match's arms are the recursion's ([`recursion_arms`]): the
+/// recursion stops for the reason it would without the match around it.
+fn guarded(
+    def: &Def,
+    ds: &[Def],
+    subject: &Term,
+    arms: &[ResolvedMatchArm],
+) -> Result<Recursion, String> {
+    let f = def.fn_id;
+    let outside = || {
+        Err(format!(
+            "{} recurses outside a match on a parameter",
+            def.name
+        ))
+    };
+    if !self_calls(subject, f, ds)?.is_empty() {
+        return outside();
+    }
+    let mut recursing = Vec::new();
+    for arm in arms {
+        if !self_calls(&arm.body, f, ds)?.is_empty() {
+            recursing.push(arm);
+        }
+    }
+    let [arm] = recursing.as_slice() else {
+        return outside();
+    };
+    if !term::pattern_binders(&arm.pattern).is_empty() {
+        return outside();
+    }
+    let ResolvedExpr::Match {
+        subject: inner,
+        arms: inner_arms,
+    } = &arm.body.node
+    else {
+        return outside();
+    };
+    let ResolvedExpr::Ident(p) = &inner.node else {
+        return outside();
+    };
+    on_parts(def, ds, p, inner_arms)
+}
+
+/// Whether `def` recurses behind a guard ([`guarded`]): its body matches
+/// something other than a parameter, and the gate passes it.
+pub fn guarded_recursion(def: &Def, ds: &[Def]) -> bool {
+    let ResolvedExpr::Match { subject, .. } = &def.body.node else {
+        return false;
+    };
+    let counts = matches!(&subject.node, ResolvedExpr::BinOp(_, p, zero)
+        if matches!(p.node, ResolvedExpr::Ident(_)) && term::int_value(zero) == Some(0.into()));
+    !counts
+        && !matches!(subject.node, ResolvedExpr::Ident(_))
+        && matches!(recursion(def, ds), Ok(Some(_)))
+}
+
+/// The arms of the match an induction along `def` follows, one case each:
+/// the body's own, or, when the body matches something else first
+/// ([`guarded`]), those of the match on a parameter in its one arm with
+/// recursive calls. `None` when the body is not a match.
+pub fn recursion_arms<'a>(def: &'a Def, ds: &[Def]) -> Option<&'a [ResolvedMatchArm]> {
+    let ResolvedExpr::Match { subject, arms } = &def.body.node else {
+        return None;
+    };
+    let counts = matches!(&subject.node, ResolvedExpr::BinOp(_, p, zero)
+        if matches!(p.node, ResolvedExpr::Ident(_)) && term::int_value(zero) == Some(0.into()));
+    if counts || matches!(subject.node, ResolvedExpr::Ident(_)) {
+        return Some(arms);
+    }
+    let mut recursing = arms.iter().filter(|a| {
+        !self_calls(&a.body, def.fn_id, ds)
+            .unwrap_or_default()
+            .is_empty()
+    });
+    let arm = recursing.next()?;
+    match &arm.body.node {
+        ResolvedExpr::Match { arms, .. } if recursing.next().is_none() => Some(arms),
+        _ => None,
+    }
 }
 
 /// Whether steps may open `def` though its recursion is not one they

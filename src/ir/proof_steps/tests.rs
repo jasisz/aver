@@ -988,6 +988,108 @@ fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
     assert!(super::induct::recursion(&taking, &[]).is_err());
 }
 
+/// A match on something else may come first (`match hasParam(l)` then
+/// `true -> match l`): the recursion is the inner match's when exactly one
+/// arm recurses, binds no name and is a match on a parameter whose calls
+/// pass a part of it. The subject and the other arms make no call.
+#[test]
+fn a_recursion_may_match_a_parameter_inside_the_one_recursing_arm_of_another_match() {
+    use crate::ast::Literal;
+    use crate::ir::hir::ResolvedCallee;
+    use crate::ir::identity::FnId;
+    let call = |args: Vec<super::Term>| {
+        Spanned::bare(ResolvedExpr::Call(
+            ResolvedCallee::Fn(FnId(7)),
+            crate::ast::shared::vec(args),
+        ))
+    };
+    let big = |t: super::Term| {
+        Spanned::bare(ResolvedExpr::Call(
+            ResolvedCallee::Fn(FnId(8)),
+            crate::ast::shared::vec(vec![t]),
+        ))
+    };
+    let arm = |pattern, body| ResolvedMatchArm {
+        pattern,
+        body: crate::ast::Shared::new(body),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    let on_xs = |tail_call: super::Term| {
+        Spanned::bare(ResolvedExpr::Match {
+            subject: crate::ast::Shared::new(var("xs")),
+            arms: crate::ast::shared::vec(vec![
+                arm(ResolvedPattern::EmptyList, term::int(&0.into())),
+                arm(ResolvedPattern::Cons("h".into(), "t".into()), tail_call),
+            ]),
+        })
+    };
+    let def = |subject: super::Term, arms: Vec<ResolvedMatchArm>| super::Def {
+        fn_id: FnId(7),
+        name: "f".into(),
+        params: vec!["xs".into()],
+        param_types: vec![crate::ast::Type::Int; 1],
+        ret: crate::ast::Type::Int,
+        lets: Vec::new(),
+        body: Spanned::bare(ResolvedExpr::Match {
+            subject: crate::ast::Shared::new(subject),
+            arms: crate::ast::shared::vec(arms),
+        }),
+    };
+    let lit = |b| ResolvedPattern::Literal(Literal::Bool(b));
+    let guarded = def(
+        big(var("xs")),
+        vec![
+            arm(lit(false), var("xs")),
+            arm(lit(true), on_xs(call(vec![var("t")]))),
+        ],
+    );
+    assert_eq!(
+        super::induct::recursion(&guarded, &[]),
+        Ok(Some(super::induct::Recursion { at: 0, guard: None }))
+    );
+    let arms = super::induct::recursion_arms(&guarded, &[]).expect("inner arms");
+    assert_eq!(arms.len(), 2);
+    assert!(matches!(arms[1].pattern, ResolvedPattern::Cons(..)));
+    // The inner match still has to pass a part.
+    let whole = def(
+        big(var("xs")),
+        vec![
+            arm(lit(false), var("xs")),
+            arm(lit(true), on_xs(call(vec![var("xs")]))),
+        ],
+    );
+    assert!(super::induct::recursion(&whole, &[]).is_err());
+    // A call in the subject, in a second arm, or outside a match on a
+    // parameter is refused.
+    let in_subject = def(big(call(vec![var("xs")])), vec![arm(lit(true), var("xs"))]);
+    assert!(super::induct::recursion(&in_subject, &[]).is_err());
+    let twice = def(
+        big(var("xs")),
+        vec![
+            arm(lit(false), on_xs(call(vec![var("t")]))),
+            arm(lit(true), on_xs(call(vec![var("t")]))),
+        ],
+    );
+    assert!(super::induct::recursion(&twice, &[]).is_err());
+    let bare = def(
+        big(var("xs")),
+        vec![
+            arm(lit(false), var("xs")),
+            arm(lit(true), call(vec![var("xs")])),
+        ],
+    );
+    assert!(super::induct::recursion(&bare, &[]).is_err());
+    // An arm that binds a name would let a call read it.
+    let binding = def(
+        big(var("xs")),
+        vec![arm(
+            ResolvedPattern::Ident("b".into()),
+            on_xs(call(vec![var("t")])),
+        )],
+    );
+    assert!(super::induct::recursion(&binding, &[]).is_err());
+}
+
 #[test]
 fn a_recursion_through_a_helper_is_checked_as_if_the_helper_stood_in_the_arm() {
     use crate::ir::hir::ResolvedCallee;

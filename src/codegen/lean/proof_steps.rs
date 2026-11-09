@@ -1724,9 +1724,8 @@ impl Renderer<'_> {
                     j,
                     &self.script.obligation.givens,
                 )?;
-                let ResolvedExpr::Match { arms, .. } = &def.body.node else {
-                    return Err("induct: the body is not a match".into());
-                };
+                let arms = crate::ir::proof_steps::induct::recursion_arms(def, &self.script.defs)
+                    .ok_or("induct: the body is not a match")?;
                 if rec.guard.is_some() {
                     self.induct_toward_zero(
                         def, &rec, args, &v, &general, arms, carried, cases, &eq, hyps,
@@ -2366,9 +2365,22 @@ impl Renderer<'_> {
                 }
                 None => pat,
             };
+            // A Bool arm that is itself a match on a parameter (a recursion
+            // behind a guard, `match hasParam(l)` then `true -> match l`):
+            // the definition names that match's equation for its
+            // termination (`match h_N : l`), the statement does not, so
+            // `ite_eq_left` does not fit. The `if` is split; the other branch
+            // contradicts the premise, and the two matches agree arm by arm.
+            let guarded = ruled.is_empty()
+                && crate::ir::proof_steps::induct::guarded_recursion(def, &self.script.defs)
+                && matches!(pat, ResolvedPattern::Literal(crate::ast::Literal::Bool(_)))
+                && matches!(arms[arm as usize - 1].body.node, ResolvedExpr::Match { .. });
             // A match the statement writes out is elaborated apart from the
             // definition's, so the two need not be equal by `rfl` alone.
             tactic = match arm_tactic(pat, &subject, "h")?.as_str() {
+                _ if guarded => {
+                    "split <;> first | (split <;> rfl) | contradiction | simp_all".to_string()
+                }
                 // Each earlier literal arm is refuted by its premise:
                 // `contradiction` reads `(253 == 253) = false` as false by
                 // evaluation, while `simp_all` rewrites it with lemmas that

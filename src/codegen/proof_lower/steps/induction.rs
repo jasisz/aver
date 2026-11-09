@@ -793,9 +793,15 @@ impl Env<'_> {
             .cloned()
             .collect();
         taken.extend(ob.givens.iter().cloned());
-        let ResolvedExpr::Match { arms, .. } = &def.body.node else {
+        let Some(arms) = induct::recursion_arms(&def, &ds) else {
             return Err("induction: the body is not a match".into());
         };
+        // Behind a guard, opening the call at a case's pattern puts that
+        // pattern into the inner match, whose arms bind names of their own:
+        // the case's names stay clear of them.
+        if induct::guarded_recursion(&def, &ds) {
+            bound_in(&def.body, &mut taken);
+        }
         self.mark_used(f);
         // The helpers the recursion goes through, which the kernel reads it
         // through as well.
@@ -1522,5 +1528,20 @@ impl Env<'_> {
         };
         self.fuel = fuel;
         looped
+    }
+}
+
+/// Every name a match arm binds anywhere in `t`.
+fn bound_in(t: &Term, out: &mut Vec<String>) {
+    if let ResolvedExpr::Match { subject, arms } = &t.node {
+        bound_in(subject, out);
+        for arm in arms {
+            out.extend(term::pattern_binders(&arm.pattern));
+            bound_in(&arm.body, out);
+        }
+        return;
+    }
+    for c in term::children(t) {
+        bound_in(c, out);
     }
 }
