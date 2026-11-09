@@ -8516,6 +8516,7 @@ pub(super) fn cmd_proof(
             compare_manifest,
             &duplicate_laws,
             &declined,
+            &ctx.unmeasured_case_reach.borrow(),
             &ctx.items,
             file,
             &module_root,
@@ -8823,6 +8824,10 @@ fn run_proof_check(
     // a claim that moves from proved to declined is a demotion the ratchet
     // sees rather than a law that quietly ceases to exist.
     declined: &[aver::codegen::DeclinedClaim],
+    // For each isolated `verify` case, the recursive functions without a
+    // measure it could reach (see `CodegenContext::unmeasured_case_reach`).
+    // Named beside a case whose proof did not close; never charged.
+    unmeasured_case_reach: &std::collections::BTreeMap<String, Vec<String>>,
     // `--explain` candidate-law renderer inputs (Lean-only, console): the parsed
     // source items + file + module root, used to un-translate each open law's
     // residual back into an Aver candidate and gate it through the VM sample-
@@ -8973,6 +8978,18 @@ fn run_proof_check(
             )
             .yellow()
         );
+        for label in &isolated_error_labels {
+            if let Some(fns) = unmeasured_case_reach.get(label) {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "  {label} can reach recursion with no termination measure: {}. Lean cannot unfold such a function, so a case that enters one stays open. Give the function a parameter that shrinks on every call, such as a step count.",
+                        fns.join(", ")
+                    )
+                    .yellow()
+                );
+            }
+        }
     }
 
     // Metric + pass decision: the build itself must SUCCEED (lake exit 0),
@@ -9411,6 +9428,24 @@ fn run_proof_check(
             obj.insert(
                 "isolated_cases".into(),
                 serde_json::Value::Array(isolated_cases),
+            );
+        }
+        // The recursive functions without a measure each of those cases could
+        // reach: what to rewrite for the case to close. Emitted only when
+        // there are any.
+        let unmeasured: serde_json::Map<String, serde_json::Value> = isolated_error_labels
+            .iter()
+            .filter_map(|label| {
+                Some((
+                    label.clone(),
+                    unmeasured_case_reach.get(label)?.clone().into(),
+                ))
+            })
+            .collect();
+        if !unmeasured.is_empty() {
+            obj.insert(
+                "isolated_case_unmeasured_recursion".into(),
+                unmeasured.into(),
             );
         }
         if isolated_errors.is_err() {
@@ -13757,6 +13792,7 @@ error: build failed";
             lean_match_equations: std::cell::Cell::new(false),
             lean_match_fixed: std::cell::Cell::new(false),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            unmeasured_case_reach: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
             omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
             rust_copied_targets: Default::default(),

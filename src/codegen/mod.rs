@@ -608,6 +608,11 @@ pub struct CodegenContext {
     /// `cmd_proof`. Keyed rather than pushed because each gate can be consulted
     /// several times per claim, and a `Vec` would multiply-count.
     pub declined_claims: std::cell::RefCell<std::collections::BTreeMap<String, DeclinedClaim>>,
+    /// For each isolated `verify` case, by the qualified name of its theorem:
+    /// the recursive functions without a measure it could reach. Written as
+    /// the Lean emitter isolates the case; read by `cmd_proof`, which names
+    /// them when the case's proof does not close.
+    pub unmeasured_case_reach: std::cell::RefCell<std::collections::BTreeMap<String, Vec<String>>>,
     /// Every construct the Rust emitter substituted a `compile_error!` for,
     /// in emit order, as the message it wrote and whose problem it is.
     ///
@@ -1243,6 +1248,7 @@ pub fn build_context(
         lean_match_equations: std::cell::Cell::new(false),
         lean_match_fixed: std::cell::Cell::new(false),
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+        unmeasured_case_reach: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
         rust_copied_targets: Default::default(),
@@ -1779,6 +1785,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         lean_match_equations: std::cell::Cell::new(false),
         lean_match_fixed: std::cell::Cell::new(false),
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+        unmeasured_case_reach: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
         rust_copied_targets: Default::default(),

@@ -74,6 +74,7 @@ fn empty_ctx() -> CodegenContext {
         lean_match_equations: std::cell::Cell::new(false),
         lean_match_fixed: std::cell::Cell::new(false),
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+        unmeasured_case_reach: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
         rust_copied_targets: Default::default(),

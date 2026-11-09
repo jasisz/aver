@@ -171,3 +171,68 @@ verify same law identity
         .collect();
     assert_eq!(identities.len(), 4);
 }
+
+const CHASE: &str = r#"module Chase
+    effects [Disk.readText]
+
+fn chase(key: String) -> String
+    ! [Disk.readText]
+    match Disk.readText(key)
+        Result.Ok(next) -> chase(next)
+        Result.Err(_) -> key
+
+fn start(go: Bool, key: String) -> String
+    ! [Disk.readText]
+    match go
+        true -> chase(key)
+        false -> key
+
+fn plain(key: String) -> String
+    ! [Disk.readText]
+    key
+
+verify start
+    start(false, "a") => "a"
+
+verify plain
+    plain("a") => "a"
+"#;
+
+#[test]
+fn isolated_case_records_the_unmeasured_recursion_it_could_reach() {
+    let mut ctx = ctx_from_source(CHASE, "Chase");
+    let results = crate::diagnostics::vm_verify::run_verify_for_items_vm(
+        ctx.items.clone(),
+        None,
+        None,
+        "chase.av",
+    )
+    .expect("VM verification");
+    for case in results.iter().flat_map(|r| &r.case_results) {
+        assert!(
+            matches!(case.outcome, crate::checker::VerifyCaseOutcome::Pass),
+            "{:?}",
+            case.outcome
+        );
+        let id = case.case_id.expect("VM preserves source identity");
+        for scope in [None, Some("Chase".to_string())] {
+            ctx.vm_passed_cases.insert((scope.clone(), id));
+            ctx.sample_expected.insert((scope, id), "\"a\"".to_string());
+        }
+    }
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    assert!(lean.contains("partial def chase"), "{lean}");
+    assert!(lean.contains("theorem __aver_verify_start_1 "), "{lean}");
+    assert!(lean.contains("theorem __aver_verify_plain_1 "), "{lean}");
+    // The branch this case takes never enters `chase`, so the case is still
+    // stated; the reach is only what to say if its proof does not close.
+    let reach = ctx.unmeasured_case_reach.borrow();
+    assert_eq!(
+        reach.iter().collect::<Vec<_>>(),
+        vec![(
+            &"Chase.__aver_verify_start_1".to_string(),
+            &vec!["chase".to_string()]
+        )],
+    );
+}

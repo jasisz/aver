@@ -198,6 +198,13 @@ fn emit_lifted_effectful_functions(
                         .filter_map(|fd| crate::codegen::common::fn_id_for_emitted_decl(ctx, fd)),
                 );
             }
+            if code_has_non_comment_token(&code, "partial def") {
+                sampled_fns.unmeasured.extend(
+                    component
+                        .iter()
+                        .filter_map(|fd| crate::codegen::common::fn_id_for_emitted_decl(ctx, fd)),
+                );
+            }
             sections.push(code);
             sections.push(String::new());
         }
@@ -438,6 +445,9 @@ struct SampledFnClassification {
     /// each with the call edge analysis's refusal when it has one — the call
     /// the exporter could not see shrink, cited by the claims it declines.
     unbounded_fuel: HashMap<crate::ir::FnId, Option<String>>,
+    /// Recursive declarations emitted as `partial def`: no measure showed
+    /// that they stop. Named to the author when a case reaching one fails.
+    unmeasured: HashSet<crate::ir::FnId>,
 }
 
 #[derive(Clone, Copy)]
@@ -544,6 +554,15 @@ fn emit_pure_component(
     }
     if component_is_kernel_opaque(comp, &out) {
         sampled_fns.opaque.extend(
+            comp.iter()
+                .filter_map(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd)),
+        );
+    }
+    if out
+        .iter()
+        .any(|code| code_has_non_comment_token(code, "partial def"))
+    {
+        sampled_fns.unmeasured.extend(
             comp.iter()
                 .filter_map(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd)),
         );
@@ -1222,6 +1241,7 @@ pub(super) fn transpile_unified(
                 let decidability = super::kernel_decide::CaseDecidability::new(
                     sampled_fns.opaque.clone(),
                     sampled_fns.unbounded_fuel.clone(),
+                    sampled_fns.unmeasured.clone(),
                     recursive_types.clone(),
                     capability_opacity.clone(),
                 );
@@ -1401,6 +1421,7 @@ pub(super) fn transpile_unified(
         LeanEmitMode::Proof => super::kernel_decide::CaseDecidability::new(
             sampled_fns.opaque,
             sampled_fns.unbounded_fuel,
+            sampled_fns.unmeasured,
             recursive_types.clone(),
             capability_opacity,
         ),

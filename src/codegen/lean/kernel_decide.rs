@@ -136,6 +136,8 @@ pub(super) struct CaseDecidability {
     /// analysis's refusal for the fn's group when it has one — the call the
     /// exporter could not see shrink — so the claim's decline can say so.
     unbounded_fuel_fns: HashMap<FnId, Option<String>>,
+    /// Recursive fns emitted as `partial def`, for want of a measure.
+    unmeasured_fns: HashSet<FnId>,
     /// Recursive user type names — they carry the `opaque` `DecidableEq` shim.
     opaque_eq_types: HashSet<String>,
     /// Provider-owned pure operations reached by each user function.  These
@@ -150,12 +152,14 @@ impl CaseDecidability {
     pub(super) fn new(
         opaque_fns: HashSet<FnId>,
         unbounded_fuel_fns: HashMap<FnId, Option<String>>,
+        unmeasured_fns: HashSet<FnId>,
         opaque_eq_types: HashSet<String>,
         capability_opacity: super::capability_opaque::CapabilityOpacity,
     ) -> Self {
         Self {
             opaque_fns,
             unbounded_fuel_fns,
+            unmeasured_fns,
             opaque_eq_types,
             capability_opacity,
             enabled: true,
@@ -167,6 +171,7 @@ impl CaseDecidability {
         Self {
             opaque_fns: HashSet::new(),
             unbounded_fuel_fns: HashMap::new(),
+            unmeasured_fns: HashSet::new(),
             opaque_eq_types: HashSet::new(),
             capability_opacity: super::capability_opaque::CapabilityOpacity::default(),
             enabled: false,
@@ -219,44 +224,38 @@ impl CaseDecidability {
             return Vec::new();
         }
 
-        let scope = ctx.active_module_scope();
-        let mut pending = HashSet::new();
-        for root in roots {
-            let resolved = ctx.resolve_expr(root, scope.as_deref());
-            super::decl_order::collect_resolved_fn_refs(&resolved, &mut pending);
-        }
-
-        let mut pending: Vec<FnId> = pending.into_iter().collect();
-        let mut seen = HashSet::new();
         let mut hits = std::collections::BTreeMap::new();
-        while let Some(fn_id) = pending.pop() {
-            if !seen.insert(fn_id) {
-                continue;
-            }
+        for fn_id in reachable_fns(roots, ctx) {
             if let Some(refusal) = self.unbounded_fuel_fns.get(&fn_id) {
                 hits.insert(
                     ctx.symbol_table.fn_entry(fn_id).key.canonical(),
                     refusal.clone(),
                 );
             }
-            let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
-                continue;
-            };
-            let body = rfd.body.clone();
-            let mut callees = HashSet::new();
-            for stmt in body.stmts() {
-                match stmt {
-                    ResolvedStmt::Expr(expr) => {
-                        super::decl_order::collect_resolved_fn_refs(expr, &mut callees)
-                    }
-                    ResolvedStmt::Binding { value, .. } => {
-                        super::decl_order::collect_resolved_fn_refs(value, &mut callees)
-                    }
-                }
-            }
-            pending.extend(callees.into_iter().filter(|id| !seen.contains(id)));
         }
         hits.into_iter().collect()
+    }
+
+    /// Canonical names of every recursive function without a measure that
+    /// `root` could reach, through any branch.
+    ///
+    /// A hint for a case whose proof did not close, never a reason to decline
+    /// one: a case that takes another branch closes without entering them.
+    pub(super) fn unmeasured_recursion_reachable(
+        &self,
+        root: &Spanned<crate::ast::Expr>,
+        ctx: &CodegenContext,
+    ) -> Vec<String> {
+        if !self.enabled || self.unmeasured_fns.is_empty() {
+            return Vec::new();
+        }
+        let mut names: Vec<String> = reachable_fns(&[root], ctx)
+            .into_iter()
+            .filter(|fn_id| self.unmeasured_fns.contains(fn_id))
+            .map(|fn_id| ctx.symbol_table.fn_entry(fn_id).key.canonical())
+            .collect();
+        names.sort();
+        names
     }
 
     /// Canonical names of kernel-opaque user functions called directly by
@@ -370,6 +369,39 @@ impl CaseDecidability {
         }
         true
     }
+}
+
+/// Every user function `roots` call, directly or through other user functions.
+fn reachable_fns(roots: &[&Spanned<crate::ast::Expr>], ctx: &CodegenContext) -> HashSet<FnId> {
+    let scope = ctx.active_module_scope();
+    let mut pending = HashSet::new();
+    for root in roots {
+        let resolved = ctx.resolve_expr(root, scope.as_deref());
+        super::decl_order::collect_resolved_fn_refs(&resolved, &mut pending);
+    }
+    let mut pending: Vec<FnId> = pending.into_iter().collect();
+    let mut seen = HashSet::new();
+    while let Some(fn_id) = pending.pop() {
+        if !seen.insert(fn_id) {
+            continue;
+        }
+        let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
+            continue;
+        };
+        let mut callees = HashSet::new();
+        for stmt in rfd.body.stmts() {
+            match stmt {
+                ResolvedStmt::Expr(expr) => {
+                    super::decl_order::collect_resolved_fn_refs(expr, &mut callees)
+                }
+                ResolvedStmt::Binding { value, .. } => {
+                    super::decl_order::collect_resolved_fn_refs(value, &mut callees)
+                }
+            }
+        }
+        pending.extend(callees.into_iter().filter(|id| !seen.contains(id)));
+    }
+    seen
 }
 
 struct Walk<'a> {
