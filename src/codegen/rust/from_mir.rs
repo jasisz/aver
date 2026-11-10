@@ -5118,7 +5118,8 @@ pub(super) fn emit_module_binding_getters(scope: Option<&str>, ctx: &CodegenCont
 /// byte-identical to HIR's `ResolvedExpr::IndependentProduct` arm
 /// (`super::expr`). The Rust backend is the one target that truly
 /// PARALLELIZES the product (the VM and wasm-gc lower it sequentially):
-/// each element runs on its own `std::thread::scope` thread.
+/// every element but the first runs on a `std::thread::scope` thread of its
+/// own, and the first runs on the thread that reaches the product.
 ///
 /// Mirror notes (the three behaviors this arm must preserve to stay
 /// byte-equal under the parity gate):
@@ -5153,8 +5154,8 @@ fn emit_mir_independent_product(
     ip: &crate::ir::mir::MirIndependentProduct,
     emit_ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
-    // Each branch runs on a thread of its own: a reuse token of an
-    // enclosing arm stays on the thread that holds it.
+    // A branch may run on a thread of its own: a reuse token of an
+    // enclosing arm stays with the code that holds it.
     let branch_ctx = MirEmitCtx {
         reuse_tokens: &[],
         ..*emit_ctx
@@ -5173,7 +5174,6 @@ fn emit_mir_independent_product(
     let result_prefix = generated_ident("r");
     let value_prefix = generated_ident("v");
     let branch_prefix = generated_ident("b");
-    let handle_prefix = generated_ident("h");
     let parallel_scope = generated_ident("parallel_scope");
     let cancel_flag = generated_ident("cancel_flag");
     let thread_scope = generated_ident("s");
@@ -5263,7 +5263,8 @@ fn emit_mir_independent_product(
         }
         for i in 0..n {
             code.push_str(&format!(
-                "let {branch_prefix}{i} = {handle_prefix}{i}.join().unwrap(); "
+                "let {branch_prefix}{i} = {}; ",
+                emit_parallel_join(i)
             ));
         }
         code.push_str(&emit_parallel_result_tuple_unwrap(
@@ -5299,7 +5300,8 @@ fn emit_mir_independent_product(
         }
         for i in 0..n {
             code.push_str(&format!(
-                "let {result_prefix}{i} = {handle_prefix}{i}.join().unwrap(); "
+                "let {result_prefix}{i} = {}; ",
+                emit_parallel_join(i)
             ));
         }
         code.push_str(&emit_tuple_from_vars(&result_prefix, n));
@@ -5343,9 +5345,16 @@ fn emit_parallel_capture_bindings(
     let captures = mir_free_locals(item);
     let handle = generated_ident(&format!("h{branch}"));
     let thread_scope = generated_ident("s");
+    // The first element is only a closure here: it runs on this thread
+    // once the others are spawned (see [`emit_parallel_join`]).
+    let start = if branch == 0 {
+        "(move || ".to_string()
+    } else {
+        format!("aver_rt::spawn_scoped({thread_scope}, move || ")
+    };
     code.push_str(&format!("let {handle} = "));
     if captures.is_empty() {
-        code.push_str(&format!("aver_rt::spawn_scoped({thread_scope}, move || "));
+        code.push_str(&start);
         return false;
     }
 
@@ -5366,8 +5375,22 @@ fn emit_parallel_capture_bindings(
         let capture = materialize_scoped_thread_capture(rust_name.clone(), &local, ctx);
         code.push_str(&format!("let {rust_name} = {capture}; "));
     }
-    code.push_str(&format!("aver_rt::spawn_scoped({thread_scope}, move || "));
+    code.push_str(&start);
     true
+}
+
+/// The value of element `branch` of a product, once every element has
+/// started: the first runs now, on this thread, the way `rayon::join` runs
+/// its first closure; the others are joined in order. A panic of the first
+/// comes back as the `Err` a join gives, so either way `unwrap` panics the
+/// same.
+fn emit_parallel_join(branch: usize) -> String {
+    let handle = generated_ident(&format!("h{branch}"));
+    if branch == 0 {
+        format!("crate::run_first_branch({handle}).unwrap()")
+    } else {
+        format!("{handle}.join().unwrap()")
+    }
 }
 
 /// Free source locals read by one independent-product branch, keyed by MIR
@@ -12191,8 +12214,8 @@ mod tests {
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("bare product should emit");
         assert_eq!(
             emit,
-            "std::thread::scope(|__s| { let __h0 = aver_rt::spawn_scoped(__s, move || aver_rt::AverInt::from_i64(7)); \
-             let __h1 = aver_rt::spawn_scoped(__s, move || aver_rt::AverInt::from_i64(9)); let __r0 = __h0.join().unwrap(); \
+            "std::thread::scope(|__s| { let __h0 = (move || aver_rt::AverInt::from_i64(7)); \
+             let __h1 = aver_rt::spawn_scoped(__s, move || aver_rt::AverInt::from_i64(9)); let __r0 = crate::run_first_branch(__h0).unwrap(); \
              let __r1 = __h1.join().unwrap(); (__r0, __r1) }) "
         );
     }
@@ -12261,9 +12284,7 @@ mod tests {
         // Both branches read `height`; only the second holds its final read.
         let emit = product_reading(&[("height", false), ("height", true)]);
         assert!(
-            emit.contains(
-                "let __h0 = { let height = height.clone(); aver_rt::spawn_scoped(__s, move ||"
-            ),
+            emit.contains("let __h0 = { let height = height.clone(); (move ||"),
             "branch 0 clones before branch 1 takes the original: {emit}"
         );
         assert!(
@@ -12277,7 +12298,7 @@ mod tests {
         // `(f(table), g(height))!` with `table` read for the last time.
         let emit = product_reading(&[("table", true), ("height", false)]);
         assert!(
-            emit.contains("let __h0 = { let table = table; aver_rt::spawn_scoped(__s, move ||"),
+            emit.contains("let __h0 = { let table = table; (move ||"),
             "a branch argument at its last use moves into the branch: {emit}"
         );
         assert!(

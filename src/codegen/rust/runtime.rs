@@ -219,6 +219,23 @@ pub fn cancel_checkpoint_now() {
     }
 }
 
+/// Runs the first element of a product on the thread that reaches the
+/// product, while the other elements run on threads of their own. The
+/// element sees no cancel flag of a product around it, as a thread of its
+/// own would not, and its panic comes back as the `Err` that joining its
+/// thread would give.
+pub fn run_first_branch<T, F>(run: F) -> std::thread::Result<T>
+where
+    F: FnOnce() -> T,
+{
+    let flags = ACTIVE_CANCEL_FLAGS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+    let steps = CANCEL_STEPS_LEFT.with(|left| left.replace(0));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+    ACTIVE_CANCEL_FLAGS.with(|cell| *cell.borrow_mut() = flags);
+    CANCEL_STEPS_LEFT.with(|left| left.set(steps));
+    result
+}
+
 pub fn run_cancelable_branch<T, F>(flag: Arc<AtomicBool>, run: F) -> ParallelBranch<T>
 where
     F: FnOnce() -> T,
