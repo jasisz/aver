@@ -502,6 +502,21 @@ pub fn main_exit_status(code: &AverInt) -> i32 {
     }
 }
 
+/// Held by each `verify` case of a program built for one thread while it
+/// runs under `cargo test`, which runs the cases on threads of their own.
+/// Such a build counts references with plain instructions, sound only while
+/// Aver code runs on one thread at a time, and the cases share nodes (the
+/// value of a module-level binding, a string literal): the lock runs them one
+/// after another, and its release and acquire order every change of a count
+/// before the next case's, as `join` does in the program. A case that fails
+/// still lets the next one run.
+pub fn one_case_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ALONE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// The value of a module-level binding, computed once, by the first thread
 /// that reads it.
 #[inline]

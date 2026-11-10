@@ -1181,10 +1181,16 @@ macro_rules! thin_sum {
         $vis struct $name($crate::thin::Thin<$name>);
 
         /// The value's constructor and a reference to its fields.
+        ///
+        /// Each discriminant is the constructor's tag, so `view` hands the
+        /// node's tag on as it is. Left to rustc, the discriminants need not
+        /// be the tags, and `view` became a jump table of its own in front
+        /// of the one the `match` on its result compiles to.
         #[allow(dead_code, non_camel_case_types)]
         $(#[$view_meta])*
+        #[repr(u32)]
         $vis enum $view<'a> {
-            $( $ctor $( (&'a $fields) )?, )+
+            $( $ctor $( (&'a $fields) )? = $tag, )+
         }
 
         /// Two values of the same constructor and both their fields.
@@ -1293,7 +1299,11 @@ macro_rules! thin_sum {
             )?
 
             /// The constructor and its fields, to match on.
-            #[inline]
+            ///
+            /// Inlined always: with the tag as the discriminant it is a load
+            /// and a choice of field pointer, and inlined into the `match`
+            /// on its result that choice merges into the match's own jump.
+            #[inline(always)]
             $vis fn view(&self) -> $view<'_> {
                 let (this, tag) = self.made();
                 match tag {
