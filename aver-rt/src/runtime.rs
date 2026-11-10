@@ -5,6 +5,14 @@ thread_local! {
     static CONSOLE_CAPTURE: RefCell<Option<(Vec<u8>, Vec<u8>)>> = const { RefCell::new(None) };
 }
 
+/// Puts `capture` in place of this thread's console capture and gives the
+/// old one back (see [`crate::as_own_thread`]).
+pub(crate) fn swap_console_capture(
+    capture: Option<(Vec<u8>, Vec<u8>)>,
+) -> Option<(Vec<u8>, Vec<u8>)> {
+    CONSOLE_CAPTURE.with(|held| std::mem::replace(&mut *held.borrow_mut(), capture))
+}
+
 pub fn capture_console_output<F, R>(f: F) -> (R, Vec<u8>, Vec<u8>)
 where
     F: FnOnce() -> R,

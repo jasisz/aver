@@ -5,6 +5,8 @@ use std::time::Duration;
 
 #[cfg(not(target_family = "wasm"))]
 mod reactor;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use reactor::{Sockets, swap_sockets};
 
 pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 5;
 pub const DEFAULT_REQUEST_IDLE_TIMEOUT_SECS: u64 = 30;
@@ -1067,5 +1069,33 @@ mod tests {
         close(&promoted_after_deadline).expect("close deadline-ready dial");
         release_blocked_tx.send(()).expect("release blocked peer");
         blocked_server.join().expect("blocked server");
+    }
+
+    #[test]
+    fn code_run_as_its_own_thread_has_sockets_of_its_own_and_closes_them() {
+        let (caller, caller_server) = loopback_connection(|_| {});
+        let (read_tx, read_rx) = mpsc::channel();
+        let (inner, inner_server) = crate::as_own_thread(|| {
+            assert!(!reactor::connection_exists(&caller));
+            let opened = loopback_connection(move |mut stream| {
+                let mut byte = [0u8; 1];
+                read_tx
+                    .send(stream.read(&mut byte).expect("read until closed"))
+                    .expect("report the read");
+            });
+            assert!(reactor::connection_exists(&opened.0));
+            opened
+        });
+        assert!(!reactor::connection_exists(&inner));
+        assert_eq!(
+            read_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the peer sees the close"),
+            0
+        );
+        assert!(reactor::connection_exists(&caller));
+        close(&caller).expect("close the caller's connection");
+        inner_server.join().expect("inner server");
+        caller_server.join().expect("caller server");
     }
 }

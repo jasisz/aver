@@ -647,6 +647,58 @@ pub fn spawn_scoped<'scope, 'env, T: Send + 'scope>(
         .expect("failed to spawn a thread")
 }
 
+/// What a thread keeps for itself and lets go of when it ends: its
+/// `Terminal` buffer, its sockets and its console capture.
+struct OwnThreadState {
+    #[cfg(feature = "terminal")]
+    out: Option<std::io::BufWriter<std::io::Stdout>>,
+    #[cfg(not(target_family = "wasm"))]
+    sockets: tcp::Sockets,
+    console: Option<(Vec<u8>, Vec<u8>)>,
+}
+
+impl OwnThreadState {
+    /// Puts `self` in place of this thread's state, giving the old one back.
+    fn swap(self) -> Self {
+        Self {
+            #[cfg(feature = "terminal")]
+            out: terminal::swap_out(self.out),
+            #[cfg(not(target_family = "wasm"))]
+            sockets: tcp::swap_sockets(self.sockets),
+            console: runtime::swap_console_capture(self.console),
+        }
+    }
+}
+
+/// The caller's state while code runs as if on a thread of its own.
+struct OwnThreadGuard(Option<OwnThreadState>);
+
+impl Drop for OwnThreadGuard {
+    fn drop(&mut self) {
+        if let Some(caller) = self.0.take() {
+            // What the code left behind goes the way a thread's goes when
+            // it ends: the buffer is flushed, the sockets are closed.
+            drop(caller.swap());
+        }
+    }
+}
+
+/// Runs `run` on this thread as if on a thread of its own: it starts with no
+/// `Terminal` output, sockets or console capture, and when it returns or
+/// unwinds what it wrote is flushed and the sockets it opened are closed,
+/// as when a thread ends. The caller's own are back afterwards.
+pub fn as_own_thread<T>(run: impl FnOnce() -> T) -> T {
+    let fresh = OwnThreadState {
+        #[cfg(feature = "terminal")]
+        out: None,
+        #[cfg(not(target_family = "wasm"))]
+        sockets: tcp::Sockets::default(),
+        console: None,
+    };
+    let _caller = OwnThreadGuard(Some(fresh.swap()));
+    run()
+}
+
 /// Execute tasks in parallel using scoped threads.
 /// All branches run to completion (`complete` mode).
 pub fn par_execute<T: Send>(tasks: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T> {

@@ -15,9 +15,27 @@ use std::time::Duration;
 
 use crossterm::{QueueableCommand, execute};
 
+/// What a thread writes, made at its first write. A thread that ends
+/// flushes it.
+type Out = BufWriter<io::Stdout>;
+
 thread_local! {
-    static STDOUT_BUF: std::cell::RefCell<BufWriter<io::Stdout>> =
-        std::cell::RefCell::new(BufWriter::with_capacity(65536, io::stdout()));
+    static STDOUT_BUF: std::cell::RefCell<Option<Out>> = const { std::cell::RefCell::new(None) };
+}
+
+fn with_out<R>(write: impl FnOnce(&mut Out) -> R) -> R {
+    STDOUT_BUF.with(|buf| {
+        write(
+            buf.borrow_mut()
+                .get_or_insert_with(|| BufWriter::with_capacity(65536, io::stdout())),
+        )
+    })
+}
+
+/// Puts `out` in place of this thread's buffer and gives the old one back
+/// (see [`crate::as_own_thread`]).
+pub(crate) fn swap_out(out: Option<Out>) -> Option<Out> {
+    STDOUT_BUF.with(|buf| std::mem::replace(&mut *buf.borrow_mut(), out))
 }
 
 /// Global flag: true while raw mode is active.
@@ -47,9 +65,8 @@ pub fn restore_terminal() {
 }
 
 pub fn clear() -> Result<(), String> {
-    STDOUT_BUF.with(|buf| {
-        buf.borrow_mut()
-            .queue(terminal::Clear(terminal::ClearType::All))
+    with_out(|out| {
+        out.queue(terminal::Clear(terminal::ClearType::All))
             .map(|_| ())
             .map_err(|e| e.to_string())
     })
@@ -58,36 +75,29 @@ pub fn clear() -> Result<(), String> {
 pub fn move_to(x: i64, y: i64) -> Result<(), String> {
     let x = u16::try_from(x).map_err(|_| format!("Terminal.moveTo: x={} out of range", x))?;
     let y = u16::try_from(y).map_err(|_| format!("Terminal.moveTo: y={} out of range", y))?;
-    STDOUT_BUF.with(|buf| {
-        buf.borrow_mut()
-            .queue(cursor::MoveTo(x, y))
+    with_out(|out| {
+        out.queue(cursor::MoveTo(x, y))
             .map(|_| ())
             .map_err(|e| e.to_string())
     })
 }
 
 pub fn print_at_cursor(s: &str) -> Result<(), String> {
-    STDOUT_BUF.with(|buf| {
-        buf.borrow_mut()
-            .write_all(s.as_bytes())
-            .map_err(|e| e.to_string())
-    })
+    with_out(|out| out.write_all(s.as_bytes()).map_err(|e| e.to_string()))
 }
 
 pub fn set_color(color: &str) -> Result<(), String> {
     let c = parse_color(color)?;
-    STDOUT_BUF.with(|buf| {
-        buf.borrow_mut()
-            .queue(SetForegroundColor(c))
+    with_out(|out| {
+        out.queue(SetForegroundColor(c))
             .map(|_| ())
             .map_err(|e| e.to_string())
     })
 }
 
 pub fn reset_color() -> Result<(), String> {
-    STDOUT_BUF.with(|buf| {
-        buf.borrow_mut()
-            .queue(style::ResetColor)
+    with_out(|out| {
+        out.queue(style::ResetColor)
             .map(|_| ())
             .map_err(|e| e.to_string())
     })
@@ -128,25 +138,23 @@ pub fn size() -> Result<(i64, i64), String> {
 }
 
 pub fn hide_cursor() -> Result<(), String> {
-    STDOUT_BUF.with(|buf| {
-        buf.borrow_mut()
-            .queue(cursor::Hide)
+    with_out(|out| {
+        out.queue(cursor::Hide)
             .map(|_| ())
             .map_err(|e| e.to_string())
     })
 }
 
 pub fn show_cursor() -> Result<(), String> {
-    STDOUT_BUF.with(|buf| {
-        buf.borrow_mut()
-            .queue(cursor::Show)
+    with_out(|out| {
+        out.queue(cursor::Show)
             .map(|_| ())
             .map_err(|e| e.to_string())
     })
 }
 
 pub fn flush() -> Result<(), String> {
-    STDOUT_BUF.with(|buf| buf.borrow_mut().flush().map_err(|e| e.to_string()))
+    with_out(|out| out.flush().map_err(|e| e.to_string()))
 }
 
 /// RAII guard that restores the terminal on drop.
@@ -180,5 +188,34 @@ fn parse_color(s: &str) -> Result<Color, String> {
             "Terminal.setColor: unknown color '{}' (expected: red, green, yellow, blue, white, cyan, magenta, black)",
             s
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buffered() -> Vec<u8> {
+        STDOUT_BUF.with(|buf| {
+            buf.borrow()
+                .as_ref()
+                .map(|out| out.buffer().to_vec())
+                .unwrap_or_default()
+        })
+    }
+
+    #[test]
+    fn code_run_as_its_own_thread_writes_to_a_buffer_of_its_own() {
+        print_at_cursor("caller").unwrap();
+        crate::as_own_thread(|| {
+            assert!(buffered().is_empty());
+            print_at_cursor("\n").unwrap();
+            assert_eq!(buffered(), b"\n");
+        });
+        assert_eq!(buffered(), b"caller");
+        // Leave nothing to print: drop the caller's bytes unwritten.
+        if let Some(out) = swap_out(None) {
+            let _ = out.into_parts();
+        }
     }
 }

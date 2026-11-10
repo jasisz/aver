@@ -4501,7 +4501,9 @@ fn main() -> Result<Tuple<Int, Int>, String>
         assert!(entry.contains("crate::run_cancelable_branch"));
         assert!(entry.contains("capture_parallel_scope_context"));
         assert!(entry.contains("aver_rt::spawn_scoped(__s, move ||"));
+        assert!(entry.contains("crate::run_first_branch(__h0)"));
         assert!(runtime_support.contains("pub fn run_cancelable_branch"));
+        assert!(runtime_support.contains("pub fn run_first_branch"));
         assert!(runtime_support.contains("panic_any(AverCancelled)"));
         assert!(replay_support.contains("pub fn capture_parallel_scope_context"));
         assert!(replay_support.contains("pub fn independence_mode_is_cancel()"));
