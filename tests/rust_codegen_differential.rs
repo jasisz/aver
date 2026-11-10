@@ -1424,6 +1424,32 @@ fn panic_abort_is_refused_with_cancel_mode_and_leaves_products_and_tests_working
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// The first element of a product runs on the calling thread but keeps a
+/// `Terminal` buffer of its own, flushed when the element ends, as when it
+/// had a thread of its own: its text comes out before the text the caller
+/// wrote earlier and flushes later.
+#[test]
+fn the_first_element_of_a_product_flushes_its_own_terminal_output_when_it_ends() {
+    const SOURCE: &str = "module TermOrder\n    intent = \"The first element of a product writes Terminal output of its own.\"\n    effects [Terminal.print, Terminal.flush]\n\nfn say(text: String) -> Result<Unit, String>\n    ? \"Print text with Terminal.\"\n    ! [Terminal.print]\n    Terminal.print(text)\n\nfn quiet(n: Int) -> Result<Int, String>\n    ? \"Print nothing.\"\n    Result.Ok(n)\n\nfn main() -> Result<Unit, String>\n    ! [Terminal.print, Terminal.flush]\n    Terminal.print(\"main \")?\n    pair = (say(\"element \"), quiet(1))?!\n    match pair\n        (_, n) -> Terminal.flush()\n";
+    let ws = temp_dir("first_element_terminal");
+    let result = (|| {
+        let (bin, root) = build_with_config(&ws, "p_terminal", SOURCE, "", &[])?;
+        let out = Command::new(&bin)
+            .current_dir(&root)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        if !out.status.success() || String::from_utf8_lossy(&out.stdout) != "element main " {
+            return Err(format!(
+                "the element's text must come out when it ends:\n{}",
+                format_output(&out)
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 #[test]
 fn a_trusted_law_that_does_not_hold_stops_the_program_when_the_call_is_made() {
     const SOURCE: &str = "module Trusted\n    intent = \"a deferred call knows a value from a law that does not hold\"\n    effects [Console.print]\n\ntype Term\n    Var(Int, Int)\n    App(Term, Term, Int)\n\nfn wordOf(t: Term) -> Int\n    ? \"The word a term carries.\"\n    match t\n        Term.Var(_, w) -> w\n        Term.App(_, _, w) -> w\n\nfn shift(t: Term, by: Int) -> Term\n    ? \"Every variable moved by `by`.\"\n    match t\n        Term.Var(n, _) -> Term.Var(n + by, wordOf(t) * 31 + by)\n        Term.App(f, a, _) -> Term.App(shift(f, by), shift(a, by), wordOf(t) * 31 + by)\n\nverify shift law wordGuess\n    given t: Term = [Term.Var(0, 5)]\n    given by: Int = [0]\n    wordOf(shift(t, by)) => wordOf(t) * 31\n\nfn main() -> Unit\n    ! [Console.print]\n    t = Term.Var(0, 1)\n    later = lazy shift(t, 2) knowing shift.wordGuess(t, 2)\n    Console.print(\"known {wordOf(later)}\")\n    Console.print(\"made {wordOf(shift(later, 0))}\")\n";

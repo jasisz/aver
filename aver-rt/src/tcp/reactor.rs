@@ -32,6 +32,24 @@ thread_local! {
     static LISTENERS: RefCell<HashMap<String, ListenerState>> = RefCell::new(HashMap::new());
 }
 
+/// One thread's sockets. Dropping them closes them, as a thread that ends
+/// does.
+#[derive(Default)]
+pub(crate) struct Sockets {
+    connections: HashMap<String, BufReader<TcpStream>>,
+    dials: HashMap<String, PendingDial>,
+    listeners: HashMap<String, ListenerState>,
+}
+
+/// Puts `sockets` in place of this thread's and gives the old ones back
+/// (see [`crate::as_own_thread`]).
+pub(crate) fn swap_sockets(mut sockets: Sockets) -> Sockets {
+    CONNECTIONS.with(|held| std::mem::swap(&mut *held.borrow_mut(), &mut sockets.connections));
+    DIALS.with(|held| std::mem::swap(&mut *held.borrow_mut(), &mut sockets.dials));
+    LISTENERS.with(|held| std::mem::swap(&mut *held.borrow_mut(), &mut sockets.listeners));
+    sockets
+}
+
 pub(super) fn live_connection_count() -> usize {
     CONNECTIONS.with(|connections| connections.borrow().len())
         + DIALS.with(|dials| dials.borrow().len())
