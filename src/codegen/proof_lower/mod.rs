@@ -526,12 +526,19 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         if !refinement::proof_subtype_carrier_supported(info.carrier_type) {
             continue;
         }
+        // Every value passed one of the smart constructors' checks: the
+        // invariant is their disjunction, which is the one check itself
+        // when the type has one constructor. A check that would capture
+        // the name it is restated over leaves the type unrefined.
+        let Some(expr) = info.invariant(|e| inputs.resolve_expr(e, module_prefix)) else {
+            continue;
+        };
         let invariant = Predicate {
             free_vars: vec![(
-                info.param_name.to_string(),
+                info.param_name().to_string(),
                 crate::ir::proof_ir::QuantifierType::Plain(info.carrier_type.to_string()),
             )],
-            expr: inputs.resolve_expr(info.predicate, module_prefix),
+            expr,
         };
         // Lean permits an empty Subtype, so no inhabitation witness is
         // needed. Keeping the decl in ProofIR makes "emit a proof subtype"
@@ -542,7 +549,7 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 name: name.clone(),
                 carrier_type: info.carrier_type.to_string(),
                 carrier_field: info.carrier_field.to_string(),
-                predicate_param: info.param_name.to_string(),
+                predicate_param: info.param_name().to_string(),
                 invariant,
                 // Filled in immediately below by `populate_refined_type_intervals`,
                 // which runs the interval analysis once over the just-built
@@ -640,14 +647,8 @@ pub fn carrier_interval_table(
         else {
             continue;
         };
-        let invariant = Predicate {
-            free_vars: vec![(
-                info.param_name.to_string(),
-                QuantifierType::Plain(info.carrier_type.to_string()),
-            )],
-            expr: inputs.resolve_expr(info.predicate, module_prefix),
-        };
-        let (interval, interval_known) = crate::ir::interval::interval_of_invariant(&invariant);
+        // The hull of what every smart constructor admits.
+        let (interval, interval_known) = info.interval(|e| inputs.resolve_expr(e, module_prefix));
         // Fail-closed: an unrecognized invariant (`interval_known == false`)
         // is OMITTED, so the carrier stays boxed.
         if !interval_known {
@@ -1463,25 +1464,19 @@ pub fn carrier_ungated_construction_demotions(
         return demoted;
     }
 
-    let mut ctor_fn_of: HashMap<String, String> = HashMap::new();
+    // Every smart constructor of each candidate gates its construction.
+    let mut ctor_fn_of: HashMap<String, Vec<String>> = HashMap::new();
     let mut carrier_field_of: HashMap<String, String> = HashMap::new();
     for name in candidates {
-        if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(name, inputs, None)
-        {
-            ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
+        if let Some(info) = crate::codegen::common::refinement_info_for(name, inputs) {
+            ctor_fn_of.insert(
+                name.clone(),
+                info.constructors
+                    .iter()
+                    .map(|c| c.name.to_string())
+                    .collect(),
+            );
             carrier_field_of.insert(name.clone(), info.carrier_field.to_string());
-        } else {
-            for m in inputs.dep_modules {
-                if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(
-                    name,
-                    inputs,
-                    Some(m.prefix.as_str()),
-                ) {
-                    ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
-                    carrier_field_of.insert(name.clone(), info.carrier_field.to_string());
-                    break;
-                }
-            }
         }
     }
 
@@ -1512,7 +1507,9 @@ pub fn carrier_ungated_construction_demotions(
                 // same demotion key here.
                 let type_name = canonical_spelling(type_name, type_aliases);
                 if !candidates.contains(type_name)
-                    || ctor_fn_of.get(type_name).map(String::as_str) == Some(fd.name.as_str())
+                    || ctor_fn_of
+                        .get(type_name)
+                        .is_some_and(|ctors| ctors.contains(&fd.name))
                 {
                     return;
                 }

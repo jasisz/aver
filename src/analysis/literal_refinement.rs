@@ -145,6 +145,9 @@ pub struct LiteralRefinementCtor {
     /// Interval the constructor's predicate proves: of EVERY element for a
     /// `List<Int>` carrier, of the value itself for an `Int` carrier.
     pub interval: Interval,
+    /// Every smart constructor of the same record, this one included, in
+    /// source order: each builds it from a value its own check admits.
+    pub gates: Vec<String>,
     /// Whether every executable construction of this nominal is gated by the
     /// smart constructor (or is independently proven safe). Only closed
     /// refinements may seed runtime list provenance. Always `false` for an
@@ -201,9 +204,26 @@ impl LiteralRefinementTable {
         // A bare record name declared in more than one scope would make the
         // per-scope lookup ambiguous downstream; the packed-layout table
         // declines those, so decline them here too.
-        let mut seen: HashSet<(Option<String>, String)> = HashSet::new();
+        let mut seen: HashSet<(Option<String>, String, String)> = HashSet::new();
         let mut ctors = Vec::new();
-        for pattern in detect_module_patterns(entry_items, dep_modules) {
+        let patterns = detect_module_patterns(entry_items, dep_modules);
+        // Every smart constructor of each record, recognized or not here.
+        let mut gates_of: HashMap<(Option<String>, String), Vec<String>> = HashMap::new();
+        for pattern in &patterns {
+            if let ModulePattern::RefinementSmartConstructor {
+                scope,
+                type_name,
+                constructor_fn,
+                ..
+            } = pattern
+            {
+                gates_of
+                    .entry((scope.clone(), type_name.clone()))
+                    .or_default()
+                    .push(constructor_fn.clone());
+            }
+        }
+        for pattern in patterns {
             let ModulePattern::RefinementSmartConstructor {
                 scope,
                 type_name,
@@ -268,9 +288,13 @@ impl LiteralRefinementTable {
             let Some(interval) = derived else {
                 continue;
             };
-            if !seen.insert((scope.clone(), type_name.clone())) {
+            if !seen.insert((scope.clone(), type_name.clone(), constructor_fn.clone())) {
                 continue;
             }
+            let gates = gates_of
+                .get(&(scope.clone(), type_name.clone()))
+                .cloned()
+                .unwrap_or_default();
             // `FnKey` is name-based within one scope. If another definition
             // shares the smart constructor's name, its call sites collapse to
             // the same identity and neither literal nor runtime discharge is
@@ -343,6 +367,7 @@ impl LiteralRefinementTable {
                 constructor_fn,
                 projector_fns,
                 interval,
+                gates,
                 runtime_provenance: false,
             });
         }
@@ -368,9 +393,28 @@ impl LiteralRefinementTable {
         // discharge of an `Int` carrier decides one written-out value
         // against the predicate; another construction site cannot change
         // that answer.
+        //
+        // A record with several smart constructors holds what any of them
+        // admits. A list projected from it is proven only within their hull,
+        // so it may pass unchecked into a constructor that admits that whole
+        // hull, never into a narrower one; and the hull is known only when
+        // every constructor of the record is in the table.
+        let mut hulls: HashMap<TypeId, (Interval, usize)> = HashMap::new();
+        for ctor in &ctors {
+            hulls
+                .entry(ctor.type_id)
+                .and_modify(|(hull, count)| {
+                    *hull = hull.hull(ctor.interval);
+                    *count += 1;
+                })
+                .or_insert((ctor.interval, 1));
+        }
         for ctor in &mut ctors {
+            let (hull, recognized) = hulls[&ctor.type_id];
             ctor.runtime_provenance = ctor.carrier == LiteralCarrier::IntList
-                && runtime_provenance_is_closed(ctor, entry_items, dep_modules);
+                && recognized == ctor.gates.len()
+                && ctor.interval.hull(hull) == ctor.interval
+                && runtime_provenance_is_closed(ctor, hull, entry_items, dep_modules);
         }
 
         Self { ctors }
@@ -460,6 +504,7 @@ fn is_exact_carrier_projector(fd: &FnDef, type_name: &str, carrier_field: &str) 
 /// site invalidates runtime provenance for the whole nominal.
 fn runtime_provenance_is_closed(
     ctor: &LiteralRefinementCtor,
+    hull: Interval,
     entry_items: &[TopLevel],
     dep_modules: &[ModuleInfo],
 ) -> bool {
@@ -488,18 +533,17 @@ fn runtime_provenance_is_closed(
                     return;
                 }
                 let independently_safe = !is_update
-                    && (crate::codegen::proof_lower::construct_arg_is_in_interval(
-                        fields,
-                        ctor.interval,
-                    ) || crate::codegen::proof_lower::construct_arg_is_finalized_bytes(
-                        fields,
-                        ctor.interval,
-                        byte_payloads,
-                    ) || crate::codegen::proof_lower::construct_arg_preserves_list_refinement(
-                        fields,
-                        &ctor.carrier_field,
-                        nominal_params,
-                    ));
+                    && (crate::codegen::proof_lower::construct_arg_is_in_interval(fields, hull)
+                        || crate::codegen::proof_lower::construct_arg_is_finalized_bytes(
+                            fields,
+                            hull,
+                            byte_payloads,
+                        )
+                        || crate::codegen::proof_lower::construct_arg_preserves_list_refinement(
+                            fields,
+                            &ctor.carrier_field,
+                            nominal_params,
+                        ));
                 if !independently_safe {
                     closed = false;
                 }
@@ -509,7 +553,7 @@ fn runtime_provenance_is_closed(
     };
 
     let scan_fn = |scope: Option<&str>, fd: &FnDef| {
-        let inside_gate = scope == ctor.scope.as_deref() && fd.name == ctor.constructor_fn;
+        let inside_gate = scope == ctor.scope.as_deref() && ctor.gates.contains(&fd.name);
         let nominal_params: HashSet<String> = fd
             .params
             .iter()
@@ -844,6 +888,7 @@ fn go() -> Int
                 constructor_fn: "fromList".to_string(),
                 projector_fns: Vec::new(),
                 interval: Interval::between(0, 255),
+                gates: vec!["fromList".to_string()],
                 runtime_provenance: true,
             }]
         );
@@ -1153,6 +1198,57 @@ fn go() -> Int
     fn int_discharges(check: &str) -> impl Fn(&str) -> bool {
         let symbols = symbols_for(INT_CONSUMER, &[("Natural", &int_refinement(check))]);
         move |arg: &str| discharges_from(&symbols, None, &format!("Natural.fromInt({arg})"))
+    }
+
+    #[test]
+    fn each_smart_constructor_discharges_by_its_own_check() {
+        let module = int_refinement("Bool.and(n >= 0, n < 10)")
+            .replace("exposes [fromInt, toInt]", "exposes [fromInt, smallOf, toInt]")
+            .replace(
+            "fn toInt(",
+            "fn smallOf(k: Int) -> Result<Natural, String>\n    match Bool.and(k >= -3, k < 3)\n        true -> Result.Ok(Natural(value = k))\n        false -> Result.Err(\"small\")\n\nfn toInt(",
+        );
+        let symbols = symbols_for(INT_CONSUMER, &[("Natural", &module)]);
+        let ctors = &symbols.literal_refinements().ctors;
+        assert_eq!(
+            ctors
+                .iter()
+                .map(|c| (c.constructor_fn.as_str(), c.interval, c.gates.len()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("fromInt", Interval::between(0, 9), 2),
+                ("smallOf", Interval::between(-3, 2), 2),
+            ]
+        );
+        let discharges = |call: &str| discharges_from(&symbols, None, call);
+        assert!(discharges("Natural.fromInt(9)"));
+        assert!(!discharges("Natural.fromInt(-2)"));
+        assert!(discharges("Natural.smallOf(-2)"));
+        assert!(!discharges("Natural.smallOf(9)"));
+    }
+
+    #[test]
+    fn a_projected_list_passes_only_into_a_constructor_that_admits_every_constructor() {
+        let module = OCTETS
+            .replace("exposes [fromList]", "exposes [fromList, lowOf]")
+            .replace(
+                "fn fromList(",
+                "fn allLow(xs: List<Int>) -> Bool\n    match xs\n        [] -> true\n        [head, ..tail] -> match Bool.and(head >= 0, head <= 127)\n            true -> allLow(tail)\n            false -> false\n\nfn lowOf(xs: List<Int>) -> Result<Octets, String>\n    match allLow(xs)\n        true -> Result.Ok(Octets(values = xs))\n        false -> Result.Err(\"high\")\n\nfn fromList(",
+            );
+        let symbols = symbols_for(CONSUMER, &[("Octets", &module)]);
+        let provenance: Vec<(&str, Interval, bool)> = symbols
+            .literal_refinements()
+            .ctors
+            .iter()
+            .map(|c| (c.constructor_fn.as_str(), c.interval, c.runtime_provenance))
+            .collect();
+        assert_eq!(
+            provenance,
+            vec![
+                ("lowOf", Interval::between(0, 127), false),
+                ("fromList", Interval::between(0, 255), true),
+            ]
+        );
     }
 
     #[test]

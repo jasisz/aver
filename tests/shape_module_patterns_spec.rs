@@ -207,11 +207,12 @@ fn detection_payload_matches_refinement_info_for() {
         .expect("legacy refinement_info_for must match the new pattern detector");
     assert_eq!(legacy.carrier_field, carrier_field);
     assert_eq!(legacy.carrier_type, carrier_type);
-    assert_eq!(legacy.param_name, param_name);
+    assert_eq!(legacy.constructors.len(), 1);
+    assert_eq!(legacy.param_name(), param_name);
     // `predicate` is `Spanned<Expr>` — comparing the rendered
     // structure is enough to confirm agreement without bringing in
     // a full AST equality impl.
-    assert_eq!(format!("{:?}", legacy.predicate), {
+    assert_eq!(format!("{:?}", legacy.constructors[0].predicate), {
         let ModulePattern::RefinementSmartConstructor { predicate, .. } = pattern else {
             unreachable!()
         };

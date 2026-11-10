@@ -9717,10 +9717,11 @@ fn named_call_head(name: &str, ctx: &MirEmitCtx<'_>) -> String {
     }
 }
 
-/// A call of the smart constructor of a carrier held as a raw `i64` on a
-/// machine word: the word is checked against the carrier's bound, which is
-/// what the constructor checks, and becomes its field. Only a word outside
-/// the bound is boxed, for the constructor to build its `Err`.
+/// A call of a smart constructor of a carrier held as a raw `i64` on a
+/// machine word: the word is checked against what that constructor's own
+/// check admits (the carrier's bound only when it is the type's one
+/// constructor) and becomes its field. Only a word outside it is boxed, for
+/// the constructor to build its `Err`.
 fn emit_carrier_ctor_on_word(
     name: &str,
     fn_id: crate::ir::FnId,
@@ -9729,8 +9730,8 @@ fn emit_carrier_ctor_on_word(
 ) -> Option<String> {
     use crate::ir::interval::Bound;
     let codegen = ctx.codegen?;
-    let (type_id, field) = codegen.rust_i64_carrier_ctors.get(&fn_id)?;
-    let interval = codegen.rust_i64_carriers.get(type_id)?;
+    let ctor = codegen.rust_i64_carrier_ctors.get(&fn_id)?;
+    let (type_id, field, interval) = (&ctor.type_id, &ctor.field, &ctor.admits);
     let ([arg], Bound::Finite(lo), Bound::Finite(hi)) = (args, interval.lo, interval.hi) else {
         return None;
     };

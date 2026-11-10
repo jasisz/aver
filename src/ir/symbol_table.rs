@@ -178,7 +178,7 @@ pub struct SymbolTable {
     literal_refinements: crate::analysis::literal_refinement::LiteralRefinementTable,
     /// Records that are refined types: opaque, with a recognized smart
     /// constructor. See [`SymbolTable::refinement_constructor`].
-    refinement_types: HashMap<TypeId, String>,
+    refinement_types: HashMap<TypeId, Vec<String>>,
     /// Every field annotation of a declared type, across its variants, as
     /// written; read by [`SymbolTable::may_hold_float`].
     type_fields: HashMap<TypeId, Vec<String>>,
@@ -555,7 +555,11 @@ impl SymbolTable {
                         None => TypeKey::entry(&type_name),
                     };
                     if let Some(id) = table.type_id_of(&key) {
-                        table.refinement_types.insert(id, constructor_fn);
+                        table
+                            .refinement_types
+                            .entry(id)
+                            .or_default()
+                            .push(constructor_fn);
                     }
                 }
             }
@@ -570,9 +574,9 @@ impl SymbolTable {
     /// invariant holds of every value only if every direct construction in
     /// its module keeps it, so the checker allows those constructions only
     /// in pure functions, which the proof export checks.
-    /// Returns the smart constructor's name.
-    pub fn refinement_constructor(&self, id: TypeId) -> Option<&str> {
-        self.refinement_types.get(&id).map(String::as_str)
+    /// Returns its smart constructors' names, in source order.
+    pub fn refinement_constructors(&self, id: TypeId) -> Option<&[String]> {
+        self.refinement_types.get(&id).map(Vec::as_slice)
     }
 
     pub fn capability_operation(&self, canonical_name: &str) -> Option<CapabilityOperationInfo> {

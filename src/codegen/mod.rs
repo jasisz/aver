@@ -548,7 +548,8 @@ pub struct CodegenContext {
     pub rust_i64_carriers: crate::ir::mir::bare_i64::CarrierIds,
     /// The smart constructor of each carrier in `rust_i64_carriers`, by
     /// function identity, to the carrier and its one field. Filled with it.
-    pub rust_i64_carrier_ctors: HashMap<crate::ir::FnId, (crate::ir::TypeId, String)>,
+    pub(crate) rust_i64_carrier_ctors:
+        HashMap<crate::ir::FnId, crate::codegen::rust::carrier::CarrierCtor>,
     /// Proof-export decision IR populated by `proof_lower::lower`
     /// during `build_context`. The Lean backend reads from
     /// here to decide refinement-record lift, recursion contracts,

@@ -181,17 +181,23 @@ impl TypeChecker {
         }
         let Some(constructor) = self
             .resolve_type_id(type_name)
-            .and_then(|id| self.symbol_table.refinement_constructor(id))
-            .map(str::to_string)
+            .and_then(|id| self.symbol_table.refinement_constructors(id))
+            .map(|ctors| {
+                ctors
+                    .iter()
+                    .map(|ctor| format!("'{ctor}'"))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            })
         else {
             return;
         };
         self.error_at_node(
             line,
             format!(
-                "A function with effects cannot build '{type_name}' directly: what '{constructor}' \
+                "A function with effects cannot build '{type_name}' directly: what {constructor} \
                  checks is proved only where a pure function builds it. Build it in a pure \
-                 function and call that, or call '{constructor}'"
+                 function and call that, or call {constructor}"
             ),
         );
     }

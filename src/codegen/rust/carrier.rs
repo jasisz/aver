@@ -30,20 +30,23 @@ struct Candidate {
     id: TypeId,
     /// `Module.Type`, or the bare name in the entry module.
     label: String,
+    /// The union of what its smart constructors admit.
     interval: Interval,
-    /// Its smart constructor, the one function that builds it unchecked.
-    ctor: Option<FnId>,
+    /// Its smart constructors, the functions that build it from a checked
+    /// value, each with the interval its own check admits.
+    ctors: Vec<(FnId, Interval)>,
     /// Its one field.
     field: String,
 }
 
 /// The carriers of `program` the Rust backend holds as a raw `i64`, keyed by
-/// type identity, their smart constructors, and a note for each type shaped
-/// as one that is not.
+/// type identity, their smart constructors with the interval each one's
+/// check admits, and a note for each type shaped as one that is not.
 ///
 /// A type is a candidate when it is one `Int` field, listed under
-/// `exposes opaque`, with a smart constructor whose check bounds it within
-/// `i64`. It stays one when nothing else builds it from anything but a
+/// `exposes opaque`, with smart constructors whose checks each bound it
+/// within `i64`. A type may have several: every value then lies in the
+/// union of what they admit, which is the carrier's bound. It stays one when nothing else builds it from anything but a
 /// literal within that bound, in a function or a module binding, and when
 /// it does not cross to a provider: a capability's boundary type or a wait
 /// set's key, whose codecs keep the declared field.
@@ -57,7 +60,7 @@ struct Candidate {
 pub(super) fn i64_carriers(
     ctx: &CodegenContext,
     program: &MirProgram,
-) -> (CarrierIds, HashMap<FnId, (TypeId, String)>, Vec<String>) {
+) -> (CarrierIds, HashMap<FnId, CarrierCtor>, Vec<String>) {
     if std::env::var_os("AVER_NO_BARE_I64").is_some() {
         return (CarrierIds::new(), HashMap::new(), Vec::new());
     }
@@ -76,9 +79,29 @@ pub(super) fn i64_carriers(
     let carriers = candidates.iter().map(|c| (c.id, c.interval)).collect();
     let ctors = candidates
         .iter()
-        .filter_map(|c| Some((c.ctor?, (c.id, c.field.clone()))))
+        .flat_map(|c| {
+            c.ctors.iter().map(|(fn_id, admits)| {
+                let ctor = CarrierCtor {
+                    type_id: c.id,
+                    field: c.field.clone(),
+                    admits: *admits,
+                };
+                (*fn_id, ctor)
+            })
+        })
         .collect();
     (carriers, ctors, notes)
+}
+
+/// A smart constructor of a carrier held as a raw `i64`.
+#[derive(Clone, Debug)]
+pub(crate) struct CarrierCtor {
+    pub type_id: TypeId,
+    /// The carrier's one field.
+    pub field: String,
+    /// What this constructor's own check admits: within the carrier's
+    /// bound, and narrower than it when the type has other constructors.
+    pub admits: Interval,
 }
 
 /// `aver check`: what keeps a carrier the module declares an `Int` field,
@@ -134,16 +157,46 @@ pub fn check_findings(
     let gates: Vec<(Candidate, &str)> = symbols
         .literal_refinements()
         .iter()
-        .filter(|c| c.carrier == LiteralCarrier::Int && c.scope.is_none() && c.interval.fits_i64())
-        .map(|c| {
+        .filter(|c| c.carrier == LiteralCarrier::Int && c.scope.is_none())
+        // The table holds one entry per smart constructor; the type is
+        // looked at once, through all of them.
+        .scan(HashSet::new(), |seen, c| Some(seen.insert(c.type_id).then_some(c)))
+        .flatten()
+        .filter_map(|c| {
+            let ctors = checked_ctors(entry_fns(items), &c.type_name, &c.carrier_field, |fd| {
+                let fn_id = symbols.fn_id_of(&FnKey::entry(fd.name.as_str()))?;
+                let admits = admitted(fd, |e| {
+                    let rctx = crate::ir::hir::ResolveCtx::new(symbols);
+                    let stmt = crate::ast::Stmt::Expr(e.clone());
+                    match crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt) {
+                        crate::ir::hir::ResolvedStmt::Expr(s) => s,
+                        crate::ir::hir::ResolvedStmt::Binding { value, .. } => value,
+                    }
+                })?;
+                Some((fn_id, admits))
+            });
+            let ctors = match ctors {
+                Ok(ctors) => ctors,
+                Err(ctor) => {
+                    let line = entry_fns(items)
+                        .find(|fd| fd.name == ctor)
+                        .map_or(0, |fd| fd.line);
+                    let note = format!(
+                        "`{}` keeps an `Int` field: the check of `{ctor}` does not bound it within 64 bits",
+                        c.type_name
+                    );
+                    findings.push(finding(line, Some(ctor), note, "bound it with literal comparisons"));
+                    return None;
+                }
+            };
             let candidate = Candidate {
                 id: c.type_id,
                 label: c.type_name.clone(),
-                interval: c.interval,
-                ctor: Some(c.fn_id),
+                interval: union(&ctors),
+                ctors,
                 field: c.carrier_field.clone(),
             };
-            (candidate, c.constructor_fn.as_str())
+            Some((candidate, c.constructor_fn.as_str()))
         })
         .collect();
     if gates.is_empty() {
@@ -196,7 +249,7 @@ fn unchecked_builds(program: &MirProgram, candidates: &[Candidate]) -> Vec<(usiz
                 return;
             };
             let candidate = &candidates[index];
-            if candidate.ctor != Some(*fn_id)
+            if !candidate.ctors.iter().any(|(ctor, _)| ctor == fn_id)
                 && !literal_of(value).is_some_and(|k| candidate.interval.contains_point(k))
             {
                 out.push((index, *fn_id, line));
@@ -285,34 +338,28 @@ fn candidates(ctx: &CodegenContext, notes: &mut Vec<String>) -> Vec<Candidate> {
             }
             continue;
         }
-        let Some(info) = crate::codegen::common::refinement_info_for_in_scope(name, &inputs, scope)
-        else {
-            continue;
+        let ctors = checked_ctors(scope_fns(ctx, scope), name, field, |fd| {
+            let key = match scope {
+                Some(prefix) => FnKey::in_module(prefix, fd.name.as_str()),
+                None => FnKey::entry(fd.name.as_str()),
+            };
+            let fn_id = ctx.symbol_table.fn_id_of(&key)?;
+            Some((fn_id, admitted(fd, |e| inputs.resolve_expr(e, scope))?))
+        });
+        let ctors = match ctors {
+            Ok(ctors) if !ctors.is_empty() => ctors,
+            Ok(_) => continue,
+            Err(ctor) => {
+                keep(format!(
+                    "the check of `{ctor}` does not bound it within 64 bits"
+                ));
+                continue;
+            }
         };
-        let invariant = crate::ir::proof_ir::Predicate {
-            free_vars: vec![(
-                info.param_name.to_string(),
-                crate::ir::proof_ir::QuantifierType::Plain(info.carrier_type.to_string()),
-            )],
-            expr: inputs.resolve_expr(info.predicate, scope),
-        };
-        let (interval, known) = crate::ir::interval::interval_of_invariant(&invariant);
-        if !known || !interval.fits_i64() {
-            keep(format!(
-                "the check of `{}` does not bound it within 64 bits",
-                info.constructor_fn
-            ));
-            continue;
-        }
-        let (type_key, ctor_key) = match scope {
-            Some(prefix) => (
-                TypeKey::in_module(prefix, name.as_str()),
-                FnKey::in_module(prefix, info.constructor_fn),
-            ),
-            None => (
-                TypeKey::entry(name.as_str()),
-                FnKey::entry(info.constructor_fn),
-            ),
+        let interval = union(&ctors);
+        let type_key = match scope {
+            Some(prefix) => TypeKey::in_module(prefix, name.as_str()),
+            None => TypeKey::entry(name.as_str()),
         };
         let Some(id) = ctx.symbol_table.type_id_of(&type_key) else {
             continue;
@@ -342,7 +389,7 @@ fn candidates(ctx: &CodegenContext, notes: &mut Vec<String>) -> Vec<Candidate> {
             id,
             label,
             interval,
-            ctor: ctx.symbol_table.fn_id_of(&ctor_key),
+            ctors,
             field: field.clone(),
         });
     }
@@ -409,6 +456,68 @@ fn smart_constructor_shaped<'a>(
         crate::codegen::common::is_refinement_bool_ok_err_match(arms, name, field, param)
             .then_some(fd.name.as_str())
     })
+}
+
+/// Every one of `fns` shaped as a smart constructor of the record `name`
+/// with the one field `field`, each as `ctor` reads it, in source order.
+/// `Err` names the first whose check `ctor` cannot read as an interval
+/// within `i64`: the carrier's bound would not be known.
+fn checked_ctors<'a>(
+    fns: impl IntoIterator<Item = &'a crate::ast::FnDef>,
+    name: &str,
+    field: &str,
+    mut ctor: impl FnMut(&'a crate::ast::FnDef) -> Option<(FnId, Interval)>,
+) -> Result<Vec<(FnId, Interval)>, &'a str> {
+    let mut out = Vec::new();
+    for fd in fns {
+        if smart_constructor_shaped([fd], name, field).is_none() {
+            continue;
+        }
+        match ctor(fd) {
+            Some((fn_id, admits)) if admits.fits_i64() => out.push((fn_id, admits)),
+            _ => return Err(fd.name.as_str()),
+        }
+    }
+    Ok(out)
+}
+
+/// The interval the check of the smart constructor `fd` admits, its
+/// predicate resolved by `resolve`; `None` when the interval engine does not
+/// read it exactly.
+fn admitted(
+    fd: &crate::ast::FnDef,
+    resolve: impl FnOnce(
+        &crate::ast::Spanned<Expr>,
+    ) -> crate::ast::Spanned<crate::ir::hir::ResolvedExpr>,
+) -> Option<Interval> {
+    let [(param, _)] = fd.params.as_slice() else {
+        return None;
+    };
+    let [crate::ast::Stmt::Expr(body)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { subject, .. } = &body.node else {
+        return None;
+    };
+    let invariant = crate::ir::proof_ir::Predicate {
+        free_vars: vec![(
+            param.clone(),
+            crate::ir::proof_ir::QuantifierType::Plain("Int".to_string()),
+        )],
+        expr: resolve(subject),
+    };
+    let (interval, known) = crate::ir::interval::interval_of_invariant(&invariant);
+    known.then_some(interval)
+}
+
+/// The union of what `ctors` admit: the bound every value of their type
+/// lies in.
+fn union(ctors: &[(FnId, Interval)]) -> Interval {
+    ctors
+        .iter()
+        .map(|(_, admits)| *admits)
+        .reduce(Interval::hull)
+        .expect("a carrier has a smart constructor")
 }
 
 fn last_segment(name: &str) -> &str {
@@ -517,6 +626,68 @@ mod tests {
         assert_eq!(
             carriers_and_notes(WORD),
             (vec!["Word".to_string()], Vec::new())
+        );
+    }
+
+    /// [`WORD`] with a second smart constructor admitting `[lo, hi)`.
+    fn word_with_run(lo: &str, hi: &str) -> String {
+        format!(
+            "{WORD}\nfn runOf(n: Int) -> Result<Word, String>\n    match Bool.and(n >= {lo}, n < {hi})\n        true -> Result.Ok(Word(value = n))\n        false -> Result.Err(\"run\")\n"
+        )
+    }
+
+    /// Each smart constructor of `src`'s carrier by name, with what it admits.
+    fn ctors_of(src: &str) -> Vec<(String, Interval)> {
+        let ctx = super::super::tests::ctx_from_source(src, "carrier");
+        let (_, ctors, _) = i64_carriers(&ctx, ctx.mir_program.as_ref().expect("MIR"));
+        let mut out: Vec<(String, Interval)> = ctors
+            .into_iter()
+            .map(|(id, c)| (ctx.symbol_table.fn_entry(id).key.name.clone(), c.admits))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    #[test]
+    fn a_second_bounded_constructor_keeps_it_and_each_keeps_its_own_check() {
+        let src = word_with_run("1", "65536");
+        assert_eq!(
+            carriers_and_notes(&src),
+            (vec!["Word".to_string()], Vec::new())
+        );
+        assert_eq!(
+            ctors_of(&src),
+            vec![
+                (
+                    "fromInt".to_string(),
+                    Interval::between(0, 4611686018427387903)
+                ),
+                ("runOf".to_string(), Interval::between(1, 65535)),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_bound_of_two_constructors_is_their_union() {
+        let src = word_with_run("-5", "3");
+        let ctx = super::super::tests::ctx_from_source(&src, "carrier");
+        let (ids, _, _) = i64_carriers(&ctx, ctx.mir_program.as_ref().expect("MIR"));
+        assert_eq!(
+            ids.into_values().collect::<Vec<_>>(),
+            vec![Interval::between(-5, 4611686018427387903)]
+        );
+        // A literal only the second constructor admits is within the bound.
+        let src = format!("{src}\nfn low() -> Word\n    Word(value = -5)\n");
+        assert_eq!(carriers(&src), vec!["Word".to_string()]);
+    }
+
+    #[test]
+    fn a_second_constructor_without_a_bound_drops_it_and_says_which() {
+        let src = word_with_run("0", "n + 1");
+        assert!(
+            note_of(&src).ends_with("the check of `runOf` does not bound it within 64 bits"),
+            "{}",
+            note_of(&src)
         );
     }
 
@@ -640,6 +811,17 @@ mod tests {
             ]
         );
         assert!(check_warnings(WORD).is_empty());
+    }
+
+    #[test]
+    fn check_takes_every_smart_constructor() {
+        assert!(check_warnings(&word_with_run("1", "65536")).is_empty());
+        assert_eq!(
+            check_warnings(&word_with_run("0", "n + 1")),
+            [
+                "13: `Word` keeps an `Int` field: the check of `runOf` does not bound it within 64 bits"
+            ]
+        );
     }
 
     #[test]

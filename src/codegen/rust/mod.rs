@@ -3,7 +3,7 @@
 /// Transforms Aver AST -> valid Rust source code.
 mod arg_order;
 mod builtins;
-mod carrier;
+pub(crate) mod carrier;
 pub(crate) mod composition;
 mod counted_records;
 pub mod emit_ctx;
