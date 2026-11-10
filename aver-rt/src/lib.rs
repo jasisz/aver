@@ -17,7 +17,7 @@ pub mod int_list;
 pub mod listbuilder;
 #[cfg(all(not(target_family = "wasm"), any(feature = "mimalloc", test)))]
 mod mimalloc;
-pub mod packed_u8;
+pub mod packed;
 #[cfg(feature = "random")]
 pub mod random;
 mod runtime;
@@ -44,12 +44,12 @@ pub use int::{
 };
 pub use int_list::{
     AverIntList, AverIntListIter, int_list_builder_finalize, int_list_builder_new,
-    int_list_builder_push, into_packed_u8,
+    int_list_builder_push, into_packed, into_packed_u8,
 };
 pub use listbuilder::{list_builder_finalize, list_builder_new, list_builder_push};
 #[cfg(all(not(target_family = "wasm"), feature = "mimalloc"))]
 pub use mimalloc::MiMalloc;
-pub use packed_u8::AverPackedU8;
+pub use packed::{AverPacked, AverPackedU8, PackedInt};
 pub use runtime::{
     append_bytes, append_text, capture_console_output, cli_args, console_error, console_print,
     console_warn, delete_dir, delete_file, env_get, env_set, file_size, list_dir, make_dir,
@@ -2572,6 +2572,11 @@ impl AverListMatch for AverIntList {
                 values.step_first();
                 Some((head, AverIntList::Packed(values)))
             }
+            AverIntList::Narrow(mut values) => {
+                let head = values.first()?;
+                values.step_first();
+                Some((head, AverIntList::Narrow(values)))
+            }
         }
     }
 
@@ -2586,6 +2591,7 @@ impl AverListMatch for AverIntList {
                 .as_slice()
                 .first()
                 .map(|byte| (AverInt::from_i64(i64::from(*byte)), ListRest::Next)),
+            AverIntList::Narrow(values) => values.first().map(|head| (head, ListRest::Next)),
             AverIntList::Wide(values) => match values.uncons_lent()? {
                 (head, ListRest::Next) => Some((head.clone(), ListRest::Next)),
                 (head, ListRest::Lent(tail)) => Some((
@@ -2607,6 +2613,7 @@ impl AverListMatch for AverIntList {
     fn step_rest_for_match(&mut self) {
         match self {
             AverIntList::Packed(values) => values.step_first(),
+            AverIntList::Narrow(values) => values.step_first(),
             AverIntList::Wide(values) => values.step_rest(),
         }
     }
