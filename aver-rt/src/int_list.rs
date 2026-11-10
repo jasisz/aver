@@ -176,9 +176,10 @@ impl NarrowInts {
 
     #[inline]
     fn get(&self, index: usize) -> Option<AverInt> {
-        with_items!(self, |items| items
-            .get(index)
-            .map(|item| AverInt::from_i64((*item).into())))
+        fn int<E: PackedInt>(item: &E) -> AverInt {
+            AverInt::from_i64((*item).into())
+        }
+        with_items!(self, |items| items.get(index).map(int))
     }
 
     fn iter(&self) -> NarrowIter<'_> {
