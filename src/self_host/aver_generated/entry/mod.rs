@@ -984,7 +984,8 @@ pub fn finishCliMainResult(
 pub fn hasLocalMain(
     fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> bool {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
     let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
@@ -1003,6 +1004,14 @@ pub fn hasLocalMain(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    fns = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(fns, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(fns);
+                                    }
                                     fns = &__hold0;
                                 }
                             }
@@ -1487,7 +1496,8 @@ pub fn shiftFnIdsInFns__collected(
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
     let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
@@ -1504,6 +1514,14 @@ pub fn shiftFnIdsInFns__collected(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(fns, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(fns);
+                            }
                             fns = &__hold0;
                         }
                     }
@@ -1525,7 +1543,8 @@ pub fn shiftFnIdsInStmts__collected(
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>>::empty();
     let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
     loop {
         crate::cancel_checkpoint();
@@ -1542,6 +1561,14 @@ pub fn shiftFnIdsInStmts__collected(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            stmts = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(stmts, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(stmts);
+                            }
                             stmts = &__hold0;
                         }
                     }
@@ -1563,7 +1590,8 @@ pub fn shiftFnIdsInExprs__collected(
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty();
     let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
@@ -1582,6 +1610,14 @@ pub fn shiftFnIdsInExprs__collected(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            exprs = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(exprs, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(exprs);
+                            }
                             exprs = &__hold0;
                         }
                     }
@@ -1603,7 +1639,8 @@ pub fn shiftFnIdsInFields__collected(
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>>::empty();
     let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
         fields;
     loop {
@@ -1627,6 +1664,14 @@ pub fn shiftFnIdsInFields__collected(
                                 __hold0 = __rest;
                                 fields = &__hold0;
                             }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(fields, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(fields);
+                                }
+                                fields = &__hold0;
+                            }
                         }
                         acc = __tco2;
                         continue;
@@ -1647,7 +1692,8 @@ pub fn shiftFnIdsInArms__collected(
     mut offset @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>>::empty();
     let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
@@ -1670,6 +1716,14 @@ pub fn shiftFnIdsInArms__collected(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            arms = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(arms, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(arms);
+                            }
                             arms = &__hold0;
                         }
                     }

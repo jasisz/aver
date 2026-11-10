@@ -1581,7 +1581,8 @@ pub fn extractStrings__collected(
     items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<AverStr>, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = items;
     loop {
         crate::cancel_checkpoint();
@@ -1602,6 +1603,14 @@ pub fn extractStrings__collected(
                                     }
                                     aver_rt::ListRest::Owned(__rest) => {
                                         __hold0 = __rest;
+                                        items = &__hold0;
+                                    }
+                                    aver_rt::ListRest::Next => {
+                                        if ::core::ptr::eq(items, &__hold0) {
+                                            aver_rt::list_step_rest(&mut __hold0);
+                                        } else {
+                                            __hold0 = aver_rt::list_rest(items);
+                                        }
                                         items = &__hold0;
                                     }
                                 }
@@ -1630,7 +1639,7 @@ pub fn strPartsToVals__collected(
     parts @ _: &aver_rt::AverList<AverStr>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut parts @ _: &aver_rt::AverList<AverStr> = parts;
     loop {
         crate::cancel_checkpoint();
@@ -1651,6 +1660,14 @@ pub fn strPartsToVals__collected(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            parts = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(parts, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(parts);
+                            }
                             parts = &__hold0;
                         }
                     }

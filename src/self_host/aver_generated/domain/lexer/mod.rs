@@ -1547,7 +1547,7 @@ pub fn emitDedentsAcc(
     stack @ _: &aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    let mut __hold2: aver_rt::AverIntList;
+    let mut __hold2: aver_rt::AverIntList = <aver_rt::AverIntList>::empty();
     let mut stack @ _: &aver_rt::AverIntList = stack;
     loop {
         crate::cancel_checkpoint();
@@ -1569,6 +1569,14 @@ pub fn emitDedentsAcc(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold2 = __rest;
+                                    stack = &__hold2;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(stack, &__hold2) {
+                                        aver_rt::list_step_rest(&mut __hold2);
+                                    } else {
+                                        __hold2 = aver_rt::list_rest(stack);
+                                    }
                                     stack = &__hold2;
                                 }
                             }
@@ -1615,7 +1623,7 @@ pub fn emitFinalDedentsAcc(
     stack @ _: &aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    let mut __hold0: aver_rt::AverIntList;
+    let mut __hold0: aver_rt::AverIntList = <aver_rt::AverIntList>::empty();
     let mut stack @ _: &aver_rt::AverIntList = stack;
     loop {
         crate::cancel_checkpoint();
@@ -1637,6 +1645,14 @@ pub fn emitFinalDedentsAcc(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    stack = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(stack, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(stack);
+                                    }
                                     stack = &__hold0;
                                 }
                             }

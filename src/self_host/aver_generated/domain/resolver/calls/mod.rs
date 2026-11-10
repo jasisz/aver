@@ -8,7 +8,8 @@ pub fn buildFnMap(
     mut acc @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut idx @ _: aver_rt::AverInt,
 ) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
     let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
@@ -25,6 +26,14 @@ pub fn buildFnMap(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(fns, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(fns);
+                            }
                             fns = &__hold0;
                         }
                     }
@@ -47,7 +56,8 @@ pub fn resolveCallsInFns(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
     let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
@@ -69,6 +79,14 @@ pub fn resolveCallsInFns(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(fns, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(fns);
+                            }
                             fns = &__hold0;
                         }
                     }
@@ -887,7 +905,7 @@ pub fn isBuiltinCallNameFrom(
     name @ _: &AverStr,
     knownNames @ _: &aver_rt::AverList<AverStr>,
 ) -> bool {
-    let mut __hold1: aver_rt::AverList<AverStr>;
+    let mut __hold1: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut knownNames @ _: &aver_rt::AverList<AverStr> = knownNames;
     loop {
         crate::cancel_checkpoint();
@@ -906,6 +924,14 @@ pub fn isBuiltinCallNameFrom(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    knownNames = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(knownNames, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(knownNames);
+                                    }
                                     knownNames = &__hold1;
                                 }
                             }
@@ -985,7 +1011,8 @@ pub fn resolveCallsInStmts__collected(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>>::empty();
     let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
     loop {
         crate::cancel_checkpoint();
@@ -1008,6 +1035,14 @@ pub fn resolveCallsInStmts__collected(
                             __hold0 = __rest;
                             stmts = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(stmts, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(stmts);
+                            }
+                            stmts = &__hold0;
+                        }
                     }
                     acc = __tco2;
                     continue;
@@ -1027,7 +1062,8 @@ pub fn resolveCallsInExprs__collected(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty();
     let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
@@ -1051,6 +1087,14 @@ pub fn resolveCallsInExprs__collected(
                             __hold0 = __rest;
                             exprs = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(exprs, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(exprs);
+                            }
+                            exprs = &__hold0;
+                        }
                     }
                     acc = __tco2;
                     continue;
@@ -1070,7 +1114,8 @@ pub fn resolveCallsInArms__collected(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>>::empty();
     let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
@@ -1099,6 +1144,14 @@ pub fn resolveCallsInArms__collected(
                             __hold0 = __rest;
                             arms = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(arms, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(arms);
+                            }
+                            arms = &__hold0;
+                        }
                     }
                     acc = __tco2;
                     continue;
@@ -1118,7 +1171,8 @@ pub fn resolveCallsInFields__collected(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>>::empty();
     let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
         fields;
     loop {
@@ -1145,6 +1199,14 @@ pub fn resolveCallsInFields__collected(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold0 = __rest;
+                                fields = &__hold0;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(fields, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(fields);
+                                }
                                 fields = &__hold0;
                             }
                         }

@@ -352,7 +352,8 @@ pub fn resolveFns(
     fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
     let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
@@ -371,6 +372,14 @@ pub fn resolveFns(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(fns, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(fns);
+                            }
                             fns = &__hold0;
                         }
                     }
@@ -414,7 +423,7 @@ pub fn buildParamSlots(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
 ) {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut params @ _: &aver_rt::AverList<AverStr> = params;
     loop {
         crate::cancel_checkpoint();
@@ -431,6 +440,14 @@ pub fn buildParamSlots(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            params = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(params, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(params);
+                            }
                             params = &__hold0;
                         }
                     }
@@ -499,7 +516,8 @@ pub fn maxSlotInStmts(
     stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>>::empty();
     let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
     loop {
         crate::cancel_checkpoint();
@@ -516,6 +534,14 @@ pub fn maxSlotInStmts(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            stmts = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(stmts, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(stmts);
+                            }
                             stmts = &__hold0;
                         }
                     }
@@ -559,7 +585,8 @@ pub fn maxSlotInExprs(
     exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty();
     let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
@@ -580,6 +607,14 @@ pub fn maxSlotInExprs(
                             __hold0 = __rest;
                             exprs = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(exprs, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(exprs);
+                            }
+                            exprs = &__hold0;
+                        }
                     }
                     acc = __tco1;
                     continue;
@@ -598,7 +633,8 @@ pub fn maxSlotInFields(
     fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>>::empty();
     let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
         fields;
     loop {
@@ -622,6 +658,14 @@ pub fn maxSlotInFields(
                                 __hold0 = __rest;
                                 fields = &__hold0;
                             }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(fields, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(fields);
+                                }
+                                fields = &__hold0;
+                            }
                         }
                         acc = __tco1;
                         continue;
@@ -641,7 +685,8 @@ pub fn maxSlotInArms(
     arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>>::empty();
     let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
@@ -660,6 +705,14 @@ pub fn maxSlotInArms(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            arms = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(arms, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(arms);
+                            }
                             arms = &__hold0;
                         }
                     }
@@ -693,7 +746,8 @@ pub fn resolveStmts(
     aver_rt::AverInt,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>>::empty();
     let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
     loop {
         crate::cancel_checkpoint();
@@ -727,6 +781,14 @@ pub fn resolveStmts(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold0 = __rest;
+                                            stmts = &__hold0;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(stmts, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(stmts);
+                                            }
                                             stmts = &__hold0;
                                         }
                                     }
@@ -767,6 +829,14 @@ pub fn resolveStmts(
                                     __hold0 = __rest;
                                     stmts = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(stmts, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(stmts);
+                                    }
+                                    stmts = &__hold0;
+                                }
                             }
                             slots = __tco1;
                             next = __tco2;
@@ -783,6 +853,14 @@ pub fn resolveStmts(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold0 = __rest;
+                                stmts = &__hold0;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(stmts, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(stmts);
+                                }
                                 stmts = &__hold0;
                             }
                         }
@@ -1832,7 +1910,8 @@ pub fn resolveArms(
     aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>>::empty();
     let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
@@ -1853,6 +1932,14 @@ pub fn resolveArms(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold0 = __rest;
+                                arms = &__hold0;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(arms, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(arms);
+                                }
                                 arms = &__hold0;
                             }
                         }
@@ -2036,7 +2123,7 @@ pub fn patternBindingSlotsConstructor(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
 ) {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut bindings @ _: &aver_rt::AverList<AverStr> = bindings;
     loop {
         crate::cancel_checkpoint();
@@ -2053,6 +2140,14 @@ pub fn patternBindingSlotsConstructor(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            bindings = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(bindings, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(bindings);
+                            }
                             bindings = &__hold0;
                         }
                     }
@@ -2078,7 +2173,8 @@ pub fn patternBindingSlotsTuple(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
 ) {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>>::empty();
     let mut pats @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern> = pats;
     loop {
         crate::cancel_checkpoint();
@@ -2102,6 +2198,14 @@ pub fn patternBindingSlotsTuple(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold0 = __rest;
+                                pats = &__hold0;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(pats, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(pats);
+                                }
                                 pats = &__hold0;
                             }
                         }
@@ -2151,7 +2255,7 @@ pub fn maxInList(
     vals @ _: &aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    let mut __hold0: aver_rt::AverIntList;
+    let mut __hold0: aver_rt::AverIntList = <aver_rt::AverIntList>::empty();
     let mut vals @ _: &aver_rt::AverIntList = vals;
     loop {
         crate::cancel_checkpoint();
@@ -2171,6 +2275,14 @@ pub fn maxInList(
                                     __hold0 = __rest;
                                     vals = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(vals, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(vals);
+                                    }
+                                    vals = &__hold0;
+                                }
                             }
                             acc = __tco1;
                             continue;
@@ -2184,6 +2296,14 @@ pub fn maxInList(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    vals = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(vals, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(vals);
+                                    }
                                     vals = &__hold0;
                                 }
                             }
@@ -2267,7 +2387,7 @@ pub fn addConstructorSlots(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
 ) {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut bindings @ _: &aver_rt::AverList<AverStr> = bindings;
     loop {
         crate::cancel_checkpoint();
@@ -2284,6 +2404,14 @@ pub fn addConstructorSlots(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            bindings = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(bindings, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(bindings);
+                            }
                             bindings = &__hold0;
                         }
                     }
@@ -2309,7 +2437,8 @@ pub fn addTuplePatternSlots(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
 ) {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>>::empty();
     let mut pats @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern> = pats;
     loop {
         crate::cancel_checkpoint();
@@ -2331,6 +2460,14 @@ pub fn addTuplePatternSlots(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold0 = __rest;
+                                pats = &__hold0;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(pats, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(pats);
+                                }
                                 pats = &__hold0;
                             }
                         }
@@ -2359,7 +2496,8 @@ pub fn resolveStmts__collected(
     aver_rt::AverInt,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>>::empty();
     let mut stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> = stmts;
     loop {
         crate::cancel_checkpoint();
@@ -2393,6 +2531,14 @@ pub fn resolveStmts__collected(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold0 = __rest;
+                                            stmts = &__hold0;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(stmts, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(stmts);
+                                            }
                                             stmts = &__hold0;
                                         }
                                     }
@@ -2433,6 +2579,14 @@ pub fn resolveStmts__collected(
                                     __hold0 = __rest;
                                     stmts = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(stmts, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(stmts);
+                                    }
+                                    stmts = &__hold0;
+                                }
                             }
                             slots = __tco1;
                             next = __tco2;
@@ -2449,6 +2603,14 @@ pub fn resolveStmts__collected(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold0 = __rest;
+                                stmts = &__hold0;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(stmts, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(stmts);
+                                }
                                 stmts = &__hold0;
                             }
                         }
@@ -2471,7 +2633,8 @@ pub fn resolveExprs__collected(
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty();
     let mut exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = exprs;
     loop {
         crate::cancel_checkpoint();
@@ -2495,6 +2658,14 @@ pub fn resolveExprs__collected(
                             __hold0 = __rest;
                             exprs = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(exprs, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(exprs);
+                            }
+                            exprs = &__hold0;
+                        }
                     }
                     acc = __tco2;
                     continue;
@@ -2514,7 +2685,8 @@ pub fn resolveFields__collected(
     mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>>::empty();
     let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> =
         fields;
     loop {
@@ -2544,6 +2716,14 @@ pub fn resolveFields__collected(
                                 __hold0 = __rest;
                                 fields = &__hold0;
                             }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(fields, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(fields);
+                                }
+                                fields = &__hold0;
+                            }
                         }
                         acc = __tco2;
                         continue;
@@ -2567,7 +2747,8 @@ pub fn resolveArms__collected(
     aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>>::empty();
     let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
@@ -2588,6 +2769,14 @@ pub fn resolveArms__collected(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold0 = __rest;
+                                arms = &__hold0;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(arms, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(arms);
+                                }
                                 arms = &__hold0;
                             }
                         }

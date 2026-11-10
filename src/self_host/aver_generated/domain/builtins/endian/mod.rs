@@ -203,7 +203,7 @@ pub fn byteVals__collected(
     octets @ _: &aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverIntList;
+    let mut __hold0: aver_rt::AverIntList = <aver_rt::AverIntList>::empty();
     let mut octets @ _: &aver_rt::AverIntList = octets;
     loop {
         crate::cancel_checkpoint();
@@ -224,6 +224,14 @@ pub fn byteVals__collected(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            octets = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(octets, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(octets);
+                            }
                             octets = &__hold0;
                         }
                     }

@@ -860,7 +860,8 @@ pub fn fieldOf(
     fs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>,
     f @ _: &AverStr,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Term> {
-    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>;
+    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>>::empty();
     let mut fs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field> = fs;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -879,6 +880,14 @@ pub fn fieldOf(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    fs = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(fs, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(fs);
+                                    }
                                     fs = &__hold0;
                                 }
                             }
@@ -1020,7 +1029,7 @@ pub fn cons(
 /// The latest case hypothesis about x.
 #[inline(always)]
 pub fn lookupKnown(x @ _: &AverStr, ks @ _: &aver_rt::AverList<Known>) -> Option<Known> {
-    let mut __hold1: aver_rt::AverList<Known>;
+    let mut __hold1: aver_rt::AverList<Known> = <aver_rt::AverList<Known>>::empty();
     let mut ks @ _: &aver_rt::AverList<Known> = ks;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -1039,6 +1048,14 @@ pub fn lookupKnown(x @ _: &AverStr, ks @ _: &aver_rt::AverList<Known>) -> Option
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    ks = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(ks, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(ks);
+                                    }
                                     ks = &__hold1;
                                 }
                             }
@@ -1770,7 +1787,8 @@ pub fn findDef(
     f @ _: &AverStr,
     ds @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Def>,
 ) -> Option<crate::proof_std::aver_generated::kernel::proof::Def> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Def>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Def> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Def>>::empty();
     let mut ds @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Def> = ds;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -1789,6 +1807,14 @@ pub fn findDef(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    ds = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(ds, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(ds);
+                                    }
                                     ds = &__hold1;
                                 }
                             }
@@ -1876,7 +1902,8 @@ pub fn bindLets(
     lets @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
     mut outer @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>;
+    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>>::empty();
     let mut lets @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding> =
         lets;
     loop {
@@ -1906,6 +1933,14 @@ pub fn bindLets(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            lets = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(lets, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(lets);
+                            }
                             lets = &__hold0;
                         }
                     }

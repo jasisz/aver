@@ -1398,7 +1398,8 @@ pub fn rewriteOnce(
     hyps @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Hyp>,
     t @ _: &crate::proof_std::aver_generated::kernel::term::Term,
 ) -> Result<Option<crate::proof_std::aver_generated::kernel::lib::Rw>, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Hyp>;
+    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Hyp> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Hyp>>::empty();
     let mut hyps @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Hyp> =
         hyps;
     loop {
@@ -1418,6 +1419,14 @@ pub fn rewriteOnce(
                                     __hold0 = __rest;
                                     hyps = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(hyps, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(hyps);
+                                    }
+                                    hyps = &__hold0;
+                                }
                             }
                             continue;
                         }
@@ -1431,6 +1440,14 @@ pub fn rewriteOnce(
                                     }
                                     aver_rt::ListRest::Owned(__rest) => {
                                         __hold0 = __rest;
+                                        hyps = &__hold0;
+                                    }
+                                    aver_rt::ListRest::Next => {
+                                        if ::core::ptr::eq(hyps, &__hold0) {
+                                            aver_rt::list_step_rest(&mut __hold0);
+                                        } else {
+                                            __hold0 = aver_rt::list_rest(hyps);
+                                        }
                                         hyps = &__hold0;
                                     }
                                 }
@@ -1949,7 +1966,7 @@ pub fn refuse(
 /// The compiler's answer to the question key, if it gave one.
 #[inline(always)]
 pub fn lookup(answers @ _: &aver_rt::AverList<Answer>, key @ _: &AverStr) -> Option<Reply> {
-    let mut __hold0: aver_rt::AverList<Answer>;
+    let mut __hold0: aver_rt::AverList<Answer> = <aver_rt::AverList<Answer>>::empty();
     let mut answers @ _: &aver_rt::AverList<Answer> = answers;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -1968,6 +1985,14 @@ pub fn lookup(answers @ _: &aver_rt::AverList<Answer>, key @ _: &AverStr) -> Opt
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    answers = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(answers, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(answers);
+                                    }
                                     answers = &__hold0;
                                 }
                             }
@@ -1992,7 +2017,7 @@ pub fn first(
     mut whys @ _: aver_rt::AverList<AverStr>,
     answers @ _: &aver_rt::AverList<Answer>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, Stop> {
-    let mut __hold1: aver_rt::AverList<Tactic>;
+    let mut __hold1: aver_rt::AverList<Tactic> = <aver_rt::AverList<Tactic>>::empty();
     let mut ts @ _: &aver_rt::AverList<Tactic> = ts;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -2047,6 +2072,14 @@ pub fn first(
                                     }
                                     aver_rt::ListRest::Owned(__rest) => {
                                         __hold1 = __rest;
+                                        ts = &__hold1;
+                                    }
+                                    aver_rt::ListRest::Next => {
+                                        if ::core::ptr::eq(ts, &__hold1) {
+                                            aver_rt::list_step_rest(&mut __hold1);
+                                        } else {
+                                            __hold1 = aver_rt::list_rest(ts);
+                                        }
                                         ts = &__hold1;
                                     }
                                 }
@@ -2680,7 +2713,8 @@ pub fn elemType(
     gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
     v @ _: &AverStr,
 ) -> crate::proof_std::aver_generated::kernel::term::Ty {
-    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>;
+    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty();
     let mut gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
         gs;
     loop {
@@ -2701,6 +2735,14 @@ pub fn elemType(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    gs = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(gs, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(gs);
+                                    }
                                     gs = &__hold0;
                                 }
                             }
