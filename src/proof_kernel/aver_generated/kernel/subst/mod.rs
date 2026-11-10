@@ -93,7 +93,8 @@ pub fn lookup(
     name @ _: &AverStr,
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::term::Term> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>>::empty();
     let mut bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> =
         bs;
     loop {
@@ -113,6 +114,14 @@ pub fn lookup(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    bs = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(bs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(bs);
+                                    }
                                     bs = &__hold1;
                                 }
                             }
@@ -911,7 +920,7 @@ pub fn firstShared(
     ns @ _: &aver_rt::AverList<AverStr>,
     mut others @ _: aver_rt::AverList<AverStr>,
 ) -> Option<AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut ns @ _: &aver_rt::AverList<AverStr> = ns;
     loop {
         crate::proof_kernel::cancel_checkpoint();
@@ -930,6 +939,14 @@ pub fn firstShared(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    ns = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(ns, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(ns);
+                                    }
                                     ns = &__hold0;
                                 }
                             }

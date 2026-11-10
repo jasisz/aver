@@ -169,7 +169,8 @@ pub fn mergeRecordFieldsAcc(
     mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>>::empty();
     let mut existing @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
         existing;
     loop {
@@ -196,6 +197,14 @@ pub fn mergeRecordFieldsAcc(
                                     __hold0 = __rest;
                                     existing = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(existing, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(existing);
+                                    }
+                                    existing = &__hold0;
+                                }
                             }
                             overrides = __tco1;
                             acc = __tco2;
@@ -210,6 +219,14 @@ pub fn mergeRecordFieldsAcc(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    existing = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(existing, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(existing);
+                                    }
                                     existing = &__hold0;
                                 }
                             }
@@ -264,7 +281,8 @@ pub fn findOverride(
     k @ _: &AverStr,
     overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Option<crate::aver_generated::domain::value::Val> {
-    let mut __hold1: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
+    let mut __hold1: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>>::empty();
     let mut overrides @ _: &aver_rt::AverList<(
         AverStr,
         crate::aver_generated::domain::value::Val,
@@ -287,6 +305,14 @@ pub fn findOverride(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    overrides = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(overrides, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(overrides);
+                                    }
                                     overrides = &__hold1;
                                 }
                             }
@@ -362,7 +388,8 @@ pub fn mergeRecordFieldsAcc__collected(
     mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>>::empty();
     let mut existing @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
         existing;
     loop {
@@ -389,6 +416,14 @@ pub fn mergeRecordFieldsAcc__collected(
                                     __hold0 = __rest;
                                     existing = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(existing, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(existing);
+                                    }
+                                    existing = &__hold0;
+                                }
                             }
                             overrides = __tco1;
                             acc = __tco2;
@@ -403,6 +438,14 @@ pub fn mergeRecordFieldsAcc__collected(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    existing = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(existing, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(existing);
+                                    }
                                     existing = &__hold0;
                                 }
                             }

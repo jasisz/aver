@@ -2435,7 +2435,7 @@ pub fn headersToValMap(
     names @ _: &aver_rt::AverList<AverStr>,
     mut acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
-    let mut __hold1: aver_rt::AverList<AverStr>;
+    let mut __hold1: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut names @ _: &aver_rt::AverList<AverStr> = names;
     loop {
         crate::cancel_checkpoint();
@@ -2452,6 +2452,14 @@ pub fn headersToValMap(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold1 = __rest;
+                                names = &__hold1;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(names, &__hold1) {
+                                    aver_rt::list_step_rest(&mut __hold1);
+                                } else {
+                                    __hold1 = aver_rt::list_rest(names);
+                                }
                                 names = &__hold1;
                             }
                         }
@@ -2483,6 +2491,14 @@ pub fn headersToValMap(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold1 = __rest;
+                                names = &__hold1;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(names, &__hold1) {
+                                    aver_rt::list_step_rest(&mut __hold1);
+                                } else {
+                                    __hold1 = aver_rt::list_rest(names);
+                                }
                                 names = &__hold1;
                             }
                         }
@@ -3159,7 +3175,8 @@ pub fn tcpSocketEntriesToMap(
     entries @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>,
 ) -> Result<aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut entries @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = entries;
     loop {
         crate::cancel_checkpoint();
@@ -3185,6 +3202,14 @@ pub fn tcpSocketEntriesToMap(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            entries = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(entries, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(entries);
+                            }
                             entries = &__hold0;
                         }
                     }
@@ -4084,7 +4109,7 @@ pub fn stringsToVals__collected(
     strs @ _: &aver_rt::AverList<AverStr>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut strs @ _: &aver_rt::AverList<AverStr> = strs;
     loop {
         crate::cancel_checkpoint();
@@ -4107,6 +4132,14 @@ pub fn stringsToVals__collected(
                             __hold0 = __rest;
                             strs = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(strs, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(strs);
+                            }
+                            strs = &__hold0;
+                        }
                     }
                     acc = __tco1;
                     continue;
@@ -4125,7 +4158,8 @@ pub fn entriesKeys__collected(
     entries @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut entries @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = entries;
     loop {
         crate::cancel_checkpoint();
@@ -4146,6 +4180,14 @@ pub fn entriesKeys__collected(
                             __hold0 = __rest;
                             entries = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(entries, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(entries);
+                            }
+                            entries = &__hold0;
+                        }
                     }
                     acc = __tco1;
                     continue;
@@ -4164,7 +4206,8 @@ pub fn entriesValues__collected(
     entries @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut entries @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = entries;
     loop {
         crate::cancel_checkpoint();
@@ -4185,6 +4228,14 @@ pub fn entriesValues__collected(
                             __hold0 = __rest;
                             entries = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(entries, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(entries);
+                            }
+                            entries = &__hold0;
+                        }
                     }
                     acc = __tco1;
                     continue;
@@ -4203,7 +4254,7 @@ pub fn stringsToValStrs__collected(
     values @ _: &aver_rt::AverList<AverStr>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut values @ _: &aver_rt::AverList<AverStr> = values;
     loop {
         crate::cancel_checkpoint();
@@ -4226,6 +4277,14 @@ pub fn stringsToValStrs__collected(
                             __hold0 = __rest;
                             values = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(values, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(values);
+                            }
+                            values = &__hold0;
+                        }
                     }
                     acc = __tco1;
                     continue;
@@ -4244,7 +4303,7 @@ pub fn tcpReadyKeysToVals__collected(
     keys @ _: &aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverIntList;
+    let mut __hold0: aver_rt::AverIntList = <aver_rt::AverIntList>::empty();
     let mut keys @ _: &aver_rt::AverIntList = keys;
     loop {
         crate::cancel_checkpoint();
@@ -4265,6 +4324,14 @@ pub fn tcpReadyKeysToVals__collected(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            keys = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(keys, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(keys);
+                            }
                             keys = &__hold0;
                         }
                     }

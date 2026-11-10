@@ -280,7 +280,8 @@ pub fn listContainsVal(
     items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     needle @ _: &crate::aver_generated::domain::value::Val,
 ) -> bool {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = items;
     loop {
         crate::cancel_checkpoint();
@@ -299,6 +300,14 @@ pub fn listContainsVal(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    items = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(items, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(items);
+                                    }
                                     items = &__hold0;
                                 }
                             }
@@ -359,9 +368,11 @@ pub fn zipListsAcc(
     b @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut a @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = a;
-    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut b @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = b;
     loop {
         crate::cancel_checkpoint();
@@ -391,6 +402,14 @@ pub fn zipListsAcc(
                                     __hold0 = __rest;
                                     a = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(a, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(a);
+                                    }
+                                    a = &__hold0;
+                                }
                             }
                             match __tco1 {
                                 aver_rt::ListRest::Lent(__rest) => {
@@ -398,6 +417,14 @@ pub fn zipListsAcc(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    b = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(b, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(b);
+                                    }
                                     b = &__hold1;
                                 }
                             }

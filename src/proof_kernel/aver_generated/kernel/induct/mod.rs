@@ -636,7 +636,8 @@ pub fn letsInlined(
     mut done @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>, AverStr>
 {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>>::empty();
     let mut lets @ _: &aver_rt::AverList<
         crate::proof_kernel::aver_generated::kernel::term::Binding,
     > = lets;
@@ -667,6 +668,14 @@ pub fn letsInlined(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            lets = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(lets, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(lets);
+                            }
                             lets = &__hold0;
                         }
                     }
@@ -797,7 +806,8 @@ pub fn defNamed(
     n @ _: &AverStr,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::proof::Def> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>>::empty();
     let mut ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
         ds;
     loop {
@@ -817,6 +827,14 @@ pub fn defNamed(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    ds = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(ds, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(ds);
+                                    }
                                     ds = &__hold1;
                                 }
                             }
@@ -2042,7 +2060,8 @@ pub fn rooted(
     todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
 ) -> bool {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>>::empty();
     let mut todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
         todo;
     loop {
@@ -2068,6 +2087,14 @@ pub fn rooted(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    todo = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(todo, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(todo);
+                                    }
                                     todo = &__hold1;
                                 }
                             }
@@ -2599,7 +2626,8 @@ pub fn nthTerm(
     xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut i @ _: aver_rt::AverInt,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::term::Term> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>>::empty();
     let mut xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
         xs;
     loop {
@@ -2620,6 +2648,14 @@ pub fn nthTerm(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    xs = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(xs, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(xs);
+                                    }
                                     xs = &__hold0;
                                 }
                             }
@@ -2657,7 +2693,8 @@ pub fn eachNotMutual(
     todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
 ) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>>::empty();
     let mut todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
         todo;
     loop {
@@ -2699,6 +2736,14 @@ pub fn eachNotMutual(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    todo = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(todo, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(todo);
+                                    }
                                     todo = &__hold0;
                                 }
                             }
@@ -2778,7 +2823,8 @@ pub fn calleesOf(
     todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
 ) -> aver_rt::AverList<AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>>::empty();
     let mut todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
         todo;
     loop {
@@ -2798,6 +2844,14 @@ pub fn calleesOf(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    todo = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(todo, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(todo);
+                                    }
                                     todo = &__hold1;
                                 }
                             }

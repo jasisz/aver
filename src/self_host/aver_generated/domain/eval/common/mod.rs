@@ -104,7 +104,8 @@ pub fn lookupField(
     fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut name @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>>::empty();
     let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
         fields;
     loop {
@@ -125,6 +126,14 @@ pub fn lookupField(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    fields = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(fields, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(fields);
+                                    }
                                     fields = &__hold0;
                                 }
                             }

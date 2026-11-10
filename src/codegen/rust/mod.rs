@@ -1815,7 +1815,7 @@ fn both(xs: List<Int>) -> Int
             "{entry}"
         );
         assert!(
-            entry.contains("match __tco0 { aver_rt::ListRest::Lent(__rest) => { xs = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; xs = &__hold0; } }"),
+            entry.contains("match __tco0 { aver_rt::ListRest::Lent(__rest) => { xs = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; xs = &__hold0; } aver_rt::ListRest::Next => { if ::core::ptr::eq(xs, &__hold0) { aver_rt::list_step_rest(&mut __hold0); } else { __hold0 = aver_rt::list_rest(xs); } xs = &__hold0; } }"),
             "{entry}"
         );
         // A rest the arm reads elsewhere is a list value, as before.

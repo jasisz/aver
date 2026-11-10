@@ -1784,15 +1784,55 @@ impl<T> AverList<T> {
     /// The head and the rest, the rest lent where the node holds it: a
     /// `Prepend` node, which nearly every node is, gives a borrow of the
     /// tail it holds, so a loop that walks the list through a borrow steps
-    /// with no count touched; the other shapes build the rest as `uncons`
-    /// does.
+    /// with no count touched. A flat or indexed body gives `ListRest::Next`:
+    /// the rest is this list read from one element further in, which a loop
+    /// already holding this list in a slot of its own steps there
+    /// ([`Self::step_rest`]), again with no count touched. A concat builds
+    /// the rest as `uncons` does.
     #[inline]
     pub fn uncons_lent(&self) -> Option<(&T, ListRest<'_, Self>)> {
-        if let AverListInner::Prepend { head, tail, .. } = &**self.inner.as_ref()? {
-            return Some((head, ListRest::Lent(tail)));
+        match &**self.inner.as_ref()? {
+            AverListInner::Prepend { head, tail, .. } => Some((head, ListRest::Lent(tail))),
+            AverListInner::Flat { items } => Some((items.get(self.start())?, ListRest::Next)),
+            AverListInner::Indexed { parts, .. } => {
+                Some((self.indexed_head(parts)?, ListRest::Next))
+            }
+            AverListInner::Concat { .. } => self
+                .uncons_slow()
+                .map(|(head, tail)| (head, ListRest::Owned(tail))),
         }
-        self.uncons_slow()
-            .map(|(head, tail)| (head, ListRest::Owned(tail)))
+    }
+
+    /// The rest after the first element, as `uncons` gives it; `[]` for `[]`.
+    pub fn rest(&self) -> Self {
+        self.uncons().map_or_else(Self::empty, |(_, rest)| rest)
+    }
+
+    /// Make this list its own rest (see [`Self::rest`]). A flat or indexed
+    /// body is read from one element further in: the offset moves, the node
+    /// and its count are left alone. The last element gives `[]`, which lets
+    /// the body go, as `uncons` does.
+    #[inline]
+    pub fn step_rest(&mut self) {
+        let next = self.start() + 1;
+        let segment_index = match self.inner.as_deref() {
+            Some(AverListInner::Flat { items }) if next < items.len() => 0,
+            Some(AverListInner::Indexed { parts, len }) if next < *len => {
+                match parts[self.segment_index()].end <= next {
+                    true => self.segment_index() + 1,
+                    false => self.segment_index(),
+                }
+            }
+            _ => return *self = self.rest(),
+        };
+        if let (Ok(start), Some(segment_index)) =
+            (u32::try_from(next), SegmentIndex::new(segment_index))
+        {
+            self.start = start;
+            self.segment_index = segment_index;
+        } else {
+            *self = self.rest();
+        }
     }
 
     /// `uncons` of a list that is not needed after it: a `Prepend` node this
@@ -1821,7 +1861,15 @@ impl<T> AverList<T> {
             // are each read out exactly once; `len` is a plain usize.
             return Some(unsafe { (std::ptr::read(head), std::ptr::read(tail)) });
         }
-        self.uncons_cloned()
+        // A flat or indexed body: the head is cloned out and this very list
+        // becomes the rest, with no count touched (see `step_rest`).
+        let head = match self.inner.as_deref() {
+            Some(AverListInner::Flat { items }) => items.get(self.start()).cloned(),
+            Some(AverListInner::Indexed { parts, .. }) => self.indexed_head(parts).cloned(),
+            _ => return self.uncons_cloned(),
+        }?;
+        self.step_rest();
+        Some((head, self))
     }
 
     /// `uncons_owned` that also keeps the node it took apart: a `Prepend`
@@ -2412,9 +2460,30 @@ pub fn list_uncons<T>(list: &AverList<T>) -> Option<(&T, AverList<T>)> {
 /// the rest as a list of its own. The loop keeps a borrow either way: of the
 /// node, or of a slot of its own the owned rest moves into
 /// (`ListRest::Owned`), as a value a step computes always did.
+///
+/// `Next` says the rest is the matched list itself read from one element
+/// further in (a flat, indexed or packed body). The loop steps the list in
+/// its own slot when the borrow it matched is that slot
+/// ([`list_step_rest`]), and otherwise fills the slot with the rest
+/// ([`list_rest`]); it holds the body either way, so the borrow never
+/// outlives it, and the step touches no count.
 pub enum ListRest<'a, L> {
     Lent(&'a L),
     Owned(L),
+    Next,
+}
+
+/// The rest after the first element of a list (`[]` for `[]`), as
+/// `ListRest::Next` stands for it.
+#[inline]
+pub fn list_rest<L: AverListMatch>(list: &L) -> L {
+    list.rest_for_match()
+}
+
+/// Make a list a loop holds in a slot of its own its rest, in place.
+#[inline]
+pub fn list_step_rest<L: AverListMatch>(list: &mut L) {
+    list.step_rest_for_match()
 }
 
 /// `list_uncons` with the rest lent (see [`ListRest`]).
@@ -2446,6 +2515,14 @@ pub trait AverListMatch: Sized {
         self.uncons_for_match()
             .map(|(head, tail)| (head, ListRest::Owned(tail)))
     }
+
+    /// The rest after the first element; the empty list for the empty list.
+    fn rest_for_match(&self) -> Self;
+
+    /// Make this list its rest, in place where its body allows it.
+    fn step_rest_for_match(&mut self) {
+        *self = self.rest_for_match();
+    }
 }
 
 impl<T: Clone> AverListMatch for AverList<T> {
@@ -2465,6 +2542,15 @@ impl<T: Clone> AverListMatch for AverList<T> {
     fn uncons_lent_for_match(&self) -> Option<(Self::Item, ListRest<'_, Self>)> {
         self.uncons_lent().map(|(head, rest)| (head.clone(), rest))
     }
+
+    fn rest_for_match(&self) -> Self {
+        self.rest()
+    }
+
+    #[inline]
+    fn step_rest_for_match(&mut self) {
+        self.step_rest()
+    }
 }
 
 impl AverListMatch for AverIntList {
@@ -2481,7 +2567,47 @@ impl AverListMatch for AverIntList {
             AverIntList::Wide(values) => values
                 .uncons_owned()
                 .map(|(head, tail)| (head, AverIntList::Wide(tail))),
-            packed => packed.uncons_cloned(),
+            AverIntList::Packed(mut values) => {
+                let head = AverInt::from_i64(i64::from(*values.as_slice().first()?));
+                values.step_first();
+                Some((head, AverIntList::Packed(values)))
+            }
+        }
+    }
+
+    /// A packed body, and a wide flat or indexed one, is stepped where the
+    /// loop holds it (`ListRest::Next`); a wide `Prepend` node holds an
+    /// `AverList`, not a list of this type, so its tail is cloned out as
+    /// `uncons_for_match` does.
+    #[inline]
+    fn uncons_lent_for_match(&self) -> Option<(Self::Item, ListRest<'_, Self>)> {
+        match self {
+            AverIntList::Packed(values) => values
+                .as_slice()
+                .first()
+                .map(|byte| (AverInt::from_i64(i64::from(*byte)), ListRest::Next)),
+            AverIntList::Wide(values) => match values.uncons_lent()? {
+                (head, ListRest::Next) => Some((head.clone(), ListRest::Next)),
+                (head, ListRest::Lent(tail)) => Some((
+                    head.clone(),
+                    ListRest::Owned(AverIntList::Wide(tail.clone())),
+                )),
+                (head, ListRest::Owned(tail)) => {
+                    Some((head.clone(), ListRest::Owned(AverIntList::Wide(tail))))
+                }
+            },
+        }
+    }
+
+    fn rest_for_match(&self) -> Self {
+        self.drop_first(1)
+    }
+
+    #[inline]
+    fn step_rest_for_match(&mut self) {
+        match self {
+            AverIntList::Packed(values) => values.step_first(),
+            AverIntList::Wide(values) => values.step_rest(),
         }
     }
 }
@@ -2572,8 +2698,8 @@ pub fn string_join(parts: &AverList<AverStr>, sep: &str) -> AverStr {
 mod tests {
     use super::{
         AverInt, AverIntList, AverList, AverListInner, AverMap, AverStr, Buffer, ListRest,
-        aver_display, clamp_list_count, clamp_list_count_i64, env_set, list_uncons_lent,
-        string_slice, string_split_byte,
+        aver_display, clamp_list_count, clamp_list_count_i64, env_set, list_rest, list_step_rest,
+        list_uncons_lent, list_uncons_owned, string_slice, string_split_byte,
     };
 
     /// A count held as a raw `i64` clamps as the same `Int` does.
@@ -2780,24 +2906,81 @@ mod tests {
             rest.inner.as_ref().map(Rc::as_ptr),
             flat.inner.as_ref().map(Rc::as_ptr)
         );
-        let Some((head, ListRest::Owned(rest))) = rest.uncons_lent() else {
-            panic!("a flat body builds its rest");
+        let Some((head, ListRest::Next)) = rest.uncons_lent() else {
+            panic!("a flat body is stepped where the loop holds it");
         };
-        assert_eq!((*head, rest.len()), (3, 1));
-        let Some((head, ListRest::Owned(rest))) = rest.uncons_lent() else {
-            panic!("a flat body builds its rest");
+        assert_eq!(*head, 3);
+        let mut slot = list_rest(rest);
+        assert_eq!(slot.len(), 1);
+        let Some((head, ListRest::Next)) = slot.uncons_lent() else {
+            panic!("a flat body is stepped where the loop holds it");
         };
-        assert_eq!((*head, rest.len()), (4, 0));
-        assert!(rest.uncons_lent().is_none());
+        assert_eq!(*head, 4);
+        list_step_rest(&mut slot);
+        assert!(slot.inner.is_none(), "the last step lets the body go");
+        assert!(slot.uncons_lent().is_none());
         assert!(AverList::<i64>::empty().uncons_lent().is_none());
 
         let ints = AverIntList::from_vec(vec![AverInt::from_i64(7), AverInt::from_i64(8)]);
-        let Some((head, ListRest::Owned(rest))) = list_uncons_lent(&ints) else {
-            panic!("an int list builds its rest");
+        let Some((head, ListRest::Next)) = list_uncons_lent(&ints) else {
+            panic!("a packed int list is stepped where the loop holds it");
         };
-        assert_eq!((head.to_i64(), rest.len()), (Some(7), 1));
+        assert_eq!(head.to_i64(), Some(7));
+        let wide = AverIntList::prepend_owned(AverInt::from_i64(1000), ints.clone());
+        let Some((head, ListRest::Owned(rest))) = list_uncons_lent(&wide) else {
+            panic!("a wide prepend node builds its rest");
+        };
+        assert_eq!((head.to_i64(), rest.len()), (Some(1000), 2));
         let (head, _) = list_uncons_lent(&list).expect("cloned head");
         assert_eq!(head, 1);
+    }
+
+    #[test]
+    fn stepping_a_held_list_in_place_touches_no_count() {
+        use crate::shared::Shared as Rc;
+        let flat = AverList::from_vec((0..5i64).collect());
+        let mut slot = flat.clone();
+        let count = |list: &AverList<i64>| list.inner.as_ref().map_or(0, Rc::strong_count);
+        assert_eq!(count(&flat), 2);
+        let mut seen = Vec::new();
+        while let Some((head, rest)) = slot.uncons_lent() {
+            seen.push(*head);
+            assert!(matches!(rest, ListRest::Next));
+            list_step_rest(&mut slot);
+            if !slot.is_empty() {
+                assert_eq!(count(&flat), 2, "a step takes no count");
+            }
+        }
+        assert_eq!(seen, vec![0, 1, 2, 3, 4]);
+        assert_eq!(count(&flat), 1, "the walked-out slot let the body go");
+
+        // An indexed body (what a long concat compiles to) steps the same
+        // way, across its segments.
+        let joined = AverList::concat(&flat, &AverList::from_vec((5..9i64).collect())).indexed();
+        let mut slot = joined.clone();
+        let mut seen = Vec::new();
+        while let Some((head, rest)) = slot.uncons_lent() {
+            seen.push(*head);
+            assert!(matches!(rest, ListRest::Next));
+            list_step_rest(&mut slot);
+        }
+        assert_eq!(seen, (0..9).collect::<Vec<_>>());
+
+        // The owned walk steps the list it was given.
+        let mut owned = AverList::from_vec((0..3i64).collect());
+        let mut seen = Vec::new();
+        while let Some((head, rest)) = owned.uncons_owned() {
+            seen.push(head);
+            owned = rest;
+        }
+        assert_eq!(seen, vec![0, 1, 2]);
+        let mut packed = AverIntList::from_vec((0..3).map(AverInt::from_i64).collect());
+        let mut seen = Vec::new();
+        while let Some((head, rest)) = list_uncons_owned(packed) {
+            seen.push(head.to_i64());
+            packed = rest;
+        }
+        assert_eq!(seen, vec![Some(0), Some(1), Some(2)]);
     }
 
     #[test]

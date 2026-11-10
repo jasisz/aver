@@ -6547,7 +6547,7 @@ fn a_loop_borrows_the_params_it_only_reads() {
         "the head `allLeaves` only reads must be borrowed, and its rest lent:\n{emitted}"
     );
     assert!(
-        emitted.contains("match __tco0 { aver_rt::ListRest::Lent(__rest) => { ts = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; ts = &__hold0; } }"),
+        emitted.contains("match __tco0 { aver_rt::ListRest::Lent(__rest) => { ts = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; ts = &__hold0; } aver_rt::ListRest::Next => { if ::core::ptr::eq(ts, &__hold0) { aver_rt::list_step_rest(&mut __hold0); } else { __hold0 = aver_rt::list_rest(ts); } ts = &__hold0; } }"),
         "the loop `allLeaves` must step to the lent rest without a copy:\n{emitted}"
     );
     // A head one branch hands on is borrowed too, and cloned only there:

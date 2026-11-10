@@ -232,7 +232,7 @@ pub fn scan(
     mut current @ _: aver_rt::AverList<Sexp>,
     mut parents @ _: aver_rt::AverList<aver_rt::AverList<Sexp>>,
 ) -> Result<Sexp, AverStr> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut cs @ _: &aver_rt::AverList<AverStr> = cs;
     let mut __hold1: ReadMode;
     let mut mode @ _: &ReadMode = mode;
@@ -257,6 +257,14 @@ pub fn scan(
                                             __hold0 = __rest;
                                             cs = &__hold0;
                                         }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
+                                            cs = &__hold0;
+                                        }
                                     }
                                     continue;
                                 }
@@ -268,6 +276,14 @@ pub fn scan(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
                                             cs = &__hold0;
                                         }
                                     }
@@ -283,6 +299,14 @@ pub fn scan(
                                             __hold0 = __rest;
                                             cs = &__hold0;
                                         }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
+                                            cs = &__hold0;
+                                        }
                                     }
                                     continue;
                                 }
@@ -294,6 +318,14 @@ pub fn scan(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
                                             cs = &__hold0;
                                         }
                                     }
@@ -308,6 +340,14 @@ pub fn scan(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
                                             cs = &__hold0;
                                         }
                                     }
@@ -327,6 +367,14 @@ pub fn scan(
                                             __hold0 = __rest;
                                             cs = &__hold0;
                                         }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
+                                            cs = &__hold0;
+                                        }
                                     }
                                     current = __tco2;
                                     parents = __tco3;
@@ -337,7 +385,7 @@ pub fn scan(
             let __tco0 = rest;
             let __tco2 = aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::sexp::Sexp::Node((current).reverse_owned()), parent);
             let __tco3 = above;
-            match __tco0 { aver_rt::ListRest::Lent(__rest) => { cs = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; cs = &__hold0; } }
+            match __tco0 { aver_rt::ListRest::Lent(__rest) => { cs = __rest; } aver_rt::ListRest::Owned(__rest) => { __hold0 = __rest; cs = &__hold0; } aver_rt::ListRest::Next => { if ::core::ptr::eq(cs, &__hold0) { aver_rt::list_step_rest(&mut __hold0); } else { __hold0 = aver_rt::list_rest(cs); } cs = &__hold0; } }
             current = __tco2;
             parents = __tco3;
             continue;
@@ -354,6 +402,14 @@ pub fn scan(
                                             __hold0 = __rest;
                                             cs = &__hold0;
                                         }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
+                                            cs = &__hold0;
+                                        }
                                     }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
@@ -368,6 +424,14 @@ pub fn scan(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
                                             cs = &__hold0;
                                         }
                                     }
@@ -395,6 +459,14 @@ pub fn scan(
                                                 __hold0 = __rest;
                                                 cs = &__hold0;
                                             }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
+                                                cs = &__hold0;
+                                            }
                                         }
                                         __hold1 = __tco1;
                                         mode = &__hold1;
@@ -411,6 +483,14 @@ pub fn scan(
                                             }
                                             aver_rt::ListRest::Owned(__rest) => {
                                                 __hold0 = __rest;
+                                                cs = &__hold0;
+                                            }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
                                                 cs = &__hold0;
                                             }
                                         }
@@ -431,6 +511,14 @@ pub fn scan(
                                                 __hold0 = __rest;
                                                 cs = &__hold0;
                                             }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
+                                                cs = &__hold0;
+                                            }
                                         }
                                         __hold1 = __tco1;
                                         mode = &__hold1;
@@ -447,6 +535,14 @@ pub fn scan(
                                             }
                                             aver_rt::ListRest::Owned(__rest) => {
                                                 __hold0 = __rest;
+                                                cs = &__hold0;
+                                            }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
                                                 cs = &__hold0;
                                             }
                                         }
@@ -490,6 +586,14 @@ pub fn scan(
                                                 __hold0 = __rest;
                                                 cs = &__hold0;
                                             }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
+                                                cs = &__hold0;
+                                            }
                                         }
                                         __hold1 = __tco1;
                                         mode = &__hold1;
@@ -516,6 +620,14 @@ pub fn scan(
                                                 __hold0 = __rest;
                                                 cs = &__hold0;
                                             }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
+                                                cs = &__hold0;
+                                            }
                                         }
                                         __hold1 = __tco1;
                                         mode = &__hold1;
@@ -533,6 +645,14 @@ pub fn scan(
                                                 __hold0 = __rest;
                                                 cs = &__hold0;
                                             }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
+                                                cs = &__hold0;
+                                            }
                                         }
                                         __hold1 = __tco1;
                                         mode = &__hold1;
@@ -547,6 +667,14 @@ pub fn scan(
                                             }
                                             aver_rt::ListRest::Owned(__rest) => {
                                                 __hold0 = __rest;
+                                                cs = &__hold0;
+                                            }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
                                                 cs = &__hold0;
                                             }
                                         }
@@ -574,6 +702,14 @@ pub fn scan(
                                                 __hold0 = __rest;
                                                 cs = &__hold0;
                                             }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
+                                                cs = &__hold0;
+                                            }
                                         }
                                         __hold1 = __tco1;
                                         mode = &__hold1;
@@ -589,6 +725,14 @@ pub fn scan(
                                             }
                                             aver_rt::ListRest::Owned(__rest) => {
                                                 __hold0 = __rest;
+                                                cs = &__hold0;
+                                            }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(cs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(cs);
+                                                }
                                                 cs = &__hold0;
                                             }
                                         }
@@ -614,6 +758,14 @@ pub fn scan(
                                             __hold0 = __rest;
                                             cs = &__hold0;
                                         }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
+                                            cs = &__hold0;
+                                        }
                                     }
                                     __hold1 = __tco1;
                                     mode = &__hold1;
@@ -628,6 +780,14 @@ pub fn scan(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold0 = __rest;
+                                            cs = &__hold0;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(cs);
+                                            }
                                             cs = &__hold0;
                                         }
                                     }
@@ -722,7 +882,7 @@ pub fn define(
     parts @ _: &aver_rt::AverList<Sexp>,
     mut table @ _: aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>,
 ) -> Result<aver_rt::AverMap<AverStr, (Sexp, aver_rt::AverInt)>, AverStr> {
-    let mut __hold0: aver_rt::AverList<Sexp>;
+    let mut __hold0: aver_rt::AverList<Sexp> = <aver_rt::AverList<Sexp>>::empty();
     let mut parts @ _: &aver_rt::AverList<Sexp> = parts;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -760,6 +920,18 @@ pub fn define(
                                                             }
                                                             aver_rt::ListRest::Owned(__rest) => {
                                                                 __hold0 = __rest;
+                                                                parts = &__hold0;
+                                                            }
+                                                            aver_rt::ListRest::Next => {
+                                                                if ::core::ptr::eq(parts, &__hold0)
+                                                                {
+                                                                    aver_rt::list_step_rest(
+                                                                        &mut __hold0,
+                                                                    );
+                                                                } else {
+                                                                    __hold0 =
+                                                                        aver_rt::list_rest(parts);
+                                                                }
                                                                 parts = &__hold0;
                                                             }
                                                         }
@@ -891,7 +1063,7 @@ pub fn withinAll(
     mut acc @ _: aver_rt::AverList<Sexp>,
     mut size @ _: aver_rt::AverInt,
 ) -> Result<(Sexp, aver_rt::AverInt), AverStr> {
-    let mut __hold0: aver_rt::AverList<Sexp>;
+    let mut __hold0: aver_rt::AverList<Sexp> = <aver_rt::AverList<Sexp>>::empty();
     let mut xs @ _: &aver_rt::AverList<Sexp> = xs;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -911,6 +1083,14 @@ pub fn withinAll(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold0 = __rest;
+                                xs = &__hold0;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(xs, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(xs);
+                                }
                                 xs = &__hold0;
                             }
                         }

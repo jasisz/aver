@@ -626,9 +626,10 @@ pub fn zipBindingsAcc(
     vals @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut names @ _: &aver_rt::AverList<AverStr> = names;
-    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut vals @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = vals;
     loop {
         crate::cancel_checkpoint();
@@ -651,6 +652,14 @@ pub fn zipBindingsAcc(
                                     __hold0 = __rest;
                                     names = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(names, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(names);
+                                    }
+                                    names = &__hold0;
+                                }
                             }
                             match __tco1 {
                                 aver_rt::ListRest::Lent(__rest) => {
@@ -658,6 +667,14 @@ pub fn zipBindingsAcc(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    vals = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(vals, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(vals);
+                                    }
                                     vals = &__hold1;
                                 }
                             }

@@ -8440,18 +8440,23 @@ pub(super) fn emit_mir_tco_fn(
     // and its borrow becomes rebindable. A param every step rebinds to a
     // borrow out of its own value (see [`LentRebind`]) writes no slot and
     // gets none.
-    let writes_slot = |hold: &str| {
-        let written = format!("{hold} = ");
-        body_code.contains(&written)
+    let emitted = |text: &str| {
+        body_code.contains(text)
             || entry_check
                 .as_ref()
-                .is_some_and(|(_, fallback)| fallback.contains(&written))
+                .is_some_and(|(_, fallback)| fallback.contains(text))
     };
     for &i in lent.iter().filter(|i| !passthrough_indices.contains(i)) {
         let (name, type_ann) = &fd.params[i];
         let rust_type = super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope);
         let hold = generated_ident(&format!("hold{i}"));
-        if writes_slot(&hold) {
+        // A slot a list step compares the param with (`ListRest::Next`)
+        // starts as `[]`, which allocates nothing, so it can be read.
+        if emitted(&format!("aver_rt::list_step_rest(&mut {hold})")) {
+            lines.push(format!(
+                "    let mut {hold}: {rust_type} = <{rust_type}>::empty();"
+            ));
+        } else if emitted(&format!("{hold} = ")) {
             lines.push(format!("    let mut {hold}: {rust_type};"));
         }
         lines.push(format!(
@@ -8754,10 +8759,15 @@ fn emit_mir_self_tco_continue(
                 let hold = generated_ident(&format!("hold{i}"));
                 match lent_rebinds[i] {
                     Some(LentRebind::Part) => lines.push(format!("            {param} = {temp};")),
+                    // `Next`: the rest is the list the param borrows, one
+                    // element further in. Where the param borrows its own
+                    // slot, the slot is stepped in place, so the walk of a
+                    // flat body touches no count; otherwise the slot takes
+                    // the rest. The slot holds the body either way.
                     Some(LentRebind::ListRest) => {
                         let rest = generated_ident("rest");
                         lines.push(format!(
-                            "            match {temp} {{ aver_rt::ListRest::Lent({rest}) => {{ {param} = {rest}; }} aver_rt::ListRest::Owned({rest}) => {{ {hold} = {rest}; {param} = &{hold}; }} }}"
+                            "            match {temp} {{ aver_rt::ListRest::Lent({rest}) => {{ {param} = {rest}; }} aver_rt::ListRest::Owned({rest}) => {{ {hold} = {rest}; {param} = &{hold}; }} aver_rt::ListRest::Next => {{ if ::core::ptr::eq({param}, &{hold}) {{ aver_rt::list_step_rest(&mut {hold}); }} else {{ {hold} = aver_rt::list_rest({param}); }} {param} = &{hold}; }} }}"
                         ));
                     }
                     None => {
