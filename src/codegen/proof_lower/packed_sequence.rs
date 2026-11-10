@@ -66,6 +66,19 @@ impl PackedIntElement {
             None
         }
     }
+
+    /// The Rust integer type of this width.
+    pub fn rust_type(self) -> &'static str {
+        match self {
+            Self::U8 => "u8",
+            Self::I8 => "i8",
+            Self::U16 => "u16",
+            Self::I16 => "i16",
+            Self::U32 => "u32",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+        }
+    }
 }
 
 /// Backend-neutral representation fact for one opaque `List<Int>` carrier.

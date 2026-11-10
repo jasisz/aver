@@ -431,19 +431,9 @@ pub(super) fn is_i64_carrier(ctx: &CodegenContext, id: Option<TypeId>) -> bool {
 /// stays on `i64`, so the width only changes how many bytes the value takes
 /// in a record, a variant, a vector, a map or a list.
 pub(crate) fn storage_for(interval: Interval) -> &'static str {
-    let (Bound::Finite(lo), Bound::Finite(hi)) = (interval.lo, interval.hi) else {
-        return "i64";
-    };
-    let fits = |min: i128, max: i128| lo >= min && hi <= max;
-    match () {
-        _ if fits(0, u8::MAX.into()) => "u8",
-        _ if fits(i8::MIN.into(), i8::MAX.into()) => "i8",
-        _ if fits(0, u16::MAX.into()) => "u16",
-        _ if fits(i16::MIN.into(), i16::MAX.into()) => "i16",
-        _ if fits(0, u32::MAX.into()) => "u32",
-        _ if fits(i32::MIN.into(), i32::MAX.into()) => "i32",
-        _ => "i64",
-    }
+    // The width a packed `List<Int>` refinement picks for its elements.
+    crate::codegen::proof_lower::PackedIntElement::for_interval(interval)
+        .map_or("i64", |element| element.rust_type())
 }
 
 /// The machine integer the carrier `id` is stored in ([`storage_for`]
