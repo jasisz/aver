@@ -1170,9 +1170,11 @@ fn single_thread_refusal(ctx: &CodegenContext, services: &HashSet<String>) -> Op
 /// - An independent product `(a, b)!` / `(a, b)?!`. A one-thread build runs
 ///   it in sequence, so this is for speed, not soundness: the program asked
 ///   for its branches to be able to run at once.
-/// - Verify cases next to a module-level binding. `cargo test` runs the
-///   cases on threads of their own, and a binding's value is one value
-///   (a `static`) that every test reading it clones and drops.
+///
+/// Verify cases are not among them. `cargo test` runs them on threads of
+/// their own, but in a one-thread build each case holds
+/// `aver_rt::one_case_at_a_time` while it runs, so they run one after
+/// another, ordered as the program's threads are by `join`.
 fn first_threaded_construct(ctx: &CodegenContext) -> Option<String> {
     use crate::ast::{Expr, Stmt};
     if ctx.emit_replay_runtime || ctx.runtime_policy_from_env {
@@ -1222,13 +1224,10 @@ fn first_threaded_construct(ctx: &CodegenContext) -> Option<String> {
             }
         })
     };
-    let mut first_binding: Option<String> = None;
     for item in &ctx.items {
         let found = match item {
             TopLevel::FnDef(fd) => in_fn(fd, None),
             TopLevel::Stmt(Stmt::Binding(name, _, expr)) => {
-                first_binding
-                    .get_or_insert_with(|| format!("`{name}` ({})", place(None, expr.line)));
                 product(expr, &format!("the binding `{name}`"), None)
             }
             TopLevel::Stmt(Stmt::Expr(expr)) => product(expr, "a top-level statement", None),
@@ -1246,9 +1245,6 @@ fn first_threaded_construct(ctx: &CodegenContext) -> Option<String> {
             }
         }
         for binding in &module.bindings {
-            first_binding.get_or_insert_with(|| {
-                format!("`{}` ({})", binding.name, place(prefix, binding.value.line))
-            });
             if let Some(found) = product(
                 &binding.value,
                 &format!("the binding `{}`", binding.name),
@@ -1258,16 +1254,7 @@ fn first_threaded_construct(ctx: &CodegenContext) -> Option<String> {
             }
         }
     }
-    let has_tests = ctx
-        .items
-        .iter()
-        .any(|item| matches!(item, TopLevel::Verify(_)));
-    match first_binding {
-        Some(binding) if has_tests => Some(format!(
-            "cargo test runs the verify cases on threads of their own, and they share the module-level binding {binding}"
-        )),
-        _ => None,
-    }
+    None
 }
 
 /// Detect which effectful services are used in the program (including modules).
@@ -4058,8 +4045,9 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
     /// `[rust] threads = "auto"` builds for one thread a program in which
     /// nothing runs Aver code on a thread of its own, and for many one with
     /// an independent product (in a module too), a service other than the
-    /// one-thread ones, or verify cases next to a module-level binding; it
-    /// says which and why. `"many"` keeps threads for a program without
+    /// one-thread ones; it says which and why. Verify cases next to a
+    /// module-level binding keep one thread: under `cargo test` the cases
+    /// run one at a time. `"many"` keeps threads for a program without
     /// any, and `"one"` runs a product in sequence.
     #[cfg(feature = "runtime")]
     #[test]
@@ -4123,12 +4111,20 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
 
         let tested = "module Demo\n\nbase = 40\n\nfn plus(n: Int) -> Int\n    n + base\n\nverify plus\n    plus(2) => 42\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(String.fromInt(plus(2)))\n";
         let auto = from(tested, RustThreads::Auto);
-        assert!(!plain(&auto));
-        let why = auto.threads.unwrap_or_default();
-        assert!(
-            why.contains("the module-level binding `base` (line 3)"),
-            "{why}"
+        assert!(plain(&auto));
+        assert_eq!(
+            auto.threads.as_deref(),
+            Some(
+                "threads: one (auto: no independent product, no service that runs Aver code on threads of its own)"
+            )
         );
+        let lock = "let _alone = aver_rt::one_case_at_a_time();";
+        let tests = generated_file(&auto, "src/verify.rs");
+        assert!(tests.contains(lock), "{tests}");
+        // With atomic counts the cases run at once, as before.
+        let many = from(tested, RustThreads::Many);
+        let tests = generated_file(&many, "src/verify.rs");
+        assert!(!tests.contains(lock), "{tests}");
 
         // A product in a module the entry depends on decides as one in the
         // entry does.

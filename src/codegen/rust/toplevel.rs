@@ -2812,11 +2812,21 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
             writeln!(out, "    #[test]").unwrap();
             if uses_error_prop {
                 writeln!(out, "    fn {}() -> Result<(), String> {{", test_name).unwrap();
-                writeln!(out, "        assert_eq!({}, {});", left_str, right_str).unwrap();
-                writeln!(out, "        Ok(())").unwrap();
             } else {
                 writeln!(out, "    fn {}() {{", test_name).unwrap();
-                writeln!(out, "        assert_eq!({}, {});", left_str, right_str).unwrap();
+            }
+            // A one-thread build counts references with plain instructions,
+            // which is sound while Aver code runs on one thread at a time.
+            // `cargo test` runs the cases on threads of their own, and they
+            // share nodes (a module-level binding's value, a string literal),
+            // so each case runs alone: taking the lock orders it after the
+            // one before, as `join` does in the program.
+            if ctx.single_thread {
+                writeln!(out, "        let _alone = aver_rt::one_case_at_a_time();").unwrap();
+            }
+            writeln!(out, "        assert_eq!({}, {});", left_str, right_str).unwrap();
+            if uses_error_prop {
+                writeln!(out, "        Ok(())").unwrap();
             }
             writeln!(out, "    }}").unwrap();
             writeln!(out).unwrap();

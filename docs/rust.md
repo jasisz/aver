@@ -181,13 +181,12 @@ A value of a recursive sum, a list or a map can be reached from several threads:
 
 Why plain counts are sound then. A count is changed by a thread that holds an owner of the node. With products in sequence and no service running Aver code elsewhere, the only threads that run Aver code are `main`'s and the thread it starts with a larger stack, and `main` waits for that thread (`join`) before it reads anything again. Every change of a count therefore happens before the next one, as on one thread. With `"many"` nothing changes: counts stay atomic, and threads may share values as before.
 
-`cargo test` is the exception: it runs the `verify` cases on threads of their own, and the value of a module-level binding (`base = 40` outside any fn) is one value that every case reading it clones and drops. A program built for one thread whose cases read such a binding is tested with `cargo test -- --test-threads=1`.
+`cargo test` runs the `verify` cases on threads of their own, and they share nodes: the value of a module-level binding (`base = 40` outside any fn) is one value for the whole program, and a string literal one node. In a build for one thread each case holds a lock while it runs (`aver_rt::one_case_at_a_time`), so the cases run one after another and the lock orders every change of a count before the next case's, as `join` does in the program.
 
 `threads = "auto"`, the default (also `--threads auto`; any value other than `"auto"`, `"many"` and `"one"` is an error), chooses for the program. It builds for one thread when nothing in the program, its modules included, runs Aver code on a thread of its own, and for many otherwise, that is when the program has
 
 - an independent product `(a, b)!` or `(a, b)?!` in a function or a module-level binding: a one-thread build would run it in sequence, and the program asked for its elements to be able to run at once;
-- a service other than `Args`, `Console`, `Disk`, `Env`, `Random`, `Terminal` and `Time`, or `--with-replay` or `--policy runtime`: what a one-thread build refuses;
-- `verify` cases and a module-level binding, for `cargo test` above.
+- a service other than `Args`, `Console`, `Disk`, `Env`, `Random`, `Terminal` and `Time`, or `--with-replay` or `--policy runtime`: what a one-thread build refuses.
 
 `aver compile` prints what it chose and why, the first such construct with its line, as in `threads: many (auto: the independent product in fn both (line 7))`. `--threads many` keeps threads and atomic counts for a program that has none of these, and `--threads one` or `--single-thread` build for one thread a program that has products only.
 
