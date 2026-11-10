@@ -409,10 +409,9 @@ impl LiteralRefinementTable {
                 })
                 .or_insert((ctor.interval, 1));
         }
-        for index in 0..ctors.len() {
-            let ctor = &ctors[index];
+        for ctor in &mut ctors {
             let (hull, recognized) = hulls[&ctor.type_id];
-            ctors[index].runtime_provenance = ctor.carrier == LiteralCarrier::IntList
+            ctor.runtime_provenance = ctor.carrier == LiteralCarrier::IntList
                 && recognized == ctor.gates.len()
                 && ctor.interval.hull(hull) == ctor.interval
                 && runtime_provenance_is_closed(ctor, hull, entry_items, dep_modules);
