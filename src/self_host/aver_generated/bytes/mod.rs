@@ -229,8 +229,8 @@ pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
     }
     if crate::aver_generated::bytes::allInRange(xs) {
         Ok(crate::aver_generated::bytes::Bytes {
-            values: aver_rt::into_packed_u8(xs.clone())
-                .expect("proof-packed U8 construction escaped its refinement gate"),
+            values: aver_rt::into_packed(xs.clone())
+                .expect("proof-packed construction escaped its refinement gate"),
         })
     } else {
         Err(aver_rt::AverStr::from({
@@ -268,8 +268,8 @@ pub fn octets(bytes @ _: &Bytes) -> aver_rt::AverIntList {
 pub fn empty() -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
-        values: aver_rt::into_packed_u8(aver_rt::AverIntList::empty())
-            .expect("proof-packed U8 construction escaped its refinement gate"),
+        values: aver_rt::into_packed(aver_rt::AverIntList::empty())
+            .expect("proof-packed construction escaped its refinement gate"),
     }
 }
 
@@ -298,11 +298,11 @@ pub fn get(bytes @ _: &Bytes, index @ _: aver_rt::AverInt) -> Option<aver_rt::Av
 pub fn concat(mut left @ _: Bytes, right @ _: &Bytes) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
-        values: aver_rt::into_packed_u8(aver_rt::AverIntList::concat_owned(
+        values: aver_rt::into_packed(aver_rt::AverIntList::concat_owned(
             aver_rt::AverIntList::from_packed(left.values),
             &(right.values).to_int_list(),
         ))
-        .expect("proof-packed U8 construction escaped its refinement gate"),
+        .expect("proof-packed construction escaped its refinement gate"),
     }
 }
 
@@ -310,12 +310,12 @@ pub fn concat(mut left @ _: Bytes, right @ _: &Bytes) -> Bytes {
 pub fn take(mut bytes @ _: Bytes, count @ _: i64) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
-        values: aver_rt::into_packed_u8({
+        values: aver_rt::into_packed({
             let __xs = &(aver_rt::AverIntList::from_packed(bytes.values));
             let __n = aver_rt::clamp_list_count_i64(count);
             __xs.take_first(__n)
         })
-        .expect("proof-packed U8 construction escaped its refinement gate"),
+        .expect("proof-packed construction escaped its refinement gate"),
     }
 }
 
@@ -323,12 +323,12 @@ pub fn take(mut bytes @ _: Bytes, count @ _: i64) -> Bytes {
 pub fn drop(mut bytes @ _: Bytes, count @ _: i64) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
-        values: aver_rt::into_packed_u8({
+        values: aver_rt::into_packed({
             let __xs = &(aver_rt::AverIntList::from_packed(bytes.values));
             let __n = aver_rt::clamp_list_count_i64(count);
             __xs.drop_first(__n)
         })
-        .expect("proof-packed U8 construction escaped its refinement gate"),
+        .expect("proof-packed construction escaped its refinement gate"),
     }
 }
 
@@ -735,8 +735,8 @@ pub fn parseHexChars__cursor__collected(
             match aver_rt::byte_builder_finalize(acc) {
                 Ok(__byt_vals @ _) => {
                     return Ok(crate::aver_generated::bytes::Bytes {
-                        values: aver_rt::into_packed_u8(__byt_vals)
-                            .expect("proof-packed U8 construction escaped its refinement gate"),
+                        values: aver_rt::into_packed(__byt_vals)
+                            .expect("proof-packed construction escaped its refinement gate"),
                     });
                 }
                 Err(__byt_msg @ _) => {

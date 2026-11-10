@@ -41,12 +41,23 @@ use crate::types::Type;
 /// for this nominal refinement. Rust intentionally consumes only `U8` in the
 /// first slice; every other proven width keeps the established representation.
 pub(super) fn uses_packed_u8(ctx: &CodegenContext, type_name: &str) -> bool {
-    matches!(
-        ctx.packed_sequence_layouts
-            .get(type_name)
-            .map(|layout| layout.element),
-        Some(crate::codegen::proof_lower::PackedIntElement::U8)
-    )
+    packed_element(ctx, type_name) == Some(crate::codegen::proof_lower::PackedIntElement::U8)
+}
+
+/// The width the elements of the `List<Int>` refinement `type_name` are
+/// packed as (`aver_rt::AverPacked<E>`), or `None` when it is not packed.
+pub(super) fn packed_element(
+    ctx: &CodegenContext,
+    type_name: &str,
+) -> Option<crate::codegen::proof_lower::PackedIntElement> {
+    ctx.packed_sequence_layouts
+        .get(type_name)
+        .map(|layout| layout.element)
+}
+
+/// Whether the `List<Int>` refinement `type_name` is packed, at any width.
+pub(super) fn uses_packed(ctx: &CodegenContext, type_name: &str) -> bool {
+    packed_element(ctx, type_name).is_some()
 }
 
 /// Synthesize Rust's `mod.rs` cascade from a flat list of (segments, body)
@@ -933,7 +944,7 @@ fn entry_module_sections(
         if ctx.emit_replay_runtime {
             sections.push(replay::emit_replay_value_impl(
                 td,
-                uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)),
+                uses_packed(ctx, crate::codegen::common::type_def_name(td)),
                 ctx,
                 None,
             ));
@@ -1054,7 +1065,7 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
         if ctx.emit_replay_runtime {
             sections.push(replay::emit_replay_value_impl(
                 td,
-                uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)),
+                uses_packed(ctx, crate::codegen::common::type_def_name(td)),
                 ctx,
                 Some(&module.prefix),
             ));

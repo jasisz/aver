@@ -1,32 +1,284 @@
 //! Hybrid storage for Aver `List<Int>` values.
 //!
-//! A byte-refined carrier can expose its contents without eagerly inflating
-//! every octet into an `AverInt`. Values outside 0..=255 use the ordinary
-//! persistent list, so this changes representation, never semantics.
+//! A refined carrier can expose its contents without eagerly inflating
+//! every element into an `AverInt`: octets as `Packed`, the other widths of
+//! a packed carrier ([`crate::AverPacked`]) as `Narrow`. Other values use the
+//! ordinary persistent list, so this changes representation, never
+//! semantics.
 
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use crate::block::{Block, Untyped};
+use crate::packed::{AverPacked, PackedInt};
 use crate::{AverDisplay, AverInt, AverList, AverPackedU8};
 
 #[derive(Clone)]
 pub enum AverIntList {
     Packed(AverPackedU8),
+    /// The body of a packed carrier of a width other than a byte, read as
+    /// the list it is.
+    Narrow(NarrowInts),
     Wide(AverList<AverInt>),
+}
+
+/// The width of a [`NarrowInts`]: every width a packed carrier has past a
+/// byte.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Width {
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    I64,
+}
+
+/// A range of the body of a packed carrier of a width past a byte: the
+/// carrier read as a `List<Int>`. The body is held without its element type
+/// and `width` says which it is, so copying or dropping one, which a walk
+/// does at every step, only changes the count. The range is kept in 32
+/// bits so that it, and so every `List<Int>`, is no larger than a packed
+/// list of octets; a longer carrier is read as a general list.
+pub struct NarrowInts {
+    body: Untyped,
+    width: Width,
+    start: u32,
+    end: u32,
+}
+
+impl Clone for NarrowInts {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            body: self.body.share(),
+            width: self.width,
+            start: self.start,
+            end: self.end,
+        }
+    }
+}
+
+impl Drop for NarrowInts {
+    #[inline]
+    fn drop(&mut self) {
+        if self.body.release() {
+            self.free();
+        }
+    }
+}
+
+/// `$body` with `$items` bound to the elements of `$narrow`, a slice of
+/// their own width.
+macro_rules! with_items {
+    ($narrow:expr, |$items:ident| $body:expr) => {{
+        let narrow = $narrow;
+        let range = narrow.start as usize..narrow.end as usize;
+        // SAFETY: the body was made as a block of the width it is marked
+        // with (`NarrowInts::new`).
+        unsafe {
+            match narrow.width {
+                Width::I8 => {
+                    let $items = &narrow.body.typed::<i8>()[range];
+                    $body
+                }
+                Width::U16 => {
+                    let $items = &narrow.body.typed::<u16>()[range];
+                    $body
+                }
+                Width::I16 => {
+                    let $items = &narrow.body.typed::<i16>()[range];
+                    $body
+                }
+                Width::U32 => {
+                    let $items = &narrow.body.typed::<u32>()[range];
+                    $body
+                }
+                Width::I32 => {
+                    let $items = &narrow.body.typed::<i32>()[range];
+                    $body
+                }
+                Width::I64 => {
+                    let $items = &narrow.body.typed::<i64>()[range];
+                    $body
+                }
+            }
+        }
+    }};
+}
+
+impl NarrowInts {
+    /// `start..end` of `body`, a block of `E`s of width `width`.
+    pub(crate) fn new<E: PackedInt>(body: Block<E>, width: Width, start: u32, end: u32) -> Self {
+        Self {
+            body: body.into_untyped(),
+            width,
+            start,
+            end,
+        }
+    }
+
+    /// The block and range, when the body is of width `width`, read as the
+    /// block of `E`s it was made as.
+    ///
+    /// # Safety
+    /// `E` is the element type of `width`.
+    pub(crate) unsafe fn typed<E: PackedInt>(
+        &self,
+        width: Width,
+    ) -> Option<(&Block<E>, usize, usize)> {
+        // SAFETY: the caller pairs `E` with `width`.
+        (self.width == width).then(|| {
+            (
+                unsafe { self.body.typed::<E>() },
+                self.start as usize,
+                self.end as usize,
+            )
+        })
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn free(&mut self) {
+        // SAFETY: the last count is gone, and the body was made as a block of
+        // the width it is marked with.
+        unsafe {
+            match self.width {
+                Width::I8 => self.body.free_as::<i8>(),
+                Width::U16 => self.body.free_as::<u16>(),
+                Width::I16 => self.body.free_as::<i16>(),
+                Width::U32 => self.body.free_as::<u32>(),
+                Width::I32 => self.body.free_as::<i32>(),
+                Width::I64 => self.body.free_as::<i64>(),
+            }
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        (self.end - self.start) as usize
+    }
+
+    /// The first element. Out of line, so that the walks over every
+    /// `List<Int>` keep a small match on the two common shapes.
+    #[inline(never)]
+    pub(crate) fn first(&self) -> Option<AverInt> {
+        self.get(0)
+    }
+
+    /// `drop_first(1)` of this very list: the offset moves, the shared body
+    /// and its count are left alone.
+    #[inline]
+    pub(crate) fn step_first(&mut self) {
+        self.start = (self.start + 1).min(self.end);
+    }
+
+    #[inline]
+    fn get(&self, index: usize) -> Option<AverInt> {
+        fn int<E: PackedInt>(item: &E) -> AverInt {
+            AverInt::from_i64((*item).into())
+        }
+        with_items!(self, |items| items.get(index).map(int))
+    }
+
+    fn iter(&self) -> NarrowIter<'_> {
+        with_items!(self, |items| NarrowIter::from(items))
+    }
+
+    #[inline]
+    fn drop_first(&self, count: usize) -> Self {
+        let count = u32::try_from(count).unwrap_or(u32::MAX);
+        let mut rest = self.clone();
+        rest.start = self.start.saturating_add(count).min(self.end);
+        rest
+    }
+
+    #[inline]
+    fn take_first(&self, count: usize) -> Self {
+        let count = u32::try_from(count).unwrap_or(u32::MAX);
+        let mut first = self.clone();
+        first.end = self.start.saturating_add(count).min(self.end);
+        first
+    }
+
+    fn contains(&self, needle: &AverInt) -> bool {
+        let Some(word) = needle.to_i64() else {
+            return false;
+        };
+        fn find<E: PackedInt>(items: &[E], word: i64) -> bool {
+            E::try_from(word).is_ok_and(|item| items.contains(&item))
+        }
+        with_items!(self, |items| find(items, word))
+    }
+}
+
+/// The elements of a [`NarrowInts`], read as `Int`s.
+pub enum NarrowIter<'a> {
+    I8(std::slice::Iter<'a, i8>),
+    U16(std::slice::Iter<'a, u16>),
+    I16(std::slice::Iter<'a, i16>),
+    U32(std::slice::Iter<'a, u32>),
+    I32(std::slice::Iter<'a, i32>),
+    I64(std::slice::Iter<'a, i64>),
+}
+
+macro_rules! narrow_iter_from {
+    ($($int:ty => $variant:ident),*) => {$(
+        impl<'a> From<&'a [$int]> for NarrowIter<'a> {
+            fn from(items: &'a [$int]) -> Self {
+                Self::$variant(items.iter())
+            }
+        }
+    )*};
+}
+
+narrow_iter_from!(i8 => I8, u16 => U16, i16 => I16, u32 => U32, i32 => I32, i64 => I64);
+
+impl Iterator for NarrowIter<'_> {
+    type Item = AverInt;
+
+    // Kept out of line: the iterator of every `List<Int>` matches on it,
+    // and the widths' arms would keep that match from being inlined.
+    #[inline(never)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let word = match self {
+            Self::I8(iter) => i64::from(*iter.next()?),
+            Self::U16(iter) => i64::from(*iter.next()?),
+            Self::I16(iter) => i64::from(*iter.next()?),
+            Self::U32(iter) => i64::from(*iter.next()?),
+            Self::I32(iter) => i64::from(*iter.next()?),
+            Self::I64(iter) => *iter.next()?,
+        };
+        Some(AverInt::from_i64(word))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::I8(iter) => iter.size_hint(),
+            Self::U16(iter) => iter.size_hint(),
+            Self::I16(iter) => iter.size_hint(),
+            Self::U32(iter) => iter.size_hint(),
+            Self::I32(iter) => iter.size_hint(),
+            Self::I64(iter) => iter.size_hint(),
+        }
+    }
 }
 
 pub enum AverIntListIter<'a> {
     Packed(std::slice::Iter<'a, u8>),
+    Narrow(NarrowIter<'a>),
     Wide(crate::AverListIter<'a, AverInt>),
 }
 
 impl Iterator for AverIntListIter<'_> {
     type Item = AverInt;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Packed(iter) => iter.next().map(|byte| AverInt::from_i64(i64::from(*byte))),
+            Self::Narrow(iter) => iter.next(),
             Self::Wide(iter) => iter.next().cloned(),
         }
     }
@@ -34,6 +286,7 @@ impl Iterator for AverIntListIter<'_> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
             Self::Packed(iter) => iter.size_hint(),
+            Self::Narrow(iter) => iter.size_hint(),
             Self::Wide(iter) => iter.size_hint(),
         }
     }
@@ -58,8 +311,9 @@ impl AverIntList {
         Self::Packed(AverPackedU8::from_vec(bytes))
     }
 
-    pub fn from_packed(values: AverPackedU8) -> Self {
-        Self::Packed(values)
+    /// The list a packed carrier of any width is, sharing its body.
+    pub fn from_packed<E: PackedInt>(values: AverPacked<E>) -> Self {
+        E::into_list(values)
     }
 
     /// Borrow the compact carrier when this list already has one.
@@ -73,7 +327,7 @@ impl AverIntList {
     pub fn as_packed(&self) -> Option<&AverPackedU8> {
         match self {
             Self::Packed(values) => Some(values),
-            Self::Wide(_) => None,
+            Self::Narrow(_) | Self::Wide(_) => None,
         }
     }
 
@@ -81,6 +335,7 @@ impl AverIntList {
     pub fn len(&self) -> usize {
         match self {
             Self::Packed(values) => values.len(),
+            Self::Narrow(values) => values.len(),
             Self::Wide(values) => values.len(),
         }
     }
@@ -92,6 +347,7 @@ impl AverIntList {
     pub fn iter_cloned(&self) -> AverIntListIter<'_> {
         match self {
             Self::Packed(values) => AverIntListIter::Packed(values.as_slice().iter()),
+            Self::Narrow(values) => AverIntListIter::Narrow(values.iter()),
             Self::Wide(values) => AverIntListIter::Wide(values.iter()),
         }
     }
@@ -102,32 +358,35 @@ impl AverIntList {
 
     pub fn to_aver_list(&self) -> AverList<AverInt> {
         match self {
-            Self::Packed(_) => AverList::from_vec(self.to_vec()),
+            Self::Packed(_) | Self::Narrow(_) => AverList::from_vec(self.to_vec()),
             Self::Wide(values) => values.clone(),
         }
     }
 
+    #[inline]
     pub fn into_aver_list(self) -> AverList<AverInt> {
         match self {
-            Self::Packed(values) => AverList::from_vec(
-                values
-                    .into_vec()
-                    .into_iter()
-                    .map(|byte| AverInt::from_i64(i64::from(byte)))
-                    .collect(),
-            ),
             Self::Wide(values) => values,
+            packed => packed.widened(),
         }
     }
 
-    pub fn into_packed(self) -> Result<AverPackedU8, String> {
-        match self {
-            Self::Packed(values) => Ok(values),
-            Self::Wide(values) => AverPackedU8::try_from_aver_list(&values),
-        }
+    /// A packed list, of any width, as a general one. Out of line: a list
+    /// built by prepending widens once, at its first step.
+    #[cold]
+    #[inline(never)]
+    fn widened(self) -> AverList<AverInt> {
+        AverList::from_vec(self.to_vec())
     }
 
-    #[inline]
+    /// This list as a packed carrier of the width the field it goes into
+    /// holds: its own body when it already is one, each element checked
+    /// against the width otherwise.
+    pub fn into_packed<E: PackedInt>(self) -> Result<AverPacked<E>, String> {
+        AverPacked::try_from_int_list(self)
+    }
+
+    #[inline(always)]
     pub fn uncons_cloned(&self) -> Option<(AverInt, Self)> {
         match self {
             Self::Packed(values) => values.as_slice().first().map(|byte| {
@@ -136,16 +395,27 @@ impl AverIntList {
                     Self::Packed(values.drop_first(1)),
                 )
             }),
+            Self::Narrow(values) => Self::narrow_uncons(values),
             Self::Wide(values) => {
                 crate::list_uncons_cloned(values).map(|(head, tail)| (head, Self::Wide(tail)))
             }
         }
     }
 
+    /// `uncons_cloned` of a `Narrow` list, out of line so that the hot
+    /// match keeps to the two common shapes, and in one piece so that a
+    /// step is one call.
+    #[inline(never)]
+    fn narrow_uncons(values: &NarrowInts) -> Option<(AverInt, Self)> {
+        let head = values.get(0)?;
+        Some((head, Self::Narrow(values.drop_first(1))))
+    }
+
     #[inline]
     pub fn drop_first(&self, count: usize) -> Self {
         match self {
             Self::Packed(values) => Self::Packed(values.drop_first(count)),
+            Self::Narrow(values) => Self::Narrow(values.drop_first(count)),
             Self::Wide(values) => Self::Wide(values.drop_first(count)),
         }
     }
@@ -153,6 +423,7 @@ impl AverIntList {
     pub fn take_first(&self, count: usize) -> Self {
         match self {
             Self::Packed(values) => Self::Packed(values.take_first(count)),
+            Self::Narrow(values) => Self::Narrow(values.take_first(count)),
             Self::Wide(values) => Self::from_vec(values.iter().take(count).cloned().collect()),
         }
     }
@@ -178,18 +449,17 @@ impl AverIntList {
                 .as_slice()
                 .get(index)
                 .map(|byte| AverInt::from_i64(i64::from(*byte))),
+            Self::Narrow(values) => values.get(index),
             Self::Wide(values) => values.get(index).cloned(),
         }
     }
 
     pub fn concat(left: &Self, right: &Self) -> Self {
         match (left, right) {
-            (Self::Packed(left), Self::Packed(right)) => {
-                let mut bytes = Vec::with_capacity(left.len() + right.len());
-                bytes.extend_from_slice(left.as_slice());
-                bytes.extend_from_slice(right.as_slice());
-                Self::Packed(AverPackedU8::from_vec(bytes))
-            }
+            (Self::Packed(left), Self::Packed(right)) => Self::Packed(AverPackedU8::from_iter_len(
+                left.len() + right.len(),
+                left.as_slice().iter().chain(right.as_slice()).copied(),
+            )),
             _ => Self::Wide(AverList::concat(
                 &left.to_aver_list(),
                 &right.to_aver_list(),
@@ -211,13 +481,9 @@ impl AverIntList {
 
     pub fn reverse(&self) -> Self {
         match self {
-            Self::Packed(values) => {
-                let mut bytes = values.as_slice().to_vec();
-                bytes.reverse();
-                Self::Packed(AverPackedU8::from_vec(bytes))
-            }
-            Self::Wide(values) => {
-                let mut out = values.to_vec();
+            Self::Packed(values) => Self::Packed(values.clone().into_reversed()),
+            Self::Narrow(_) | Self::Wide(_) => {
+                let mut out = self.to_vec();
                 out.reverse();
                 Self::from_vec(out)
             }
@@ -228,11 +494,8 @@ impl AverIntList {
     /// reversed where it lies rather than copied.
     pub fn reverse_owned(self) -> Self {
         match self {
-            Self::Packed(values) => {
-                let mut bytes = values.into_vec();
-                bytes.reverse();
-                Self::Packed(AverPackedU8::from_vec(bytes))
-            }
+            Self::Packed(values) => Self::Packed(values.into_reversed()),
+            Self::Narrow(_) => self.reverse(),
             Self::Wide(values) => Self::from_vec(values.into_reversed_vec()),
         }
     }
@@ -243,6 +506,7 @@ impl AverIntList {
                 .to_u32()
                 .and_then(|value| u8::try_from(value).ok())
                 .is_some_and(|byte| values.as_slice().contains(&byte)),
+            Self::Narrow(values) => values.contains(needle),
             Self::Wide(values) => values.contains(needle),
         }
     }
@@ -313,24 +577,31 @@ impl AverDisplay for AverIntList {
     }
 }
 
-pub trait IntoPackedU8 {
-    fn into_packed_u8(self) -> Result<AverPackedU8, String>;
+/// A `List<Int>`, either Rust form of it, that packs into a carrier.
+pub trait IntoPacked {
+    fn into_packed<E: PackedInt>(self) -> Result<AverPacked<E>, String>;
 }
 
-impl IntoPackedU8 for AverIntList {
-    fn into_packed_u8(self) -> Result<AverPackedU8, String> {
-        self.into_packed()
+impl IntoPacked for AverIntList {
+    fn into_packed<E: PackedInt>(self) -> Result<AverPacked<E>, String> {
+        AverPacked::try_from_int_list(self)
     }
 }
 
-impl IntoPackedU8 for AverList<AverInt> {
-    fn into_packed_u8(self) -> Result<AverPackedU8, String> {
-        AverPackedU8::try_from_aver_list(&self)
+impl IntoPacked for AverList<AverInt> {
+    fn into_packed<E: PackedInt>(self) -> Result<AverPacked<E>, String> {
+        AverPacked::try_from_aver_list(&self)
     }
 }
 
-pub fn into_packed_u8<T: IntoPackedU8>(values: T) -> Result<AverPackedU8, String> {
-    values.into_packed_u8()
+/// `values` as a packed carrier of the width the place it goes to holds.
+pub fn into_packed<E: PackedInt, T: IntoPacked>(values: T) -> Result<AverPacked<E>, String> {
+    values.into_packed()
+}
+
+/// `values` as a packed carrier of octets.
+pub fn into_packed_u8<T: IntoPacked>(values: T) -> Result<AverPackedU8, String> {
+    values.into_packed()
 }
 
 /// Builder entry points used by the list-deforestation intrinsics when their

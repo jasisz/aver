@@ -1130,7 +1130,7 @@ fn emit_product_type(
     counted: bool,
     representation: RepresentationContract,
 ) -> String {
-    let packed_u8 = super::uses_packed_u8(ctx, name);
+    let packed = super::packed_element(ctx, name);
     let carrier = super::carrier::declared_storage(ctx, scope, name);
     let mut out = String::new();
     let visibility = visibility_prefix(public);
@@ -1171,10 +1171,15 @@ fn emit_product_type(
         writeln!(out, "    {visibility}{COUNT_FIELD}: aver_rt::Count,").unwrap();
     }
     for (field_name, field_type) in fields {
-        let rust_type = if packed_u8 {
+        let rust_type = if let Some(element) = packed {
             debug_assert_eq!(fields.len(), 1);
             debug_assert_eq!(parse_type_str(field_type), Type::List(Box::new(Type::Int)));
-            "aver_rt::AverPackedU8".to_string()
+            match element {
+                crate::codegen::proof_lower::PackedIntElement::U8 => {
+                    "aver_rt::AverPackedU8".to_string()
+                }
+                element => format!("aver_rt::AverPacked<{}>", element.rust_type()),
+            }
         } else if let Some(storage) = carrier {
             debug_assert_eq!(fields.len(), 1);
             debug_assert_eq!(parse_type_str(field_type), Type::Int);

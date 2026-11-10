@@ -2720,10 +2720,10 @@ fn packed_u8_carrier(
     };
     if let Some(id) = type_id {
         let bare = ctx.symbol_table.type_entry(id).key.name.as_str();
-        return Some(super::uses_packed_u8(codegen, bare));
+        return Some(super::uses_packed(codegen, bare));
     }
     let bare = type_name.rsplit('.').next().unwrap_or(type_name);
-    if super::uses_packed_u8(codegen, bare) {
+    if super::uses_packed(codegen, bare) {
         return None;
     }
     Some(false)
@@ -2802,9 +2802,11 @@ fn emit_wide_literal_comparison(
     Some(format!("({value}).cmp_i64({k}i64).{test}()"))
 }
 
+/// `value`, a `List<Int>`, as the packed carrier of the field it goes
+/// into; the field's type says the width.
 fn pack_u8_list(value: String) -> String {
     format!(
-        "aver_rt::into_packed_u8({value}).expect(\"proof-packed U8 construction escaped its refinement gate\")"
+        "aver_rt::into_packed({value}).expect(\"proof-packed construction escaped its refinement gate\")"
     )
 }
 
@@ -11347,7 +11349,12 @@ fn emit_mir_intrinsic_call(
             let Some(Type::Named { id, name }) = project.node.base.ty() else {
                 return None;
             };
-            if packed_u8_carrier(*id, name, ctx) != Some(true) {
+            // The pass rewrites reads of octet carriers only.
+            if packed_u8_carrier(*id, name, ctx) != Some(true)
+                || !ctx.codegen.zip(*id).is_some_and(|(codegen, id)| {
+                    super::uses_packed_u8(codegen, &ctx.symbol_table.type_entry(id).key.name)
+                })
+            {
                 return None;
             }
             let base = emit_mir_expr(&project.node.base, ctx)?;
