@@ -157,7 +157,11 @@ pub fn check_findings(
     let gates: Vec<(Candidate, &str)> = symbols
         .literal_refinements()
         .iter()
-        .filter(|c| c.carrier == LiteralCarrier::Int && c.scope.is_none() && c.interval.fits_i64())
+        .filter(|c| c.carrier == LiteralCarrier::Int && c.scope.is_none())
+        // The table holds one entry per smart constructor; the type is
+        // looked at once, through all of them.
+        .scan(HashSet::new(), |seen, c| Some(seen.insert(c.type_id).then_some(c)))
+        .flatten()
         .filter_map(|c| {
             let ctors = checked_ctors(entry_fns(items), &c.type_name, &c.carrier_field, |fd| {
                 let fn_id = symbols.fn_id_of(&FnKey::entry(fd.name.as_str()))?;

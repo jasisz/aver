@@ -1834,15 +1834,29 @@ fn packed_refinement_constructor_prologue(
         else {
             continue;
         };
-        let constructor_key = match scope {
-            Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), info.constructor_fn),
-            None => crate::ir::FnKey::entry(info.constructor_fn),
+        let Some(constructor) = info.constructors.iter().find(|ctor| {
+            let key = match scope {
+                Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), ctor.name),
+                None => crate::ir::FnKey::entry(ctor.name),
+            };
+            ctx.symbol_table.fn_id_of(&key) == Some(resolved_fd.fn_id)
+        }) else {
+            continue;
         };
-        if ctx.symbol_table.fn_id_of(&constructor_key) != Some(resolved_fd.fn_id) {
+        // The layout holds what every constructor of the type admits; a
+        // packed list proves only that. This constructor may accept it
+        // unchecked only when its own check admits every octet too.
+        let own = crate::codegen::proof_lower::packed_sequence::element_interval_from_predicate(
+            constructor.predicate,
+            constructor.param_name,
+            &inputs.pure_fns_in_scope(scope),
+            &|expr| inputs.resolve_expr(expr, scope),
+        );
+        if own != Some(full_octet_interval) {
             continue;
         }
 
-        let parameter = aver_name_to_rust(info.param_name);
+        let parameter = aver_name_to_rust(constructor.param_name);
         let record = aver_name_to_rust(type_name);
         let field = aver_name_to_rust(info.carrier_field);
         let packed = super::syntax::generated_ident("packed");

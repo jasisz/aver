@@ -234,8 +234,8 @@ fn legacy_decision(ctx: &CodegenContext, type_name: &str) -> Option<LegacyDecl> 
     Some(LegacyDecl {
         carrier_type: info.carrier_type.to_string(),
         carrier_field: info.carrier_field.to_string(),
-        predicate_param: info.param_name.to_string(),
-        predicate_repr: spanned_repr_ast(&inputs, info.predicate, None),
+        predicate_param: info.param_name().to_string(),
+        predicate_repr: spanned_repr_ast(&inputs, info.constructors[0].predicate, None),
     })
 }
 

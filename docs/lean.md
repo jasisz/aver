@@ -436,7 +436,7 @@ An Aver single-field record that its module lists under `exposes opaque`, paired
 abbrev Natural := { v : Int // v ≥ 0 }
 ```
 
-The predicate from the smart constructor's bool guard lives in the type itself. A law about values of the type says so in its givens:
+The predicate from the smart constructor's bool guard lives in the type itself. A record may have several smart constructors in its module, each with its own check (`runOf` admitting `1..65535` and `placeOf` admitting `0..2^40`); every value then satisfies one of them, so the predicate is their disjunction, whatever order they are declared in, and each constructor proves its own disjunct. Every backend reads the record the same way: its bound is the union of what the constructors admit, while a call of one constructor still checks only its own condition. A law about values of the type says so in its givens:
 
 ```aver
 verify add law commutative

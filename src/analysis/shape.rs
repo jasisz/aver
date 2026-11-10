@@ -890,7 +890,7 @@ pub fn detect_module_patterns(
         }
     }
 
-    // Walk fns looking for the smart-constructor shape per candidate
+    // Walk fns looking for every smart constructor of each candidate
     // record. Mirrors `refinement_info_for_walk`: return type
     // `Result<TypeName, _>`, exactly one param, body is a single
     // `match <pred>` with two arms, bool-shaped `true -> Ok` /
@@ -942,7 +942,8 @@ pub fn detect_module_patterns(
                 param_name: param_name.clone(),
                 predicate: (**subject).clone(),
             });
-            break;
+            // A record may have several smart constructors, each with its
+            // own check; every one is a pattern of its own.
         }
     }
 

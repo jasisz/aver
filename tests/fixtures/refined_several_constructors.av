@@ -1,0 +1,59 @@
+module RefinedSeveralConstructors
+    intent = "A refined record with three smart constructors, the narrowest first: the type holds what any of them admits."
+    effects []
+    exposes [runOf, placeOf, debtOf, longer, next, lit]
+    exposes opaque [Place]
+
+record Place
+    value: Int
+
+fn runOf(n: Int) -> Result<Place, String>
+    ? "A run length as a place."
+    match Bool.and(n >= 1, n < 65536)
+        true -> Result.Ok(Place(value = n))
+        false -> Result.Err("run out of range")
+
+fn placeOf(n: Int) -> Result<Place, String>
+    ? "A place within forty bits."
+    match Bool.and(n >= 0, n < 1099511627776)
+        true -> Result.Ok(Place(value = n))
+        false -> Result.Err("place out of range")
+
+fn debtOf(k: Int) -> Result<Place, String>
+    ? "A small debt as a place below zero."
+    match Bool.and(k >= -100, k < 0)
+        true -> Result.Ok(Place(value = k))
+        false -> Result.Err("debt out of range")
+
+fn longer(p: Place) -> Result<Place, String>
+    ? "A run one longer than this place."
+    runOf(p.value + 1)
+
+fn next(p: Place) -> Int
+    ? "The place after this one."
+    p.value + 1
+
+fn lit() -> Int
+    ? "Places written as literals, one per constructor."
+    next(runOf(5)) + next(debtOf(-7)) + next(placeOf(70000))
+
+verify runOf
+    runOf(0) => Result.Err("run out of range")
+    next(runOf(3)) => 4
+
+verify placeOf
+    placeOf(0 - 1) => Result.Err("place out of range")
+
+verify debtOf
+    debtOf(0) => Result.Err("debt out of range")
+    debtOf(0 - 5) => Result.Ok(Place(value = 0 - 5))
+
+verify longer
+    longer(runOf(65535)) => Result.Err("run out of range")
+    longer(debtOf(-2)) => Result.Err("run out of range")
+
+verify lit
+    lit() => 70001
+
+verify next
+    next(Place(value = 0 - 100)) => 0 - 99

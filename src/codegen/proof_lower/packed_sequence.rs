@@ -147,12 +147,21 @@ fn element_interval_from_refinement(
     inputs: &ProofLowerInputs<'_>,
     scope: Option<&str>,
 ) -> Option<Interval> {
-    element_interval_from_predicate(
-        info.predicate,
-        info.param_name,
-        &inputs.pure_fns_in_scope(scope),
-        &|expr| inputs.resolve_expr(expr, scope),
-    )
+    // Every element of every value passed one constructor's check: the
+    // hull of what each admits. A check the recognizer cannot read leaves
+    // the layout undecided.
+    let fns = inputs.pure_fns_in_scope(scope);
+    info.constructors
+        .iter()
+        .map(|ctor| {
+            element_interval_from_predicate(ctor.predicate, ctor.param_name, &fns, &|expr| {
+                inputs.resolve_expr(expr, scope)
+            })
+        })
+        .try_fold(None, |hull: Option<Interval>, admits| {
+            let admits = admits?;
+            Some(Some(hull.map_or(admits, |h| h.hull(admits))))
+        })?
 }
 
 /// Derive the per-element interval of a canonical `List<Int>` refinement

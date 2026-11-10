@@ -779,7 +779,7 @@ pub fn classify_op(
     carrier_interval: Interval,
     refined_type_name: &str,
     carrier_field: &str,
-    constructor_fn: &str,
+    constructor_fns: &[String],
 ) -> OpClass {
     // Map each parameter name to whether it carries the refined type.
     let mut refined_params: HashMap<&str, bool> = HashMap::new();
@@ -790,7 +790,7 @@ pub fn classify_op(
         carrier_interval,
         carrier_field,
         refined_params: &refined_params,
-        constructor_fn,
+        constructor_fns,
     };
 
     // Worst-case (least-headroom) interval seen anywhere in the body.
@@ -821,10 +821,10 @@ struct OpCtx<'a> {
     carrier_interval: Interval,
     carrier_field: &'a str,
     refined_params: &'a HashMap<&'a str, bool>,
-    /// The refined type's actual smart constructor name (`"fromInt"`).
-    /// ONLY a one-arg call to this exact callee is peeled transparently;
-    /// every other call evaluates to `Interval::unbounded()`.
-    constructor_fn: &'a str,
+    /// The refined type's actual smart constructor names (`"fromInt"`).
+    /// ONLY a one-arg call to one of these exact callees is peeled
+    /// transparently; every other call evaluates to `Interval::unbounded()`.
+    constructor_fns: &'a [String],
 }
 
 /// Convex hull of two intervals — the "worst case includes both"
@@ -891,7 +891,11 @@ fn eval_expr(expr: &Spanned<Expr>, ctx: &OpCtx<'_>, worst: &mut Interval) -> Int
         // treated as identity, or its widened return value would be
         // hidden. Every non-constructor call is opaque → unbounded.
         Expr::FnCall(callee, args)
-            if args.len() == 1 && is_constructor_call(callee, ctx.constructor_fn) =>
+            if args.len() == 1
+                && ctx
+                    .constructor_fns
+                    .iter()
+                    .any(|ctor| is_constructor_call(callee, ctor)) =>
         {
             eval_expr(&args[0], ctx, worst)
         }
@@ -939,8 +943,6 @@ pub fn analyze(
     let symbols = inputs.symbol_table;
 
     for (type_id, decl) in refined {
-        let (interval, interval_known) = interval_of_invariant(&decl.invariant);
-
         // Find the module scope this type lives in by resolving its
         // opaque `TypeId` back through the symbol table, then walk that
         // scope's fns for arithmetic ops over the type. Same scoping
@@ -954,18 +956,29 @@ pub fn analyze(
         // one-arg helper). If the refinement shape can't be re-resolved
         // (it always can here — the type was lifted from it), there is
         // no trustworthy constructor to gate on, so every op declines.
-        let constructor_fn = crate::codegen::common::refinement_info_for_in_scope(
+        let info = crate::codegen::common::refinement_info_for_in_scope(
             &decl.name,
             inputs,
             scope.as_deref(),
-        )
-        .map(|info| info.constructor_fn.to_string());
+        );
+        let constructor_fns: Option<Vec<String>> = info.as_ref().map(|info| {
+            info.constructors
+                .iter()
+                .map(|c| c.name.to_string())
+                .collect()
+        });
+        // The hull of what each smart constructor admits: the invariant is
+        // their disjunction, which the interval engine does not read.
+        let (interval, interval_known) = match &info {
+            Some(info) => info.interval(|e| inputs.resolve_expr(e, scope.as_deref())),
+            None => interval_of_invariant(&decl.invariant),
+        };
 
         let ops = classify_ops_in_scope(
             decl,
             interval,
             interval_known,
-            constructor_fn.as_deref(),
+            constructor_fns.as_deref(),
             inputs.pure_fns_in_scope(scope.as_deref()),
         );
 
@@ -1014,7 +1027,7 @@ fn classify_ops_in_scope(
     decl: &RefinedTypeDecl,
     interval: Interval,
     interval_known: bool,
-    constructor_fn: Option<&str>,
+    constructor_fns: Option<&[String]>,
     fns: Vec<&FnDef>,
 ) -> Vec<(String, OpClass)> {
     let mut ops = Vec::new();
@@ -1033,8 +1046,10 @@ fn classify_ops_in_scope(
         // transparent peel on, the op is necessarily `Unbounded` —
         // there's no derived bound to reason from, and without the
         // constructor name no call can be safely treated as identity.
-        let class = match (interval_known, constructor_fn) {
-            (true, Some(ctor)) => classify_op(fd, interval, &decl.name, &decl.carrier_field, ctor),
+        let class = match (interval_known, constructor_fns) {
+            (true, Some(ctors)) => {
+                classify_op(fd, interval, &decl.name, &decl.carrier_field, ctors)
+            }
             _ => OpClass::Unbounded,
         };
         ops.push((fd.name.clone(), class));

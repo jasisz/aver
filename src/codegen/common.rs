@@ -30,35 +30,129 @@ pub struct RefinementInfo<'a> {
     /// `.val` on a Subtype, so users of the carrier field have to
     /// rewrite `n.value → n.val` when the host type is refined.
     pub carrier_field: &'a str,
-    /// Name of the smart constructor's input parameter (`"n"` in
-    /// `fromInt(n: Int) → Result<X, _>`). Used when substituting
-    /// the law's quantified variable into the predicate.
+    /// Every smart constructor of the record in its own module, in source
+    /// order; never empty. Each builds a value its own check admits, so
+    /// every value of the type satisfies one of their checks, and none of
+    /// them is the type's: the invariant is their disjunction
+    /// ([`RefinementInfo::invariant`]), and the interval its hull
+    /// ([`RefinementInfo::interval`]).
+    pub constructors: Vec<SmartConstructor<'a>>,
+}
+
+/// One smart constructor of a refinement-via-opaque record:
+/// `fn <name>(<param_name>: <carrier>) -> Result<T, _>` whose body is
+/// `match <predicate> { true -> Ok(T(field = param)); false -> Err(_) }`.
+#[derive(Debug, Clone)]
+pub struct SmartConstructor<'a> {
+    /// Source-level name (`"fromInt"`).
+    pub name: &'a str,
+    /// Name of its one parameter (`"n"`), the predicate's free variable.
     pub param_name: &'a str,
-    /// Source-level name of the smart constructor itself (`"fromInt"`).
-    /// The interval analysis gates its transparent-wrapper peel on this
-    /// name so only the real smart constructor — never an arbitrary
-    /// one-arg helper — is treated as identity over its argument.
-    pub constructor_fn: &'a str,
-    /// AST node for the bool predicate the smart constructor
-    /// branches on — the body's `Match { subject = <here>, ... }`.
+    /// The bool predicate it branches on.
     pub predicate: &'a Spanned<Expr>,
 }
 
-/// Inspect inputs for a refinement-via-opaque record by `type_name`.
-/// Returns `Some(info)` iff there's exactly one matching smart
-/// constructor and the record has a single carrier field.
+impl<'a> RefinementInfo<'a> {
+    /// The free variable [`Self::invariant`] is stated over: the first
+    /// constructor's parameter.
+    pub fn param_name(&self) -> &'a str {
+        self.constructors[0].param_name
+    }
+
+    /// Whether `name` is one of the record's smart constructors.
+    pub fn is_constructor(&self, name: &str) -> bool {
+        self.constructors.iter().any(|c| c.name == name)
+    }
+
+    /// The predicate every value of the type satisfies, over
+    /// [`Self::param_name`]: one constructor's check as it is, or
+    /// `Bool.or` of all of them, each restated over that name. `None` when a
+    /// later check mentions that name as something other than its own
+    /// parameter, so restating it would capture it.
+    pub fn invariant(
+        &self,
+        resolve: impl Fn(&Spanned<Expr>) -> Spanned<crate::ir::hir::ResolvedExpr>,
+    ) -> Option<Spanned<crate::ir::hir::ResolvedExpr>> {
+        let over = self.param_name();
+        let mut checks = self.constructors.iter().map(|ctor| {
+            let check = resolve(ctor.predicate);
+            if ctor.param_name == over {
+                return Some(check);
+            }
+            let probe = "__aver_capture_probe";
+            if substitute_ident_in_resolved_expr(&check, over, probe) != check {
+                return None;
+            }
+            Some(substitute_ident_in_resolved_expr(
+                &check,
+                ctor.param_name,
+                over,
+            ))
+        });
+        let first = checks.next()??;
+        checks.try_fold(first, |acc, check| {
+            let line = acc.line;
+            Some(Spanned::new(
+                crate::ir::hir::ResolvedExpr::Call(
+                    crate::ir::hir::ResolvedCallee::Builtin("Bool.or".into()),
+                    crate::ast::Shared::new(vec![acc, check?]),
+                ),
+                line,
+            ))
+        })
+    }
+
+    /// The interval every value of an `Int` carrier lies in: the hull of
+    /// what each constructor's check admits. `known` only when the interval
+    /// engine reads every check exactly, so a constructor it cannot read
+    /// leaves the whole type unbounded.
+    pub fn interval(
+        &self,
+        resolve: impl Fn(&Spanned<Expr>) -> Spanned<crate::ir::hir::ResolvedExpr>,
+    ) -> (crate::ir::interval::Interval, bool) {
+        let mut hull: Option<crate::ir::interval::Interval> = None;
+        for ctor in &self.constructors {
+            let (admits, known) = self.admitted_by(ctor, &resolve);
+            if !known {
+                return (crate::ir::interval::Interval::unbounded(), false);
+            }
+            hull = Some(hull.map_or(admits, |h| h.hull(admits)));
+        }
+        (hull.expect("a refinement has a smart constructor"), true)
+    }
+
+    /// What one constructor's own check admits, exactly as the interval
+    /// engine reads it.
+    pub fn admitted_by(
+        &self,
+        ctor: &SmartConstructor<'a>,
+        resolve: impl Fn(&Spanned<Expr>) -> Spanned<crate::ir::hir::ResolvedExpr>,
+    ) -> (crate::ir::interval::Interval, bool) {
+        crate::ir::interval::interval_of_invariant(&crate::ir::proof_ir::Predicate {
+            free_vars: vec![(
+                ctor.param_name.to_string(),
+                crate::ir::proof_ir::QuantifierType::Plain(self.carrier_type.to_string()),
+            )],
+            expr: resolve(ctor.predicate),
+        })
+    }
+}
+
+/// Inspect inputs for a refinement-via-opaque record by `type_name`:
+/// `Some(info)` when the record has a single carrier field and at least one
+/// smart constructor in its own module.
 ///
-/// Defaults to "any scope" — walks entry + every dep module's
-/// type_defs and fn_defs to find the record + smart constructor.
+/// Defaults to "any scope" — the first such record walked, entry first.
 /// Use [`refinement_info_for_in_scope`] when two modules declare a
 /// refined record of the same bare name (`A.Natural` vs `B.Natural`)
-/// and you need each scope's *own* predicate; the unscoped form
-/// returns whichever record walked first.
+/// and you need each scope's *own* predicate.
 pub fn refinement_info_for<'a>(
     type_name: &str,
     inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
 ) -> Option<RefinementInfo<'a>> {
-    refinement_info_for_walk(type_name, inputs, None)
+    std::iter::once(None)
+        .chain(inputs.dep_modules.iter().map(|m| Some(m.prefix.as_str())))
+        .find_map(|scope| refinement_info_for_in_scope(type_name, inputs, scope))
 }
 
 /// Module-scoped variant of [`refinement_info_for`]. `scope =
@@ -66,9 +160,9 @@ pub fn refinement_info_for<'a>(
 /// means "look in the dep module whose `prefix` matches".
 ///
 /// Refinement-via-opaque is a single-module pattern: the record is
-/// declared `exposes opaque [X]` and the smart constructor lives in
+/// declared `exposes opaque [X]` and its smart constructors live in
 /// the same module (the carrier field isn't reachable from outside,
-/// so the constructor can't reside elsewhere). Scoping the search
+/// so a constructor can't reside elsewhere). Scoping the search
 /// to one module gives each scope its own predicate, which is what
 /// `populate_refined_types` needs so canonical `A.Natural` and
 /// `B.Natural` slots don't share a predicate from whichever module
@@ -78,111 +172,74 @@ pub fn refinement_info_for_in_scope<'a>(
     inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
     scope: Option<&str>,
 ) -> Option<RefinementInfo<'a>> {
-    refinement_info_for_walk(type_name, inputs, Some(scope))
-}
-
-fn refinement_info_for_walk<'a>(
-    type_name: &str,
-    inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
-    // Outer Option: None = "any scope" (legacy); Some(inner) =
-    // module-scoped. Inner Option: None = entry, Some(prefix) =
-    // module by prefix.
-    scope_filter: Option<Option<&str>>,
-) -> Option<RefinementInfo<'a>> {
-    // Stage 6b of #232: when the caller threaded a `ProgramShape`
-    // through `ProofLowerInputs.program_shape`, look up the typed
-    // pattern directly instead of walking the AST. The
-    // `detection_payload_matches_refinement_info_for` test guards
-    // that the two paths return the same carrier/predicate, so this
-    // adapter is behavior-preserving.
-    if let Some(shape) = inputs.program_shape
-        && let Some(info) = refinement_info_from_shape(shape, inputs, type_name, scope_filter)
-    {
-        return Some(info);
-    }
-    refinement_info_for_walk_legacy(type_name, inputs, scope_filter)
-}
-
-/// Stage 6b adapter: pick the typed `RefinementSmartConstructor`
-/// pattern from `ProgramShape.patterns` and project it back into the
-/// legacy `RefinementInfo<'a>` shape (with `&'a Spanned<Expr>`
-/// predicate). The predicate is borrowed from the matching smart
-/// constructor's body in `inputs.entry_items` / `inputs.dep_modules` —
-/// the pattern's owned clone is only used for the cross-check test.
-fn refinement_info_from_shape<'a>(
-    shape: &crate::analysis::shape::ProgramShape,
-    inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
-    type_name: &str,
-    scope_filter: Option<Option<&str>>,
-) -> Option<RefinementInfo<'a>> {
-    use crate::analysis::shape::ModulePattern;
-
-    let pattern_match = shape.patterns.iter().find_map(|p| {
-        let ModulePattern::RefinementSmartConstructor {
-            scope,
-            type_name: ptn,
-            constructor_fn,
-            ..
-        } = p
-        else {
-            return None;
-        };
-        if ptn != type_name {
-            return None;
+    let (type_defs, fns): (Vec<&'a TypeDef>, Vec<&'a FnDef>) = match scope {
+        None => (
+            inputs
+                .entry_items
+                .iter()
+                .filter_map(|item| match item {
+                    TopLevel::TypeDef(td) => Some(td),
+                    _ => None,
+                })
+                .collect(),
+            inputs
+                .entry_items
+                .iter()
+                .filter_map(|item| match item {
+                    TopLevel::FnDef(fd) => Some(fd),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        Some(prefix) => {
+            let module = inputs.dep_modules.iter().find(|m| m.prefix == prefix)?;
+            (
+                module.type_defs.iter().collect(),
+                module.fn_defs.iter().collect(),
+            )
         }
-        let scope_ok = match (scope_filter, scope.as_deref()) {
-            (None, _) => true,
-            (Some(None), None) => true,
-            (Some(None), Some(_)) => false,
-            (Some(Some(want)), Some(have)) => want == have,
-            (Some(Some(_)), None) => false,
-        };
-        if !scope_ok {
-            return None;
-        }
-        Some((scope.clone(), constructor_fn.clone()))
-    })?;
-
-    let (scope, constructor_fn) = pattern_match;
-
-    let (carrier_field, carrier_type) = match scope.as_deref() {
-        None => inputs.entry_items.iter().find_map(|i| match i {
-            TopLevel::TypeDef(td) => carrier_of(td, type_name),
-            _ => None,
-        }),
-        Some(prefix) => inputs
-            .dep_modules
-            .iter()
-            .find(|m| m.prefix == prefix)
-            .and_then(|m| m.type_defs.iter().find_map(|td| carrier_of(td, type_name))),
-    }?;
-
-    let constructor_fd: &'a FnDef = match scope.as_deref() {
-        None => inputs.entry_items.iter().find_map(|i| match i {
-            TopLevel::FnDef(fd) if fd.name == constructor_fn => Some(fd),
-            _ => None,
-        }),
-        Some(prefix) => inputs
-            .dep_modules
-            .iter()
-            .find(|m| m.prefix == prefix)
-            .and_then(|m| m.fn_defs.iter().find(|fd| fd.name == constructor_fn)),
-    }?;
-
-    let (param_name, _) = constructor_fd.params.first()?;
-    let stmts = constructor_fd.body.stmts();
-    let Stmt::Expr(body_expr) = stmts.first()? else {
-        return None;
     };
-    let Expr::Match { subject, .. } = &body_expr.node else {
-        return None;
-    };
-
-    Some(RefinementInfo {
+    let (carrier_field, carrier_type) = type_defs
+        .into_iter()
+        .find_map(|td| carrier_of(td, type_name))?;
+    let constructors: Vec<SmartConstructor<'a>> = fns
+        .into_iter()
+        .filter_map(|fd| smart_constructor_of(fd, type_name, carrier_field))
+        .collect();
+    (!constructors.is_empty()).then_some(RefinementInfo {
         carrier_type,
         carrier_field,
+        constructors,
+    })
+}
+
+/// `fd` as a smart constructor of the record `type_name` with the one field
+/// `carrier_field`, when it has that shape (see [`SmartConstructor`]). The
+/// same test `analysis::shape::detect_module_patterns` applies.
+pub fn smart_constructor_of<'a>(
+    fd: &'a FnDef,
+    type_name: &str,
+    carrier_field: &str,
+) -> Option<SmartConstructor<'a>> {
+    if !fd
+        .return_type
+        .strip_prefix("Result<")?
+        .starts_with(type_name)
+    {
+        return None;
+    }
+    let [(param_name, _)] = fd.params.as_slice() else {
+        return None;
+    };
+    let [Stmt::Expr(body_expr)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { subject, arms } = &body_expr.node else {
+        return None;
+    };
+    is_bool_ok_err_match(arms, type_name, carrier_field, param_name).then_some(SmartConstructor {
+        name: fd.name.as_str(),
         param_name,
-        constructor_fn: constructor_fd.name.as_str(),
         predicate: subject,
     })
 }
@@ -194,103 +251,6 @@ fn carrier_of<'a>(td: &'a TypeDef, type_name: &str) -> Option<(&'a str, &'a str)
     crate::analysis::shape::refinement_carrier(td)
         .filter(|(name, _, _)| *name == type_name)
         .map(|(_, field, ty)| (field, ty))
-}
-
-fn refinement_info_for_walk_legacy<'a>(
-    type_name: &str,
-    inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
-    scope_filter: Option<Option<&str>>,
-) -> Option<RefinementInfo<'a>> {
-    let entry_only = matches!(scope_filter, Some(None));
-    let module_only_prefix = match scope_filter {
-        Some(Some(p)) => Some(p),
-        _ => None,
-    };
-    let allow_entry = scope_filter.is_none() || entry_only;
-    let entry_typedefs: Vec<&'a TypeDef> = if allow_entry {
-        inputs
-            .entry_items
-            .iter()
-            .filter_map(|item| match item {
-                TopLevel::TypeDef(td) => Some(td),
-                _ => None,
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let module_typedefs: Vec<&'a TypeDef> = inputs
-        .dep_modules
-        .iter()
-        .filter(|m| match (scope_filter, module_only_prefix) {
-            (None, _) => true,
-            (Some(None), _) => false,
-            (Some(Some(_)), Some(p)) => m.prefix == p,
-            _ => false,
-        })
-        .flat_map(|m| m.type_defs.iter())
-        .collect();
-    let (carrier_field, carrier_type) = entry_typedefs
-        .into_iter()
-        .chain(module_typedefs)
-        .find_map(|td| carrier_of(td, type_name))?;
-
-    let entry_fns: Vec<&'a FnDef> = if allow_entry {
-        inputs
-            .entry_items
-            .iter()
-            .filter_map(|item| match item {
-                TopLevel::FnDef(fd) => Some(fd),
-                _ => None,
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let module_fns: Vec<&'a FnDef> = inputs
-        .dep_modules
-        .iter()
-        .filter(|m| match (scope_filter, module_only_prefix) {
-            (None, _) => true,
-            (Some(None), _) => false,
-            (Some(Some(_)), Some(p)) => m.prefix == p,
-            _ => false,
-        })
-        .flat_map(|m| m.fn_defs.iter())
-        .collect();
-    for fd in entry_fns.into_iter().chain(module_fns) {
-        if !fd.return_type.starts_with("Result<") {
-            continue;
-        }
-        if !fd.return_type[7..].starts_with(type_name) {
-            continue;
-        }
-        if fd.params.len() != 1 {
-            continue;
-        }
-        let (param_name, _) = &fd.params[0];
-        let stmts = fd.body.stmts();
-        if stmts.len() != 1 {
-            continue;
-        }
-        let Stmt::Expr(body_expr) = &stmts[0] else {
-            continue;
-        };
-        let Expr::Match { subject, arms } = &body_expr.node else {
-            continue;
-        };
-        if !is_bool_ok_err_match(arms, type_name, carrier_field, param_name) {
-            continue;
-        }
-        return Some(RefinementInfo {
-            carrier_type,
-            carrier_field,
-            param_name,
-            constructor_fn: fd.name.as_str(),
-            predicate: subject,
-        });
-    }
-    None
 }
 
 /// True iff a two-arm bool match is the canonical refinement shape:

@@ -392,8 +392,26 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                 } else {
                     "first | omega | decide | (simp_all; omega) | assumption".to_string()
                 };
-                if let Some(predicate) = invariant_head_name(&decl.invariant.expr, ctx) {
-                    ladder.push_str(&format!(" | simp [{predicate}]"));
+                let disjuncts = invariant_disjuncts(&decl.invariant.expr);
+                if let [only] = disjuncts.as_slice() {
+                    if let Some(predicate) = invariant_head_name(only, ctx) {
+                        ladder.push_str(&format!(" | simp [{predicate}]"));
+                    }
+                } else {
+                    // A type with several smart constructors: the invariant
+                    // is the disjunction of their checks. Inside one of them
+                    // the check it branched on is a hypothesis that rewrites
+                    // its disjunct to `true`, which `simp_all` alone finishes
+                    // (`simp_all; omega` then fails on no goals); a literal
+                    // needs the predicates' equation lemmas, as above.
+                    ladder.push_str(" | simp_all");
+                    let heads: Vec<String> = disjuncts
+                        .iter()
+                        .filter_map(|disjunct| invariant_head_name(disjunct, ctx))
+                        .collect();
+                    if !heads.is_empty() {
+                        ladder.push_str(&format!(" | simp [{}]", heads.join(", ")));
+                    }
                 }
                 return format!("(⟨{value_str}, by {ladder}⟩ : {lean_type_name})");
             }
@@ -653,6 +671,22 @@ fn escape_lean_string(s: &str) -> String {
 /// well-founded recursion. A non-call invariant (a bare comparison such
 /// as `n >= 0`) has no name to unfold and returns `None`; those goals
 /// are already closed by `omega` / `decide`.
+/// The checks a refinement's invariant is the disjunction of: one per
+/// smart constructor (`common::RefinementInfo::invariant`), so a single
+/// check is itself.
+fn invariant_disjuncts(invariant: &Spanned<ResolvedExpr>) -> Vec<&Spanned<ResolvedExpr>> {
+    match &invariant.node {
+        ResolvedExpr::Call(ResolvedCallee::Builtin(name), args)
+            if name == "Bool.or" && args.len() == 2 =>
+        {
+            let mut out = invariant_disjuncts(&args[0]);
+            out.extend(invariant_disjuncts(&args[1]));
+            out
+        }
+        _ => vec![invariant],
+    }
+}
+
 pub(super) fn invariant_head_name(
     invariant: &Spanned<ResolvedExpr>,
     ctx: &CodegenContext,

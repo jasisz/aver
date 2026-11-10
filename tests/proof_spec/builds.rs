@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn proof_export_builds_a_refinement_with_several_smart_constructors() {
+    // The invariant of a record with three smart constructors is the
+    // disjunction of their checks; each constructor proves its own disjunct
+    // and each literal discharge proves the whole. The narrowest check comes
+    // first, so a type whose invariant were its first constructor's check
+    // would fail to build the wider two.
+    assert_proof_builds_with_sorry_budget(
+        "tests/fixtures/refined_several_constructors.av",
+        "aver-proof-refined-several-constructors",
+        0,
+    );
+}
+
+#[test]
 fn proof_export_builds_law_auto_when_lake_is_available() {
     assert_proof_builds("examples/formal/law_auto.av", "aver-proof-smoke");
 }
