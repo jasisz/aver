@@ -75,7 +75,7 @@ struct Calls<'a> {
     /// Smart constructors of carriers held as a raw `i64`: called on a
     /// boxed machine word, the emitter binds the word itself and checks it
     /// raw (`emit_carrier_ctor_on_word`).
-    carrier_ctors: &'a std::collections::HashMap<FnId, (crate::ir::TypeId, String)>,
+    carrier_ctors: &'a std::collections::HashMap<FnId, super::carrier::CarrierCtor>,
 }
 
 /// Rewrite every call in `expr`, innermost first.
