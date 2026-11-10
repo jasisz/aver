@@ -2807,7 +2807,7 @@ pub fn givenNames(
 /// A definition by name.
 #[inline(always)]
 pub fn findDef(name @ _: &AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option<Def> {
-    let mut __hold1: aver_rt::AverList<Def>;
+    let mut __hold1: aver_rt::AverList<Def> = <aver_rt::AverList<Def>>::empty();
     let mut ds @ _: &aver_rt::AverList<Def> = ds;
     loop {
         crate::proof_kernel::cancel_checkpoint();
@@ -2826,6 +2826,14 @@ pub fn findDef(name @ _: &AverStr, ds @ _: &aver_rt::AverList<Def>) -> Option<De
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    ds = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(ds, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(ds);
+                                    }
                                     ds = &__hold1;
                                 }
                             }

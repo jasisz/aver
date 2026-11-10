@@ -718,7 +718,7 @@ pub fn valListRepr(
     mut acc @ _: AverStr,
     mut first @ _: bool,
 ) -> AverStr {
-    let mut __hold0: aver_rt::AverList<Val>;
+    let mut __hold0: aver_rt::AverList<Val> = <aver_rt::AverList<Val>>::empty();
     let mut items @ _: &aver_rt::AverList<Val> = items;
     loop {
         crate::cancel_checkpoint();
@@ -739,6 +739,14 @@ pub fn valListRepr(
                                     __hold0 = __rest;
                                     items = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(items, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(items);
+                                    }
+                                    items = &__hold0;
+                                }
                             }
                             acc = __tco1;
                             first = __tco2;
@@ -756,6 +764,14 @@ pub fn valListRepr(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    items = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(items, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(items);
+                                    }
                                     items = &__hold0;
                                 }
                             }
@@ -1043,7 +1059,7 @@ pub fn valMapRepr(
     mut acc @ _: AverStr,
     mut first @ _: bool,
 ) -> AverStr {
-    let mut __hold0: aver_rt::AverList<Val>;
+    let mut __hold0: aver_rt::AverList<Val> = <aver_rt::AverList<Val>>::empty();
     let mut entries @ _: &aver_rt::AverList<Val> = entries;
     loop {
         crate::cancel_checkpoint();
@@ -1073,6 +1089,14 @@ pub fn valMapRepr(
                                     __hold0 = __rest;
                                     entries = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(entries, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(entries);
+                                    }
+                                    entries = &__hold0;
+                                }
                             }
                             acc = __tco1;
                             first = __tco2;
@@ -1100,6 +1124,14 @@ pub fn valMapRepr(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    entries = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(entries, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(entries);
+                                    }
                                     entries = &__hold0;
                                 }
                             }
@@ -1227,7 +1259,7 @@ pub fn mapKeyRepr(v @ _: &Val) -> AverStr {
 /// A tag followed by each part's key text, each with its length in front.
 #[inline(always)]
 pub fn partsKey(mut tag @ _: AverStr, items @ _: &aver_rt::AverList<Val>) -> AverStr {
-    let mut __hold1: aver_rt::AverList<Val>;
+    let mut __hold1: aver_rt::AverList<Val> = <aver_rt::AverList<Val>>::empty();
     let mut items @ _: &aver_rt::AverList<Val> = items;
     loop {
         crate::cancel_checkpoint();
@@ -1253,6 +1285,14 @@ pub fn partsKey(mut tag @ _: AverStr, items @ _: &aver_rt::AverList<Val>) -> Ave
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold1 = __rest;
+                            items = &__hold1;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(items, &__hold1) {
+                                aver_rt::list_step_rest(&mut __hold1);
+                            } else {
+                                __hold1 = aver_rt::list_rest(items);
+                            }
                             items = &__hold1;
                         }
                     }
@@ -1379,7 +1419,7 @@ pub fn splitVals(
     mut left @ _: aver_rt::AverList<Val>,
     mut right @ _: aver_rt::AverList<Val>,
 ) -> (aver_rt::AverList<Val>, aver_rt::AverList<Val>) {
-    let mut __hold0: aver_rt::AverList<Val>;
+    let mut __hold0: aver_rt::AverList<Val> = <aver_rt::AverList<Val>>::empty();
     let mut xs @ _: &aver_rt::AverList<Val> = xs;
     loop {
         crate::cancel_checkpoint();
@@ -1396,6 +1436,14 @@ pub fn splitVals(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            xs = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(xs, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(xs);
+                            }
                             xs = &__hold0;
                         }
                     }
@@ -1640,9 +1688,9 @@ pub fn valsCmp(
     xs @ _: &aver_rt::AverList<Val>,
     ys @ _: &aver_rt::AverList<Val>,
 ) -> aver_rt::AverInt {
-    let mut __hold0: aver_rt::AverList<Val>;
+    let mut __hold0: aver_rt::AverList<Val> = <aver_rt::AverList<Val>>::empty();
     let mut xs @ _: &aver_rt::AverList<Val> = xs;
-    let mut __hold1: aver_rt::AverList<Val>;
+    let mut __hold1: aver_rt::AverList<Val> = <aver_rt::AverList<Val>>::empty();
     let mut ys @ _: &aver_rt::AverList<Val> = ys;
     loop {
         crate::cancel_checkpoint();
@@ -1667,6 +1715,14 @@ pub fn valsCmp(
                                             __hold0 = __rest;
                                             xs = &__hold0;
                                         }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(xs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(xs);
+                                            }
+                                            xs = &__hold0;
+                                        }
                                     }
                                     match __tco1 {
                                         aver_rt::ListRest::Lent(__rest) => {
@@ -1674,6 +1730,14 @@ pub fn valsCmp(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold1 = __rest;
+                                            ys = &__hold1;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(ys, &__hold1) {
+                                                aver_rt::list_step_rest(&mut __hold1);
+                                            } else {
+                                                __hold1 = aver_rt::list_rest(ys);
+                                            }
                                             ys = &__hold1;
                                         }
                                     }
@@ -1746,7 +1810,7 @@ pub fn valFieldsRepr(
     mut acc @ _: AverStr,
     mut first @ _: bool,
 ) -> AverStr {
-    let mut __hold0: aver_rt::AverList<Val>;
+    let mut __hold0: aver_rt::AverList<Val> = <aver_rt::AverList<Val>>::empty();
     let mut items @ _: &aver_rt::AverList<Val> = items;
     loop {
         crate::cancel_checkpoint();
@@ -1767,6 +1831,14 @@ pub fn valFieldsRepr(
                                     __hold0 = __rest;
                                     items = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(items, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(items);
+                                    }
+                                    items = &__hold0;
+                                }
                             }
                             acc = __tco1;
                             first = __tco2;
@@ -1784,6 +1856,14 @@ pub fn valFieldsRepr(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    items = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(items, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(items);
+                                    }
                                     items = &__hold0;
                                 }
                             }
@@ -2044,9 +2124,9 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
 /// Whether two lists of values are equal item by item.
 #[inline(always)]
 pub fn valsEq(xs @ _: &aver_rt::AverList<Val>, ys @ _: &aver_rt::AverList<Val>) -> bool {
-    let mut __hold0: aver_rt::AverList<Val>;
+    let mut __hold0: aver_rt::AverList<Val> = <aver_rt::AverList<Val>>::empty();
     let mut xs @ _: &aver_rt::AverList<Val> = xs;
-    let mut __hold1: aver_rt::AverList<Val>;
+    let mut __hold1: aver_rt::AverList<Val> = <aver_rt::AverList<Val>>::empty();
     let mut ys @ _: &aver_rt::AverList<Val> = ys;
     loop {
         crate::cancel_checkpoint();
@@ -2069,6 +2149,14 @@ pub fn valsEq(xs @ _: &aver_rt::AverList<Val>, ys @ _: &aver_rt::AverList<Val>) 
                                             __hold0 = __rest;
                                             xs = &__hold0;
                                         }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(xs, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(xs);
+                                            }
+                                            xs = &__hold0;
+                                        }
                                     }
                                     match __tco1 {
                                         aver_rt::ListRest::Lent(__rest) => {
@@ -2076,6 +2164,14 @@ pub fn valsEq(xs @ _: &aver_rt::AverList<Val>, ys @ _: &aver_rt::AverList<Val>) 
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold1 = __rest;
+                                            ys = &__hold1;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(ys, &__hold1) {
+                                                aver_rt::list_step_rest(&mut __hold1);
+                                            } else {
+                                                __hold1 = aver_rt::list_rest(ys);
+                                            }
                                             ys = &__hold1;
                                         }
                                     }
@@ -2109,9 +2205,11 @@ pub fn entriesEq(
     xs @ _: &aver_rt::AverList<(AverStr, Val)>,
     ys @ _: &aver_rt::AverList<(AverStr, Val)>,
 ) -> bool {
-    let mut __hold0: aver_rt::AverList<(AverStr, Val)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, Val)> =
+        <aver_rt::AverList<(AverStr, Val)>>::empty();
     let mut xs @ _: &aver_rt::AverList<(AverStr, Val)> = xs;
-    let mut __hold1: aver_rt::AverList<(AverStr, Val)>;
+    let mut __hold1: aver_rt::AverList<(AverStr, Val)> =
+        <aver_rt::AverList<(AverStr, Val)>>::empty();
     let mut ys @ _: &aver_rt::AverList<(AverStr, Val)> = ys;
     loop {
         crate::cancel_checkpoint();
@@ -2136,6 +2234,14 @@ pub fn entriesEq(
                                                 __hold0 = __rest;
                                                 xs = &__hold0;
                                             }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(xs, &__hold0) {
+                                                    aver_rt::list_step_rest(&mut __hold0);
+                                                } else {
+                                                    __hold0 = aver_rt::list_rest(xs);
+                                                }
+                                                xs = &__hold0;
+                                            }
                                         }
                                         match __tco1 {
                                             aver_rt::ListRest::Lent(__rest) => {
@@ -2143,6 +2249,14 @@ pub fn entriesEq(
                                             }
                                             aver_rt::ListRest::Owned(__rest) => {
                                                 __hold1 = __rest;
+                                                ys = &__hold1;
+                                            }
+                                            aver_rt::ListRest::Next => {
+                                                if ::core::ptr::eq(ys, &__hold1) {
+                                                    aver_rt::list_step_rest(&mut __hold1);
+                                                } else {
+                                                    __hold1 = aver_rt::list_rest(ys);
+                                                }
                                                 ys = &__hold1;
                                             }
                                         }

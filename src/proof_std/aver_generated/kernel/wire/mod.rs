@@ -49,7 +49,8 @@ pub fn withGivens(
     mut g0 @ _: crate::proof_std::aver_generated::kernel::proof::Goal,
     gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
 ) -> crate::proof_std::aver_generated::kernel::proof::Goal {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty();
     let mut gs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
         gs;
     loop {
@@ -67,6 +68,14 @@ pub fn withGivens(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold1 = __rest;
+                            gs = &__hold1;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(gs, &__hold1) {
+                                aver_rt::list_step_rest(&mut __hold1);
+                            } else {
+                                __hold1 = aver_rt::list_rest(gs);
+                            }
                             gs = &__hold1;
                         }
                     }

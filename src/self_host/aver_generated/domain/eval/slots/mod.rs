@@ -30,7 +30,8 @@ pub fn buildSlotEnvLoop(
     mut acc @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     mut idx @ _: aver_rt::AverInt,
 ) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = args;
     loop {
         crate::cancel_checkpoint();
@@ -55,6 +56,14 @@ pub fn buildSlotEnvLoop(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            args = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(args, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(args);
+                            }
                             args = &__hold0;
                         }
                     }

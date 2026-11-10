@@ -310,7 +310,8 @@ pub fn indexOf(
     atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut i @ _: aver_rt::AverInt,
 ) -> Option<aver_rt::AverInt> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>>::empty();
     let mut atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
         atoms;
     loop {
@@ -333,6 +334,14 @@ pub fn indexOf(
                                     __hold1 = __rest;
                                     atoms = &__hold1;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(atoms, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(atoms);
+                                    }
+                                    atoms = &__hold1;
+                                }
                             }
                             i = __tco2;
                             continue;
@@ -353,7 +362,7 @@ pub fn addPoly(
     mut a @ _: aver_rt::AverList<Mono>,
     b @ _: &aver_rt::AverList<Mono>,
 ) -> aver_rt::AverList<Mono> {
-    let mut __hold1: aver_rt::AverList<Mono>;
+    let mut __hold1: aver_rt::AverList<Mono> = <aver_rt::AverList<Mono>>::empty();
     let mut b @ _: &aver_rt::AverList<Mono> = b;
     loop {
         crate::proof_kernel::cancel_checkpoint();
@@ -373,6 +382,14 @@ pub fn addPoly(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold1 = __rest;
+                            b = &__hold1;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(b, &__hold1) {
+                                aver_rt::list_step_rest(&mut __hold1);
+                            } else {
+                                __hold1 = aver_rt::list_rest(b);
+                            }
                             b = &__hold1;
                         }
                     }
@@ -642,7 +659,8 @@ pub fn readRows(
     mut rows @ _: aver_rt::AverList<aver_rt::AverList<Mono>>,
     atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>>::empty();
     let mut facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn> =
         facts;
     let mut __hold2: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
@@ -682,6 +700,14 @@ pub fn readRows(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold0 = __rest;
+                                            facts = &__hold0;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(facts, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(facts);
+                                            }
                                             facts = &__hold0;
                                         }
                                     }
@@ -754,7 +780,8 @@ pub fn withCuts(
     mut rows @ _: aver_rt::AverList<aver_rt::AverList<Mono>>,
     cuts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
 ) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>>::empty();
     let mut cuts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut> =
         cuts;
     loop {
@@ -801,6 +828,14 @@ pub fn withCuts(
                                             __hold1 = __rest;
                                             cuts = &__hold1;
                                         }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(cuts, &__hold1) {
+                                                aver_rt::list_step_rest(&mut __hold1);
+                                            } else {
+                                                __hold1 = aver_rt::list_rest(cuts);
+                                            }
+                                            cuts = &__hold1;
+                                        }
                                     }
                                     continue;
                                 }
@@ -840,7 +875,7 @@ pub fn roundedBy(
     mut d @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<Mono>,
 ) -> Option<aver_rt::AverList<Mono>> {
-    let mut __hold0: aver_rt::AverList<Mono>;
+    let mut __hold0: aver_rt::AverList<Mono> = <aver_rt::AverList<Mono>>::empty();
     let mut p @ _: &aver_rt::AverList<Mono> = p;
     loop {
         crate::proof_kernel::cancel_checkpoint();
@@ -879,6 +914,14 @@ pub fn roundedBy(
                                         }
                                         aver_rt::ListRest::Owned(__rest) => {
                                             __hold0 = __rest;
+                                            p = &__hold0;
+                                        }
+                                        aver_rt::ListRest::Next => {
+                                            if ::core::ptr::eq(p, &__hold0) {
+                                                aver_rt::list_step_rest(&mut __hold0);
+                                            } else {
+                                                __hold0 = aver_rt::list_rest(p);
+                                            }
                                             p = &__hold0;
                                         }
                                     }

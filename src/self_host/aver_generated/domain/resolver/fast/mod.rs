@@ -8,7 +8,8 @@ pub fn annotateFastFns(
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
     let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
@@ -30,6 +31,14 @@ pub fn annotateFastFns(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(fns, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(fns);
+                            }
                             fns = &__hold0;
                         }
                     }
@@ -168,7 +177,8 @@ pub fn armsNeedTailLoop(
     mut selfId @ _: aver_rt::AverInt,
     arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> bool {
-    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>;
+    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>>::empty();
     let mut arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> = arms;
     loop {
         crate::cancel_checkpoint();
@@ -190,6 +200,14 @@ pub fn armsNeedTailLoop(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    arms = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(arms, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(arms);
+                                    }
                                     arms = &__hold1;
                                 }
                             }
@@ -1509,7 +1527,8 @@ pub fn classifyFastForwardSlots__collected(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut acc @ _: aver_rt::AverIntList,
 ) -> Option<aver_rt::AverIntList> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::Expr> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty();
     let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr> = args;
     loop {
         crate::cancel_checkpoint();
@@ -1530,6 +1549,14 @@ pub fn classifyFastForwardSlots__collected(
                                     }
                                     aver_rt::ListRest::Owned(__rest) => {
                                         __hold0 = __rest;
+                                        args = &__hold0;
+                                    }
+                                    aver_rt::ListRest::Next => {
+                                        if ::core::ptr::eq(args, &__hold0) {
+                                            aver_rt::list_step_rest(&mut __hold0);
+                                        } else {
+                                            __hold0 = aver_rt::list_rest(args);
+                                        }
                                         args = &__hold0;
                                     }
                                 }

@@ -84,6 +84,13 @@ impl AverPackedU8 {
         }
     }
 
+    /// `drop_first(1)` of this very list: the offset moves, the shared bytes
+    /// and their count are left alone.
+    #[inline]
+    pub fn step_first(&mut self) {
+        self.start = (self.start + 1).min(self.end);
+    }
+
     pub fn take_first(&self, count: usize) -> Self {
         let end = self.start.saturating_add(count).min(self.end);
         Self {

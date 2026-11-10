@@ -105,7 +105,7 @@ impl aver_replay::ReplayValue for Bytes {
 /// Return true when every integer in the list is an octet.
 #[inline(always)]
 pub fn allInRange(xs @ _: &aver_rt::AverIntList) -> bool {
-    let mut __hold0: aver_rt::AverIntList;
+    let mut __hold0: aver_rt::AverIntList = <aver_rt::AverIntList>::empty();
     let mut xs @ _: &aver_rt::AverIntList = xs;
     loop {
         crate::cancel_checkpoint();
@@ -126,6 +126,14 @@ pub fn allInRange(xs @ _: &aver_rt::AverIntList) -> bool {
                                     __hold0 = __rest;
                                     xs = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(xs, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(xs);
+                                    }
+                                    xs = &__hold0;
+                                }
                             }
                             continue;
                         }
@@ -144,7 +152,7 @@ pub fn allInRange(xs @ _: &aver_rt::AverIntList) -> bool {
 /// Return the first non-octet value; -1 when every value is an octet.
 #[inline(always)]
 pub fn firstOutOfRange(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
-    let mut __hold0: aver_rt::AverIntList;
+    let mut __hold0: aver_rt::AverIntList = <aver_rt::AverIntList>::empty();
     let mut xs @ _: &aver_rt::AverIntList = xs;
     loop {
         crate::cancel_checkpoint();
@@ -163,6 +171,14 @@ pub fn firstOutOfRange(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    xs = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(xs, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(xs);
+                                    }
                                     xs = &__hold0;
                                 }
                             }
@@ -504,7 +520,7 @@ pub fn hexParts__buffered(
     mut __buf @ _: aver_rt::Buffer,
     mut __sep @ _: AverStr,
 ) -> aver_rt::Buffer {
-    let mut __hold0: aver_rt::AverIntList;
+    let mut __hold0: aver_rt::AverIntList = <aver_rt::AverIntList>::empty();
     let mut values @ _: &aver_rt::AverIntList = values;
     loop {
         crate::cancel_checkpoint();
@@ -530,6 +546,14 @@ pub fn hexParts__buffered(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            values = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(values, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(values);
+                            }
                             values = &__hold0;
                         }
                     }

@@ -512,7 +512,8 @@ pub fn tokenAtWalk(
     mut target @ _: aver_rt::AverInt,
     mut idx @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::token::Token {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::token::Token>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::token::Token> =
+        <aver_rt::AverList<crate::aver_generated::domain::token::Token>>::empty();
     let mut tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token> = tokens;
     loop {
         crate::cancel_checkpoint();
@@ -532,6 +533,14 @@ pub fn tokenAtWalk(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    tokens = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(tokens, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(tokens);
+                                    }
                                     tokens = &__hold0;
                                 }
                             }

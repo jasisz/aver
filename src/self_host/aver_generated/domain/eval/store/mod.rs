@@ -191,9 +191,10 @@ pub fn zipArgs(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<AverStr>;
+    let mut __hold0: aver_rt::AverList<AverStr> = <aver_rt::AverList<AverStr>>::empty();
     let mut params @ _: &aver_rt::AverList<AverStr> = params;
-    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold1: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = args;
     loop {
         crate::cancel_checkpoint();
@@ -215,6 +216,14 @@ pub fn zipArgs(
                                     __hold0 = __rest;
                                     params = &__hold0;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(params, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(params);
+                                    }
+                                    params = &__hold0;
+                                }
                             }
                             match __tco1 {
                                 aver_rt::ListRest::Lent(__rest) => {
@@ -222,6 +231,14 @@ pub fn zipArgs(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    args = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(args, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(args);
+                                    }
                                     args = &__hold1;
                                 }
                             }
@@ -247,7 +264,8 @@ pub fn mergeBindings(
     bindings @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut env @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>>::empty();
     let mut bindings @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
         bindings;
     loop {
@@ -266,6 +284,14 @@ pub fn mergeBindings(
                             }
                             aver_rt::ListRest::Owned(__rest) => {
                                 __hold0 = __rest;
+                                bindings = &__hold0;
+                            }
+                            aver_rt::ListRest::Next => {
+                                if ::core::ptr::eq(bindings, &__hold0) {
+                                    aver_rt::list_step_rest(&mut __hold0);
+                                } else {
+                                    __hold0 = aver_rt::list_rest(bindings);
+                                }
                                 bindings = &__hold0;
                             }
                         }
@@ -308,7 +334,8 @@ pub fn fnsToIdMap(
     mut acc @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut idx @ _: aver_rt::AverInt,
 ) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> =
+        <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty();
     let mut fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> = fns;
     loop {
         crate::cancel_checkpoint();
@@ -325,6 +352,14 @@ pub fn fnsToIdMap(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            fns = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(fns, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(fns);
+                            }
                             fns = &__hold0;
                         }
                     }

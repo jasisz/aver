@@ -1680,7 +1680,8 @@ pub fn declarationsAcyclic(
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
     mut path @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>>::empty();
     let mut todo @ _: &aver_rt::AverList<
         crate::proof_kernel::aver_generated::kernel::proof::Const,
     > = todo;
@@ -1739,6 +1740,14 @@ pub fn declarationsAcyclic(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    todo = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(todo, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(todo);
+                                    }
                                     todo = &__hold0;
                                 }
                             }
@@ -1848,7 +1857,8 @@ pub fn constantDeclarationDeps(
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>>::empty();
     let mut todo @ _: &aver_rt::AverList<
         crate::proof_kernel::aver_generated::kernel::proof::Const,
     > = todo;
@@ -1874,6 +1884,14 @@ pub fn constantDeclarationDeps(
                                     __hold1 = __rest;
                                     todo = &__hold1;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(todo, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(todo);
+                                    }
+                                    todo = &__hold1;
+                                }
                             }
                             continue;
                         }
@@ -1895,7 +1913,8 @@ pub fn definitionDeclarationDeps(
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>>::empty();
     let mut todo @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
         todo;
     loop {
@@ -1917,6 +1936,14 @@ pub fn definitionDeclarationDeps(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    todo = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(todo, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(todo);
+                                    }
                                     todo = &__hold1;
                                 }
                             }
@@ -2060,7 +2087,8 @@ pub fn defsTyped(
     env @ _: &Env,
     mut path @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>>::empty();
     let mut ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def> =
         ds;
     loop {
@@ -2085,6 +2113,14 @@ pub fn defsTyped(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    ds = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(ds, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(ds);
+                                    }
                                     ds = &__hold0;
                                 }
                             }
@@ -2163,7 +2199,8 @@ pub fn letsTyped(
     mut env @ _: Env,
     mut path @ _: AverStr,
 ) -> Result<Env, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>>::empty();
     let mut bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> =
         bs;
     loop {
@@ -2199,6 +2236,14 @@ pub fn letsTyped(
                             __hold0 = __rest;
                             bs = &__hold0;
                         }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(bs, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(bs);
+                            }
+                            bs = &__hold0;
+                        }
                     }
                     env = __tco1;
                     continue;
@@ -2218,7 +2263,8 @@ pub fn constsTyped(
     env @ _: &Env,
     mut path @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>>::empty();
     let mut cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const> =
         cs;
     loop {
@@ -2264,6 +2310,14 @@ pub fn constsTyped(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    cs = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(cs, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(cs);
+                                    }
                                     cs = &__hold0;
                                 }
                             }
@@ -2796,7 +2850,8 @@ pub fn findField(
     fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>,
     f @ _: &AverStr,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::term::Term> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>>::empty();
     let mut fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field> =
         fs;
     loop {
@@ -2816,6 +2871,14 @@ pub fn findField(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    fs = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(fs, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(fs);
+                                    }
                                     fs = &__hold0;
                                 }
                             }
@@ -2884,7 +2947,8 @@ pub fn projField(
     mut f @ _: AverStr,
     mut path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field>>::empty();
     let mut fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Field> =
         fs;
     loop {
@@ -2907,6 +2971,14 @@ pub fn projField(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    fs = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(fs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(fs);
+                                    }
                                     fs = &__hold1;
                                 }
                             }
@@ -2940,7 +3012,8 @@ pub fn hyp(
     hs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     mut path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>>::empty();
     let mut hs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp> =
         hs;
     loop {
@@ -2960,6 +3033,14 @@ pub fn hyp(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    hs = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(hs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(hs);
+                                    }
                                     hs = &__hold1;
                                 }
                             }
@@ -4165,7 +4246,8 @@ pub fn constantIn(
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
     mut path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>>::empty();
     let mut cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const> =
         cs;
     loop {
@@ -4190,6 +4272,14 @@ pub fn constantIn(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    cs = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(cs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(cs);
+                                    }
                                     cs = &__hold1;
                                 }
                             }
@@ -4345,7 +4435,8 @@ pub fn bindLets(
     mut outer @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>, AverStr>
 {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>>::empty();
     let mut lets @ _: &aver_rt::AverList<
         crate::proof_kernel::aver_generated::kernel::term::Binding,
     > = lets;
@@ -4376,6 +4467,14 @@ pub fn bindLets(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            lets = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(lets, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(lets);
+                            }
                             lets = &__hold0;
                         }
                     }
@@ -5518,7 +5617,8 @@ pub fn findLaw(
     key @ _: &AverStr,
     ls @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::proof::Law> {
-    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>;
+    let mut __hold1: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>>::empty();
     let mut ls @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law> =
         ls;
     loop {
@@ -5538,6 +5638,14 @@ pub fn findLaw(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    ls = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(ls, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(ls);
+                                    }
                                     ls = &__hold1;
                                 }
                             }
@@ -7196,7 +7304,8 @@ pub fn callAt(
     calls @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::Call>,
     mut k @ _: aver_rt::AverInt,
 ) -> Option<crate::proof_kernel::aver_generated::kernel::induct::Call> {
-    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::Call>;
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::Call> =
+        <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::Call>>::empty();
     let mut calls @ _: &aver_rt::AverList<
         crate::proof_kernel::aver_generated::kernel::induct::Call,
     > = calls;
@@ -7218,6 +7327,14 @@ pub fn callAt(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    calls = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(calls, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(calls);
+                                    }
                                     calls = &__hold0;
                                 }
                             }

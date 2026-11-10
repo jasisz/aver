@@ -131,7 +131,8 @@ pub fn expectBytes(
 pub fn expectBytesFields(
     fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<aver_rt::AverIntList, AverStr> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>;
+    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
+        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>>::empty();
     let mut fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
         fields;
     loop {
@@ -168,6 +169,14 @@ pub fn expectBytesFields(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold0 = __rest;
+                                    fields = &__hold0;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(fields, &__hold0) {
+                                        aver_rt::list_step_rest(&mut __hold0);
+                                    } else {
+                                        __hold0 = aver_rt::list_rest(fields);
+                                    }
                                     fields = &__hold0;
                                 }
                             }
@@ -215,7 +224,8 @@ pub fn expectByteItems__collected(
     items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc @ _: aver_rt::AverIntList,
 ) -> Result<aver_rt::AverIntList, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val>;
+    let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::value::Val> =
+        <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
     let mut items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val> = items;
     loop {
         crate::cancel_checkpoint();
@@ -236,6 +246,14 @@ pub fn expectByteItems__collected(
                                     }
                                     aver_rt::ListRest::Owned(__rest) => {
                                         __hold0 = __rest;
+                                        items = &__hold0;
+                                    }
+                                    aver_rt::ListRest::Next => {
+                                        if ::core::ptr::eq(items, &__hold0) {
+                                            aver_rt::list_step_rest(&mut __hold0);
+                                        } else {
+                                            __hold0 = aver_rt::list_rest(items);
+                                        }
                                         items = &__hold0;
                                     }
                                 }

@@ -300,7 +300,8 @@ pub fn find(
     n @ _: &AverStr,
     vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Ty> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty();
     let mut vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
         vs;
     loop {
@@ -322,6 +323,14 @@ pub fn find(
                                     __hold1 = __rest;
                                     vs = &__hold1;
                                 }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(vs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(vs);
+                                    }
+                                    vs = &__hold1;
+                                }
                             }
                             continue;
                         }
@@ -341,7 +350,8 @@ pub fn constType(
     n @ _: &AverStr,
     cs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Const>,
 ) -> Option<crate::proof_std::aver_generated::kernel::term::Ty> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Const>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Const> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Const>>::empty();
     let mut cs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Const> = cs;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -360,6 +370,14 @@ pub fn constType(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    cs = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(cs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(cs);
+                                    }
                                     cs = &__hold1;
                                 }
                             }
@@ -698,7 +716,8 @@ pub fn joinAll(
     ts @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>,
     mut acc @ _: crate::proof_std::aver_generated::kernel::term::Ty,
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Ty, AverStr> {
-    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>;
+    let mut __hold0: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>>::empty();
     let mut ts @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty> = ts;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -715,6 +734,14 @@ pub fn joinAll(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold0 = __rest;
+                            ts = &__hold0;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(ts, &__hold0) {
+                                aver_rt::list_step_rest(&mut __hold0);
+                            } else {
+                                __hold0 = aver_rt::list_rest(ts);
+                            }
                             ts = &__hold0;
                         }
                     }
@@ -967,7 +994,8 @@ pub fn sumNamed(
     n @ _: &AverStr,
     ss @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum>,
 ) -> Option<crate::proof_std::aver_generated::kernel::proof::Sum> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum>>::empty();
     let mut ss @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Sum> = ss;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -986,6 +1014,14 @@ pub fn sumNamed(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    ss = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(ss, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(ss);
+                                    }
                                     ss = &__hold1;
                                 }
                             }
@@ -1007,7 +1043,8 @@ pub fn recNamed(
     n @ _: &AverStr,
     rs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec>,
 ) -> Option<crate::proof_std::aver_generated::kernel::proof::Rec> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec>>::empty();
     let mut rs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Rec> = rs;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -1026,6 +1063,14 @@ pub fn recNamed(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    rs = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(rs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(rs);
+                                    }
                                     rs = &__hold1;
                                 }
                             }
@@ -1073,7 +1118,8 @@ pub fn variantFields(
     c @ _: &AverStr,
     vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant>,
 ) -> Option<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Ty>> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant>>::empty();
     let mut vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant> =
         vs;
     loop {
@@ -1093,6 +1139,14 @@ pub fn variantFields(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    vs = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(vs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(vs);
+                                    }
                                     vs = &__hold1;
                                 }
                             }
@@ -1704,7 +1758,8 @@ pub fn requiredFieldsPresent(
     required @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
     mut actual @ _: aver_rt::AverList<AverStr>,
 ) -> Result<(), AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>>::empty();
     let mut required @ _: &aver_rt::AverList<
         crate::proof_std::aver_generated::kernel::term::TypedVar,
     > = required;
@@ -1723,6 +1778,14 @@ pub fn requiredFieldsPresent(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    required = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(required, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(required);
+                                    }
                                     required = &__hold1;
                                 }
                             }
@@ -1816,7 +1879,8 @@ pub fn variantsProduce(
     e @ _: &TyEnv,
     mut path @ _: AverStr,
 ) -> Result<(), AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant>>::empty();
     let mut vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Variant> =
         vs;
     loop {
@@ -1840,6 +1904,14 @@ pub fn variantsProduce(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    vs = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(vs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(vs);
+                                    }
                                     vs = &__hold1;
                                 }
                             }
@@ -1923,7 +1995,8 @@ pub fn fieldTypesFit(
     mut result @ _: crate::proof_std::aver_generated::kernel::term::Ty,
     e @ _: &TyEnv,
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Ty, AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>>::empty();
     let mut fs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field> = fs;
     loop {
         crate::proof_std::cancel_checkpoint();
@@ -1959,6 +2032,14 @@ pub fn fieldTypesFit(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold1 = __rest;
+                                    fs = &__hold1;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(fs, &__hold1) {
+                                        aver_rt::list_step_rest(&mut __hold1);
+                                    } else {
+                                        __hold1 = aver_rt::list_rest(fs);
+                                    }
                                     fs = &__hold1;
                                 }
                             }
@@ -2049,7 +2130,8 @@ pub fn sigType(
     sigs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::FnSig>,
     e @ _: &TyEnv,
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Ty, AverStr> {
-    let mut __hold2: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::FnSig>;
+    let mut __hold2: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::FnSig> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::FnSig>>::empty();
     let mut sigs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::FnSig> =
         sigs;
     loop {
@@ -2094,6 +2176,14 @@ pub fn sigType(
                                 }
                                 aver_rt::ListRest::Owned(__rest) => {
                                     __hold2 = __rest;
+                                    sigs = &__hold2;
+                                }
+                                aver_rt::ListRest::Next => {
+                                    if ::core::ptr::eq(sigs, &__hold2) {
+                                        aver_rt::list_step_rest(&mut __hold2);
+                                    } else {
+                                        __hold2 = aver_rt::list_rest(sigs);
+                                    }
                                     sigs = &__hold2;
                                 }
                             }
@@ -2988,7 +3078,8 @@ pub fn armsType(
     mut acc @ _: crate::proof_std::aver_generated::kernel::term::Ty,
     e @ _: &TyEnv,
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Ty, AverStr> {
-    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>;
+    let mut __hold1: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm> =
+        <aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>>::empty();
     let mut arms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm> =
         arms;
     loop {
@@ -3023,6 +3114,14 @@ pub fn armsType(
                         }
                         aver_rt::ListRest::Owned(__rest) => {
                             __hold1 = __rest;
+                            arms = &__hold1;
+                        }
+                        aver_rt::ListRest::Next => {
+                            if ::core::ptr::eq(arms, &__hold1) {
+                                aver_rt::list_step_rest(&mut __hold1);
+                            } else {
+                                __hold1 = aver_rt::list_rest(arms);
+                            }
                             arms = &__hold1;
                         }
                     }
