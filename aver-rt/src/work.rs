@@ -15,6 +15,11 @@
 //! at the limit, so the same program gives the same answers on a host with
 //! one core and on a host with sixty-four, and a recording made on either
 //! replays on the other.
+//!
+//! The elements of independent products run here too, as tasks on workers
+//! that stay between tasks ([`scope`], in `tasks`). They are kept apart from
+//! the jobs: a product waits for its elements, so they never queue behind
+//! the limit.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +27,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::provider::{ProviderResource, ProviderValue};
+
+mod tasks;
+pub use tasks::{Scope, ScopedTask, scope};
 
 /// What one finished job produced: the bound function's value, or the
 /// message explaining why it could not produce one.

@@ -7930,7 +7930,7 @@ fn mir_tco_deep_self_and_mutual_recursion_behaves() {
 // ─── Mode (f): MIR-emitted IndependentProduct (`?!` / `!`) ────────────────
 //
 // The MIR walker emits `MirExpr::IndependentProduct` — the Rust
-// backend's truly-PARALLEL product (`std::thread::scope` + per-branch
+// backend's truly-PARALLEL product (`aver_rt::work::scope` + per-branch
 // `spawn`, the cancel-flag machinery for `?!`, the bare tuple fold for
 // `!`) — as the sole codegen path. This probe proves the MIR walker
 // OWNS the parallel emission and the built binary still produces
@@ -7975,7 +7975,7 @@ fn mir_forced_independent_product_builds_and_matches_vm() {
 
         // Structural tripwire: the emitted Rust must carry the MIR-
         // emitted parallel product machinery (the cancel-flag branch
-        // runner for `?!` and the `thread::scope` fan-out).
+        // runner for `?!` and the `aver_rt::work::scope` fan-out).
         let emitted = fs::read_to_string(
             project
                 .join("src")
@@ -7984,10 +7984,10 @@ fn mir_forced_independent_product_builds_and_matches_vm() {
                 .join("mod.rs"),
         )
         .map_err(|e| format!("read emitted module: {e}"))?;
-        if !emitted.contains("run_cancelable_branch") || !emitted.contains("std::thread::scope") {
+        if !emitted.contains("run_cancelable_branch") || !emitted.contains("aver_rt::work::scope") {
             return Err(format!(
                 "emitted Rust is missing the parallel IndependentProduct machinery \
-                 (run_cancelable_branch / thread::scope) — the MIR product emit was \
+                 (run_cancelable_branch / work::scope) — the MIR product emit was \
                  dropped:\n{emitted}"
             ));
         }
@@ -8055,7 +8055,7 @@ fn recursive_independent_product_owns_each_shared_capture() {
                     .join("mod.rs"),
             )
             .map_err(|e| format!("read emitted module: {e}"))?;
-            if !emitted.contains("std::thread::scope") {
+            if !emitted.contains("aver_rt::work::scope") {
                 return Err(format!(
                     "{mode}: recursive independent product lost scoped-thread emission:\n{emitted}"
                 ));
@@ -8175,7 +8175,7 @@ fn main() -> Unit
                 .join("mod.rs"),
         )
         .map_err(|e| format!("read emitted entry module: {e}"))?;
-        if emitted.matches("std::thread::scope").count() < 3 {
+        if emitted.matches("aver_rt::work::scope").count() < 3 {
             return Err(format!(
                 "probe did not emit the three parallel products:\n{emitted}"
             ));
@@ -8287,7 +8287,7 @@ fn main() -> Unit
         .map_err(|e| format!("read emitted entry module: {e}"))?;
         if !emitted.contains("enum __MutualTco")
             || !emitted.contains("fn __mutual_tco_trampoline_")
-            || !emitted.contains("std::thread::scope")
+            || !emitted.contains("aver_rt::work::scope")
         {
             return Err(format!(
                 "probe did not exercise mutual TCO plus independent-product emission:\n{emitted}"
@@ -9583,7 +9583,7 @@ fn main() -> Int
                 ));
             }
         }
-        if !emitted.contains("std::thread::scope(|__s|")
+        if !emitted.contains("aver_rt::work::scope(|__s|")
             || !emitted.contains("_s @ _")
             || !emitted.contains("let mut __map = HashMap::new()")
         {

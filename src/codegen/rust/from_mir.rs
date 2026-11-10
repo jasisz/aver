@@ -5118,7 +5118,7 @@ pub(super) fn emit_module_binding_getters(scope: Option<&str>, ctx: &CodegenCont
 /// byte-identical to HIR's `ResolvedExpr::IndependentProduct` arm
 /// (`super::expr`). The Rust backend is the one target that truly
 /// PARALLELIZES the product (the VM and wasm-gc lower it sequentially):
-/// every element but the first runs on a `std::thread::scope` thread of its
+/// every element but the first runs as a task of `aver_rt::work::scope`, on a worker of its
 /// own, and the first runs on the thread that reaches the product.
 ///
 /// Mirror notes (the three behaviors this arm must preserve to stay
@@ -5235,7 +5235,7 @@ fn emit_mir_independent_product(
         code.push_str(&format!(
             "let {cancel_flag} = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); "
         ));
-        code.push_str(&format!("std::thread::scope(|{thread_scope}| {{ "));
+        code.push_str(&format!("aver_rt::work::scope(|{thread_scope}| {{ "));
         for (i, part) in parts.iter().enumerate() {
             let branch_scope = generated_ident(&format!("parallel_scope{i}"));
             let branch_cancel = generated_ident(&format!("cancel_flag{i}"));
@@ -5280,7 +5280,7 @@ fn emit_mir_independent_product(
                 "let {parallel_scope} = crate::aver_replay::capture_parallel_scope_context(); "
             ));
         }
-        code.push_str(&format!("std::thread::scope(|{thread_scope}| {{ "));
+        code.push_str(&format!("aver_rt::work::scope(|{thread_scope}| {{ "));
         for (i, part) in parts.iter().enumerate() {
             if has_replay {
                 let branch_scope = generated_ident(&format!("parallel_scope{i}"));
@@ -5333,7 +5333,7 @@ fn emit_mir_independent_product(
 /// later branch that also reads the local keeps the move for itself.
 ///
 /// Returns whether a capture block was opened; the caller closes either
-/// `aver_rt::spawn_scoped(scope, …) };` or the capture-free `aver_rt::spawn_scoped(scope, …);` shape. Keeping the old
+/// `crate::spawn_branch(scope, …) };` or the capture-free `crate::spawn_branch(scope, …);` shape. Keeping the old
 /// shape for capture-free branches avoids churn in generated Rust.
 fn emit_parallel_capture_bindings(
     code: &mut String,
@@ -5350,7 +5350,7 @@ fn emit_parallel_capture_bindings(
     let start = if branch == 0 {
         "(move || ".to_string()
     } else {
-        format!("aver_rt::spawn_scoped({thread_scope}, move || ")
+        format!("crate::spawn_branch({thread_scope}, move || ")
     };
     code.push_str(&format!("let {handle} = "));
     if captures.is_empty() {
@@ -12224,8 +12224,8 @@ mod tests {
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("bare product should emit");
         assert_eq!(
             emit,
-            "std::thread::scope(|__s| { let __h0 = (move || aver_rt::AverInt::from_i64(7)); \
-             let __h1 = aver_rt::spawn_scoped(__s, move || aver_rt::AverInt::from_i64(9)); let __r0 = crate::run_first_branch(__h0).unwrap(); \
+            "aver_rt::work::scope(|__s| { let __h0 = (move || aver_rt::AverInt::from_i64(7)); \
+             let __h1 = crate::spawn_branch(__s, move || aver_rt::AverInt::from_i64(9)); let __r0 = crate::run_first_branch(__h0).unwrap(); \
              let __r1 = __h1.join().unwrap(); (__r0, __r1) }) "
         );
     }
@@ -12250,7 +12250,7 @@ mod tests {
         assert!(
             emit.starts_with(
                 "{ let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); \
-                 std::thread::scope(|__s| { "
+                 aver_rt::work::scope(|__s| { "
             ),
             "got: {emit}"
         );
@@ -12298,7 +12298,7 @@ mod tests {
             "branch 0 clones before branch 1 takes the original: {emit}"
         );
         assert!(
-            emit.contains("let __h1 = { let height = height; aver_rt::spawn_scoped(__s, move ||"),
+            emit.contains("let __h1 = { let height = height; crate::spawn_branch(__s, move ||"),
             "branch 1 holds the final read and moves the original: {emit}"
         );
     }
@@ -12313,7 +12313,7 @@ mod tests {
         );
         assert!(
             emit.contains(
-                "let __h1 = { let height = height.clone(); aver_rt::spawn_scoped(__s, move ||"
+                "let __h1 = { let height = height.clone(); crate::spawn_branch(__s, move ||"
             ),
             "a local read after the product is still cloned: {emit}"
         );
