@@ -36,14 +36,32 @@ const MI_OPTION_GENERIC_COLLECT: c_int = 34;
 #[cfg(not(miri))]
 const GENERIC_COLLECT: c_long = 1_000_000;
 
+/// `mi_option_page_reclaim_on_free` in the same `mimalloc.h`: whether a free
+/// into a page whose thread has exited takes that page over (1), only when the
+/// page came from the freeing thread's own heap (0, the default), or never
+/// (-1).
+#[cfg(not(miri))]
+const MI_OPTION_PAGE_RECLAIM_ON_FREE: c_int = 35;
+
+/// Always take the page over. Each element of an `(a, b)!` product runs on a
+/// thread that exits when it is done, and the calling thread later frees what
+/// that thread allocated; without this every such free goes through the slow
+/// path for pages nobody owns.
+#[cfg(not(miri))]
+const PAGE_RECLAIM_ON_FREE: c_long = 1;
+
 /// Sets mimalloc's options when the process loads, before `main` and before
-/// the first allocation of any thread. `MIMALLOC_GENERIC_COLLECT` in the
-/// environment still decides, as for any mimalloc option. Miri cannot call
+/// the first allocation of any thread. `MIMALLOC_GENERIC_COLLECT` and
+/// `MIMALLOC_PAGE_RECLAIM_ON_FREE` in the environment still decide, as for any
+/// mimalloc option. Miri cannot call
 /// into mimalloc, so under it nothing is set.
 #[cfg(not(miri))]
 extern "C" fn set_options() {
     if std::env::var_os("MIMALLOC_GENERIC_COLLECT").is_none() {
         unsafe { mi_option_set(MI_OPTION_GENERIC_COLLECT, GENERIC_COLLECT) };
+    }
+    if std::env::var_os("MIMALLOC_PAGE_RECLAIM_ON_FREE").is_none() {
+        unsafe { mi_option_set(MI_OPTION_PAGE_RECLAIM_ON_FREE, PAGE_RECLAIM_ON_FREE) };
     }
 }
 
@@ -123,6 +141,15 @@ mod tests {
         if std::env::var_os("MIMALLOC_GENERIC_COLLECT").is_none() {
             let value = unsafe { mi_option_get(MI_OPTION_GENERIC_COLLECT) };
             assert_eq!(value, GENERIC_COLLECT);
+        }
+    }
+
+    #[test]
+    #[cfg(not(miri))]
+    fn frees_take_over_pages_of_exited_threads() {
+        if std::env::var_os("MIMALLOC_PAGE_RECLAIM_ON_FREE").is_none() {
+            let value = unsafe { mi_option_get(MI_OPTION_PAGE_RECLAIM_ON_FREE) };
+            assert_eq!(value, PAGE_RECLAIM_ON_FREE);
         }
     }
 
