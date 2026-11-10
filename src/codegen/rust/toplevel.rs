@@ -1131,7 +1131,7 @@ fn emit_product_type(
     representation: RepresentationContract,
 ) -> String {
     let packed_u8 = super::uses_packed_u8(ctx, name);
-    let i64_carrier = super::carrier::declared_i64_carrier(ctx, scope, name);
+    let carrier = super::carrier::declared_storage(ctx, scope, name);
     let mut out = String::new();
     let visibility = visibility_prefix(public);
     // A boxed record (see `is_boxed_record`) keeps its fields in
@@ -1175,10 +1175,10 @@ fn emit_product_type(
             debug_assert_eq!(fields.len(), 1);
             debug_assert_eq!(parse_type_str(field_type), Type::List(Box::new(Type::Int)));
             "aver_rt::AverPackedU8".to_string()
-        } else if i64_carrier {
+        } else if let Some(storage) = carrier {
             debug_assert_eq!(fields.len(), 1);
             debug_assert_eq!(parse_type_str(field_type), Type::Int);
-            "i64".to_string()
+            storage.to_string()
         } else {
             type_annotation_to_rust_scoped(field_type, ctx, scope)
         };
@@ -1302,11 +1302,13 @@ fn emit_product_type(
         let parts: Vec<String> = fields
             .iter()
             .map(|(field_name, _)| {
-                format!(
-                    "format!(\"{}: {{}}\", self.{}.aver_display_inner())",
-                    field_name,
-                    aver_name_to_rust(field_name)
-                )
+                let read = format!("self.{}", aver_name_to_rust(field_name));
+                // A carrier's field shows as the `Int` it is.
+                let read = match carrier {
+                    Some(storage) => super::carrier::widened(&read, storage),
+                    None => read,
+                };
+                format!("format!(\"{field_name}: {{}}\", {read}.aver_display_inner())")
             })
             .collect();
         if fields.len() == 1 {

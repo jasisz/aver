@@ -2808,27 +2808,47 @@ fn pack_u8_list(value: String) -> String {
     )
 }
 
-/// Is this record a refinement carrier the backend holds as a raw `i64`
-/// (`codegen::rust::carrier`)? Decided by the type's identity: a record
-/// without one is not.
+/// Is this record a refinement carrier the backend holds as a raw machine
+/// integer (`codegen::rust::carrier`)? Decided by the type's identity: a
+/// record without one is not.
 fn i64_carrier_record(type_id: Option<crate::ir::TypeId>, ctx: &MirEmitCtx<'_>) -> bool {
-    ctx.codegen
-        .is_some_and(|codegen| super::carrier::is_i64_carrier(codegen, type_id))
+    carrier_storage(type_id, ctx).is_some()
 }
 
-/// The `i64` a carrier's field is built from: a value that renders raw (or
-/// that the rewrite narrowed with `Unbox`) as it is, any other `AverInt`
-/// narrowed here. Outside a rewritten body (a verify case) every value is an
-/// `AverInt`; the smart constructor's bound keeps the narrowing from failing.
-fn emit_carrier_field(value: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
-    if mir_expr_is_bare_i64(value, ctx) {
-        return emit_bare_i64(value, ctx).or_else(|| emit_mir_expr(value, ctx));
-    }
-    let emitted = emit_mir_expr(value, ctx)?;
-    Some(match value.node {
-        MirExpr::Unbox(_) => emitted,
-        _ => format!("({emitted}).to_i64().expect(\"Int out of i64 range\")"),
-    })
+/// The machine integer a carrier's field is stored in
+/// ([`super::carrier::storage_for`]), or `None` for any other record.
+fn carrier_storage(
+    type_id: Option<crate::ir::TypeId>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<&'static str> {
+    super::carrier::storage_of(ctx.codegen?, type_id)
+}
+
+/// The field a carrier is built with, stored as `storage`, from the `i64`
+/// of a value that renders raw (or that the rewrite narrowed with `Unbox`),
+/// or of any other `AverInt` narrowed here. Outside a rewritten body (a
+/// verify case) every value is an `AverInt`; the smart constructor's bound
+/// keeps the narrowing from failing, and a verify case, which may build a
+/// carrier from any value, has its narrowing checked.
+fn emit_carrier_field(
+    value: &Spanned<MirExpr>,
+    storage: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let word = if mir_expr_is_bare_i64(value, ctx) {
+        emit_bare_i64(value, ctx).or_else(|| emit_mir_expr(value, ctx))?
+    } else {
+        let emitted = emit_mir_expr(value, ctx)?;
+        match value.node {
+            MirExpr::Unbox(_) => emitted,
+            _ => format!("({emitted}).to_i64().expect(\"Int out of i64 range\")"),
+        }
+    };
+    Some(super::carrier::narrowed(
+        &word,
+        storage,
+        ctx.try_err_to_string,
+    ))
 }
 
 /// `[]`, `{}` or `Option.None` spelled with its stamped element type, for
@@ -3662,10 +3682,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // A carrier held as a raw `i64`: the read is raw where the facts
             // know it (the rewrite boxed it wherever it meets a general
             // `Int`), and boxed here anywhere else.
-            if i64_carrier_record(*id, emit_ctx) {
+            if let Some(storage) = carrier_storage(*id, emit_ctx) {
+                let raw = super::carrier::widened(&projected, storage);
                 return Some(match emit_ctx.bare.is_carrier_project(&expr.node) {
-                    true => projected,
-                    false => format!("aver_rt::AverInt::from_i64({projected})"),
+                    true => raw,
+                    false => format!("aver_rt::AverInt::from_i64({raw})"),
                 });
             }
             match packed_u8_carrier(*id, name, emit_ctx) {
@@ -3693,11 +3714,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let Some(packed_u8) = packed_u8_carrier(rec.type_id, &rec.type_name, emit_ctx) else {
                 return Some(unresolved_packed_carrier(&rec.type_name, emit_ctx));
             };
-            let i64_carrier = i64_carrier_record(rec.type_id, emit_ctx);
+            let carrier = carrier_storage(rec.type_id, emit_ctx);
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
-                if i64_carrier {
-                    let val = emit_carrier_field(&f.value, emit_ctx)?;
+                if let Some(storage) = carrier {
+                    let val = emit_carrier_field(&f.value, storage, emit_ctx)?;
                     parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
                     continue;
                 }
@@ -3988,12 +4009,12 @@ fn emit_update_parts(
 ) -> Option<(Vec<(String, String)>, bool)> {
     let mut parts = Vec::with_capacity(upd.updates.len());
     let mut moved_replaced_field = false;
-    let i64_carrier = i64_carrier_record(upd.type_id, ctx);
+    let carrier = carrier_storage(upd.type_id, ctx);
     for f in &upd.updates {
-        if i64_carrier {
+        if let Some(storage) = carrier {
             parts.push((
                 aver_name_to_rust(&f.name),
-                emit_carrier_field(&f.value, ctx)?,
+                emit_carrier_field(&f.value, storage, ctx)?,
             ));
             continue;
         }
@@ -9732,6 +9753,7 @@ fn emit_carrier_ctor_on_word(
     let codegen = ctx.codegen?;
     let ctor = codegen.rust_i64_carrier_ctors.get(&fn_id)?;
     let (type_id, field, interval) = (&ctor.type_id, &ctor.field, &ctor.admits);
+    let storage = super::carrier::storage_of(codegen, Some(*type_id))?;
     let ([arg], Bound::Finite(lo), Bound::Finite(hi)) = (args, interval.lo, interval.hi) else {
         return None;
     };
@@ -9750,9 +9772,10 @@ fn emit_carrier_ctor_on_word(
     let (lo, hi) = (bound(lo)?, bound(hi)?);
     let word = emit_mir_expr(word, ctx)?;
     Some(format!(
-        "{{ let __word: i64 = {word}; if ({lo}..={hi}).contains(&__word) {{ Ok({} {{ {}: __word }}) }} else {{ {}(aver_rt::AverInt::from_i64(__word)) }} }}",
+        "{{ let __word: i64 = {word}; if ({lo}..={hi}).contains(&__word) {{ Ok({} {{ {}: {} }}) }} else {{ {}(aver_rt::AverInt::from_i64(__word)) }} }}",
         mir_record_rust_type(Some(*type_id), record, ctx),
         aver_name_to_rust(field),
+        super::carrier::narrowed("__word", storage, false),
         named_call_head(name, ctx),
     ))
 }
