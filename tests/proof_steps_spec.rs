@@ -730,6 +730,93 @@ fn the_kernel_reads_back_each_script_as_the_compiler_wrote_it() {
     let _ = fs::remove_dir_all(out);
 }
 
+/// `clamp` matches `hasBig(t)` first and `t` only in the arm that
+/// recurses: the induction follows the inner match, and both backends
+/// close the law by steps (`guarded.av`).
+#[test]
+fn a_recursion_behind_a_guard_is_inducted_along_by_both_backends() {
+    let out = scratch("guarded-aver");
+    let (result, aver) = aver_backend_json("guarded.av", &out, Some(""));
+    assert!(result.status.success(), "{}", format_output(&result));
+    assert_eq!(aver["steps_rejected"], serde_json::json!([]));
+    assert_eq!(closed_by_steps(&aver), ["clamp.keepsSize"]);
+    let _ = fs::remove_dir_all(out);
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let lean_out = scratch("guarded-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "guarded.av",
+            "-o",
+            lean_out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    let line = String::from_utf8_lossy(&result.stdout)
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("{}", format_output(&result)));
+    let lean: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(lean["sorries"], 0, "{}", format_output(&result));
+    assert_eq!(closed_by_steps(&lean), ["clamp.keepsSize"]);
+    let _ = fs::remove_dir_all(lean_out);
+}
+
+/// `lookup` recurses down two lists at once and `same` down two numbers,
+/// the second matched inside the arm of the first: the hypothesis of such
+/// a call is a law over the second, cited where the inner match has named
+/// its part. Both backends close the true laws by steps and leave the
+/// false ones open (`lockstep.av`).
+#[test]
+fn a_recursion_down_two_values_at_once_is_inducted_along_by_both_backends() {
+    let closed = [
+        "first.ofNoLength",
+        "lookup.likeValueOf",
+        "same.symmetric",
+        "sized.cellIsNotAsLongAsNone",
+        "sized.neitherSide",
+        "sized.noneIsNotAsLongAsCell",
+    ];
+    let out = scratch("lockstep-aver");
+    let (_, aver) = aver_backend_json("lockstep.av", &out, Some(""));
+    assert_eq!(aver["steps_rejected"], serde_json::json!([]));
+    assert_eq!(closed_by_steps(&aver), closed);
+    assert_eq!(aver["closed_by"]["lookup.falseLikeValueOf"], "open");
+    assert_eq!(aver["closed_by"]["same.falseAlways"], "open");
+    let _ = fs::remove_dir_all(out);
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let lean_out = scratch("lockstep-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "lockstep.av",
+            "-o",
+            lean_out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    let line = String::from_utf8_lossy(&result.stdout)
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("{}", format_output(&result)));
+    let lean: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(lean["build_errors"], 0, "{}", format_output(&result));
+    assert_eq!(closed_by_steps(&lean), closed);
+    let _ = fs::remove_dir_all(lean_out);
+}
+
 #[test]
 fn both_backends_close_the_same_laws_by_steps() {
     if !lean_required::lake_available() {

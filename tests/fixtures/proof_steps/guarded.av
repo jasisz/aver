@@ -1,0 +1,40 @@
+module Guarded
+    intent = "Structural recursion behind a guard: clamp skips trees without a big leaf."
+
+type T
+    Leaf(Int)
+    Node(T, T)
+
+fn hasBig(t: T) -> Bool
+    ? "Some leaf above 9."
+    match t
+        T.Leaf(n) -> n > 9
+        T.Node(a, b) -> Bool.or(hasBig(a), hasBig(b))
+
+verify hasBig
+    hasBig(T.Leaf(10)) => true
+
+fn size(t: T) -> Int
+    ? "Leaves in the tree."
+    match t
+        T.Leaf(_) -> 1
+        T.Node(a, b) -> size(a) + size(b)
+
+verify size
+    size(T.Node(T.Leaf(1), T.Leaf(2))) => 2
+
+fn clamp(t: T) -> T
+    ? "Clamps big leaves to 9; a tree without one is kept as it is."
+    match hasBig(t)
+        false -> t
+        true -> match t
+            T.Leaf(_) -> T.Leaf(9)
+            T.Node(a, b) -> T.Node(clamp(a), clamp(b))
+
+verify clamp
+    clamp(T.Node(T.Leaf(1), T.Leaf(12))) => T.Node(T.Leaf(1), T.Leaf(9))
+
+verify clamp law keepsSize
+    given t: T = [T.Leaf(1), T.Leaf(12), T.Node(T.Leaf(3), T.Leaf(40)), T.Node(T.Node(T.Leaf(1), T.Leaf(2)), T.Leaf(10))]
+    induction t
+    size(clamp(t)) => size(t)

@@ -48,6 +48,80 @@ fn same_ctor(a: &ResolvedCtor, b: &ResolvedCtor) -> bool {
     }
 }
 
+/// `t` with the last arm of each `match` in it, where that arm is `_` and
+/// the arms before it name every constructor of the subject's type but one,
+/// written as that constructor over wildcard parts (`_ -> l` after `Param`,
+/// `Succ`, `Max` and `IMax` is `Level.Zero -> l`; `_` after `[]` is
+/// `[_, .._]`). The match selects the same arm for every value, and an
+/// induction along the function then has one arm per constructor, which is
+/// what its cases are.
+pub(crate) fn name_last_arms(
+    t: &Term,
+    inputs: &crate::codegen::proof_lower::ProofLowerInputs,
+) -> Term {
+    let t =
+        term::map_children(t, &mut |c| Ok(name_last_arms(c, inputs))).unwrap_or_else(|_| t.clone());
+    let ResolvedExpr::Match { subject, arms } = &t.node else {
+        return t;
+    };
+    let Some((last, named)) = arms.split_last() else {
+        return t;
+    };
+    if !matches!(last.pattern, ResolvedPattern::Wildcard) || named.is_empty() {
+        return t;
+    }
+    let list =
+        |p: &ResolvedPattern| matches!(p, ResolvedPattern::EmptyList | ResolvedPattern::Cons(..));
+    let pattern = if named.iter().all(|a| list(&a.pattern)) {
+        let nil = named
+            .iter()
+            .any(|a| matches!(a.pattern, ResolvedPattern::EmptyList));
+        let cons = named
+            .iter()
+            .any(|a| matches!(a.pattern, ResolvedPattern::Cons(..)));
+        match (nil, cons) {
+            (true, false) => ResolvedPattern::Cons("_".into(), "_".into()),
+            (false, true) => ResolvedPattern::EmptyList,
+            _ => return t,
+        }
+    } else {
+        let mut seen: Vec<&ResolvedCtor> = Vec::new();
+        for arm in named {
+            match &arm.pattern {
+                ResolvedPattern::Ctor(c @ ResolvedCtor::User { .. }, _) => seen.push(c),
+                _ => return t,
+            }
+        }
+        let Some(variants) = variants_of(inputs, seen[0], subject.ty()) else {
+            return t;
+        };
+        let mut missing = variants
+            .iter()
+            .filter(|(c, _)| !seen.iter().any(|s| same_ctor(s, c)));
+        let (Some((c, fields)), None) = (missing.next(), missing.next()) else {
+            return t;
+        };
+        ResolvedPattern::Ctor(c.clone(), vec!["_".to_string(); fields.len()])
+    };
+    let mut arms: Vec<crate::ir::hir::ResolvedMatchArm> = named.to_vec();
+    arms.push(crate::ir::hir::ResolvedMatchArm {
+        pattern,
+        body: last.body.clone(),
+        binding_slots: std::sync::OnceLock::new(),
+    });
+    let out = crate::ast::Spanned::new(
+        ResolvedExpr::Match {
+            subject: subject.clone(),
+            arms: crate::ast::shared::vec(arms),
+        },
+        t.line,
+    );
+    if let Some(ty) = t.ty() {
+        out.set_ty(ty.clone());
+    }
+    out
+}
+
 /// Every constructor of the sum type `c` belongs to, as the program
 /// declares it, with the types of its fields: in declaration order, and
 /// for Option and Result in the order Lean declares them (`none` before
@@ -765,7 +839,7 @@ impl Env<'_> {
 /// that reads it from its front: the subject `List.concat(v, [x])` or
 /// `List.reverse(v)` waits for `v` to be `[]` or a cell. Only a variable
 /// of list type outside `taken`, and only where the arms read a list.
-fn list_var_under_match(t: &Term, taken: &[String]) -> Option<Term> {
+fn list_var_under_match(t: &Term, taken: &[String], bare: &[String]) -> Option<Term> {
     fn blocked_on(s: &Term) -> Option<&Term> {
         match &s.node {
             ResolvedExpr::Call(ResolvedCallee::Builtin(b), args)
@@ -791,8 +865,16 @@ fn list_var_under_match(t: &Term, taken: &[String]) -> Option<Term> {
                 ResolvedPattern::EmptyList | ResolvedPattern::Cons(..)
             )
         });
+        let subject = canon(subject);
+        // The variable itself only where an induction in progress varies
+        // it along another ([`Env::varied_lists`]): its recursion reads both
+        // lists, and the claim holds at every value of this one.
+        let on = match &subject.node {
+            ResolvedExpr::Ident(n) if bare.contains(n) => Some(&subject),
+            _ => blocked_on(&subject),
+        };
         if reads_list
-            && let Some(v) = blocked_on(&canon(subject))
+            && let Some(v) = on
             && let ResolvedExpr::Ident(n) = &v.node
             && matches!(v.ty(), Some(Type::List(_)))
             && !taken.contains(n)
@@ -802,7 +884,7 @@ fn list_var_under_match(t: &Term, taken: &[String]) -> Option<Term> {
     }
     term::children(t)
         .into_iter()
-        .find_map(|c| list_var_under_match(c, taken))
+        .find_map(|c| list_var_under_match(c, taken, bare))
 }
 
 impl Env<'_> {
@@ -821,12 +903,13 @@ impl Env<'_> {
     ) -> Option<Proof> {
         let v = stopped
             .iter()
-            .find_map(|t| list_var_under_match(t, &self.split_binders))?;
+            .find_map(|t| list_var_under_match(t, &self.split_binders, &self.varied_lists))?;
         self.split_list_var(&v, lhs, rhs, depth, true)
     }
 
     /// Where a hypothesis states whether a list variable `v` is empty
-    /// (`(v == []) = false`, `(v != []) = true`, from a `when` or a case),
+    /// (`(v == []) = false`, `(v != []) = true`, `(List.len(v) == 0) =
+    /// true`, from a `when` or a case),
     /// that variable in each of the two cases a list is, as
     /// [`Self::split_list_var_under_match`] splits it: in one case the
     /// hypothesis evaluates to the other Bool, in the other the lengths and
@@ -838,6 +921,23 @@ impl Env<'_> {
         depth: usize,
     ) -> Option<Proof> {
         let nil_side = |t: &Term| matches!(&t.node, ResolvedExpr::List(xs) if xs.is_empty());
+        // `List.len(v)` against zero, written `0` or `List.len([])` (what
+        // a `when` about two lists of one length becomes where the other
+        // is empty), says the same of `v`.
+        let zero_side = |t: &Term| {
+            term::int_value(t) == Some(0.into())
+                || matches!(&t.node,
+                    ResolvedExpr::Call(ResolvedCallee::Builtin(b), xs)
+                        if b == "List.len" && xs.len() == 1 && nil_side(&xs[0]))
+        };
+        let len_of = |t: &Term| match &t.node {
+            ResolvedExpr::Call(ResolvedCallee::Builtin(b), xs)
+                if b == "List.len" && xs.len() == 1 =>
+            {
+                Some(xs[0].clone())
+            }
+            _ => None,
+        };
         let v = self.hyps.iter().rev().find_map(|(_, e)| {
             term::bool_value(&e.rhs)?;
             let ResolvedExpr::BinOp(crate::ast::BinOp::Eq | crate::ast::BinOp::Neq, a, b) =
@@ -845,16 +945,22 @@ impl Env<'_> {
             else {
                 return None;
             };
-            let v = match (nil_side(a), nil_side(b)) {
-                (false, true) => a,
-                (true, false) => b,
+            let measured = match (zero_side(a), zero_side(b)) {
+                (false, true) => len_of(a),
+                (true, false) => len_of(b),
+                _ => None,
+            };
+            let v = match (&measured, nil_side(a), nil_side(b)) {
+                (Some(l), _, _) => l,
+                (_, false, true) => &**a,
+                (_, true, false) => &**b,
                 _ => return None,
             };
             match &v.node {
                 ResolvedExpr::Ident(n)
                     if matches!(v.ty(), Some(Type::List(_))) && !self.split_binders.contains(n) =>
                 {
-                    Some((**v).clone())
+                    Some(v.clone())
                 }
                 _ => None,
             }

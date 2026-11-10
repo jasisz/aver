@@ -167,6 +167,27 @@ impl Env<'_> {
                 }
             }
         }
+        // The negation of a side of a disjunction stated false.
+        if let ResolvedExpr::Call(ResolvedCallee::Builtin(b), args) = &t.node
+            && b == "Bool.not"
+            && args.len() == 1
+            && let Some(side) = self.disjunct_of_hyp(&args[0])
+        {
+            let negated = canon(&term::bool_not(term::boolean(false)));
+            return Some(Proof::Trans {
+                terms: vec![t.clone(), negated.clone(), term::boolean(true)],
+                steps: vec![
+                    Proof::Congr {
+                        ctx: term::bool_not(term::hole()),
+                        inner: Box::new(side),
+                    },
+                    Proof::Compute {
+                        lhs: negated,
+                        rhs: term::boolean(true),
+                    },
+                ],
+            });
+        }
         // A fact inside a hypothesis that calls a predicate.
         if let Some(proof) = self.view_for(&t) {
             return Some(proof);
@@ -204,6 +225,11 @@ impl Env<'_> {
             return Some(p);
         }
         if let Some(p) = self.discharge_by_picking(&t) {
+            return Some(p);
+        }
+        // A comparison of lengths the comparisons of lengths in scope
+        // settle once they are in normal form.
+        if let Some(p) = self.discharge_by_lengths(&t) {
             return Some(p);
         }
         // Last, a comparison evaluated, within a short budget:

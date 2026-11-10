@@ -6,7 +6,9 @@ module Induct
         "definition and an induction along it both read: a match on a parameter whose calls pass"
         "a part of the value matched, or List.drop of one, never longer than the part; or a match"
         "on `n <= 0` or `n > 0` whose calls pass n - 1 or n / k (k a literal of at least 2) where"
-        "n > 0. A call of another definition that calls back into the one checked counts as the"
+        "n > 0. The match on a parameter may also stand in the one arm with recursive calls of a"
+        "match on something else, an arm that binds no name; its arms are then the recursion's."
+        "A call of another definition that calls back into the one checked counts as the"
         "recursive calls its body makes, its local bindings substituted, read at the call's"
         "arguments, so a recursion through a helper is checked as if the helper's body stood in"
         "its place. A definition may also be opened, though not inducted along, when it calls"
@@ -227,16 +229,51 @@ verify recursion
     recursion(walks(), [walks(), skipping([Kernel.Term.bind("r", Term.TCall("walk", [Term.TVar("rest")]))], Term.TInt(0))]) => Result.Err("walk recurses from a local binding of skip")
 
 fn recursive(d: Def, ds: List<Def>) -> Result<Recursion, String>
-    ? "The gate for a definition that does call itself: no local bindings, and a body that matches a parameter or compares one with zero."
+    ? "The gate for a definition that does call itself: no local bindings, and a body that matches a parameter, compares one with zero, or matches something else first and a parameter in the one arm that recurses (guarded)."
     match (d.lets, d.body)
         ([], Term.TMatch(Term.TVar(p), arms)) -> onParts(d, ds, indexOf(Kernel.Proof.givenNames(d.params), p, 0), arms)
         ([], Term.TMatch(Term.TOp(op, Term.TVar(p), Term.TInt(0)), arms)) -> towardZero(d, ds, Term.TOp(op, Term.TVar(p), Term.TInt(0)), p, indexOf(Kernel.Proof.givenNames(d.params), p, 0), arms)
+        ([], Term.TMatch(s, arms)) -> guarded(d, ds, s, arms)
         ([], _) -> Result.Err("{d.name} recurses outside a match on a parameter")
         _ -> Result.Err("{d.name} recurses from a local binding")
 
 verify recursive
     recursive(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TVar("y"), [])), []) => Result.Err("f recurses on a match whose subject is not a parameter")
     recursive(Def(name = "f", params = [Kernel.Term.typed("x", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp("<=", Term.TVar("y"), Term.TInt(0)), [])), []) => Result.Err("f recurses on a match whose subject is not a parameter")
+
+fn guarded(d: Def, ds: List<Def>, s: Term, arms: List<Arm>) -> Result<Recursion, String>
+    ? "A match on something other than a parameter, s itself without a recursive call: every arm but one makes none, and that one binds no name and is a match on a parameter whose calls pass a part of the value matched (onParts). Its arms are the recursion's: the recursion stops for the reason it would without the match around it."
+    match (List.len(calls(s, d, ds)?) == 0, recursingArms(arms, d, ds)?)
+        (true, [a]) -> match (Kernel.Subst.patNames(a.pattern), a.body)
+            ([], Term.TMatch(Term.TVar(p), inner)) -> onParts(d, ds, indexOf(Kernel.Proof.givenNames(d.params), p, 0), inner)
+            _ -> Result.Err("{d.name} recurses outside a match on a parameter")
+        _ -> Result.Err("{d.name} recurses outside a match on a parameter")
+
+verify guarded
+    guarded(clamps(Term.TMatch(Term.TVar("t"), [Arm(pattern = Pat.PCtor("T.Leaf", ["n"]), body = Term.TVar("t")), Arm(pattern = Pat.PCtor("T.Node", ["a", "b"]), body = Term.TCall("clamp", [Term.TVar("a")]))])), [], Term.TCall("big", [Term.TVar("t")]), [Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TVar("t")), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TMatch(Term.TVar("t"), [Arm(pattern = Pat.PCtor("T.Leaf", ["n"]), body = Term.TVar("t")), Arm(pattern = Pat.PCtor("T.Node", ["a", "b"]), body = Term.TCall("clamp", [Term.TVar("a")]))]))]) => Result.Ok(Recursion(at = 0, guard = Option.None, arms = [ArmCalls(arm = Arm(pattern = Pat.PCtor("T.Leaf", ["n"]), body = Term.TVar("t")), calls = []), ArmCalls(arm = Arm(pattern = Pat.PCtor("T.Node", ["a", "b"]), body = Term.TCall("clamp", [Term.TVar("a")])), calls = [Call(args = [Term.TVar("a")], inner = [])])]))
+    guarded(clamps(Term.TUnit), [], Term.TCall("big", [Term.TVar("t")]), [Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TCall("clamp", [Term.TVar("t")])), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TUnit)]) => Result.Err("clamp recurses outside a match on a parameter")
+    guarded(clamps(Term.TUnit), [], Term.TCall("clamp", [Term.TVar("t")]), [Arm(pattern = Pat.PWild, body = Term.TUnit)]) => Result.Err("clamp recurses outside a match on a parameter")
+    guarded(clamps(Term.TUnit), [], Term.TCall("big", [Term.TVar("t")]), [Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TMatch(Term.TVar("t"), [Arm(pattern = Pat.PCtor("T.Node", ["a", "b"]), body = Term.TCall("clamp", [Term.TVar("a")]))])), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TMatch(Term.TVar("t"), [Arm(pattern = Pat.PCtor("T.Node", ["a", "b"]), body = Term.TCall("clamp", [Term.TVar("b")]))]))]) => Result.Err("clamp recurses outside a match on a parameter")
+    guarded(clamps(Term.TUnit), [], Term.TCall("big", [Term.TVar("t")]), [Arm(pattern = Pat.PVar("t"), body = Term.TMatch(Term.TVar("t"), [Arm(pattern = Pat.PCtor("T.Node", ["a", "b"]), body = Term.TCall("clamp", [Term.TVar("a")]))]))]) => Result.Err("clamp recurses outside a match on a parameter")
+    guarded(clamps(Term.TUnit), [], Term.TCall("big", [Term.TVar("t")]), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TMatch(Term.TVar("t"), [Arm(pattern = Pat.PCtor("T.Node", ["a", "b"]), body = Term.TCall("clamp", [Term.TVar("t")]))]))]) => Result.Err("clamp recurses on something that is not a part of the value it matches")
+
+fn recursingArms(arms: List<Arm>, d: Def, ds: List<Def>) -> Result<List<Arm>, String>
+    ? "The arms with a recursive call in them."
+    match arms
+        [] -> Result.Ok([])
+        [a, ..rest] -> match List.len(calls(a.body, d, ds)?) == 0
+            true -> recursingArms(rest, d, ds)
+            false -> Result.Ok(List.prepend(a, recursingArms(rest, d, ds)?))
+
+verify recursingArms
+    recursingArms([Arm(pattern = Pat.PWild, body = Term.TUnit)], clamps(Term.TUnit), []) => Result.Ok([])
+
+fn clamps(body: Term) -> Def
+    ? "A fixture for the tests: clamp(t) with this body."
+    Def(name = "clamp", params = [Kernel.Term.typed("t", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = body)
+
+verify clamps
+    clamps(Term.TUnit).name => "clamp"
 
 fn onParts(d: Def, ds: List<Def>, j: Int, arms: List<Arm>) -> Result<Recursion, String>
     ? "Every recursive call passes, at place j, a name its arm's pattern binds and no inner arm rebinds, or List.drop of one: a value smaller than the one matched."
@@ -346,6 +383,13 @@ fn openGate(d: Def, ds: List<Def>) -> Result<Unit, String>
         Result.Err(why) -> match Bool.or(rooted(d, ds, ds), shortens(d, ds))
             true -> Result.Ok(Unit)
             false -> Result.Err(why)
+
+verify openGate
+    openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(256)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))])), []) => Result.Ok(Unit)
+    openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(1)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))])), []) => Result.Err("f does not count n down to zero")
+    openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TCall("f", [Term.TVar("n")])), []) => Result.Err("f recurses outside a match on a parameter")
+    openGate(orOn(Term.TCall("any", [Term.TVar("rest")])), [listAny(), orOn(Term.TCall("any", [Term.TVar("rest")]))]) => Result.Ok(Unit)
+    openGate(orOn(Term.TCall("any", [Term.TList([Term.TVar("first")])])), [listAny(), orOn(Term.TCall("any", [Term.TList([Term.TVar("first")])]))]) => Result.Err("orOn does not count first down to zero")
 
 record Shrink
     f: String
@@ -463,13 +507,6 @@ fn fieldValues(fs: List<Field>) -> List<Term>
 
 verify fieldValues
     fieldValues([]) => []
-
-verify openGate
-    openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(256)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))])), []) => Result.Ok(Unit)
-    openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TMatch(Term.TOp(">", Term.TVar("n"), Term.TInt(0)), [Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TCall("f", [Term.TBi("__int_div_euclid", [Term.TVar("n"), Term.TInt(1)])])), Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TInt(0))])), []) => Result.Err("f does not count n down to zero")
-    openGate(Def(name = "f", params = [Kernel.Term.typed("n", Ty.TyAny)], ret = Ty.TyAny, lets = [], body = Term.TCall("f", [Term.TVar("n")])), []) => Result.Err("f recurses outside a match on a parameter")
-    openGate(orOn(Term.TCall("any", [Term.TVar("rest")])), [listAny(), orOn(Term.TCall("any", [Term.TVar("rest")]))]) => Result.Ok(Unit)
-    openGate(orOn(Term.TCall("any", [Term.TList([Term.TVar("first")])])), [listAny(), orOn(Term.TCall("any", [Term.TList([Term.TVar("first")])]))]) => Result.Err("orOn does not count first down to zero")
 
 fn rooted(d: Def, todo: List<Def>, ds: List<Def>) -> Bool
     ? "Whether some definition r of ds reaches d and is reached from it, and r's recursion, read through the others, passes the gate. Every cycle through d then passes r, each time on a smaller value, so d stops."

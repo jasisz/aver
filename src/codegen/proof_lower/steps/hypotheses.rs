@@ -39,6 +39,32 @@ fn is_list(t: &Term) -> bool {
             if matches!(b.as_str(), "List.prepend" | "List.concat" | "List.reverse" | "List.take" | "List.drop"))
 }
 
+/// Whether `t` is an Int, by its type or as a literal.
+fn is_int(t: &Term) -> bool {
+    matches!(t.ty(), Some(Type::Int)) || term::int_value(t).is_some()
+}
+
+/// Whether `t` holds a call of `List.len`.
+fn reads_len(t: &Term) -> bool {
+    matches!(&t.node, ResolvedExpr::Call(ResolvedCallee::Builtin(b), _) if b == "List.len")
+        || term::children(t).into_iter().any(reads_len)
+}
+
+/// The equations the lengths of lists are written in normal form with:
+/// the builtin list facts and the constructor equations of `List.len`.
+fn length_equations() -> Vec<Equation> {
+    let mut eqs: Vec<Equation> = crate::ir::proof_steps::facts::normalizing()
+        .iter()
+        .map(|f| Equation::Law(Box::new(f.law_ref())))
+        .collect();
+    eqs.push(Equation::Closed(Box::new((
+        canon(&len(term::nil())),
+        term::int(&0.into()),
+    ))));
+    eqs.push(Equation::Wall(WallRule::LenCons));
+    eqs
+}
+
 fn len(l: Term) -> Term {
     term::builtin("List.len", vec![l], Some(Type::Int))
 }
@@ -93,19 +119,17 @@ impl Env<'_> {
             .filter(|(_, e)| is_list(&e.lhs) || is_list(&e.rhs))
             .cloned()
             .collect();
-        if lists.is_empty() {
+        // A comparison of Ints stated true that reads the length of a list
+        // (`List.len(List.prepend(p, t)) == List.len(us)`, which a `when`
+        // about two lists of one length becomes at a cell): its normal form
+        // is cut in the same way, and linear arithmetic may decide an
+        // equality among them false as it stands or in that form.
+        let ints = self.stated_length_comparisons();
+        if lists.is_empty() && ints.is_empty() {
             return None;
         }
         let marks = (self.laws.len(), self.used.len(), self.used_consts.len());
-        let mut eqs: Vec<Equation> = crate::ir::proof_steps::facts::normalizing()
-            .iter()
-            .map(|f| Equation::Law(Box::new(f.law_ref())))
-            .collect();
-        eqs.push(Equation::Closed(Box::new((
-            canon(&len(term::nil())),
-            term::int(&0.into()),
-        ))));
-        eqs.push(Equation::Wall(WallRule::LenCons));
+        let eqs = length_equations();
         let mut cuts: Vec<(String, Term, Proof)> = Vec::new();
         for (name, e) in lists {
             let (l, r) = (canon(&e.lhs), canon(&e.rhs));
@@ -150,6 +174,11 @@ impl Env<'_> {
             let name = format!("h_len{}", self.hyps.len() + cuts.len());
             cuts.push((name, fact, proof));
         }
+        let stated_ints: Vec<(String, Term, Proof)> = ints
+            .iter()
+            .map(|(name, e)| (name.clone(), canon(&e.lhs), Proof::Hyp(name.clone())))
+            .collect();
+        self.cut_normal_lengths(&ints, &eqs, &mut cuts);
         let base = self.hyps.len();
         for (name, fact, _) in &cuts {
             self.hyps
@@ -158,6 +187,7 @@ impl Env<'_> {
         let found = self.on_refute_fuel(|env| {
             env.refute_linearly()
                 .or_else(|| env.refute_an_equality(&cuts))
+                .or_else(|| env.refute_an_equality(&stated_ints))
         });
         self.hyps.truncate(base);
         let Some(contradiction) = found else {
@@ -167,6 +197,119 @@ impl Env<'_> {
             return None;
         };
         let mut proof = absurd(contradiction);
+        for (name, fact, from) in cuts.into_iter().rev() {
+            if super::uses_hyp(&proof, &name) {
+                proof = Proof::Have {
+                    name,
+                    fact,
+                    proof: Box::new(from),
+                    body: Box::new(proof),
+                };
+            }
+        }
+        Some(proof)
+    }
+
+    /// The comparisons of Ints stated true in scope that read the length
+    /// of a list.
+    fn stated_length_comparisons(&self) -> Vec<(String, Eqn)> {
+        self.hyps
+            .iter()
+            .filter(|(_, e)| term::bool_value(&e.rhs) == Some(true))
+            .filter(|(_, e)| {
+                matches!(&e.lhs.node,
+                    ResolvedExpr::BinOp(
+                        BinOp::Eq | BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte,
+                        x,
+                        y,
+                    ) if (is_int(x) || is_int(y)) && reads_len(&e.lhs))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// For each of `ints` that the equations `eqs` rewrite, its normal form
+    /// with its proof from the hypothesis, added to `cuts` under a name
+    /// apart from every hypothesis in scope, unless it is in scope or cut
+    /// already.
+    fn cut_normal_lengths(
+        &mut self,
+        ints: &[(String, Eqn)],
+        eqs: &[Equation],
+        cuts: &mut Vec<(String, Term, Proof)>,
+    ) {
+        for (name, e) in ints {
+            let stated = canon(&e.lhs);
+            let Ok(chain) = self.on_refute_fuel(|env| env.rewrite(&stated, eqs)) else {
+                continue;
+            };
+            if chain.is_empty() {
+                continue;
+            }
+            let (to, bridge) = chain.finish();
+            let to = canon(&to);
+            if self.hyp_for(&to).is_some() || cuts.iter().any(|(_, f, _)| *f == to) {
+                continue;
+            }
+            let proof = Proof::Trans {
+                terms: vec![to.clone(), stated, term::boolean(true)],
+                steps: vec![Proof::Symm(Box::new(bridge)), Proof::Hyp(name.clone())],
+            };
+            let name = format!("h_len{}", self.hyps.len() + cuts.len());
+            cuts.push((name, to, proof));
+        }
+    }
+
+    /// `t = true` for a comparison of Ints `t` that reads the length of a
+    /// list, where linear arithmetic settles it once the comparisons of
+    /// lengths in scope are written in normal form: `List.len(t) ==
+    /// List.len(u)` from `List.len(List.prepend(x, t)) ==
+    /// List.len(List.prepend(y, u))`, which a `when` about two lists of one
+    /// length becomes at their cells. The normal forms are cut in above the
+    /// step that reads them.
+    pub(crate) fn discharge_by_lengths(&mut self, t: &Term) -> Option<Proof> {
+        if !matches!(
+            t.node,
+            ResolvedExpr::BinOp(
+                BinOp::Eq | BinOp::Lt | BinOp::Lte | BinOp::Gt | BinOp::Gte,
+                ..
+            )
+        ) || !reads_len(t)
+        {
+            return None;
+        }
+        let ints = self.stated_length_comparisons();
+        if ints.is_empty() {
+            return None;
+        }
+        let marks = (self.laws.len(), self.used.len(), self.used_consts.len());
+        let mut cuts = Vec::new();
+        self.cut_normal_lengths(&ints, &length_equations(), &mut cuts);
+        if cuts.is_empty() {
+            return None;
+        }
+        let base = self.hyps.len();
+        for (name, fact, _) in &cuts {
+            self.hyps
+                .push((name.clone(), Eqn::new(fact.clone(), term::boolean(true))));
+        }
+        let wide = self.wide_linear;
+        self.wide_linear = true;
+        let found = self.on_refute_fuel(|env| {
+            env.linear_proof(t, true).or_else(|| {
+                env.decide_linearly(t)
+                    .filter(|(_, value)| term::bool_value(value) == Some(true))
+                    .map(|(proof, _)| proof)
+            })
+        });
+        self.wide_linear = wide;
+        self.hyps.truncate(base);
+        let Some(mut proof) = found else {
+            self.laws.truncate(marks.0);
+            self.used.truncate(marks.1);
+            self.used_consts.truncate(marks.2);
+            return None;
+        };
         for (name, fact, from) in cuts.into_iter().rev() {
             if super::uses_hyp(&proof, &name) {
                 proof = Proof::Have {

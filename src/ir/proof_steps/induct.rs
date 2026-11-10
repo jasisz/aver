@@ -10,7 +10,11 @@
 //! most 0 without a recursive call, and every call in the other passing
 //! `p - 1` or `p / k` (a literal `k` of at least 2) in `p`'s place, which
 //! for `p > 0` is at least 0 and below `p`; it stops for every Int, a
-//! negative one included. The gate returns what it checked
+//! negative one included. The match on a parameter may also stand in
+//! the one arm with recursive calls of a match on something else, an arm
+//! that binds no name (`match hasParam(l)` then `true -> match l`); its
+//! arms are then the recursion's ([`recursion_arms`]), and the recursion
+//! stops for the reason it would without the match around it. The gate returns what it checked
 //! ([`recursion`]), and both opening a definition ([`super::Proof::Unfold`])
 //! and inducting along it ([`super::Proof::Induct`]) read that.
 //! A call of another definition that calls back into the one checked
@@ -29,7 +33,12 @@
 //! case's one name is the hypothesis that the comparison has the arm's
 //! value. Each recursive call in the arm gives one induction hypothesis,
 //! the claim at that call's arguments: a part of the value, or an Int
-//! closer to zero where the comparison lets the call happen.
+//! closer to zero where the comparison lets the call happen. A call that
+//! passes at a generalised place a name an inner match binds (`urest` in
+//! `lookup(n, prest, urest, dflt)` under `match us`) has no such
+//! hypothesis where the case starts; it gives a law instead, the claim at
+//! the part for every value of the generalised givens ([`ih_law`]), which
+//! the case cites where the name is in scope.
 
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedMatchArm};
 use crate::ir::identity::FnId;
@@ -458,7 +467,8 @@ pub enum Descent {
 /// no inner arm rebinds, or on `p <= 0` / `p > 0` for a parameter `p`, one
 /// arm per truth value, the arm where `p` is at most 0 without a recursive
 /// call and every call in the other descending ([`descent`]) at `p`'s
-/// place, `p` not rebound around it. The recursive calls are those
+/// place, `p` not rebound around it; or on something else, with the match
+/// on a parameter in its one arm that recurses ([`guarded`]). The recursive calls are those
 /// [`self_calls`] lists, a recursion through other definitions of `ds`
 /// included.
 pub fn recursion(def: &Def, ds: &[Def]) -> Result<Option<Recursion>, String> {
@@ -522,25 +532,119 @@ pub fn recursion(def: &Def, ds: &[Def]) -> Result<Option<Recursion>, String> {
             }),
         }));
     }
-    if let ResolvedExpr::BinOp(..) = &subject.node {
-        return refuse("outside a match on a parameter");
-    }
     let ResolvedExpr::Ident(p) = &subject.node else {
-        return refuse("on a match whose subject is not a parameter");
+        return guarded(def, ds, subject, arms).map(Some);
     };
-    let Some(j) = place(p) else {
+    on_parts(def, ds, p, arms).map(Some)
+}
+
+/// The gate for a match on a parameter `p`: every recursive call passes,
+/// at `p`'s place, a part of the value matched (the kernel's `onParts`).
+fn on_parts(
+    def: &Def,
+    ds: &[Def],
+    p: &str,
+    arms: &[ResolvedMatchArm],
+) -> Result<Recursion, String> {
+    let refuse = |why: &str| Err(format!("{} recurses {why}", def.name));
+    let Some(j) = def.params.iter().position(|n| n == p) else {
         return refuse("on a match whose subject is not a parameter");
     };
     for arm in arms {
         let parts = term::pattern_binders(&arm.pattern);
-        for (args, inner) in self_calls(&arm.body, f, ds)? {
+        for (args, inner) in self_calls(&arm.body, def.fn_id, ds)? {
             let smaller = args.get(j).is_some_and(|a| smaller(a, &parts, &inner));
             if args.len() != def.params.len() || !smaller {
                 return refuse("on something that is not a part of the value it matches");
             }
         }
     }
-    Ok(Some(Recursion { at: j, guard: None }))
+    Ok(Recursion { at: j, guard: None })
+}
+
+/// The gate for a body that matches something other than a parameter
+/// first (the kernel's `guarded`): the subject makes no recursive call,
+/// and of the arms exactly one does, binds no name, and is a match on a
+/// parameter whose calls pass a part of the value matched ([`on_parts`]).
+/// That inner match's arms are the recursion's ([`recursion_arms`]): the
+/// recursion stops for the reason it would without the match around it.
+fn guarded(
+    def: &Def,
+    ds: &[Def],
+    subject: &Term,
+    arms: &[ResolvedMatchArm],
+) -> Result<Recursion, String> {
+    let f = def.fn_id;
+    let outside = || {
+        Err(format!(
+            "{} recurses outside a match on a parameter",
+            def.name
+        ))
+    };
+    if !self_calls(subject, f, ds)?.is_empty() {
+        return outside();
+    }
+    let mut recursing = Vec::new();
+    for arm in arms {
+        if !self_calls(&arm.body, f, ds)?.is_empty() {
+            recursing.push(arm);
+        }
+    }
+    let [arm] = recursing.as_slice() else {
+        return outside();
+    };
+    if !term::pattern_binders(&arm.pattern).is_empty() {
+        return outside();
+    }
+    let ResolvedExpr::Match {
+        subject: inner,
+        arms: inner_arms,
+    } = &arm.body.node
+    else {
+        return outside();
+    };
+    let ResolvedExpr::Ident(p) = &inner.node else {
+        return outside();
+    };
+    on_parts(def, ds, p, inner_arms)
+}
+
+/// Whether `def` recurses behind a guard ([`guarded`]): its body matches
+/// something other than a parameter, and the gate passes it.
+pub fn guarded_recursion(def: &Def, ds: &[Def]) -> bool {
+    let ResolvedExpr::Match { subject, .. } = &def.body.node else {
+        return false;
+    };
+    let counts = matches!(&subject.node, ResolvedExpr::BinOp(_, p, zero)
+        if matches!(p.node, ResolvedExpr::Ident(_)) && term::int_value(zero) == Some(0.into()));
+    !counts
+        && !matches!(subject.node, ResolvedExpr::Ident(_))
+        && matches!(recursion(def, ds), Ok(Some(_)))
+}
+
+/// The arms of the match an induction along `def` follows, one case each:
+/// the body's own, or, when the body matches something else first
+/// ([`guarded`]), those of the match on a parameter in its one arm with
+/// recursive calls. `None` when the body is not a match.
+pub fn recursion_arms<'a>(def: &'a Def, ds: &[Def]) -> Option<&'a [ResolvedMatchArm]> {
+    let ResolvedExpr::Match { subject, arms } = &def.body.node else {
+        return None;
+    };
+    let counts = matches!(&subject.node, ResolvedExpr::BinOp(_, p, zero)
+        if matches!(p.node, ResolvedExpr::Ident(_)) && term::int_value(zero) == Some(0.into()));
+    if counts || matches!(subject.node, ResolvedExpr::Ident(_)) {
+        return Some(arms);
+    }
+    let mut recursing = arms.iter().filter(|a| {
+        !self_calls(&a.body, def.fn_id, ds)
+            .unwrap_or_default()
+            .is_empty()
+    });
+    let arm = recursing.next()?;
+    match &arm.body.node {
+        ResolvedExpr::Match { arms, .. } if recursing.next().is_none() => Some(arms),
+        _ => None,
+    }
 }
 
 /// Whether steps may open `def` though its recursion is not one they
@@ -766,18 +870,33 @@ pub fn case(
     }
     let mut out = Vec::new();
     let mut at = Vec::new();
+    let mut over = Vec::new();
     for ((call, inner), ih) in calls.iter().zip(ihs) {
         // Only the argument at the recursive place and those at the varied
         // places enter the hypothesis; a name an inner match binds may sit
         // anywhere else.
         let mut fv = Vec::new();
-        for (k, a) in call.iter().enumerate() {
-            if k == j || general.iter().any(|(g, _)| *g == k) {
-                term::free_vars(a, &mut fv);
-            }
-        }
+        term::free_vars(&call[j], &mut fv);
         if fv.iter().any(|n| inner.contains(n)) {
             return Err("a recursive call reads a name an inner match binds".into());
+        }
+        // A name an inner match binds at a varied place is not in scope
+        // where the case starts: the hypothesis is then the claim at the
+        // part for every value of the varied givens, a law the case cites
+        // where the name is in scope ([`ih_law`]).
+        let mut fv = Vec::new();
+        for (k, _) in general {
+            term::free_vars(&call[*k], &mut fv);
+        }
+        if fv.iter().any(|n| inner.contains(n)) {
+            let tau = vec![(v.to_string(), term::subst(&call[j], &map)?)];
+            out.push((
+                ih.clone(),
+                Eqn::new(term::subst(lhs, &tau)?, term::subst(rhs, &tau)?),
+            ));
+            at.push(tau);
+            over.push(true);
+            continue;
         }
         let c: Vec<Term> = call
             .iter()
@@ -790,6 +909,7 @@ pub fn case(
             Eqn::new(term::subst(lhs, &tau)?, term::subst(rhs, &tau)?),
         ));
         at.push(tau);
+        over.push(false);
     }
     Ok(Case {
         value,
@@ -797,7 +917,63 @@ pub fn case(
         guard,
         ihs: out,
         at,
+        over,
     })
+}
+
+/// The law a case of an [`super::Proof::Induct`] step holds for a
+/// recursive call that passes, at a varied place, a name an inner match
+/// binds ([`Case::over`]): over the varied givens `general`, with the
+/// types `types` gives them, the claim `lhs = rhs` at the part the call
+/// recurses on (`at`, which binds the given inducted on alone), where
+/// each of `facts`, what the carried hypotheses say is true there, holds.
+pub fn ih_law(
+    ih: &str,
+    general: &[(usize, String)],
+    types: &[(String, crate::ast::Type)],
+    facts: &[Term],
+    lhs: &Term,
+    rhs: &Term,
+) -> super::LawRef {
+    let givens: Vec<String> = general.iter().map(|(_, g)| g.clone()).collect();
+    let mut parts: Vec<Term> = facts.to_vec();
+    let premise = parts.pop().map(|mut premise| {
+        while let Some(p) = parts.pop() {
+            premise = term::bool_and(p, premise);
+        }
+        term::canon(&premise)
+    });
+    super::LawRef {
+        key: ih.to_string(),
+        types: givens
+            .iter()
+            .filter_map(|g| types.iter().find(|(n, _)| n == g).cloned())
+            .collect(),
+        givens,
+        premise,
+        refined: Vec::new(),
+        lhs: term::canon(lhs),
+        rhs: term::canon(rhs),
+        fact: None,
+    }
+}
+
+/// Whether some recursive call of `def` passes, at one of the varied
+/// places `general`, a name an inner match binds: its hypothesis is then
+/// a law ([`ih_law`]).
+pub fn over_inner(def: &Def, ds: &[Def], general: &[(usize, String)]) -> bool {
+    self_calls(&def.body, def.fn_id, ds)
+        .unwrap_or_default()
+        .iter()
+        .any(|(call, inner)| {
+            let mut fv = Vec::new();
+            for (k, _) in general {
+                if let Some(a) = call.get(*k) {
+                    term::free_vars(a, &mut fv);
+                }
+            }
+            fv.iter().any(|n| inner.contains(n))
+        })
 }
 
 /// One case of an induction, as [`case`] states it.
@@ -814,6 +990,12 @@ pub struct Case {
     pub ihs: Vec<(String, Eqn)>,
     /// For each, the substitution that puts the claim there.
     pub at: Vec<Vec<(String, Term)>>,
+    /// For each, whether the call passes at a varied place a name an inner
+    /// match binds. Its hypothesis is then no equation in scope but the
+    /// law [`ih_law`] states: its entry of `ihs` is the claim at the part
+    /// with the varied givens left as they are, and its entry of `at` puts
+    /// the given inducted on alone.
+    pub over: Vec<bool>,
 }
 
 /// For each recursive call in `arm`, in the order of [`case`]'s

@@ -1,0 +1,140 @@
+module Lockstep
+    intent =
+        "Recursion down two values at once: the second is matched inside the arm of the first, and the recursive call passes the parts of both."
+        "The hypothesis of such a call is the claim at the first part for every value of the second, cited where the inner match has named its part."
+        "The laws marked false hold on their samples only and must stay open."
+    exposes [Nat, lookup, first, valueOf, same, sized]
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn lookup(n: Int, ps: List<Int>, us: List<Int>, dflt: Int) -> Int
+    ? "The value paired with key n, or the default."
+    match ps
+        [] -> dflt
+        [p, ..prest] -> match us
+            [] -> dflt
+            [u, ..urest] -> match p == n
+                true -> u
+                false -> lookup(n, prest, urest, dflt)
+
+verify lookup
+    lookup(1, [2, 1], [5, 6], 0) => 6
+    lookup(1, [], [], 9) => 9
+
+// `lookup` passes `urest`, which the inner `match us` binds, where `us`
+// varies: the hypothesis is a law over `us`, cited at `urest` once the
+// case has split `us`. Its `when` there is `List.len(prest) ==
+// List.len(urest)`, read off the `when` at the two cells by their lengths;
+// the cases with one list empty and the other a cell are ruled out the
+// same way.
+
+verify lookup law likeValueOf
+    given n: Int = [1, 2, 3]
+    given ps: List<Int> = [[], [1], [2, 1]]
+    given us: List<Int> = [[], [5], [5, 6]]
+    when List.len(ps) == List.len(us)
+    induction ps
+    lookup(n, ps, us, 0) => valueOf(n, ps, us)
+
+// The same shape, false where n is no key: it stays open.
+
+verify lookup law falseLikeValueOf
+    given n: Int = [1]
+    given ps: List<Int> = [[1], [2, 1]]
+    given us: List<Int> = [[5], [5, 6]]
+    when List.len(ps) == List.len(us)
+    induction ps
+    lookup(n, ps, us, 9) => valueOf(n, ps, us)
+
+fn first(vs: List<Int>) -> Int
+    ? "The first value, zero for none."
+    match vs
+        [] -> 0
+        [v, .._] -> v
+
+verify first
+    first([4, 5]) => 4
+
+// A list as long as the empty one is empty: the list is split where the
+// hypothesis says so.
+
+verify first law ofNoLength
+    given vs: List<Int> = [[], [1], [1, 2]]
+    when List.len(vs) == 0
+    first(vs) => 0
+
+fn valueOf(n: Int, ps: List<Int>, vs: List<Int>) -> Int
+    ? "The value paired with n, recursing on the keys alone."
+    match ps
+        [] -> 0
+        [p, ..prest] -> match p == n
+            true -> first(vs)
+            false -> valueOf(n, prest, List.drop(vs, 1))
+
+verify valueOf
+    valueOf(1, [2, 1], [5, 6]) => 6
+
+fn same(x: Nat, y: Nat) -> Bool
+    ? "Whether two numbers are one, recursing on both."
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(y2) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> same(x2, y2)
+
+verify same
+    same(Nat.S(Nat.Z), Nat.S(Nat.Z)) => true
+    same(Nat.Z, Nat.S(Nat.Z)) => false
+
+// The same on a sum type: the hypothesis is the claim at `x2` for every
+// `y`, cited at `y2`.
+
+verify same law symmetric
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    induction x
+    same(x, y) => same(y, x)
+
+// False at x = Z, y = S(Z): it stays open.
+
+verify same law falseAlways
+    given x: Nat = [Nat.Z]
+    given y: Nat = [Nat.Z]
+    induction x
+    same(x, y) => same(y, y)
+
+fn sized(xs: List<Int>, ys: List<Int>) -> Int
+    ? "One for two lists, whatever they hold."
+    1
+
+verify sized
+    sized([1], [2]) => 1
+
+// A hypothesis that two lists are of one length, read at a cell and at
+// the empty list, rules the case out: a cell is longer than no list.
+
+verify sized law cellIsNotAsLongAsNone
+    given h: Int = [0, 1]
+    given t: List<Int> = [[], [2]]
+    when List.len(List.prepend(h, t)) == 0
+    sized(t, t) => 2
+
+verify sized law noneIsNotAsLongAsCell
+    given h: Int = [0, 1]
+    given t: List<Int> = [[], [2]]
+    when 0 == List.len(List.prepend(h, t))
+    sized(t, t) => 2
+
+// A disjunction stated false states each side false.
+
+verify sized law neitherSide
+    given a: Bool = [true, false]
+    given b: Bool = [true, false]
+    given c: Bool = [true, false]
+    when Bool.not(Bool.or(a, Bool.or(b, c)))
+    Bool.and(Bool.not(b), Bool.not(c)) => true

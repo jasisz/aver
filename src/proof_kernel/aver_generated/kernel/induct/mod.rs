@@ -917,7 +917,7 @@ pub fn recursion(
     }
 }
 
-/// The gate for a definition that does call itself: no local bindings, and a body that matches a parameter or compares one with zero.
+/// The gate for a definition that does call itself: no local bindings, and a body that matches a parameter, compares one with zero, or matches something else first and a parameter in the one arm that recurses (guarded).
 pub fn recursive(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
@@ -932,41 +932,42 @@ pub fn recursive(
                     let __t = __pat1;
                     match __t.view() {
                         crate::proof_kernel::aver_generated::kernel::term::Term__view::TMatch(
-                            ____pat2_fields,
+                            __s_fields,
                         ) => {
-                            let __pat2 = &____pat2_fields.0;
-                            let arms = &____pat2_fields.1;
+                            let s = &__s_fields.0;
+                            let arms = &__s_fields.1;
                             {
-                                let __t = __pat2;
+                                let __t = s;
                                 match __t.view() {
-        crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__p_fields) => {
-            let p = __p_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::induct::onParts(d, ds, { let __arg12 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg12, &p, aver_rt::AverInt::from_i64(0)) }, arms)
+        crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(____pat2_fields) => {
+            let __pat2 = ____pat2_fields.0.clone();
+            crate::proof_kernel::aver_generated::kernel::induct::onParts(d, ds, { let __arg16 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg16, &__pat2, aver_rt::AverInt::from_i64(0)) }, arms)
         },
-        crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(__op_fields) => {
-            let op = __op_fields.0.clone();
-            let __pat3 = &__op_fields.1;
-            let __pat4 = &__op_fields.2;
-            { let __t = __pat3; match __t.view() {
-        crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__p_fields) => {
-            let p = __p_fields.0.clone();
+        crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(____pat3_fields) => {
+            let __pat3 = ____pat3_fields.0.clone();
+            let __pat4 = &____pat3_fields.1;
+            let __pat5 = &____pat3_fields.2;
             { let __t = __pat4; match __t.view() {
-        crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(____pat5_fields) => {
-            let __pat5 = ____pat5_fields.0.clone();
-            { let __int_match_subject = __pat5; if __int_match_subject == aver_rt::AverInt::from_i64(0) { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(op, crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(p.clone())), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))))); crate::proof_kernel::aver_generated::kernel::induct::towardZero(d, ds, __arg14, p.clone(), { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg13, &p, aver_rt::AverInt::from_i64(0)) }, arms) } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(56usize); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b })) } }
+        crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__p_fields) => {
+            let p = __p_fields.0.clone();
+            { let __t = __pat5; match __t.view() {
+        crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(____pat6_fields) => {
+            let __pat6 = ____pat6_fields.0.clone();
+            { let __int_match_subject = __pat6; if __int_match_subject == aver_rt::AverInt::from_i64(0) { { let __arg18 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(__pat3, crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(p.clone())), crate::proof_kernel::aver_generated::kernel::term::Term::TInt(crate::proof_kernel::aver_generated::kernel::term::Term__TInt(aver_rt::AverInt::from_i64(0))))); crate::proof_kernel::aver_generated::kernel::induct::towardZero(d, ds, __arg18, p.clone(), { let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg17, &p, aver_rt::AverInt::from_i64(0)) }, arms) } } else { { let s = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(__pat3, __pat4.clone(), __pat5.clone())); crate::proof_kernel::aver_generated::kernel::induct::guarded(d, ds, &s, arms) } } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(56usize); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
+            { let s = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(__pat3, __pat4.clone(), __pat5.clone())); crate::proof_kernel::aver_generated::kernel::induct::guarded(d, ds, &s, arms) }
         }
     } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(56usize); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
+            { let s = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(__pat3, __pat4.clone(), __pat5.clone())); crate::proof_kernel::aver_generated::kernel::induct::guarded(d, ds, &s, arms) }
         }
     } }
         },
         _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(56usize); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
+            let __pat7 = __t.clone();
+            crate::proof_kernel::aver_generated::kernel::induct::guarded(d, ds, &__pat7, arms)
         }
     }
                             }
@@ -996,6 +997,185 @@ pub fn recursive(
                 }))
             }
         }
+    }
+}
+
+/// A match on something other than a parameter, s itself without a recursive call: every arm but one makes none, and that one binds no name and is a match on a parameter whose calls pass a part of the value matched (onParts). Its arms are the recursion's: the recursion stops for the reason it would without the match around it.
+pub fn guarded(
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    s @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+) -> Result<Recursion, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat3, __pat4) = (
+            (aver_rt::AverInt::from_i64(
+                crate::proof_kernel::aver_generated::kernel::induct::calls(s, d, ds)?.len() as i64,
+            ) == aver_rt::AverInt::from_i64(0)),
+            crate::proof_kernel::aver_generated::kernel::induct::recursingArms(arms, d, ds)?,
+        );
+        if __pat3 {
+            {
+                let __list_subject = __pat4;
+                match aver_rt::list_uncons(&__list_subject) {
+                    Some((a, __pat5)) => {
+                        let __list_subject = __pat5;
+                        if __list_subject.is_empty() {
+                            {
+                                let (__pat0, __pat1) = (
+                                    crate::proof_kernel::aver_generated::kernel::subst::patNames(
+                                        &a.pattern,
+                                    ),
+                                    a.body.clone(),
+                                );
+                                {
+                                    let __list_subject = __pat0;
+                                    if __list_subject.is_empty() {
+                                        {
+                                            let __t = __pat1;
+                                            match __t.view() {
+        crate::proof_kernel::aver_generated::kernel::term::Term__view::TMatch(____pat2_fields) => {
+            let __pat2 = &____pat2_fields.0;
+            let inner = &____pat2_fields.1;
+            { let __t = __pat2; match __t.view() {
+        crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__p_fields) => {
+            let p = __p_fields.0.clone();
+            crate::proof_kernel::aver_generated::kernel::induct::onParts(d, ds, { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg13, &p, aver_rt::AverInt::from_i64(0)) }, inner)
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(56usize); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
+        }
+    } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(56usize); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
+        }
+    }
+                                        }
+                                    } else {
+                                        Err(aver_rt::AverStr::from({
+                                            let mut __b = {
+                                                let mut __b =
+                                                    aver_rt::Buffer::with_capacity(56usize);
+                                                __b.push_display(&(d.name));
+                                                __b
+                                            };
+                                            __b.push_str(&::aver_rt::str_lit!(
+                                                " recurses outside a match on a parameter"
+                                            ));
+                                            __b
+                                        }))
+                                    }
+                                }
+                            }
+                        } else {
+                            Err(aver_rt::AverStr::from({
+                                let mut __b = {
+                                    let mut __b = aver_rt::Buffer::with_capacity(56usize);
+                                    __b.push_display(&(d.name));
+                                    __b
+                                };
+                                __b.push_str(&::aver_rt::str_lit!(
+                                    " recurses outside a match on a parameter"
+                                ));
+                                __b
+                            }))
+                        }
+                    }
+                    None => Err(aver_rt::AverStr::from({
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity(56usize);
+                            __b.push_display(&(d.name));
+                            __b
+                        };
+                        __b.push_str(&::aver_rt::str_lit!(
+                            " recurses outside a match on a parameter"
+                        ));
+                        __b
+                    })),
+                }
+            }
+        } else {
+            Err(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity(56usize);
+                    __b.push_display(&(d.name));
+                    __b
+                };
+                __b.push_str(&::aver_rt::str_lit!(
+                    " recurses outside a match on a parameter"
+                ));
+                __b
+            }))
+        }
+    }
+}
+
+/// The arms with a recursive call in them.
+#[inline(always)]
+pub fn recursingArms(
+    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
+    ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>, AverStr> {
+    let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>;
+    let mut arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm> =
+        arms;
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        {
+            let __list_subject = arms;
+            match aver_rt::list_uncons(__list_subject) {
+                Some((a, rest)) => {
+                    if (aver_rt::AverInt::from_i64(
+                        crate::proof_kernel::aver_generated::kernel::induct::calls(&a.body, d, ds)?
+                            .len() as i64,
+                    ) == aver_rt::AverInt::from_i64(0))
+                    {
+                        {
+                            let __tco0 = rest;
+                            __hold0 = __tco0;
+                            arms = &__hold0;
+                            continue;
+                        }
+                    } else {
+                        return Ok(aver_rt::AverList::prepend_owned(
+                            a.clone(),
+                            crate::proof_kernel::aver_generated::kernel::induct::recursingArms(
+                                &rest, d, ds,
+                            )?,
+                        ));
+                    }
+                }
+                None => {
+                    return Ok(aver_rt::AverList::empty());
+                }
+            }
+        }
+    }
+}
+
+/// A fixture for the tests: clamp(t) with this body.
+pub fn clamps(
+    mut body @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
+) -> crate::proof_kernel::aver_generated::kernel::proof::Def {
+    crate::proof_kernel::cancel_checkpoint();
+    crate::proof_kernel::aver_generated::kernel::proof::Def {
+        name: ::aver_rt::str_lit!("clamp"),
+        params: aver_rt::AverList::prepend_owned(
+            {
+                let __arg1 @ _ = crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny;
+                crate::proof_kernel::aver_generated::kernel::term::typed(
+                    ::aver_rt::str_lit!("t"),
+                    __arg1,
+                )
+            },
+            aver_rt::AverList::empty(),
+        ),
+        ret: crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
+        lets: aver_rt::AverList::empty(),
+        body: body,
     }
 }
 

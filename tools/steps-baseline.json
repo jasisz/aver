@@ -830,25 +830,25 @@
  "proof-corpus/decomposed/isaplanner/prop_77.av": {
   "steps": [
    "insort.leHeadInsort",
+   "le.leTotal",
    "sorted.sortTail",
    "sorted.sortedCons",
    "sorted.sortedConsLeHead"
   ],
   "tactic": [
-   "insort.sortedInsort",
-   "le.leTotal"
+   "insort.sortedInsort"
   ]
  },
  "proof-corpus/decomposed/isaplanner/prop_78.av": {
   "steps": [
    "insort.leHeadInsort",
+   "leq.leTotal",
    "sorted.sortTail",
    "sorted.sortedCons",
    "sorted.sortedConsLeHead"
   ],
   "tactic": [
    "insort.sortedInsort",
-   "leq.leTotal",
    "sort.sortProducesSorted"
   ]
  },
@@ -882,13 +882,13 @@
  "proof-corpus/decomposed/prod/lemma_12.av": {
   "steps": [
    "insert.leHeadInsert",
+   "lessEq.leTotal",
    "sorted.sortTail",
    "sorted.sortedCons",
    "sorted.sortedConsLeHead"
   ],
   "tactic": [
-   "insert.sortedInsert",
-   "lessEq.leTotal"
+   "insert.sortedInsert"
   ]
  },
  "proof-corpus/decomposed/prod/lemma_14.av": {
@@ -976,14 +976,14 @@
  "proof-corpus/decomposed/prod/prop_14.av": {
   "steps": [
    "insert.leHeadInsert",
+   "lessEq.lessEqTotal",
    "sorted.sortedCons",
    "sorted.sortedConsLeHead",
    "sorted.sortedTail"
   ],
   "tactic": [
    "insert.sortedInsert",
-   "isort.sortedIsort",
-   "lessEq.lessEqTotal"
+   "isort.sortedIsort"
   ]
  },
  "proof-corpus/decomposed/prod/prop_16.av": {
@@ -1213,7 +1213,7 @@
   ]
  },
  "proof-corpus/tip/isaplanner/prop_01.av": {
-  "tactic": [
+  "steps": [
    "take.takeDropAppend"
   ]
  },
@@ -1253,7 +1253,7 @@
   ]
  },
  "proof-corpus/tip/isaplanner/prop_09.av": {
-  "tactic": [
+  "steps": [
    "minus.minusMinusPlus"
   ]
  },
@@ -1348,12 +1348,12 @@
   ]
  },
  "proof-corpus/tip/isaplanner/prop_33.av": {
-  "tactic": [
+  "steps": [
    "eq.minEqLeq"
   ]
  },
  "proof-corpus/tip/isaplanner/prop_34.av": {
-  "tactic": [
+  "steps": [
    "eq.minEqLe"
   ]
  },
@@ -1507,7 +1507,7 @@
   ]
  },
  "proof-corpus/tip/isaplanner/prop_79.av": {
-  "tactic": [
+  "steps": [
    "sub.subShiftCancel"
   ]
  },

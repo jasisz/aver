@@ -793,9 +793,23 @@ impl Env<'_> {
             .cloned()
             .collect();
         taken.extend(ob.givens.iter().cloned());
-        let ResolvedExpr::Match { arms, .. } = &def.body.node else {
+        let Some(arms) = induct::recursion_arms(&def, &ds) else {
             return Err("induction: the body is not a match".into());
         };
+        // Behind a guard, opening the call at a case's pattern puts that
+        // pattern into the inner match, whose arms bind names of their own:
+        // the case's names stay clear of them. So they do where an arm
+        // reads the parameter it matched (`Level.Param(n) -> lookup(n, ps,
+        // us, l)`): opening the call puts the pattern where that arm reads
+        // it, under the names the arm binds.
+        let reads_matched = arms.iter().any(|arm| {
+            let mut fv = Vec::new();
+            term::free_vars(&arm.body, &mut fv);
+            fv.contains(&def.params[j])
+        });
+        if induct::guarded_recursion(&def, &ds) || reads_matched {
+            bound_in(&def.body, &mut taken);
+        }
         self.mark_used(f);
         // The helpers the recursion goes through, which the kernel reads it
         // through as well.
@@ -804,6 +818,20 @@ impl Env<'_> {
         }
         let saved = std::mem::take(&mut self.hyps);
         self.inducting.push(f);
+        let laws_before = (
+            self.rewrite_laws.len(),
+            self.cited_all.len(),
+            self.local_laws.len(),
+        );
+        let varied_before = self.varied_lists.len();
+        if induct::over_inner(&def, &ds, &general) {
+            self.varied_lists.extend(
+                general
+                    .iter()
+                    .map(|(_, g)| g.clone())
+                    .filter(|g| ob.lists.contains(g)),
+            );
+        }
         let result = (|| -> Result<Vec<InductCase>, String> {
             let mut cases = Vec::new();
             for (i, arm) in arms.iter().enumerate() {
@@ -844,7 +872,38 @@ impl Env<'_> {
                 let mut ihs = Vec::new();
                 let mut carry = Vec::new();
                 let mut taken_ihs = Vec::new();
-                for ((ih, e), tau) in case.ihs.iter().zip(&case.at) {
+                self.rewrite_laws.truncate(laws_before.0);
+                self.cited_all.truncate(laws_before.1);
+                self.local_laws.truncate(laws_before.2);
+                for (k, ((ih, e), tau)) in case.ihs.iter().zip(&case.at).enumerate() {
+                    // A call that passes at a varied place a name an inner
+                    // match binds: its hypothesis is the claim at the part
+                    // for every value of the varied givens, a law
+                    // evaluation applies where it reaches the call, its
+                    // premise (the carried hypotheses there) proved then.
+                    if case.over[k] {
+                        let facts: Option<Vec<Term>> = carried
+                            .iter()
+                            .map(|(_, c)| {
+                                (term::bool_value(&c.rhs) == Some(true))
+                                    .then(|| term::subst(&c.lhs, tau).ok())
+                                    .flatten()
+                            })
+                            .collect();
+                        carry.push(Vec::new());
+                        let Some(facts) = facts else {
+                            ihs.push("_".to_string());
+                            continue;
+                        };
+                        let law = induct::ih_law(ih, &general, &ob.types, &facts, &e.lhs, &e.rhs);
+                        ihs.push(ih.clone());
+                        if super::rewrite::loops(&law).is_none() {
+                            self.rewrite_laws.push(law.clone());
+                        }
+                        self.cited_all.push(law);
+                        self.local_laws.push(ih.clone());
+                        continue;
+                    }
                     let mut proofs = Vec::new();
                     for (_, c) in &carried {
                         let at = (term::subst(&c.lhs, tau)?, term::subst(&c.rhs, tau)?);
@@ -976,6 +1035,10 @@ impl Env<'_> {
         })();
         self.hyps = saved;
         self.inducting.pop();
+        self.rewrite_laws.truncate(laws_before.0);
+        self.cited_all.truncate(laws_before.1);
+        self.local_laws.truncate(laws_before.2);
+        self.varied_lists.truncate(varied_before);
         let cases = result?;
         Ok(Proof::Induct {
             fn_id: f,
@@ -1522,5 +1585,20 @@ impl Env<'_> {
         };
         self.fuel = fuel;
         looped
+    }
+}
+
+/// Every name a match arm binds anywhere in `t`.
+fn bound_in(t: &Term, out: &mut Vec<String>) {
+    if let ResolvedExpr::Match { subject, arms } = &t.node {
+        bound_in(subject, out);
+        for arm in arms {
+            out.extend(term::pattern_binders(&arm.pattern));
+            bound_in(&arm.body, out);
+        }
+        return;
+    }
+    for c in term::children(t) {
+        bound_in(c, out);
     }
 }
