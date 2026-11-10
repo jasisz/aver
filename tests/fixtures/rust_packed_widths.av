@@ -1,0 +1,180 @@
+module M
+    intent = "List<Int> refinements packed at every width past a byte"
+    exposes opaque [Ports, Deltas, Steps, Words, Stamps]
+    effects [Console]
+
+record Ports
+    values: List<Int>
+
+record Deltas
+    values: List<Int>
+
+record Steps
+    values: List<Int>
+
+record Words
+    values: List<Int>
+
+record Stamps
+    values: List<Int>
+
+fn allPorts(xs: List<Int>) -> Bool
+    ? "Every element is a port number."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 65535)
+            true -> allPorts(tail)
+            false -> false
+
+fn portsOf(xs: List<Int>) -> Result<Ports, String>
+    ? "Smart constructor: u16 elements."
+    match allPorts(xs)
+        true -> Result.Ok(Ports(values = xs))
+        false -> Result.Err("not a port")
+
+fn allDeltas(xs: List<Int>) -> Bool
+    ? "Every element is a small signed delta."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= -30000, head <= 30000)
+            true -> allDeltas(tail)
+            false -> false
+
+fn deltasOf(xs: List<Int>) -> Result<Deltas, String>
+    ? "Smart constructor: i16 elements."
+    match allDeltas(xs)
+        true -> Result.Ok(Deltas(values = xs))
+        false -> Result.Err("not a delta")
+
+fn allSteps(xs: List<Int>) -> Bool
+    ? "Every element is a step of at most 100 either way."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= -100, head <= 100)
+            true -> allSteps(tail)
+            false -> false
+
+fn stepsOf(xs: List<Int>) -> Result<Steps, String>
+    ? "Smart constructor: i8 elements."
+    match allSteps(xs)
+        true -> Result.Ok(Steps(values = xs))
+        false -> Result.Err("not a step")
+
+fn allWords(xs: List<Int>) -> Bool
+    ? "Every element is a 32-bit word."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 4294967295)
+            true -> allWords(tail)
+            false -> false
+
+fn wordsOf(xs: List<Int>) -> Result<Words, String>
+    ? "Smart constructor: u32 elements."
+    match allWords(xs)
+        true -> Result.Ok(Words(values = xs))
+        false -> Result.Err("not a word")
+
+fn allStamps(xs: List<Int>) -> Bool
+    ? "Every element is a 40-bit time stamp."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 1099511627775)
+            true -> allStamps(tail)
+            false -> false
+
+fn stampsOf(xs: List<Int>) -> Result<Stamps, String>
+    ? "Smart constructor: i64 elements."
+    match allStamps(xs)
+        true -> Result.Ok(Stamps(values = xs))
+        false -> Result.Err("not a stamp")
+
+fn total(xs: List<Int>, acc: Int) -> Int
+    ? "Sum of the elements."
+    match xs
+        [] -> acc
+        [head, ..tail] -> total(tail, acc + head)
+
+fn portsOr(xs: List<Int>) -> Ports
+    ? "The ports, or none."
+    Result.withDefault(portsOf(xs), portsOf([]))
+
+verify portsOf
+    portsOf([0, 80, 65535]) => Ports(values = [0, 80, 65535])
+    portsOf([65536]) => Result.Err("not a port")
+
+verify deltasOf
+    deltasOf([-30000, 0, 30000]) => Deltas(values = [-30000, 0, 30000])
+    deltasOf([-30001]) => Result.Err("not a delta")
+
+verify stepsOf
+    stepsOf([-100, 100]) => Steps(values = [-100, 100])
+    stepsOf([101]) => Result.Err("not a step")
+
+verify wordsOf
+    wordsOf([4294967295]) => Words(values = [4294967295])
+    wordsOf([-1]) => Result.Err("not a word")
+
+verify stampsOf
+    stampsOf([1099511627775, 7]) => Stamps(values = [1099511627775, 7])
+    stampsOf([1099511627776]) => Result.Err("not a stamp")
+
+fn show(xs: List<Int>) -> String
+    ? "The elements, separated by spaces."
+    match xs
+        [] -> "."
+        [head, ..tail] -> "{head} {show(tail)}"
+
+fn showPorts(p: Ports) -> String
+    ? "Length, sum, first two, the rest reversed, and whether 443 is there."
+    xs = p.values
+    "{List.len(xs)} {total(xs, 0)} {show(List.take(xs, 2))} {show(List.reverse(List.drop(xs, 1)))} {List.contains(xs, 443)}"
+
+fn equalities() -> String
+    ? "Packed lists compare as the lists they are."
+    ports = portsOr([22, 80, 443, 8080, 65535])
+    "{ports == portsOr(List.concat([22, 80, 443], [8080, 65535]))} {ports == portsOr([22])}"
+
+fn keyed() -> String
+    ? "Packed lists key a map in list order."
+    m = Map.set(Map.set({}, portsOr([2, 1]), "b"), portsOr([1, 2]), "a")
+    keys(Map.keys(m))
+
+fn keys(ks: List<Ports>) -> String
+    ? "Each key's elements."
+    match ks
+        [] -> "|"
+        [k, ..rest] -> "{show(k.values)}| {keys(rest)}"
+
+fn deltas(xs: List<Int>) -> String
+    ? "Signed 16-bit elements."
+    match deltasOf(xs)
+        Result.Ok(d) -> "{show(d.values)} {total(d.values, 0)}"
+        Result.Err(e) -> e
+
+fn steps(xs: List<Int>) -> String
+    ? "Signed 8-bit elements, read by index."
+    match stepsOf(xs)
+        Result.Ok(s) -> "{show(s.values)} {show(List.take(List.drop(s.values, 1), 1))}"
+        Result.Err(e) -> e
+
+fn words(xs: List<Int>) -> String
+    ? "Unsigned 32-bit elements."
+    match wordsOf(xs)
+        Result.Ok(w) -> "{show(w.values)} {total(w.values, 0)}"
+        Result.Err(e) -> e
+
+fn stamps(xs: List<Int>) -> String
+    ? "64-bit elements, reversed."
+    match stampsOf(xs)
+        Result.Ok(t) -> "{show(List.reverse(t.values))} {total(t.values, 0)}"
+        Result.Err(e) -> e
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(showPorts(portsOr(List.concat([22, 80, 443], [8080, 65535]))))
+    Console.print(equalities())
+    Console.print(keyed())
+    Console.print(deltas([-30000, -5, 7, 30000]))
+    Console.print(steps([-100, 3, 100]))
+    Console.print(words([0, 4294967295, 65536]))
+    Console.print(stamps([1099511627775, 3]))

@@ -231,7 +231,7 @@ pub(super) fn is_boxed_record(td: &TypeDef, ctx: &CodegenContext) -> bool {
 
 /// [`is_boxed_record`] for a record whose fields take `size` bytes.
 fn boxes(size: usize, td: &TypeDef, name: &str, ctx: &CodegenContext) -> bool {
-    size > BOXED_RECORD_BYTES && !super::uses_packed_u8(ctx, name) && !on_cycle(td, ctx)
+    size > BOXED_RECORD_BYTES && !super::uses_packed(ctx, name) && !on_cycle(td, ctx)
 }
 
 /// Whether a boxed record (see [`is_boxed_record`]) is kept behind a
@@ -565,8 +565,8 @@ fn capabilities_for_def(
         return RepresentationCapabilities::ALL;
     }
 
-    let capabilities = if super::uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)) {
-        // `AverPackedU8` explicitly implements all five operations, with
+    let capabilities = if super::uses_packed(ctx, crate::codegen::common::type_def_name(td)) {
+        // `AverPacked<E>` explicitly implements all five operations, with
         // equality/hash compatible with the ordinary `List<Int>` carrier.
         RepresentationCapabilities::ALL
     } else {
@@ -688,7 +688,7 @@ fn orderable_def(td: &TypeDef, ctx: &CodegenContext, visiting: &mut HashSet<Stri
     if !visiting.insert(key.clone()) {
         return true;
     }
-    let orderable = if super::uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)) {
+    let orderable = if super::uses_packed(ctx, crate::codegen::common::type_def_name(td)) {
         true
     } else {
         fields_of(td).all(|field| {

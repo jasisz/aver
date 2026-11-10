@@ -29,10 +29,65 @@ struct Header {
     cap: usize,
 }
 
+#[repr(transparent)]
 pub(crate) struct Block<T> {
     ptr: NonNull<Header>,
     /// Owns `T`s for the drop check.
     phantom: PhantomData<T>,
+}
+
+/// One count of a block whose element type its holder keeps beside it
+/// rather than in the type (the packed `List<Int>` widths,
+/// [`crate::int_list::NarrowInts`]). The count is the same for every element
+/// type, so copying and dropping one needs no type; reading the elements and
+/// freeing the last one take the type the block was made with.
+#[repr(transparent)]
+pub(crate) struct Untyped(NonNull<Header>);
+
+// As `Block`: the elements are integers, which any thread may read.
+unsafe impl Send for Untyped {}
+unsafe impl Sync for Untyped {}
+
+impl Untyped {
+    /// One more count of the same block.
+    #[inline]
+    pub(crate) fn share(&self) -> Self {
+        // SAFETY: the allocation lives while this count does.
+        if crate::counts::inc(unsafe { &self.0.as_ref().count }) {
+            std::process::abort();
+        }
+        Self(self.0)
+    }
+
+    /// Gives up this count: true when it was the last one, and the caller
+    /// must then free the block with [`Untyped::free_as`].
+    #[inline]
+    pub(crate) fn release(&self) -> bool {
+        // SAFETY: the allocation lives while this count does.
+        crate::counts::dec(unsafe { &self.0.as_ref().count })
+    }
+
+    /// The block, read as the `Block<T>` it was made as.
+    ///
+    /// # Safety
+    /// It was made from a `Block<T>` ([`Block::into_untyped`]).
+    #[inline]
+    pub(crate) unsafe fn typed<T>(&self) -> &Block<T> {
+        // SAFETY: both are one `NonNull<Header>` (`repr(transparent)`).
+        unsafe { &*(self as *const Self as *const Block<T>) }
+    }
+
+    /// Frees a block whose last count [`Untyped::release`] gave up.
+    ///
+    /// # Safety
+    /// It was made from a `Block<T>`, and its count is zero.
+    pub(crate) unsafe fn free_as<T>(&self) {
+        let mut block = std::mem::ManuallyDrop::new(Block::<T> {
+            ptr: self.0,
+            phantom: PhantomData,
+        });
+        block.drop_slow();
+    }
 }
 
 // As `Shared`/`Arc`: sending a block shares its elements with the threads
@@ -57,6 +112,12 @@ impl<T> Block<T> {
         let header = std::mem::size_of::<Header>();
         header.div_ceil(align) * align
     };
+
+    /// This count of the block, its element type left to the holder.
+    pub(crate) fn into_untyped(self) -> Untyped {
+        let block = std::mem::ManuallyDrop::new(self);
+        Untyped(block.ptr)
+    }
 
     /// An empty block with room for `cap` elements.
     pub(crate) fn with_capacity(cap: usize) -> Self {
@@ -237,6 +298,29 @@ impl<T> Block<T> {
         // SAFETY: room for one more, held alone.
         unsafe { self.push_within(item) };
         Ok(())
+    }
+
+    /// Appends `more` in place when this is the only owner, growing the
+    /// allocation once to at least twice its room when it has too little;
+    /// false, and nothing changed, when the block is shared.
+    pub(crate) fn extend_unique(&mut self, more: &[T]) -> bool
+    where
+        T: Copy,
+    {
+        if !self.is_unique() {
+            return false;
+        }
+        let (len, cap) = (self.header().len, self.header().cap);
+        if cap - len < more.len() {
+            self.grow((len + more.len()).max(cap.saturating_mul(2)));
+        }
+        // SAFETY: room for `more` past the last element, held alone; `T` is
+        // `Copy`, so the copies need no drop of their own.
+        unsafe {
+            ptr::copy_nonoverlapping(more.as_ptr(), self.data().add(len), more.len());
+        }
+        self.set_len(len + more.len());
+        true
     }
 
     #[cold]

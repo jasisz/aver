@@ -320,6 +320,93 @@ fn rust_codegen_uses_proof_derived_u8_storage_for_generic_refinement() {
     let _ = fs::remove_dir_all(workspace);
 }
 
+/// A `List<Int>` refinement whose elements are bounded past a byte is packed
+/// at the narrowest width that holds them (`u16`, `i16`, `i8`, `u32`, and
+/// `i64` for a 40-bit bound), reads back as the list it is (length, sum,
+/// prefix, reverse, membership, equality, order as a map key), and its verify
+/// cases pass as tests; the output is the VM's.
+#[test]
+fn rust_codegen_packs_list_refinements_at_every_width() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let source = repo_root.join("tests/fixtures/rust_packed_widths.av");
+    let workspace = temp_output_dir("rust-codegen-packed-widths");
+    let project_dir = workspace.join("project");
+    fs::create_dir_all(&project_dir).expect("create packed-widths workspace");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&source)
+        .arg("--target")
+        .arg("rust")
+        .arg("--name")
+        .arg("packed_widths")
+        .arg("-o")
+        .arg(&project_dir)
+        .output()
+        .expect("compile packed widths");
+    assert!(
+        compile.status.success(),
+        "aver compile failed:\n{}",
+        format_output(&compile)
+    );
+    let generated = fs::read_to_string(project_dir.join("src/aver_generated/entry/mod.rs"))
+        .expect("read generated entry module");
+    for width in ["u16", "i16", "i8", "u32", "i64"] {
+        assert!(
+            generated.contains(&format!("pub values: aver_rt::AverPacked<{width}>")),
+            "a refinement bounded within {width} should be packed as {width}:\n{generated}"
+        );
+    }
+
+    let vm = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run packed widths on the VM");
+    assert!(
+        vm.status.success(),
+        "VM run failed:\n{}",
+        format_output(&vm)
+    );
+
+    let tests = Command::new("cargo")
+        .arg("test")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(project_dir.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", shared_target_dir())
+        .output()
+        .expect("test generated packed-widths project");
+    assert!(
+        tests.status.success(),
+        "generated packed-widths project failed verify tests:\n{}",
+        format_output(&tests)
+    );
+
+    let run = Command::new("cargo")
+        .arg("run")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(project_dir.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", shared_target_dir())
+        .output()
+        .expect("run generated packed-widths project");
+    assert!(
+        run.status.success(),
+        "generated packed-widths project failed to run:\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&vm.stdout)
+    );
+
+    let _ = fs::remove_dir_all(workspace);
+}
+
 fn sanitise(relative: &str) -> String {
     relative
         .chars()
