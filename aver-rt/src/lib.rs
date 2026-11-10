@@ -1095,7 +1095,30 @@ pub struct AverList<T> {
     ///
     /// Keeping the cursor on the cheap list wrapper makes the next `uncons`
     /// O(1): a tail shares the segment table and advances these two integers.
-    segment_index: u32,
+    segment_index: SegmentIndex,
+}
+
+/// The index of a segment of an indexed body, below `u32::MAX`, kept as its
+/// complement so that it is never zero: the value no index takes is where
+/// an `Option<AverList<T>>` keeps its `None`, so the option is 16 bytes, as
+/// the list is, rather than 24.
+#[derive(Clone, Copy)]
+struct SegmentIndex(std::num::NonZeroU32);
+
+impl SegmentIndex {
+    const FIRST: Self = Self(std::num::NonZeroU32::MAX);
+
+    /// `index`, or `None` when it is too far in to be kept.
+    #[inline]
+    fn new(index: usize) -> Option<Self> {
+        let index = u32::try_from(index).ok()?;
+        std::num::NonZeroU32::new(!index).map(Self)
+    }
+
+    #[inline]
+    fn get(self) -> usize {
+        !self.0.get() as usize
+    }
 }
 
 struct TraversalSegment<T> {
@@ -1318,7 +1341,7 @@ impl<T> AverList<T> {
         Self {
             inner: Some(Rc::new(inner)),
             start: 0,
-            segment_index: 0,
+            segment_index: SegmentIndex::FIRST,
         }
     }
 
@@ -1335,19 +1358,21 @@ impl<T> AverList<T> {
 
     #[inline]
     fn segment_index(&self) -> usize {
-        self.segment_index as usize
+        self.segment_index.get()
     }
 
     /// This list's flat or indexed body read from `start`, which lies in
     /// segment `segment_index` of an indexed body.
     ///
-    /// Both numbers are kept in 32 bits. One past that — a body of more than
+    /// Both numbers are kept in 32 bits (the segment below `u32::MAX`, see
+    /// [`SegmentIndex`]). One past that — a body of more than
     /// four billion elements — gets a table of its own that starts where the
     /// view does, so the view starts at 0 again; that is one table entry for
     /// a flat body and once every four billion steps.
     #[inline]
     fn view(&self, start: usize, segment_index: usize) -> Self {
-        if let (Ok(start), Ok(segment_index)) = (u32::try_from(start), u32::try_from(segment_index))
+        if let (Ok(start), Some(segment_index)) =
+            (u32::try_from(start), SegmentIndex::new(segment_index))
         {
             return Self {
                 inner: self.inner.clone(),
@@ -1783,7 +1808,7 @@ impl<T> AverList<T> {
         Self {
             inner: None,
             start: 0,
-            segment_index: 0,
+            segment_index: SegmentIndex::FIRST,
         }
     }
 
@@ -2463,7 +2488,7 @@ impl<T> ListSlot<T> {
         AverList {
             inner: Some(node),
             start: 0,
-            segment_index: 0,
+            segment_index: SegmentIndex::FIRST,
         }
     }
 }
@@ -3754,6 +3779,7 @@ mod tests {
         fn a_list_is_two_words_and_a_node_the_size_of_a_cons_cell() {
             use std::mem::size_of;
             assert_eq!(size_of::<AverList<u64>>(), 16);
+            assert_eq!(size_of::<Option<AverList<u64>>>(), 16, "an optional list");
             assert_eq!(size_of::<AverListInner<u64>>(), 40);
             assert_eq!(size_of::<AverListInner<AverStr>>(), 48);
             assert_eq!(size_of::<AverListInner<AverList<u64>>>(), 48);
