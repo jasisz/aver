@@ -116,13 +116,23 @@ pub fn check_findings(
     symbols: &crate::ir::SymbolTable,
 ) -> Vec<crate::checker::CheckFinding> {
     use crate::analysis::literal_refinement::LiteralCarrier;
-    let finding = |line: usize, fn_name: Option<&str>, note: String, repair: &str| {
+    // What the type would be held as: the machine integer its bound fits
+    // ([`storage_for`]) when the bound is known.
+    let finding = |line: usize,
+                   fn_name: Option<&str>,
+                   note: String,
+                   repair: &str,
+                   bound: Option<Interval>| {
+        let held = match bound {
+            Some(bound) => format!("a `{}`", storage_for(bound)),
+            None => "a machine integer".to_string(),
+        };
         crate::checker::CheckFinding {
             line,
             module: None,
             file: None,
             fn_name: fn_name.map(str::to_string),
-            message: format!("{note} — {repair}, and the Rust backend holds it as a machine word"),
+            message: format!("{note} — {repair}, and the Rust backend holds it as {held}"),
             extra_spans: vec![],
         }
     };
@@ -151,6 +161,7 @@ pub fn check_findings(
                     "`{name}` keeps an `Int` field: it has the smart constructor `{ctor}` but is not listed under `exposes opaque`"
                 ),
                 "list it under `exposes opaque`",
+                None,
             ));
         }
     }
@@ -185,7 +196,13 @@ pub fn check_findings(
                         "`{}` keeps an `Int` field: the check of `{ctor}` does not bound it within 64 bits",
                         c.type_name
                     );
-                    findings.push(finding(line, Some(ctor), note, "bound it with literal comparisons"));
+                    findings.push(finding(
+                        line,
+                        Some(ctor),
+                        note,
+                        "bound it with literal comparisons",
+                        None,
+                    ));
                     return None;
                 }
             };
@@ -211,7 +228,13 @@ pub fn check_findings(
                 candidate.label,
                 built_in(&binding.name, candidate.interval)
             );
-            findings.push(finding(binding.value.line, None, note, &repair(ctor)));
+            findings.push(finding(
+                binding.value.line,
+                None,
+                note,
+                &repair(ctor),
+                Some(candidate.interval),
+            ));
         }
     }
     let candidates: Vec<Candidate> = gates.iter().map(|(c, _)| c.clone()).collect();
@@ -224,6 +247,7 @@ pub fn check_findings(
             Some(&at),
             built_unchecked(candidate, &at, None),
             &repair(ctor),
+            Some(candidate.interval),
         ));
     }
     findings
@@ -396,19 +420,72 @@ fn candidates(ctx: &CodegenContext, notes: &mut Vec<String>) -> Vec<Candidate> {
     out
 }
 
-/// Is the record held as a raw `i64`?
+/// Is the record held as a raw machine integer?
 pub(super) fn is_i64_carrier(ctx: &CodegenContext, id: Option<TypeId>) -> bool {
     id.is_some_and(|id| ctx.rust_i64_carriers.contains_key(&id))
 }
 
-/// Is the record `name` declared in `scope` (`None`: the entry) held as a
-/// raw `i64`?
-pub(super) fn declared_i64_carrier(ctx: &CodegenContext, scope: Option<&str>, name: &str) -> bool {
+/// The narrowest machine integer that holds every value of `interval`, one
+/// of `u8`, `i8`, `u16`, `i16`, `u32`, `i32` and `i64`: the field a carrier
+/// with that bound is stored in. A read widens it to `i64` and arithmetic
+/// stays on `i64`, so the width only changes how many bytes the value takes
+/// in a record, a variant, a vector, a map or a list.
+pub(crate) fn storage_for(interval: Interval) -> &'static str {
+    // The width a packed `List<Int>` refinement picks for its elements.
+    crate::codegen::proof_lower::PackedIntElement::for_interval(interval)
+        .map_or("i64", |element| element.rust_type())
+}
+
+/// The machine integer the carrier `id` is stored in ([`storage_for`]
+/// its bound), or `None` when the record is not a carrier.
+pub(super) fn storage_of(ctx: &CodegenContext, id: Option<TypeId>) -> Option<&'static str> {
+    id.and_then(|id| ctx.rust_i64_carriers.get(&id))
+        .map(|interval| storage_for(*interval))
+}
+
+/// The bytes a value stored as `storage` ([`storage_for`]) takes.
+pub(super) fn storage_bytes(storage: &str) -> usize {
+    match storage {
+        "u8" | "i8" => 1,
+        "u16" | "i16" => 2,
+        "u32" | "i32" => 4,
+        _ => 8,
+    }
+}
+
+/// `value`, an `i64` within the carrier's bound, as the field stored as
+/// `storage`. In a verify case, which may build a carrier from any value,
+/// the narrowing is checked and a value it does not hold stops the test.
+pub(super) fn narrowed(value: &str, storage: &str, checked: bool) -> String {
+    match (storage, checked) {
+        ("i64", _) => value.to_string(),
+        (_, false) => format!("(({value}) as {storage})"),
+        (_, true) => format!(
+            "<{storage}>::try_from({value}).expect(\"Int outside the range of its refinement\")"
+        ),
+    }
+}
+
+/// `field`, a carrier's field stored as `storage`, read as an `i64`.
+pub(super) fn widened(field: &str, storage: &str) -> String {
+    match storage {
+        "i64" => field.to_string(),
+        _ => format!("i64::from({field})"),
+    }
+}
+
+/// The machine integer the record `name` declared in `scope` is stored in,
+/// when it is a carrier ([`storage_of`]).
+pub(super) fn declared_storage(
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    name: &str,
+) -> Option<&'static str> {
     let key = match scope {
         Some(prefix) => TypeKey::in_module(prefix, name),
         None => TypeKey::entry(name),
     };
-    is_i64_carrier(ctx, ctx.symbol_table.type_id_of(&key))
+    storage_of(ctx, ctx.symbol_table.type_id_of(&key))
 }
 
 /// The functions of `scope` (`None`: the entry).
@@ -595,6 +672,30 @@ fn built_in_binding<'b>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_carrier_is_stored_in_the_narrowest_integer_its_bound_fits() {
+        let within = |lo: i128, hi: i128| {
+            storage_for(Interval {
+                lo: Bound::Finite(lo),
+                hi: Bound::Finite(hi),
+            })
+        };
+        assert_eq!(within(0, 255), "u8");
+        assert_eq!(within(-1, 100), "i8");
+        assert_eq!(within(0, 256), "u16");
+        assert_eq!(within(-129, 0), "i16");
+        assert_eq!(within(0, 65_536), "u32");
+        assert_eq!(within(0, u32::MAX.into()), "u32");
+        assert_eq!(within(-1, 65_536), "i32");
+        assert_eq!(within(0, i128::from(u32::MAX) + 1), "i64");
+        assert_eq!(within(i64::MIN.into(), 0), "i64");
+        let open = Interval {
+            lo: Bound::Finite(0),
+            hi: Bound::PosInf,
+        };
+        assert_eq!(storage_for(open), "i64");
+    }
 
     /// The carriers of `src` by name, and the notes.
     fn carriers_and_notes(src: &str) -> (Vec<String>, Vec<String>) {

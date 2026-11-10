@@ -478,7 +478,7 @@ fn equality_of_terms_with_shared_subterms_matches_vm() {
 /// its bound edges, refused by its smart constructor, updated by a literal,
 /// past `i64` and back, and built from a value outside its smart constructor
 /// (which keeps the `Int` field, as one built past its bound does), and a
-/// second `Word` in another module, held as an `i64` of its own, all read as
+/// second `Word` in another module, held as a `u16` of its own, all read as
 /// the VM; its verify cases pass as tests.
 #[test]
 fn refinement_carriers_held_as_i64_match_vm() {
@@ -509,9 +509,10 @@ fn refinement_carriers_held_as_i64_match_vm() {
         }
         let small = fs::read_to_string(project.join("src/aver_generated/lib/small/mod.rs"))
             .map_err(|e| format!("read emitted small module: {e}"))?;
-        if !small.contains("pub value: i64,") {
+        // A residue below 1000 is held in the narrowest integer that fits.
+        if !small.contains("pub value: u16,") {
             return Err(format!(
-                "a Word of another module is not held as an i64:\n{small}"
+                "a Word of another module is not held as a u16:\n{small}"
             ));
         }
         cargo_test_in(&project, &shared_target_dir())

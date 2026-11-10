@@ -318,7 +318,9 @@ fn alignment(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) -> usize {
     let word = std::mem::size_of::<usize>();
     match ty {
         Type::Bool | Type::Unit => 1,
-        Type::Named { id, .. } if super::carrier::is_i64_carrier(ctx, *id) => word,
+        Type::Named { id, .. } if super::carrier::is_i64_carrier(ctx, *id) => {
+            super::carrier::storage_of(ctx, *id).map_or(word, super::carrier::storage_bytes)
+        }
         Type::Named { .. } if bitwise(ty, ctx, scope) == Bitwise::Equal => 1,
         _ => word,
     }
