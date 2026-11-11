@@ -144,9 +144,13 @@ fn read(expr: &MirExpr) -> bool {
         MirExpr::Project(project) => read(&project.node.base.node),
         MirExpr::Box(inner) | MirExpr::Unbox(inner) => read(&inner.node),
         MirExpr::Call(call) => {
-            call.node.callee
-                == MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::StrIndexPosition)
-                && call.node.args.iter().all(|a| read(&a.node))
+            matches!(
+                call.node.callee,
+                MirCallee::Intrinsic(
+                    crate::ir::hir::BuiltinIntrinsic::StrIndexPosition
+                        | crate::ir::hir::BuiltinIntrinsic::PositionOffset
+                )
+            ) && call.node.args.iter().all(|a| read(&a.node))
         }
         _ => false,
     }

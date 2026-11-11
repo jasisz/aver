@@ -1775,7 +1775,7 @@ fn bytes_get_loops_verify_vm_and_wasm_gc() {
             "Bytes.get loops verify failed (wasm-gc: {wasm_gc}): {summary}"
         );
         assert!(
-            summary.contains("9/9 cases passed | 0 failed"),
+            summary.contains("15/15 cases passed | 0 failed"),
             "Bytes.get loops verify summary (wasm-gc: {wasm_gc}): {summary}"
         );
     }

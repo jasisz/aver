@@ -8725,7 +8725,8 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::BranchPathChild
             | BuiltinIntrinsic::BranchPathParse
             // Rust only (its representation rewrite).
-            | BuiltinIntrinsic::StrIndexPosition => false,
+            | BuiltinIntrinsic::StrIndexPosition
+            | BuiltinIntrinsic::PositionOffset => false,
         }
     }
 

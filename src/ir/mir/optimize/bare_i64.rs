@@ -73,7 +73,7 @@ fn carrier_call_interval(e: &MirExpr) -> Option<Interval> {
             I::StrIndexCodeAt | I::StrCursorCode | I::StrFoldLower | I::StrFoldUpper,
         ) => Some(index_code_interval()),
         MirCallee::Intrinsic(I::StrCursorNext) => Some(cursor_offset_interval()),
-        MirCallee::Intrinsic(I::StrIndexPosition) => Some(i64_interval()),
+        MirCallee::Intrinsic(I::StrIndexPosition | I::PositionOffset) => Some(i64_interval()),
         // An octet, or `-1` where `Bytes.get` answers `Option.None`.
         MirCallee::Intrinsic(I::PackedByteAt) => Some(Interval::between(-1, 255)),
         _ => None,
@@ -2548,35 +2548,102 @@ fn read_only_positions(
         graph.entry(edge.caller).or_default().push(edge.target);
     }
     let mutual = crate::scc::mutually_recursive(&nodes, &graph);
-    let mut out = HashSet::new();
+    // Start from every candidate and drop a param while some use of it is
+    // not a position: a read's position, or the argument of another
+    // function's param that is itself only read at as a position. The set
+    // only shrinks, so this ends.
+    let mut out: HashSet<(FnId, usize)> = HashSet::new();
     for (id, f) in program.iter() {
         if f.name == "main" || address_taken.contains(&f.name) || mutual.contains(id) {
             continue;
         }
         for (i, p) in f.params.iter().enumerate() {
-            let read = |e: &MirExpr| read_at(e, p.local, raw_ops);
-            if ty_str_is_int(&p.ty) && read(&f.body.node) == Some(true) {
+            if ty_str_is_int(&p.ty) {
                 out.insert((*id, i));
             }
         }
     }
-    out
+    loop {
+        let before = out.len();
+        let kept: HashSet<(FnId, usize)> = out
+            .iter()
+            .copied()
+            .filter(|&(id, i)| {
+                let f = program.fn_by_id(id).expect("a candidate names a function");
+                let sinks = PositionSinks {
+                    raw_ops,
+                    params: &out,
+                    caller: id,
+                };
+                read_at(&f.body.node, f.params[i].local, &sinks) == Some(true)
+            })
+            .collect();
+        out = kept;
+        if out.len() == before {
+            return out;
+        }
+    }
 }
 
-/// Is every use of `slot` in `e` the position of an indexed read:
-/// `Some(true)` when there is at least one, `Some(false)` when there is none,
-/// `None` when some other use reads it.
-fn read_at(e: &MirExpr, slot: LocalId, raw_ops: &RawOps) -> Option<bool> {
+/// Where a position may go and still be only read at: the position of an
+/// indexed read (`raw_ops`), or a param of another function in `params`.
+struct PositionSinks<'a> {
+    raw_ops: &'a RawOps,
+    params: &'a HashSet<(FnId, usize)>,
+    caller: FnId,
+}
+
+impl PositionSinks<'_> {
+    fn takes_position(&self, callee: &MirCallee, k: usize) -> bool {
+        match callee {
+            MirCallee::Fn(target) => *target != self.caller && self.params.contains(&(*target, k)),
+            _ => self.raw_ops.takes_position(callee, k),
+        }
+    }
+}
+
+/// `e` as `base + k` or `base - k` with a literal `k`: the base and the
+/// offset `k` adds. A read at such a position is the read at `base` moved
+/// by `k`, which the Rust backend computes saturated
+/// ([`crate::ir::hir::BuiltinIntrinsic::PositionOffset`]).
+pub(super) fn position_offset(e: &MirExpr) -> Option<(&Spanned<MirExpr>, i64)> {
+    let MirExpr::BinOp(b) = e else {
+        return None;
+    };
+    let MirExpr::Literal(l) = &b.node.rhs.node else {
+        return None;
+    };
+    let Literal::Int(k) = l.node else {
+        return None;
+    };
+    match b.node.op {
+        BinOp::Add => Some((&b.node.lhs, k)),
+        BinOp::Sub => Some((&b.node.lhs, k.checked_neg()?)),
+        _ => None,
+    }
+}
+
+/// Is `e` the local `slot`, or `slot` moved by a literal offset?
+fn local_or_offset(e: &MirExpr, slot: LocalId) -> bool {
+    subject_is_local(e, slot)
+        || position_offset(e).is_some_and(|(base, _)| subject_is_local(&base.node, slot))
+}
+
+/// Is every use of `slot` in `e` a position (see [`PositionSinks`]), as it
+/// is or moved by a literal offset: `Some(true)` when there is at least
+/// one, `Some(false)` when there is none, `None` when some other use reads
+/// it.
+fn read_at(e: &MirExpr, slot: LocalId, sinks: &PositionSinks<'_>) -> Option<bool> {
     if subject_is_local(e, slot) {
         return None;
     }
     let mut seen = false;
     if let MirExpr::Call(c) = e {
         for (k, a) in c.node.args.iter().enumerate() {
-            let at = raw_ops.takes_position(&c.node.callee, k);
+            let at = sinks.takes_position(&c.node.callee, k);
             match (
-                at && subject_is_local(&a.node, slot),
-                read_at(&a.node, slot, raw_ops),
+                at && local_or_offset(&a.node, slot),
+                read_at(&a.node, slot, sinks),
             ) {
                 (true, _) => seen = true,
                 (false, None) => return None,
@@ -2586,7 +2653,7 @@ fn read_at(e: &MirExpr, slot: LocalId, raw_ops: &RawOps) -> Option<bool> {
         return Some(seen);
     }
     let mut other = false;
-    visit_children(e, &mut |c| match read_at(c, slot, raw_ops) {
+    visit_children(e, &mut |c| match read_at(c, slot, sinks) {
         None => other = true,
         Some(r) => seen |= r,
     });
@@ -5483,18 +5550,73 @@ fn main() -> Int
     }
 
     #[test]
+    fn a_position_moved_by_a_literal_is_still_only_read_at() {
+        // `pairAt` reads at `i + 1` and hands `i` and `i + 1` to `codeAt`,
+        // which only reads at its position: both take an `i64` position,
+        // and the offsets are computed saturated instead of as `Int`s.
+        let src = r#"
+fn codeAt(s: String, i: Int) -> Int
+    match String.charAt(s, i)
+        Option.Some("1") -> 1
+        Option.Some -> 0
+        Option.None -> -1
+
+fn pairAt(s: String, i: Int) -> Int
+    match String.charAt(s, i + 1)
+        Option.None -> -1
+        Option.Some -> codeAt(s, i) * 2 + codeAt(s, i + 1)
+
+fn walk(s: String, i: Int, n: Int) -> Int
+    match String.charAt(s, i)
+        Option.None -> n
+        Option.Some(_) -> walk(s, i + 1, n + pairAt(s, i))
+
+fn main() -> Int
+    walk("x10", 0, 0)
+"#;
+        let (program, facts) = facts_for(src);
+        for name in ["codeAt__indexed", "pairAt__indexed"] {
+            let f = facts.for_fn(fn_id_by_name(&program, name)).unwrap();
+            assert!(
+                f.param_is_bare(1) && f.param_takes_saturated(1),
+                "{name} takes a saturated position"
+            );
+        }
+        let program = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(
+            program,
+            &HashSet::new(),
+            &CarrierIds::new(),
+        );
+        fn offsets(e: &MirExpr, out: &mut Vec<i64>) {
+            if let MirExpr::Call(c) = e
+                && c.node.callee
+                    == MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::PositionOffset)
+                && let MirExpr::Literal(l) = &c.node.args[1].node
+                && let Literal::Int(k) = l.node
+            {
+                out.push(k);
+            }
+            visit_children(e, &mut |c| offsets(c, out));
+        }
+        let mut found = Vec::new();
+        let pair = fn_id_by_name(&program, "pairAt__indexed");
+        offsets(&program.fn_by_id(pair).unwrap().body.node, &mut found);
+        assert_eq!(found, vec![1, 1]);
+    }
+
+    #[test]
     fn param_only_read_at_takes_a_saturated_position() {
         let src = READER.replace("NONE", "-1");
         let (program, facts) = facts_for(&src);
         let id = fn_id_by_name(&program, "digitAt__indexed");
         let f = facts.for_fn(id).unwrap();
         assert!(f.param_is_bare(1) && f.param_takes_saturated(1));
-        // `numberAt` steps its position, the wrapper hands it on: neither
-        // only reads it.
+        // `numberAt` steps its position: it does not only read it. The
+        // wrapper hands it on to a param only read at, so it only reads it.
         let number = fn_id_by_name(&program, "numberAt__indexed");
         assert!(!facts.for_fn(number).unwrap().param_takes_saturated(1));
         let wrapper = fn_id_by_name(&program, "digitAt");
-        assert!(!facts.for_fn(wrapper).unwrap().param_takes_saturated(1));
+        assert!(facts.for_fn(wrapper).unwrap().param_takes_saturated(1));
         // `canonAt` hands it a boxed start: saturated at the call; the loop
         // of `walkAt` hands it its raw position as it is.
         let program = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(
@@ -5565,13 +5687,11 @@ fn main() -> Int
     walk("abc", 0, 0)
 "#;
         let (program, facts) = facts_for(src);
-        for name in ["next__indexed", "here__indexed"] {
-            let id = fn_id_by_name(&program, name);
-            assert!(
-                !facts.for_fn(id).unwrap().param_takes_saturated(1),
-                "{name}"
-            );
-        }
+        // `here` answers with its position; `next` only reads at it, moved.
+        let here = fn_id_by_name(&program, "here__indexed");
+        assert!(!facts.for_fn(here).unwrap().param_takes_saturated(1));
+        let next = fn_id_by_name(&program, "next__indexed");
+        assert!(facts.for_fn(next).unwrap().param_takes_saturated(1));
     }
 
     #[test]

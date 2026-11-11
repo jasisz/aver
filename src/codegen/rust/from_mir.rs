@@ -473,6 +473,12 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
         // The raw field of a carrier held as an `i64` (`emit_mir_expr`
         // renders such a read raw where the facts know it).
         MirExpr::Project(_) if ctx.bare.is_carrier_project(&expr.node) => emit_mir_expr(expr, ctx),
+        // A raw position moved by a literal, saturated at the ends of `i64`.
+        MirExpr::Call(c)
+            if c.node.callee == MirCallee::Intrinsic(BuiltinIntrinsic::PositionOffset) =>
+        {
+            position_offset(&c.node.args, ctx)
+        }
         // A builtin computed raw, when its operands are raw.
         MirExpr::Call(_)
             if ctx.bare.expr_is_bare_i64(&expr.node)
@@ -513,6 +519,19 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
         }
         _ => None,
     }
+}
+
+/// `__position_offset(position, k)` as the `i64` it computes: the raw
+/// position moved by the literal `k`, saturated at the ends of `i64`.
+fn position_offset(args: &[Spanned<MirExpr>], ctx: &MirEmitCtx<'_>) -> Option<String> {
+    let position = emit_bare_i64(&args[0], ctx)?;
+    let MirExpr::Literal(offset) = &args[1].node else {
+        return None;
+    };
+    let crate::ast::Literal::Int(offset) = offset.node else {
+        return None;
+    };
+    Some(format!("({position}).saturating_add({offset}i64)"))
 }
 
 /// A string position for the indexed reads, as an `i64`: raw when the
@@ -11311,6 +11330,14 @@ fn emit_mir_intrinsic_call(
         BuiltinIntrinsic::StrIndexPosition => {
             let position = emit_mir_expr(&args[0], ctx)?;
             let call = format!("aver_rt::string_position(&{position})");
+            Some(match raw_result {
+                true => call,
+                false => format!("aver_rt::AverInt::from_i64({call})"),
+            })
+        }
+        // A raw position moved by a literal, saturated at the ends of `i64`.
+        BuiltinIntrinsic::PositionOffset => {
+            let call = position_offset(args, ctx)?;
             Some(match raw_result {
                 true => call,
                 false => format!("aver_rt::AverInt::from_i64({call})"),

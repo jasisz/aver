@@ -635,6 +635,13 @@ pub enum BuiltinIntrinsic {
     /// keeps every answer of the reads). Only the Rust representation
     /// rewrite inserts it, for a param only read at as a position.
     StrIndexPosition,
+    /// `__position_offset(<i>, <k>)` — `(Int, Int) -> Int`, a raw `i64`
+    /// position `i` moved by the literal `k`, saturated at the ends of
+    /// `i64` (which keeps every answer of the reads: a position past
+    /// either end is out of every string and byte carrier). Only the Rust
+    /// representation rewrite inserts it, for a read at `i + k` where `i`
+    /// is a param only read at as a position.
+    PositionOffset,
     /// `__packed_byte_at(<carrier>, <i>)` — `(List<Int>, Int) -> Int`, the
     /// element at position `i` of a carrier the backend stores as a packed
     /// `U8` array (every element proven in `0..=255`), or `-1` where the
@@ -743,6 +750,7 @@ impl BuiltinIntrinsic {
             Self::StrIndexSlice => "__str_index_slice",
             Self::StrIndexLen => "__str_index_len",
             Self::StrIndexPosition => "__str_index_position",
+            Self::PositionOffset => "__position_offset",
             Self::PackedByteAt => "__packed_byte_at",
             Self::LstNew => "__lst_new",
             Self::LstPush => "__lst_push",
@@ -792,6 +800,7 @@ impl BuiltinIntrinsic {
             "__str_index_slice" => Some(Self::StrIndexSlice),
             "__str_index_len" => Some(Self::StrIndexLen),
             "__str_index_position" => Some(Self::StrIndexPosition),
+            "__position_offset" => Some(Self::PositionOffset),
             "__lst_new" => Some(Self::LstNew),
             "__lst_push" => Some(Self::LstPush),
             "__lst_finalize" => Some(Self::LstFinalize),
