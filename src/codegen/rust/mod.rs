@@ -250,7 +250,7 @@ fn transpile_project(
         let (carriers, ctors, notes) = carrier::i64_carriers(ctx, &prog);
         carrier_notes = notes;
         // The calls emitted outside any function body are callers too.
-        let free = free_calls::collect(ctx);
+        let free = free_calls::collect(ctx, &prog);
         let (prog, facts) = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust_with_facts(
             prog,
             &boxed,

@@ -964,11 +964,20 @@ fn analyze_inner(
         &entry_ranges,
     );
     // Rust: the ranges callers pass, found again over the summary they gave.
-    // Every round is sound on its own (its ranges come from a sound round),
-    // so a few rounds that do not settle still leave a sound summary.
+    // Every range is sound on its own (it comes from a sound summary), so the
+    // rounds keep them all, and a few rounds that do not settle still leave a
+    // sound summary.
     if rust_positions && let Some(free) = free {
         for _ in 0..ENTRY_RANGE_ROUNDS {
-            let next = caller_ranges(program, &summary, carrier, field_carrier, free);
+            // A range found in any round holds (every round reads a sound
+            // summary), so a round keeps what the ones before found and only
+            // narrows it: the rounds settle.
+            let mut next = caller_ranges(program, &summary, carrier, field_carrier, free);
+            for (key, old) in &entry_ranges {
+                next.entry(*key)
+                    .and_modify(|r| *r = r.intersect(*old))
+                    .or_insert(*old);
+            }
             if next == entry_ranges {
                 break;
             }
@@ -1015,23 +1024,23 @@ fn analyze_inner(
 }
 
 /// Rust: the calls the backend emits outside any function body — `verify`
-/// cases and laws, module bindings, top-level statements — by the name of
-/// the function called. Each argument is the literal it is, or unknown. A
-/// param of a function called here with an unknown argument, or of a
-/// function named as a value here, takes no range from its callers.
+/// cases and laws, module bindings, top-level statements — by the function
+/// they call. Each argument is the literal it is, or unknown. A param of a
+/// function called here with an unknown argument, or of a function named as
+/// a value here, takes no range from its callers.
 #[derive(Debug, Clone, Default)]
 pub struct FreeCalls {
-    /// Per function name, per argument: the hull of the literals passed,
-    /// `None` once any argument there is not a literal.
-    args: HashMap<String, Vec<Option<Interval>>>,
+    /// Per function, per argument: the hull of the literals passed, `None`
+    /// once any argument there is not a literal.
+    args: HashMap<FnId, Vec<Option<Interval>>>,
     /// Functions named as a value.
-    named: HashSet<String>,
+    named: HashSet<FnId>,
 }
 
 impl FreeCalls {
-    /// A call of `name` with these arguments, each a literal or unknown.
-    pub fn call(&mut self, name: &str, args: &[Option<i64>]) {
-        let cells = self.args.entry(name.to_string()).or_insert_with(|| {
+    /// A call of `id` with these arguments, each a literal or unknown.
+    pub fn call(&mut self, id: FnId, args: &[Option<i64>]) {
+        let cells = self.args.entry(id).or_insert_with(|| {
             args.iter()
                 .map(|a| a.map(|k| Interval::point(k as i128)))
                 .collect()
@@ -1047,20 +1056,20 @@ impl FreeCalls {
         }
     }
 
-    /// `name` named as a value, so called with anything.
-    pub fn named(&mut self, name: &str) {
-        self.named.insert(name.to_string());
+    /// `id` named as a value, so called with anything.
+    pub fn named(&mut self, id: FnId) {
+        self.named.insert(id);
     }
 
-    /// What the free calls pass at param `i` of `name`: `Some(None)` for
+    /// What the free calls pass at param `i` of `id`: `Some(None)` for
     /// anything, `Some(Some(range))` for literals in `range`, `None` when
     /// no free call passes it.
-    fn passes(&self, name: &str, i: usize) -> Option<Option<Interval>> {
-        if self.named.contains(name) {
+    fn passes(&self, id: FnId, i: usize) -> Option<Option<Interval>> {
+        if self.named.contains(&id) {
             return Some(None);
         }
         self.args
-            .get(name)
+            .get(&id)
             .map(|cells| cells.get(i).copied().flatten())
     }
 }
@@ -1109,7 +1118,7 @@ fn caller_ranges(
     let mut free_hulls: HashMap<(FnId, usize), Option<Interval>> = HashMap::new();
     for (id, f) in program.iter() {
         for i in 0..f.params.len() {
-            if let Some(range) = free.passes(&f.name, i) {
+            if let Some(range) = free.passes(*id, i) {
                 free_hulls.insert((*id, i), range);
             }
         }
@@ -1442,6 +1451,12 @@ fn compute_summary(
                 }
                 if read_only.contains(&(edge.target, i)) {
                     continue; // a boxed position is saturated at the call
+                }
+                // A param ranging over what every caller passes takes an
+                // `AverInt` argument narrowed at the call, which the range
+                // says always fits.
+                if entry_ranges.contains_key(&(edge.target, i)) {
+                    continue;
                 }
                 let ok = arg_supplies_bare(
                     &arg.node,
@@ -4054,10 +4069,14 @@ fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet
         // Stringification: every embedded value escapes (including a bare
         // leaf inside a `BinOp`/`Neg` — the interpolation emit stringifies
         // the whole compound, not the operands).
+        // On Rust the rewrite boxes each embed (`rewrite_interp_embed`), so
+        // a raw value printed into a string stays raw everywhere else.
         MirExpr::InterpolatedStr(parts) => {
             for p in parts {
                 if let super::super::expr::MirStrPart::Expr(ex) = p {
-                    mark_operand_escapes_deep(&ex.node, out);
+                    if !summary.rust {
+                        mark_operand_escapes_deep(&ex.node, out);
+                    }
                     scan_escapes(&ex.node, self_fn, summary, out);
                 }
             }
@@ -4092,8 +4111,14 @@ fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet
                 // does: raw when the call is raw, boxed by the rewrite when
                 // it is not.
                 let raw_op = summary.raw_ops.op(&c.node.callee).is_some();
+                // On Rust an interpolation's embed, lowered to `__to_str`,
+                // is boxed by the rewrite as the embed itself is.
+                let printed = summary.rust
+                    && c.node.callee
+                        == MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::ToStr);
                 for (i, a) in c.node.args.iter().enumerate() {
                     if !raw_op
+                        && !printed
                         && !intrinsic_accepts_raw_code_arg(&c.node.callee, i)
                         && !summary.raw_ops.takes_position(&c.node.callee, i)
                     {
@@ -6019,13 +6044,13 @@ fn main() -> Int
         assert!(!bare(None), "without the free calls there is no range");
         let mut free = FreeCalls::default();
         assert!(bare(Some(&free)));
-        free.call("scaled", &[Some(-2)]);
+        free.call(id, &[Some(-2)]);
         assert!(bare(Some(&free)), "a literal widens the range");
         let mut any = free.clone();
-        any.call("scaled", &[None]);
+        any.call(id, &[None]);
         assert!(!bare(Some(&any)), "an unknown argument");
         let mut named = free.clone();
-        named.named("scaled");
+        named.named(id);
         assert!(!bare(Some(&named)), "named as a value");
     }
 
@@ -6091,6 +6116,30 @@ fn main() -> Int
             let id = fn_id_by_name(&program, name);
             assert!(facts.for_fn(id).unwrap().param_is_bare(0), "{name}");
         }
+    }
+
+    #[test]
+    fn a_ranged_param_takes_any_argument_and_may_be_printed() {
+        // `tagName` gets 0..127 from its one caller, a `Bits.and` (not a
+        // literal, a param or a call): the param is an `i64`, which the
+        // caller's argument is narrowed to. Printing it into a string is no
+        // escape on Rust: the rewrite boxes the embed.
+        let src = r#"
+fn tagName(tag: Int) -> String
+    match tag
+        1 -> "one"
+        _ -> "tag {tag}"
+
+fn step(x: Int) -> String
+    tagName(Bits.and(x + 0, 127))
+
+fn main() -> String
+    step(300)
+"#;
+        let (program, _) = facts_for(src);
+        let facts = analyze_rust(&program, &CarrierIds::new(), Some(&FreeCalls::default()));
+        let id = fn_id_by_name(&program, "tagName");
+        assert!(facts.for_fn(id).unwrap().param_is_bare(0));
     }
 
     #[test]

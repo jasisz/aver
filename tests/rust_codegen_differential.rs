@@ -1758,7 +1758,7 @@ fn a_computed_fallback_runs_only_when_missing_on_rust_and_vm() {
         assert!(entry.contains(lazy), "missing `{lazy}`:\n{entry}");
     }
     assert!(
-        entry.contains("unwrap_or(noisy("),
+        entry.contains("unwrap_or(aver_rt::AverInt::from_i64(noisy("),
         "the effectful fallback runs first:\n{entry}"
     );
 }

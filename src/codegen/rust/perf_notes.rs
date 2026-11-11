@@ -893,6 +893,12 @@ fn mixed(i: Int) -> Int
 
 fn reads(w: Word) -> Int
     unpack(w.value) + unpack(w.value) + mixed(w.value + 1) + mixed(3)
+
+verify unpack
+    unpack(Int.abs(-9)) => 3
+
+verify mixed
+    mixed(Int.abs(-1)) => 31
 "#;
 
     /// A copy made to pass a value to a function that writes it in place,
