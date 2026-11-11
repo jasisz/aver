@@ -485,6 +485,9 @@ pub struct FnBareFacts {
     pub carrier_ids: std::sync::Arc<CarrierIds>,
     /// Rust: the calls of the program computed on raw `i64` operands.
     pub raw_ops: std::sync::Arc<RawOps>,
+    /// Rust: the functions that return a raw `i64`, with the range of what
+    /// they return. A call of one is a raw leaf of the arithmetic around it.
+    pub call_returns: std::sync::Arc<HashMap<FnId, Interval>>,
     /// wasm-gc: the fn is kept in its ordinary form for a `--certify`
     /// build's certificate. Only the reads of a word record's machine word
     /// render raw; arithmetic over them stays `Int`, so the word trees
@@ -653,6 +656,23 @@ impl FnBareFacts {
         (c.node.args.len() == 2).then_some((op, c.node.args.as_slice()))
     }
 
+    /// Rust: the range of a call of a function that returns a raw `i64`,
+    /// also behind the `let`s that bind its computed arguments first (the
+    /// Rust backend's `arg_order`): a `let` is worth its body.
+    pub fn call_return_interval(&self, e: &MirExpr) -> Option<Interval> {
+        let mut e = e;
+        while let MirExpr::Let(l) = e {
+            e = &l.node.body.node;
+        }
+        let MirExpr::Call(c) = e else {
+            return None;
+        };
+        let MirCallee::Fn(target) = c.node.callee else {
+            return None;
+        };
+        self.call_returns.get(&target).copied()
+    }
+
     /// The bound of a raw builtin call over raw operands; `None` when an
     /// operand is not raw or not the literal the op takes.
     fn raw_op_interval(&self, e: &MirExpr) -> Option<Interval> {
@@ -706,7 +726,10 @@ impl FnBareFacts {
             // backend's native i64 carrier; a builtin computed raw over raw
             // operands gives its own bound.
             MirExpr::Call(_) if self.words_only => carrier_call_interval(e),
-            MirExpr::Call(_) => carrier_call_interval(e).or_else(|| self.raw_op_interval(e)),
+            MirExpr::Call(_) => carrier_call_interval(e)
+                .or_else(|| self.call_return_interval(e))
+                .or_else(|| self.raw_op_interval(e)),
+            MirExpr::Let(_) if !self.words_only => self.call_return_interval(e),
             MirExpr::Neg(_) | MirExpr::BinOp(_) if self.words_only => None,
             MirExpr::Neg(inner) => {
                 let r = Interval::point(0).sub(self.bare_expr_interval(&inner.node)?);
@@ -748,7 +771,12 @@ impl FnBareFacts {
             // ETAP-2 carrier-`i64`: a bare carrier's `.value` reads raw i64.
             MirExpr::Project(_) => self.is_carrier_project(e),
             MirExpr::Call(_) if self.words_only => is_code_carrier_call(e),
-            MirExpr::Call(_) => is_code_carrier_call(e) || self.raw_op_interval(e).is_some(),
+            MirExpr::Call(_) => {
+                is_code_carrier_call(e)
+                    || self.call_return_interval(e).is_some()
+                    || self.raw_op_interval(e).is_some()
+            }
+            MirExpr::Let(_) if !self.words_only => self.call_return_interval(e).is_some(),
             // A compound: require the WHOLE-TREE result interval to fit i64.
             MirExpr::Neg(_) | MirExpr::BinOp(_) => self.bare_expr_interval(e).is_some_and(|iv| {
                 raw_i64_eligible(Some(iv), std::iter::once(&OpClass::OverflowFree))
@@ -940,6 +968,8 @@ struct Summary {
     raw_ops: std::sync::Arc<RawOps>,
     /// Rust: the carriers held as a raw `i64` ([`CarrierIds`]).
     carrier_ids: std::sync::Arc<CarrierIds>,
+    /// Rust: the range of each bare return ([`return_interval`]).
+    return_intervals: std::sync::Arc<HashMap<FnId, Interval>>,
 }
 
 impl Summary {
@@ -1087,6 +1117,22 @@ fn compute_summary(
         bare_return.insert(*id, false);
     }
 
+    // Rust: the range of each bare return, found callee first so a caller
+    // whose result is computed from a callee's sees the callee's range.
+    // A function in a cycle of calls gets none: the Rust backend gives the
+    // members of a mutual tail-call cycle an `AverInt` signature whatever
+    // the analysis says.
+    let order = callee_first(program, &edges);
+    let in_cycle = {
+        let nodes: Vec<FnId> = program.iter().map(|(id, _)| *id).collect();
+        let mut graph: HashMap<FnId, Vec<FnId>> = HashMap::new();
+        for edge in edges.iter().filter(|e| e.caller != e.target) {
+            graph.entry(edge.caller).or_default().push(edge.target);
+        }
+        crate::scc::mutually_recursive(&nodes, &graph)
+    };
+    let mut return_intervals: std::sync::Arc<HashMap<FnId, Interval>> = Default::default();
+
     loop {
         let mut changed = false;
 
@@ -1168,6 +1214,7 @@ fn compute_summary(
             read_only: read_only.clone(),
             raw_ops: raw_ops.clone(),
             carrier_ids: carrier_ids.clone(),
+            return_intervals: return_intervals.clone(),
         };
         for (id, f) in program.iter() {
             let mut escaping: HashSet<LocalId> = HashSet::new();
@@ -1198,8 +1245,14 @@ fn compute_summary(
             read_only: read_only.clone(),
             raw_ops: raw_ops.clone(),
             carrier_ids: carrier_ids.clone(),
+            return_intervals: return_intervals.clone(),
         };
-        for (id, f) in program.iter() {
+        let mut intervals: HashMap<FnId, Interval> = HashMap::new();
+        for id in &order {
+            // A call may name a function of another module.
+            let Some(f) = program.fn_by_id(*id) else {
+                continue;
+            };
             if !bare_return.get(id).copied().unwrap_or(false) {
                 continue;
             }
@@ -1208,6 +1261,18 @@ fn compute_summary(
                 tmp.bare_return.insert(*id, false);
                 changed = true;
             }
+            if rust_positions
+                && facts.bare_return
+                && !in_cycle.contains(id)
+                && let Some(range) = return_interval(&f.body, *id, &facts)
+            {
+                intervals.insert(*id, range);
+                tmp.return_intervals = std::sync::Arc::new(intervals.clone());
+            }
+        }
+        if *return_intervals != intervals {
+            return_intervals = std::sync::Arc::new(intervals);
+            changed = true;
         }
 
         // (C2) A fn's return is bare only if EVERY caller consumes the
@@ -1223,7 +1288,13 @@ fn compute_summary(
         //      what keeps factorial/countdown (their results are discarded
         //      or stringified by `main`) bare while a return flowing into
         //      arithmetic stays boxed.
-        let unsafe_returns = collect_unsafe_return_consumers(program, &bare_params);
+        //      On Rust the representation rewrite boxes a raw return at
+        //      every general-Int sink, so a return stays bare there and a
+        //      caller computing on it does so on `i64`.
+        let unsafe_returns = match rust_positions {
+            true => HashSet::new(),
+            false => collect_unsafe_return_consumers(program, &bare_params),
+        };
         for id in &unsafe_returns {
             if bare_return.get(id).copied().unwrap_or(false)
                 && bare_return.insert(*id, false) != Some(false)
@@ -1255,6 +1326,7 @@ fn compute_summary(
             read_only: read_only.clone(),
             raw_ops: raw_ops.clone(),
             carrier_ids: carrier_ids.clone(),
+            return_intervals: return_intervals.clone(),
         };
         for (_caller, f) in program.iter() {
             let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
@@ -1283,7 +1355,60 @@ fn compute_summary(
         read_only,
         raw_ops,
         carrier_ids,
+        return_intervals,
     }
+}
+
+/// The functions of `program`, each after the functions it calls (in a
+/// cycle, in the order the walk meets them).
+fn callee_first(program: &MirProgram, edges: &[CallEdge]) -> Vec<FnId> {
+    let mut callees: HashMap<FnId, Vec<FnId>> = HashMap::new();
+    for edge in edges.iter().filter(|e| e.caller != e.target) {
+        callees.entry(edge.caller).or_default().push(edge.target);
+    }
+    let mut seen: HashSet<FnId> = HashSet::new();
+    let mut order = Vec::new();
+    for (id, _) in program.iter() {
+        // An explicit stack: the call graph may be deep.
+        let mut stack = vec![(*id, 0usize)];
+        if !seen.insert(*id) {
+            continue;
+        }
+        while let Some((node, next)) = stack.pop() {
+            let succ = callees.get(&node).map(Vec::as_slice).unwrap_or(&[]);
+            if let Some(&child) = succ.get(next) {
+                stack.push((node, next + 1));
+                if seen.insert(child) {
+                    stack.push((child, 0));
+                }
+            } else {
+                order.push(node);
+            }
+        }
+    }
+    order
+}
+
+/// The range of what a bare-returning body returns: the hull of its result
+/// values. `None` when some value has no range here.
+fn return_interval(
+    body: &Spanned<MirExpr>,
+    self_fn: FnId,
+    facts: &FnBareFacts,
+) -> Option<Interval> {
+    let mut values = Vec::new();
+    crate::ir::mir::result_values::collect(body, &mut values);
+    let mut range: Option<Interval> = None;
+    for value in values {
+        let r = match &value.node {
+            // The recurrence: its value is one of the others.
+            MirExpr::TailCall(tc) if tc.node.target == self_fn => continue,
+            MirExpr::Return(inner) => return_interval(inner, self_fn, facts)?,
+            e => facts.bare_expr_interval(e)?,
+        };
+        range = Some(range.map_or(r, |acc| acc.hull(r)));
+    }
+    range
 }
 
 /// Walk `e`, collecting any `Call(Fn(target))` that is the immediate VALUE
@@ -3287,6 +3412,7 @@ fn analyze_fn(
         rust,
         raw_ops: summary.raw_ops.clone(),
         carrier_ids: summary.carrier_ids.clone(),
+        call_returns: summary.return_intervals.clone(),
         ..FnBareFacts::default()
     };
 
@@ -3439,7 +3565,7 @@ fn analyze_fn(
     // 5. Return: bare iff the summary says so AND the body's tail value is
     //    itself bare-eligible.
     facts.bare_return =
-        summary.return_bare(f.fn_id) && tail_value_is_bare(&f.body, &facts, &escaping);
+        summary.return_bare(f.fn_id) && tail_value_is_bare(&f.body, f.fn_id, &facts, &escaping);
 
     facts
 }
@@ -3527,7 +3653,7 @@ fn eval_interval(
             .carrier_project_interval(e)
             .unwrap_or_else(Interval::unbounded),
         MirExpr::Call(_) => {
-            if let Some(iv) = carrier_call_interval(e) {
+            if let Some(iv) = carrier_call_interval(e).or_else(|| facts.call_return_interval(e)) {
                 return iv;
             }
             let Some((op, args)) = facts.raw_op_call(e) else {
@@ -3739,6 +3865,7 @@ fn mark_operand_escapes_deep(e: &MirExpr, out: &mut HashSet<LocalId>) {
 /// literal; anything else demotes the return.
 fn tail_value_is_bare(
     e: &Spanned<MirExpr>,
+    self_fn: FnId,
     facts: &FnBareFacts,
     escaping: &HashSet<LocalId>,
 ) -> bool {
@@ -3750,9 +3877,11 @@ fn tail_value_is_bare(
             MirExpr::Local(l) => facts.is_bare(l.node.slot) && !escaping.contains(&l.node.slot),
             MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
             // A self-tail-call's value is the recurrence, not a base value; it
-            // does not constrain the return repr.
-            MirExpr::TailCall(_) => true,
-            MirExpr::Return(inner) => tail_value_is_bare(inner, facts, escaping),
+            // does not constrain the return repr. A tail call of another
+            // function returns what that one does: on Rust a member of a
+            // mutual tail-call cycle, whose trampoline returns `AverInt`.
+            MirExpr::TailCall(tc) => tc.node.target == self_fn,
+            MirExpr::Return(inner) => tail_value_is_bare(inner, self_fn, facts, escaping),
             // A compound `Add`/`Sub`/`Mul` tail value is bare ONLY when its
             // RESULT interval provably fits `i64` (BUG 2): a tree whose operands
             // are each bare can still overflow (`n + i64::MAX`), so route through
@@ -3766,7 +3895,7 @@ fn tail_value_is_bare(
             // ETAP-2 carrier-`i64`: a tail `c.value` over a bare carrier reads raw
             // i64, so the fn may return bare i64 (skip the project bridge).
             MirExpr::Project(_) => facts.is_carrier_project(e),
-            MirExpr::Call(_) => is_code_carrier_call(e),
+            MirExpr::Call(_) => is_code_carrier_call(e) || facts.call_return_interval(e).is_some(),
             _ => false,
         }
     })

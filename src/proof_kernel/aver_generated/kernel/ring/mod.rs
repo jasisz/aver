@@ -411,35 +411,31 @@ pub fn insertMono(mut m @ _: Mono, p @ _: &aver_rt::AverList<Mono>) -> aver_rt::
         let __list_subject = p;
         match aver_rt::list_uncons_cloned(__list_subject) {
             Some((x, rest)) => {
-                let __subject = aver_rt::AverInt::from_i64(
+                let __dispatch_subject =
                     crate::proof_kernel::aver_generated::kernel::ring::compareAtoms(
                         m.atoms.clone(),
                         x.atoms.clone(),
+                    );
+                match __dispatch_subject {
+                    0i64 => aver_rt::AverList::concat(
+                        &{
+                            let __arg4 @ _ =
+                                crate::proof_kernel::aver_generated::kernel::ring::Mono {
+                                    atoms: x.atoms,
+                                    coef: x.coef.add(&m.coef),
+                                };
+                            crate::proof_kernel::aver_generated::kernel::ring::nonzero(__arg4)
+                        },
+                        &rest,
                     ),
-                );
-                {
-                    let __dispatch_subject = __subject;
-                    match __dispatch_subject.to_i64() {
-                        Some(0i64) => aver_rt::AverList::concat(
-                            &{
-                                let __arg4 @ _ =
-                                    crate::proof_kernel::aver_generated::kernel::ring::Mono {
-                                        atoms: x.atoms,
-                                        coef: x.coef.add(&m.coef),
-                                    };
-                                crate::proof_kernel::aver_generated::kernel::ring::nonzero(__arg4)
-                            },
-                            &rest,
-                        ),
-                        Some(1i64) => aver_rt::AverList::prepend_owned(
-                            x,
-                            crate::proof_kernel::aver_generated::kernel::ring::insertMono(m, &rest),
-                        ),
-                        _ => aver_rt::AverList::concat(
-                            &crate::proof_kernel::aver_generated::kernel::ring::nonzero(m),
-                            &p.clone(),
-                        ),
-                    }
+                    1i64 => aver_rt::AverList::prepend_owned(
+                        x,
+                        crate::proof_kernel::aver_generated::kernel::ring::insertMono(m, &rest),
+                    ),
+                    _ => aver_rt::AverList::concat(
+                        &crate::proof_kernel::aver_generated::kernel::ring::nonzero(m),
+                        &p.clone(),
+                    ),
                 }
             }
             None => crate::proof_kernel::aver_generated::kernel::ring::nonzero(m),
@@ -978,10 +974,11 @@ pub fn asNonneg(
                     let __dispatch_subject = __pat0;
                     if &*__dispatch_subject == "<" {
                         Some({
-                            let __arg6 @ _ =
+                            let __arg6 @ _ = aver_rt::AverInt::from_i64(
                                 crate::proof_kernel::aver_generated::kernel::ring::strictWhen(
                                     value, true,
-                                );
+                                ),
+                            );
                             crate::proof_kernel::aver_generated::kernel::ring::difference(
                                 b.clone(),
                                 a.clone(),
@@ -995,10 +992,11 @@ pub fn asNonneg(
                     } else {
                         if &*__dispatch_subject == "<=" {
                             Some({
-                                let __arg7 @ _ =
+                                let __arg7 @ _ = aver_rt::AverInt::from_i64(
                                     crate::proof_kernel::aver_generated::kernel::ring::strictWhen(
                                         value, false,
-                                    );
+                                    ),
+                                );
                                 crate::proof_kernel::aver_generated::kernel::ring::difference(
                                     b.clone(),
                                     a.clone(),
@@ -1012,7 +1010,7 @@ pub fn asNonneg(
                         } else {
                             if &*__dispatch_subject == ">" {
                                 Some({
-                                    let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, true);
+                                    let __arg8 @ _ = aver_rt::AverInt::from_i64(crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, true));
                                     crate::proof_kernel::aver_generated::kernel::ring::difference(
                                         a.clone(),
                                         b.clone(),
@@ -1026,7 +1024,7 @@ pub fn asNonneg(
                             } else {
                                 if &*__dispatch_subject == ">=" {
                                     Some({
-                                        let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, false);
+                                        let __arg9 @ _ = aver_rt::AverInt::from_i64(crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, false));
                                         crate::proof_kernel::aver_generated::kernel::ring::difference(a.clone(), b.clone(), __arg9, atoms, value, b.clone(), a.clone())
                                     })
                                 } else {
@@ -1044,13 +1042,9 @@ pub fn asNonneg(
 
 /// The constant to take away: 1 for a strict comparison that holds or a non-strict one that fails.
 #[inline(always)]
-pub fn strictWhen(value @ _: bool, strict @ _: bool) -> aver_rt::AverInt {
+pub fn strictWhen(value @ _: bool, strict @ _: bool) -> i64 {
     crate::proof_kernel::cancel_checkpoint();
-    if (value == strict) {
-        aver_rt::AverInt::from_i64(1)
-    } else {
-        aver_rt::AverInt::from_i64(0)
-    }
+    if (value == strict) { 1i64 } else { 0i64 }
 }
 
 /// upper - lower - k when the comparison holds; otherUpper - otherLower - k when it fails.

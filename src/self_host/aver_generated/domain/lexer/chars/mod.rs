@@ -291,22 +291,22 @@ pub fn readNumberLoop__indexed(
                         {
                             let __tco1 = (pos + 1i64);
                             let __tco2 = ({
-                                let __leaf0 =
-                                    &(crate::aver_generated::domain::lexer::chars::digitVal__code(
+                                let __leaf0: i64 =
+                                    crate::aver_generated::domain::lexer::chars::digitVal__code(
                                         __str_ix_c1,
-                                    ));
+                                    );
                                 let __word: Option<i64> = (|| {
                                     Some(
                                         ((((acc).inline_word()?) >> 1).checked_mul((21i64) ^ 1)?
                                             | 1)
-                                        .checked_add((__leaf0.inline_word()?) ^ 1)?,
+                                        .checked_add(((__leaf0).checked_mul(2)? | 1) ^ 1)?,
                                     )
                                 })();
                                 match __word {
                                     Some(__word) => aver_rt::AverInt::from_inline_word(__word),
-                                    None => {
-                                        acc.mul(&aver_rt::AverInt::from_i64(10)).add(&(*__leaf0))
-                                    }
+                                    None => acc
+                                        .mul(&aver_rt::AverInt::from_i64(10))
+                                        .add(&aver_rt::AverInt::from_i64(__leaf0)),
                                 }
                             });
                             pos = __tco1;
@@ -463,22 +463,22 @@ pub fn readIdent__indexed(
 
 /// Synthesized codepoint variant of `digitVal` for indexed character dispatch. Parameter `c` is the Unicode scalar of the one-character String accepted by the source function.
 #[inline(always)]
-pub fn digitVal__code(__str_index_code @ _: i64) -> aver_rt::AverInt {
+pub fn digitVal__code(__str_index_code @ _: i64) -> i64 {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = __str_index_code;
         match __dispatch_subject {
-            48i64 => aver_rt::AverInt::from_i64(0),
-            49i64 => aver_rt::AverInt::from_i64(1),
-            50i64 => aver_rt::AverInt::from_i64(2),
-            51i64 => aver_rt::AverInt::from_i64(3),
-            52i64 => aver_rt::AverInt::from_i64(4),
-            53i64 => aver_rt::AverInt::from_i64(5),
-            54i64 => aver_rt::AverInt::from_i64(6),
-            55i64 => aver_rt::AverInt::from_i64(7),
-            56i64 => aver_rt::AverInt::from_i64(8),
-            57i64 => aver_rt::AverInt::from_i64(9),
-            _ => aver_rt::AverInt::from_i64(0),
+            48i64 => 0i64,
+            49i64 => 1i64,
+            50i64 => 2i64,
+            51i64 => 3i64,
+            52i64 => 4i64,
+            53i64 => 5i64,
+            54i64 => 6i64,
+            55i64 => 7i64,
+            56i64 => 8i64,
+            57i64 => 9i64,
+            _ => 0i64,
         }
     }
 }

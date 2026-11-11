@@ -1567,9 +1567,41 @@ fn main() -> Int
     }
 
     #[test]
+    fn a_bare_return_is_a_raw_leaf_of_the_arithmetic_around_it() {
+        // `bit` returns 0 or 1. `pair` computes on two calls of it: with the
+        // range of what `bit` returns, the sum fits `i64`, so `pair` adds
+        // the raw results and returns raw too, with nothing boxed; only
+        // `main`, whose return is a general `Int`, boxes.
+        let src = r#"
+module M
+    intent = "t"
+    depends []
+
+fn bit(n: Int) -> Int
+    match n > 5
+        true -> 1
+        false -> 0
+
+fn pair(n: Int) -> Int
+    bit(n) * 256 + bit(n + 1)
+
+fn main() -> Int
+    pair(3)
+"#;
+        let program = rewritten(src);
+        assert!(fn_named(&program, "bit").repr.bare_return);
+        let pair = fn_named(&program, "pair");
+        assert!(pair.repr.bare_return, "pair returns its raw sum");
+        assert_eq!(count_boundaries(&pair.body.node), (0, 0));
+        let (boxes, _) = count_boundaries(&fn_named(&program, "main").body.node);
+        assert_eq!(boxes, 1, "main boxes the raw result of pair");
+    }
+
+    #[test]
     fn q5_bare_return_into_boxed_return_boxes_at_crossing() {
         // Defect Q5: `g` has a bare return; `h` returns the call result as a
-        // boxed Int. The rewrite must `Box` the bare-returning call in `h`.
+        // boxed Int (its other arm is a general `Int`). The rewrite must `Box`
+        // the bare-returning call in `h`.
         let src = r#"
 module M
     intent = "t"
@@ -1580,11 +1612,13 @@ fn g(n: Int) -> Int
         0 -> 0
         _ -> g(n - 1)
 
-fn h() -> Int
-    g(2)
+fn h(s: String) -> Int
+    match String.len(s) > 1
+        true -> g(2)
+        false -> String.len(s)
 
 fn main() -> Int
-    h()
+    h("ab")
 "#;
         let program = rewritten(src);
         let g = fn_named(&program, "g");
@@ -1668,12 +1702,12 @@ fn main() -> Int
             g.repr.bare_return,
             "g's recurrence stays native (bare return preserved)"
         );
+        // On Rust the call is a raw leaf with the range `g` returns, so the
+        // subject stays an `i64` and its literals compare as `i64`: nothing
+        // to box. (wasm-gc keeps its boxed subject: it has no return ranges.)
         let r = fn_named(&program, "r");
         let (boxes, _unboxes) = count_boundaries(&r.body.node);
-        assert!(
-            boxes >= 1,
-            "the bare-returning g(2) used as a no-bind $AverInt match subject is boxed"
-        );
+        assert_eq!(boxes, 0, "the raw subject of g(2) is not boxed");
     }
 
     #[test]
