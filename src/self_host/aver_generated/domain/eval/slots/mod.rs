@@ -41,10 +41,12 @@ pub fn buildSlotEnvLoop(
                 Some((a, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = {
+                        let __idx = (idx).to_usize();
+                        let __value = a.clone();
                         let __vec = acc;
-                        match (idx).to_usize() {
+                        match __idx {
                             Some(__idx) if __idx < __vec.len() => {
-                                __vec.set_unchecked(__idx, a.clone())
+                                __vec.set_unchecked(__idx, __value)
                             }
                             _ => __vec,
                         }
@@ -112,9 +114,11 @@ pub fn setSlot(
 ) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     {
+        let __idx = (slot).to_usize();
+        let __value = v;
         let __vec = env;
-        match (slot).to_usize() {
-            Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, v),
+        match __idx {
+            Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, __value),
             _ => __vec,
         }
     }

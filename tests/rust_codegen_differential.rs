@@ -1072,7 +1072,8 @@ fn stored_element_params_taken_by_value_match_vm() {
     let emitted = emitted_entry_module("rust_stored_element", &src);
     for shape in [
         "k @ _: aver_rt::AverInt, mut a @ _: Val) -> aver_rt::AverVector<Val>",
-        "__vec.set_unchecked(__idx, a)",
+        "let __value = a; let __vec = v;",
+        "__vec.set_unchecked(__idx, __value)",
         "m.insert_owned(k, a)",
         "pub fn cons(mut a @ _: Val,",
         "aver_rt::AverList::prepend(a, rest)",
@@ -5714,6 +5715,106 @@ fn main() -> Unit
         emitted.contains("= noisy(&s, id);") && !emitted.contains("bumpNode(s.clone()"),
         "an effectful later argument is bound first too, and the store moves:\n{emitted}"
     );
+}
+
+/// A record passed whole with one of its fields after it (`step(t, i,
+/// t.dense)`). The field read was the last read of `t`, so `t` was cloned
+/// and `Vector.set` in `step` copied the whole Vector on every call. The
+/// field is now read first and `t` moves.
+#[test]
+fn rust_a_field_read_after_its_record_lets_the_record_move() {
+    let src = r#"module FieldAfter
+    intent = "Pass a record with one of its own fields"
+    depends []
+    effects [Console.print]
+
+record T
+    cur: Vector<Int>
+    dense: Int
+    n: Int
+
+fn step(t: T, i: Int, seg: Int) -> T
+    ? "One write."
+    match Vector.set(t.cur, Int.mod(i, 64), i + seg)
+        Option.Some(v) -> T.update(t, cur = v, n = t.n + 1)
+        Option.None -> t
+
+fn loop(t: T, i: Int, k: Int) -> T
+    ? "k writes, each passing t with t.dense."
+    match i >= k
+        true -> t
+        false -> loop(step(t, i, t.dense), i + 1, k)
+
+fn main() -> Unit
+    ! [Console.print]
+    t = loop(T(cur = Vector.new(64, 0), dense = 3, n = 0), 0, 100)
+    Console.print("{t.n} {Option.withDefault(Vector.get(t.cur, 5), 0)}")
+"#;
+    let expected = "100 72";
+    let vm = run_vm_inline("field_after", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("field_after", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("field_after", src);
+    assert!(
+        emitted.contains("= t.dense.clone(); step(t, ") && !emitted.contains("t.clone()"),
+        "the field must be read first and t moved:\n{emitted}"
+    );
+}
+
+/// A record updated in one argument and read by field in a later one
+/// (`back(W.update(w, big = ...), note(side, w.id, w.n), ...)`). The later
+/// field reads were the last reads of `w`, so the update cloned the whole
+/// record, and `Vector.set` under it copied its Vector every step. The field
+/// reads now run first and the update takes `w` over, through a mutual
+/// trampoline and in a self loop.
+#[test]
+fn rust_a_record_update_before_its_field_reads_takes_the_record() {
+    let src = include_str!("fixtures/update_then_read.av");
+    let expected = "101 5 138 200 0 70";
+    let vm = run_vm_inline("update_then_read", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("update_then_read", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("update_then_read", src);
+    assert!(
+        !emitted.contains("w.clone()") && emitted.contains("big: note(w.big, "),
+        "the update must take w over (a later read of w.big still keeps the old Vector):\n{emitted}"
+    );
+}
+
+/// `Option.withDefault(Vector.set(v, i, f(v)), v)` with `v` moving into the
+/// set: the value read `v` after the set had taken it, and the generated
+/// Rust did not build (E0382). The index and the value are now computed
+/// first, as Aver computes every argument before the call.
+#[test]
+fn rust_a_set_value_read_from_the_vector_it_sets_builds() {
+    let src = r#"module SetFromItself
+    intent = "A Vector set at a place computed from the Vector itself"
+    depends []
+    effects [Console.print]
+
+fn f(v: Vector<Int>) -> Int
+    ? "The length plus the first."
+    Vector.len(v) + Option.withDefault(Vector.get(v, 0), 0)
+
+fn step(v: Vector<Int>, i: Int, k: Int) -> Vector<Int>
+    ? "k writes, each of a value read from v."
+    match i >= k
+        true -> v
+        false -> step(Option.withDefault(Vector.set(v, Int.mod(i, 8), f(v)), v), i + 1, k)
+
+fn main() -> Unit
+    ! [Console.print]
+    v = step(Vector.new(8, 1), 0, 20)
+    Console.print("{Option.withDefault(Vector.get(v, 3), 0)}")
+"#;
+    let vm = run_vm_inline("set_from_itself", src).expect("vm run");
+    assert_eq!(vm, "33", "VM result");
+    let rust = build_run_rust_inline("set_from_itself", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
 }
 
 /// The self-keep `Option.withDefault(Vector.set(s.f, i, x), s.f)` on a field
