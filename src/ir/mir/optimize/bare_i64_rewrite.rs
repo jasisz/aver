@@ -574,12 +574,18 @@ fn rewrite_raw(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
     if renders_raw(&e.node, ctx.facts) {
         return rewrite_children(e, ctx);
     }
+    // A call of a function that returns a raw `i64` is one already, whether
+    // or not this function's facts carry its range: a member of a mutual
+    // tail-call group is rewritten with boxed facts of its own, which know
+    // no callee's range. `call_returns_raw` reads the callee's facts, and
+    // gives none for a mutual tail-call member, whose trampoline returns an
+    // `AverInt`.
+    if call_returns_raw(&e.node, ctx) {
+        return rewrite_children(e, ctx);
+    }
     // Any other value reaching a raw context (`i64` param / return) is a
     // boxed `AverInt` and must be narrowed via `Unbox` (the checked
-    // `to_i64`). This mirrors the prior codegen's bare-param call-arg path,
-    // which narrowed every non-`emit_bare_i64` arg — INCLUDING a call result
-    // — with `to_i64`, rather than trusting the (mutual-TCO-unreliable)
-    // `bare_return` flag.
+    // `to_i64`).
     let inner = rewrite_children(e, ctx);
     unbox_node(inner)
 }

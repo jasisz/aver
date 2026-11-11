@@ -1,0 +1,36 @@
+module Main
+    intent =
+        "A function returning a refinement's field as a raw i64, called by a"
+        "member of a mutual tail-call group and handed to a raw parameter."
+    depends [Idx]
+    effects [Console.print]
+
+fn fits(i: Int, n: Int) -> Bool
+    ? "Whether i is below n."
+    i < n
+
+verify fits
+    fits(1, 2) => true
+
+fn check(x: Idx.Index, n: Int, k: Int) -> Bool
+    ? "fits on the index, after k bounces."
+    match k
+        0 -> fits(Idx.indexValue(x), n)
+        _ -> other(x, n, k - 1)
+
+fn other(x: Idx.Index, n: Int, k: Int) -> Bool
+    ? "Back to check."
+    check(x, n, k)
+
+fn run(k: Int, n: Int) -> String
+    ? "check on the index k."
+    match Idx.fromInt(k)
+        Result.Ok(x) -> "{check(x, n, 3)}"
+        Result.Err(e) -> e
+
+verify run
+    run(1, 2) => "true"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(run(5, 9))
