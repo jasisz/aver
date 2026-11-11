@@ -83,6 +83,11 @@ fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, calls: &Calls<'_>) {
     crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
         rewrite(child, mir_fn, calls)
     });
+    if matches!(expr.node, MirExpr::RecordUpdate(_)) {
+        let hoisted = hoist_reads_after_base_call(expr, mir_fn);
+        wrap_in_lets(expr, hoisted);
+        return;
+    }
     let (boxed_return, builtins, self_bounces) =
         (calls.boxed_return, calls.builtins, calls.self_bounces);
     let mut write = false;
@@ -108,6 +113,21 @@ fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, calls: &Calls<'_>) {
         },
         MirExpr::TailCall(call) if self_bounces || call.node.target != mir_fn.fn_id => {
             &call.node.args
+        }
+        // The self loop assigns its params in place, but a record update
+        // read again by a later argument is handled as for any call.
+        MirExpr::TailCall(call) => {
+            let updates: Vec<usize> = call
+                .node
+                .args
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| matches!(a.node, MirExpr::RecordUpdate(_)))
+                .map(|(j, _)| j)
+                .collect();
+            let hoisted = hoist_reads_after_update(expr, mir_fn, &updates);
+            wrap_in_lets(expr, hoisted);
+            return;
         }
         _ => return,
     };
@@ -141,9 +161,223 @@ fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, calls: &Calls<'_>) {
             return;
         }
     }
+    let hoisted = if write {
+        Vec::new()
+    } else {
+        hoist_reads_after_update(expr, mir_fn, &bound)
+    };
     if !bound.is_empty() {
         apply(expr, mir_fn, &bound);
     }
+    wrap_in_lets(expr, hoisted);
+}
+
+/// A local bound to a value before the call: its slot, name and value.
+type Binding = (LocalId, String, Spanned<MirExpr>);
+
+/// Where a bound argument updates a record (`T.update(t, ...)`) and every
+/// later argument reads only fields of it (`f(T.update(t, n = t.n + 1),
+/// g(t.id))`), those field reads move before the call and the update's base
+/// becomes the last read of `t`, so the update takes the record over instead
+/// of copying it. Reading a field has no effect, so this keeps what the call
+/// computes. The reads are returned as the bindings to put before the call.
+fn hoist_reads_after_update(
+    expr: &mut Spanned<MirExpr>,
+    mir_fn: &mut MirFn,
+    bound: &[usize],
+) -> Vec<Binding> {
+    let args = match &mut expr.node {
+        MirExpr::Call(call) => &mut call.node.args,
+        MirExpr::TailCall(call) => &mut call.node.args,
+        _ => return Vec::new(),
+    };
+    let mut hoisted = Vec::new();
+    for &i in bound {
+        let MirExpr::RecordUpdate(update) = &args[i].node else {
+            continue;
+        };
+        let MirExpr::Local(base) = &update.node.base.node else {
+            continue;
+        };
+        if base.node.last_use || base.node.name.is_empty() {
+            continue;
+        }
+        let slot = base.node.slot;
+        let later = &mut args[i + 1..];
+        if later.iter().any(|a| reads_whole(&a.node, slot))
+            || !later.iter().any(|a| reads_last(&a.node, slot, &[]))
+            || !later.iter_mut().all(|a| fields_typed(a, slot))
+        {
+            continue;
+        }
+        for arg in &mut args[i + 1..] {
+            hoist_fields(arg, slot, mir_fn, &mut hoisted);
+        }
+        if let MirExpr::RecordUpdate(update) = &mut args[i].node
+            && let MirExpr::Local(base) = &mut update.node.base.node
+        {
+            base.node.last_use = true;
+        }
+    }
+    hoisted
+}
+
+/// Where an update's base is a call handed a record whole (`W.update(f(w,
+/// x), n = w.n + 1)`) and the update's fields read only fields of it, those
+/// reads move before the call and the call takes the record over. The
+/// call's other arguments must not read the record, though bindings the
+/// argument order put before it may (they run first).
+fn hoist_reads_after_base_call(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn) -> Vec<Binding> {
+    let MirExpr::RecordUpdate(update) = &mut expr.node else {
+        return Vec::new();
+    };
+    let update = &mut update.node;
+    // The call under the bindings the argument order put first.
+    let mut call = &mut *update.base;
+    while matches!(call.node, MirExpr::Let(_)) {
+        let MirExpr::Let(binding) = &mut call.node else {
+            unreachable!("matched just above")
+        };
+        call = &mut *binding.node.body;
+    }
+    let args = match &mut call.node {
+        MirExpr::Call(call) if matches!(call.node.callee, MirCallee::Fn(_)) => &mut call.node.args,
+        _ => return Vec::new(),
+    };
+    let whole: Vec<usize> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| matches!(&a.node, MirExpr::Local(l) if !l.node.last_use && !l.node.name.is_empty()))
+        .map(|(j, _)| j)
+        .collect();
+    for j in whole {
+        let MirExpr::Local(local) = &args[j].node else {
+            continue;
+        };
+        let slot = local.node.slot;
+        let others_read = args
+            .iter()
+            .enumerate()
+            .any(|(k, a)| k != j && reads_slot(&a.node, slot));
+        let fields = &mut update.updates;
+        if others_read
+            || fields.iter().any(|f| reads_whole(&f.value.node, slot))
+            || !fields.iter().any(|f| reads_last(&f.value.node, slot, &[]))
+            || !fields.iter_mut().all(|f| fields_typed(&mut f.value, slot))
+        {
+            continue;
+        }
+        let mut hoisted = Vec::new();
+        for field in fields.iter_mut() {
+            hoist_fields(&mut field.value, slot, mir_fn, &mut hoisted);
+        }
+        if let MirExpr::Local(local) = &mut args[j].node {
+            local.node.last_use = true;
+        }
+        return hoisted;
+    }
+    Vec::new()
+}
+
+/// Whether `expr` reads `slot` other than through a field of it.
+fn reads_whole(expr: &MirExpr, slot: LocalId) -> bool {
+    match expr {
+        MirExpr::Project(_) if read_path(expr).is_some_and(|(l, _)| l.slot == slot) => false,
+        MirExpr::Local(local) => local.node.slot == slot,
+        MirExpr::Call(call) if matches!(&call.node.callee, MirCallee::LocalSlot { slot: s, .. } if u32::from(*s) == slot.0) => {
+            true
+        }
+        _ => {
+            let mut found = false;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                found = found || reads_whole(child, slot);
+            });
+            found
+        }
+    }
+}
+
+/// Whether every field read of `slot` in `expr` has a type, so it can be
+/// bound to a local.
+fn fields_typed(expr: &mut Spanned<MirExpr>, slot: LocalId) -> bool {
+    if read_path(&expr.node).is_some_and(|(l, path)| l.slot == slot && !path.is_empty()) {
+        return expr.ty().is_some();
+    }
+    let mut typed = true;
+    crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
+        typed = typed && fields_typed(child, slot);
+    });
+    typed
+}
+
+/// Replace every field read of `slot` in `expr` with a fresh local bound
+/// to it, none of them the last read of `slot`.
+fn hoist_fields(
+    expr: &mut Spanned<MirExpr>,
+    slot: LocalId,
+    mir_fn: &mut MirFn,
+    out: &mut Vec<Binding>,
+) {
+    let is_field =
+        read_path(&expr.node).is_some_and(|(l, path)| l.slot == slot && !path.is_empty());
+    if !is_field {
+        crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
+            hoist_fields(child, slot, mir_fn, out)
+        });
+        return;
+    }
+    let fresh = LocalId(mir_fn.local_count);
+    mir_fn.local_count += 1;
+    let name = generated_ident(&format!("arg{}", fresh.0));
+    let read = Spanned::new(
+        MirExpr::Local(Spanned::new(
+            MirLocal {
+                slot: fresh,
+                last_use: true,
+                name: name.clone(),
+            },
+            expr.line,
+        )),
+        expr.line,
+    );
+    if let Some(ty) = expr.ty.get() {
+        read.set_ty_shared(ty);
+    }
+    let mut value = std::mem::replace(expr, read);
+    clear_last_use(&mut value.node, slot);
+    out.push((fresh, name, value));
+}
+
+/// Put `bindings` around `expr`, the first outermost.
+fn wrap_in_lets(expr: &mut Spanned<MirExpr>, bindings: Vec<Binding>) {
+    if bindings.is_empty() {
+        return;
+    }
+    let line = expr.line;
+    let ty = expr.ty.get().cloned();
+    let mut body = std::mem::replace(
+        expr,
+        Spanned::bare(MirExpr::Literal(Spanned::bare(crate::ast::Literal::Unit))),
+    );
+    for (slot, name, value) in bindings.into_iter().rev() {
+        let node = Spanned::new(
+            MirExpr::Let(Spanned::new(
+                MirLet {
+                    binding: slot,
+                    binding_name: name,
+                    value: Box::new(value),
+                    body: Box::new(body),
+                },
+                line,
+            )),
+            line,
+        );
+        if let Some(ty) = &ty {
+            node.set_ty_shared(ty);
+        }
+        body = node;
+    }
+    *expr = body;
 }
 
 /// Whether `expr` only reads: a variable, a field of one, a literal or a

@@ -5762,6 +5762,28 @@ fn main() -> Unit
     );
 }
 
+/// A record updated in one argument and read by field in a later one
+/// (`back(W.update(w, big = ...), note(side, w.id, w.n), ...)`). The later
+/// field reads were the last reads of `w`, so the update cloned the whole
+/// record, and `Vector.set` under it copied its Vector every step. The field
+/// reads now run first and the update takes `w` over, through a mutual
+/// trampoline and in a self loop.
+#[test]
+fn rust_a_record_update_before_its_field_reads_takes_the_record() {
+    let src = include_str!("fixtures/update_then_read.av");
+    let expected = "101 5 138 200 0 70";
+    let vm = run_vm_inline("update_then_read", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("update_then_read", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("update_then_read", src);
+    assert!(
+        !emitted.contains("w.clone()") && emitted.contains("big: note(w.big, "),
+        "the update must take w over (a later read of w.big still keeps the old Vector):\n{emitted}"
+    );
+}
+
 /// The self-keep `Option.withDefault(Vector.set(s.f, i, x), s.f)` on a field
 /// of an owned record at its last use. The two reads of `s.f` hand on one
 /// value, so the field moves into the in-place set instead of being cloned

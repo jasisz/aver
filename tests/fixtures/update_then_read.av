@@ -1,0 +1,37 @@
+module UpdateThenRead
+    intent = "A record updated in one argument and read in a later one"
+    depends []
+    effects [Console.print]
+
+record W
+    big: Vector<Int>
+    id: Int
+    n: Int
+
+fn note(v: Vector<Int>, i: Int, x: Int) -> Vector<Int>
+    ? "x at i."
+    Option.withDefault(Vector.set(v, Int.mod(i, 64), x), v)
+
+fn step(w: W, side: Vector<Int>, i: Int, k: Int) -> W
+    ? "Bump w, noting its id in side, then hand over to back."
+    match i >= k
+        true -> w
+        false -> back(W.update(w, big = note(w.big, i, i), id = w.id + 1), note(side, w.id, w.n + Option.withDefault(Vector.get(w.big, 3), 0)), i + 1, k)
+
+fn back(w: W, side: Vector<Int>, i: Int, k: Int) -> W
+    ? "The same, then back to step."
+    match i >= k
+        true -> W.update(w, n = Option.withDefault(Vector.get(side, 7), 0))
+        false -> step(W.update(w, big = note(w.big, i, i * 2), id = w.id + 1), note(side, w.id, w.n), i + 1, k)
+
+fn alone(w: W, side: Vector<Int>, i: Int, k: Int) -> W
+    ? "One function updating w and reading it in a later argument."
+    match i >= k
+        true -> W.update(w, n = Option.withDefault(Vector.get(side, 9), 0))
+        false -> alone(W.update(w, big = note(w.big, i, i + 1), id = w.id + 2), note(side, w.id, w.id + w.n), i + 1, k)
+
+fn main() -> Unit
+    ! [Console.print]
+    a = step(W(big = Vector.new(64, 0), id = 0, n = 5), Vector.new(64, 0), 0, 101)
+    b = alone(W(big = Vector.new(64, 0), id = 0, n = 5), Vector.new(64, 0), 0, 100)
+    Console.print("{a.id} {a.n} {Option.withDefault(Vector.get(a.big, 5), 0)} {b.id} {b.n} {Option.withDefault(Vector.get(b.big, 5), 0)}")
