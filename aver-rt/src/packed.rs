@@ -267,6 +267,16 @@ impl<E: PackedInt> AverPacked<E> {
         AverList::from_vec(self.to_aver_ints())
     }
 
+    /// The element at `index` as an `Int`, read in place: `get` of the
+    /// `List<Int>` this is, without making that list (and so without
+    /// touching the body's count).
+    #[inline]
+    pub fn get_int(&self, index: usize) -> Option<crate::AverInt> {
+        self.as_slice()
+            .get(index)
+            .map(|e| crate::AverInt::from_i64((*e).into()))
+    }
+
     /// Expose the semantic `List<Int>` as a zero-copy hybrid list view.
     pub fn to_int_list(&self) -> AverIntList {
         E::into_list(self.clone())
