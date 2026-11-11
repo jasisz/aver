@@ -2,9 +2,11 @@
 //!
 //! A refined carrier can expose its contents without eagerly inflating
 //! every element into an `AverInt`: octets as `Packed`, the other widths of
-//! a packed carrier ([`crate::AverPacked`]) as `Narrow`. Other values use the
-//! ordinary persistent list, so this changes representation, never
-//! semantics.
+//! a packed carrier ([`crate::AverPacked`]) as `Narrow`. A list of octets
+//! built by prepending, as an encoder builds its output backwards, is a
+//! `Stack` that pushes each byte into a buffer instead of a cell. Other
+//! values use the ordinary persistent list, so this changes
+//! representation, never semantics.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -21,6 +23,195 @@ pub enum AverIntList {
     /// the list it is.
     Narrow(NarrowInts),
     Wide(AverList<AverInt>),
+    /// Octets built by prepending, kept in an append-only buffer in reverse
+    /// (see [`ByteStack`]).
+    Stack(ByteStack),
+}
+
+/// A list of octets built by prepending: a chain of append-only buffers,
+/// each holding its part of the list backwards, so a prepend is a push.
+/// A value sees the first `len` bytes of its buffer, then the list below
+/// it. Bytes once pushed never change, so a shorter value that shares a
+/// buffer still reads the list it was. A prepend onto the value whose
+/// `len` is its buffer's own pushes in place; onto any other it pushes in
+/// place only when no other value holds the buffer (cutting it back to its
+/// `len` first), and otherwise starts a new buffer over this value, so no
+/// prepend copies and a list prepended from many places is at worst a
+/// chain of one-byte buffers.
+#[derive(Clone)]
+pub struct ByteStack {
+    seg: std::rc::Rc<Segment>,
+    len: usize,
+}
+
+struct Segment {
+    buf: std::cell::UnsafeCell<Vec<u8>>,
+    /// The list after this buffer's bytes, and its length.
+    below: Option<ByteStack>,
+    base: usize,
+}
+
+impl Drop for Segment {
+    /// A long chain is taken apart one segment at a time, not by recursion.
+    fn drop(&mut self) {
+        let mut next = self.below.take();
+        while let Some(stack) = next {
+            match std::rc::Rc::try_unwrap(stack.seg) {
+                Ok(mut seg) => next = seg.below.take(),
+                Err(_) => break,
+            }
+        }
+    }
+}
+
+impl ByteStack {
+    /// The bytes this value sees in its own buffer, oldest first.
+    #[inline]
+    fn own(&self) -> &[u8] {
+        // SAFETY: a buffer only changes through `push_onto`, which takes no
+        // reference out of it and runs on this thread (`Rc` is neither
+        // `Send` nor `Sync`); a slice handed out here lives as long as the
+        // borrow of `self`, and nothing called while it lives pushes.
+        unsafe { &(&*self.seg.buf.get())[..self.len] }
+    }
+
+    #[inline]
+    fn total(&self) -> usize {
+        self.len + self.seg.base
+    }
+
+    /// The `index`th element of the list.
+    #[inline]
+    fn get(&self, mut index: usize) -> Option<u8> {
+        let mut at = self;
+        loop {
+            if index < at.len {
+                return Some(at.own()[at.len - 1 - index]);
+            }
+            index -= at.len;
+            at = at.seg.below.as_ref()?;
+        }
+    }
+
+    /// The list after its first `count` elements; `None` when that is empty.
+    fn drop_first(&self, mut count: usize) -> Option<ByteStack> {
+        let mut at = self;
+        loop {
+            if count < at.len {
+                return Some(ByteStack {
+                    seg: at.seg.clone(),
+                    len: at.len - count,
+                });
+            }
+            count -= at.len;
+            at = at.seg.below.as_ref()?;
+        }
+    }
+
+    fn iter(&self) -> ByteStackIter<'_> {
+        ByteStackIter {
+            at: Some(self),
+            index: 0,
+            left: self.total(),
+        }
+    }
+
+    /// `byte` prepended to the list this value is.
+    fn push_onto(&self, byte: u8) -> ByteStack {
+        // SAFETY: as in `own`; no slice of the buffer is alive here, since
+        // every reader takes one only for the call it makes.
+        let buf = unsafe { &mut *self.seg.buf.get() };
+        if buf.len() == self.len || std::rc::Rc::strong_count(&self.seg) == 1 {
+            buf.truncate(self.len);
+            buf.push(byte);
+            return ByteStack {
+                seg: self.seg.clone(),
+                len: self.len + 1,
+            };
+        }
+        let mut bytes = Vec::with_capacity(16);
+        bytes.push(byte);
+        ByteStack::new(bytes, Some(self.clone()))
+    }
+
+    fn new(bytes: Vec<u8>, below: Option<ByteStack>) -> ByteStack {
+        let len = bytes.len();
+        let base = below.as_ref().map_or(0, ByteStack::total);
+        ByteStack {
+            seg: std::rc::Rc::new(Segment {
+                buf: std::cell::UnsafeCell::new(bytes),
+                below,
+                base,
+            }),
+            len,
+        }
+    }
+
+    /// The list forwards, as octets: a single buffer no other value holds
+    /// is reused in place.
+    fn into_reversed(self) -> AverPackedU8 {
+        if self.seg.below.is_none() {
+            let len = self.len;
+            match std::rc::Rc::try_unwrap(self.seg) {
+                Ok(mut seg) => {
+                    let mut bytes = std::mem::take(seg.buf.get_mut());
+                    bytes.truncate(len);
+                    return AverPackedU8::from_vec(bytes);
+                }
+                Err(seg) => return ByteStack { seg, len }.reversed(),
+            }
+        }
+        self.reversed()
+    }
+
+    /// The list forwards: the deepest buffer's bytes first.
+    fn reversed(&self) -> AverPackedU8 {
+        let mut parts = Vec::new();
+        let mut at = Some(self);
+        while let Some(stack) = at {
+            parts.push(stack.own());
+            at = stack.seg.below.as_ref();
+        }
+        let mut bytes = Vec::with_capacity(self.total());
+        for part in parts.into_iter().rev() {
+            bytes.extend_from_slice(part);
+        }
+        AverPackedU8::from_vec(bytes)
+    }
+}
+
+pub struct ByteStackIter<'a> {
+    at: Option<&'a ByteStack>,
+    index: usize,
+    left: usize,
+}
+
+impl Iterator for ByteStackIter<'_> {
+    type Item = u8;
+
+    #[inline]
+    fn next(&mut self) -> Option<u8> {
+        loop {
+            let at = self.at?;
+            if self.index < at.len {
+                self.index += 1;
+                self.left -= 1;
+                return Some(at.own()[at.len - self.index]);
+            }
+            self.at = at.seg.below.as_ref();
+            self.index = 0;
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.left, Some(self.left))
+    }
+}
+
+/// The byte `value` is, if it is one.
+#[inline]
+fn as_byte(value: &AverInt) -> Option<u8> {
+    value.to_i64().and_then(|v| u8::try_from(v).ok())
 }
 
 /// The width of a [`NarrowInts`]: every width a packed carrier has past a
@@ -269,6 +460,7 @@ pub enum AverIntListIter<'a> {
     Packed(std::slice::Iter<'a, u8>),
     Narrow(NarrowIter<'a>),
     Wide(crate::AverListIter<'a, AverInt>),
+    Stack(ByteStackIter<'a>),
 }
 
 impl Iterator for AverIntListIter<'_> {
@@ -280,6 +472,7 @@ impl Iterator for AverIntListIter<'_> {
             Self::Packed(iter) => iter.next().map(|byte| AverInt::from_i64(i64::from(*byte))),
             Self::Narrow(iter) => iter.next(),
             Self::Wide(iter) => iter.next().cloned(),
+            Self::Stack(iter) => iter.next().map(|byte| AverInt::from_i64(i64::from(byte))),
         }
     }
 
@@ -288,6 +481,7 @@ impl Iterator for AverIntListIter<'_> {
             Self::Packed(iter) => iter.size_hint(),
             Self::Narrow(iter) => iter.size_hint(),
             Self::Wide(iter) => iter.size_hint(),
+            Self::Stack(iter) => iter.size_hint(),
         }
     }
 }
@@ -327,7 +521,7 @@ impl AverIntList {
     pub fn as_packed(&self) -> Option<&AverPackedU8> {
         match self {
             Self::Packed(values) => Some(values),
-            Self::Narrow(_) | Self::Wide(_) => None,
+            Self::Narrow(_) | Self::Wide(_) | Self::Stack(_) => None,
         }
     }
 
@@ -337,6 +531,7 @@ impl AverIntList {
             Self::Packed(values) => values.len(),
             Self::Narrow(values) => values.len(),
             Self::Wide(values) => values.len(),
+            Self::Stack(stack) => stack.total(),
         }
     }
 
@@ -349,6 +544,7 @@ impl AverIntList {
             Self::Packed(values) => AverIntListIter::Packed(values.as_slice().iter()),
             Self::Narrow(values) => AverIntListIter::Narrow(values.iter()),
             Self::Wide(values) => AverIntListIter::Wide(values.iter()),
+            Self::Stack(stack) => AverIntListIter::Stack(stack.iter()),
         }
     }
 
@@ -358,7 +554,7 @@ impl AverIntList {
 
     pub fn to_aver_list(&self) -> AverList<AverInt> {
         match self {
-            Self::Packed(_) | Self::Narrow(_) => AverList::from_vec(self.to_vec()),
+            Self::Packed(_) | Self::Narrow(_) | Self::Stack(_) => AverList::from_vec(self.to_vec()),
             Self::Wide(values) => values.clone(),
         }
     }
@@ -399,6 +595,12 @@ impl AverIntList {
             Self::Wide(values) => {
                 crate::list_uncons_cloned(values).map(|(head, tail)| (head, Self::Wide(tail)))
             }
+            Self::Stack(stack) => stack.get(0).map(|byte| {
+                (
+                    AverInt::from_i64(i64::from(byte)),
+                    Self::stack_or_empty(stack.drop_first(1)),
+                )
+            }),
         }
     }
 
@@ -411,12 +613,17 @@ impl AverIntList {
         Some((head, Self::Narrow(values.drop_first(1))))
     }
 
+    fn stack_or_empty(stack: Option<ByteStack>) -> Self {
+        stack.map_or_else(Self::empty, Self::Stack)
+    }
+
     #[inline]
     pub fn drop_first(&self, count: usize) -> Self {
         match self {
             Self::Packed(values) => Self::Packed(values.drop_first(count)),
             Self::Narrow(values) => Self::Narrow(values.drop_first(count)),
             Self::Wide(values) => Self::Wide(values.drop_first(count)),
+            Self::Stack(stack) => Self::stack_or_empty(stack.drop_first(count)),
         }
     }
 
@@ -425,10 +632,28 @@ impl AverIntList {
             Self::Packed(values) => Self::Packed(values.take_first(count)),
             Self::Narrow(values) => Self::Narrow(values.take_first(count)),
             Self::Wide(values) => Self::from_vec(values.iter().take(count).cloned().collect()),
+            Self::Stack(stack) => {
+                Self::Packed(AverPackedU8::from_vec(stack.iter().take(count).collect()))
+            }
         }
     }
 
     pub fn prepend(head: AverInt, tail: &Self) -> Self {
+        if let Some(byte) = as_byte(&head) {
+            match tail {
+                Self::Stack(stack) => return Self::Stack(stack.push_onto(byte)),
+                // Octets already in hand are copied in once, as a wide
+                // list would copy them into its cells.
+                Self::Packed(values) => {
+                    let values = values.as_slice();
+                    let mut bytes = Vec::with_capacity((values.len() + 1).max(16));
+                    bytes.extend(values.iter().rev());
+                    bytes.push(byte);
+                    return Self::Stack(ByteStack::new(bytes, None));
+                }
+                _ => {}
+            }
+        }
         // Widen once at a persistent-list mutation boundary. Subsequent
         // accumulator prepends stay O(1), including when `head` is not a byte.
         Self::Wide(AverList::prepend(head, &tail.to_aver_list()))
@@ -438,6 +663,9 @@ impl AverIntList {
     /// `AverList::prepend_owned`).
     #[inline]
     pub fn prepend_owned(head: AverInt, tail: Self) -> Self {
+        if matches!(&tail, Self::Stack(_) | Self::Packed(_)) {
+            return Self::prepend(head, &tail);
+        }
         Self::Wide(AverList::prepend_owned(head, tail.into_aver_list()))
     }
 
@@ -451,6 +679,9 @@ impl AverIntList {
                 .map(|byte| AverInt::from_i64(i64::from(*byte))),
             Self::Narrow(values) => values.get(index),
             Self::Wide(values) => values.get(index).cloned(),
+            Self::Stack(stack) => stack
+                .get(index)
+                .map(|byte| AverInt::from_i64(i64::from(byte))),
         }
     }
 
@@ -482,6 +713,7 @@ impl AverIntList {
     pub fn reverse(&self) -> Self {
         match self {
             Self::Packed(values) => Self::Packed(values.clone().into_reversed()),
+            Self::Stack(stack) => Self::Packed(stack.reversed()),
             Self::Narrow(_) | Self::Wide(_) => {
                 let mut out = self.to_vec();
                 out.reverse();
@@ -497,6 +729,7 @@ impl AverIntList {
             Self::Packed(values) => Self::Packed(values.into_reversed()),
             Self::Narrow(_) => self.reverse(),
             Self::Wide(values) => Self::from_vec(values.into_reversed_vec()),
+            Self::Stack(stack) => Self::Packed(stack.into_reversed()),
         }
     }
 
@@ -508,6 +741,9 @@ impl AverIntList {
                 .is_some_and(|byte| values.as_slice().contains(&byte)),
             Self::Narrow(values) => values.contains(needle),
             Self::Wide(values) => values.contains(needle),
+            Self::Stack(stack) => {
+                as_byte(needle).is_some_and(|byte| stack.iter().any(|b| b == byte))
+            }
         }
     }
 }
@@ -718,6 +954,75 @@ mod tests {
         assert_eq!(wide.reverse().aver_display(), "[300, 4, 3, 2, 1]");
         assert_eq!(grown.clone().reverse_owned().aver_display(), "[4, 3, 2, 1]");
         assert_eq!(grown.aver_display(), "[1, 2, 3, 4]");
+    }
+
+    fn prepended(onto: &AverIntList, values: &[i64]) -> AverIntList {
+        values.iter().fold(onto.clone(), |list, v| {
+            AverIntList::prepend(AverInt::from_i64(*v), &list)
+        })
+    }
+
+    #[test]
+    fn a_list_prepended_from_many_places_reads_as_it_was_built() {
+        let base = prepended(&AverIntList::empty(), &[1, 2, 3]);
+        assert!(matches!(base, AverIntList::Stack(_)));
+        assert_eq!(base.aver_display(), "[3, 2, 1]");
+        // Two values prepended onto the same one, and onto a shorter view.
+        let left = prepended(&base, &[4, 5]);
+        let right = prepended(&base, &[6]);
+        let tail = base.drop_first(1);
+        let from_tail = prepended(&tail, &[7]);
+        assert_eq!(base.aver_display(), "[3, 2, 1]");
+        assert_eq!(left.aver_display(), "[5, 4, 3, 2, 1]");
+        assert_eq!(right.aver_display(), "[6, 3, 2, 1]");
+        assert_eq!(tail.aver_display(), "[2, 1]");
+        assert_eq!(from_tail.aver_display(), "[7, 2, 1]");
+        assert_eq!(prepended(&right, &[8]).aver_display(), "[8, 6, 3, 2, 1]");
+        assert_eq!(right.get(3), Some(AverInt::from_i64(1)));
+        assert_eq!(right.get(4), None);
+        assert_eq!(right.len(), 4);
+        assert_eq!(right.drop_first(2).aver_display(), "[2, 1]");
+        assert_eq!(right.drop_first(4).aver_display(), "[]");
+        assert_eq!(right.take_first(2).aver_display(), "[6, 3]");
+        assert!(right.contains(&AverInt::from_i64(1)));
+        assert!(!right.contains(&AverInt::from_i64(4)));
+        assert_eq!(right.reverse().aver_display(), "[1, 2, 3, 6]");
+        assert_eq!(right.clone().reverse_owned().aver_display(), "[1, 2, 3, 6]");
+        assert_eq!(
+            left.clone().reverse_owned().aver_display(),
+            "[1, 2, 3, 4, 5]"
+        );
+        // A value past a byte widens, and every form compares the same.
+        let wide = prepended(&right, &[300]);
+        assert!(matches!(wide, AverIntList::Wide(_)));
+        assert_eq!(wide.aver_display(), "[300, 6, 3, 2, 1]");
+        let packed = AverIntList::from_vec([6, 3, 2, 1].map(AverInt::from_i64).to_vec());
+        assert_eq!(right, packed);
+        assert_eq!(hash(&right), hash(&packed));
+        // Octets already packed are copied in once.
+        let onto_packed = prepended(&packed, &[9]);
+        assert!(matches!(onto_packed, AverIntList::Stack(_)));
+        assert_eq!(onto_packed.aver_display(), "[9, 6, 3, 2, 1]");
+        assert_eq!(packed.aver_display(), "[6, 3, 2, 1]");
+    }
+
+    #[test]
+    fn a_reverse_of_a_sole_buffer_reuses_it_and_a_long_chain_drops() {
+        let built = prepended(&AverIntList::empty(), &[1, 2, 3]);
+        let AverIntList::Packed(forwards) = built.reverse_owned() else {
+            panic!("a stack reverses into octets");
+        };
+        assert_eq!(forwards.as_slice(), &[1, 2, 3]);
+        // Every prepend onto an older value starts a buffer of its own.
+        let mut chain = prepended(&AverIntList::empty(), &[0]);
+        for _ in 0..200_000 {
+            let _sibling = prepended(&chain, &[1]);
+            chain = prepended(&chain, &[2]);
+        }
+        assert_eq!(chain.len(), 200_001);
+        assert_eq!(chain.get(200_000), Some(AverInt::from_i64(0)));
+        assert_eq!(chain.reverse().get(1), Some(AverInt::from_i64(2)));
+        drop(chain);
     }
 
     #[test]

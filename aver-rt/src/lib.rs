@@ -2612,6 +2612,7 @@ impl AverListMatch for AverIntList {
                 values.step_first();
                 Some((head, AverIntList::Narrow(values)))
             }
+            stack @ AverIntList::Stack(_) => stack.uncons_cloned(),
         }
     }
 
@@ -2627,6 +2628,7 @@ impl AverListMatch for AverIntList {
                 .first()
                 .map(|byte| (AverInt::from_i64(i64::from(*byte)), ListRest::Next)),
             AverIntList::Narrow(values) => values.first().map(|head| (head, ListRest::Next)),
+            AverIntList::Stack(_) => self.get(0).map(|head| (head, ListRest::Next)),
             AverIntList::Wide(values) => match values.uncons_lent()? {
                 (head, ListRest::Next) => Some((head.clone(), ListRest::Next)),
                 (head, ListRest::Lent(tail)) => Some((
@@ -2650,6 +2652,7 @@ impl AverListMatch for AverIntList {
             AverIntList::Packed(values) => values.step_first(),
             AverIntList::Narrow(values) => values.step_first(),
             AverIntList::Wide(values) => values.step_rest(),
+            AverIntList::Stack(_) => *self = self.drop_first(1),
         }
     }
 }
