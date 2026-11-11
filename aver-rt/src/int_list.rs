@@ -933,6 +933,15 @@ mod tests {
     }
 
     #[test]
+    fn a_packed_carrier_reads_an_element_in_place() {
+        let values = AverIntList::from_vec([0, 7, 255].map(AverInt::from_i64).to_vec());
+        let packed = values.as_packed().expect("byte values should be packed");
+        assert_eq!(packed.get_int(2), Some(AverInt::from_i64(255)));
+        assert_eq!(packed.get_int(3), None);
+        assert_eq!(packed.drop_first(1).get_int(0), Some(AverInt::from_i64(7)));
+    }
+
+    #[test]
     fn packed_access_reuses_the_backing_storage() {
         let values = AverIntList::from_vec(
             [0, 1, 127, 255]
