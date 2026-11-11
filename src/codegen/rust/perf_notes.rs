@@ -6,7 +6,8 @@
 //! - A Map or Vector copied whole before a write: the emitter clones the
 //!   target of `Map.set`, `Map.remove` or `Vector.set`, so the write meets a
 //!   collection with a second owner and copies it. The emitter records each
-//!   such target as it renders it ([`owned_write_target`]); the note says
+//!   such target as it renders it ([`owned_write_target`]), and drops what
+//!   a render it throws away recorded ([`take_copies`]); the note says
 //!   why it was not handed over: a later read, a loop that keeps it for its
 //!   next round, or a parameter the function only borrows. A copy made at
 //!   run time because the collection's count is above one without a clone
@@ -129,6 +130,36 @@ fn record(
             keep: keep.map(addr),
         },
     );
+}
+
+/// The copies recorded under `exprs`, taken out of the record: a render of
+/// them the emitter is about to throw away for another, which records its
+/// own (an update rendered again to write a record in place).
+pub(super) fn take_copies<'e>(
+    exprs: impl IntoIterator<Item = &'e MirExpr>,
+    ctx: &MirEmitCtx<'_>,
+) -> Vec<(usize, CopiedTarget)> {
+    let Some(codegen) = ctx.codegen else {
+        return Vec::new();
+    };
+    let mut copied = codegen.rust_copied_targets.borrow_mut();
+    let mut taken = Vec::new();
+    for e in exprs {
+        visit(e, &mut |e| {
+            if let Some(copy) = copied.remove(&addr(e)) {
+                taken.push((addr(e), copy));
+            }
+        });
+    }
+    taken
+}
+
+/// Copies [`take_copies`] took out, back in the record: the render they
+/// came from is the one the emitter keeps.
+pub(super) fn put_copies(copies: Vec<(usize, CopiedTarget)>, ctx: &MirEmitCtx<'_>) {
+    if let Some(codegen) = ctx.codegen {
+        codegen.rust_copied_targets.borrow_mut().extend(copies);
+    }
 }
 
 /// The notes of the transpile that `ctx` has just emitted, with the
@@ -906,6 +937,74 @@ fn reads(f: Frame, i: Int) -> Int
             [
                 "13: `writeArr` copies `xs` to pass it to `setAt`, which writes it in place: `writeArr` only borrows `xs`, which its caller keeps",
                 "27: `step` copies `f` to pass it to `hot`, which writes it in place: `f` is read again at line 29",
+            ]
+        );
+    }
+
+    /// An update of a counted record the emitter renders again to write
+    /// in place: the copies of its first render, which it throws away, are
+    /// not noted, while a real copy beside it still is.
+    #[test]
+    fn a_counted_record_written_in_place_notes_no_copy() {
+        let fields: String = (0..16).map(|k| format!("    f{k}: Int\n")).collect();
+        let zeros: String = (0..16).map(|k| format!(", f{k} = 0")).collect();
+        let src = format!(
+            r#"module M
+    intent = "perf"
+
+record Tables
+    names: Map<Int, String>
+    cur: Vector<Int>
+    dense: Int
+    next: Int
+{fields}
+fn empty() -> Tables
+    Tables(names = {{}}, cur = Vector.new(8, 0), dense = 0, next = 0{zeros})
+
+fn addName(t: Tables, i: Int, n: String) -> Result<Tables, String>
+    match Map.has(t.names, i)
+        true -> Result.Err("bound")
+        false -> Result.Ok(Tables.update(t, names = Map.set(t.names, i, n), next = t.next + 1))
+
+fn placed(v: Vector<Int>, j: Int, e: Int) -> Vector<Int>
+    Option.withDefault(Vector.set(v, j, e), v)
+
+fn denseAdd(t: Tables, e: Int) -> Tables
+    Tables.update(t, cur = placed(t.cur, t.dense, e), dense = t.dense + 1)
+
+fn sequential(t: Tables, k: Int, n: Int) -> Tables
+    match k >= n
+        true -> t
+        false -> sequential(Result.withDefault(addName(t, k, "x"), t), k + 1, n)
+
+fn bumps(v: Vector<Int>) -> Int
+    w = placed(v, 0, 1)
+    Vector.len(w) + Vector.len(v)
+"#
+        );
+        let mut ctx = super::super::tests::ctx_from_source(&src, "perf");
+        let out = super::super::transpile(&mut ctx);
+        let code: String = out
+            .files
+            .iter()
+            .map(|(_, content)| content.as_str())
+            .collect();
+        // The emitter writes both updates in place.
+        assert!(
+            code.contains("__record0.names.insert_owned(i, n)"),
+            "{code}"
+        );
+        assert!(code.contains("placed(__record0.cur, "), "{code}");
+        let notes: Vec<String> = out
+            .perf_notes
+            .into_iter()
+            .map(|note| format!("{}: {}", note.line, note.text))
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                "43: `sequential` copies `t` to pass it to `addName`, which writes it in place: `t` is read again at line 43",
+                "46: `bumps` copies `v` to pass it to `placed`, which writes it in place: `v` is read again at line 47",
             ]
         );
     }
