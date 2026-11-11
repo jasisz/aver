@@ -219,24 +219,52 @@ pub fn cancel_checkpoint_now() {
     }
 }
 
+/// Puts the cancel flags of the thread back when an element is done.
+struct CallerCancelFlags(Vec<Arc<AtomicBool>>, u32);
+
+impl Drop for CallerCancelFlags {
+    fn drop(&mut self) {
+        ACTIVE_CANCEL_FLAGS.with(|cell| *cell.borrow_mut() = std::mem::take(&mut self.0));
+        CANCEL_STEPS_LEFT.with(|left| left.set(self.1));
+    }
+}
+
+/// Runs an element of a product out of sight of the cancel flags of the
+/// products around it on the thread that runs it, as on a thread of its own.
+fn as_branch<T>(run: impl FnOnce() -> T) -> T {
+    let flags = ACTIVE_CANCEL_FLAGS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+    let _caller = CallerCancelFlags(flags, CANCEL_STEPS_LEFT.with(|left| left.replace(0)));
+    run()
+}
+
 /// Runs the first element of a product on the thread that reaches the
-/// product, while the other elements run on threads of their own. It runs
-/// as if on a thread of its own: it sees no cancel flag of a product around
-/// it, its `Terminal` output and sockets are its own and are flushed and
-/// closed when it ends (`aver_rt::as_own_thread`), and its panic comes back
-/// as the `Err` that joining its thread would give.
+/// product, while the other elements run as tasks. It runs as if on a thread
+/// of its own: it sees no cancel flag of a product around it, its
+/// `Terminal` output and sockets are its own and are flushed and closed when
+/// it ends (`aver_rt::as_own_thread`), and its panic comes back as the `Err`
+/// that joining its thread would give.
 pub fn run_first_branch<T, F>(run: F) -> std::thread::Result<T>
 where
     F: FnOnce() -> T,
 {
-    let flags = ACTIVE_CANCEL_FLAGS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
-    let steps = CANCEL_STEPS_LEFT.with(|left| left.replace(0));
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        ::aver_rt::as_own_thread(run)
-    }));
-    ACTIVE_CANCEL_FLAGS.with(|cell| *cell.borrow_mut() = flags);
-    CANCEL_STEPS_LEFT.with(|left| left.set(steps));
-    result
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        as_branch(|| ::aver_rt::as_own_thread(run))
+    }))
+}
+
+/// Begins an element of a product after the first as a task of the
+/// product's scope. A worker runs it, or the thread that joins it when no
+/// worker has taken it yet; either way it sees no cancel flag of a product
+/// around it.
+pub fn spawn_branch<'scope, 'env, T, F>(
+    scope: &'scope ::aver_rt::work::Scope<'scope, 'env>,
+    run: F,
+) -> ::aver_rt::work::ScopedTask<'scope, T>
+where
+    F: FnOnce() -> T + Send + 'scope,
+    T: Send + 'scope,
+{
+    scope.spawn(move || as_branch(run))
 }
 
 pub fn run_cancelable_branch<T, F>(flag: Arc<AtomicBool>, run: F) -> ParallelBranch<T>

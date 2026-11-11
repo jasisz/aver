@@ -4032,16 +4032,16 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         };
 
         assert!(
-            entry(&many).contains("std::thread::scope"),
+            entry(&many).contains("aver_rt::work::scope"),
             "{}",
             entry(&many)
         );
         assert!(
-            !entry(&one).contains("std::thread::scope"),
+            !entry(&one).contains("aver_rt::work::scope"),
             "{}",
             entry(&one)
         );
-        assert!(!entry(&one).contains("spawn_scoped"), "{}", entry(&one));
+        assert!(!entry(&one).contains("spawn_branch"), "{}", entry(&one));
         assert!(!generated_file(&many, "Cargo.toml").contains("plain-counts"));
         assert!(generated_file(&one, "Cargo.toml").contains("\"plain-counts\""));
 
@@ -4103,12 +4103,14 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
             Some("threads: many (auto: the independent product in fn both (line 7))")
         );
         assert!(
-            generated_file(&auto, "src/aver_generated/entry/mod.rs").contains("std::thread::scope")
+            generated_file(&auto, "src/aver_generated/entry/mod.rs")
+                .contains("aver_rt::work::scope")
         );
         let one = from(product, RustThreads::One);
         assert!(plain(&one));
         assert!(
-            !generated_file(&one, "src/aver_generated/entry/mod.rs").contains("std::thread::scope")
+            !generated_file(&one, "src/aver_generated/entry/mod.rs")
+                .contains("aver_rt::work::scope")
         );
 
         let tcp = "module Demo\n\nfn main() -> Unit\n    ! [Tcp.connect, Console.print]\n    match Tcp.connect(\"localhost\", 1)\n        Result.Ok(_) -> Console.print(\"up\")\n        Result.Err(e) -> Console.print(e)\n";
@@ -4511,7 +4513,7 @@ fn main() -> Result<Tuple<Int, Int>, String>
 
         assert!(entry.contains("crate::run_cancelable_branch"));
         assert!(entry.contains("capture_parallel_scope_context"));
-        assert!(entry.contains("aver_rt::spawn_scoped(__s, move ||"));
+        assert!(entry.contains("crate::spawn_branch(__s, move ||"));
         assert!(entry.contains("crate::run_first_branch(__h0)"));
         assert!(runtime_support.contains("pub fn run_cancelable_branch"));
         assert!(runtime_support.contains("pub fn run_first_branch"));
