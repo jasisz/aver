@@ -10,6 +10,7 @@ pub mod emit_ctx;
 mod expr;
 mod field_layout;
 mod forced_inline;
+mod free_calls;
 mod from_mir;
 mod knowing;
 mod lent_option;
@@ -248,14 +249,17 @@ fn transpile_project(
         // `AverInt` field and the facts the context was built with.
         let (carriers, ctors, notes) = carrier::i64_carriers(ctx, &prog);
         carrier_notes = notes;
+        // The calls emitted outside any function body are callers too.
+        let free = free_calls::collect(ctx);
         let (prog, facts) = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust_with_facts(
-            prog, &boxed, &carriers,
+            prog,
+            &boxed,
+            &carriers,
+            Some(&free),
         );
-        if !carriers.is_empty() {
-            // The emitter reads the facts the rewrite placed its boundaries
-            // by, which know the carriers.
-            ctx.bare_i64 = facts;
-        }
+        // The emitter reads the facts the rewrite placed its boundaries by,
+        // which know the carriers and the ranges callers pass.
+        ctx.bare_i64 = facts;
         ctx.rust_i64_carriers = carriers;
         ctx.rust_i64_carrier_ctors = ctors;
         ctx.mir_program = Some(prog);

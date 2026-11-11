@@ -61,7 +61,7 @@ pub fn rewrite_for_rust(
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
     carrier: &super::bare_i64::CarrierIds,
 ) -> MirProgram {
-    rewrite_for_rust_with_facts(program, boxed_signature_fns, carrier).0
+    rewrite_for_rust_with_facts(program, boxed_signature_fns, carrier, None).0
 }
 
 /// [`rewrite_for_rust`], also returning the analysis the rewrite placed its
@@ -76,8 +76,9 @@ pub fn rewrite_for_rust_with_facts(
     program: MirProgram,
     boxed_signature_fns: &std::collections::HashSet<crate::ir::FnId>,
     carrier: &super::bare_i64::CarrierIds,
+    free: Option<&super::bare_i64::FreeCalls>,
 ) -> (MirProgram, BareI64Facts) {
-    let facts = super::bare_i64::analyze_rust(&program, carrier);
+    let facts = super::bare_i64::analyze_rust(&program, carrier, free);
     rewrite(
         program,
         facts,

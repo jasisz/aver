@@ -749,10 +749,7 @@ pub fn builtinStringChars(
                 let __arg4 @ _ =
                     <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
                 crate::aver_generated::domain::builtins::primitives::stringToCharList(
-                    &s,
-                    aver_rt::AverInt::from_i64(0),
-                    __arg3,
-                    __arg4,
+                    &s, 0i64, __arg3, __arg4,
                 )
             }
         }),
@@ -763,18 +760,14 @@ pub fn builtinStringChars(
 #[inline(always)]
 pub fn stringToCharList(
     s @ _: &AverStr,
-    pos @ _: aver_rt::AverInt,
+    pos @ _: i64,
     total @ _: aver_rt::AverInt,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     let __arg4 @ _ = aver_rt::string_index_build(&s);
     crate::aver_generated::domain::builtins::primitives::stringToCharList__indexed(
-        s,
-        pos.to_i64().expect("Int out of i64 range"),
-        total,
-        acc,
-        &__arg4,
+        s, pos, total, acc, &__arg4,
     )
 }
 

@@ -855,19 +855,27 @@ pub fn analyze_with_fields(
         field_carrier,
         rust_positions,
         &CarrierIds::new(),
+        None,
     )
 }
 
 /// The Rust backend's facts with its carriers (`carrier_ids`): a read of a
 /// carrier's field is a raw `i64` with the carrier's bound, whatever the
-/// base (see [`FnBareFacts::rust`]).
-pub fn analyze_rust(program: &MirProgram, carrier_ids: &CarrierIds) -> BareI64Facts {
+/// base (see [`FnBareFacts::rust`]). With `free`, every call the backend
+/// emits outside a function body, a param that never changes in its own
+/// recursion also ranges over what its callers pass ([`caller_ranges`]).
+pub fn analyze_rust(
+    program: &MirProgram,
+    carrier_ids: &CarrierIds,
+    free: Option<&FreeCalls>,
+) -> BareI64Facts {
     analyze_inner(
         program,
         &CarrierIntervals::new(),
         &FieldCarrierIntervals::new(),
         true,
         carrier_ids,
+        free,
     )
 }
 
@@ -877,6 +885,7 @@ fn analyze_inner(
     field_carrier: &FieldCarrierIntervals,
     rust_positions: bool,
     carrier_ids: &CarrierIds,
+    free: Option<&FreeCalls>,
 ) -> BareI64Facts {
     // Diagnostic / bench-differential escape hatch: skip the analysis so a
     // run keeps the conservative all-Boxed baseline.
@@ -902,14 +911,37 @@ fn analyze_inner(
     // bounded-field read), which the body pass reads via the per-fn facts; the
     // cross-frame param/return summary keys off `carrier` exactly as before.
     let carrier_ids = std::sync::Arc::new(carrier_ids.clone());
-    let summary = compute_summary(
+    let mut entry_ranges: HashMap<(FnId, usize), Interval> = HashMap::new();
+    let mut summary = compute_summary(
         program,
         &int_params,
         carrier,
         field_carrier,
         rust_positions,
-        carrier_ids,
+        carrier_ids.clone(),
+        &entry_ranges,
     );
+    // Rust: the ranges callers pass, found again over the summary they gave.
+    // Every round is sound on its own (its ranges come from a sound round),
+    // so a few rounds that do not settle still leave a sound summary.
+    if rust_positions && let Some(free) = free {
+        for _ in 0..ENTRY_RANGE_ROUNDS {
+            let next = caller_ranges(program, &summary, carrier, field_carrier, free);
+            if next == entry_ranges {
+                break;
+            }
+            entry_ranges = next;
+            summary = compute_summary(
+                program,
+                &int_params,
+                carrier,
+                field_carrier,
+                rust_positions,
+                carrier_ids.clone(),
+                &entry_ranges,
+            );
+        }
+    }
 
     let mut fns: HashMap<FnId, FnBareFacts> = HashMap::new();
     for (id, f) in program.iter() {
@@ -938,6 +970,178 @@ fn analyze_inner(
     }
 
     BareI64Facts { fns }
+}
+
+/// Rust: the calls the backend emits outside any function body — `verify`
+/// cases and laws, module bindings, top-level statements — by the name of
+/// the function called. Each argument is the literal it is, or unknown. A
+/// param of a function called here with an unknown argument, or of a
+/// function named as a value here, takes no range from its callers.
+#[derive(Debug, Clone, Default)]
+pub struct FreeCalls {
+    /// Per function name, per argument: the hull of the literals passed,
+    /// `None` once any argument there is not a literal.
+    args: HashMap<String, Vec<Option<Interval>>>,
+    /// Functions named as a value.
+    named: HashSet<String>,
+}
+
+impl FreeCalls {
+    /// A call of `name` with these arguments, each a literal or unknown.
+    pub fn call(&mut self, name: &str, args: &[Option<i64>]) {
+        let cells = self.args.entry(name.to_string()).or_insert_with(|| {
+            args.iter()
+                .map(|a| a.map(|k| Interval::point(k as i128)))
+                .collect()
+        });
+        if cells.len() < args.len() {
+            cells.resize(args.len(), None);
+        }
+        for (cell, arg) in cells.iter_mut().zip(args) {
+            *cell = match (*cell, arg) {
+                (Some(c), Some(k)) => Some(c.hull(Interval::point(*k as i128))),
+                _ => None,
+            };
+        }
+    }
+
+    /// `name` named as a value, so called with anything.
+    pub fn named(&mut self, name: &str) {
+        self.named.insert(name.to_string());
+    }
+
+    /// What the free calls pass at param `i` of `name`: `Some(None)` for
+    /// anything, `Some(Some(range))` for literals in `range`, `None` when
+    /// no free call passes it.
+    fn passes(&self, name: &str, i: usize) -> Option<Option<Interval>> {
+        if self.named.contains(name) {
+            return Some(None);
+        }
+        self.args
+            .get(name)
+            .map(|cells| cells.get(i).copied().flatten())
+    }
+}
+
+/// How many times [`caller_ranges`] is recomputed over a new summary.
+const ENTRY_RANGE_ROUNDS: usize = 3;
+
+/// How many rounds [`caller_ranges`] carries ranges from callers' params
+/// on to their callees' within one summary.
+const ENTRY_RANGE_STEPS: usize = 4;
+
+/// Rust: for each `Int` param that every recursive call of its function
+/// passes on unchanged, the hull of what its callers pass. An argument's
+/// range is its interval with each param of the caller ranging over its
+/// own range from the step before (unbounded at first), a call over what
+/// `summary` says its callee returns, and a carrier read over the
+/// carrier's bound. Every step is sound given the one before, so stopping
+/// after a fixed number of steps is too. A param of `main`, of a function
+/// named as a value, or with a caller whose argument has no range gets
+/// none.
+fn caller_ranges(
+    program: &MirProgram,
+    summary: &Summary,
+    carrier: &CarrierIntervals,
+    field_carrier: &FieldCarrierIntervals,
+    free: &FreeCalls,
+) -> HashMap<(FnId, usize), Interval> {
+    let mut address_taken: HashSet<String> = HashSet::new();
+    for (_, f) in program.iter() {
+        collect_fn_values(&f.body.node, &mut address_taken);
+    }
+    let mut edges: Vec<CallEdge> = Vec::new();
+    for (caller, f) in program.iter() {
+        collect_call_edges(*caller, &f.body.node, &mut edges);
+    }
+    let mut facts: HashMap<FnId, FnBareFacts> = HashMap::new();
+    for edge in &edges {
+        facts.entry(edge.caller).or_insert_with(|| {
+            let f = program
+                .fn_by_id(edge.caller)
+                .expect("a caller is in the program");
+            analyze_fn(f, summary, carrier, field_carrier, None, true)
+        });
+    }
+    // What the free calls pass, the same at every step.
+    let mut free_hulls: HashMap<(FnId, usize), Option<Interval>> = HashMap::new();
+    for (id, f) in program.iter() {
+        for i in 0..f.params.len() {
+            if let Some(range) = free.passes(&f.name, i) {
+                free_hulls.insert((*id, i), range);
+            }
+        }
+    }
+    let mut ranges: HashMap<(FnId, usize), Interval> = HashMap::new();
+    for _ in 0..ENTRY_RANGE_STEPS {
+        let mut hulls: HashMap<(FnId, usize), Option<Interval>> = HashMap::new();
+        for edge in &edges {
+            let Some(target) = program.fn_by_id(edge.target) else {
+                continue;
+            };
+            if target.name == "main" || address_taken.contains(&target.name) {
+                continue;
+            }
+            let caller = program
+                .fn_by_id(edge.caller)
+                .expect("a caller is in the program");
+            let env: HashMap<LocalId, Interval> = caller
+                .params
+                .iter()
+                .enumerate()
+                .filter_map(|(k, p)| {
+                    ranges
+                        .get(&(edge.caller, k))
+                        .copied()
+                        .or_else(|| {
+                            summary
+                                .param_bare(edge.caller, k)
+                                .then(|| summary.param_interval(edge.caller, k))
+                                .flatten()
+                        })
+                        .map(|r| (p.local, r))
+                })
+                .collect();
+            for (i, arg) in edge.args.iter().enumerate() {
+                let Some(p) = target.params.get(i).filter(|p| ty_str_is_int(&p.ty)) else {
+                    continue;
+                };
+                let range = if edge.caller == edge.target {
+                    // The recursion must hand the param on as it is.
+                    match subject_is_local(&arg.node, p.local) {
+                        true => continue,
+                        false => None,
+                    }
+                } else {
+                    let mut worst = Interval::point(0);
+                    let r = eval_interval(&arg.node, &env, &mut worst, &facts[&edge.caller]);
+                    (r.fits_i64() && worst.fits_i64()).then_some(r)
+                };
+                let cell = hulls.entry((edge.target, i)).or_insert(range);
+                *cell = match (*cell, range) {
+                    (Some(a), Some(b)) => Some(a.hull(b)),
+                    _ => None,
+                };
+            }
+        }
+        for (key, range) in &free_hulls {
+            if let Some(cell) = hulls.get_mut(key) {
+                *cell = match (*cell, *range) {
+                    (Some(a), Some(b)) => Some(a.hull(b)),
+                    _ => None,
+                };
+            }
+        }
+        let next: HashMap<(FnId, usize), Interval> = hulls
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k, v)))
+            .collect();
+        if next == ranges {
+            break;
+        }
+        ranges = next;
+    }
+    ranges
 }
 
 /// Cross-frame summary: per-fn, which params are bare and whether the
@@ -973,6 +1177,11 @@ struct Summary {
 }
 
 impl Summary {
+    /// Rust: is a record of identity `id` a carrier held as a raw `i64`?
+    fn is_carrier(&self, id: Option<crate::ir::TypeId>) -> bool {
+        id.is_some_and(|id| self.carrier_ids.contains_key(&id))
+    }
+
     /// Does the loop of `id` hold param `i` as an `i64` though its
     /// signature keeps it boxed (a position checked on entry)?
     fn checked_param(&self, id: FnId, i: usize) -> bool {
@@ -1011,6 +1220,7 @@ fn compute_summary(
     field_carrier: &FieldCarrierIntervals,
     rust_positions: bool,
     carrier_ids: std::sync::Arc<CarrierIds>,
+    entry_ranges: &HashMap<(FnId, usize), Interval>,
 ) -> Summary {
     // Address-taken fns (name appears as a `FnValue`) have callers we
     // cannot attribute — pin all their params/return boxed.
@@ -1071,6 +1281,15 @@ fn compute_summary(
     // type and both readers (condition B + the `analyze_fn` seed) are
     // unchanged.
     let mut bare_param_intervals = compute_bare_param_intervals(program, &edges, &address_taken);
+    // Rust: a param that never changes in its own recursion ranges over
+    // what its callers pass ([`caller_ranges`]).
+    for (&(id, i), range) in entry_ranges {
+        if let Some(cell) = bare_param_intervals.get_mut(&id).and_then(|v| v.get_mut(i))
+            && cell.is_none()
+        {
+            *cell = Some(*range);
+        }
+    }
     let ranges = string_positions(
         program,
         &edges,
@@ -3721,17 +3940,26 @@ fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet
                 scan_escapes(&a.node, self_fn, summary, out);
             }
         }
+        // Rust: the field of a carrier held as a raw `i64` takes a raw value
+        // as it is (the rewrite's `rewrite_field`), so it is not a
+        // general-Int sink.
         MirExpr::RecordCreate(r) => {
+            let carrier = summary.is_carrier(r.node.type_id);
             for fld in &r.node.fields {
-                mark_operand_escapes_deep(&fld.value.node, out);
+                if !carrier {
+                    mark_operand_escapes_deep(&fld.value.node, out);
+                }
                 scan_escapes(&fld.value.node, self_fn, summary, out);
             }
         }
         MirExpr::RecordUpdate(u) => {
             mark_operand_escapes_deep(&u.node.base.node, out);
             scan_escapes(&u.node.base.node, self_fn, summary, out);
+            let carrier = summary.is_carrier(u.node.type_id);
             for fld in &u.node.updates {
-                mark_operand_escapes_deep(&fld.value.node, out);
+                if !carrier {
+                    mark_operand_escapes_deep(&fld.value.node, out);
+                }
                 scan_escapes(&fld.value.node, self_fn, summary, out);
             }
         }
@@ -3851,6 +4079,12 @@ fn mark_operand_escapes_deep(e: &MirExpr, out: &mut HashSet<LocalId>) {
             out.insert(l.node.slot);
         }
         MirExpr::Neg(inner) => mark_operand_escapes_deep(&inner.node, out),
+        // A comparison is a `Bool`: its operands do not reach the sink.
+        MirExpr::BinOp(b)
+            if matches!(
+                b.node.op,
+                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
+            ) => {}
         MirExpr::BinOp(b) => {
             mark_operand_escapes_deep(&b.node.lhs.node, out);
             mark_operand_escapes_deep(&b.node.rhs.node, out);
@@ -5679,6 +5913,41 @@ fn main() -> Int
     }
 
     #[test]
+    fn a_param_ranges_over_what_its_callers_pass() {
+        // `scaled` is never called recursively: its `n` ranges over what
+        // its callers pass, 5..7, so `n * 3 + 1` stays an `i64`. The calls
+        // emitted outside a function body count too: one with an argument
+        // that is not a literal, or naming `scaled` as a value, leaves `n`
+        // without a range.
+        let src = r#"
+fn scaled(n: Int) -> Int
+    n * 3 + 1
+
+fn main() -> Int
+    scaled(5) + scaled(7)
+"#;
+        let (program, _) = facts_for(src);
+        let id = fn_id_by_name(&program, "scaled");
+        let bare = |free: Option<&FreeCalls>| {
+            analyze_rust(&program, &CarrierIds::new(), free)
+                .for_fn(id)
+                .unwrap()
+                .param_is_bare(0)
+        };
+        assert!(!bare(None), "without the free calls there is no range");
+        let mut free = FreeCalls::default();
+        assert!(bare(Some(&free)));
+        free.call("scaled", &[Some(-2)]);
+        assert!(bare(Some(&free)), "a literal widens the range");
+        let mut any = free.clone();
+        any.call("scaled", &[None]);
+        assert!(!bare(Some(&any)), "an unknown argument");
+        let mut named = free.clone();
+        named.named("scaled");
+        assert!(!bare(Some(&named)), "named as a value");
+    }
+
+    #[test]
     fn a_position_moved_by_a_literal_is_still_only_read_at() {
         // `pairAt` reads at `i + 1` and hands `i` and `i + 1` to `codeAt`,
         // which only reads at its position: both take an `i64` position,
@@ -5963,7 +6232,7 @@ fn mixed(w: Word, k: Int) -> Int
                     .symbol_table
                     .type_id_of(&crate::ir::TypeKey::entry("Word"))
                     .expect("Word has an identity");
-                analyze_rust(&program, &CarrierIds::from([(word, iv)]))
+                analyze_rust(&program, &CarrierIds::from([(word, iv)]), None)
             }
             false => analyze_with_fields(&program, &table, &FieldCarrierIntervals::new(), false),
         };
