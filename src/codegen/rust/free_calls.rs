@@ -65,21 +65,21 @@ fn verify_block(block: &VerifyBlock, free: &mut FreeCalls) {
 
 /// Note every call in `e` and every function `e` names as a value.
 fn expr(e: &Spanned<Expr>, givens: &HashMap<&str, &Spanned<Expr>>, free: &mut FreeCalls) {
-    walk(e, &mut |node| match &node.node {
-        Expr::FnCall(callee, args) => {
-            if let Some(name) = callee_name(&callee.node) {
+    walk(e, &mut |node| {
+        let Expr::FnCall(callee, args) = &node.node else {
+            return;
+        };
+        match callee_name(&callee.node) {
+            Some(name) => {
                 let args: Vec<Option<i64>> = args.iter().map(|a| literal(a, givens)).collect();
                 free.call(name, &args);
             }
             // A callee that is not a plain name is visited as a value.
-            if callee_name(&callee.node).is_none() {
-                value_names(callee, free);
-            }
-            for arg in args.iter() {
-                value_names(arg, free);
-            }
+            None => value_names(callee, free),
         }
-        _ => {}
+        for arg in args.iter() {
+            value_names(arg, free);
+        }
     });
 }
 

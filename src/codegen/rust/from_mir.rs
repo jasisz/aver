@@ -474,11 +474,11 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
         // renders such a read raw where the facts know it).
         MirExpr::Project(_) if ctx.bare.is_carrier_project(&expr.node) => emit_mir_expr(expr, ctx),
         // A call of a function that returns a raw `i64`.
-        MirExpr::Call(_) | MirExpr::Let(_)
-            if ctx.bare.call_return_interval(&expr.node).is_some() =>
-        {
+        MirExpr::Call(_) if ctx.bare.call_return_interval(&expr.node).is_some() => {
             emit_mir_expr(expr, ctx)
         }
+        // A `let` block whose body renders raw.
+        MirExpr::Let(l) if ctx.bare.expr_is_bare_i64(&l.node.body.node) => emit_mir_expr(expr, ctx),
         // A raw position moved by a literal, saturated at the ends of `i64`.
         MirExpr::Call(c)
             if c.node.callee == MirCallee::Intrinsic(BuiltinIntrinsic::PositionOffset) =>

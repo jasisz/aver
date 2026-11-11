@@ -729,7 +729,8 @@ impl FnBareFacts {
             MirExpr::Call(_) => carrier_call_interval(e)
                 .or_else(|| self.call_return_interval(e))
                 .or_else(|| self.raw_op_interval(e)),
-            MirExpr::Let(_) if !self.words_only => self.call_return_interval(e),
+            // Rust: a `let` block is worth its body.
+            MirExpr::Let(l) if self.rust => self.bare_expr_interval(&l.node.body.node),
             MirExpr::Neg(_) | MirExpr::BinOp(_) if self.words_only => None,
             MirExpr::Neg(inner) => {
                 let r = Interval::point(0).sub(self.bare_expr_interval(&inner.node)?);
@@ -776,7 +777,7 @@ impl FnBareFacts {
                     || self.call_return_interval(e).is_some()
                     || self.raw_op_interval(e).is_some()
             }
-            MirExpr::Let(_) if !self.words_only => self.call_return_interval(e).is_some(),
+            MirExpr::Let(l) if self.rust => self.expr_is_bare_i64(&l.node.body.node),
             // A compound: require the WHOLE-TREE result interval to fit i64.
             MirExpr::Neg(_) | MirExpr::BinOp(_) => self.bare_expr_interval(e).is_some_and(|iv| {
                 raw_i64_eligible(Some(iv), std::iter::once(&OpClass::OverflowFree))
