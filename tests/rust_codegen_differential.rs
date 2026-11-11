@@ -5716,6 +5716,52 @@ fn main() -> Unit
     );
 }
 
+/// A record passed whole with one of its fields after it (`step(t, i,
+/// t.dense)`). The field read was the last read of `t`, so `t` was cloned
+/// and `Vector.set` in `step` copied the whole Vector on every call. The
+/// field is now read first and `t` moves.
+#[test]
+fn rust_a_field_read_after_its_record_lets_the_record_move() {
+    let src = r#"module FieldAfter
+    intent = "Pass a record with one of its own fields"
+    depends []
+    effects [Console.print]
+
+record T
+    cur: Vector<Int>
+    dense: Int
+    n: Int
+
+fn step(t: T, i: Int, seg: Int) -> T
+    ? "One write."
+    match Vector.set(t.cur, Int.mod(i, 64), i + seg)
+        Option.Some(v) -> T.update(t, cur = v, n = t.n + 1)
+        Option.None -> t
+
+fn loop(t: T, i: Int, k: Int) -> T
+    ? "k writes, each passing t with t.dense."
+    match i >= k
+        true -> t
+        false -> loop(step(t, i, t.dense), i + 1, k)
+
+fn main() -> Unit
+    ! [Console.print]
+    t = loop(T(cur = Vector.new(64, 0), dense = 3, n = 0), 0, 100)
+    Console.print("{t.n} {Option.withDefault(Vector.get(t.cur, 5), 0)}")
+"#;
+    let expected = "100 72";
+    let vm = run_vm_inline("field_after", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("field_after", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("field_after", src);
+    assert!(
+        emitted.contains("= t.dense.clone(); step(t, ") && !emitted.contains("t.clone()"),
+        "the field must be read first and t moved:\n{emitted}"
+    );
+}
+
 /// The self-keep `Option.withDefault(Vector.set(s.f, i, x), s.f)` on a field
 /// of an owned record at its last use. The two reads of `s.f` hand on one
 /// value, so the field moves into the in-place set instead of being cloned

@@ -112,12 +112,22 @@ fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, calls: &Calls<'_>) {
         _ => return,
     };
     // The computed arguments up to the first one that cannot be bound.
-    let bound: Vec<usize> = args
+    let mut bound: Vec<usize> = args
         .iter()
         .enumerate()
         .filter(|(_, arg)| !read(&arg.node))
         .map_while(|(j, arg)| bindable(arg, boxed_return).then_some(j))
         .collect();
+    // A field read last after the value that holds it is passed whole
+    // (`f(t, t.dense)`) is read first, so the value moves.
+    if !write {
+        for j in field_reads_after_holder(args) {
+            if !bound.contains(&j) && bindable(&args[j], boxed_return) {
+                bound.push(j);
+            }
+        }
+        bound.sort_unstable();
+    }
     // A write is rewritten only when a bound argument reads the collection
     // it takes (or what holds it) last.
     if write {
@@ -154,6 +164,32 @@ fn read(expr: &MirExpr) -> bool {
         }
         _ => false,
     }
+}
+
+/// The arguments that read a field of a variable last, where an earlier
+/// argument passes a part of that variable which holds the field. Reading
+/// has no effect, so the field may be read before the call instead.
+fn field_reads_after_holder(args: &[Spanned<MirExpr>]) -> Vec<usize> {
+    let mut out = Vec::new();
+    for (j, arg) in args.iter().enumerate() {
+        let Some((local, path)) = read_path(&arg.node) else {
+            continue;
+        };
+        if path.is_empty() || !local.last_use {
+            continue;
+        }
+        let held = args[..j].iter().any(|earlier| {
+            read_path(&earlier.node).is_some_and(|(holder, prefix)| {
+                holder.slot == local.slot
+                    && prefix.len() < path.len()
+                    && prefix.iter().zip(&path).all(|(a, b)| a == b)
+            })
+        });
+        if held {
+            out.push(j);
+        }
+    }
+    out
 }
 
 /// Whether an argument can be bound to a local: it has a type, and an `Int`
