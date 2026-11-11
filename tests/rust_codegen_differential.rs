@@ -1072,7 +1072,8 @@ fn stored_element_params_taken_by_value_match_vm() {
     let emitted = emitted_entry_module("rust_stored_element", &src);
     for shape in [
         "k @ _: aver_rt::AverInt, mut a @ _: Val) -> aver_rt::AverVector<Val>",
-        "__vec.set_unchecked(__idx, a)",
+        "let __value = a; let __vec = v;",
+        "__vec.set_unchecked(__idx, __value)",
         "m.insert_owned(k, a)",
         "pub fn cons(mut a @ _: Val,",
         "aver_rt::AverList::prepend(a, rest)",
