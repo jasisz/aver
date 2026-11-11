@@ -77,13 +77,12 @@ pub fn unwrapPropagatedError(err @ _: &AverStr) -> Option<AverStr> {
 /// Catch internal ? propagation at a function boundary and turn it back into Result.Err(value).
 #[inline(always)]
 pub fn normalizeFnReturn(
-    result @ _: &Result<crate::aver_generated::domain::value::Val, AverStr>,
+    mut result @ _: Result<crate::aver_generated::domain::value::Val, AverStr>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match result {
-        Ok(v @ _) => Ok(v.clone()),
+        Ok(v @ _) => Ok(v),
         Err(err @ _) => {
-            let err = err.clone();
             match crate::aver_generated::domain::eval::common::unwrapPropagatedError(&err) {
                 Some(msg @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
                     crate::aver_generated::domain::value::Val__ValErr(

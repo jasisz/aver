@@ -89,7 +89,9 @@ pub fn rewriteInternalStmts(
                 Some((stmt, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = aver_rt::AverList::prepend_owned(
-                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(stmt),
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(
+                            stmt.clone(),
+                        ),
                         acc,
                     );
                     match __tco0 {
@@ -122,27 +124,25 @@ pub fn rewriteInternalStmts(
 
 /// Rewrite one statement recursively into lighter internal expression shapes.
 pub fn rewriteInternalStmt(
-    stmt @ _: &crate::aver_generated::domain::ast::Stmt,
+    mut stmt @ _: crate::aver_generated::domain::ast::Stmt,
 ) -> crate::aver_generated::domain::ast::Stmt {
     crate::cancel_checkpoint();
     match stmt {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
-            let name = name.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBind(
                 name,
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr.clone()),
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
-            let slot = slot.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
                 slot,
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr.clone()),
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
             crate::aver_generated::domain::ast::Stmt::StmtExpr(
-                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr.clone()),
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(expr),
             )
         }
     }
@@ -1368,7 +1368,9 @@ pub fn rewriteInternalStmts__collected(
                     let __tco0 = rest;
                     let __tco1 = aver_rt::list_builder_push(
                         acc,
-                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(stmt),
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(
+                            stmt.clone(),
+                        ),
                     );
                     match __tco0 {
                         aver_rt::ListRest::Lent(__rest) => {

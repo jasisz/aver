@@ -398,7 +398,7 @@ pub fn shiftFnIdsInStmts(
         crate::cancel_checkpoint();
         ::aver_rt::aver_list_match_reuse!(stmts, [] => { return (acc).reverse_owned(); }, [stmt, rest, __list_slot] => { {
             let __tco0 = rest;
-            let __tco2 = __list_slot.prepend(shiftFnIdsInStmt(&stmt, offset.clone()), acc);
+            let __tco2 = __list_slot.prepend(shiftFnIdsInStmt(stmt, offset.clone()), acc);
             stmts = __tco0;
             acc = __tco2;
             continue;
@@ -408,30 +408,22 @@ pub fn shiftFnIdsInStmts(
 
 /// Shift direct-call ids in one statement.
 pub fn shiftFnIdsInStmt(
-    stmt @ _: &crate::aver_generated::domain::ast::Stmt,
+    mut stmt @ _: crate::aver_generated::domain::ast::Stmt,
     offset @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::Stmt {
     crate::cancel_checkpoint();
     match stmt {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
-            let name = name.clone();
-            crate::aver_generated::domain::ast::Stmt::StmtBind(
-                name,
-                shiftFnIdsInExpr(expr.clone(), offset),
-            )
+            crate::aver_generated::domain::ast::Stmt::StmtBind(name, shiftFnIdsInExpr(expr, offset))
         }
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
-            let slot = slot.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
                 slot,
-                shiftFnIdsInExpr(expr.clone(), offset),
+                shiftFnIdsInExpr(expr, offset),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            crate::aver_generated::domain::ast::Stmt::StmtExpr(shiftFnIdsInExpr(
-                expr.clone(),
-                offset,
-            ))
+            crate::aver_generated::domain::ast::Stmt::StmtExpr(shiftFnIdsInExpr(expr, offset))
         }
     }
 }
@@ -1553,8 +1545,10 @@ pub fn shiftFnIdsInStmts__collected(
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((stmt, rest)) => {
                     let __tco0 = rest;
-                    let __tco2 =
-                        aver_rt::list_builder_push(acc, shiftFnIdsInStmt(stmt, offset.clone()));
+                    let __tco2 = aver_rt::list_builder_push(
+                        acc,
+                        shiftFnIdsInStmt(stmt.clone(), offset.clone()),
+                    );
                     match __tco0 {
                         aver_rt::ListRest::Lent(__rest) => {
                             stmts = __rest;
