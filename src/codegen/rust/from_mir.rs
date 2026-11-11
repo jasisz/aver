@@ -4181,9 +4181,6 @@ fn emit_counted_record_update(
                 record_alias: Some(&alias),
                 ..*ctx
             };
-            let (inside, _) = emit_update_parts(upd, false, &inner)?;
-            // The base moves as it is emitted outside the alias.
-            let base = emit_mir_expr(&upd.base, ctx)?;
             // A value that reads the record whole (`k = f(r.st)`) reads the
             // counted record, not the `Box`: it and every value before it
             // run first, as emitted outside the alias, so the order stays.
@@ -4192,6 +4189,19 @@ fn emit_counted_record_update(
                 .iter()
                 .rposition(|field| reads_place_whole(&field.value.node, root, &path))
                 .map_or(0, |i| i + 1);
+            // The copies the perf notes name are those of the values this
+            // emits: the ones before `before` as `parts` rendered them, the
+            // rest as rendered inside the alias.
+            let values = |range: std::ops::Range<usize>| {
+                upd.updates[range].iter().map(|field| &field.value.node)
+            };
+            let outer = super::perf_notes::take_copies(values(0..before), ctx);
+            super::perf_notes::take_copies(values(before..upd.updates.len()), ctx);
+            let (inside, _) = emit_update_parts(upd, false, &inner)?;
+            super::perf_notes::take_copies(values(0..before), ctx);
+            super::perf_notes::put_copies(outer, ctx);
+            // The base moves as it is emitted outside the alias.
+            let base = emit_mir_expr(&upd.base, ctx)?;
             if before == 0 {
                 return Some(in_box(&base, &inside));
             }
@@ -4389,6 +4399,9 @@ fn emit_boxed_record_update(
             record_alias: Some(&alias),
             ..*ctx
         };
+        // The values are emitted again inside the alias: the copies the
+        // perf notes name are that render's.
+        super::perf_notes::take_copies(upd.updates.iter().map(|f| &f.value.node), ctx);
         let (parts, _) = emit_update_parts(upd, false, &inner)?;
         return Some(in_binding(&parts));
     }
