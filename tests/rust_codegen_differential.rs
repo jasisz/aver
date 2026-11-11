@@ -6282,7 +6282,7 @@ fn a_value_looked_up_in_a_map_is_lent_to_a_function_that_only_reads_it() {
         "let x @ _ = memo.get(&k);\n    isNode(x)",
         "pub fn deep(o @ _: Option<&Expr>) -> bool {\n    crate::cancel_checkpoint();\n    isNode(o)",
         "match o { Some(_) => { o.cloned() }",
-        "Some(e @ _) => { Kept { e: Some(e.clone()), n: n } }",
+        "Some(e @ _) => { Kept { e: Some(e.clone()), n: aver_rt::AverInt::from_i64(n) } }",
         "let __arg2 @ _ = memo.get(&k).cloned();",
         "both((&__arg2).as_ref(), &__arg3)",
         "(deep((&o).as_ref()) == isNode((&o).as_ref()))",
