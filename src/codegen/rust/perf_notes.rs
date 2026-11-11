@@ -370,6 +370,10 @@ fn matched_part_writes(
         let Some((getter, holder)) = read_out(&m.node.subject.node) else {
             return;
         };
+        // The element is taken out of the vector, not copied (`VectorTake`).
+        if crate::ir::mir::field_moves::vector_take_match(&m.node, &program.builtins).is_some() {
+            return;
+        }
         // The locals the arms bind, and those a match on one of them binds.
         let mut parts: HashSet<LocalId> = HashSet::new();
         for arm in &m.node.arms {
@@ -740,13 +744,20 @@ pub(super) fn boxing(ctx: &CodegenContext) -> Vec<PerfNote> {
         let Some(sites) = calls.get(id).filter(|_| {
             !f.name.contains("__")
                 && !taken.contains(&ctx.symbol_table.fn_entry(*id).key.canonical())
-                && !builds_carrier_from_param(ctx, f)
         }) else {
             continue;
         };
+        let constructor = builds_carrier_from_param(ctx, f);
         let facts = ctx.bare_i64.for_fn(*id);
         for (index, param) in f.params.iter().enumerate() {
             if param.ty != "Int" || facts.is_some_and(|facts| facts.param_is_bare(index)) {
+                continue;
+            }
+            if let Some(note) = mixed_int_note(f, &param.name, index, sites) {
+                notes.push(note);
+                continue;
+            }
+            if constructor {
                 continue;
             }
             // Every argument boxes a machine word or is a literal.
@@ -793,6 +804,48 @@ pub(super) fn boxing(ctx: &CodegenContext) -> Vec<PerfNote> {
         }
     }
     notes
+}
+
+/// A param taken as an `Int` while most of its calls pass a machine word
+/// (boxed for it) and a few pass an `Int` not known to fit one: the param is
+/// a word only when every call can give it one, so those few calls set it
+/// for all (a smart constructor's `n` boxed for every caller by one that
+/// reads it from text). Noted at the first of them.
+fn mixed_int_note(f: &MirFn, param: &str, index: usize, sites: &[Call<'_>]) -> Option<PerfNote> {
+    let (mut words, mut general) = (0usize, Vec::new());
+    for site in sites {
+        match site.args.get(index).map(|arg| &arg.node) {
+            Some(MirExpr::Box(inner)) if !matches!(inner.node, MirExpr::Literal(_)) => words += 1,
+            Some(MirExpr::Literal(_) | MirExpr::Box(_)) => {}
+            _ => general.push(site),
+        }
+    }
+    // Only where the general calls are the few: otherwise the param is an
+    // `Int` by what its callers have, not by an exception.
+    if words == 0 || general.is_empty() || general.len() > words {
+        return None;
+    }
+    let first = general
+        .iter()
+        .min_by(|a, b| (&a.module, a.line).cmp(&(&b.module, b.line)))?;
+    let these = match general.len() {
+        1 => "this call passes".to_string(),
+        n => format!("{n} of its calls (this is the first) pass"),
+    };
+    let others = match words {
+        1 => "its other call passes a word it boxes".to_string(),
+        n => format!("{n} others pass a word it boxes"),
+    };
+    Some(PerfNote {
+        module: first.module.clone(),
+        line: first.line,
+        text: format!(
+            "`{}` takes `{param}` as an `Int` for all its {} calls: {these} an `Int` not known to fit a machine word, and {others}; a param is a word only when every call can give it one, so a word here (or a function of its own for this caller) lets the rest pass theirs, unless `{name}` needs an `Int` itself",
+            f.name,
+            sites.len(),
+            name = f.name,
+        ),
+    })
 }
 
 /// The carrier every one of `reads` is the `value` of, when they all are.
@@ -1026,6 +1079,53 @@ fn bumps(v: Vector<Int>) -> Int
                 "31: `round` copies the whole map `m` before `Map.set`: the loop passes `m` on unchanged to its next round at line 31",
                 "45: `mixed` takes `i` as an `Int`, and one of its 2 calls (this one; the others pass a literal) boxes a machine word into it: `mixed` works on it as an `Int`",
                 "45: `unpack` takes `i` as an `Int`, and all 2 of its calls (this is the first) box a machine word into it: taking the `Word` itself would keep it a machine word",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_few_calls_with_a_general_int_are_noted_where_they_box_a_param_for_all() {
+        let src = r#"module M
+    intent = "perf"
+    exposes opaque [Off]
+
+record Off
+    value: Int
+
+fn offOf(n: Int) -> Result<Off, String>
+    ? "n when it is a valid offset."
+    match Bool.and(n >= 0, n < 4294967296)
+        true -> Result.Ok(Off(value = n))
+        false -> Result.Err("bad offset")
+
+fn offAt(n: Int) -> Off
+    ? "n, or 0."
+    match offOf(n)
+        Result.Ok(o) -> o
+        Result.Err(_) -> Off(value = 0)
+
+fn bump(p: Off, k: Int) -> Off
+    ? "p moved by k."
+    offAt(p.value + k)
+
+fn fromText(s: String) -> Off
+    ? "An offset read from text: a general Int."
+    offAt(Result.withDefault(Int.fromString(s), 0))
+
+fn sum(p: Off, n: Int, acc: Int) -> Int
+    ? "Walks."
+    match n == 0
+        true -> acc
+        false -> sum(bump(p, 1), n - 1, acc + p.value)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{sum(offAt(3), 10, 0)} {fromText("12").value}")
+"#;
+        assert_eq!(
+            notes(src),
+            [
+                "26: `offAt` takes `n` as an `Int` for all its 3 calls: this call passes an `Int` not known to fit a machine word, and its other call passes a word it boxes; a param is a word only when every call can give it one, so a word here (or a function of its own for this caller) lets the rest pass theirs, unless `offAt` needs an `Int` itself"
             ]
         );
     }

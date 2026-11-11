@@ -224,6 +224,13 @@ fn is_ignored(slot: LocalId) -> bool {
 
 fn rewrite(e: &mut Spanned<MirExpr>, readers: &HashMap<FnId, Reader>, rewritten: &mut usize) {
     walk_children_mut(&mut e.node, &mut |child| rewrite(child, readers, rewritten));
+    if let MirExpr::BinOp(b) = &mut e.node {
+        if let Some(read) = indexed_comparison(&b.node, readers) {
+            b.node = read;
+            *rewritten += 1;
+        }
+        return;
+    }
     let MirExpr::Match(m) = &mut e.node else {
         return;
     };
@@ -231,6 +238,82 @@ fn rewrite(e: &mut Spanned<MirExpr>, readers: &HashMap<FnId, Reader>, rewritten:
         m.node = indexed;
         *rewritten += 1;
     }
+}
+
+/// `get(b, i) == Option.Some(k)` (or `!=`, either side) for a literal
+/// `k >= 0`, as `__packed_byte_at(b.values, i) == k`: the read answers `-1`
+/// exactly where the reader answers `Option.None`, which no such `k`
+/// equals, and the octet itself otherwise. A negative or computed `k`
+/// could be `-1`, so it keeps the general shape.
+fn indexed_comparison(
+    b: &super::super::expr::MirBinOp,
+    readers: &HashMap<FnId, Reader>,
+) -> Option<super::super::expr::MirBinOp> {
+    if !matches!(b.op, BinOp::Eq | BinOp::Neq) {
+        return None;
+    }
+    let (call, wanted) = match (&b.lhs.node, &b.rhs.node) {
+        (MirExpr::Call(_), _) => (&*b.lhs, &*b.rhs),
+        (_, MirExpr::Call(_)) => (&*b.rhs, &*b.lhs),
+        _ => return None,
+    };
+    let MirExpr::Call(c) = &call.node else {
+        return None;
+    };
+    let MirCallee::Fn(id) = c.node.callee else {
+        return None;
+    };
+    let reader = readers.get(&id)?;
+    let [carrier, index] = c.node.args.as_slice() else {
+        return None;
+    };
+    let MirExpr::Construct(some) = &wanted.node else {
+        return None;
+    };
+    let octet = match (&some.node.ctor, some.node.args.as_slice()) {
+        (MirCtor::Builtin(BuiltinCtor::OptionSome), [octet]) => octet,
+        _ => return None,
+    };
+    if !matches!(&octet.node, MirExpr::Literal(l) if matches!(l.node, Literal::Int(k) if k >= 0)) {
+        return None;
+    }
+    Some(super::super::expr::MirBinOp {
+        op: b.op,
+        lhs: Box::new(byte_at(carrier, index, reader, call.line)),
+        rhs: Box::new(octet.clone()),
+    })
+}
+
+/// `__packed_byte_at(carrier.<field>, index)`, typed as the `Int` it is.
+fn byte_at(
+    carrier: &Spanned<MirExpr>,
+    index: &Spanned<MirExpr>,
+    reader: &Reader,
+    line: usize,
+) -> Spanned<MirExpr> {
+    let projected = Spanned::new(
+        MirExpr::Project(Spanned::new(
+            MirProject {
+                base: Box::new(carrier.clone()),
+                field: reader.field.clone(),
+            },
+            carrier.line,
+        )),
+        carrier.line,
+    );
+    projected.set_ty(Type::List(Box::new(Type::Int)));
+    let read = Spanned::new(
+        MirExpr::Call(Spanned::new(
+            MirCall {
+                callee: MirCallee::Intrinsic(BuiltinIntrinsic::PackedByteAt),
+                args: vec![projected, index.clone()],
+            },
+            line,
+        )),
+        line,
+    );
+    read.set_ty(Type::Int);
+    read
 }
 
 /// The match on `__packed_byte_at` that answers `m`, a match on a reader
@@ -271,28 +354,7 @@ fn indexed_match(m: &MirMatch, readers: &HashMap<FnId, Reader>) -> Option<MirMat
     }
     let (none_body, (octet, octet_name, some_body)) = (none_body?, some?);
 
-    let projected = Spanned::new(
-        MirExpr::Project(Spanned::new(
-            MirProject {
-                base: Box::new(carrier.clone()),
-                field: reader.field.clone(),
-            },
-            carrier.line,
-        )),
-        carrier.line,
-    );
-    projected.set_ty(Type::List(Box::new(Type::Int)));
-    let subject = Spanned::new(
-        MirExpr::Call(Spanned::new(
-            MirCall {
-                callee: MirCallee::Intrinsic(BuiltinIntrinsic::PackedByteAt),
-                args: vec![projected, index.clone()],
-            },
-            m.subject.line,
-        )),
-        m.subject.line,
-    );
-    subject.set_ty(Type::Int);
+    let subject = byte_at(carrier, index, reader, m.subject.line);
     let some_pattern = if is_ignored(octet) {
         MirPattern::Wildcard
     } else {
@@ -411,6 +473,35 @@ fn main() -> Int
         assert!(matches!(m.arms[1].pattern, MirPattern::Bind(_, ref name) if name == "v"));
         // The reader itself keeps its body.
         assert!(first_match(&fn_named(&program, "get").body.node).is_some());
+    }
+
+    #[test]
+    fn a_comparison_with_a_literal_octet_reads_in_place_and_no_other_does() {
+        let src = r#"
+fn hits(b: Bytes, i: Int, k: Int) -> List<Bool>
+    [get(b, i) == Option.Some(44), Option.Some(0) != get(b, i), get(b, i) == Option.Some(-1), get(b, i) == Option.Some(k)]
+
+fn main() -> List<Bool>
+    hits(Bytes(values = [44]), 0, 1)
+"#;
+        let (program, rewritten) = index_packed_byte_reads(optimized(src), &bytes_carrier());
+        assert_eq!(rewritten, 2);
+        let MirExpr::List(items) = &fn_named(&program, "hits").body.node else {
+            panic!("body is not a list");
+        };
+        let reads_in_place = |e: &MirExpr| {
+            let MirExpr::BinOp(b) = e else {
+                return false;
+            };
+            matches!(&b.node.lhs.node, MirExpr::Call(c)
+                if c.node.callee == MirCallee::Intrinsic(BuiltinIntrinsic::PackedByteAt))
+        };
+        let read: Vec<bool> = items
+            .iter()
+            .map(|item| reads_in_place(&item.node))
+            .collect();
+        // `-1` is the read's answer past the end; a computed octet may be it.
+        assert_eq!(read, [true, true, false, false]);
     }
 
     #[test]

@@ -548,6 +548,11 @@ pub struct CodegenContext {
     pub rust_i64_carriers: crate::ir::mir::bare_i64::CarrierIds,
     /// The smart constructor of each carrier in `rust_i64_carriers`, by
     /// function identity, to the carrier and its one field. Filled with it.
+    /// For each function, the fields of each record param it never reads
+    /// but replaces (`field_moves::replaced_only_fields`): a caller handing
+    /// it the record at its last use may take such a field out first.
+    pub(crate) rust_replaced_only_fields:
+        std::collections::HashMap<crate::ir::FnId, Vec<Vec<String>>>,
     pub(crate) rust_i64_carrier_ctors:
         HashMap<crate::ir::FnId, crate::codegen::rust::carrier::CarrierCtor>,
     /// Proof-export decision IR populated by `proof_lower::lower`
@@ -1223,6 +1228,7 @@ pub fn build_context(
         packed_sequence_layouts: HashMap::new(),
         rust_i64_carriers: HashMap::new(),
         rust_i64_carrier_ctors: HashMap::new(),
+        rust_replaced_only_fields: HashMap::new(),
         bare_i64,
         rust_owned_record_params: Default::default(),
         rust_lent_strings: Default::default(),
@@ -1779,6 +1785,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         packed_sequence_layouts: std::collections::HashMap::new(),
         rust_i64_carriers: std::collections::HashMap::new(),
         rust_i64_carrier_ctors: std::collections::HashMap::new(),
+        rust_replaced_only_fields: std::collections::HashMap::new(),
         proof_ir: crate::ir::ProofIR::default(),
         symbol_table: crate::ir::SymbolTable::default(),
         current_module_scope: std::cell::RefCell::new(None),

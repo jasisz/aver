@@ -160,13 +160,36 @@ impl ByteStack {
     }
 
     /// `byte` prepended to the list this value is, which the caller hands
-    /// over: the only value on its buffer gives back the places past its
-    /// `len` first.
+    /// over: the value itself grows by one place, so its hold on the buffer
+    /// carries over. The only value on its buffer writes without claiming
+    /// the place (no one else can), giving back the places past its `len`;
+    /// a shared one claims it as `push_onto` does.
+    #[inline]
     fn push_owned(mut self, byte: u8) -> ByteStack {
-        if let Some(seg) = crate::shared::Shared::get_mut(&mut self.seg) {
-            *seg.used.get_mut() = self.len;
+        use std::sync::atomic::Ordering;
+        let len = self.len;
+        if len < self.seg.bytes.len() {
+            if let Some(seg) = crate::shared::Shared::get_mut(&mut self.seg) {
+                *seg.bytes[len].get_mut() = byte;
+                *seg.used.get_mut() = len + 1;
+                self.len = len + 1;
+                return self;
+            }
+            let seg = &self.seg;
+            if seg
+                .used
+                .compare_exchange(len, len + 1, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                // SAFETY: the place was claimed above, and no value reads it yet.
+                unsafe { *seg.bytes[len].get() = byte };
+                self.len = len + 1;
+                return self;
+            }
+            return ByteStack::start(byte, FIRST_PLACES, Some(self));
         }
-        self.push_onto(byte)
+        let places = (len * 2).min(MAX_PLACES);
+        ByteStack::start(byte, places, Some(self))
     }
 
     /// A list of `byte` over `below`, in a new buffer of `places` places.
@@ -539,6 +562,14 @@ impl Iterator for AverIntListIter<'_> {
 impl ExactSizeIterator for AverIntListIter<'_> {}
 impl std::iter::FusedIterator for AverIntListIter<'_> {}
 
+/// The empty list, which allocates nothing: what a record's list field is
+/// left holding when a call takes the list out of it (`std::mem::take`).
+impl Default for AverIntList {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl AverIntList {
     pub fn empty() -> Self {
         Self::Packed(AverPackedU8::from_vec(Vec::new()))
@@ -740,11 +771,49 @@ impl AverIntList {
                 left.len() + right.len(),
                 left.as_slice().iter().chain(right.as_slice()).copied(),
             )),
+            // Octets on both sides, one of them built by prepending: the
+            // left ones prepended onto the right, which a list built in
+            // front of keeps sharing, as a general list shares its tail.
+            (Self::Packed(_) | Self::Stack(_), Self::Packed(_) | Self::Stack(_)) => {
+                Self::octets_onto(left, right)
+            }
             _ => Self::Wide(AverList::concat(
                 &left.to_aver_list(),
                 &right.to_aver_list(),
             )),
         }
+    }
+
+    /// `left` prepended onto `right`, both lists of octets: the right one
+    /// as it is when it was built by prepending, its octets copied in once
+    /// otherwise. Costs the left list's length, whatever the right one's.
+    fn octets_onto(left: &Self, right: &Self) -> Self {
+        let bytes: Vec<u8> = left.octets().collect();
+        let Some((&last, rest)) = bytes.split_last() else {
+            return right.clone();
+        };
+        let mut stack = match right {
+            Self::Stack(stack) => stack.push_onto(last),
+            Self::Packed(values) => ByteStack::onto_octets(values, last),
+            Self::Narrow(_) | Self::Wide(_) => unreachable!("octets only"),
+        };
+        for byte in rest.iter().rev() {
+            stack = stack.push_owned(*byte);
+        }
+        Self::Stack(stack)
+    }
+
+    /// The elements of a list of octets (`Packed` or `Stack`), in order.
+    fn octets(&self) -> impl Iterator<Item = u8> + '_ {
+        let (packed, stack) = match self {
+            Self::Packed(values) => (Some(values.as_slice().iter().copied()), None),
+            Self::Stack(stack) => (None, Some(stack.iter())),
+            Self::Narrow(_) | Self::Wide(_) => (None, None),
+        };
+        packed
+            .into_iter()
+            .flatten()
+            .chain(stack.into_iter().flatten())
     }
 
     /// `concat` of a left list the caller hands over: two packed carriers
@@ -1062,6 +1131,67 @@ mod tests {
         assert!(matches!(onto_packed, AverIntList::Stack(_)));
         assert_eq!(onto_packed.aver_display(), "[9, 6, 3, 2, 1]");
         assert_eq!(packed.aver_display(), "[6, 3, 2, 1]");
+    }
+
+    #[test]
+    fn an_owned_prepend_grows_its_value_and_leaves_every_other_as_it_was() {
+        let owned = |list: AverIntList, values: &[i64]| {
+            values.iter().fold(list, |list, v| {
+                AverIntList::prepend_owned(AverInt::from_i64(*v), list)
+            })
+        };
+        // The only value on its buffer writes in place, past a full buffer
+        // too, and gives back places a shorter view of it had left.
+        let sole = owned(
+            prepended(&AverIntList::empty(), &[1]),
+            &(2..=40).collect::<Vec<_>>(),
+        );
+        assert_eq!(sole.len(), 40);
+        assert_eq!(sole.get(0), Some(AverInt::from_i64(40)));
+        assert_eq!(sole.get(39), Some(AverInt::from_i64(1)));
+        let shorter = owned(sole.drop_first(30), &[99]);
+        assert_eq!(
+            shorter.aver_display(),
+            "[99, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]"
+        );
+        // A value kept elsewhere: the owned one claims the next place once,
+        // and a second owned prepend onto the kept value starts its own.
+        let kept = prepended(&AverIntList::empty(), &[1, 2]);
+        let first = owned(kept.clone(), &[3, 4]);
+        let second = owned(kept.clone(), &[5]);
+        assert_eq!(kept.aver_display(), "[2, 1]");
+        assert_eq!(first.aver_display(), "[4, 3, 2, 1]");
+        assert_eq!(second.aver_display(), "[5, 2, 1]");
+    }
+
+    #[test]
+    fn octets_joined_stay_octets() {
+        let stack = prepended(&AverIntList::empty(), &[1, 2, 3]);
+        let packed = AverIntList::from_vec([7, 8].map(AverInt::from_i64).to_vec());
+        for (left, right, shown) in [
+            (&stack, &packed, "[3, 2, 1, 7, 8]"),
+            (&packed, &stack, "[7, 8, 3, 2, 1]"),
+            (&stack, &stack, "[3, 2, 1, 3, 2, 1]"),
+            (&AverIntList::empty(), &stack, "[3, 2, 1]"),
+        ] {
+            let joined = AverIntList::concat(left, right);
+            assert!(matches!(joined, AverIntList::Stack(_)));
+            assert_eq!(joined.aver_display(), shown);
+        }
+        assert_eq!(stack.aver_display(), "[3, 2, 1]");
+        assert_eq!(packed.aver_display(), "[7, 8]");
+        // A short list joined in front of a long one, again and again, as
+        // an encoder adds a record before what it has: each join costs the
+        // short one, and the long one is never copied.
+        let mut acc = stack.clone();
+        for _ in 0..100_000 {
+            acc = AverIntList::concat(&packed, &acc);
+        }
+        assert_eq!(acc.len(), 200_003);
+        assert_eq!(acc.get(200_000), Some(AverInt::from_i64(3)));
+        let wide = prepended(&AverIntList::empty(), &[300]);
+        let joined = AverIntList::concat(&stack, &wide);
+        assert_eq!(joined.aver_display(), "[3, 2, 1, 300]");
     }
 
     #[test]

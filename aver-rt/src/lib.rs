@@ -1052,6 +1052,16 @@ impl<T: Clone> AverVector<T> {
         self
     }
 
+    /// `set_unchecked` that hands back the element it replaced, moved out
+    /// rather than copied: the element read and the slot written at once.
+    ///
+    /// Caller must ensure `index < len()`.
+    pub fn replace_unchecked(mut self, index: usize, value: T) -> (Self, T) {
+        debug_assert!(index < self.inner.len());
+        let old = std::mem::replace(&mut self.inner.make_mut()[index], value);
+        (self, old)
+    }
+
     /// O(1) amortized if unique owner, O(n) clone if shared. None if out of bounds.
     pub fn set_owned(self, index: usize, value: T) -> Option<Self> {
         if index >= self.inner.len() {
@@ -1387,6 +1397,14 @@ impl<T> Clone for AverList<T> {
             start: self.start,
             segment_index: self.segment_index,
         }
+    }
+}
+
+/// The empty list, which allocates nothing: what a record's list field is
+/// left holding when a call takes the list out of it (`std::mem::take`).
+impl<T> Default for AverList<T> {
+    fn default() -> Self {
+        Self::empty()
     }
 }
 

@@ -265,6 +265,11 @@ fn transpile_project(
         ctx.mir_program = Some(prog);
         boxing_notes = perf_notes::boxing(ctx);
         arg_order::bind_computed_arguments(ctx);
+        ctx.rust_replaced_only_fields = ctx
+            .mir_program
+            .as_ref()
+            .map(crate::ir::mir::field_moves::replaced_only_fields)
+            .unwrap_or_default();
         // The by-value facts ask which sums have deferred calls: a match
         // never takes the fields out of a node of one.
         ctx.rust_lazy_sums = from_mir::compute_lazy_sums(ctx);

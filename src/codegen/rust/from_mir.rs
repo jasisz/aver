@@ -172,6 +172,10 @@ pub struct MirEmitCtx<'a> {
     /// happens only where the root local is also an owned Rust value.
     /// Empty on every path without per-fn facts.
     pub movable_projections: &'a HashSet<usize>,
+    /// Field reads that take their field out of a record a call is then
+    /// handed whole, by a callee that never reads the field
+    /// (`field_moves::taken_projections`): `std::mem::take(&mut q.out)`.
+    pub taken_fields: &'a HashSet<usize>,
     /// Locals some movable projection takes a field out of; see
     /// [`crate::ir::mir::field_moves::moved_roots`].
     pub moved_roots: &'a HashSet<crate::ir::mir::LocalId>,
@@ -183,6 +187,10 @@ pub struct MirEmitCtx<'a> {
     /// The boxed records whose new field values are being emitted, each
     /// already bound under its own name (see [`emit_boxed_record_update`]).
     pub record_alias: Option<&'a RecordAlias<'a>>,
+    /// The `Vector.set` (by its address) of a self-keeping set whose vector
+    /// an enclosing `match Vector.get` already wrote, and the name it bound
+    /// the written vector to (see [`emit_vector_take_match`]).
+    pub taken_vector: Option<(usize, &'a str)>,
     /// Elements a `match Vector.get(v, i)` lends out of a vector whose root
     /// local some arm hands on: the element's slot and name, and the root's
     /// slot (see [`lent_vector_get_in_wrapper`]). An arm that moves the root
@@ -269,10 +277,12 @@ impl<'a> MirEmitCtx<'a> {
             bare: empty_bare_facts(),
             try_err_to_string: false,
             movable_projections: empty_addr_set(),
+            taken_fields: empty_addr_set(),
             moved_roots: empty_slot_set(),
             moved_paths: &[],
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -324,10 +334,12 @@ impl<'a> MirEmitCtx<'a> {
             bare: &policy.bare,
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
+            taken_fields: &policy.taken_fields,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -366,10 +378,12 @@ impl<'a> MirEmitCtx<'a> {
             bare: &policy.bare,
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
+            taken_fields: &policy.taken_fields,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -448,6 +462,30 @@ fn mir_expr_is_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> bool {
     // raw binding aliases (`match Bits.and(i, 1023) { 0 -> …; b -> b }`)
     // compares its literals as `i64`.
     matches!(expr.node, MirExpr::Unbox(_)) || ctx.bare.expr_is_bare_i64(&expr.node)
+}
+
+/// The operands of a comparison as raw `i64`s, when both are bare words, or
+/// one is and the other an `Int` literal (`__packed_byte_at(b.values, i) ==
+/// 44`, which the packed byte read leaves for a literal octet).
+fn bare_comparison_operands(
+    bop: &crate::ir::mir::MirBinOp,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<(String, String)> {
+    let literal = |e: &Spanned<MirExpr>| matches!(&e.node, MirExpr::Literal(l) if matches!(l.node, crate::ast::Literal::Int(_)));
+    let (lhs, rhs) = (
+        mir_expr_is_bare_i64(&bop.lhs, ctx),
+        mir_expr_is_bare_i64(&bop.rhs, ctx),
+    );
+    if !((lhs || literal(&bop.lhs)) && (rhs || literal(&bop.rhs)) && (lhs || rhs)) {
+        return None;
+    }
+    // A bare call (an intrinsic that reads a word) renders raw as it is.
+    let raw = |e: &Spanned<MirExpr>, bare: bool| match (emit_bare_i64(e, ctx), bare) {
+        (Some(word), _) => Some(word),
+        (None, true) if matches!(e.node, MirExpr::Call(_)) => emit_mir_expr(e, ctx),
+        (None, _) => None,
+    };
+    Some((raw(&bop.lhs, lhs)?, raw(&bop.rhs, rhs)?))
 }
 
 /// Emit `expr` as a raw `i64` expression, assuming [`mir_expr_is_bare_i64`]
@@ -592,6 +630,8 @@ pub(super) struct MirFnEmitPolicy {
     /// [`MirEmitCtx::movable_projections`]. Empty until
     /// [`Self::apply_field_moves`] runs.
     pub movable_projections: HashSet<usize>,
+    /// See [`MirEmitCtx::taken_fields`].
+    pub taken_fields: HashSet<usize>,
     /// See [`MirEmitCtx::moved_roots`].
     pub moved_roots: HashSet<crate::ir::mir::LocalId>,
     /// See [`MirEmitCtx::moved_paths`].
@@ -613,6 +653,7 @@ impl MirFnEmitPolicy {
             bare: crate::ir::mir::FnBareFacts::default(),
             current_module_scope: None,
             movable_projections: HashSet::new(),
+            taken_fields: HashSet::new(),
             moved_roots: HashSet::new(),
             moved_paths: Vec::new(),
         }
@@ -652,6 +693,7 @@ impl MirFnEmitPolicy {
             bare: crate::ir::mir::FnBareFacts::default(),
             current_module_scope: scope.map(String::from),
             movable_projections: HashSet::new(),
+            taken_fields: HashSet::new(),
             moved_roots: HashSet::new(),
             moved_paths: Vec::new(),
         }
@@ -671,6 +713,21 @@ impl MirFnEmitPolicy {
             crate::ir::mir::field_moves::moved_roots(&mir_fn.body.node, &self.movable_projections);
         self.moved_paths =
             crate::ir::mir::field_moves::moved_paths(&mir_fn.body.node, &self.movable_projections);
+    }
+
+    /// Record which field reads of `mir_fn`'s body take their field out of
+    /// a record a call is then handed whole (see
+    /// [`MirEmitCtx::taken_fields`]). Addresses into this very body, as
+    /// [`Self::apply_field_moves`].
+    pub(super) fn apply_taken_fields(
+        &mut self,
+        mir_fn: &crate::ir::mir::MirFn,
+        ctx: &CodegenContext,
+    ) {
+        self.taken_fields = crate::ir::mir::field_moves::taken_projections(
+            &mir_fn.body.node,
+            &ctx.rust_replaced_only_fields,
+        );
     }
 
     /// Lend the `Option` params of `mir_fn` the lent-option analysis lends
@@ -2437,8 +2494,18 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
                             .is_some_and(|target| moves_field(target) || last_use_of(&target.node))
                             || (name != "Map.remove" && call.node.args.iter().skip(1).any(stores))
                     }
-                    // `List.prepend(x, rest)` keeps `x` in the new node.
-                    Some("List.prepend") => call.node.args.first().is_some_and(stores),
+                    // `List.prepend(x, rest)` keeps `x` in the new node,
+                    // and grows `rest` itself when it is handed over at its
+                    // last use: a list of octets built by prepending writes
+                    // the byte past its end, which a borrowed `rest` cannot.
+                    Some("List.prepend") => {
+                        call.node.args.first().is_some_and(stores)
+                            || call
+                                .node
+                                .args
+                                .get(1)
+                                .is_some_and(|rest| last_use_of(&rest.node))
+                    }
                     // The self-keep fusion `Option.withDefault(Vector.set(v,
                     // ..), v)` updates `v` in place and reads it last in the
                     // default, so the update's own read is not the last one.
@@ -3361,10 +3428,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             if matches!(
                 bop.op,
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
-            ) && mir_expr_is_bare_i64(&bop.lhs, emit_ctx)
-                && mir_expr_is_bare_i64(&bop.rhs, emit_ctx)
-                && let Some(lb) = emit_bare_i64(&bop.lhs, emit_ctx)
-                && let Some(rb) = emit_bare_i64(&bop.rhs, emit_ctx)
+            ) && let Some((lb, rb)) = bare_comparison_operands(bop, emit_ctx)
             {
                 let op = match bop.op {
                     BinOp::Eq => "==",
@@ -3728,6 +3792,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             }
             let base = emit_mir_expr(&proj.base, emit_ctx)?;
             let projected = format!("{}.{}", base, aver_name_to_rust(&proj.field));
+            if takes_field(&expr.node, emit_ctx) {
+                return Some(format!("std::mem::take(&mut {projected})"));
+            }
             let Some(Type::Named { id, name }) = proj.base.ty() else {
                 return Some(projected);
             };
@@ -4138,6 +4205,33 @@ fn values_end_base(upd: &crate::ir::mir::MirRecordUpdate, ctx: &MirEmitCtx<'_>) 
         );
     }
     last && !bad
+}
+
+/// Whether this field read takes its field out of the record, leaving the
+/// empty list (see [`MirEmitCtx::taken_fields`]): the record is a `mut`
+/// param taken by value, held as a plain struct, and the field is stored as
+/// the list it is.
+pub(super) fn takes_field(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    let MirExpr::Project(project) = expr else {
+        return false;
+    };
+    if !ctx
+        .taken_fields
+        .contains(&(expr as *const MirExpr as usize))
+        || super::ownership::through_counted(expr, ctx)
+    {
+        return false;
+    }
+    let Some(root) = local_of(&project.node.base.node) else {
+        return false;
+    };
+    let Some(Type::Named { id, name }) = project.node.base.ty() else {
+        return false;
+    };
+    super::ownership::root_is_owned(root, ctx)
+        && ctx.is_owned_param(&aver_name_to_rust(&root.name))
+        && carrier_storage(*id, ctx).is_none()
+        && packed_u8_carrier(*id, name, ctx) == Some(false)
 }
 
 /// Whether the record type of a literal or update is kept behind a `Box`
@@ -5720,6 +5814,46 @@ fn emit_mir_match(m: &MirMatch, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
     })
 }
 
+/// `match Vector.get(v, i)` that takes the element out and puts a
+/// placeholder in at once (see [`crate::ir::mir::field_moves::VectorTake`]),
+/// for an owned `v`: `replace_unchecked` moves the element out, and the arm
+/// reads the written vector where the set stood.
+fn emit_vector_take_match(
+    m: &MirMatch,
+    ctx: &MirEmitCtx<'_>,
+    render_arm: &dyn Fn(&Spanned<MirExpr>, &MirEmitCtx<'_>) -> Option<String>,
+) -> Option<String> {
+    if ctx.taken_vector.is_some() {
+        return None;
+    }
+    let take = crate::ir::mir::field_moves::vector_take_match(m, ctx.mir_builtins)?;
+    if !local_of(&take.vector.node).is_some_and(|root| super::ownership::root_is_owned(root, ctx)) {
+        return None;
+    }
+    let depth = ctx.record_alias.map_or(0, |alias| alias.depth + 1);
+    let written = format!("__taken{depth}");
+    let inner = MirEmitCtx {
+        taken_vector: Some((&take.set.node as *const MirExpr as usize, &written)),
+        ..*ctx
+    };
+    let some_body = render_arm(take.some, &inner)?;
+    let none_body = render_arm(take.none, ctx)?;
+    let place = match mir_expr_is_bare_i64(take.index, ctx) {
+        true => format!("usize::try_from({}).ok()", emit_bare_i64(take.index, ctx)?),
+        false => format!("({}).to_usize()", emit_mir_expr(take.index, ctx)?),
+    };
+    let vector = emit_mir_expr(take.vector, ctx)?;
+    let value = mir_clone_arg(emit_mir_expr(take.value, ctx)?, &take.value.node, ctx);
+    // A binder the source wrote as `_`.
+    let element = match take.element.0 == u32::from(u16::MAX) {
+        true => "_".to_string(),
+        false => aver_name_to_rust(take.element_name),
+    };
+    Some(format!(
+        "match {place}.filter(|__i| *__i < {vector}.len()) {{ None => {{ {none_body} }}, Some(__i) => {{ let ({written}, {element}) = {vector}.replace_unchecked(__i, {value}); {some_body} }} }}"
+    ))
+}
+
 /// Core of [`emit_mir_match`], parameterized over how each arm body is
 /// rendered. `render_arm` turns one arm's `Spanned<MirExpr>` body into
 /// Rust source (or `None` → fall back). The default path renders bodies
@@ -5732,6 +5866,9 @@ fn emit_mir_match_with(
     emit_ctx: &MirEmitCtx<'_>,
     render_arm: &dyn Fn(&Spanned<MirExpr>, &MirEmitCtx<'_>) -> Option<String>,
 ) -> Option<String> {
+    if let Some(taken) = emit_vector_take_match(m, emit_ctx, render_arm) {
+        return Some(taken);
+    }
     // Translate patterns up front — bail if any pattern can't map.
     let mut arms: Vec<ResolvedMatchArm> = Vec::with_capacity(m.arms.len());
     for arm in &m.arms {
@@ -8331,6 +8468,7 @@ pub(super) fn emit_mir_fn_body_routed(
             .map(|p| p.builtins.as_slice())
             .unwrap_or(&[]),
     );
+    policy.apply_taken_fields(mir_fn, ctx);
     policy.apply_lent_options(mir_fn, ctx);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
     if let MirExpr::Match(m) = &mir_fn.body.node {
@@ -8451,6 +8589,7 @@ pub(super) fn emit_mir_tco_fn(
             .map(|p| p.builtins.as_slice())
             .unwrap_or(&[]),
     );
+    policy.apply_taken_fields(mir_fn, ctx);
     policy.apply_lent_options(mir_fn, ctx);
     let self_loop = SelfLoop {
         fn_id: mir_fn.fn_id,
@@ -8898,21 +9037,15 @@ fn mir_if_cond_and_branches<'a>(
             // emits raw `i64` operands (a bare counter `i == 0` compares
             // `i64 == 0i64`, not `i64 == AverInt`). Mirror of the
             // comparison bare path in `emit_mir_expr`.
-            let (l, r) = if mir_expr_is_bare_i64(&bop.lhs, ctx)
-                && mir_expr_is_bare_i64(&bop.rhs, ctx)
-                && let Some(lb) = emit_bare_i64(&bop.lhs, ctx)
-                && let Some(rb) = emit_bare_i64(&bop.rhs, ctx)
-            {
-                (lb, rb)
-            } else {
-                (emit_mir_expr(&bop.lhs, ctx)?, emit_mir_expr(&bop.rhs, ctx)?)
-            };
-            let cond = if matches!(bop.op, BinOp::Eq | BinOp::Neq)
-                && !(mir_expr_is_bare_i64(&bop.lhs, ctx) && mir_expr_is_bare_i64(&bop.rhs, ctx))
-            {
-                mir_emit_equality(bop, &l, &r, op_str, ctx)
-            } else {
-                format!("({} {} {})", l, op_str, r)
+            let cond = match bare_comparison_operands(bop, ctx) {
+                Some((l, r)) => format!("({} {} {})", l, op_str, r),
+                None => {
+                    let (l, r) = (emit_mir_expr(&bop.lhs, ctx)?, emit_mir_expr(&bop.rhs, ctx)?);
+                    match bop.op {
+                        BinOp::Eq | BinOp::Neq => mir_emit_equality(bop, &l, &r, op_str, ctx),
+                        _ => format!("({} {} {})", l, op_str, r),
+                    }
+                }
             };
             if invert {
                 Some((cond, &ite.else_branch, &ite.then_branch))
@@ -9076,6 +9209,7 @@ pub(super) fn emit_mir_mutual_tco_block(
                 .map(|p| p.builtins.as_slice())
                 .unwrap_or(&[]),
         );
+        policy.apply_taken_fields(mir_fn, ctx);
         policy.apply_lent_options(mir_fn, ctx);
         let mut arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
         // Mutual invariants are `rc_wrapped` for owning reads, but unlike
@@ -10184,6 +10318,11 @@ fn try_emit_mir_fusion(
         // both `v` are the SAME local → in-place bounds-checked set.
         // HIR: `ResolvedLeafOp::VectorSetOrDefaultSameVector`.
         "Option.withDefault" if args.len() == 2 => {
+            if let Some((set, name)) = ctx.taken_vector
+                && set == &args[0].node as *const MirExpr as usize
+            {
+                return Some(name.to_string());
+            }
             let (inner_name, inner_args) = mir_builtin_call_parts(&args[0].node, ctx)?;
             if inner_name != "Vector.set" || inner_args.len() != 3 {
                 return None;
@@ -11678,10 +11817,12 @@ mod tests {
             bare: &policy.bare,
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
+            taken_fields: &policy.taken_fields,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -12873,10 +13014,12 @@ mod tests {
             bare: &policy.bare,
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
+            taken_fields: &policy.taken_fields,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],

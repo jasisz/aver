@@ -1076,7 +1076,8 @@ fn stored_element_params_taken_by_value_match_vm() {
         "__vec.set_unchecked(__idx, __value)",
         "m.insert_owned(k, a)",
         "pub fn cons(mut a @ _: Val,",
-        "aver_rt::AverList::prepend(a, rest)",
+        // The rest a caller hands over at its last use is taken too.
+        "aver_rt::AverList::prepend_owned(a, rest)",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
     }
@@ -5782,6 +5783,122 @@ fn rust_a_record_update_before_its_field_reads_takes_the_record() {
     assert!(
         !emitted.contains("w.clone()") && emitted.contains("big: note(w.big, "),
         "the update must take w over (a later read of w.big still keeps the old Vector):\n{emitted}"
+    );
+}
+
+/// An update of several fields whose values read a field the update keeps
+/// (`X.update(x, owner = f(x.owner), known = g(x.known, x.names))`) took
+/// copies of the fields it replaces. The record is read last in the values,
+/// so the replaced fields move into the calls that write them, and a kept
+/// field read there is lent or copied, never moved. A value that reads the
+/// record whole still takes copies.
+#[test]
+fn rust_an_update_whose_values_read_a_kept_field_moves_the_replaced_ones() {
+    let src = include_str!("fixtures/update_kept_fields.av");
+    let expected = "10 6 15 15 42 1";
+    let vm = run_vm_inline("update_kept_fields", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("update_kept_fields", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("update_kept_fields", src);
+    for moved in [
+        "a: bump(x.a, aver_rt::AverInt::from_i64(0)), w: wrap(x.keep.clone()), ..x }",
+        "b: bump(x.a, aver_rt::AverInt::from_i64(1)), n: total(&x.keep,",
+        "a: bump(x.a, aver_rt::AverInt::from_i64(2)), n: x.n.add(&total(&x.w.v,",
+        "a: bump(x.a.clone(), aver_rt::AverInt::from_i64(3))",
+    ] {
+        assert!(emitted.contains(moved), "expected `{moved}` in:\n{emitted}");
+    }
+}
+
+/// `match Vector.get(v, i)` whose `Some(c)` arm puts a placeholder at the
+/// same place (`Option.withDefault(Vector.set(v, i, k), v)`) moves the
+/// element out and the placeholder in at once, so the element is written in
+/// place and no count moves for it. A vector another value still holds is
+/// copied first and left as it was.
+#[test]
+fn rust_an_element_taken_out_of_its_vector_and_put_back_is_written_in_place() {
+    let src = include_str!("fixtures/vector_take.av");
+    let expected = "28 29 33 -1 0 3";
+    let vm = run_vm_inline("vector_take", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("vector_take", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("vector_take", src);
+    let cset = emitted
+        .split("pub fn cset(")
+        .nth(1)
+        .and_then(|rest| rest.split("\npub fn ").next())
+        .expect("cset emitted");
+    assert!(
+        cset.contains("let (__taken0, c) = v.replace_unchecked(__i, __binding_noChunk());")
+            && !cset.contains(".cloned()"),
+        "the chunk must be taken out, not copied:\n{cset}"
+    );
+}
+
+/// A list field read for a call that is then handed the record whole, by a
+/// function that only replaces that field (`withOut(q, List.prepend(k,
+/// q.out))`), is taken out of the record, so the list has one owner and the
+/// prepend writes in place. A callee that reads the field, or a second read
+/// of it, keeps it where it is.
+#[test]
+fn rust_a_field_the_callee_only_replaces_is_taken_out_for_the_call() {
+    let src = include_str!("fixtures/field_take.av");
+    let expected = ",7,1,2 1 ,8,7,1,2 4 ,9,8,7,1,2,8,7,1,2 5 ,1,2";
+    let vm = run_vm_inline("field_take", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("field_take", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("field_take", src);
+    assert!(
+        emitted.contains("prepend_owned(k, std::mem::take(&mut q.out))")
+            && emitted.matches("std::mem::take").count() == 1,
+        "only `taken` may take the field out:\n{emitted}"
+    );
+}
+
+/// A list a function only prepends onto, handed over at the caller's last
+/// use, is taken by value, so the first prepend grows it in place
+/// (`prepend_owned`) instead of starting from a borrow. A caller that keeps
+/// the list hands over a copy and still reads it as it was.
+#[test]
+fn rust_a_list_prepended_onto_at_its_last_use_is_taken_by_value() {
+    let src = include_str!("fixtures/list_handed_over.av");
+    let expected = "1844 158663 5534 1844";
+    let vm = run_vm_inline("list_handed_over", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("list_handed_over", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("list_handed_over", src);
+    assert!(
+        emitted.contains("pub fn colHead(mut acc @ _: aver_rt::AverIntList")
+            && !emitted.contains("AverIntList::prepend(aver_rt::AverInt::from_i64(10), acc)"),
+        "colHead must take the list by value:\n{emitted}"
+    );
+}
+
+/// `Bytes.get(b, i) == Option.Some(k)` for a literal octet reads the byte in
+/// place, as a match on `Bytes.get` does, with no `Option` built; past
+/// either end it still answers as the general path does.
+#[test]
+fn rust_a_byte_compared_to_a_literal_octet_is_read_in_place() {
+    let src = include_str!("fixtures/bytes_compare.av");
+    let expected = "140 false true";
+    let vm = run_vm_inline("bytes_compare", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("bytes_compare", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("bytes_compare", src);
+    assert!(
+        emitted.contains("byte_at_i64(aver_rt::string_position(&i)) == 44i64")
+            && emitted.contains("byte_at_i64(-1i64) == 0i64"),
+        "the comparison must read the byte in place:\n{emitted}"
     );
 }
 

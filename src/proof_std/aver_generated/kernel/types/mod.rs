@@ -3040,7 +3040,7 @@ pub fn namedVars(
             {
                 let __arg6 @ _ =
                     crate::proof_std::aver_generated::kernel::types::namedVars(&nr, &tr);
-                crate::proof_std::aver_generated::kernel::types::namedOne(n, t, &__arg6)
+                crate::proof_std::aver_generated::kernel::types::namedOne(n, t, __arg6)
             }
         } else {
             aver_rt::AverList::empty()
@@ -3053,13 +3053,13 @@ pub fn namedVars(
 pub fn namedOne(
     n @ _: AverStr,
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Ty,
-    rest @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
+    mut rest @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar>,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::TypedVar> {
     crate::proof_std::cancel_checkpoint();
     if (&*n == "_") {
-        rest.clone()
+        rest
     } else {
-        aver_rt::AverList::prepend(
+        aver_rt::AverList::prepend_owned(
             crate::proof_std::aver_generated::kernel::term::typed(n, t),
             rest,
         )

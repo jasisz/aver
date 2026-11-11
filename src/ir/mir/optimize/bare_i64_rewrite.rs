@@ -899,8 +899,16 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
                 op,
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
             ) {
-                let both_raw =
-                    renders_raw(&lhs.node, ctx.facts) && renders_raw(&rhs.node, ctx.facts);
+                // An `Int` literal is a word beside a raw operand too
+                // (`__packed_byte_at(b.values, i) == 44`, see `packed_index`).
+                let literal = |e: &MirExpr| matches!(e, MirExpr::Literal(l) if matches!(l.node, Literal::Int(_)));
+                let (l_raw, r_raw) = (
+                    renders_raw(&lhs.node, ctx.facts),
+                    renders_raw(&rhs.node, ctx.facts),
+                );
+                let both_raw = (l_raw || literal(&lhs.node))
+                    && (r_raw || literal(&rhs.node))
+                    && (l_raw || r_raw);
                 if both_raw {
                     b.node.lhs = std::boxed::Box::new(rewrite_raw(lhs, ctx));
                     b.node.rhs = std::boxed::Box::new(rewrite_raw(rhs, ctx));
