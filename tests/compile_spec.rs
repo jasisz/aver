@@ -381,6 +381,9 @@ fn spread(n: Int) -> Int
     match fromInt(n)
         Result.Ok(w) -> half(w.value)
         Result.Err(_) -> 0
+
+verify half
+    half(Int.abs(-5)) => 3
 "#,
     )
     .expect("write lib");
