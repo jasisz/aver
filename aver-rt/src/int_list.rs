@@ -28,35 +28,49 @@ pub enum AverIntList {
     Stack(ByteStack),
 }
 
-/// A list of octets built by prepending: a chain of append-only buffers,
-/// each holding its part of the list backwards, so a prepend is a push.
-/// A value sees the first `len` bytes of its buffer, then the list below
-/// it. Bytes once pushed never change, so a shorter value that shares a
-/// buffer still reads the list it was. A prepend onto the value whose
-/// `len` is its buffer's own pushes in place; onto any other it pushes in
-/// place only when no other value holds the buffer (cutting it back to its
-/// `len` first), and otherwise starts a new buffer over this value, so no
-/// prepend copies and a list prepended from many places is at worst a
-/// chain of one-byte buffers.
+/// A list of octets built by prepending: a chain of byte buffers, each
+/// holding its part of the list backwards, so a prepend is a write past the
+/// last byte. A value sees the first `len` bytes of its buffer, then the
+/// list below it. A buffer never moves or grows, and a byte once written
+/// never changes, so a shorter value that shares a buffer still reads the
+/// list it was, on any thread.
+///
+/// A prepend writes into the buffer when it claims the next place: the
+/// buffer's count of places in use goes from this value's `len` to one more
+/// (an atomic compare-and-swap, so of two prepends onto one value, on one
+/// thread or two, one writes in place). A value handed over whole, the only
+/// one on its buffer, first gives back the places past its `len`. Any other
+/// prepend, and one onto a full buffer, starts a new buffer over this
+/// value: no prepend copies, and a list prepended from many places is at
+/// worst a chain of short buffers.
 #[derive(Clone)]
 pub struct ByteStack {
-    seg: std::rc::Rc<Segment>,
+    seg: crate::shared::Shared<Segment>,
     len: usize,
 }
 
 struct Segment {
-    buf: std::cell::UnsafeCell<Vec<u8>>,
+    bytes: Box<[std::cell::UnsafeCell<u8>]>,
+    /// The places in use: every value on this buffer has `len` at most this.
+    used: std::sync::atomic::AtomicUsize,
     /// The list after this buffer's bytes, and its length.
     below: Option<ByteStack>,
     base: usize,
 }
+
+// SAFETY: a place of `bytes` is written once, by the prepend that claimed
+// it through `used`, before the value that reads it exists; every reader
+// reads only places below its own `len`, so no place is read and written at
+// once, and a value that crosses threads carries what was written before it.
+unsafe impl Send for Segment {}
+unsafe impl Sync for Segment {}
 
 impl Drop for Segment {
     /// A long chain is taken apart one segment at a time, not by recursion.
     fn drop(&mut self) {
         let mut next = self.below.take();
         while let Some(stack) = next {
-            match std::rc::Rc::try_unwrap(stack.seg) {
+            match crate::shared::Shared::try_unwrap(stack.seg) {
                 Ok(mut seg) => next = seg.below.take(),
                 Err(_) => break,
             }
@@ -64,15 +78,19 @@ impl Drop for Segment {
     }
 }
 
+/// The places of the first buffer of a list; each next buffer down a
+/// growing list has twice as many, up to [`MAX_PLACES`].
+const FIRST_PLACES: usize = 16;
+const MAX_PLACES: usize = 1 << 20;
+
 impl ByteStack {
     /// The bytes this value sees in its own buffer, oldest first.
     #[inline]
     fn own(&self) -> &[u8] {
-        // SAFETY: a buffer only changes through `push_onto`, which takes no
-        // reference out of it and runs on this thread (`Rc` is neither
-        // `Send` nor `Sync`); a slice handed out here lives as long as the
-        // borrow of `self`, and nothing called while it lives pushes.
-        unsafe { &(&*self.seg.buf.get())[..self.len] }
+        // SAFETY: places below `len` were written before this value existed
+        // and never change (see `Segment`); `UnsafeCell<u8>` is laid out as
+        // `u8`.
+        unsafe { std::slice::from_raw_parts(self.seg.bytes.as_ptr().cast::<u8>(), self.len) }
     }
 
     #[inline]
@@ -118,50 +136,82 @@ impl ByteStack {
 
     /// `byte` prepended to the list this value is.
     fn push_onto(&self, byte: u8) -> ByteStack {
-        // SAFETY: as in `own`; no slice of the buffer is alive here, since
-        // every reader takes one only for the call it makes.
-        let buf = unsafe { &mut *self.seg.buf.get() };
-        if buf.len() == self.len || std::rc::Rc::strong_count(&self.seg) == 1 {
-            buf.truncate(self.len);
-            buf.push(byte);
+        use std::sync::atomic::Ordering;
+        let seg = &self.seg;
+        if self.len < seg.bytes.len()
+            && seg
+                .used
+                .compare_exchange(self.len, self.len + 1, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+        {
+            // SAFETY: the place was claimed above, and no value reads it yet.
+            unsafe { *seg.bytes[self.len].get() = byte };
             return ByteStack {
-                seg: self.seg.clone(),
+                seg: seg.clone(),
                 len: self.len + 1,
             };
         }
-        let mut bytes = Vec::with_capacity(16);
-        bytes.push(byte);
-        ByteStack::new(bytes, Some(self.clone()))
+        let places = if self.len == seg.bytes.len() {
+            (self.len * 2).min(MAX_PLACES)
+        } else {
+            FIRST_PLACES
+        };
+        ByteStack::start(byte, places, Some(self.clone()))
     }
 
-    fn new(bytes: Vec<u8>, below: Option<ByteStack>) -> ByteStack {
-        let len = bytes.len();
+    /// `byte` prepended to the list this value is, which the caller hands
+    /// over: the only value on its buffer gives back the places past its
+    /// `len` first.
+    fn push_owned(mut self, byte: u8) -> ByteStack {
+        if let Some(seg) = crate::shared::Shared::get_mut(&mut self.seg) {
+            *seg.used.get_mut() = self.len;
+        }
+        self.push_onto(byte)
+    }
+
+    /// A list of `byte` over `below`, in a new buffer of `places` places.
+    fn start(byte: u8, places: usize, below: Option<ByteStack>) -> ByteStack {
+        let bytes: Box<[std::cell::UnsafeCell<u8>]> = (0..places.max(1))
+            .map(|_| std::cell::UnsafeCell::new(0))
+            .collect();
+        // SAFETY: the buffer is new; no one else holds it.
+        unsafe { *bytes[0].get() = byte };
         let base = below.as_ref().map_or(0, ByteStack::total);
         ByteStack {
-            seg: std::rc::Rc::new(Segment {
-                buf: std::cell::UnsafeCell::new(bytes),
+            seg: crate::shared::Shared::new(Segment {
+                bytes,
+                used: std::sync::atomic::AtomicUsize::new(1),
                 below,
                 base,
             }),
-            len,
+            len: 1,
         }
     }
 
-    /// The list forwards, as octets: a single buffer no other value holds
-    /// is reused in place.
-    fn into_reversed(self) -> AverPackedU8 {
-        if self.seg.below.is_none() {
-            let len = self.len;
-            match std::rc::Rc::try_unwrap(self.seg) {
-                Ok(mut seg) => {
-                    let mut bytes = std::mem::take(seg.buf.get_mut());
-                    bytes.truncate(len);
-                    return AverPackedU8::from_vec(bytes);
-                }
-                Err(seg) => return ByteStack { seg, len }.reversed(),
-            }
+    /// `byte` prepended to octets already packed, which are copied in once,
+    /// as a general list would copy them into its cells.
+    fn onto_octets(values: &AverPackedU8, byte: u8) -> ByteStack {
+        let values = values.as_slice();
+        let len = values.len() + 1;
+        let places = len
+            .next_power_of_two()
+            .clamp(FIRST_PLACES, MAX_PLACES.max(len));
+        let bytes: Box<[std::cell::UnsafeCell<u8>]> = values
+            .iter()
+            .rev()
+            .chain(std::iter::once(&byte))
+            .map(|b| std::cell::UnsafeCell::new(*b))
+            .chain((len..places).map(|_| std::cell::UnsafeCell::new(0)))
+            .collect();
+        ByteStack {
+            seg: crate::shared::Shared::new(Segment {
+                bytes,
+                used: std::sync::atomic::AtomicUsize::new(len),
+                below: None,
+                base: 0,
+            }),
+            len,
         }
-        self.reversed()
     }
 
     /// The list forwards: the deepest buffer's bytes first.
@@ -644,13 +694,7 @@ impl AverIntList {
                 Self::Stack(stack) => return Self::Stack(stack.push_onto(byte)),
                 // Octets already in hand are copied in once, as a wide
                 // list would copy them into its cells.
-                Self::Packed(values) => {
-                    let values = values.as_slice();
-                    let mut bytes = Vec::with_capacity((values.len() + 1).max(16));
-                    bytes.extend(values.iter().rev());
-                    bytes.push(byte);
-                    return Self::Stack(ByteStack::new(bytes, None));
-                }
+                Self::Packed(values) => return Self::Stack(ByteStack::onto_octets(values, byte)),
                 _ => {}
             }
         }
@@ -663,8 +707,13 @@ impl AverIntList {
     /// `AverList::prepend_owned`).
     #[inline]
     pub fn prepend_owned(head: AverInt, tail: Self) -> Self {
-        if matches!(&tail, Self::Stack(_) | Self::Packed(_)) {
-            return Self::prepend(head, &tail);
+        match tail {
+            Self::Stack(stack) => match as_byte(&head) {
+                Some(byte) => return Self::Stack(stack.push_owned(byte)),
+                None => return Self::prepend(head, &Self::Stack(stack)),
+            },
+            Self::Packed(_) => return Self::prepend(head, &tail),
+            _ => {}
         }
         Self::Wide(AverList::prepend_owned(head, tail.into_aver_list()))
     }
@@ -729,7 +778,7 @@ impl AverIntList {
             Self::Packed(values) => Self::Packed(values.into_reversed()),
             Self::Narrow(_) => self.reverse(),
             Self::Wide(values) => Self::from_vec(values.into_reversed_vec()),
-            Self::Stack(stack) => Self::Packed(stack.into_reversed()),
+            Self::Stack(stack) => Self::Packed(stack.reversed()),
         }
     }
 
@@ -1023,6 +1072,36 @@ mod tests {
         assert_eq!(chain.get(200_000), Some(AverInt::from_i64(0)));
         assert_eq!(chain.reverse().get(1), Some(AverInt::from_i64(2)));
         drop(chain);
+    }
+
+    #[cfg(not(feature = "plain-counts"))] // shares values between threads
+    #[test]
+    fn two_threads_prepending_onto_one_value_each_get_their_own_list() {
+        let base = prepended(&AverIntList::empty(), &[1, 2, 3]);
+        let lists: Vec<AverIntList> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..4)
+                .map(|t| {
+                    let base = &base;
+                    scope.spawn(move || {
+                        let mut list = base.clone();
+                        for k in 0..10_000 {
+                            list = prepended(&list, &[(t * 50 + k % 50) as i64]);
+                        }
+                        list
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        for (t, list) in lists.iter().enumerate() {
+            assert_eq!(list.len(), 10_003);
+            for k in 0..10_000 {
+                let want = (t * 50 + (9_999 - k) % 50) as i64;
+                assert_eq!(list.get(k), Some(AverInt::from_i64(want)));
+            }
+            assert_eq!(list.drop_first(10_000).aver_display(), "[3, 2, 1]");
+        }
+        assert_eq!(base.aver_display(), "[3, 2, 1]");
     }
 
     #[test]
