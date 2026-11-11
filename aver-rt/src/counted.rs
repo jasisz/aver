@@ -219,6 +219,31 @@ impl<T: Counts> Deref for Counted<T> {
     }
 }
 
+/// A record's node as a hash made from parts sees it (see
+/// `crate::shared_hash`): its address and how many owners share it.
+impl<T: Counts> crate::NodeId for Counted<T> {
+    #[inline]
+    fn addr(&self) -> usize {
+        self.ptr.as_ptr() as usize
+    }
+
+    #[inline]
+    fn count(&self) -> usize {
+        Counted::count(self).load(Ordering::Relaxed)
+    }
+}
+
+/// A record that holds itself through a collection compares within a walk
+/// as a node: one held in several places on both sides is compared once
+/// per pair, not once per path to it. Two copies of one record are equal
+/// unread, as with its `==`.
+impl<T: Counts + crate::WalkEq> crate::WalkEq for Counted<T> {
+    #[inline]
+    fn walk_eq<'v>(&'v self, other: &'v Self, walk: crate::Walk<'_, 'v>) -> bool {
+        walk.node(self, other, true, |walk| (**self).walk_eq(&**other, walk))
+    }
+}
+
 impl<T: Counts + fmt::Debug> fmt::Debug for Counted<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)

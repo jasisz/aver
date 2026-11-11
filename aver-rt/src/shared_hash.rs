@@ -17,6 +17,7 @@
 //! built.
 
 use crate::NodeId;
+use crate::counted::{Counted, Counts};
 pub use crate::shared_eq::BUDGET;
 use std::cell::RefCell;
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -79,6 +80,36 @@ impl<T: WalkHash> WalkHash for Option<T> {
             Some(value) => value.walk_hash(walk),
             None => 0,
         }
+    }
+}
+
+/// A large record kept behind a `Box` (see `is_boxed_record` in the
+/// compiler) hashes as its fields: the box is held in one place only.
+impl<T: WalkHash> WalkHash for Box<T> {
+    #[inline]
+    fn stream<H: Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        (**self).stream(state, left)
+    }
+
+    #[inline]
+    fn walk_hash(&self, walk: HashWalk<'_>) -> u64 {
+        (**self).walk_hash(walk)
+    }
+}
+
+/// A large record kept behind a counted pointer (see `is_counted_record` in
+/// the compiler) feeds its fields to the hasher as a `Box` would, and its
+/// hash made from parts is made as a node's: once for a record held in
+/// several places.
+impl<T: Counts + WalkHash> WalkHash for Counted<T> {
+    #[inline]
+    fn stream<H: Hasher>(&self, state: &mut H, left: u32) -> u32 {
+        (**self).stream(state, left)
+    }
+
+    #[inline]
+    fn walk_hash(&self, walk: HashWalk<'_>) -> u64 {
+        walk.node(self, |walk, h| h.write_u64((**self).walk_hash(walk)))
     }
 }
 

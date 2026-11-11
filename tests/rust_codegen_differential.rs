@@ -1662,6 +1662,24 @@ fn equality_through_collections_matches_between_rust_and_vm() {
     .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// The same for records large enough to sit behind a pointer (a `Box`, or a
+/// counted one when the program copies them) that hold themselves through
+/// a `List`, a `Map` and a sum: their hash and `==` go through the pointer,
+/// and a copy held in many places is hashed and compared once, so the binary
+/// answers at 64 levels as at 12.
+#[test]
+fn boxed_records_through_collections_match_between_rust_and_vm() {
+    assert_plain_parity_then(
+        "tests/fixtures/boxed_record_collection_cycle_app.av",
+        None,
+        |bin, shallow| match shallow {
+            "table 1010\nfolder 10\nholder 110" => prints_the_same_at_64_levels(bin, shallow),
+            _ => Err(format!("at 12 levels:\n{shallow}")),
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A value of a recursive sum a million levels deep is let go whole: a chain,
 /// a tree leaning either way, a chain through a record and an `Option`, and
 /// two sums on one cycle. Each node freed inside its parent's free would take
