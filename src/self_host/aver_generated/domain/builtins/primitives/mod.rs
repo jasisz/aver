@@ -376,7 +376,7 @@ pub fn builtinStringLen(
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
         crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
-            s.chars().count() as i64,
+            ((s).chars().count() as i64),
         )),
     ))
 }
@@ -744,7 +744,7 @@ pub fn builtinStringChars(
     let s @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(
         crate::aver_generated::domain::value::Val__ValList({
-            let __arg3 @ _ = aver_rt::AverInt::from_i64(s.chars().count() as i64);
+            let __arg3 @ _ = aver_rt::AverInt::from_i64(((s).chars().count() as i64));
             {
                 let __arg4 @ _ =
                     <aver_rt::AverList<crate::aver_generated::domain::value::Val>>::empty();
@@ -767,7 +767,11 @@ pub fn stringToCharList(
     crate::cancel_checkpoint();
     let __arg4 @ _ = aver_rt::string_index_build(&s);
     crate::aver_generated::domain::builtins::primitives::stringToCharList__indexed(
-        s, pos, total, acc, &__arg4,
+        s,
+        pos,
+        total.to_i64().expect("Int out of i64 range"),
+        acc,
+        &__arg4,
     )
 }
 
@@ -1493,7 +1497,7 @@ pub fn builtinStringReplaceAll(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(args.len() as i64) == aver_rt::AverInt::from_i64(3)) {
+    if (((args).len() as i64) == 3i64) {
         crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAllExtract(args)
     } else {
         Err(::aver_rt::str_lit!("String.replace takes 3 arguments"))
@@ -1537,14 +1541,14 @@ pub fn builtinStringReplaceAllDo(
 pub fn stringToCharList__indexed(
     s @ _: &AverStr,
     mut pos @ _: i64,
-    mut total @ _: aver_rt::AverInt,
+    mut total @ _: i64,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
-        if (aver_rt::AverInt::from_i64(pos) < total) {
+        if (pos < total) {
             match aver_rt::string_index_char_at_i64(&s, &__str_index, pos) {
                 Some(c @ _) => {
                     let __tco1 = (pos + 1i64);

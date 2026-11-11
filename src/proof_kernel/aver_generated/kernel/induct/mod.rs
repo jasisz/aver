@@ -560,10 +560,9 @@ pub fn helperBody(
     crate::proof_kernel::cancel_checkpoint();
     {
         let __subject = (
-            (aver_rt::AverInt::from_i64(
-                crate::proof_kernel::aver_generated::kernel::proof::givenNames(&h.params).len()
-                    as i64,
-            ) == aver_rt::AverInt::from_i64(xs.len() as i64)),
+            (((crate::proof_kernel::aver_generated::kernel::proof::givenNames(&h.params)).len()
+                as i64)
+                == ((xs).len() as i64)),
             (crate::proof_kernel::aver_generated::kernel::induct::letCalls(
                 &h.lets,
                 f.clone(),
@@ -583,7 +582,7 @@ pub fn helperBody(
                         __b.push_str(&::aver_rt::str_lit!(" takes "));
                         __b
                     };
-                    __b.push_display(&(aver_rt::AverInt::from_i64(h.params.len() as i64)));
+                    __b.push_display(&(aver_rt::AverInt::from_i64(((h.params).len() as i64))));
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" arguments"));
@@ -791,7 +790,7 @@ pub fn reachesBack(
         {
             let __arg4 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg5 @ _ = aver_rt::AverInt::from_i64(ds.len() as i64);
+                let __arg5 @ _ = aver_rt::AverInt::from_i64(((ds).len() as i64));
                 crate::proof_kernel::aver_generated::kernel::induct::reaches(
                     __arg3, f, ds, __arg4, __arg5,
                 )
@@ -863,7 +862,7 @@ pub fn letCalls(
         let __list_subject = ls;
         match aver_rt::list_uncons(__list_subject) {
             Some((b, rest)) => Ok(aver_rt::AverInt::from_i64(
-                {
+                (({
                     let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
                     crate::proof_kernel::aver_generated::kernel::induct::selfCalls(
                         &b.value,
@@ -872,8 +871,8 @@ pub fn letCalls(
                         ds,
                         fuel.clone(),
                     )
-                }?
-                .len() as i64,
+                }?)
+                .len() as i64),
             )
             .add(
                 &crate::proof_kernel::aver_generated::kernel::induct::letCalls(&rest, f, ds, fuel)?,
@@ -892,7 +891,7 @@ pub fn calls(
 ) -> Result<aver_rt::AverList<Call>, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     let __arg3 @ _ = <aver_rt::AverList<AverStr>>::empty();
-    let __arg4 @ _ = aver_rt::AverInt::from_i64(ds.len() as i64);
+    let __arg4 @ _ = aver_rt::AverInt::from_i64(((ds).len() as i64));
     crate::proof_kernel::aver_generated::kernel::induct::selfCalls(
         t,
         d.name.clone(),
@@ -911,7 +910,7 @@ pub fn recursion(
     {
         let __subject = (
             ({
-                let __arg2 @ _ = aver_rt::AverInt::from_i64(ds.len() as i64);
+                let __arg2 @ _ = aver_rt::AverInt::from_i64(((ds).len() as i64));
                 crate::proof_kernel::aver_generated::kernel::induct::letCalls(
                     &d.lets,
                     d.name.clone(),
@@ -1028,9 +1027,9 @@ pub fn guarded(
     crate::proof_kernel::cancel_checkpoint();
     {
         let (__pat3, __pat4) = (
-            (aver_rt::AverInt::from_i64(
-                crate::proof_kernel::aver_generated::kernel::induct::calls(s, d, ds)?.len() as i64,
-            ) == aver_rt::AverInt::from_i64(0)),
+            (((crate::proof_kernel::aver_generated::kernel::induct::calls(s, d, ds)?).len()
+                as i64)
+                == 0i64),
             crate::proof_kernel::aver_generated::kernel::induct::recursingArms(arms, d, ds)?,
         );
         if __pat3 {
@@ -1146,10 +1145,11 @@ pub fn recursingArms(
             let __list_subject = arms;
             match aver_rt::list_uncons(__list_subject) {
                 Some((a, rest)) => {
-                    if (aver_rt::AverInt::from_i64(
-                        crate::proof_kernel::aver_generated::kernel::induct::calls(&a.body, d, ds)?
-                            .len() as i64,
-                    ) == aver_rt::AverInt::from_i64(0))
+                    if (((crate::proof_kernel::aver_generated::kernel::induct::calls(
+                        &a.body, d, ds,
+                    )?)
+                    .len() as i64)
+                        == 0i64)
                     {
                         {
                             let __tco0 = rest;
@@ -1483,16 +1483,17 @@ pub fn armDescends(
             ),
         ))
     {
-        Ok((aver_rt::AverInt::from_i64(
-            crate::proof_kernel::aver_generated::kernel::induct::calls(&a.body, d, ds)?.len()
-                as i64,
-        ) == aver_rt::AverInt::from_i64(0)))
+        Ok(
+            (((crate::proof_kernel::aver_generated::kernel::induct::calls(&a.body, d, ds)?).len()
+                as i64)
+                == 0i64),
+        )
     } else {
         Ok({
             let __arg6 @ _ =
                 crate::proof_kernel::aver_generated::kernel::induct::calls(&a.body, d, ds)?;
             {
-                let __arg7 @ _ = aver_rt::AverInt::from_i64(d.params.len() as i64);
+                let __arg7 @ _ = aver_rt::AverInt::from_i64(((d.params).len() as i64));
                 crate::proof_kernel::aver_generated::kernel::induct::callsDescend(
                     &__arg6, p, j, __arg7,
                 )
@@ -1514,7 +1515,7 @@ pub fn callsDescend(
         let __list_subject = cs;
         match aver_rt::list_uncons(__list_subject) {
             Some((c, rest)) => {
-                (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n)
+                (((aver_rt::AverInt::from_i64(((c.args).len() as i64)) == n)
                     && ({
                         let __arg6 @ _ =
                             crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
@@ -1734,7 +1735,7 @@ pub fn shorterSomewhere(
                         f: f.clone(),
                         p: p,
                         j: j.clone(),
-                        n: j.add(&aver_rt::AverInt::from_i64(ps.len() as i64)),
+                        n: j.add(&aver_rt::AverInt::from_i64(((ps).len() as i64))),
                     };
                     {
                         let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty();
@@ -1773,7 +1774,7 @@ pub fn shorter(
                     let g = __g_fields.1.clone();
                     let xs = &__g_fields.0;
                     return (((g != m.f)
-                        || ((aver_rt::AverInt::from_i64(xs.len() as i64) == m.n) && {
+                        || ((aver_rt::AverInt::from_i64(((xs).len() as i64)) == m.n) && {
                             let __arg26 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
                                     xs,
@@ -2123,7 +2124,7 @@ pub fn reachesFrom(
         {
             let __arg4 @ _ = <aver_rt::AverList<AverStr>>::empty();
             {
-                let __arg5 @ _ = aver_rt::AverInt::from_i64(ds.len() as i64);
+                let __arg5 @ _ = aver_rt::AverInt::from_i64(((ds).len() as i64));
                 crate::proof_kernel::aver_generated::kernel::induct::reaches(
                     __arg3, b, ds, __arg4, __arg5,
                 )
@@ -2460,7 +2461,7 @@ pub fn armsShrink(
                             &a.pattern,
                         );
                     {
-                        let __arg8 @ _ = aver_rt::AverInt::from_i64(d.params.len() as i64);
+                        let __arg8 @ _ = aver_rt::AverInt::from_i64(((d.params).len() as i64));
                         crate::proof_kernel::aver_generated::kernel::induct::callsShrink(
                             &__arg6,
                             &__arg7,
@@ -2515,7 +2516,7 @@ pub fn callsShrink(
         let __list_subject = cs;
         match aver_rt::list_uncons(__list_subject) {
             Some((c, rest)) => {
-                (((aver_rt::AverInt::from_i64(c.args.len() as i64) == n) && {
+                (((aver_rt::AverInt::from_i64(((c.args).len() as i64)) == n) && {
                     let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
                         &c.args,
                         j.clone(),
@@ -2709,7 +2710,7 @@ pub fn eachNotMutual(
                         {
                             let __arg5 @ _ = <aver_rt::AverList<AverStr>>::empty();
                             {
-                                let __arg6 @ _ = aver_rt::AverInt::from_i64(ds.len() as i64);
+                                let __arg6 @ _ = aver_rt::AverInt::from_i64(((ds).len() as i64));
                                 crate::proof_kernel::aver_generated::kernel::induct::reaches(
                                     __arg4, &d.name, ds, __arg5, __arg6,
                                 )

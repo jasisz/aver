@@ -64,7 +64,7 @@ pub fn isLetterOrUnderscore(c @ _: AverStr) -> bool {
 #[inline(always)]
 pub fn isAlpha(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(c.chars().count() as i64) == aver_rt::AverInt::from_i64(1)) {
+    if (((c).chars().count() as i64) == 1i64) {
         crate::aver_generated::domain::lexer::chars::isLetterOrUnderscore(c)
     } else {
         false

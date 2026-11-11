@@ -21,7 +21,7 @@ pub fn hasNamedRecord(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> bool {
     crate::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(args.len() as i64) == aver_rt::AverInt::from_i64(2)) {
+    if (((args).len() as i64) == 2i64) {
         crate::aver_generated::domain::eval::records::isNamedSentinel(args)
     } else {
         false

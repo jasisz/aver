@@ -568,7 +568,7 @@ pub fn evalVectorSetMaybeDefault(
                             if (idx < aver_rt::AverInt::from_i64(0)) {
                                 Ok(None)
                             } else {
-                                if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
+                                if (idx < aver_rt::AverInt::from_i64(((vec).len() as i64))) {
                                     Ok(Some(crate::aver_generated::domain::value::Val::new_in(
                                         [&__tok1, &__tok0],
                                         crate::aver_generated::domain::value::Val__ValVector({

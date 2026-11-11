@@ -277,7 +277,7 @@ pub fn empty() -> Bytes {
 #[inline(always)]
 pub fn len(bytes @ _: &Bytes) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    aver_rt::AverInt::from_i64((bytes.values).to_int_list().len() as i64)
+    aver_rt::AverInt::from_i64((((bytes.values).to_int_list()).len() as i64))
 }
 
 /// The octet at a zero-based index; Option.None below zero or at the length and past it.

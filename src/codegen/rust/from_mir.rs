@@ -473,6 +473,19 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
         // The raw field of a carrier held as an `i64` (`emit_mir_expr`
         // renders such a read raw where the facts know it).
         MirExpr::Project(_) if ctx.bare.is_carrier_project(&expr.node) => emit_mir_expr(expr, ctx),
+        // A length, read as the `i64` it is.
+        MirExpr::Call(c) if ctx.bare.length_interval(&expr.node).is_some() => {
+            let arg = c.node.args.first()?;
+            if matches!(&arg.node, MirExpr::List(items) if items.is_empty()) {
+                return Some("0i64".to_string());
+            }
+            // An empty literal names its element type, as the builtin does.
+            let operand = mir_typed_empty_literal(arg, ctx).or_else(|| emit_mir_expr(arg, ctx))?;
+            Some(match arg.ty() {
+                Some(Type::Str) => format!("(({operand}).chars().count() as i64)"),
+                _ => format!("(({operand}).len() as i64)"),
+            })
+        }
         // A call of a function that returns a raw `i64`.
         MirExpr::Call(_) if ctx.bare.call_return_interval(&expr.node).is_some() => {
             emit_mir_expr(expr, ctx)
@@ -4004,7 +4017,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         //              via the checked `to_i64()` (the analysis proved the
         //              value fits, so the `expect` never fires).
         MirExpr::Box(inner) => {
-            let raw = emit_mir_expr(inner, emit_ctx)?;
+            // A length is raw only in its `i64` form; the builtin's own
+            // rendering is the boxed one.
+            let raw = match emit_ctx.bare.length_interval(&inner.node) {
+                Some(_) => emit_bare_i64(inner, emit_ctx)?,
+                None => emit_mir_expr(inner, emit_ctx)?,
+            };
             Some(format!("aver_rt::AverInt::from_i64({})", raw))
         }
         MirExpr::Unbox(inner) => {

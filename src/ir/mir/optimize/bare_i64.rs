@@ -160,6 +160,9 @@ impl RawOp {
     }
 }
 
+/// The largest length the Rust backend assumes ([`FnBareFacts::length_interval`]).
+const LENGTH_TOP: i128 = 1 << 62;
+
 /// The calls the Rust backend computes raw, of one program ([`RawOp`]):
 /// none outside the Rust facts.
 #[derive(Debug, Clone, Default)]
@@ -169,6 +172,10 @@ pub struct RawOps {
     /// `List.take` and `List.drop`, whose count the Rust backend clamps to
     /// a `usize` from either representation (see [`RawOps::takes_count`]).
     counts: HashSet<crate::ir::BuiltinId>,
+    /// The lengths (`List.len`, `Vector.len`, `Map.len`, `String.len`): the
+    /// size of something already in memory, which the Rust backend reads as
+    /// an `i64` (see [`RawOps::length`], [`LENGTH_TOP`]).
+    lengths: HashSet<crate::ir::BuiltinId>,
 }
 
 impl RawOps {
@@ -187,11 +194,30 @@ impl RawOps {
                 .collect(),
             false => HashSet::new(),
         };
+        let lengths = match on {
+            true => (0..program.builtins.len() as u32)
+                .map(crate::ir::BuiltinId)
+                .filter(|&id| {
+                    matches!(
+                        program.builtin_name(id),
+                        "List.len" | "Vector.len" | "Map.len" | "String.len"
+                    )
+                })
+                .collect(),
+            false => HashSet::new(),
+        };
         RawOps {
             on,
             builtins,
             counts,
+            lengths,
         }
+    }
+
+    /// Whether a call of `callee` is a length, an `i64` in
+    /// `0..=LENGTH_TOP` (see [`RawOps::lengths`]).
+    pub fn length(&self, callee: &MirCallee) -> bool {
+        matches!(callee, MirCallee::Builtin(id) if self.lengths.contains(id))
     }
 
     /// Whether argument `i` of a call of `callee` is a count of list
@@ -656,6 +682,19 @@ impl FnBareFacts {
         (c.node.args.len() == 2).then_some((op, c.node.args.as_slice()))
     }
 
+    /// Rust: the range of a length (`Vector.len(v)` …): the count of
+    /// elements of something in memory, each at least a byte, and no 64-bit
+    /// host maps more than 2^57 bytes (wasm32, 2^32). 2^62 leaves room for
+    /// `len + k` and `len - k` to stay within `i64`.
+    pub fn length_interval(&self, e: &MirExpr) -> Option<Interval> {
+        let MirExpr::Call(c) = e else {
+            return None;
+        };
+        self.raw_ops
+            .length(&c.node.callee)
+            .then(|| Interval::between(0, LENGTH_TOP))
+    }
+
     /// Rust: the range of a call of a function that returns a raw `i64`,
     /// also behind the `let`s that bind its computed arguments first (the
     /// Rust backend's `arg_order`): a `let` is worth its body.
@@ -728,6 +767,7 @@ impl FnBareFacts {
             MirExpr::Call(_) if self.words_only => carrier_call_interval(e),
             MirExpr::Call(_) => carrier_call_interval(e)
                 .or_else(|| self.call_return_interval(e))
+                .or_else(|| self.length_interval(e))
                 .or_else(|| self.raw_op_interval(e)),
             // Rust: a `let` block is worth its body.
             MirExpr::Let(l) if self.rust => self.bare_expr_interval(&l.node.body.node),
@@ -775,6 +815,7 @@ impl FnBareFacts {
             MirExpr::Call(_) => {
                 is_code_carrier_call(e)
                     || self.call_return_interval(e).is_some()
+                    || self.length_interval(e).is_some()
                     || self.raw_op_interval(e).is_some()
             }
             MirExpr::Let(l) if self.rust => self.expr_is_bare_i64(&l.node.body.node),
@@ -3873,7 +3914,10 @@ fn eval_interval(
             .carrier_project_interval(e)
             .unwrap_or_else(Interval::unbounded),
         MirExpr::Call(_) => {
-            if let Some(iv) = carrier_call_interval(e).or_else(|| facts.call_return_interval(e)) {
+            if let Some(iv) = carrier_call_interval(e)
+                .or_else(|| facts.call_return_interval(e))
+                .or_else(|| facts.length_interval(e))
+            {
                 return iv;
             }
             let Some((op, args)) = facts.raw_op_call(e) else {
@@ -5946,6 +5990,30 @@ fn main() -> Int
         let mut named = free.clone();
         named.named("scaled");
         assert!(!bare(Some(&named)), "named as a value");
+    }
+
+    #[test]
+    fn a_length_is_a_raw_leaf_on_rust() {
+        // A length is the size of something in memory, so `List.len(xs) + 1`
+        // fits `i64` and `count` returns it raw on Rust; the general analysis
+        // (wasm-gc) keeps it an `Int`.
+        let src = r#"
+fn count(xs: List<Int>) -> Int
+    List.len(xs) + 1
+
+fn main() -> Int
+    count([1, 2]) + 1
+"#;
+        let (program, facts) = facts_for(src);
+        let id = fn_id_by_name(&program, "count");
+        assert!(facts.for_fn(id).unwrap().bare_return);
+        let general = analyze_with_fields(
+            &program,
+            &CarrierIntervals::new(),
+            &FieldCarrierIntervals::new(),
+            false,
+        );
+        assert!(!general.for_fn(id).unwrap().bare_return);
     }
 
     #[test]
