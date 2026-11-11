@@ -183,6 +183,10 @@ pub struct MirEmitCtx<'a> {
     /// The boxed records whose new field values are being emitted, each
     /// already bound under its own name (see [`emit_boxed_record_update`]).
     pub record_alias: Option<&'a RecordAlias<'a>>,
+    /// The `Vector.set` (by its address) of a self-keeping set whose vector
+    /// an enclosing `match Vector.get` already wrote, and the name it bound
+    /// the written vector to (see [`emit_vector_take_match`]).
+    pub taken_vector: Option<(usize, &'a str)>,
     /// Elements a `match Vector.get(v, i)` lends out of a vector whose root
     /// local some arm hands on: the element's slot and name, and the root's
     /// slot (see [`lent_vector_get_in_wrapper`]). An arm that moves the root
@@ -273,6 +277,7 @@ impl<'a> MirEmitCtx<'a> {
             moved_paths: &[],
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -328,6 +333,7 @@ impl<'a> MirEmitCtx<'a> {
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -370,6 +376,7 @@ impl<'a> MirEmitCtx<'a> {
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -448,6 +455,30 @@ fn mir_expr_is_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> bool {
     // raw binding aliases (`match Bits.and(i, 1023) { 0 -> …; b -> b }`)
     // compares its literals as `i64`.
     matches!(expr.node, MirExpr::Unbox(_)) || ctx.bare.expr_is_bare_i64(&expr.node)
+}
+
+/// The operands of a comparison as raw `i64`s, when both are bare words, or
+/// one is and the other an `Int` literal (`__packed_byte_at(b.values, i) ==
+/// 44`, which the packed byte read leaves for a literal octet).
+fn bare_comparison_operands(
+    bop: &crate::ir::mir::MirBinOp,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<(String, String)> {
+    let literal = |e: &Spanned<MirExpr>| matches!(&e.node, MirExpr::Literal(l) if matches!(l.node, crate::ast::Literal::Int(_)));
+    let (lhs, rhs) = (
+        mir_expr_is_bare_i64(&bop.lhs, ctx),
+        mir_expr_is_bare_i64(&bop.rhs, ctx),
+    );
+    if !((lhs || literal(&bop.lhs)) && (rhs || literal(&bop.rhs)) && (lhs || rhs)) {
+        return None;
+    }
+    // A bare call (an intrinsic that reads a word) renders raw as it is.
+    let raw = |e: &Spanned<MirExpr>, bare: bool| match (emit_bare_i64(e, ctx), bare) {
+        (Some(word), _) => Some(word),
+        (None, true) if matches!(e.node, MirExpr::Call(_)) => emit_mir_expr(e, ctx),
+        (None, _) => None,
+    };
+    Some((raw(&bop.lhs, lhs)?, raw(&bop.rhs, rhs)?))
 }
 
 /// Emit `expr` as a raw `i64` expression, assuming [`mir_expr_is_bare_i64`]
@@ -3361,10 +3392,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             if matches!(
                 bop.op,
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
-            ) && mir_expr_is_bare_i64(&bop.lhs, emit_ctx)
-                && mir_expr_is_bare_i64(&bop.rhs, emit_ctx)
-                && let Some(lb) = emit_bare_i64(&bop.lhs, emit_ctx)
-                && let Some(rb) = emit_bare_i64(&bop.rhs, emit_ctx)
+            ) && let Some((lb, rb)) = bare_comparison_operands(bop, emit_ctx)
             {
                 let op = match bop.op {
                     BinOp::Eq => "==",
@@ -5720,6 +5748,46 @@ fn emit_mir_match(m: &MirMatch, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
     })
 }
 
+/// `match Vector.get(v, i)` that takes the element out and puts a
+/// placeholder in at once (see [`crate::ir::mir::field_moves::VectorTake`]),
+/// for an owned `v`: `replace_unchecked` moves the element out, and the arm
+/// reads the written vector where the set stood.
+fn emit_vector_take_match(
+    m: &MirMatch,
+    ctx: &MirEmitCtx<'_>,
+    render_arm: &dyn Fn(&Spanned<MirExpr>, &MirEmitCtx<'_>) -> Option<String>,
+) -> Option<String> {
+    if ctx.taken_vector.is_some() {
+        return None;
+    }
+    let take = crate::ir::mir::field_moves::vector_take_match(m, ctx.mir_builtins)?;
+    if !local_of(&take.vector.node).is_some_and(|root| super::ownership::root_is_owned(root, ctx)) {
+        return None;
+    }
+    let depth = ctx.record_alias.map_or(0, |alias| alias.depth + 1);
+    let written = format!("__taken{depth}");
+    let inner = MirEmitCtx {
+        taken_vector: Some((&take.set.node as *const MirExpr as usize, &written)),
+        ..*ctx
+    };
+    let some_body = render_arm(take.some, &inner)?;
+    let none_body = render_arm(take.none, ctx)?;
+    let place = match mir_expr_is_bare_i64(take.index, ctx) {
+        true => format!("usize::try_from({}).ok()", emit_bare_i64(take.index, ctx)?),
+        false => format!("({}).to_usize()", emit_mir_expr(take.index, ctx)?),
+    };
+    let vector = emit_mir_expr(take.vector, ctx)?;
+    let value = mir_clone_arg(emit_mir_expr(take.value, ctx)?, &take.value.node, ctx);
+    // A binder the source wrote as `_`.
+    let element = match take.element.0 == u32::from(u16::MAX) {
+        true => "_".to_string(),
+        false => aver_name_to_rust(take.element_name),
+    };
+    Some(format!(
+        "match {place}.filter(|__i| *__i < {vector}.len()) {{ None => {{ {none_body} }}, Some(__i) => {{ let ({written}, {element}) = {vector}.replace_unchecked(__i, {value}); {some_body} }} }}"
+    ))
+}
+
 /// Core of [`emit_mir_match`], parameterized over how each arm body is
 /// rendered. `render_arm` turns one arm's `Spanned<MirExpr>` body into
 /// Rust source (or `None` → fall back). The default path renders bodies
@@ -5732,6 +5800,9 @@ fn emit_mir_match_with(
     emit_ctx: &MirEmitCtx<'_>,
     render_arm: &dyn Fn(&Spanned<MirExpr>, &MirEmitCtx<'_>) -> Option<String>,
 ) -> Option<String> {
+    if let Some(taken) = emit_vector_take_match(m, emit_ctx, render_arm) {
+        return Some(taken);
+    }
     // Translate patterns up front — bail if any pattern can't map.
     let mut arms: Vec<ResolvedMatchArm> = Vec::with_capacity(m.arms.len());
     for arm in &m.arms {
@@ -8898,21 +8969,15 @@ fn mir_if_cond_and_branches<'a>(
             // emits raw `i64` operands (a bare counter `i == 0` compares
             // `i64 == 0i64`, not `i64 == AverInt`). Mirror of the
             // comparison bare path in `emit_mir_expr`.
-            let (l, r) = if mir_expr_is_bare_i64(&bop.lhs, ctx)
-                && mir_expr_is_bare_i64(&bop.rhs, ctx)
-                && let Some(lb) = emit_bare_i64(&bop.lhs, ctx)
-                && let Some(rb) = emit_bare_i64(&bop.rhs, ctx)
-            {
-                (lb, rb)
-            } else {
-                (emit_mir_expr(&bop.lhs, ctx)?, emit_mir_expr(&bop.rhs, ctx)?)
-            };
-            let cond = if matches!(bop.op, BinOp::Eq | BinOp::Neq)
-                && !(mir_expr_is_bare_i64(&bop.lhs, ctx) && mir_expr_is_bare_i64(&bop.rhs, ctx))
-            {
-                mir_emit_equality(bop, &l, &r, op_str, ctx)
-            } else {
-                format!("({} {} {})", l, op_str, r)
+            let cond = match bare_comparison_operands(bop, ctx) {
+                Some((l, r)) => format!("({} {} {})", l, op_str, r),
+                None => {
+                    let (l, r) = (emit_mir_expr(&bop.lhs, ctx)?, emit_mir_expr(&bop.rhs, ctx)?);
+                    match bop.op {
+                        BinOp::Eq | BinOp::Neq => mir_emit_equality(bop, &l, &r, op_str, ctx),
+                        _ => format!("({} {} {})", l, op_str, r),
+                    }
+                }
             };
             if invert {
                 Some((cond, &ite.else_branch, &ite.then_branch))
@@ -10184,6 +10249,11 @@ fn try_emit_mir_fusion(
         // both `v` are the SAME local → in-place bounds-checked set.
         // HIR: `ResolvedLeafOp::VectorSetOrDefaultSameVector`.
         "Option.withDefault" if args.len() == 2 => {
+            if let Some((set, name)) = ctx.taken_vector
+                && set == &args[0].node as *const MirExpr as usize
+            {
+                return Some(name.to_string());
+            }
             let (inner_name, inner_args) = mir_builtin_call_parts(&args[0].node, ctx)?;
             if inner_name != "Vector.set" || inner_args.len() != 3 {
                 return None;
@@ -11682,6 +11752,7 @@ mod tests {
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -12877,6 +12948,7 @@ mod tests {
             moved_paths: &policy.moved_paths,
             list_slot: None,
             record_alias: None,
+            taken_vector: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],

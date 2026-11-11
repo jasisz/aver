@@ -145,6 +145,133 @@ pub fn same_field_path(a: &MirExpr, b: &MirExpr) -> bool {
     }
 }
 
+/// `match Vector.get(v, i)` with an `Option.None` arm and an `Option.Some(c)`
+/// arm that reads `v` only in a self-keeping set at the same place,
+/// `Option.withDefault(Vector.set(v, i, k), v)`, as its last read of `v`: a
+/// chunk taken out of a vector of vectors, changed and put back
+/// (`cput(set(v, ci, empty), ci, f(c))`).
+///
+/// A backend may move the element out and `k` in at once, before the rest
+/// of the arm runs, and read the written vector where the set stands: `k`
+/// is a literal, a module value or a local other than `v` and `c`, so
+/// writing it first changes nothing, and `i` is the same local or literal
+/// in both places, so the place is the same. `c` is then the only owner of
+/// what it holds.
+pub struct VectorTake<'a> {
+    pub vector: &'a Spanned<MirExpr>,
+    pub index: &'a Spanned<MirExpr>,
+    pub none: &'a Spanned<MirExpr>,
+    pub some: &'a Spanned<MirExpr>,
+    pub element: LocalId,
+    pub element_name: &'a str,
+    /// The `Vector.set` call, which the written vector stands for.
+    pub set: &'a Spanned<MirExpr>,
+    pub value: &'a Spanned<MirExpr>,
+}
+
+/// See [`VectorTake`]. `builtins` names the program's builtin ids.
+pub fn vector_take_match<'a>(m: &'a MirMatch, builtins: &[String]) -> Option<VectorTake<'a>> {
+    let call = |e: &'a MirExpr, name: &str| -> Option<&'a [Spanned<MirExpr>]> {
+        let MirExpr::Call(call) = e else {
+            return None;
+        };
+        let MirCallee::Builtin(id) = call.node.callee else {
+            return None;
+        };
+        (builtins.get(id.0 as usize).map(String::as_str) == Some(name)).then_some(&call.node.args)
+    };
+    let [vector, index] = call(&m.subject.node, "Vector.get")? else {
+        return None;
+    };
+    let MirExpr::Local(root) = &vector.node else {
+        return None;
+    };
+    let root = root.node.slot;
+    let local = |e: &MirExpr| match e {
+        MirExpr::Local(l) => Some(l.node.slot),
+        _ => None,
+    };
+    let same_index = |other: &MirExpr| match (&index.node, other) {
+        (MirExpr::Literal(a), MirExpr::Literal(b)) => a.node == b.node,
+        (MirExpr::Local(_), _) => local(&index.node) == local(other),
+        _ => false,
+    };
+    let [first, second] = m.arms.as_slice() else {
+        return None;
+    };
+    let is_none = |p: &MirPattern| matches!(p, MirPattern::Ctor { ctor: MirCtor::Builtin(BuiltinCtor::OptionNone), bindings, .. } if bindings.is_empty());
+    let (none, some) = match is_none(&first.pattern) {
+        true => (first, second),
+        false if is_none(&second.pattern) => (second, first),
+        false => return None,
+    };
+    let MirPattern::Ctor {
+        ctor: MirCtor::Builtin(BuiltinCtor::OptionSome),
+        bindings,
+        binding_names,
+    } = &some.pattern
+    else {
+        return None;
+    };
+    let ([element], [element_name]) = (bindings.as_slice(), binding_names.as_slice()) else {
+        return None;
+    };
+    // Every read of `v` in the arm, and whether one is its last.
+    fn reads(expr: &MirExpr, slot: LocalId, count: &mut usize, last: &mut bool) {
+        if let MirExpr::Local(l) = expr
+            && l.node.slot == slot
+        {
+            *count += 1;
+            *last = *last || l.node.last_use;
+        }
+        walk_children(expr, &mut |child| reads(child, slot, count, last));
+    }
+    fn find<'e>(
+        expr: &'e MirExpr,
+        hit: &dyn Fn(&'e MirExpr) -> Option<&'e Spanned<MirExpr>>,
+    ) -> Option<&'e Spanned<MirExpr>> {
+        if let Some(found) = hit(expr) {
+            return Some(found);
+        }
+        let mut found = None;
+        walk_children(expr, &mut |child| {
+            found = found.or_else(|| find(child, hit));
+        });
+        found
+    }
+    let set = find(&some.body.node, &|e| {
+        let [set, default] = call(e, "Option.withDefault")? else {
+            return None;
+        };
+        let [target, _, _] = call(&set.node, "Vector.set")? else {
+            return None;
+        };
+        (local(&target.node) == Some(root) && local(&default.node) == Some(root)).then_some(set)
+    })?;
+    let [_, at, value] = call(&set.node, "Vector.set")? else {
+        return None;
+    };
+    let (mut count, mut last) = (0, false);
+    reads(&some.body.node, root, &mut count, &mut last);
+    let plain_value = match &value.node {
+        MirExpr::Literal(_) | MirExpr::FnValue(_) => true,
+        other => local(other).is_some_and(|slot| slot != root && slot != *element),
+    };
+    let plain_index = matches!(index.node, MirExpr::Literal(_) | MirExpr::Local(_));
+    (count == 2 && last && plain_index && same_index(&at.node) && plain_value).then_some(
+        VectorTake {
+            vector,
+            index,
+            none: &none.body,
+            some: &some.body,
+            element: *element,
+            element_name,
+            set,
+            value,
+        },
+    )
+}
+
 /// See [`VectorSetMatch`]. `builtins` names the program's builtin ids.
 pub fn vector_set_match<'a>(m: &'a MirMatch, builtins: &[String]) -> Option<VectorSetMatch<'a>> {
     set_match(m, builtins, false)
@@ -773,10 +900,12 @@ fn result_parts(
 
 /// Whether this update reads its base local for the last time: the base
 /// read is the local's last use, or every last use of the local inside the
-/// new field values reads a field the update replaces
-/// (`T.update(s, window = f(s.window.created))`). Nothing reads the local
-/// after such an update, and a field value can only move a field the update
-/// replaces, so the base may move after the field values run.
+/// new field values reads a field of it
+/// (`T.update(s, window = f(s.window.created), n = g(s.names))`). Nothing
+/// reads the local after such an update. The base then counts as read last,
+/// so a read of a field the update keeps never moves that field
+/// ([`movable_projections`]); a value moves at most a field the update
+/// replaces, and the base may move after the values run.
 pub fn update_base_is_final(update: &MirRecordUpdate) -> bool {
     let MirExpr::Local(base) = &update.base.node else {
         return false;
@@ -785,38 +914,29 @@ pub fn update_base_is_final(update: &MirRecordUpdate) -> bool {
         return true;
     }
     let slot = base.node.slot;
-    let replaced: Vec<&str> = update.updates.iter().map(|f| f.name.as_str()).collect();
     let mut finals = 0usize;
     let mut stray = false;
     for field in &update.updates {
-        final_reads(&field.value.node, slot, &replaced, &mut finals, &mut stray);
+        final_reads(&field.value.node, slot, &mut finals, &mut stray);
     }
     finals > 0 && !stray
 }
 
-/// Count the last-use reads of `slot` under `expr` that read a replaced
-/// field, and note any last-use read that does not.
-fn final_reads(
-    expr: &MirExpr,
-    slot: LocalId,
-    replaced: &[&str],
-    finals: &mut usize,
-    stray: &mut bool,
-) {
+/// Count the last-use reads of `slot` under `expr` that read a field of it,
+/// and note any last-use read of it whole.
+fn final_reads(expr: &MirExpr, slot: LocalId, finals: &mut usize, stray: &mut bool) {
     if let Some((root, last_use, path)) = projection_root(expr)
         && root == slot
     {
         if last_use {
-            match path.first() {
-                Some(first) if replaced.contains(&first.as_str()) => *finals += 1,
-                _ => *stray = true,
+            match path.is_empty() {
+                true => *stray = true,
+                false => *finals += 1,
             }
         }
         return;
     }
-    walk_children(expr, &mut |child| {
-        final_reads(child, slot, replaced, finals, stray)
-    });
+    walk_children(expr, &mut |child| final_reads(child, slot, finals, stray));
 }
 
 /// Whether `o` never runs together with `q`, or finishes before `q` starts

@@ -1,0 +1,24 @@
+module BytesCompare
+    intent = "Bytes compared to a known byte, as a parser looks for a separator."
+    depends [Bytes]
+
+fn count(b: Bytes, i: Int, n: Int, acc: Int) -> Int
+    ? "How many bytes of b equal 44 or are not 10."
+    match i >= n
+        true -> acc
+        false -> match Bytes.get(b, i) == Option.Some(44)
+            true -> count(b, i + 1, n, acc + 1)
+            false -> match Bytes.get(b, i) != Option.Some(10)
+                true -> count(b, i + 1, n, acc + 2)
+                false -> count(b, i + 1, n, acc)
+
+fn reps(b: Bytes, k: Int, acc: Int) -> Int
+    ? "count, k times."
+    match k == 0
+        true -> acc
+        false -> reps(b, k - 1, acc + count(b, 0, Bytes.len(b), 0))
+
+fn main() -> Unit
+    ! [Console.print]
+    b = Bytes.fromList([97, 98, 99, 44, 100, 101, 102, 44, 10, 103, 104, 105, 44, 49, 50, 51, 52, 53, 10, 44, 44, 120])
+    Console.print("{reps(b, 4, 0)} {Bytes.get(b, -1) == Option.Some(0)} {Bytes.get(b, 99) != Option.Some(5)}")

@@ -5785,6 +5785,79 @@ fn rust_a_record_update_before_its_field_reads_takes_the_record() {
     );
 }
 
+/// An update of several fields whose values read a field the update keeps
+/// (`X.update(x, owner = f(x.owner), known = g(x.known, x.names))`) took
+/// copies of the fields it replaces. The record is read last in the values,
+/// so the replaced fields move into the calls that write them, and a kept
+/// field read there is lent or copied, never moved. A value that reads the
+/// record whole still takes copies.
+#[test]
+fn rust_an_update_whose_values_read_a_kept_field_moves_the_replaced_ones() {
+    let src = include_str!("fixtures/update_kept_fields.av");
+    let expected = "10 6 15 15 42 1";
+    let vm = run_vm_inline("update_kept_fields", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("update_kept_fields", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("update_kept_fields", src);
+    for moved in [
+        "a: bump(x.a, aver_rt::AverInt::from_i64(0)), w: wrap(x.keep.clone()), ..x }",
+        "b: bump(x.a, aver_rt::AverInt::from_i64(1)), n: total(&x.keep,",
+        "a: bump(x.a, aver_rt::AverInt::from_i64(2)), n: x.n.add(&total(&x.w.v,",
+        "a: bump(x.a.clone(), aver_rt::AverInt::from_i64(3))",
+    ] {
+        assert!(emitted.contains(moved), "expected `{moved}` in:\n{emitted}");
+    }
+}
+
+/// `match Vector.get(v, i)` whose `Some(c)` arm puts a placeholder at the
+/// same place (`Option.withDefault(Vector.set(v, i, k), v)`) moves the
+/// element out and the placeholder in at once, so the element is written in
+/// place and no count moves for it. A vector another value still holds is
+/// copied first and left as it was.
+#[test]
+fn rust_an_element_taken_out_of_its_vector_and_put_back_is_written_in_place() {
+    let src = include_str!("fixtures/vector_take.av");
+    let expected = "28 29 33 -1 0 3";
+    let vm = run_vm_inline("vector_take", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("vector_take", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("vector_take", src);
+    let cset = emitted
+        .split("pub fn cset(")
+        .nth(1)
+        .and_then(|rest| rest.split("\npub fn ").next())
+        .expect("cset emitted");
+    assert!(
+        cset.contains("let (__taken0, c) = v.replace_unchecked(__i, __binding_noChunk());")
+            && !cset.contains(".cloned()"),
+        "the chunk must be taken out, not copied:\n{cset}"
+    );
+}
+
+/// `Bytes.get(b, i) == Option.Some(k)` for a literal octet reads the byte in
+/// place, as a match on `Bytes.get` does, with no `Option` built; past
+/// either end it still answers as the general path does.
+#[test]
+fn rust_a_byte_compared_to_a_literal_octet_is_read_in_place() {
+    let src = include_str!("fixtures/bytes_compare.av");
+    let expected = "140 false true";
+    let vm = run_vm_inline("bytes_compare", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("bytes_compare", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("bytes_compare", src);
+    assert!(
+        emitted.contains("byte_at_i64(aver_rt::string_position(&i)) == 44i64")
+            && emitted.contains("byte_at_i64(-1i64) == 0i64"),
+        "the comparison must read the byte in place:\n{emitted}"
+    );
+}
+
 /// `Option.withDefault(Vector.set(v, i, f(v)), v)` with `v` moving into the
 /// set: the value read `v` after the set had taken it, and the generated
 /// Rust did not build (E0382). The index and the value are now computed

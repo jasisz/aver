@@ -1,0 +1,52 @@
+module UpdateKeptFields
+    intent = "Updates whose values read fields the update keeps."
+
+record W
+    v: Vector<Int>
+
+record X
+    a: Vector<Int>
+    b: Vector<Int>
+    keep: Vector<Int>
+    w: W
+    n: Int
+
+fn bump(v: Vector<Int>, i: Int) -> Vector<Int>
+    ? "v with one more at i."
+    Option.withDefault(Vector.set(v, i, Option.withDefault(Vector.get(v, i), 0) + 1), v)
+
+fn wrap(v: Vector<Int>) -> W
+    ? "v kept in a record."
+    W(v = v)
+
+fn total(v: Vector<Int>, i: Int, acc: Int) -> Int
+    ? "Sum."
+    match i >= Vector.len(v)
+        true -> acc
+        false -> total(v, i + 1, acc + Option.withDefault(Vector.get(v, i), 0))
+
+fn s1(x: X) -> X
+    ? "A replaced field written, a kept one stored by value."
+    X.update(x, a = bump(x.a, 0), w = wrap(x.keep))
+
+fn s2(x: X) -> X
+    ? "Two fields swapped, a kept one read."
+    X.update(x, a = x.b, b = bump(x.a, 1), n = total(x.keep, 0, 0))
+
+fn s3(x: X) -> X
+    ? "A kept nested field read last."
+    X.update(x, a = bump(x.a, 2), n = x.n + total(x.w.v, 0, 0))
+
+fn s4(x: X) -> X
+    ? "The whole record read in a value."
+    X.update(x, a = bump(x.a, 3), n = total(x.a, 0, 0) + whole(x))
+
+fn whole(x: X) -> Int
+    ? "Reads it whole."
+    x.n + Vector.len(x.keep)
+
+fn main() -> Unit
+    ! [Console.print]
+    x0 = X(a = Vector.new(4, 1), b = Vector.new(4, 2), keep = Vector.new(3, 5), w = W(v = Vector.new(2, 7)), n = 1)
+    x = s4(s3(s2(s1(x0))))
+    Console.print("{total(x.a, 0, 0)} {total(x.b, 0, 0)} {total(x.keep, 0, 0)} {total(x.w.v, 0, 0)} {x.n} {x0.n}")

@@ -370,6 +370,10 @@ fn matched_part_writes(
         let Some((getter, holder)) = read_out(&m.node.subject.node) else {
             return;
         };
+        // The element is taken out of the vector, not copied (`VectorTake`).
+        if crate::ir::mir::field_moves::vector_take_match(&m.node, &program.builtins).is_some() {
+            return;
+        }
         // The locals the arms bind, and those a match on one of them binds.
         let mut parts: HashSet<LocalId> = HashSet::new();
         for arm in &m.node.arms {

@@ -1,0 +1,39 @@
+module VectorTake
+    intent =
+        "Chunks of a Vector of Vectors taken out, changed and put back, at"
+        "places in and out of range, so every backend can be held to one output."
+    depends []
+    effects [Console.print]
+
+fn cset(v: Vector<Vector<Int>>, i: Int, x: Int) -> Vector<Vector<Int>>
+    ? "v with x as number i: its chunk taken out, set and put back."
+    ci = Int.div(i, 4)
+    match Vector.get(v, ci)
+        Option.None -> v
+        Option.Some(c) -> cput(Option.withDefault(Vector.set(v, ci, noChunk), v), ci, chunkSet(c, Int.mod(i, 4), x))
+
+fn chunkSet(c: Vector<Int>, j: Int, x: Int) -> Vector<Int>
+    ? "c with x at j."
+    Option.withDefault(Vector.set(c, j, x), c)
+
+fn cput(v: Vector<Vector<Int>>, ci: Int, c: Vector<Int>) -> Vector<Vector<Int>>
+    ? "c back as chunk ci."
+    Option.withDefault(Vector.set(v, ci, c), v)
+
+noChunk: Vector<Int> = Vector.fromList([0])
+
+fn cget(v: Vector<Vector<Int>>, i: Int) -> Int
+    ? "Number i, or -1."
+    Option.withDefault(Vector.get(Option.withDefault(Vector.get(v, Int.div(i, 4)), noChunk), Int.mod(i, 4)), -1)
+
+fn fill(v: Vector<Vector<Int>>, k: Int, n: Int) -> Vector<Vector<Int>>
+    ? "n writes, some past the end."
+    match k == n
+        true -> v
+        false -> fill(cset(v, Int.mod(k * 5, 14), k), k + 1, n)
+
+fn main() -> Unit
+    ! [Console.print]
+    v0 = Vector.fromList([Vector.new(4, 0), Vector.new(4, 0), Vector.new(4, 0)])
+    v = fill(v0, 0, 40)
+    Console.print("{cget(v, 0)} {cget(v, 5)} {cget(v, 11)} {cget(v, 13)} {cget(v0, 5)} {Vector.len(v)}")
