@@ -134,9 +134,7 @@ pub fn __lent_readPoly(
                                     &a, atoms,
                                 );
                             crate::proof_kernel::aver_generated::kernel::ring::__lent_combine(
-                                __arg7,
-                                &b,
-                                aver_rt::AverInt::from_i64(0),
+                                __arg7, &b, 0i64,
                             )
                         }
                         Some(45i64) => {
@@ -145,9 +143,7 @@ pub fn __lent_readPoly(
                                     &a, atoms,
                                 );
                             crate::proof_kernel::aver_generated::kernel::ring::__lent_combine(
-                                __arg8,
-                                &b,
-                                aver_rt::AverInt::from_i64(1),
+                                __arg8, &b, 1i64,
                             )
                         }
                         Some(42i64) => {
@@ -156,9 +152,7 @@ pub fn __lent_readPoly(
                                     &a, atoms,
                                 );
                             crate::proof_kernel::aver_generated::kernel::ring::__lent_combine(
-                                __arg9,
-                                &b,
-                                aver_rt::AverInt::from_i64(2),
+                                __arg9, &b, 2i64,
                             )
                         }
                         _ => crate::proof_kernel::aver_generated::kernel::ring::atom(
@@ -188,7 +182,7 @@ pub fn __lent_readPoly(
 pub fn combine(
     mut left @ _: Read,
     mut b @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    how @ _: aver_rt::AverInt,
+    how @ _: i64,
 ) -> Read {
     __lent_combine(left, &b, how)
 }
@@ -198,22 +192,22 @@ pub fn combine(
 pub fn __lent_combine(
     mut left @ _: Read,
     b @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
-    how @ _: aver_rt::AverInt,
+    how @ _: i64,
 ) -> Read {
     crate::proof_kernel::cancel_checkpoint();
     let right @ _ =
         crate::proof_kernel::aver_generated::kernel::ring::__lent_readPoly(b, &left.atoms);
     {
         let __dispatch_subject = how;
-        match __dispatch_subject.to_i64() {
-            Some(0i64) => crate::proof_kernel::aver_generated::kernel::ring::Read {
+        match __dispatch_subject {
+            0i64 => crate::proof_kernel::aver_generated::kernel::ring::Read {
                 poly: crate::proof_kernel::aver_generated::kernel::ring::addPoly(
                     left.poly,
                     &right.poly,
                 ),
                 atoms: right.atoms,
             },
-            Some(1i64) => crate::proof_kernel::aver_generated::kernel::ring::Read {
+            1i64 => crate::proof_kernel::aver_generated::kernel::ring::Read {
                 poly: {
                     let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::ring::scalePoly(
                         &right.poly,
@@ -973,60 +967,40 @@ pub fn asNonneg(
                 {
                     let __dispatch_subject = __pat0;
                     if &*__dispatch_subject == "<" {
-                        Some({
-                            let __arg6 @ _ = aver_rt::AverInt::from_i64(
-                                crate::proof_kernel::aver_generated::kernel::ring::strictWhen(
-                                    value, true,
-                                ),
-                            );
+                        Some(
                             crate::proof_kernel::aver_generated::kernel::ring::difference(
                                 b.clone(),
                                 a.clone(),
-                                __arg6,
+                                crate::proof_kernel::aver_generated::kernel::ring::strictWhen(
+                                    value, true,
+                                ),
                                 atoms,
                                 value,
                                 a.clone(),
                                 b.clone(),
-                            )
-                        })
+                            ),
+                        )
                     } else {
                         if &*__dispatch_subject == "<=" {
-                            Some({
-                                let __arg7 @ _ = aver_rt::AverInt::from_i64(
-                                    crate::proof_kernel::aver_generated::kernel::ring::strictWhen(
-                                        value, false,
-                                    ),
-                                );
+                            Some(
                                 crate::proof_kernel::aver_generated::kernel::ring::difference(
                                     b.clone(),
                                     a.clone(),
-                                    __arg7,
+                                    crate::proof_kernel::aver_generated::kernel::ring::strictWhen(
+                                        value, false,
+                                    ),
                                     atoms,
                                     value,
                                     a.clone(),
                                     b.clone(),
-                                )
-                            })
+                                ),
+                            )
                         } else {
                             if &*__dispatch_subject == ">" {
-                                Some({
-                                    let __arg8 @ _ = aver_rt::AverInt::from_i64(crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, true));
-                                    crate::proof_kernel::aver_generated::kernel::ring::difference(
-                                        a.clone(),
-                                        b.clone(),
-                                        __arg8,
-                                        atoms,
-                                        value,
-                                        b.clone(),
-                                        a.clone(),
-                                    )
-                                })
+                                Some(crate::proof_kernel::aver_generated::kernel::ring::difference(a.clone(), b.clone(), crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, true), atoms, value, b.clone(), a.clone()))
                             } else {
                                 if &*__dispatch_subject == ">=" {
-                                    Some({
-                                        let __arg9 @ _ = aver_rt::AverInt::from_i64(crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, false));
-                                        crate::proof_kernel::aver_generated::kernel::ring::difference(a.clone(), b.clone(), __arg9, atoms, value, b.clone(), a.clone())
-                                    })
+                                    Some(crate::proof_kernel::aver_generated::kernel::ring::difference(a.clone(), b.clone(), crate::proof_kernel::aver_generated::kernel::ring::strictWhen(value, false), atoms, value, b.clone(), a.clone()))
                                 } else {
                                     None
                                 }
@@ -1052,7 +1026,7 @@ pub fn strictWhen(value @ _: bool, strict @ _: bool) -> i64 {
 pub fn difference(
     mut upper @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut lower @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    k @ _: aver_rt::AverInt,
+    k @ _: i64,
     atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     value @ _: bool,
     mut otherUpper @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -1091,14 +1065,15 @@ pub fn difference(
 }
 
 /// A polynomial minus a constant.
-pub fn lessConstant(r @ _: &Read, k @ _: aver_rt::AverInt) -> Read {
+pub fn lessConstant(r @ _: &Read, k @ _: i64) -> Read {
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::ring::Read {
         poly: {
-            let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::ring::constant(
-                aver_rt::AverInt::from_i64(0).sub(&k),
-            );
-            crate::proof_kernel::aver_generated::kernel::ring::addPoly(r.poly.clone(), &__arg2)
+            let __arg3 @ _ = {
+                let __arg2 @ _ = aver_rt::AverInt::from_i64((0i64 - k));
+                crate::proof_kernel::aver_generated::kernel::ring::constant(__arg2)
+            };
+            crate::proof_kernel::aver_generated::kernel::ring::addPoly(r.poly.clone(), &__arg3)
         },
         atoms: r.atoms.clone(),
     }

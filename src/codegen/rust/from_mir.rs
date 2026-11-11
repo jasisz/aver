@@ -474,11 +474,11 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
         // renders such a read raw where the facts know it).
         MirExpr::Project(_) if ctx.bare.is_carrier_project(&expr.node) => emit_mir_expr(expr, ctx),
         // A call of a function that returns a raw `i64`.
-        MirExpr::Call(_) | MirExpr::Let(_)
-            if ctx.bare.call_return_interval(&expr.node).is_some() =>
-        {
+        MirExpr::Call(_) if ctx.bare.call_return_interval(&expr.node).is_some() => {
             emit_mir_expr(expr, ctx)
         }
+        // A `let` block whose body renders raw.
+        MirExpr::Let(l) if ctx.bare.expr_is_bare_i64(&l.node.body.node) => emit_mir_expr(expr, ctx),
         // A raw position moved by a literal, saturated at the ends of `i64`.
         MirExpr::Call(c)
             if c.node.callee == MirCallee::Intrinsic(BuiltinIntrinsic::PositionOffset) =>
@@ -3530,7 +3530,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // → fall back to HIR).
             let tc = &spanned_tc.node;
             let name = emit_ctx.symbol_table.fn_entry(tc.target).key.canonical();
-            emit_named_call(&name, &tc.args, emit_ctx)
+            emit_named_call_to(&name, Some(tc.target), &tc.args, emit_ctx)
         }
         MirExpr::Try(inner) => {
             // `value?` propagation. `?` (the `Try` trait) is implemented
@@ -8622,7 +8622,7 @@ fn emit_mir_tco_tail_expr(
                 let name = ctx.symbol_table.fn_entry(tc.target).key.canonical();
                 Some(format!(
                     "return {};",
-                    emit_named_call(&name, &tc.args, ctx)?
+                    emit_named_call_to(&name, Some(tc.target), &tc.args, ctx)?
                 ))
             }
         }
@@ -9327,7 +9327,10 @@ fn emit_mir_trampoline_tail_expr(
                 ))
             } else {
                 let name = ctx.symbol_table.fn_entry(tc.target).key.canonical();
-                Some(format!("return {}", emit_named_call(&name, &tc.args, ctx)?))
+                Some(format!(
+                    "return {}",
+                    emit_named_call_to(&name, Some(tc.target), &tc.args, ctx)?
+                ))
             }
         }
         MirExpr::Match(spanned_match) => {
@@ -9519,26 +9522,6 @@ fn mir_clone_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
     materialize_owned(code, expr, ctx)
 }
 
-/// Emit a named user-function call (`Call(Fn)` /
-/// outside-loop `TailCall`). Mirror of HIR's
-/// `emit_named_function_call`: per-arg `borrow_arg` (when the
-/// callee's i-th param is borrowed-by-default `&T`) or `clone_arg`
-/// (owned), and `resolve_module_call` head path-mangling.
-///
-/// `callee_borrow_mask` needs the full `CodegenContext`; on the
-/// coverage path (`codegen == None`) there's no mask, so every arg
-/// rides `clone_arg` (conservative — coverage only reads Some/None,
-/// and the production parity gate never runs without a ctx).
-fn emit_named_call(name: &str, args: &[Spanned<MirExpr>], ctx: &MirEmitCtx<'_>) -> Option<String> {
-    emit_named_call_to(name, None, args, ctx)
-}
-
-/// Like [`emit_named_call`] but threads the callee's `FnId` so the Int
-/// unboxing facts can convert each arg at the call boundary: when the
-/// callee's i-th param is bare `i64`, the arg is emitted as a raw `i64`
-/// (an already-bare arg directly; a boxed `AverInt` arg narrowed via a
-/// checked `to_i64`). A `None` `callee` (a foreign tail-call helper with
-/// no facts) keeps every arg boxed.
 /// The facts a call to `callee` is rendered by: none for a member of a
 /// mutual tail-call group, whose trampoline wrapper takes every `Int` param
 /// and gives its result as an `AverInt` whatever the analysis found, as the
@@ -9553,6 +9536,20 @@ fn callee_bare_facts(
     codegen.bare_i64.for_fn(callee)
 }
 
+/// Emit a named user-function call of `callee` (`Call(Fn)` / a tail call
+/// of another function). Mirror of HIR's
+/// `emit_named_function_call`: per-arg `borrow_arg` (when the
+/// callee's i-th param is borrowed-by-default `&T`) or `clone_arg`
+/// (owned), and `resolve_module_call` head path-mangling.
+///
+/// `callee_borrow_mask` needs the full `CodegenContext`; on the
+/// coverage path (`codegen == None`) there's no mask, so every arg
+/// rides `clone_arg` (conservative — coverage only reads Some/None,
+/// and the production parity gate never runs without a ctx).
+///
+/// With the callee's `FnId` the Int unboxing facts render each arg at the
+/// call boundary: when the callee's i-th param is bare `i64`, the arg is
+/// emitted as a raw `i64`.
 fn emit_named_call_to(
     name: &str,
     callee: Option<crate::ir::FnId>,

@@ -395,21 +395,15 @@ pub fn matchPatConstructorById(
     {
         let __dispatch_subject = tag.clone();
         match __dispatch_subject.to_i64() {
-            Some(1i64) => crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
-                v,
-                aver_rt::AverInt::from_i64(1),
-                bindings,
-            ),
-            Some(2i64) => crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
-                v,
-                aver_rt::AverInt::from_i64(2),
-                bindings,
-            ),
-            Some(3i64) => crate::aver_generated::domain::match_mod::matchWrapperPatDirect(
-                v,
-                aver_rt::AverInt::from_i64(3),
-                bindings,
-            ),
+            Some(1i64) => {
+                crate::aver_generated::domain::match_mod::matchWrapperPatDirect(v, 1i64, bindings)
+            }
+            Some(2i64) => {
+                crate::aver_generated::domain::match_mod::matchWrapperPatDirect(v, 2i64, bindings)
+            }
+            Some(3i64) => {
+                crate::aver_generated::domain::match_mod::matchWrapperPatDirect(v, 3i64, bindings)
+            }
             Some(4i64) => crate::aver_generated::domain::match_mod::matchNonePat(v),
             _ => crate::aver_generated::domain::match_mod::matchGenericCtorById(
                 tag, ctorName, bindings, v,
@@ -422,14 +416,14 @@ pub fn matchPatConstructorById(
 #[inline(always)]
 pub fn matchWrapperPatDirect(
     v @ _: &crate::aver_generated::domain::value::Val,
-    tag @ _: aver_rt::AverInt,
+    tag @ _: i64,
     bindings @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = tag;
-        match __dispatch_subject.to_i64() {
-            Some(1i64) => {
+        match __dispatch_subject {
+            1i64 => {
                 let __t = v;
                 match __t.view() {
                     crate::aver_generated::domain::value::Val__view::ValOk(__inner_fields) => {
@@ -445,7 +439,7 @@ pub fn matchWrapperPatDirect(
                     _ => Err(::aver_rt::str_lit!("no match")),
                 }
             }
-            Some(2i64) => {
+            2i64 => {
                 let __t = v;
                 match __t.view() {
                     crate::aver_generated::domain::value::Val__view::ValErr(__inner_fields) => {
@@ -461,7 +455,7 @@ pub fn matchWrapperPatDirect(
                     _ => Err(::aver_rt::str_lit!("no match")),
                 }
             }
-            Some(3i64) => {
+            3i64 => {
                 let __t = v;
                 match __t.view() {
                     crate::aver_generated::domain::value::Val__view::ValSome(__inner_fields) => {

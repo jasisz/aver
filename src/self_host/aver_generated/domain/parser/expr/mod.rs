@@ -1536,50 +1536,32 @@ pub fn parseCmpExprTail(
     match crate::aver_generated::domain::parser_match::continuationAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkEqEq => {
             crate::aver_generated::domain::parser::expr::parseCmpExprRight(
-                tokens,
-                nextPos,
-                left,
-                aver_rt::AverInt::from_i64(0),
+                tokens, nextPos, left, 0i64,
             )
         }
         crate::aver_generated::domain::token::Token::TkNeq => {
             crate::aver_generated::domain::parser::expr::parseCmpExprRight(
-                tokens,
-                nextPos,
-                left,
-                aver_rt::AverInt::from_i64(1),
+                tokens, nextPos, left, 1i64,
             )
         }
         crate::aver_generated::domain::token::Token::TkLt => {
             crate::aver_generated::domain::parser::expr::parseCmpExprRight(
-                tokens,
-                nextPos,
-                left,
-                aver_rt::AverInt::from_i64(2),
+                tokens, nextPos, left, 2i64,
             )
         }
         crate::aver_generated::domain::token::Token::TkGt => {
             crate::aver_generated::domain::parser::expr::parseCmpExprRight(
-                tokens,
-                nextPos,
-                left,
-                aver_rt::AverInt::from_i64(3),
+                tokens, nextPos, left, 3i64,
             )
         }
         crate::aver_generated::domain::token::Token::TkLte => {
             crate::aver_generated::domain::parser::expr::parseCmpExprRight(
-                tokens,
-                nextPos,
-                left,
-                aver_rt::AverInt::from_i64(4),
+                tokens, nextPos, left, 4i64,
             )
         }
         crate::aver_generated::domain::token::Token::TkGte => {
             crate::aver_generated::domain::parser::expr::parseCmpExprRight(
-                tokens,
-                nextPos,
-                left,
-                aver_rt::AverInt::from_i64(5),
+                tokens, nextPos, left, 5i64,
             )
         }
         _ => Ok((left, pos)),
@@ -1591,7 +1573,7 @@ pub fn parseCmpExprRight(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     mut left @ _: crate::aver_generated::domain::ast::Expr,
-    op @ _: aver_rt::AverInt,
+    op @ _: i64,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let r @ _ = crate::aver_generated::domain::parser::expr::parseAddExpr(tokens, pos)?;
@@ -1607,43 +1589,43 @@ pub fn buildCmpExpr(
     mut left @ _: crate::aver_generated::domain::ast::Expr,
     mut right @ _: crate::aver_generated::domain::ast::Expr,
     pos @ _: aver_rt::AverInt,
-    op @ _: aver_rt::AverInt,
+    op @ _: i64,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = op;
-        match __dispatch_subject.to_i64() {
-            Some(0i64) => Ok((
+        match __dispatch_subject {
+            0i64 => Ok((
                 crate::aver_generated::domain::ast::Expr::ExprEq(
                     crate::aver_generated::domain::ast::Expr__ExprEq(left, right),
                 ),
                 pos,
             )),
-            Some(1i64) => Ok((
+            1i64 => Ok((
                 crate::aver_generated::domain::ast::Expr::ExprNeq(
                     crate::aver_generated::domain::ast::Expr__ExprNeq(left, right),
                 ),
                 pos,
             )),
-            Some(2i64) => Ok((
+            2i64 => Ok((
                 crate::aver_generated::domain::ast::Expr::ExprLt(
                     crate::aver_generated::domain::ast::Expr__ExprLt(left, right),
                 ),
                 pos,
             )),
-            Some(3i64) => Ok((
+            3i64 => Ok((
                 crate::aver_generated::domain::ast::Expr::ExprGt(
                     crate::aver_generated::domain::ast::Expr__ExprGt(left, right),
                 ),
                 pos,
             )),
-            Some(4i64) => Ok((
+            4i64 => Ok((
                 crate::aver_generated::domain::ast::Expr::ExprLte(
                     crate::aver_generated::domain::ast::Expr__ExprLte(left, right),
                 ),
                 pos,
             )),
-            Some(5i64) => Ok((
+            5i64 => Ok((
                 crate::aver_generated::domain::ast::Expr::ExprGte(
                     crate::aver_generated::domain::ast::Expr__ExprGte(left, right),
                 ),
