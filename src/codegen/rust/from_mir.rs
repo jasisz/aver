@@ -3439,6 +3439,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         {
             emit_bare_i64(expr, emit_ctx)
         }
+        // So does a length: the rewrite boxed it wherever it meets a general
+        // `Int`, so anywhere else it is the `i64` it reads (a `let` slot, a
+        // comparison).
+        MirExpr::Call(_) if emit_ctx.bare.length_interval(&expr.node).is_some() => {
+            emit_bare_i64(expr, emit_ctx)
+        }
         MirExpr::Call(spanned_call) => {
             let call = &spanned_call.node;
             match &call.callee {
