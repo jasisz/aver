@@ -69,7 +69,7 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::ToStr => None,
         // Rust only: the representation rewrite of the Rust backend is its
         // one producer.
-        BuiltinIntrinsic::StrIndexPosition => None,
+        BuiltinIntrinsic::StrIndexPosition | BuiltinIntrinsic::PositionOffset => None,
         // Rust and wasm-gc only: the packed byte read runs where the carrier
         // is a packed array, which the VM's is not.
         BuiltinIntrinsic::PackedByteAt => None,

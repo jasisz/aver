@@ -59,6 +59,36 @@ verify octetAt
     octetAt(Bytes.fromList([7]), 0) => "7"
     octetAt(Bytes.fromList([7]), 1) => "none"
 
+fn octet(b: Bytes, i: Int) -> Int
+    ? "The octet at i, or 0 where there is none."
+    match Bytes.get(b, i)
+        Option.Some(x) -> x
+        Option.None -> 0
+
+verify octet
+    octet(Bytes.fromList([7]), 0) => 7
+    octet(Bytes.fromList([7]), 1) => 0
+
+fn u16At(b: Bytes, i: Int) -> Int
+    ? "A little-endian u16 at i, read at i + 1 and handed on as i and i + 1, or -1 past the end."
+    match Bytes.get(b, i + 1)
+        Option.None -> -1
+        Option.Some(_) -> octet(b, i + 1) * 256 + octet(b, i)
+
+verify u16At
+    u16At(Bytes.fromList([1, 2]), 0) => 513
+    u16At(Bytes.fromList([1, 2]), 1) => -1
+
+fn before(b: Bytes, i: Int) -> String
+    ? "The octet before i, read at i - 1."
+    match Bytes.get(b, i - 1)
+        Option.None -> "none"
+        Option.Some(v) -> "{v}"
+
+verify before
+    before(Bytes.fromList([7]), 1) => "7"
+    before(Bytes.fromList([7]), 0) => "none"
+
 fn ramp(n: Int, acc: List<Int>) -> List<Int>
     ? "The octets n - 1 down to 0 mod 256, prepended onto acc."
     match n
@@ -78,7 +108,7 @@ fn starts(label: String, b: Bytes, indices: List<Int>) -> Unit
 fn startsAt(label: String, b: Bytes, i: Int, rest: List<Int>) -> Unit
     ? "Prints the loops started at one index, then the rest."
     ! [Console.print]
-    Console.print("{label}[{i}] sum {sumFrom(b, i, 0)} count {countFrom(b, i, 0)} find {findFrom(b, i, 255)} at {octetAt(b, i)}")
+    Console.print("{label}[{i}] sum {sumFrom(b, i, 0)} count {countFrom(b, i, 0)} find {findFrom(b, i, 255)} at {octetAt(b, i)} u16 {u16At(b, i)} before {before(b, i)}")
     starts(label, b, rest)
 
 fn lebAll(b: Bytes, i: Int, total: Int) -> Int

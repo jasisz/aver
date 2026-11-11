@@ -37,7 +37,7 @@
 //! raw value would still fail to type-check in the emitted Rust (raw `i64`
 //! into an `AverInt` slot is `E0308`), the same backstop as before.
 
-use crate::ast::{BinOp, Literal, Spanned};
+use crate::ast::{BinOp, Literal, Spanned, Type};
 use crate::ir::mir::program::LocalId;
 use crate::ir::mir::{
     BareI64Facts, FnBareFacts, MirCallee, MirExpr, MirFn, MirFnRepr, MirProgram, MirStrPart,
@@ -1089,9 +1089,16 @@ fn rewrite_call_args(
         .enumerate()
         .map(|(i, a)| {
             // A param only read at as a position takes a boxed one saturated.
-            if callee_facts.is_some_and(|f| param_bare(f, i) && f.param_takes_saturated(i))
+            let saturated =
+                callee_facts.is_some_and(|f| param_bare(f, i) && f.param_takes_saturated(i));
+            let position = saturated || ctx.facts.raw_ops.takes_position(callee, i);
+            if position
                 && !renders_raw(&a.node, ctx.facts)
+                && let Some(moved) = offset_position(&a, ctx)
             {
+                return moved;
+            }
+            if saturated && !renders_raw(&a.node, ctx.facts) {
                 return saturated_position(rewrite_boxed(a, ctx));
             }
             if callee_facts.is_some_and(|f| param_bare(f, i))
@@ -1104,6 +1111,26 @@ fn rewrite_call_args(
             }
         })
         .collect()
+}
+
+/// A position `base + k` whose base renders raw, as the raw `i64` the
+/// read takes: `base` moved by `k`, saturated at the ends of `i64`. `None`
+/// for any other shape, which then takes the boxed path.
+fn offset_position(e: &Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Option<Spanned<MirExpr>> {
+    let (base, k) = super::bare_i64::position_offset(&e.node)?;
+    if !matches!(base.node, MirExpr::Local(_)) || !renders_raw(&base.node, ctx.facts) {
+        return None;
+    }
+    let line = e.line;
+    let offset = Spanned::new(MirExpr::Literal(Spanned::new(Literal::Int(k), line)), line);
+    offset.set_ty(Type::Int);
+    let call = crate::ir::mir::MirCall {
+        callee: MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::PositionOffset),
+        args: vec![rewrite_raw(base.clone(), ctx), offset],
+    };
+    let out = Spanned::new(MirExpr::Call(Spanned::new(call, line)), line);
+    out.set_ty(Type::Int);
+    Some(out)
 }
 
 /// `e`, a boxed position, as the `i64` an indexed read takes: saturated

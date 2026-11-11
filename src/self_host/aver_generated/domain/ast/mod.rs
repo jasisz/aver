@@ -4095,7 +4095,7 @@ pub fn canonicalCtorName(name @ _: AverStr) -> AverStr {
 #[inline(always)]
 pub fn canonicalCtorNameAtLastDot(
     name @ _: AverStr,
-    total @ _: aver_rt::AverInt,
+    total @ _: i64,
     lastDot @ _: aver_rt::AverInt,
 ) -> AverStr {
     crate::cancel_checkpoint();
@@ -4109,18 +4109,14 @@ pub fn canonicalCtorNameAtLastDot(
 #[inline(always)]
 pub fn canonicalCtorNameAtBothDots(
     name @ _: AverStr,
-    total @ _: aver_rt::AverInt,
-    lastDot @ _: aver_rt::AverInt,
+    total @ _: i64,
+    lastDot @ _: i64,
     prevDot @ _: aver_rt::AverInt,
 ) -> AverStr {
     crate::cancel_checkpoint();
     let __arg4 @ _ = aver_rt::string_index_build(&name);
     crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots__indexed(
-        name,
-        aver_rt::string_position(&total),
-        lastDot,
-        prevDot,
-        &__arg4,
+        name, total, lastDot, prevDot, &__arg4,
     )
 }
 
@@ -4365,7 +4361,7 @@ pub fn canonicalCtorName__indexed(
     );
     crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot__indexed(
         name,
-        total,
+        aver_rt::string_position(&total),
         __arg3,
         __str_index,
     )
@@ -4375,7 +4371,7 @@ pub fn canonicalCtorName__indexed(
 #[inline(always)]
 pub fn canonicalCtorNameAtLastDot__indexed(
     name @ _: AverStr,
-    total @ _: aver_rt::AverInt,
+    total @ _: i64,
     lastDot @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> AverStr {
@@ -4389,8 +4385,8 @@ pub fn canonicalCtorNameAtLastDot__indexed(
             );
             crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots__indexed(
                 name,
-                aver_rt::string_position(&total),
-                lastDot,
+                total,
+                aver_rt::string_position(&lastDot),
                 __arg4,
                 __str_index,
             )
@@ -4405,7 +4401,7 @@ pub fn canonicalCtorNameAtLastDot__indexed(
 pub fn canonicalCtorNameAtBothDots__indexed(
     name @ _: AverStr,
     total @ _: i64,
-    lastDot @ _: aver_rt::AverInt,
+    lastDot @ _: i64,
     prevDot @ _: aver_rt::AverInt,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> AverStr {
@@ -4418,13 +4414,13 @@ pub fn canonicalCtorNameAtBothDots__indexed(
                 &name,
                 &__str_index,
                 aver_rt::string_position(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
-                aver_rt::string_position(&lastDot),
+                lastDot,
             );
             {
                 let __arg6 @ _ = aver_rt::string_index_slice_i64(
                     &name,
                     &__str_index,
-                    aver_rt::string_position(&lastDot.add(&aver_rt::AverInt::from_i64(1))),
+                    (lastDot).saturating_add(1i64),
                     total,
                 );
                 crate::aver_generated::domain::ast::isTypeVariantTail(&__arg5, &__arg6)
