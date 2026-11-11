@@ -1,0 +1,23 @@
+module Idx
+    intent = "An index."
+    exposes [fromInt, indexValue]
+    exposes opaque [Index]
+
+record Index
+    value: Int
+
+fn fromInt(n: Int) -> Result<Index, String>
+    ? "An index from 0 up to 2^31."
+    match Bool.and(n >= 0, n <= 2147483648)
+        true -> Result.Ok(Index(value = n))
+        false -> Result.Err("index out of range")
+
+verify fromInt
+    fromInt(0) => Index(value = 0)
+
+fn indexValue(x: Index) -> Int
+    ? "The index."
+    x.value
+
+verify indexValue
+    indexValue(Index(value = 3)) => 3
