@@ -1056,7 +1056,7 @@ pub fn caseCount(
         let __list_subject = gs;
         match aver_rt::list_uncons(__list_subject) {
             Some((g, rest)) => aver_rt::AverInt::from_i64(
-                crate::proof_std::aver_generated::kernel::finite::values(&g.fin).len() as i64,
+                ((crate::proof_std::aver_generated::kernel::finite::values(&g.fin)).len() as i64),
             )
             .mul(&crate::proof_std::aver_generated::kernel::std::caseCount(
                 &rest,

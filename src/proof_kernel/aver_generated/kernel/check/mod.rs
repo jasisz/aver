@@ -398,8 +398,7 @@ fn __mutual_tco_trampoline_2(
                                 &__arg9, &c.binders,
                             )
                         },
-                        ((aver_rt::AverInt::from_i64(before.len() as i64)
-                            == aver_rt::AverInt::from_i64(0))
+                        ((((before).len() as i64) == 0i64)
                             || (before
                                 == aver_rt::AverList::prepend_owned(
                                     e.clone(),
@@ -1339,9 +1338,7 @@ pub fn argsFit(
     path @ _: AverStr,
 ) -> Result<(), AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(d.params.len() as i64)
-        == aver_rt::AverInt::from_i64(xs.len() as i64))
-    {
+    if (((d.params).len() as i64) == ((xs).len() as i64)) {
         {
             let __arg5 @ _ = {
                 let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::types::paramsOf(d);
@@ -1379,7 +1376,7 @@ pub fn argsFit(
                     __b.push_str(&::aver_rt::str_lit!(" takes "));
                     __b
                 };
-                __b.push_display(&(aver_rt::AverInt::from_i64(d.params.len() as i64)));
+                __b.push_display(&(aver_rt::AverInt::from_i64(((d.params).len() as i64))));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" arguments"));
@@ -1705,8 +1702,9 @@ pub fn declarationsAcyclic(
                                     crate::proof_kernel::aver_generated::kernel::term::Term,
                                 >>::empty();
                                 {
-                                    let __arg9 @ _ = aver_rt::AverInt::from_i64(ds.len() as i64)
-                                        .add(&aver_rt::AverInt::from_i64(cs.len() as i64));
+                                    let __arg9 @ _ =
+                                        aver_rt::AverInt::from_i64(((ds).len() as i64))
+                                            .add(&aver_rt::AverInt::from_i64(((cs).len() as i64)));
                                     crate::proof_kernel::aver_generated::kernel::check::declarationCycle(__arg6, &__arg7, ds, cs, __arg8, __arg9)
                                 }
                             }
@@ -2536,9 +2534,7 @@ pub fn trans(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(ts.len() as i64)
-        == aver_rt::AverInt::from_i64(ps.len() as i64).add(&aver_rt::AverInt::from_i64(1)))
-    {
+    if (((ts).len() as i64) == (((ps).len() as i64) + 1i64)) {
         crate::proof_kernel::aver_generated::kernel::check::transFrom(
             ts,
             ps,
@@ -3457,9 +3453,7 @@ pub fn caseVars(
                 match __subject {
                     Err(why @ _) => Err(why),
                     Ok(fs @ _) => {
-                        if (aver_rt::AverInt::from_i64(fs.len() as i64)
-                            == aver_rt::AverInt::from_i64(c.binders.len() as i64))
-                        {
+                        if (((fs).len() as i64) == ((c.binders).len() as i64)) {
                             Ok(aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::types::namedVars(
                                     &c.binders, &fs,
@@ -3489,7 +3483,7 @@ pub fn caseVars(
                                             };
                                             __b.push_display(
                                                 &(aver_rt::AverInt::from_i64(
-                                                    c.binders.len() as i64
+                                                    ((c.binders).len() as i64),
                                                 )),
                                             );
                                             __b
@@ -3498,7 +3492,7 @@ pub fn caseVars(
                                         __b
                                     };
                                     __b.push_display(
-                                        &(aver_rt::AverInt::from_i64(fs.len() as i64)),
+                                        &(aver_rt::AverInt::from_i64(((fs).len() as i64))),
                                     );
                                     __b
                                 };
@@ -3568,7 +3562,7 @@ pub fn binderCounts(
         let __list_subject = cs;
         match aver_rt::list_uncons(__list_subject) {
             Some((c, rest)) => aver_rt::AverIntList::prepend_owned(
-                aver_rt::AverInt::from_i64(c.binders.len() as i64),
+                aver_rt::AverInt::from_i64(((c.binders).len() as i64)),
                 crate::proof_kernel::aver_generated::kernel::check::binderCounts(&rest),
             ),
             None => aver_rt::AverIntList::empty(),
@@ -5406,9 +5400,7 @@ pub fn ctorTerm(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Term, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(names.len() as i64)
-        == aver_rt::AverInt::from_i64(ys.len() as i64))
-    {
+    if (((names).len() as i64) == ((ys).len() as i64)) {
         Ok(
             crate::proof_kernel::aver_generated::kernel::term::Term::TCtor({
                 let __field0 = c;
@@ -6089,8 +6081,7 @@ pub fn inductChecked(
     );
     {
         let __subject = (
-            (aver_rt::AverInt::from_i64(r.arms.len() as i64)
-                == aver_rt::AverInt::from_i64(cs.len() as i64)),
+            (((r.arms).len() as i64) == ((cs).len() as i64)),
             crate::proof_kernel::aver_generated::kernel::check::measured(r, vr.v.clone(), env),
         );
         match __subject {
@@ -6101,14 +6092,14 @@ pub fn inductChecked(
                             let mut __b = {
                                 let mut __b = aver_rt::Buffer::with_capacity(45usize);
                                 __b.push_display(
-                                    &(aver_rt::AverInt::from_i64(r.arms.len() as i64)),
+                                    &(aver_rt::AverInt::from_i64(((r.arms).len() as i64))),
                                 );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" arms, "));
                             __b
                         };
-                        __b.push_display(&(aver_rt::AverInt::from_i64(cs.len() as i64)));
+                        __b.push_display(&(aver_rt::AverInt::from_i64(((cs).len() as i64))));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" cases"));
@@ -6427,8 +6418,7 @@ pub fn sameNames(
     actual @ _: &aver_rt::AverList<AverStr>,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
-    ((aver_rt::AverInt::from_i64(expected.len() as i64)
-        == aver_rt::AverInt::from_i64(actual.len() as i64))
+    ((((expected).len() as i64) == ((actual).len() as i64))
         && crate::proof_kernel::aver_generated::kernel::check::sameNameCounts(
             expected, expected, actual,
         ))
@@ -6563,11 +6553,9 @@ pub fn constructorFieldCountFits(
         };
         match __subject {
             Ok(fs @ _) => {
-                (aver_rt::AverInt::from_i64(fs.len() as i64)
-                    == aver_rt::AverInt::from_i64(
-                        crate::proof_kernel::aver_generated::kernel::check::patFields(p).len()
-                            as i64,
-                    ))
+                (((fs).len() as i64)
+                    == ((crate::proof_kernel::aver_generated::kernel::check::patFields(p)).len()
+                        as i64))
             }
             Err(why @ _) => false,
         }
@@ -6591,7 +6579,7 @@ pub fn inductCase(
     crate::proof_kernel::cancel_checkpoint();
     {
         let __subject = (
-            (aver_rt::AverInt::from_i64(c.binders.len() as i64)
+            (aver_rt::AverInt::from_i64(((c.binders).len() as i64))
                 == crate::proof_kernel::aver_generated::kernel::check::caseNames(r, &a.arm)),
             {
                 let __arg11 @ _ = <aver_rt::AverList<AverStr>>::empty();
@@ -6629,7 +6617,8 @@ pub fn caseNames(
     crate::proof_kernel::cancel_checkpoint();
     match r.guard.clone() {
         None => aver_rt::AverInt::from_i64(
-            crate::proof_kernel::aver_generated::kernel::check::patFields(&a.pattern).len() as i64,
+            ((crate::proof_kernel::aver_generated::kernel::check::patFields(&a.pattern)).len()
+                as i64),
         ),
         Some(g @ _) => aver_rt::AverInt::from_i64(1),
     }
@@ -6814,10 +6803,8 @@ pub fn inductCaseNamed(
     };
     {
         let __subject = (
-            (aver_rt::AverInt::from_i64(a.calls.len() as i64)
-                == aver_rt::AverInt::from_i64(c.ihs.len() as i64)),
-            (aver_rt::AverInt::from_i64(c.carry.len() as i64)
-                == aver_rt::AverInt::from_i64(c.ihs.len() as i64)),
+            (((a.calls).len() as i64) == ((c.ihs).len() as i64)),
+            (((c.carry).len() as i64) == ((c.ihs).len() as i64)),
         );
         match __subject {
             (false, _) => {
@@ -6827,14 +6814,14 @@ pub fn inductCaseNamed(
                             let mut __b = {
                                 let mut __b = aver_rt::Buffer::with_capacity(61usize);
                                 __b.push_display(
-                                    &(aver_rt::AverInt::from_i64(a.calls.len() as i64)),
+                                    &(aver_rt::AverInt::from_i64(((a.calls).len() as i64))),
                                 );
                                 __b
                             };
                             __b.push_str(&::aver_rt::str_lit!(" recursive calls, "));
                             __b
                         };
-                        __b.push_display(&(aver_rt::AverInt::from_i64(c.ihs.len() as i64)));
+                        __b.push_display(&(aver_rt::AverInt::from_i64(((c.ihs).len() as i64))));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" hypotheses"));
@@ -7172,10 +7159,8 @@ pub fn moreHyps(
                         calls,
                         m.call.clone(),
                     ),
-                    (aver_rt::AverInt::from_i64(m.ih.at.len() as i64)
-                        == aver_rt::AverInt::from_i64(vr.general.len() as i64)),
-                    (aver_rt::AverInt::from_i64(m.ih.carry.len() as i64)
-                        == aver_rt::AverInt::from_i64(carried.len() as i64)),
+                    (((m.ih.at).len() as i64) == ((vr.general).len() as i64)),
+                    (((m.ih.carry).len() as i64) == ((carried).len() as i64)),
                 );
                 match __subject {
                     (None, _, _) => Err(aver_rt::AverStr::from({
@@ -7224,7 +7209,7 @@ pub fn moreHyps(
                                         __b
                                     };
                                     __b.push_display(
-                                        &(aver_rt::AverInt::from_i64(m.ih.at.len() as i64)),
+                                        &(aver_rt::AverInt::from_i64(((m.ih.at).len() as i64))),
                                     );
                                     __b
                                 };
@@ -7232,7 +7217,7 @@ pub fn moreHyps(
                                 __b
                             };
                             __b.push_display(
-                                &(aver_rt::AverInt::from_i64(vr.general.len() as i64)),
+                                &(aver_rt::AverInt::from_i64(((vr.general).len() as i64))),
                             );
                             __b
                         };
@@ -7607,8 +7592,7 @@ pub fn ihTaken(
         let __subject = (
             (&*h == "_"),
             crate::proof_kernel::aver_generated::kernel::check::overInner(c, vr),
-            (aver_rt::AverInt::from_i64(ps.len() as i64)
-                == aver_rt::AverInt::from_i64(carried.len() as i64)),
+            (((ps).len() as i64) == ((carried).len() as i64)),
         );
         match __subject {
             (true, _, _) => Ok(aver_rt::AverList::empty()),
@@ -8640,10 +8624,8 @@ pub fn smallerHyps(
         match aver_rt::list_uncons(__list_subject) {
             Some((i, rest)) => {
                 let __subject = (
-                    (aver_rt::AverInt::from_i64(i.at.len() as i64)
-                        == aver_rt::AverInt::from_i64(general.len() as i64)),
-                    (aver_rt::AverInt::from_i64(i.carry.len() as i64)
-                        == aver_rt::AverInt::from_i64(cs.len() as i64)),
+                    (((i.at).len() as i64) == ((general).len() as i64)),
+                    (((i.carry).len() as i64) == ((cs).len() as i64)),
                 );
                 match __subject {
                     (false, _) => Err(aver_rt::AverStr::from({
@@ -8675,14 +8657,16 @@ pub fn smallerHyps(
                                         __b
                                     };
                                     __b.push_display(
-                                        &(aver_rt::AverInt::from_i64(i.at.len() as i64)),
+                                        &(aver_rt::AverInt::from_i64(((i.at).len() as i64))),
                                     );
                                     __b
                                 };
                                 __b.push_str(&::aver_rt::str_lit!(" values for "));
                                 __b
                             };
-                            __b.push_display(&(aver_rt::AverInt::from_i64(general.len() as i64)));
+                            __b.push_display(
+                                &(aver_rt::AverInt::from_i64(((general).len() as i64))),
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" generalised givens"));

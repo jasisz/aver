@@ -142,7 +142,7 @@ pub fn runGuestProgram(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg4 @ _ = {
-        let __arg3 @ _ = aver_rt::AverInt::from_i64(moduleFns.len() as i64);
+        let __arg3 @ _ = aver_rt::AverInt::from_i64(((moduleFns).len() as i64));
         shiftFnIdsInProgram(prog, __arg3)
     };
     crate::aver_generated::domain::eval::evalProgramWithFns(&__arg4, moduleFns)
@@ -1337,7 +1337,7 @@ pub fn loadOneModule__indexed(
         let (accWithInner, loaded3) = innerResult;
         {
             let __arg17 @ _ = aver_rt::AverList::concat(&accWithInner.clone(), &{
-                let __arg15 @ _ = aver_rt::AverInt::from_i64(accWithInner.len() as i64);
+                let __arg15 @ _ = aver_rt::AverInt::from_i64(((accWithInner).len() as i64));
                 {
                     let __arg16 @ _ = aver_rt::list_builder_new(0usize);
                     shiftFnIdsInFns__collected(&moduleFns, __arg15, __arg16)

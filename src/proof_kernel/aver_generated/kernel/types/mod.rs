@@ -648,11 +648,10 @@ pub fn join(
             (&*crate::proof_kernel::aver_generated::kernel::types::headOf(&b) == "_"),
             ((crate::proof_kernel::aver_generated::kernel::types::headOf(&a)
                 == crate::proof_kernel::aver_generated::kernel::types::headOf(&b))
-                && (aver_rt::AverInt::from_i64(
-                    crate::proof_kernel::aver_generated::kernel::types::partsOf(&a).len() as i64,
-                ) == aver_rt::AverInt::from_i64(
-                    crate::proof_kernel::aver_generated::kernel::types::partsOf(&b).len() as i64,
-                ))),
+                && (((crate::proof_kernel::aver_generated::kernel::types::partsOf(&a)).len()
+                    as i64)
+                    == ((crate::proof_kernel::aver_generated::kernel::types::partsOf(&b)).len()
+                        as i64))),
         );
         match __subject {
             (true, _, _) => Ok(b),
@@ -2511,7 +2510,7 @@ pub fn bindEach(
                     let __s = what;
                     let mut __b = aver_rt::Buffer::with_capacity(49usize);
                     __b.push_str(&::aver_rt::str_lit!(" takes "));
-                    __b.push_display(&(aver_rt::AverInt::from_i64(expected.len() as i64)));
+                    __b.push_display(&(aver_rt::AverInt::from_i64(((expected).len() as i64))));
                     __b.push_str(&::aver_rt::str_lit!(" arguments"));
                     __s.append_buffer(__b)
                 });
@@ -2563,13 +2562,10 @@ pub fn bindShape(
                 || (&*crate::proof_kernel::aver_generated::kernel::types::headOf(expected) == "_")),
             ((crate::proof_kernel::aver_generated::kernel::types::headOf(expected)
                 == crate::proof_kernel::aver_generated::kernel::types::headOf(actual))
-                && (aver_rt::AverInt::from_i64(
-                    crate::proof_kernel::aver_generated::kernel::types::partsOf(expected).len()
-                        as i64,
-                ) == aver_rt::AverInt::from_i64(
-                    crate::proof_kernel::aver_generated::kernel::types::partsOf(actual).len()
-                        as i64,
-                ))),
+                && (((crate::proof_kernel::aver_generated::kernel::types::partsOf(expected)).len()
+                    as i64)
+                    == ((crate::proof_kernel::aver_generated::kernel::types::partsOf(actual)).len()
+                        as i64))),
         );
         match __subject {
             (true, _) => Ok(bound.clone()),
@@ -3085,8 +3081,7 @@ pub fn ctorPatVars(
     crate::proof_kernel::cancel_checkpoint();
     let fs @ _ =
         crate::proof_kernel::aver_generated::kernel::types::ctorFields(c.clone(), subject, e)?;
-    if (aver_rt::AverInt::from_i64(ns.len() as i64) == aver_rt::AverInt::from_i64(fs.len() as i64))
-    {
+    if (((ns).len() as i64) == ((fs).len() as i64)) {
         Ok(crate::proof_kernel::aver_generated::kernel::types::namedVars(ns, &fs))
     } else {
         Err(aver_rt::AverStr::from({
@@ -3106,13 +3101,13 @@ pub fn ctorPatVars(
                             __b.push_str(&::aver_rt::str_lit!(" binds "));
                             __b
                         };
-                        __b.push_display(&(aver_rt::AverInt::from_i64(ns.len() as i64)));
+                        __b.push_display(&(aver_rt::AverInt::from_i64(((ns).len() as i64))));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" names for "));
                     __b
                 };
-                __b.push_display(&(aver_rt::AverInt::from_i64(fs.len() as i64)));
+                __b.push_display(&(aver_rt::AverInt::from_i64(((fs).len() as i64))));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" fields"));
@@ -3617,8 +3612,7 @@ pub fn bare(
         let __list_subject = vs;
         match aver_rt::list_uncons(__list_subject) {
             Some((v, rest)) => {
-                ((aver_rt::AverInt::from_i64(v.fields.len() as i64)
-                    == aver_rt::AverInt::from_i64(0))
+                ((((v.fields).len() as i64) == 0i64)
                     && crate::proof_kernel::aver_generated::kernel::types::bare(&rest))
             }
             None => true,

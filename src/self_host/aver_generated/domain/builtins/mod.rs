@@ -687,7 +687,7 @@ pub fn builtinMapSize(
                 let m = &__m_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
-                        m.len() as i64,
+                        ((m).len() as i64),
                     )),
                 ))
             }

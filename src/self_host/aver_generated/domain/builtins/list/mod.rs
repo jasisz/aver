@@ -102,7 +102,7 @@ pub fn builtinListLen(
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
         crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
-            items.len() as i64
+            ((items).len() as i64),
         )),
     ))
 }

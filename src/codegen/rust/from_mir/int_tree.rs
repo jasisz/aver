@@ -193,13 +193,21 @@ fn hoist<'e>(e: Node<'e>, ctx: &MirEmitCtx<'_>, ahead: &mut Ahead<'e>) -> Option
     }
     let name = format!("{}{}", generated_ident("leaf"), ahead.nodes.len());
     let (binding, fast, exact) = match boxed {
+        // A raw leaf in its `i64` form: a builtin read raw (a length) is
+        // only `i64` there.
         Some(inner) => (
-            format!("let {name}: i64 = {};", emit_mir_expr(inner, ctx)?),
+            format!(
+                "let {name}: i64 = {};",
+                super::emit_bare_i64(inner, ctx).or_else(|| emit_mir_expr(inner, ctx))?
+            ),
             tagged(&name),
             format!("aver_rt::AverInt::from_i64({name})"),
         ),
         None if mir_expr_is_bare_i64(e, ctx) => (
-            format!("let {name}: i64 = {};", emit_mir_expr(e, ctx)?),
+            format!(
+                "let {name}: i64 = {};",
+                super::emit_bare_i64(e, ctx).or_else(|| emit_mir_expr(e, ctx))?
+            ),
             tagged(&name),
             name.clone(),
         ),

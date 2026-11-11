@@ -1270,9 +1270,9 @@ pub fn partsKey(mut tag @ _: AverStr, items @ _: &aver_rt::AverList<Val>) -> Ave
                     let __tco0 = (((tag
                         + &aver_rt::display_str(
                             &(aver_rt::AverInt::from_i64(
-                                crate::aver_generated::domain::value::mapKeyRepr(item)
+                                ((crate::aver_generated::domain::value::mapKeyRepr(item))
                                     .chars()
-                                    .count() as i64,
+                                    .count() as i64),
                             )),
                         ))
                         + &::aver_rt::str_lit!(":"))

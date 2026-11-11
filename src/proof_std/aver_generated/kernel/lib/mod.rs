@@ -376,9 +376,7 @@ pub fn trans(
     proofs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(terms.len() as i64)
-        == aver_rt::AverInt::from_i64(proofs.len() as i64).add(&aver_rt::AverInt::from_i64(1)))
-    {
+    if (((terms).len() as i64) == (((proofs).len() as i64) + 1i64)) {
         {
             let __list_subject = proofs;
             match aver_rt::list_uncons_cloned(__list_subject) {
@@ -418,22 +416,23 @@ pub fn trans(
                                 __b.push_str(&::aver_rt::str_lit!("a chain of "));
                                 __b
                             };
-                            __b.push_display(&(aver_rt::AverInt::from_i64(proofs.len() as i64)));
+                            __b.push_display(
+                                &(aver_rt::AverInt::from_i64(((proofs).len() as i64))),
+                            );
                             __b
                         };
                         __b.push_str(&::aver_rt::str_lit!(" steps lists "));
                         __b
                     };
                     __b.push_display(
-                        &(aver_rt::AverInt::from_i64(proofs.len() as i64)
-                            .add(&aver_rt::AverInt::from_i64(1))),
+                        &(aver_rt::AverInt::from_i64((((proofs).len() as i64) + 1i64))),
                     );
                     __b
                 };
                 __b.push_str(&::aver_rt::str_lit!(" terms, not "));
                 __b
             };
-            __b.push_display(&(aver_rt::AverInt::from_i64(terms.len() as i64)));
+            __b.push_display(&(aver_rt::AverInt::from_i64(((terms).len() as i64))));
             __b
         }))
     }
@@ -1863,9 +1862,7 @@ pub fn letBindings(
     args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    if (aver_rt::AverInt::from_i64(d.params.len() as i64)
-        == aver_rt::AverInt::from_i64(args.len() as i64))
-    {
+    if (((d.params).len() as i64) == ((args).len() as i64)) {
         {
             let __arg3 @ _ = ({
                 let __arg2 @ _ =
@@ -1887,7 +1884,7 @@ pub fn letBindings(
                     __b.push_str(&::aver_rt::str_lit!(" takes "));
                     __b
                 };
-                __b.push_display(&(aver_rt::AverInt::from_i64(d.params.len() as i64)));
+                __b.push_display(&(aver_rt::AverInt::from_i64(((d.params).len() as i64))));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" arguments"));

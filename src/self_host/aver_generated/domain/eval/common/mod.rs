@@ -66,8 +66,10 @@ pub fn unwrapPropagatedError(err @ _: &AverStr) -> Option<AverStr> {
     if err.starts_with(&*prefix) {
         Some(aver_rt::string_slice_part(
             &err,
-            crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(prefix.chars().count() as i64)),
-            crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(err.chars().count() as i64)),
+            crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(
+                ((prefix).chars().count() as i64),
+            )),
+            crate::aver_int_clamp_i64(&aver_rt::AverInt::from_i64(((err).chars().count() as i64))),
         ))
     } else {
         None

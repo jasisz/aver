@@ -183,7 +183,7 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__d_fields) => {
             let d = __d_fields.1.clone();
             let ys = &__d_fields.0;
-            { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(xs.len() as i64).add(&aver_rt::AverInt::from_i64(ys.len() as i64)); crate::proof_std::aver_generated::kernel::eval::sameCtor(&c, &d, __arg14) }; crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
+            { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(((xs).len() as i64)).add(&aver_rt::AverInt::from_i64(((ys).len() as i64))); crate::proof_std::aver_generated::kernel::eval::sameCtor(&c, &d, __arg14) }; crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
         },
         _ => {
             { let __arg16 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a); { let __arg17 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(b); crate::proof_std::aver_generated::kernel::eval::evalOp(o, &__arg16, &__arg17) } }
@@ -1001,7 +1001,7 @@ pub fn lengthOf(l @ _: Option<&Val>) -> Option<Val> {
         Some(__pat0) => match __pat0 {
             crate::proof_std::aver_generated::kernel::eval::Val::VList(vs) => {
                 Some(crate::proof_std::aver_generated::kernel::eval::Val::VInt(
-                    aver_rt::AverInt::from_i64(vs.len() as i64),
+                    aver_rt::AverInt::from_i64(((vs).len() as i64)),
                 ))
             }
             _ => None,

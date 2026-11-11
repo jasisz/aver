@@ -156,7 +156,7 @@ pub fn builtinVectorSetInner(
                             if (idx < aver_rt::AverInt::from_i64(0)) {
                                 Ok(crate::aver_generated::domain::value::Val::ValNone)
                             } else {
-                                if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
+                                if (idx < aver_rt::AverInt::from_i64(((vec).len() as i64))) {
                                     crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(vec.clone(), idx, valV)
                                 } else {
                                     Ok(crate::aver_generated::domain::value::Val::ValNone)
@@ -212,7 +212,7 @@ pub fn builtinVectorLen(
                 let vec = &__vec_fields.0;
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
-                        vec.len() as i64,
+                        ((vec).len() as i64),
                     )),
                 ))
             }

@@ -283,7 +283,7 @@ pub fn atom(
             poly: aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::ring::Mono {
                     atoms: aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(
-                        atoms.len() as i64,
+                        ((atoms).len() as i64),
                     )]),
                     coef: aver_rt::AverInt::from_i64(1),
                 },
