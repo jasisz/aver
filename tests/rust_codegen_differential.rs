@@ -1076,7 +1076,8 @@ fn stored_element_params_taken_by_value_match_vm() {
         "__vec.set_unchecked(__idx, __value)",
         "m.insert_owned(k, a)",
         "pub fn cons(mut a @ _: Val,",
-        "aver_rt::AverList::prepend(a, rest)",
+        // The rest a caller hands over at its last use is taken too.
+        "aver_rt::AverList::prepend_owned(a, rest)",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
     }
