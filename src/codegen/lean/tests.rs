@@ -67,6 +67,7 @@ fn empty_ctx() -> CodegenContext {
         packed_sequence_layouts: HashMap::new(),
         rust_i64_carriers: HashMap::new(),
         rust_i64_carrier_ctors: HashMap::new(),
+        rust_replaced_only_fields: HashMap::new(),
         proof_ir: crate::ir::ProofIR::default(),
         symbol_table: crate::ir::SymbolTable::default(),
         current_module_scope: std::cell::RefCell::new(None),
