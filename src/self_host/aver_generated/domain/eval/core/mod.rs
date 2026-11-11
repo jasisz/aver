@@ -4150,7 +4150,7 @@ pub fn evalResolvedSlotLoop(
         match step {
             crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v) => {
                 let __arg7 @ _ = Ok(v);
-                return crate::aver_generated::domain::eval::common::normalizeFnReturn(&__arg7);
+                return crate::aver_generated::domain::eval::common::normalizeFnReturn(__arg7);
             }
             crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailRecurEnv(nextEnv) => {
                 let __tco2 = nextEnv;
@@ -4257,7 +4257,7 @@ pub fn evalResolvedSlotDirect(
             }
         }
     };
-    crate::aver_generated::domain::eval::common::normalizeFnReturn(&result)
+    crate::aver_generated::domain::eval::common::normalizeFnReturn(result)
 }
 
 /// Run one slot-frame step and either finish with a value or request a self-tail-call re-entry.
@@ -4427,7 +4427,7 @@ pub fn evalResolvedNamedFn(
             ),
         }
     };
-    crate::aver_generated::domain::eval::common::normalizeFnReturn(&result)
+    crate::aver_generated::domain::eval::common::normalizeFnReturn(result)
 }
 
 /// Fast path for a single expression body in slot mode.
@@ -4835,7 +4835,7 @@ pub fn evalStmtBind(
 
 /// Evaluate a statement, returning the result and updated environment.
 pub fn evalStmt(
-    stmt @ _: &crate::aver_generated::domain::ast::Stmt,
+    mut stmt @ _: crate::aver_generated::domain::ast::Stmt,
     mut env @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<
@@ -4848,14 +4848,13 @@ pub fn evalStmt(
     crate::cancel_checkpoint();
     match stmt {
         crate::aver_generated::domain::ast::Stmt::StmtExpr(e) => {
-            crate::aver_generated::domain::eval::core::evalStmtExpr(e.clone(), env, fns)
+            crate::aver_generated::domain::eval::core::evalStmtExpr(e, env, fns)
         }
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, e) => {
-            let name = name.clone();
-            crate::aver_generated::domain::eval::core::evalStmtBind(name, e.clone(), env, fns)
+            crate::aver_generated::domain::eval::core::evalStmtBind(name, e, env, fns)
         }
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(_, e) => {
-            crate::aver_generated::domain::eval::core::evalStmtExpr(e.clone(), env, fns)
+            crate::aver_generated::domain::eval::core::evalStmtExpr(e, env, fns)
         }
     }
 }
@@ -4874,7 +4873,7 @@ pub fn evalStmts(
             let __list_subject = stmts;
             match aver_rt::list_uncons(__list_subject) {
                 Some((s, rest)) => {
-                    match crate::aver_generated::domain::eval::core::evalStmt(s, env, fns) {
+                    match crate::aver_generated::domain::eval::core::evalStmt(s.clone(), env, fns) {
                         Err(e @ _) => {
                             return Err(e);
                         }
@@ -4933,7 +4932,11 @@ pub fn evalTopLevelStmts(
                             fns.clone(),
                             env.clone(),
                         );
-                        crate::aver_generated::domain::eval::core::evalStmt(s, env, &__arg10)
+                        crate::aver_generated::domain::eval::core::evalStmt(
+                            s.clone(),
+                            env,
+                            &__arg10,
+                        )
                     };
                     match __subject {
                         Err(e @ _) => {

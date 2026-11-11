@@ -526,8 +526,10 @@ pub fn maxSlotInStmts(
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((s, rest)) => {
                     let __tco0 = rest;
-                    let __tco1 =
-                        crate::aver_generated::domain::resolver::core::maxSlotInStmt(s, acc);
+                    let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInStmt(
+                        s.clone(),
+                        acc,
+                    );
                     match __tco0 {
                         aver_rt::ListRest::Lent(__rest) => {
                             stmts = __rest;
@@ -558,23 +560,20 @@ pub fn maxSlotInStmts(
 
 /// Find highest slot index in a statement.
 pub fn maxSlotInStmt(
-    s @ _: &crate::aver_generated::domain::ast::Stmt,
+    mut s @ _: crate::aver_generated::domain::ast::Stmt,
     acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     match s {
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
-            let slot = slot.clone();
-            {
-                let __arg6 @ _ = crate::aver_generated::domain::resolver::core::maxInt(slot, acc);
-                crate::aver_generated::domain::resolver::core::maxSlotInExpr(expr.clone(), __arg6)
-            }
+            let __arg6 @ _ = crate::aver_generated::domain::resolver::core::maxInt(slot, acc);
+            crate::aver_generated::domain::resolver::core::maxSlotInExpr(expr, __arg6)
         }
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            crate::aver_generated::domain::resolver::core::maxSlotInExpr(expr.clone(), acc)
+            crate::aver_generated::domain::resolver::core::maxSlotInExpr(expr, acc)
         }
         crate::aver_generated::domain::ast::Stmt::StmtBind(_, expr) => {
-            crate::aver_generated::domain::resolver::core::maxSlotInExpr(expr.clone(), acc)
+            crate::aver_generated::domain::resolver::core::maxSlotInExpr(expr, acc)
         }
     }
 }
