@@ -1,0 +1,97 @@
+module BoxedRecordCollectionCycleApp
+    intent =
+        "Fixture: records large enough to sit behind a pointer that hold themselves through a List, a Map and a sum."
+        "Equal values built apart and values that differ at the last leaf are compared and used as map keys, as deep as the first argument says."
+    effects [Console.print, Args.get]
+
+record Table
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    name: String
+    kids: List<Table>
+
+record Folder
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    i: Int
+    kids: Map<String, Folder>
+
+type Item
+    Plain(Int)
+    Nested(Holder)
+
+record Holder
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    i: Int
+    items: List<Item>
+
+fn tableOf(name: String, kids: List<Table>) -> Table
+    ? "A table with fixed numbers."
+    Table(a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8, name = name, kids = kids)
+
+fn table(n: Int, last: String) -> Table
+    ? "n levels of tables, each holding the level below twice, over a table named last."
+    match n <= 0
+        true -> tableOf(last, [])
+        false -> twoTables(table(n - 1, last))
+
+fn twoTables(t: Table) -> Table
+    ? "A table holding t twice."
+    tableOf("t", [t, t])
+
+fn tableSpine(n: Int, last: String) -> Table
+    ? "table(n, \"f\") with its last table named last, built level by level."
+    match n <= 0
+        true -> tableOf(last, [])
+        false -> tableOf("t", [table(n - 1, "f"), tableSpine(n - 1, last)])
+
+fn folder(n: Int, kids: Map<String, Folder>) -> Folder
+    ? "A folder with every number n."
+    Folder(a = n, b = n, c = n, d = n, e = n, f = n, g = n, h = n, i = n, kids = kids)
+
+fn holder(n: Int, items: List<Item>) -> Holder
+    ? "A holder with every number n."
+    Holder(a = n, b = n, c = n, d = n, e = n, f = n, g = n, h = n, i = n, items = items)
+
+fn yes(b: Bool) -> String
+    ? "1 or 0."
+    match b
+        true -> "1"
+        false -> "0"
+
+fn depth() -> Int
+    ? "The first argument as a number, 12 without one."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), 0)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), 12)
+        Option.None -> 12
+
+fn main() -> Unit
+    ! [Console.print, Args.get]
+    n = depth()
+    tables = Map.fromList([(table(n, "f"), 1)])
+    Console.print("table " + yes(table(n, "f") == tableSpine(n, "f")) + yes(table(n, "f") == tableSpine(n, "g")) + yes(Map.has(tables, tableSpine(n, "f"))) + yes(Map.has(tables, tableSpine(n, "g"))))
+    one = folder(1, Map.fromList([("x", folder(2, {}))]))
+    Console.print("folder " + yes(one == folder(1, Map.fromList([("x", folder(2, {}))]))) + yes(one == folder(1, {})))
+    held = holder(1, [Item.Plain(1), Item.Nested(holder(2, []))])
+    holders = Map.fromList([(held, 1)])
+    Console.print("holder " + yes(held == holder(1, [Item.Plain(1), Item.Nested(holder(2, []))])) + yes(Map.has(holders, holder(1, [Item.Plain(1), Item.Nested(holder(2, []))]))) + yes(Map.has(holders, holder(1, []))))

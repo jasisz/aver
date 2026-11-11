@@ -201,6 +201,23 @@ pub fn fast_node<T>(
     (Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1 || shared_pair()) && eq(a, b)
 }
 
+/// `==` on the fields of two records kept behind a counted pointer from
+/// [`top`], `eq` comparing them: a pair of records both held in several
+/// places counts as a pair of collections sharing their items does. Two
+/// copies of one record are equal unread, as with its `==`.
+#[inline]
+pub fn fast_counted<T: crate::Counts>(
+    a: &crate::Counted<T>,
+    b: &crate::Counted<T>,
+    eq: impl FnOnce(&T, &T) -> bool,
+) -> bool {
+    use crate::NodeId;
+    if crate::Counted::ptr_eq(a, b) {
+        return true;
+    }
+    (NodeId::count(a) == 1 || NodeId::count(b) == 1 || shared_pair()) && eq(a, b)
+}
+
 /// `==` on two lists from [`top`], `eq` comparing two items.
 #[inline(never)]
 pub fn fast_list<T>(a: &AverList<T>, b: &AverList<T>, eq: impl Fn(&T, &T) -> bool) -> bool {
