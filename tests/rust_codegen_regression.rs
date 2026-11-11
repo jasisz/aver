@@ -245,6 +245,61 @@ fn rust_codegen_builds_embedded_bytes_crypto_fixture() {
     let _ = fs::remove_dir_all(workspace);
 }
 
+/// A function that returns a refinement's field as a raw `i64`, called by a
+/// member of a mutual tail-call group and handed to a raw parameter: the
+/// call is passed on as the `i64` it is. The group's members are rewritten
+/// with boxed facts of their own, which once made the call look boxed and
+/// narrowed it again (`.to_i64()` on an `i64`), so the project did not build.
+#[test]
+fn rust_codegen_hands_a_raw_return_on_from_a_trampoline() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = repo_root.join("tests/fixtures/rust_raw_return_in_trampoline");
+    let workspace = temp_output_dir("rust-codegen-raw-return-in-trampoline");
+    let project_dir = workspace.join("project");
+    fs::create_dir_all(&project_dir).expect("create workspace");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("compile")
+        .arg(root.join("main.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .arg("--target")
+        .arg("rust")
+        .arg("-o")
+        .arg(&project_dir)
+        .output()
+        .expect("aver compile");
+    assert!(
+        compile.status.success(),
+        "aver compile failed:\n{}",
+        format_output(&compile)
+    );
+    let entry = fs::read_to_string(project_dir.join("src/aver_generated/entry/mod.rs"))
+        .expect("read generated entry module");
+    assert!(
+        entry.contains("fits(crate::aver_generated::idx::indexValue(&*x), n)"),
+        "the raw return goes to the raw param as it is:\n{entry}"
+    );
+
+    let tests = Command::new("cargo")
+        .arg("test")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(project_dir.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", shared_target_dir())
+        .output()
+        .expect("cargo test generated project");
+    assert!(
+        tests.status.success(),
+        "generated project failed to build or its verify cases failed:\n{}",
+        format_output(&tests)
+    );
+
+    let _ = fs::remove_dir_all(workspace);
+}
+
 #[test]
 fn rust_codegen_uses_proof_derived_u8_storage_for_generic_refinement() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
