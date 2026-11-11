@@ -6621,9 +6621,15 @@ fn emit_dropped_head_match(
             }
         })
         .collect();
+    // A packed carrier's field is read in place rather than through the
+    // `List<Int>` view it would otherwise be made into for the read.
+    let list_rendered = emit_mir_expr(list, ctx)?;
+    let (receiver, get) = match list_rendered.strip_suffix(".to_int_list()") {
+        Some(carrier) => (carrier.to_string(), "get_int"),
+        None => (format!("({list_rendered})"), "get"),
+    };
     Some(format!(
-        "match ({}).get({}) {{ {} }}",
-        emit_mir_expr(list, ctx)?,
+        "match {receiver}.{get}({}) {{ {} }}",
         emit_list_count(count, emit_mir_expr(count, ctx)?, ctx),
         rendered.join(", ")
     ))

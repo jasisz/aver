@@ -287,7 +287,7 @@ pub fn get(bytes @ _: &Bytes, index @ _: aver_rt::AverInt) -> Option<aver_rt::Av
     if (index < aver_rt::AverInt::from_i64(0)) {
         None
     } else {
-        match ((bytes.values).to_int_list()).get(aver_rt::clamp_list_count(&(index))) {
+        match (bytes.values).get_int(aver_rt::clamp_list_count(&(index))) {
             None => None,
             Some(octet) => Some(octet),
         }
