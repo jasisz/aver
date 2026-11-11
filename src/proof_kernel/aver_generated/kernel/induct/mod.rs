@@ -1493,7 +1493,7 @@ pub fn armDescends(
             let __arg6 @ _ =
                 crate::proof_kernel::aver_generated::kernel::induct::calls(&a.body, d, ds)?;
             {
-                let __arg7 @ _ = aver_rt::AverInt::from_i64(((d.params).len() as i64));
+                let __arg7 @ _ = ((d.params).len() as i64);
                 crate::proof_kernel::aver_generated::kernel::induct::callsDescend(
                     &__arg6, p, j, __arg7,
                 )
@@ -1508,14 +1508,14 @@ pub fn callsDescend(
     cs @ _: &aver_rt::AverList<Call>,
     p @ _: AverStr,
     j @ _: aver_rt::AverInt,
-    n @ _: aver_rt::AverInt,
+    n @ _: i64,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {
         let __list_subject = cs;
         match aver_rt::list_uncons(__list_subject) {
             Some((c, rest)) => {
-                (((aver_rt::AverInt::from_i64(((c.args).len() as i64)) == n)
+                (((((c.args).len() as i64) == n)
                     && ({
                         let __arg6 @ _ =
                             crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
@@ -2461,7 +2461,7 @@ pub fn armsShrink(
                             &a.pattern,
                         );
                     {
-                        let __arg8 @ _ = aver_rt::AverInt::from_i64(((d.params).len() as i64));
+                        let __arg8 @ _ = ((d.params).len() as i64);
                         crate::proof_kernel::aver_generated::kernel::induct::callsShrink(
                             &__arg6,
                             &__arg7,
@@ -2509,14 +2509,14 @@ pub fn callsShrink(
     cs @ _: &aver_rt::AverList<Call>,
     parts @ _: &aver_rt::AverList<AverStr>,
     j @ _: aver_rt::AverInt,
-    n @ _: aver_rt::AverInt,
+    n @ _: i64,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {
         let __list_subject = cs;
         match aver_rt::list_uncons(__list_subject) {
             Some((c, rest)) => {
-                (((aver_rt::AverInt::from_i64(((c.args).len() as i64)) == n) && {
+                (((((c.args).len() as i64) == n) && {
                     let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
                         &c.args,
                         j.clone(),
