@@ -2494,8 +2494,18 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
                             .is_some_and(|target| moves_field(target) || last_use_of(&target.node))
                             || (name != "Map.remove" && call.node.args.iter().skip(1).any(stores))
                     }
-                    // `List.prepend(x, rest)` keeps `x` in the new node.
-                    Some("List.prepend") => call.node.args.first().is_some_and(stores),
+                    // `List.prepend(x, rest)` keeps `x` in the new node,
+                    // and grows `rest` itself when it is handed over at its
+                    // last use: a list of octets built by prepending writes
+                    // the byte past its end, which a borrowed `rest` cannot.
+                    Some("List.prepend") => {
+                        call.node.args.first().is_some_and(stores)
+                            || call
+                                .node
+                                .args
+                                .get(1)
+                                .is_some_and(|rest| last_use_of(&rest.node))
+                    }
                     // The self-keep fusion `Option.withDefault(Vector.set(v,
                     // ..), v)` updates `v` in place and reads it last in the
                     // default, so the update's own read is not the last one.

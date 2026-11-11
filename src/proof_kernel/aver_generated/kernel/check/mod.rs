@@ -371,7 +371,7 @@ fn __mutual_tco_trampoline_2(
                 mut path @ _,
             ) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::splitDone(&before, path) }, [c, rest] => { if { let __arg9 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::freeVars(&*on), &crate::proof_kernel::aver_generated::kernel::check::hypNames(&env.hyps)); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(&c.binders, &__arg9, &*env, &__arg10) } } { { let __arg16 @ _ = { let __arg14 @ _ = { let __arg12 @ _ = { let __arg11 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone()); crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &__arg11) }; { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss); crate::proof_kernel::aver_generated::kernel::check::withVars(&__arg12, &__arg13) } }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(39usize); __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_display(&(c.ctor)); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), __arg14, __arg15) } }?; { let __arg17 @ _ = { let __xs = &(hss); let __n = 1usize; __xs.drop_first(__n) }; { let __arg18 @ _ = { let __xs = &(vss); let __n = 1usize; __xs.drop_first(__n) }; __MutualTco2::SplitNext(__arg16, c, rest, __arg17, __arg18, before, path) } } } } else { { let __arg19 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(48usize); __b.push_str(&::aver_rt::str_lit!("the names of case ")); __b }; __b.push_display(&(c.ctor)); __b }; __b.push_str(&::aver_rt::str_lit!(" are not fresh")); __b }); return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19) } } })
+                aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::splitDone(&before, path) }, [c, rest] => { if { let __arg9 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::freeVars(&*on), &crate::proof_kernel::aver_generated::kernel::check::hypNames(&env.hyps)); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(&c.binders, &__arg9, &*env, __arg10) } } { { let __arg16 @ _ = { let __arg14 @ _ = { let __arg12 @ _ = { let __arg11 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone()); crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &__arg11) }; { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss); crate::proof_kernel::aver_generated::kernel::check::withVars(&__arg12, &__arg13) } }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(39usize); __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_display(&(c.ctor)); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), __arg14, __arg15) } }?; { let __arg17 @ _ = { let __xs = &(hss); let __n = 1usize; __xs.drop_first(__n) }; { let __arg18 @ _ = { let __xs = &(vss); let __n = 1usize; __xs.drop_first(__n) }; __MutualTco2::SplitNext(__arg16, c, rest, __arg17, __arg18, before, path) } } } } else { { let __arg19 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(48usize); __b.push_str(&::aver_rt::str_lit!("the names of case ")); __b }; __b.push_display(&(c.ctor)); __b }; __b.push_str(&::aver_rt::str_lit!(" are not fresh")); __b }); return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19) } } })
             }
             __MutualTco2::SplitNext(
                 mut e @ _,
@@ -1967,7 +1967,7 @@ pub fn definitionDeps(
     crate::proof_kernel::cancel_checkpoint();
     let __arg3 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params);
     crate::proof_kernel::aver_generated::kernel::check::letDeclarationDeps(
-        &d.lets, &d.body, &__arg3, ds, cs,
+        &d.lets, &d.body, __arg3, ds, cs,
     )
 }
 
@@ -1976,7 +1976,7 @@ pub fn definitionDeps(
 pub fn letDeclarationDeps(
     lets @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     body @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
-    locals @ _: &aver_rt::AverList<AverStr>,
+    mut locals @ _: aver_rt::AverList<AverStr>,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
@@ -1986,17 +1986,17 @@ pub fn letDeclarationDeps(
         match aver_rt::list_uncons(__list_subject) {
             Some((b, rest)) => aver_rt::AverList::concat(
                 &crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(
-                    &b.value, locals, ds, cs,
+                    &b.value, &locals, ds, cs,
                 ),
                 &{
-                    let __arg7 @ _ = aver_rt::AverList::prepend(b.name.clone(), locals);
+                    let __arg7 @ _ = aver_rt::AverList::prepend_owned(b.name.clone(), locals);
                     crate::proof_kernel::aver_generated::kernel::check::letDeclarationDeps(
-                        &rest, body, &__arg7, ds, cs,
+                        &rest, body, __arg7, ds, cs,
                     )
                 },
             ),
             None => crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(
-                body, locals, ds, cs,
+                body, &locals, ds, cs,
             ),
         }
     }
@@ -6587,7 +6587,7 @@ pub fn inductCase(
             {
                 let __arg11 @ _ = <aver_rt::AverList<AverStr>>::empty();
                 crate::proof_kernel::aver_generated::kernel::check::freshAll(
-                    &c.binders, taken, env, &__arg11,
+                    &c.binders, taken, env, __arg11,
                 )
             },
         );
@@ -6655,7 +6655,7 @@ pub fn freshAll(
     bs @ _: &aver_rt::AverList<AverStr>,
     taken @ _: &aver_rt::AverList<AverStr>,
     env @ _: &Env,
-    before @ _: &aver_rt::AverList<AverStr>,
+    mut before @ _: aver_rt::AverList<AverStr>,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -6670,9 +6670,9 @@ pub fn freshAll(
                         &env.consts,
                     ) || before.contains(&b))))
                     && {
-                        let __arg6 @ _ = aver_rt::AverList::prepend(b, before);
+                        let __arg6 @ _ = aver_rt::AverList::prepend_owned(b, before);
                         crate::proof_kernel::aver_generated::kernel::check::freshAll(
-                            &rest, taken, env, &__arg6,
+                            &rest, taken, env, __arg6,
                         )
                     })
             }
@@ -7984,7 +7984,7 @@ pub fn listInduct(
                         {
                             let __arg17 @ _ = <aver_rt::AverList<AverStr>>::empty();
                             crate::proof_kernel::aver_generated::kernel::check::freshAll(
-                                &__arg15, &__arg16, env, &__arg17,
+                                &__arg15, &__arg16, env, __arg17,
                             )
                         }
                     }
@@ -8071,7 +8071,7 @@ pub fn lenInduct(
                                 match aver_rt::list_uncons_cloned(&__list_subject) {
                                     Some((hn, __pat4)) => {
                                         let __list_subject = __pat4;
-                                        match aver_rt::list_uncons_cloned(&__list_subject) { Some((ih, __pat5)) => { { let __list_subject = __pat5; if __list_subject.is_empty() { if { let __arg20 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::takenNames(&claim, &env.hyps), &crate::proof_kernel::aver_generated::kernel::check::hypLabels(&env.hyps)); { let __arg21 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(names, &__arg20, env, &__arg21) } } { { let __arg25 @ _ = crate::proof_kernel::aver_generated::kernel::proof::Law { key: ih, givens: { let __arg22 @ _ = aver_rt::AverList::prepend(v.clone(), general); crate::proof_kernel::aver_generated::kernel::check::typedNames(&__arg22, env, path.clone()) }?, premise: aver_rt::AverList::prepend_owned({ let __arg23 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::term::Term::TBi({ let __field0 = ::aver_rt::str_lit!("List.len"); let __field1 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(v.clone())), aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::term::Term__TBi(__field1, __field0) }), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n.clone())))); { let __arg24 @ _ = crate::proof_kernel::aver_generated::kernel::check::factsOf(&carried, path.clone())?; crate::proof_kernel::aver_generated::kernel::check::conjoined(__arg23, &__arg24) } }, aver_rt::AverList::empty()), lhs: claim.lhs.clone(), rhs: claim.rhs.clone() }; crate::proof_kernel::aver_generated::kernel::check::lenCase(v, claim, &carried, general, n, hn, __arg25, c, env, path) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("the names are not fresh")) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("a length induction names a bound, its hypothesis and its law")) } } }, None => { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("a length induction names a bound, its hypothesis and its law")) } }
+                                        match aver_rt::list_uncons_cloned(&__list_subject) { Some((ih, __pat5)) => { { let __list_subject = __pat5; if __list_subject.is_empty() { if { let __arg20 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::takenNames(&claim, &env.hyps), &crate::proof_kernel::aver_generated::kernel::check::hypLabels(&env.hyps)); { let __arg21 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(names, &__arg20, env, __arg21) } } { { let __arg25 @ _ = crate::proof_kernel::aver_generated::kernel::proof::Law { key: ih, givens: { let __arg22 @ _ = aver_rt::AverList::prepend(v.clone(), general); crate::proof_kernel::aver_generated::kernel::check::typedNames(&__arg22, env, path.clone()) }?, premise: aver_rt::AverList::prepend_owned({ let __arg23 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::term::Term::TBi({ let __field0 = ::aver_rt::str_lit!("List.len"); let __field1 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(v.clone())), aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::term::Term__TBi(__field1, __field0) }), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n.clone())))); { let __arg24 @ _ = crate::proof_kernel::aver_generated::kernel::check::factsOf(&carried, path.clone())?; crate::proof_kernel::aver_generated::kernel::check::conjoined(__arg23, &__arg24) } }, aver_rt::AverList::empty()), lhs: claim.lhs.clone(), rhs: claim.rhs.clone() }; crate::proof_kernel::aver_generated::kernel::check::lenCase(v, claim, &carried, general, n, hn, __arg25, c, env, path) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("the names are not fresh")) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("a length induction names a bound, its hypothesis and its law")) } } }, None => { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("a length induction names a bound, its hypothesis and its law")) } }
                                     }
                                     None => {
                                         crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -8539,7 +8539,7 @@ pub fn splitList(
                     {
                         let __arg11 @ _ = <aver_rt::AverList<AverStr>>::empty();
                         crate::proof_kernel::aver_generated::kernel::check::freshAll(
-                            &__arg9, &__arg10, env, &__arg11,
+                            &__arg9, &__arg10, env, __arg11,
                         )
                     }
                 }

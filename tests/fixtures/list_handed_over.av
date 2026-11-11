@@ -1,0 +1,48 @@
+module ListHandedOver
+    intent = "A column head written onto an output its caller hands over, and one it keeps."
+    depends []
+    effects [Console.print]
+
+fn uv(acc: List<Int>, n: Int) -> List<Int>
+    ? "n as a varint onto the reversed output."
+    match n < 128
+        true -> List.prepend(n, acc)
+        false -> uv(List.prepend(Bits.and(n, 127) + 128, acc), Bits.shiftRight(n, 7))
+
+fn colHead(acc: List<Int>, k: Int) -> List<Int>
+    ? "A tag, or a tag and a code."
+    code = Bits.and(k, 15)
+    match code == 1
+        true -> List.prepend(10, acc)
+        false -> match code > 5
+            true -> List.prepend(code - 6, List.prepend(12, acc))
+            false -> List.prepend(code, acc)
+
+fn colOut(acc: List<Int>, k: Int) -> List<Int>
+    ? "A head and two numbers."
+    uv(uv(colHead(acc, k), k * 977), k)
+
+fn loop(acc: List<Int>, k: Int) -> List<Int>
+    ? "k columns."
+    match k == 0
+        true -> acc
+        false -> loop(colOut(acc, k), k - 1)
+
+fn tagged(acc: List<Int>, k: Int) -> List<Int>
+    ? "A tag onto a list its caller keeps."
+    List.prepend(k, acc)
+
+fn kept(acc: List<Int>) -> Int
+    ? "The output written twice from one list the caller keeps."
+    List.len(tagged(acc, 1)) + List.len(tagged(acc, 7)) + List.len(acc)
+
+fn sum(xs: List<Int>, acc: Int) -> Int
+    ? "The sum of xs."
+    match xs
+        [] -> acc
+        [x, ..rest] -> sum(rest, acc + x)
+
+fn main() -> Unit
+    ! [Console.print]
+    out = loop([], 300)
+    Console.print("{List.len(out)} {sum(out, 0)} {kept(out)} {List.len(out)}")

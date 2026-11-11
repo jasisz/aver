@@ -5860,6 +5860,27 @@ fn rust_a_field_the_callee_only_replaces_is_taken_out_for_the_call() {
     );
 }
 
+/// A list a function only prepends onto, handed over at the caller's last
+/// use, is taken by value, so the first prepend grows it in place
+/// (`prepend_owned`) instead of starting from a borrow. A caller that keeps
+/// the list hands over a copy and still reads it as it was.
+#[test]
+fn rust_a_list_prepended_onto_at_its_last_use_is_taken_by_value() {
+    let src = include_str!("fixtures/list_handed_over.av");
+    let expected = "1844 158663 5534 1844";
+    let vm = run_vm_inline("list_handed_over", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("list_handed_over", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("list_handed_over", src);
+    assert!(
+        emitted.contains("pub fn colHead(mut acc @ _: aver_rt::AverIntList")
+            && !emitted.contains("AverIntList::prepend(aver_rt::AverInt::from_i64(10), acc)"),
+        "colHead must take the list by value:\n{emitted}"
+    );
+}
+
 /// `Bytes.get(b, i) == Option.Some(k)` for a literal octet reads the byte in
 /// place, as a match on `Bytes.get` does, with no `Option` built; past
 /// either end it still answers as the general path does.
