@@ -5784,6 +5784,38 @@ fn rust_a_record_update_before_its_field_reads_takes_the_record() {
     );
 }
 
+/// `Option.withDefault(Vector.set(v, i, f(v)), v)` with `v` moving into the
+/// set: the value read `v` after the set had taken it, and the generated
+/// Rust did not build (E0382). The index and the value are now computed
+/// first, as Aver computes every argument before the call.
+#[test]
+fn rust_a_set_value_read_from_the_vector_it_sets_builds() {
+    let src = r#"module SetFromItself
+    intent = "A Vector set at a place computed from the Vector itself"
+    depends []
+    effects [Console.print]
+
+fn f(v: Vector<Int>) -> Int
+    ? "The length plus the first."
+    Vector.len(v) + Option.withDefault(Vector.get(v, 0), 0)
+
+fn step(v: Vector<Int>, i: Int, k: Int) -> Vector<Int>
+    ? "k writes, each of a value read from v."
+    match i >= k
+        true -> v
+        false -> step(Option.withDefault(Vector.set(v, Int.mod(i, 8), f(v)), v), i + 1, k)
+
+fn main() -> Unit
+    ! [Console.print]
+    v = step(Vector.new(8, 1), 0, 20)
+    Console.print("{Option.withDefault(Vector.get(v, 3), 0)}")
+"#;
+    let vm = run_vm_inline("set_from_itself", src).expect("vm run");
+    assert_eq!(vm, "33", "VM result");
+    let rust = build_run_rust_inline("set_from_itself", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+}
+
 /// The self-keep `Option.withDefault(Vector.set(s.f, i, x), s.f)` on a field
 /// of an owned record at its last use. The two reads of `s.f` hand on one
 /// value, so the field moves into the in-place set instead of being cloned

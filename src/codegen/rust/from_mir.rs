@@ -10240,6 +10240,15 @@ fn try_emit_mir_fusion(
             );
             let vector_temp = generated_ident("vec");
             let index_temp = generated_ident("idx");
+            if move_vec {
+                // The index and the value may read the Vector the set takes
+                // (`Vector.set(v, i, f(v))`): they are computed before it
+                // moves, as Aver computes every argument before the call.
+                let value_temp = generated_ident("value");
+                return Some(format!(
+                    "{{ let {index_temp} = ({index}).to_usize(); let {value_temp} = {value}; let {vector_temp} = {vector}; match {index_temp} {{ Some({index_temp}) if {index_temp} < {vector_temp}.len() => {vector_temp}.set_unchecked({index_temp}, {value_temp}), _ => {vector_temp} }} }}"
+                ));
+            }
             Some(format!(
                 "{{ let {vector_temp} = {vector}; match ({index}).to_usize() {{ Some({index_temp}) if {index_temp} < {vector_temp}.len() => {vector_temp}.set_unchecked({index_temp}, {value}), _ => {vector_temp} }} }}"
             ))

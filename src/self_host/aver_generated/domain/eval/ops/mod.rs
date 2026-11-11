@@ -572,10 +572,12 @@ pub fn evalVectorSetMaybeDefault(
                                     Ok(Some(crate::aver_generated::domain::value::Val::new_in(
                                         [&__tok1, &__tok0],
                                         crate::aver_generated::domain::value::Val__ValVector({
+                                            let __idx = (idx).to_usize();
+                                            let __value = valueV;
                                             let __vec = vec;
-                                            match (idx).to_usize() {
+                                            match __idx {
                                                 Some(__idx) if __idx < __vec.len() => {
-                                                    __vec.set_unchecked(__idx, valueV)
+                                                    __vec.set_unchecked(__idx, __value)
                                                 }
                                                 _ => __vec,
                                             }
