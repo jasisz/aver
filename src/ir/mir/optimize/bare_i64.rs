@@ -1114,74 +1114,104 @@ fn caller_ranges(
             }
         }
     }
+    // Callers first, each function's params found from every call of it
+    // and written back at once, so a chain without cycles is ranged in one
+    // pass; a cycle takes more. Every range ever written is sound (it is
+    // computed from ranges that were), so the map is sound whenever the
+    // passes stop.
+    let mut incoming: HashMap<FnId, Vec<&CallEdge>> = HashMap::new();
+    for edge in &edges {
+        incoming.entry(edge.target).or_default().push(edge);
+    }
+    let mut order = callee_first(program, &edges);
+    order.reverse();
     let mut ranges: HashMap<(FnId, usize), Interval> = HashMap::new();
     for _ in 0..ENTRY_RANGE_STEPS {
-        let mut hulls: HashMap<(FnId, usize), Option<Interval>> = HashMap::new();
-        for edge in &edges {
-            let Some(target) = program.fn_by_id(edge.target) else {
+        let mut changed = false;
+        for target_id in &order {
+            let Some(target) = program.fn_by_id(*target_id) else {
                 continue;
             };
             if target.name == "main" || address_taken.contains(&target.name) {
                 continue;
             }
-            let caller = program
-                .fn_by_id(edge.caller)
-                .expect("a caller is in the program");
-            let env: HashMap<LocalId, Interval> = caller
-                .params
-                .iter()
-                .enumerate()
-                .filter_map(|(k, p)| {
-                    ranges
-                        .get(&(edge.caller, k))
-                        .copied()
-                        .or_else(|| {
-                            summary
-                                .param_bare(edge.caller, k)
-                                .then(|| summary.param_interval(edge.caller, k))
-                                .flatten()
-                        })
-                        .map(|r| (p.local, r))
-                })
-                .collect();
-            for (i, arg) in edge.args.iter().enumerate() {
-                let Some(p) = target.params.get(i).filter(|p| ty_str_is_int(&p.ty)) else {
-                    continue;
+            let Some(calls) = incoming.get(target_id) else {
+                continue;
+            };
+            let mut hulls: HashMap<usize, Option<Interval>> = HashMap::new();
+            for edge in calls {
+                let caller = program
+                    .fn_by_id(edge.caller)
+                    .expect("a caller is in the program");
+                // The caller's own values its analysis proved raw, with their
+                // ranges, then its params over their ranges.
+                let caller_facts = &facts[&edge.caller];
+                let locals = caller_facts.values.iter().filter_map(|(slot, fact)| {
+                    fact.is_bare()
+                        .then_some(fact.interval)
+                        .flatten()
+                        .map(|r| (*slot, r))
+                });
+                let env: HashMap<LocalId, Interval> = locals
+                    .chain(caller.params.iter().enumerate().filter_map(|(k, p)| {
+                        ranges
+                            .get(&(edge.caller, k))
+                            .copied()
+                            .or_else(|| {
+                                summary
+                                    .param_bare(edge.caller, k)
+                                    .then(|| summary.param_interval(edge.caller, k))
+                                    .flatten()
+                            })
+                            .map(|r| (p.local, r))
+                    }))
+                    .collect();
+                for (i, arg) in edge.args.iter().enumerate() {
+                    let Some(p) = target.params.get(i).filter(|p| ty_str_is_int(&p.ty)) else {
+                        continue;
+                    };
+                    let range = if edge.caller == edge.target {
+                        // The recursion must hand the param on as it is.
+                        match subject_is_local(&arg.node, p.local) {
+                            true => continue,
+                            false => None,
+                        }
+                    } else {
+                        let mut worst = Interval::point(0);
+                        let r = eval_interval(&arg.node, &env, &mut worst, caller_facts);
+                        (r.fits_i64() && worst.fits_i64()).then_some(r)
+                    };
+                    let cell = hulls.entry(i).or_insert(range);
+                    *cell = match (*cell, range) {
+                        (Some(a), Some(b)) => Some(a.hull(b)),
+                        _ => None,
+                    };
+                }
+            }
+            for (i, cell) in hulls {
+                let cell = match free_hulls.get(&(*target_id, i)) {
+                    Some(free) => match (cell, *free) {
+                        (Some(a), Some(b)) => Some(a.hull(b)),
+                        _ => None,
+                    },
+                    None => cell,
                 };
-                let range = if edge.caller == edge.target {
-                    // The recursion must hand the param on as it is.
-                    match subject_is_local(&arg.node, p.local) {
-                        true => continue,
-                        false => None,
+                let key = (*target_id, i);
+                let before = ranges.get(&key).copied();
+                match cell {
+                    Some(r) => {
+                        ranges.insert(key, r);
                     }
-                } else {
-                    let mut worst = Interval::point(0);
-                    let r = eval_interval(&arg.node, &env, &mut worst, &facts[&edge.caller]);
-                    (r.fits_i64() && worst.fits_i64()).then_some(r)
-                };
-                let cell = hulls.entry((edge.target, i)).or_insert(range);
-                *cell = match (*cell, range) {
-                    (Some(a), Some(b)) => Some(a.hull(b)),
-                    _ => None,
-                };
+                    None => {
+                        ranges.remove(&key);
+                    }
+                }
+                changed |= before != cell;
             }
         }
-        for (key, range) in &free_hulls {
-            if let Some(cell) = hulls.get_mut(key) {
-                *cell = match (*cell, *range) {
-                    (Some(a), Some(b)) => Some(a.hull(b)),
-                    _ => None,
-                };
-            }
-        }
-        let next: HashMap<(FnId, usize), Interval> = hulls
-            .into_iter()
-            .filter_map(|(k, v)| v.map(|v| (k, v)))
-            .collect();
-        if next == ranges {
+        if !changed {
             break;
         }
-        ranges = next;
     }
     ranges
 }
@@ -1216,6 +1246,9 @@ struct Summary {
     carrier_ids: std::sync::Arc<CarrierIds>,
     /// Rust: the range of each bare return ([`return_interval`]).
     return_intervals: std::sync::Arc<HashMap<FnId, Interval>>,
+    /// Rust: the representation rewrite boxes a raw value wherever it is
+    /// stored into a record's field.
+    rust: bool,
 }
 
 impl Summary {
@@ -1476,6 +1509,7 @@ fn compute_summary(
             raw_ops: raw_ops.clone(),
             carrier_ids: carrier_ids.clone(),
             return_intervals: return_intervals.clone(),
+            rust: rust_positions,
         };
         for (id, f) in program.iter() {
             let mut escaping: HashSet<LocalId> = HashSet::new();
@@ -1507,6 +1541,7 @@ fn compute_summary(
             raw_ops: raw_ops.clone(),
             carrier_ids: carrier_ids.clone(),
             return_intervals: return_intervals.clone(),
+            rust: rust_positions,
         };
         let mut intervals: HashMap<FnId, Interval> = HashMap::new();
         for id in &order {
@@ -1588,6 +1623,7 @@ fn compute_summary(
             raw_ops: raw_ops.clone(),
             carrier_ids: carrier_ids.clone(),
             return_intervals: return_intervals.clone(),
+            rust: rust_positions,
         };
         for (_caller, f) in program.iter() {
             let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
@@ -1617,6 +1653,7 @@ fn compute_summary(
         raw_ops,
         carrier_ids,
         return_intervals,
+        rust: rust_positions,
     }
 }
 
@@ -3985,13 +4022,13 @@ fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet
                 scan_escapes(&a.node, self_fn, summary, out);
             }
         }
-        // Rust: the field of a carrier held as a raw `i64` takes a raw value
-        // as it is (the rewrite's `rewrite_field`), so it is not a
-        // general-Int sink.
+        // Rust: a record's field is not a general-Int sink. The field of a
+        // carrier held as a raw `i64` takes a raw value as it is, and any
+        // other field gets a raw value boxed (the rewrite's `rewrite_field`).
         MirExpr::RecordCreate(r) => {
-            let carrier = summary.is_carrier(r.node.type_id);
+            let in_place = summary.rust || summary.is_carrier(r.node.type_id);
             for fld in &r.node.fields {
-                if !carrier {
+                if !in_place {
                     mark_operand_escapes_deep(&fld.value.node, out);
                 }
                 scan_escapes(&fld.value.node, self_fn, summary, out);
@@ -4000,9 +4037,9 @@ fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet
         MirExpr::RecordUpdate(u) => {
             mark_operand_escapes_deep(&u.node.base.node, out);
             scan_escapes(&u.node.base.node, self_fn, summary, out);
-            let carrier = summary.is_carrier(u.node.type_id);
+            let in_place = summary.rust || summary.is_carrier(u.node.type_id);
             for fld in &u.node.updates {
-                if !carrier {
+                if !in_place {
                     mark_operand_escapes_deep(&fld.value.node, out);
                 }
                 scan_escapes(&fld.value.node, self_fn, summary, out);
@@ -6014,6 +6051,46 @@ fn main() -> Int
             false,
         );
         assert!(!general.for_fn(id).unwrap().bare_return);
+    }
+
+    #[test]
+    fn a_range_goes_down_a_chain_of_any_length() {
+        // Each step hands on a value computed from a local its match binds
+        // out of a bounded read, through a record field: the range of `c6`'s
+        // `n` comes six calls deep, and the field is not an escape on Rust.
+        let src = r#"
+record R
+    v: Int
+
+fn c6(n: Int) -> R
+    R(v = n + 1)
+
+fn c5(n: Int) -> R
+    c6(n + 1)
+
+fn c4(n: Int) -> R
+    c5(n + 1)
+
+fn c3(n: Int) -> R
+    c4(n + 1)
+
+fn c2(n: Int) -> R
+    c3(n + 1)
+
+fn c1(n: Int) -> R
+    match n > 3
+        true -> c2(n * 2)
+        false -> c2(n)
+
+fn main() -> Int
+    c1(5).v
+"#;
+        let (program, _) = facts_for(src);
+        let facts = analyze_rust(&program, &CarrierIds::new(), Some(&FreeCalls::default()));
+        for name in ["c2", "c3", "c4", "c5", "c6"] {
+            let id = fn_id_by_name(&program, name);
+            assert!(facts.for_fn(id).unwrap().param_is_bare(0), "{name}");
+        }
     }
 
     #[test]
