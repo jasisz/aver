@@ -6109,36 +6109,39 @@ pub fn inductChecked(
             }
             (_, Err(why)) => crate::proof_kernel::aver_generated::kernel::check::refuse(path, why),
             _ => {
-                let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::induct::Call {
-                    args: xs.clone(),
-                    inner: aver_rt::AverList::empty(),
-                };
+                let __arg13 @ _ = r.arms.clone();
                 {
-                    let __arg14 @ _ =
-                        crate::proof_kernel::aver_generated::kernel::check::takenNames(
-                            &claim, &env.hyps,
-                        );
+                    let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::induct::Call {
+                        args: xs.clone(),
+                        inner: aver_rt::AverList::empty(),
+                    };
                     {
-                        let __arg15 @ _ = {
-                            let __arg12 @ _ = crate::proof_kernel::aver_generated::kernel::check::notMentioningAny(&env.hyps, &varying);
-                            crate::proof_kernel::aver_generated::kernel::check::withHyps(
-                                env, &__arg12,
+                        let __arg15 @ _ =
+                            crate::proof_kernel::aver_generated::kernel::check::takenNames(
+                                &claim, &env.hyps,
+                            );
+                        {
+                            let __arg16 @ _ = {
+                                let __arg12 @ _ = crate::proof_kernel::aver_generated::kernel::check::notMentioningAny(&env.hyps, &varying);
+                                crate::proof_kernel::aver_generated::kernel::check::withHyps(
+                                    env, &__arg12,
+                                )
+                            };
+                            crate::proof_kernel::aver_generated::kernel::check::inductCases(
+                                d,
+                                r,
+                                __arg13,
+                                cs.clone(),
+                                &__arg14,
+                                claim,
+                                vr,
+                                &__arg15,
+                                carried,
+                                &__arg16,
+                                path,
+                                aver_rt::AverInt::from_i64(0),
                             )
-                        };
-                        crate::proof_kernel::aver_generated::kernel::check::inductCases(
-                            d,
-                            r,
-                            r.arms.clone(),
-                            cs.clone(),
-                            &__arg13,
-                            claim,
-                            vr,
-                            &__arg14,
-                            carried,
-                            &__arg15,
-                            path,
-                            aver_rt::AverInt::from_i64(0),
-                        )
+                        }
                     }
                 }
             }

@@ -832,7 +832,7 @@ fn __mutual_tco_trampoline_1(
                                         ::aver_rt::str_lit!("SplitBool"),
                                     );
                                 return crate::proof_std::aver_generated::kernel::std::boolStep(
-                                    &__arg28, c, yes, no, &*answers,
+                                    __arg28, c, yes, no, &*answers,
                                 );
                             }
                         }
@@ -1040,7 +1040,10 @@ pub fn cases(
                     __b
                 }))
             } else {
-                crate::proof_std::aver_generated::kernel::std::splitAll(goal, &goal.finite)
+                {
+                    let __arg2 @ _ = goal.finite.clone();
+                    crate::proof_std::aver_generated::kernel::std::splitAll(goal, &__arg2)
+                }
             }
         }
     }
@@ -2788,7 +2791,7 @@ pub fn without(ns @ _: &aver_rt::AverList<AverStr>, v @ _: &AverStr) -> aver_rt:
 
 /// Split on the Bool term c: yes runs where it is true and no where it is false, each case with it as a hypothesis (c, or the first free c1, c2, …).
 pub fn boolStep(
-    n @ _: &Node,
+    mut n @ _: Node,
     mut c @ _: crate::proof_std::aver_generated::kernel::term::Term,
     mut yes @ _: Tactic,
     mut no @ _: Tactic,
@@ -2823,27 +2826,31 @@ pub fn boolStep(
         crate::proof_std::aver_generated::kernel::std::within(__arg10, yes, answers)
     }?;
     let f @ _ = {
-        let __arg12 @ _ = {
-            let __base = crate::proof_std::aver_generated::kernel::std::down(
-                n.clone(),
-                ::aver_rt::str_lit!("false"),
-            );
-            crate::proof_std::aver_generated::kernel::std::Node {
-                goal: {
-                    let __arg11 @ _ = crate::proof_std::aver_generated::kernel::term::Term::TBool(
-                        crate::proof_std::aver_generated::kernel::term::Term__TBool(false),
-                    );
-                    crate::proof_std::aver_generated::kernel::std::assume(
-                        n.goal.clone(),
-                        h.clone(),
-                        c.clone(),
-                        __arg11,
-                    )
-                },
-                ..__base
+        let __arg13 @ _ = {
+            let __arg12 @ _ = n.goal.clone();
+            {
+                let __base = crate::proof_std::aver_generated::kernel::std::down(
+                    n,
+                    ::aver_rt::str_lit!("false"),
+                );
+                crate::proof_std::aver_generated::kernel::std::Node {
+                    goal: {
+                        let __arg11 @ _ =
+                            crate::proof_std::aver_generated::kernel::term::Term::TBool(
+                                crate::proof_std::aver_generated::kernel::term::Term__TBool(false),
+                            );
+                        crate::proof_std::aver_generated::kernel::std::assume(
+                            __arg12,
+                            h.clone(),
+                            c.clone(),
+                            __arg11,
+                        )
+                    },
+                    ..__base
+                }
             }
         };
-        crate::proof_std::aver_generated::kernel::std::within(__arg12, no, answers)
+        crate::proof_std::aver_generated::kernel::std::within(__arg13, no, answers)
     }?;
     Ok(
         crate::proof_std::aver_generated::kernel::proof::Proof::PCases(
