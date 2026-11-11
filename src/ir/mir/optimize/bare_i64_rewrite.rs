@@ -1092,7 +1092,9 @@ fn rewrite_call_args(
             let saturated =
                 callee_facts.is_some_and(|f| param_bare(f, i) && f.param_takes_saturated(i));
             let position = saturated || ctx.facts.raw_ops.takes_position(callee, i);
-            if position
+            // Rust only: wasm-gc has no `__position_offset`.
+            if ctx.facts.rust
+                && position
                 && !renders_raw(&a.node, ctx.facts)
                 && let Some(moved) = offset_position(&a, ctx)
             {
