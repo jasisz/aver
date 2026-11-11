@@ -2421,7 +2421,7 @@ pub fn listCases(
                     &__arg17,
                 )
             };
-            crate::proof_std::aver_generated::kernel::std::substituted(&n, &__arg18)
+            crate::proof_std::aver_generated::kernel::std::substituted(&n, __arg18)
         }?;
         crate::proof_std::aver_generated::kernel::std::withoutList(__arg19, &v)
     };
@@ -2448,7 +2448,7 @@ pub fn listCases(
                     &__arg22,
                 )
             };
-            crate::proof_std::aver_generated::kernel::std::substituted(&n, &__arg23)
+            crate::proof_std::aver_generated::kernel::std::substituted(&n, __arg23)
         }?;
         crate::proof_std::aver_generated::kernel::std::opened(__arg24, &v, h.clone(), tl.clone())
     };
@@ -2551,31 +2551,26 @@ pub fn listCases(
 #[inline(always)]
 pub fn substituted(
     n @ _: &Node,
-    r @ _: &Result<crate::proof_std::aver_generated::kernel::proof::Goal, AverStr>,
+    mut r @ _: Result<crate::proof_std::aver_generated::kernel::proof::Goal, AverStr>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Goal, Stop> {
     crate::proof_std::cancel_checkpoint();
     match r {
-        Ok(g @ _) => Ok(g.clone()),
-        Err(why @ _) => {
-            let why = why.clone();
-            Err(
-                crate::proof_std::aver_generated::kernel::std::Stop::Refused(
-                    aver_rt::AverStr::from({
-                        let mut __b = {
-                            let mut __b = {
-                                let mut __b = aver_rt::Buffer::with_capacity(34usize);
-                                __b.push_display(&(n.path));
-                                __b
-                            };
-                            __b.push_str(&::aver_rt::str_lit!(": "));
-                            __b
-                        };
-                        __b.push_display(&(why));
+        Ok(g @ _) => Ok(g),
+        Err(why @ _) => Err(
+            crate::proof_std::aver_generated::kernel::std::Stop::Refused(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(34usize);
+                        __b.push_display(&(n.path));
                         __b
-                    }),
-                ),
-            )
-        }
+                    };
+                    __b.push_str(&::aver_rt::str_lit!(": "));
+                    __b
+                };
+                __b.push_display(&(why));
+                __b
+            })),
+        ),
     }
 }
 
@@ -2600,7 +2595,7 @@ pub fn withIh(
             {
                 let __arg7 @ _ =
                     crate::proof_std::aver_generated::kernel::lib::substitute(ob.rhs, v, tl);
-                crate::proof_std::aver_generated::kernel::std::withIhOf(goal, ih, &__arg6, &__arg7)
+                crate::proof_std::aver_generated::kernel::std::withIhOf(goal, ih, __arg6, __arg7)
             }
         }
     } else {
@@ -2612,11 +2607,11 @@ pub fn withIh(
 pub fn withIhOf(
     mut goal @ _: crate::proof_std::aver_generated::kernel::proof::Goal,
     ih @ _: AverStr,
-    l @ _: &Result<crate::proof_std::aver_generated::kernel::term::Term, AverStr>,
-    r @ _: &Result<crate::proof_std::aver_generated::kernel::term::Term, AverStr>,
+    mut l @ _: Result<crate::proof_std::aver_generated::kernel::term::Term, AverStr>,
+    mut r @ _: Result<crate::proof_std::aver_generated::kernel::term::Term, AverStr>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Goal, Stop> {
     crate::proof_std::cancel_checkpoint();
-    match (l.clone(), r.clone()) {
+    match (l, r) {
         (Ok(a), Ok(b)) => Ok(crate::proof_std::aver_generated::kernel::std::assume(
             goal, ih, a, b,
         )),

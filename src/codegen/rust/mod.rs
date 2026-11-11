@@ -2383,6 +2383,56 @@ fn isOdd(n: Int) -> Bool
         assert!(!entry.contains("Side"));
     }
 
+    /// A record that holds itself with no sum on the way (`Option` of
+    /// itself, or two records through each other) has no fixed size in Rust:
+    /// the backend refuses it by name, so `compile` reports it before rustc
+    /// does. A record on the cycle of a sum is laid out as before.
+    #[test]
+    fn a_record_holding_itself_with_no_sum_on_the_way_is_refused() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+record Chain
+    v: Int
+    next: Option<Chain>
+
+record Pa
+    b: Option<Pb>
+
+record Pb
+    a: Pa
+
+record Node
+    v: Int
+    kids: Kids
+
+type Kids
+    NoKids
+    Two(Node, Node)
+"#,
+            "record-only-cycle",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+        let refused: Vec<&str> = out
+            .generated_compile_errors()
+            .iter()
+            .map(|error| error.message.as_str())
+            .collect();
+        assert_eq!(refused.len(), 3, "{refused:?}");
+        for name in ["Chain", "Pa", "Pb"] {
+            assert!(
+                refused
+                    .iter()
+                    .any(|m| m.starts_with(&format!("record `{name}` holds a value of itself"))),
+                "{refused:?}"
+            );
+        }
+        assert!(entry.contains("pub struct Node {"), "{entry}");
+    }
+
     #[test]
     fn missing_resolved_function_is_a_hard_codegen_error() {
         let mut ctx = ctx_from_source(

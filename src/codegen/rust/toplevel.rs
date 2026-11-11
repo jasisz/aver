@@ -3,7 +3,8 @@ use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_par
 use super::representation::{
     COUNT_FIELD, RepresentationCapabilities, RepresentationContract, cheap_fields_first,
     compares_fast, hands_over, is_boxed_record, is_counted_record, is_thin_sum, on_cycle,
-    through_collection, type_def_contract, variant_field_refs, walking_def, walks,
+    on_record_only_cycle, through_collection, type_def_contract, variant_field_refs, walking_def,
+    walks,
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
@@ -91,6 +92,22 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
                 .contains(&crate::codegen::common::backend_type_def_key(ctx, td)),
             super::field_layout::of_def(td, ctx),
         ),
+        // A record that holds itself with no sum on the way has no pointer
+        // anywhere on its cycle, and no fixed size in Rust: refused here, so
+        // `compile` says so instead of rustc.
+        TypeDef::Product { name, .. } if on_record_only_cycle(td, ctx) => {
+            let message = format!(
+                "record `{name}` holds a value of itself through records, `Option`, `Result` or tuples only, which the Rust backend cannot lay out; put the recursion behind a sum type (a constructor holding `{name}`) or a `List`"
+            );
+            let item = format!("compile_error!({message:?});");
+            ctx.substituted_compile_errors
+                .borrow_mut()
+                .push(SubstitutedCompileError {
+                    cause: CompileErrorCause::Program,
+                    message,
+                });
+            item
+        }
         TypeDef::Product { name, fields, .. } => emit_product_type(
             name,
             fields,
@@ -167,6 +184,17 @@ impl Walking<'_> {
         walks(&ty, self.ctx, self.scope).then_some(ty)
     }
 
+    /// Whether `ty` is a record kept behind a counted pointer (see
+    /// `is_counted_record`).
+    fn counted(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Named { id, name } => {
+                super::representation::type_is_counted_record(*id, name, self.ctx, self.scope)
+            }
+            _ => false,
+        }
+    }
+
     fn marks(&self) -> Vec<bool> {
         (0..self.types.len())
             .map(|i| self.field(i).is_some())
@@ -191,6 +219,11 @@ impl Walking<'_> {
             ),
         };
         let named = |a: &str, b: &str| match self.fast {
+            // A record the program copies may sit in many places, and a
+            // pair of copies counts as a pair of shared collections does.
+            true if compares_fast(ty, self.ctx, self.scope) && self.counted(ty) => {
+                format!("aver_rt::shared_items::fast_counted(&{a}, &{b}, |x, y| x.aver_fast_eq(y))")
+            }
             true if compares_fast(ty, self.ctx, self.scope) => format!("{a}.aver_fast_eq(&{b})"),
             true => format!("{a} == {b}"),
             false => format!("{a}.walk_eq(&{b}, walk)"),

@@ -1224,6 +1224,10 @@ impl<T> TraversalSegment<T> {
     }
 }
 
+/// The longest left side [`AverList::concat`] copies into cells rather than
+/// joining as a node.
+const SHORT_JOIN: usize = 16;
+
 /// A list node. Every node is as large as its largest shape, and nearly
 /// every node is a `Prepend`, so the other shapes are kept no larger than it:
 /// a `Concat` counts its length in 32 bits, which its tag leaves room for
@@ -2127,7 +2131,38 @@ impl<T> AverList<T> {
         })
     }
 
-    pub fn concat(left: &Self, right: &Self) -> Self {
+    /// `left` followed by `right`. A short `left` (at most
+    /// [`SHORT_JOIN`] elements) is copied into `Prepend` cells in front of
+    /// `right`, so the result walks like any chain of cells: a walk through
+    /// a borrow steps with nothing built. A join node would make every walk
+    /// of a shared list build a traversal table first, as a shared node
+    /// cannot keep one. Joining one element at a time onto a growing list
+    /// copies at most `SHORT_JOIN` elements per join, so such a loop stays
+    /// linear; a longer `left` is joined as a node ([`Self::concat_rope`]).
+    pub fn concat(left: &Self, right: &Self) -> Self
+    where
+        T: Clone,
+    {
+        let len = left.len();
+        if len == 0 || len > SHORT_JOIN || right.is_empty() {
+            return Self::concat_rope(left, right);
+        }
+        let mut heads: [Option<&T>; SHORT_JOIN] = [None; SHORT_JOIN];
+        for (slot, head) in heads.iter_mut().zip(left.iter()) {
+            *slot = Some(head);
+        }
+        heads[..len]
+            .iter()
+            .rev()
+            .flatten()
+            .fold(right.clone(), |list, &head| {
+                Self::prepend_owned(head.clone(), list)
+            })
+    }
+
+    /// `left` followed by `right` as a join node, whatever their lengths;
+    /// either side empty gives the other.
+    fn concat_rope(left: &Self, right: &Self) -> Self {
         if left.is_empty() {
             return right.clone();
         }
@@ -2766,7 +2801,7 @@ mod tests {
     /// `list` with `item` joined at its end: a chain of these is a deep
     /// left-leaning concat rope.
     fn snoc<T>(list: &AverList<T>, item: T) -> AverList<T> {
-        AverList::concat(list, &AverList::prepend(item, &AverList::empty()))
+        AverList::concat_rope(list, &AverList::prepend(item, &AverList::empty()))
     }
 
     /// Threads reading a module-level binding at once get one value computed
@@ -2963,7 +2998,8 @@ mod tests {
 
         // An indexed body (what a long concat compiles to) steps the same
         // way, across its segments.
-        let joined = AverList::concat(&flat, &AverList::from_vec((5..9i64).collect())).indexed();
+        let joined =
+            AverList::concat_rope(&flat, &AverList::from_vec((5..9i64).collect())).indexed();
         let mut slot = joined.clone();
         let mut seen = Vec::new();
         while let Some((head, rest)) = slot.uncons_lent() {
@@ -3506,6 +3542,68 @@ mod tests {
         assert_eq!(joined.to_vec(), vec![1, 2, 3, 4]);
     }
 
+    /// A short left side is copied into cells in front of the right side,
+    /// so a walk through a borrow lends every rest and builds nothing; a
+    /// left side longer than `SHORT_JOIN` still joins as a node. Either way
+    /// the list compares and orders as its elements do.
+    #[test]
+    fn a_short_concat_is_cells_and_a_long_one_a_node() {
+        use std::cmp::Ordering;
+        let base = AverList::from_vec(vec![1, 2, 3]);
+        let held = base.clone();
+        let last = AverList::prepend(4, &AverList::empty());
+        let joined = AverList::concat(&base, &last);
+
+        let mut rest = &joined;
+        let mut seen = Vec::new();
+        while let Some((head, next)) = rest.uncons_lent() {
+            seen.push(*head);
+            let ListRest::Lent(next) = next else {
+                panic!("a short concat walks as cells")
+            };
+            rest = next;
+        }
+        assert_eq!(seen, vec![1, 2, 3, 4]);
+        assert!(super::Rc::ptr_eq(joined.drop_first(3).rc(), last.rc()));
+        assert_eq!(held.to_vec(), vec![1, 2, 3]);
+
+        let flat = AverList::from_vec(vec![1, 2, 3, 4]);
+        let rope = AverList::concat_rope(&base, &last);
+        assert_eq!(joined, flat);
+        assert_eq!(joined, rope);
+        assert_eq!(joined.cmp(&rope), Ordering::Equal);
+        assert_eq!(
+            joined.cmp(&AverList::from_vec(vec![1, 2, 3, 5])),
+            Ordering::Less
+        );
+        assert_eq!(
+            joined.cmp(&AverList::from_vec(vec![1, 2, 3])),
+            Ordering::Greater
+        );
+        let hash = |list: &AverList<i32>| {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            list.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&joined), hash(&rope));
+
+        let edge = AverList::from_vec((0..super::SHORT_JOIN as i32).collect());
+        let at_edge = AverList::concat(&edge, &last);
+        assert!(matches!(
+            at_edge.rc().as_ref(),
+            AverListInner::Prepend { .. }
+        ));
+        let longer = AverList::prepend(-1, &edge);
+        let past_edge = AverList::concat(&longer, &last);
+        assert!(matches!(
+            past_edge.rc().as_ref(),
+            AverListInner::Concat { .. }
+        ));
+        assert_eq!(past_edge.len(), super::SHORT_JOIN + 2);
+        assert_eq!(past_edge.to_vec().last(), Some(&4));
+    }
+
     /// The first destructuring step compiles either concat topology into one
     /// traversal index. Every later tail advances the constant-size cursor on
     /// that same table instead of rebuilding any part of the rope (#1020).
@@ -3515,8 +3613,8 @@ mod tests {
         let mut right = AverList::empty();
         let mut left = AverList::empty();
         for _ in 0..32 {
-            right = AverList::concat(&part, &right);
-            left = AverList::concat(&left, &part);
+            right = AverList::concat_rope(&part, &right);
+            left = AverList::concat_rope(&left, &part);
         }
 
         for list in [right, left] {
@@ -3605,8 +3703,8 @@ mod tests {
         let mut left = AverList::empty();
         let mut right = AverList::empty();
         for _ in 0..20_000 {
-            left = AverList::concat(&left, &singleton);
-            right = AverList::concat(&singleton, &right);
+            left = AverList::concat_rope(&left, &singleton);
+            right = AverList::concat_rope(&singleton, &right);
         }
 
         for list in [left, right] {
@@ -3639,7 +3737,7 @@ mod tests {
             prepended = AverList::prepend(Counted(super::Rc::clone(&drops)), &prepended);
         }
         let suffix = AverList::from_vec(vec![Counted(super::Rc::clone(&drops))]);
-        let joined = AverList::concat(&prepended, &suffix);
+        let joined = AverList::concat_rope(&prepended, &suffix);
         let indexed_tail = {
             let (_, tail) = super::list_uncons(&joined).expect("joined prepend unconses");
             tail
@@ -3779,7 +3877,7 @@ mod tests {
             let held = chain(AverList::empty());
             let over_held = chain(held.clone());
             let (left, right) = (chain(AverList::empty()), chain(AverList::empty()));
-            let over_rope = chain(AverList::concat(&left, &right));
+            let over_rope = chain(AverList::concat_rope(&left, &right));
             drop((left, right));
             std::thread::Builder::new()
                 .stack_size(64 * 1024)
@@ -4075,8 +4173,8 @@ mod tests {
             let mut left = AverList::empty();
             let mut right = AverList::empty();
             for value in 0..depth {
-                left = AverList::concat(&left, &one(value));
-                right = AverList::concat(&one(depth - 1 - value), &right);
+                left = AverList::concat_rope(&left, &one(value));
+                right = AverList::concat_rope(&one(depth - 1 - value), &right);
             }
 
             for list in [&chain, &flat, &left, &right] {
@@ -4128,12 +4226,12 @@ mod tests {
                 AverList::from_vec((0..12).map(|v| Counted::new(&live, v)).collect());
             let mut rope = AverList::from_vec((0..3).map(|v| Counted::new(&live, v)).collect());
             for value in 3..6 {
-                rope = AverList::concat(
+                rope = AverList::concat_rope(
                     &rope,
                     &AverList::prepend_owned(Counted::new(&live, value), AverList::empty()),
                 );
             }
-            rope = AverList::concat(&rope, &flat.drop_first(6));
+            rope = AverList::concat_rope(&rope, &flat.drop_first(6));
             let indexed = rope.indexed();
             assert!(matches!(
                 indexed.shape(),

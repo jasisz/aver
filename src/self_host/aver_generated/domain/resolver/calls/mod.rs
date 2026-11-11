@@ -134,7 +134,7 @@ pub fn resolveCallsInStmts(
         crate::cancel_checkpoint();
         ::aver_rt::aver_list_match_reuse!(stmts, [] => { return (acc).reverse_owned(); }, [s, rest, __list_slot] => { {
             let __tco0 = rest;
-            let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(&s, fnMap), acc);
+            let __tco2 = __list_slot.prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(s, fnMap), acc);
             stmts = __tco0;
             acc = __tco2;
             continue;
@@ -144,37 +144,26 @@ pub fn resolveCallsInStmts(
 
 /// Resolve calls in a single statement.
 pub fn resolveCallsInStmt(
-    s @ _: &crate::aver_generated::domain::ast::Stmt,
+    mut s @ _: crate::aver_generated::domain::ast::Stmt,
     fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Stmt {
     crate::cancel_checkpoint();
     match s {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
-            let name = name.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBind(
                 name,
-                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                    expr.clone(),
-                    fnMap,
-                ),
+                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
-            let slot = slot.clone();
             crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
                 slot,
-                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                    expr.clone(),
-                    fnMap,
-                ),
+                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
             crate::aver_generated::domain::ast::Stmt::StmtExpr(
-                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(
-                    expr.clone(),
-                    fnMap,
-                ),
+                crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(expr, fnMap),
             )
         }
     }
@@ -1022,7 +1011,8 @@ pub fn resolveCallsInStmts__collected(
                     let __tco2 = aver_rt::list_builder_push(
                         acc,
                         crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(
-                            s, fnMap,
+                            s.clone(),
+                            fnMap,
                         ),
                     );
                     match __tco0 {

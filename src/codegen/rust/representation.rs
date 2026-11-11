@@ -517,6 +517,59 @@ fn holds_collection_cycle(ty: &Type, ctx: &CodegenContext, scope: Option<&str>) 
     }
 }
 
+/// Whether a record holds a value of itself through records, `Option`,
+/// `Result` and tuples only: a cycle with no sum on it, and so no pointer
+/// to give the record a fixed size (see [`is_thin_sum`]).
+pub(super) fn on_record_only_cycle(td: &TypeDef, ctx: &CodegenContext) -> bool {
+    fn reaches(
+        ty: &Type,
+        target: &str,
+        ctx: &CodegenContext,
+        scope: Option<&str>,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        match ty {
+            Type::Option(inner) => reaches(inner, target, ctx, scope, seen),
+            Type::Result(ok, err) => {
+                reaches(ok, target, ctx, scope, seen) || reaches(err, target, ctx, scope, seen)
+            }
+            Type::Tuple(items) => items
+                .iter()
+                .any(|item| reaches(item, target, ctx, scope, seen)),
+            Type::Named { id, name } => named_type_def(*id, name, ctx, scope).is_some_and(|next| {
+                let TypeDef::Product { fields, .. } = next else {
+                    return false;
+                };
+                let key = crate::codegen::common::backend_type_def_key(ctx, next);
+                if key == target {
+                    return true;
+                }
+                let decl = crate::codegen::common::type_key_for_decl(ctx, next);
+                seen.insert(key)
+                    && fields.iter().any(|(_, field)| {
+                        reaches(&parse_type_str(field), target, ctx, decl.scope_str(), seen)
+                    })
+            }),
+            _ => false,
+        }
+    }
+    let TypeDef::Product { fields, .. } = td else {
+        return false;
+    };
+    let key = crate::codegen::common::backend_type_def_key(ctx, td);
+    let scope = crate::codegen::common::type_key_for_decl(ctx, td);
+    let mut seen = HashSet::new();
+    fields.iter().any(|(_, field)| {
+        reaches(
+            &parse_type_str(field),
+            &key,
+            ctx,
+            scope.scope_str(),
+            &mut seen,
+        )
+    })
+}
+
 fn reaches_inline(
     td: &TypeDef,
     target: &str,

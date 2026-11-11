@@ -4895,7 +4895,7 @@ pub fn earlierExcludeValue(
                     a.pattern.clone(),
                     v,
                 ) || crate::proof_kernel::aver_generated::kernel::check::ruledOut(
-                    &a.pattern,
+                    a.pattern,
                     v.clone(),
                     hs,
                 )) && crate::proof_kernel::aver_generated::kernel::check::earlierExcludeValue(
@@ -4913,20 +4913,20 @@ pub fn earlierExcludeValue(
 
 /// A literal pattern k that a hypothesis in scope states the value is not: (v == k) = false.
 pub fn ruledOut(
-    p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat,
+    mut p @ _: crate::proof_kernel::aver_generated::kernel::term::Pat,
     mut v @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     hs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     match p {
         crate::proof_kernel::aver_generated::kernel::term::Pat::PLit(k) => {
-            (crate::proof_kernel::aver_generated::kernel::check::isLiteral(k) && {
+            (crate::proof_kernel::aver_generated::kernel::check::isLiteral(&k) && {
                 let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn {
                     lhs: crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
                         crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
                             ::aver_rt::str_lit!("=="),
                             v,
-                            k.clone(),
+                            k,
                         ),
                     ),
                     rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(

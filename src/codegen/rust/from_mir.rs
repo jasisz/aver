@@ -924,7 +924,10 @@ fn is_owned_collection_candidate(ty: &Type) -> bool {
 /// successor of it, see [`result_hands_on`]), or `consumed` (the
 /// [`compute_owned_record_params`] facts) says the body consumes it. Only a
 /// named record or a `Vector`/`Map` param qualifies: those are the values
-/// whose in-place update copies everything while a second owner lives.
+/// whose in-place update copies everything while a second owner lives. A
+/// `List` or `Result` param qualifies when the body consumes it (a `Result`
+/// whose payload a match moves on). An `Option` keeps its own lending
+/// (`lent_option`).
 pub(super) fn param_handed_on(
     ty: &Type,
     mir_fn: &crate::ir::mir::MirFn,
@@ -942,7 +945,7 @@ pub(super) fn param_handed_on(
                 .params
                 .get(index)
                 .is_some_and(|param| result_hands_on(&mir_fn.body.node, param.local))))
-        || (matches!(ty, Type::List(_)) && consumed)
+        || (matches!(ty, Type::List(_) | Type::Result(..)) && consumed)
 }
 
 /// Does a function result hand on the value in `slot`: the local itself at
@@ -1761,7 +1764,7 @@ fn owned_params_with(
         for (i, (name, ty)) in resolved.params.iter().enumerate() {
             let taken = !should_borrow_param(ty) || by_value.contains(&aver_name_to_rust(name));
             if !taken
-                && (matches!(ty, Type::Named { .. })
+                && (matches!(ty, Type::Named { .. } | Type::Result(..))
                     || is_owned_collection_candidate(ty)
                     || lists.contains(&(*id, i)))
                 && mir_fn.params.get(i).is_some()
@@ -2491,9 +2494,12 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
             true
         }
         // A match on the local at its last use moves the parts its arms
-        // bind out of it: a Map or Vector part updated in place there
-        // consumes the local, as a field moved out of it would. A list it
-        // takes apart is consumed as a whole.
+        // bind out of it: a Map, Vector or record part an arm consumes (a
+        // Map or Vector updated in place, a record stored or handed to a
+        // by-value param) consumes the local, as a field moved out of it
+        // would; so a function that unwraps a `Result` it was given and
+        // keeps what it holds takes the `Result` by value. A list it takes
+        // apart is consumed as a whole.
         MirExpr::Match(m) if last_use_of(&m.node.subject.node) => {
             (cx.takes_list_apart && list_match_takes_apart(&m.node))
                 || (cx.takes_node_apart && thin_match_takes_fields(&m.node, cx))
@@ -2503,7 +2509,7 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
                     binders.into_iter().any(|binder| {
                         matches!(
                             read_type(&arm.body.node, binder),
-                            Some(Type::Map(..) | Type::Vector(_))
+                            Some(Type::Map(..) | Type::Vector(_) | Type::Named { .. })
                         ) && consumes_local(
                             &arm.body.node,
                             &Consumption {
@@ -4205,9 +4211,6 @@ fn emit_counted_record_update(
                 record_alias: Some(&alias),
                 ..*ctx
             };
-            let (inside, _) = emit_update_parts(upd, false, &inner)?;
-            // The base moves as it is emitted outside the alias.
-            let base = emit_mir_expr(&upd.base, ctx)?;
             // A value that reads the record whole (`k = f(r.st)`) reads the
             // counted record, not the `Box`: it and every value before it
             // run first, as emitted outside the alias, so the order stays.
@@ -4216,6 +4219,19 @@ fn emit_counted_record_update(
                 .iter()
                 .rposition(|field| reads_place_whole(&field.value.node, root, &path))
                 .map_or(0, |i| i + 1);
+            // The copies the perf notes name are those of the values this
+            // emits: the ones before `before` as `parts` rendered them, the
+            // rest as rendered inside the alias.
+            let values = |range: std::ops::Range<usize>| {
+                upd.updates[range].iter().map(|field| &field.value.node)
+            };
+            let outer = super::perf_notes::take_copies(values(0..before), ctx);
+            super::perf_notes::take_copies(values(before..upd.updates.len()), ctx);
+            let (inside, _) = emit_update_parts(upd, false, &inner)?;
+            super::perf_notes::take_copies(values(0..before), ctx);
+            super::perf_notes::put_copies(outer, ctx);
+            // The base moves as it is emitted outside the alias.
+            let base = emit_mir_expr(&upd.base, ctx)?;
             if before == 0 {
                 return Some(in_box(&base, &inside));
             }
@@ -4413,6 +4429,9 @@ fn emit_boxed_record_update(
             record_alias: Some(&alias),
             ..*ctx
         };
+        // The values are emitted again inside the alias: the copies the
+        // perf notes name are that render's.
+        super::perf_notes::take_copies(upd.updates.iter().map(|f| &f.value.node), ctx);
         let (parts, _) = emit_update_parts(upd, false, &inner)?;
         return Some(in_binding(&parts));
     }
