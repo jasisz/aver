@@ -562,6 +562,14 @@ impl Iterator for AverIntListIter<'_> {
 impl ExactSizeIterator for AverIntListIter<'_> {}
 impl std::iter::FusedIterator for AverIntListIter<'_> {}
 
+/// The empty list, which allocates nothing: what a record's list field is
+/// left holding when a call takes the list out of it (`std::mem::take`).
+impl Default for AverIntList {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl AverIntList {
     pub fn empty() -> Self {
         Self::Packed(AverPackedU8::from_vec(Vec::new()))

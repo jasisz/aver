@@ -1400,6 +1400,14 @@ impl<T> Clone for AverList<T> {
     }
 }
 
+/// The empty list, which allocates nothing: what a record's list field is
+/// left holding when a call takes the list out of it (`std::mem::take`).
+impl<T> Default for AverList<T> {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl<T> AverList<T> {
     /// A list that is a whole node — every shape but a stepped-into flat body.
     #[inline]

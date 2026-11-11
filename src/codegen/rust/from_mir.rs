@@ -172,6 +172,10 @@ pub struct MirEmitCtx<'a> {
     /// happens only where the root local is also an owned Rust value.
     /// Empty on every path without per-fn facts.
     pub movable_projections: &'a HashSet<usize>,
+    /// Field reads that take their field out of a record a call is then
+    /// handed whole, by a callee that never reads the field
+    /// (`field_moves::taken_projections`): `std::mem::take(&mut q.out)`.
+    pub taken_fields: &'a HashSet<usize>,
     /// Locals some movable projection takes a field out of; see
     /// [`crate::ir::mir::field_moves::moved_roots`].
     pub moved_roots: &'a HashSet<crate::ir::mir::LocalId>,
@@ -273,6 +277,7 @@ impl<'a> MirEmitCtx<'a> {
             bare: empty_bare_facts(),
             try_err_to_string: false,
             movable_projections: empty_addr_set(),
+            taken_fields: empty_addr_set(),
             moved_roots: empty_slot_set(),
             moved_paths: &[],
             list_slot: None,
@@ -329,6 +334,7 @@ impl<'a> MirEmitCtx<'a> {
             bare: &policy.bare,
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
+            taken_fields: &policy.taken_fields,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
             list_slot: None,
@@ -372,6 +378,7 @@ impl<'a> MirEmitCtx<'a> {
             bare: &policy.bare,
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
+            taken_fields: &policy.taken_fields,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
             list_slot: None,
@@ -623,6 +630,8 @@ pub(super) struct MirFnEmitPolicy {
     /// [`MirEmitCtx::movable_projections`]. Empty until
     /// [`Self::apply_field_moves`] runs.
     pub movable_projections: HashSet<usize>,
+    /// See [`MirEmitCtx::taken_fields`].
+    pub taken_fields: HashSet<usize>,
     /// See [`MirEmitCtx::moved_roots`].
     pub moved_roots: HashSet<crate::ir::mir::LocalId>,
     /// See [`MirEmitCtx::moved_paths`].
@@ -644,6 +653,7 @@ impl MirFnEmitPolicy {
             bare: crate::ir::mir::FnBareFacts::default(),
             current_module_scope: None,
             movable_projections: HashSet::new(),
+            taken_fields: HashSet::new(),
             moved_roots: HashSet::new(),
             moved_paths: Vec::new(),
         }
@@ -683,6 +693,7 @@ impl MirFnEmitPolicy {
             bare: crate::ir::mir::FnBareFacts::default(),
             current_module_scope: scope.map(String::from),
             movable_projections: HashSet::new(),
+            taken_fields: HashSet::new(),
             moved_roots: HashSet::new(),
             moved_paths: Vec::new(),
         }
@@ -702,6 +713,21 @@ impl MirFnEmitPolicy {
             crate::ir::mir::field_moves::moved_roots(&mir_fn.body.node, &self.movable_projections);
         self.moved_paths =
             crate::ir::mir::field_moves::moved_paths(&mir_fn.body.node, &self.movable_projections);
+    }
+
+    /// Record which field reads of `mir_fn`'s body take their field out of
+    /// a record a call is then handed whole (see
+    /// [`MirEmitCtx::taken_fields`]). Addresses into this very body, as
+    /// [`Self::apply_field_moves`].
+    pub(super) fn apply_taken_fields(
+        &mut self,
+        mir_fn: &crate::ir::mir::MirFn,
+        ctx: &CodegenContext,
+    ) {
+        self.taken_fields = crate::ir::mir::field_moves::taken_projections(
+            &mir_fn.body.node,
+            &ctx.rust_replaced_only_fields,
+        );
     }
 
     /// Lend the `Option` params of `mir_fn` the lent-option analysis lends
@@ -3756,6 +3782,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             }
             let base = emit_mir_expr(&proj.base, emit_ctx)?;
             let projected = format!("{}.{}", base, aver_name_to_rust(&proj.field));
+            if takes_field(&expr.node, emit_ctx) {
+                return Some(format!("std::mem::take(&mut {projected})"));
+            }
             let Some(Type::Named { id, name }) = proj.base.ty() else {
                 return Some(projected);
             };
@@ -4166,6 +4195,33 @@ fn values_end_base(upd: &crate::ir::mir::MirRecordUpdate, ctx: &MirEmitCtx<'_>) 
         );
     }
     last && !bad
+}
+
+/// Whether this field read takes its field out of the record, leaving the
+/// empty list (see [`MirEmitCtx::taken_fields`]): the record is a `mut`
+/// param taken by value, held as a plain struct, and the field is stored as
+/// the list it is.
+pub(super) fn takes_field(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    let MirExpr::Project(project) = expr else {
+        return false;
+    };
+    if !ctx
+        .taken_fields
+        .contains(&(expr as *const MirExpr as usize))
+        || super::ownership::through_counted(expr, ctx)
+    {
+        return false;
+    }
+    let Some(root) = local_of(&project.node.base.node) else {
+        return false;
+    };
+    let Some(Type::Named { id, name }) = project.node.base.ty() else {
+        return false;
+    };
+    super::ownership::root_is_owned(root, ctx)
+        && ctx.is_owned_param(&aver_name_to_rust(&root.name))
+        && carrier_storage(*id, ctx).is_none()
+        && packed_u8_carrier(*id, name, ctx) == Some(false)
 }
 
 /// Whether the record type of a literal or update is kept behind a `Box`
@@ -8402,6 +8458,7 @@ pub(super) fn emit_mir_fn_body_routed(
             .map(|p| p.builtins.as_slice())
             .unwrap_or(&[]),
     );
+    policy.apply_taken_fields(mir_fn, ctx);
     policy.apply_lent_options(mir_fn, ctx);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
     if let MirExpr::Match(m) = &mir_fn.body.node {
@@ -8522,6 +8579,7 @@ pub(super) fn emit_mir_tco_fn(
             .map(|p| p.builtins.as_slice())
             .unwrap_or(&[]),
     );
+    policy.apply_taken_fields(mir_fn, ctx);
     policy.apply_lent_options(mir_fn, ctx);
     let self_loop = SelfLoop {
         fn_id: mir_fn.fn_id,
@@ -9141,6 +9199,7 @@ pub(super) fn emit_mir_mutual_tco_block(
                 .map(|p| p.builtins.as_slice())
                 .unwrap_or(&[]),
         );
+        policy.apply_taken_fields(mir_fn, ctx);
         policy.apply_lent_options(mir_fn, ctx);
         let mut arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
         // Mutual invariants are `rc_wrapped` for owning reads, but unlike
@@ -11748,6 +11807,7 @@ mod tests {
             bare: &policy.bare,
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
+            taken_fields: &policy.taken_fields,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
             list_slot: None,
@@ -12944,6 +13004,7 @@ mod tests {
             bare: &policy.bare,
             try_err_to_string: false,
             movable_projections: &policy.movable_projections,
+            taken_fields: &policy.taken_fields,
             moved_roots: &policy.moved_roots,
             moved_paths: &policy.moved_paths,
             list_slot: None,

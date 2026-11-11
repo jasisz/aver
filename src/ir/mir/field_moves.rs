@@ -898,6 +898,184 @@ fn result_parts(
     }
 }
 
+/// For each function, and each of its params, the fields of the param the
+/// function never reads: every use of the param is the base of a record
+/// update that replaces them, or a read of another field
+/// (`fn withExpr(q: P, out: List<Int>) -> P = P.update(q, out = out, n =
+/// q.n + 1)` never reads `q.out`). Only functions with such a field are
+/// listed.
+pub fn replaced_only_fields(
+    program: &crate::ir::mir::program::MirProgram,
+) -> HashMap<crate::ir::FnId, Vec<Vec<String>>> {
+    #[derive(Default)]
+    struct Uses {
+        /// The fields every update of the param replaces; `None` before the
+        /// first update.
+        replaced: Option<HashSet<String>>,
+        read: HashSet<String>,
+        whole: bool,
+    }
+    fn walk(expr: &MirExpr, slot: LocalId, uses: &mut Uses) {
+        if let MirExpr::RecordUpdate(update) = expr
+            && let MirExpr::Local(base) = &update.node.base.node
+            && base.node.slot == slot
+        {
+            // A list field only: what the taken field leaves behind is the
+            // empty list, which allocates nothing.
+            let names: HashSet<String> = update
+                .node
+                .updates
+                .iter()
+                .filter(|f| matches!(f.value.ty(), Some(crate::ast::Type::List(_))))
+                .map(|f| f.name.clone())
+                .collect();
+            uses.replaced = Some(match uses.replaced.take() {
+                None => names,
+                Some(before) => before.intersection(&names).cloned().collect(),
+            });
+            for field in &update.node.updates {
+                walk(&field.value.node, slot, uses);
+            }
+            return;
+        }
+        if let Some((root, _, path)) = projection_root(expr)
+            && root == slot
+        {
+            match path.first() {
+                Some(field) => {
+                    uses.read.insert(field.clone());
+                }
+                None => uses.whole = true,
+            }
+            return;
+        }
+        walk_children(expr, &mut |child| walk(child, slot, uses));
+    }
+    let mut out = HashMap::new();
+    for (id, f) in program.iter() {
+        let per_param: Vec<Vec<String>> = f
+            .params
+            .iter()
+            .map(|param| {
+                let mut uses = Uses::default();
+                walk(&f.body.node, param.local, &mut uses);
+                let replaced = match (uses.whole, uses.replaced) {
+                    (false, Some(replaced)) => replaced,
+                    _ => return Vec::new(),
+                };
+                let mut fields: Vec<String> = replaced.difference(&uses.read).cloned().collect();
+                fields.sort();
+                fields
+            })
+            .collect();
+        if per_param.iter().any(|fields| !fields.is_empty()) {
+            out.insert(*id, per_param);
+        }
+    }
+    out
+}
+
+/// Field reads that may take their field out of a record which a call is
+/// then handed whole, at its last use, by a callee that never reads that
+/// field ([`replaced_only_fields`]): in `withExpr(q, uv(List.prepend(10,
+/// q.out), n))` the list leaves `q` for the prepend, so it has one owner,
+/// and `q` goes on holding an empty list `withExpr` replaces unread.
+///
+/// The reads counted are those among the call's arguments and the values of
+/// the `let`s wrapped directly around the call (the arguments computed
+/// first); the field is read there exactly once, by a plain `q.field`, and
+/// nothing there reads `q` whole but the argument it is handed in.
+pub fn taken_projections(
+    body: &MirExpr,
+    replaced_only: &HashMap<crate::ir::FnId, Vec<Vec<String>>>,
+) -> HashSet<usize> {
+    fn reads<'e>(expr: &'e MirExpr, slot: LocalId, out: &mut Vec<(&'e MirExpr, Vec<String>)>) {
+        if let Some((root, _, path)) = projection_root(expr)
+            && root == slot
+        {
+            out.push((expr, path));
+            return;
+        }
+        walk_children(expr, &mut |child| reads(child, slot, out));
+    }
+    fn at_call<'e>(
+        callee: crate::ir::FnId,
+        args: &'e [Spanned<MirExpr>],
+        lets: &[&'e MirExpr],
+        replaced_only: &HashMap<crate::ir::FnId, Vec<Vec<String>>>,
+        out: &mut HashSet<usize>,
+    ) {
+        let Some(per_param) = replaced_only.get(&callee) else {
+            return;
+        };
+        for (i, arg) in args.iter().enumerate() {
+            let MirExpr::Local(held) = &arg.node else {
+                continue;
+            };
+            let fields = per_param.get(i).map(Vec::as_slice).unwrap_or(&[]);
+            if !held.node.last_use || fields.is_empty() {
+                continue;
+            }
+            let mut found = Vec::new();
+            for (j, other) in args.iter().enumerate() {
+                if j != i {
+                    reads(&other.node, held.node.slot, &mut found);
+                }
+            }
+            for value in lets {
+                reads(value, held.node.slot, &mut found);
+            }
+            if found.iter().any(|(_, path)| path.is_empty()) {
+                continue;
+            }
+            for field in fields {
+                let of_field: Vec<_> = found
+                    .iter()
+                    .filter(|(_, path)| path.first() == Some(field))
+                    .collect();
+                if let [(read, path)] = of_field.as_slice()
+                    && path.len() == 1
+                {
+                    out.insert(*read as *const MirExpr as usize);
+                }
+            }
+        }
+    }
+    fn visit<'e>(
+        expr: &'e MirExpr,
+        lets: &mut Vec<&'e MirExpr>,
+        replaced_only: &HashMap<crate::ir::FnId, Vec<Vec<String>>>,
+        out: &mut HashSet<usize>,
+    ) {
+        match expr {
+            MirExpr::Let(l) => {
+                visit(&l.node.value.node, &mut Vec::new(), replaced_only, out);
+                lets.push(&l.node.value.node);
+                visit(&l.node.body.node, lets, replaced_only, out);
+                lets.pop();
+                return;
+            }
+            MirExpr::Call(call) => {
+                if let MirCallee::Fn(callee) = call.node.callee {
+                    at_call(callee, &call.node.args, lets, replaced_only, out);
+                }
+            }
+            MirExpr::TailCall(call) => {
+                at_call(call.node.target, &call.node.args, lets, replaced_only, out);
+            }
+            _ => {}
+        }
+        walk_children(expr, &mut |child| {
+            visit(child, &mut Vec::new(), replaced_only, out)
+        });
+    }
+    let mut out = HashSet::new();
+    if !replaced_only.is_empty() {
+        visit(body, &mut Vec::new(), replaced_only, &mut out);
+    }
+    out
+}
+
 /// Whether this update reads its base local for the last time: the base
 /// read is the local's last use, or every last use of the local inside the
 /// new field values reads a field of it

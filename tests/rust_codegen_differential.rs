@@ -5838,6 +5838,28 @@ fn rust_an_element_taken_out_of_its_vector_and_put_back_is_written_in_place() {
     );
 }
 
+/// A list field read for a call that is then handed the record whole, by a
+/// function that only replaces that field (`withOut(q, List.prepend(k,
+/// q.out))`), is taken out of the record, so the list has one owner and the
+/// prepend writes in place. A callee that reads the field, or a second read
+/// of it, keeps it where it is.
+#[test]
+fn rust_a_field_the_callee_only_replaces_is_taken_out_for_the_call() {
+    let src = include_str!("fixtures/field_take.av");
+    let expected = ",7,1,2 1 ,8,7,1,2 4 ,9,8,7,1,2,8,7,1,2 5 ,1,2";
+    let vm = run_vm_inline("field_take", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("field_take", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("field_take", src);
+    assert!(
+        emitted.contains("prepend_owned(k, std::mem::take(&mut q.out))")
+            && emitted.matches("std::mem::take").count() == 1,
+        "only `taken` may take the field out:\n{emitted}"
+    );
+}
+
 /// `Bytes.get(b, i) == Option.Some(k)` for a literal octet reads the byte in
 /// place, as a match on `Bytes.get` does, with no `Option` built; past
 /// either end it still answers as the general path does.

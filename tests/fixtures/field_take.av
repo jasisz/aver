@@ -1,0 +1,44 @@
+module FieldTake
+    intent =
+        "A record's list field taken out for a call that only replaces it, and"
+        "the shapes where it must stay, so every backend can be held to one output."
+    depends []
+    effects [Console.print]
+
+record P
+    out: List<Int>
+    n: Int
+
+fn withOut(q: P, out: List<Int>) -> P
+    ? "q with out replaced, never read."
+    P.update(q, out = out, n = q.n + 1)
+
+fn readsOut(q: P, out: List<Int>) -> P
+    ? "q with out replaced after reading it."
+    P.update(q, out = out, n = q.n + List.len(q.out))
+
+fn taken(q: P, k: Int) -> P
+    ? "The field taken out: withOut never reads it."
+    withOut(q, List.prepend(k, q.out))
+
+fn kept(q: P, k: Int) -> P
+    ? "The field kept: readsOut reads it."
+    readsOut(q, List.prepend(k, q.out))
+
+fn twice(q: P, k: Int) -> P
+    ? "The field read twice: it stays for the second read."
+    withOut(q, List.concat(List.prepend(k, q.out), q.out))
+
+fn shown(xs: List<Int>, acc: String) -> String
+    ? "The list's numbers, each after a comma."
+    match xs
+        [] -> acc
+        [x, ..rest] -> shown(rest, "{acc},{x}")
+
+fn main() -> Unit
+    ! [Console.print]
+    p0 = P(out = [1, 2], n = 0)
+    a = taken(p0, 7)
+    b = kept(a, 8)
+    c = twice(b, 9)
+    Console.print("{shown(a.out, "")} {a.n} {shown(b.out, "")} {b.n} {shown(c.out, "")} {c.n} {shown(p0.out, "")}")

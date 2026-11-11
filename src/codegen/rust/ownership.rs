@@ -92,6 +92,7 @@ pub(super) fn value_facts(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> RustValueFact
             // moves: an update reads it through a `Box` (see
             // `through_counted`).
             can_move: copy
+                || super::from_mir::takes_field(expr, ctx)
                 || (!through_counted(expr, ctx)
                     && match projection_root_local(&project.node.base.node) {
                         None => true,
