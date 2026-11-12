@@ -4174,7 +4174,10 @@ fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet
                     // emit converts a bare compound operand, so only a DIRECT
                     // bare `Local` escapes here (shallow), not a leaf buried
                     // in a `BinOp` (which `boxed_int_operand` converts).
-                    if !summary.param_bare(target, i) {
+                    // On Rust the rewrite boxes a raw argument at a boxed
+                    // param (`rewrite_call_arg`), so passing a word there
+                    // does not make it a general `Int` anywhere else.
+                    if !summary.rust && !summary.param_bare(target, i) {
                         mark_operand_escapes(&a.node, out);
                     }
                     scan_escapes(&a.node, self_fn, summary, out);

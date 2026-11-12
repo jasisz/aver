@@ -11118,7 +11118,18 @@ fn emit_mir_builtin_call(
                 let slot = generated_ident("list_slot");
                 return Some(format!("{slot}.prepend({head}, {list})"));
             }
-            match super::ownership::moves_when_owned(&args[1].node, ctx) {
+            let owned = super::ownership::moves_when_owned(&args[1].node, ctx);
+            // A word onto a list of `Int`s it hands over: no `AverInt` for an
+            // octet the list keeps as a byte.
+            if owned
+                && list_type == "aver_rt::AverIntList"
+                && let MirExpr::Box(word) = &args[0].node
+                && ctx.bare.length_interval(&word.node).is_none()
+                && let Some(word) = emit_mir_expr(word, ctx)
+            {
+                return Some(format!("{list_type}::prepend_word_owned({word}, {list})"));
+            }
+            match owned {
                 true => format!("{list_type}::prepend_owned({head}, {list})"),
                 false => format!(
                     "{list_type}::prepend({head}, {})",
