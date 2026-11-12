@@ -142,7 +142,7 @@ pub fn runGuestProgram(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg4 @ _ = {
-        let __arg3 @ _ = aver_rt::AverInt::from_i64(((moduleFns).len() as i64));
+        let __arg3 @ _ = ((moduleFns).len() as i64);
         shiftFnIdsInProgram(prog, __arg3)
     };
     crate::aver_generated::domain::eval::evalProgramWithFns(&__arg4, moduleFns)
@@ -325,18 +325,18 @@ pub fn shiftFnIdsInFns(
 /// Shift entry-program direct-call ids before prepending loaded module functions.
 pub fn shiftFnIdsInProgram(
     prog @ _: &crate::aver_generated::domain::ast::Program,
-    offset @ _: aver_rt::AverInt,
+    offset @ _: i64,
 ) -> crate::aver_generated::domain::ast::Program {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
         fns: {
             let __arg2 @ _ = aver_rt::list_builder_new(0usize);
-            shiftFnIdsInFns__collected(&prog.fns, offset.clone(), __arg2)
+            shiftFnIdsInFns__collected(&prog.fns, offset, __arg2)
         },
         stmts: {
             let __arg3 @ _ = aver_rt::list_builder_new(0usize);
-            shiftFnIdsInStmts__collected(&prog.stmts, offset, __arg3)
+            shiftFnIdsInStmts__collected(&prog.stmts, aver_rt::AverInt::from_i64(offset), __arg3)
         },
     }
 }
@@ -1340,7 +1340,7 @@ pub fn loadOneModule__indexed(
         let (accWithInner, loaded3) = innerResult;
         {
             let __arg17 @ _ = aver_rt::AverList::concat(&accWithInner.clone(), &{
-                let __arg15 @ _ = aver_rt::AverInt::from_i64(((accWithInner).len() as i64));
+                let __arg15 @ _ = ((accWithInner).len() as i64);
                 {
                     let __arg16 @ _ = aver_rt::list_builder_new(0usize);
                     shiftFnIdsInFns__collected(&moduleFns, __arg15, __arg16)
@@ -1488,7 +1488,7 @@ pub fn resolveQualifiedModuleFns__indexed(
 #[inline(always)]
 pub fn shiftFnIdsInFns__collected(
     fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    mut offset @ _: aver_rt::AverInt,
+    mut offset @ _: i64,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     let mut __hold0: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> =
@@ -1501,8 +1501,10 @@ pub fn shiftFnIdsInFns__collected(
             match aver_rt::list_uncons_lent_head(__list_subject) {
                 Some((fd, rest)) => {
                     let __tco0 = rest;
-                    let __tco2 =
-                        aver_rt::list_builder_push(acc, shiftFnIdsInFn(fd.clone(), offset.clone()));
+                    let __tco2 = aver_rt::list_builder_push(
+                        acc,
+                        shiftFnIdsInFn(fd.clone(), aver_rt::AverInt::from_i64(offset)),
+                    );
                     match __tco0 {
                         aver_rt::ListRest::Lent(__rest) => {
                             fns = __rest;
