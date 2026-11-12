@@ -292,6 +292,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_some(
     function.instruction(&Instruction::I64ExtendI32U);
     function.instruction(&Instruction::Call(helpers.aint_from_i64_fn));
     function.instruction(&Instruction::LocalGet(list));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut function);
     function.instruction(&Instruction::StructNew(indices.list_int_type_idx));
     function.instruction(&Instruction::LocalSet(list));
     function.instruction(&Instruction::Br(0));

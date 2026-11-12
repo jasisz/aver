@@ -333,6 +333,7 @@ fn emit_from_lm_boxed(bytes_idx: u32, list_idx: u32, from_i64: Option<u32>) -> F
         function.instruction(&Instruction::Call(from_i64));
     }
     function.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut function);
     function.instruction(&Instruction::StructNew(list_idx));
     function.instruction(&Instruction::LocalSet(1));
     function.instruction(&Instruction::Br(0));

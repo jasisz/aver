@@ -1520,6 +1520,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_bytes(
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::Call(helpers.aint_from_i64_fn));
     f.instruction(&Instruction::LocalGet(l_list_cursor));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(indices.list_int_type_idx));
     f.instruction(&Instruction::LocalSet(l_list_cursor));
     f.instruction(&Instruction::Br(0));

@@ -2420,6 +2420,7 @@ pub(crate) fn emit_mir_list_builtin(
                         "List.prepend: tail type `{tail_ty}` is not a registered List<T>"
                     )))?;
             emit_args!();
+            crate::codegen::wasm_gc::lists::push_len_unknown(func);
             func.instruction(&Instruction::StructNew(list_idx));
         }
         "List.empty" if args.is_empty() => {

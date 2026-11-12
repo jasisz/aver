@@ -106,7 +106,11 @@ impl EndianTypes {
             } else if idx == self.result_idx {
                 "(type $result (struct (field (mut i32)) (field (mut (ref null $bytes))) (field (mut (ref null $string)))))"
             } else if Some(idx) == self.list_idx {
-                "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+                if crate::codegen::wasm_gc::lists::counted_lists() {
+                    "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int)) (field (mut i32))))"
+                } else {
+                    "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+                }
             } else if idx == self.mag_idx {
                 "(type $mag (array (mut i64)))"
             } else if idx == self.aint_idx {
@@ -207,6 +211,7 @@ pub(super) fn emit_to_endian(
         )
     } else {
         let from_i64 = from_i64.expect("boxed carrier registered from-i64");
+        let len_unknown = crate::codegen::wasm_gc::lists::wat_len_unknown();
         (
             "(local $node (ref null $list_int))".to_string(),
             format!(
@@ -216,7 +221,7 @@ pub(super) fn emit_to_endian(
     local.get $i i32.const 1 i32.sub local.set $i
     {load_byte}
     local.get $byte i64.extend_i32_u call {from_i64}
-    local.get $node struct.new $list_int local.set $node
+    local.get $node {len_unknown}struct.new $list_int local.set $node
     br $copy))
   local.get $node struct.new $bytes"#
             ),

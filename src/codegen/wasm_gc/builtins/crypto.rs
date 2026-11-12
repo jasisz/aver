@@ -208,6 +208,7 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
             .to_string()
     } else {
         let from_i64_idx = from_i64_idx.expect("boxed path checked above");
+        let len_unknown = crate::codegen::wasm_gc::lists::wat_len_unknown();
         format!(
             r#"i32.const 31 local.set $i
   (block $output_done
@@ -224,6 +225,7 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
       i64.extend_i32_u
       call {from_i64_idx}
       local.get $out
+      {len_unknown}
       struct.new $list_int
       local.set $out
       local.get $i i32.eqz br_if $output_done
@@ -552,7 +554,11 @@ fn crypto_types(
         } else if idx == digest_idx {
             "(type $digest (struct (field (ref null $bytes))))"
         } else if Some(idx) == list_idx {
-            "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+            if crate::codegen::wasm_gc::lists::counted_lists() {
+                "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int)) (field (mut i32))))"
+            } else {
+                "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+            }
         } else if Some(idx) == aint_idx {
             // Only the reference identity is needed in this standalone WAT;
             // actual construction/conversion is delegated to the real helpers.

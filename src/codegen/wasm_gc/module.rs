@@ -204,6 +204,12 @@ fn emit_module_pass(
     fn_exports: super::FnExports,
 ) -> Result<(ModuleOutput, std::collections::HashSet<String>), WasmGcError> {
     let certify = !matches!(twins_for, Certify::Off);
+    // Plain builds keep a list's length in its cells; a `--certify` build
+    // keeps the two-field cell its certificate's wall proves, and so does
+    // any build under `AVER_NO_COUNTED_LISTS=1`.
+    let _counted_lists = super::lists::CountedLists::set(
+        !certify && std::env::var_os("AVER_NO_COUNTED_LISTS").is_none(),
+    );
     // A `String` param a self loop grows by appending is held as a buffer,
     // except in a `--certify` build (`body/from_mir/str_builder.rs`).
     super::body::set_string_builders(!certify);
@@ -7812,19 +7818,25 @@ fn emit_user_types(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(own_idx),
         });
-        entries.push((
-            own_idx,
-            mk_struct(vec![
-                wasm_encoder::FieldType {
-                    element_type: wasm_encoder::StorageType::Val(elem_val),
-                    mutable: false,
-                },
-                wasm_encoder::FieldType {
-                    element_type: wasm_encoder::StorageType::Val(tail_ref),
-                    mutable: false,
-                },
-            ]),
-        ));
+        let mut fields = vec![
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(elem_val),
+                mutable: false,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(tail_ref),
+                mutable: false,
+            },
+        ];
+        // The length of the list from this cell on, or `LIST_LEN_UNKNOWN`
+        // until `List.len` counts it (see `lists::emit_list_len`).
+        if super::lists::counted_lists() {
+            fields.push(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                mutable: true,
+            });
+        }
+        entries.push((own_idx, mk_struct(fields)));
     }
 
     // Option<T> — `(struct (mut i32 tag) (mut T value))`.
@@ -9182,6 +9194,7 @@ fn emit_list_string_cons(registry: &TypeRegistry) -> Result<wasm_encoder::Functi
     let mut f = wasm_encoder::Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -11245,6 +11258,7 @@ fn emit_factory_list_string_cons(
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -11347,6 +11361,7 @@ fn emit_factory_list_cons_from(
         }
     }
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::End);
     Ok(f)

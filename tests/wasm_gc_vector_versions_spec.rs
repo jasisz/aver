@@ -531,13 +531,14 @@ fn main() -> Unit
     // helper either). `words` also holds its `String` accumulator as a
     // buffer (`body/from_mir/str_builder.rs`), its string literals are
     // shared through globals (`body/from_mir/strings.rs`), and its twin loops
-    // only while its Int params are words (`self_tail_loop.rs`); none is a
-    // vector layout.
+    // only while its Int params are words (`self_tail_loop.rs`), and its list
+    // cells carry their length (`lists::emit_list_len`); none is a vector
+    // layout.
     assert_eq!(
         (bytes.len(), digest.as_str()),
         (
-            4539,
-            "400d8df97c9404e7f91eaa5c5420771c3802d4f633452ad27850d53d1e0d3ca2"
+            4629,
+            "186155c4853f404788bd486b11ba2db9111e24abb7be211a60022de769415258"
         ),
         "a module with no Vector value changed"
     );

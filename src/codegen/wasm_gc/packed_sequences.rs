@@ -481,6 +481,7 @@ fn emit_get(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError
         f.instruction(&Instruction::Call(from_i64));
     }
     f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::Else);
     f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
@@ -577,6 +578,7 @@ fn emit_unpack(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcEr
         f.instruction(&Instruction::Call(from_i64));
     }
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(1));
     f.instruction(&Instruction::Br(0));

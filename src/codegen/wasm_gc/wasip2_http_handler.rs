@@ -821,6 +821,7 @@ pub(super) fn emit_aver_http_handle(
         // new_list = struct.new $list_string (val_str, tail)
         f.instruction(&Instruction::LocalGet(l_h_val_str));
         f.instruction(&Instruction::LocalGet(l_h_tail));
+        crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
         f.instruction(&Instruction::StructNew(list_str_idx));
 
         // Map.set(map, name_str, new_list) — note arg order: pre-push map + key.

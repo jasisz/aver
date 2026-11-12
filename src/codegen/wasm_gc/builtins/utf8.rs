@@ -96,7 +96,11 @@ impl Utf8Types {
             } else if Some(idx) == self.result_idx {
                 "(type $result (struct (field (mut i32)) (field (mut (ref null $string))) (field (mut (ref null $string)))))"
             } else if Some(idx) == self.list_idx {
-                "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+                if crate::codegen::wasm_gc::lists::counted_lists() {
+                    "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int)) (field (mut i32))))"
+                } else {
+                    "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+                }
             } else if Some(idx) == self.aint_idx {
                 "(type $aint (struct))"
             } else {
@@ -136,6 +140,7 @@ pub(super) fn emit_to_utf8(registry: &TypeRegistry) -> Result<Function, WasmGcEr
         let from_i64_idx = registry.aint_from_i64_fn_idx.ok_or_else(|| {
             WasmGcError::Validation("boxed String.toUtf8 requires Int.from-i64".into())
         })?;
+        let len_unknown = crate::codegen::wasm_gc::lists::wat_len_unknown();
         (
             wat_helper::func_placeholders(&[wat_helper::CalleeStub {
                 abs_idx: from_i64_idx,
@@ -151,6 +156,7 @@ pub(super) fn emit_to_utf8(registry: &TypeRegistry) -> Result<Function, WasmGcEr
       local.get $s local.get $i array.get_u $string i64.extend_i32_u
       call {from_i64_idx}
       local.get $node
+      {len_unknown}
       struct.new $list_int
       local.set $node
       br $copy))

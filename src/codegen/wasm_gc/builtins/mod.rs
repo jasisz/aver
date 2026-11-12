@@ -3758,6 +3758,7 @@ fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     // acc = struct.new $list (cell, acc)
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(1));
     // end = i
