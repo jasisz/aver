@@ -1,0 +1,42 @@
+module ParamWordHandedOn
+    intent = "A param every caller passes as a word stays a word, though it is handed on to a param that takes any Int."
+    exposes opaque [Ix]
+    depends []
+    effects [Console.print]
+
+record Ix
+    value: Int
+
+fn ixOf(n: Int) -> Result<Ix, Bool>
+    ? "An id: -1 for none, otherwise below 2^40."
+    match Bool.and(n >= -1, n <= 1099511627776)
+        true -> Result.Ok(Ix(value = n))
+        false -> Result.Err(false)
+
+fn ixAt(n: Int) -> Ix
+    ? "The id n, none out of range."
+    match ixOf(n)
+        Result.Ok(x) -> x
+        Result.Err(_) -> Ix(value = -1)
+
+fn placed(code: Int, mark: Int) -> Bool
+    ? "Whether code is below twice mark."
+    code < 2 * mark
+
+fn allPlaced(cs: List<Int>, mark: Int) -> Bool
+    ? "Every code placed before mark."
+    match cs
+        [] -> true
+        [c, ..rest] -> Bool.and(placed(c, mark), allPlaced(rest, mark))
+
+fn block(cs: List<Int>, mark: Int) -> Int
+    ? "One past mark when every code is placed, one before otherwise."
+    match allPlaced(cs, mark)
+        true -> mark + 1
+        false -> mark - 1
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(block([1, 2, 3], ixAt(5).value)))
+    Console.print(String.fromInt(block([1, 20], ixAt(5).value)))
+    Console.print(String.fromBool(placed(1, 100000000000000000000)))

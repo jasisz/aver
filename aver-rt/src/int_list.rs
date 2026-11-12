@@ -766,6 +766,19 @@ impl AverIntList {
         Self::Wide(AverList::prepend_owned(head, tail.into_aver_list()))
     }
 
+    /// [`Self::prepend_owned`] of a machine word: an octet goes onto a list
+    /// built by prepending as it is, never made an `AverInt` and read back.
+    #[inline]
+    pub fn prepend_word_owned(head: i64, tail: Self) -> Self {
+        match tail {
+            Self::Stack(stack) => match u8::try_from(head) {
+                Ok(byte) => Self::Stack(stack.push_owned(byte)),
+                Err(_) => Self::prepend(AverInt::from_i64(head), &Self::Stack(stack)),
+            },
+            tail => Self::prepend_owned(AverInt::from_i64(head), tail),
+        }
+    }
+
     /// The element at `index`, read in place.
     #[inline]
     pub fn get(&self, index: usize) -> Option<AverInt> {
@@ -1179,6 +1192,26 @@ mod tests {
         assert_eq!(kept.aver_display(), "[2, 1]");
         assert_eq!(first.aver_display(), "[4, 3, 2, 1]");
         assert_eq!(second.aver_display(), "[5, 2, 1]");
+    }
+
+    #[test]
+    fn a_word_prepended_onto_octets_stays_a_byte_or_widens() {
+        let words = |list: AverIntList, values: &[i64]| {
+            values
+                .iter()
+                .fold(list, |list, v| AverIntList::prepend_word_owned(*v, list))
+        };
+        let stack = words(prepended(&AverIntList::empty(), &[1]), &[0, 128, 255]);
+        assert!(matches!(stack, AverIntList::Stack(_)));
+        assert_eq!(stack.aver_display(), "[255, 128, 0, 1]");
+        let kept = stack.clone();
+        let wide = words(stack, &[256, -1]);
+        assert_eq!(wide.aver_display(), "[-1, 256, 255, 128, 0, 1]");
+        assert_eq!(kept.aver_display(), "[255, 128, 0, 1]");
+        assert_eq!(
+            words(AverIntList::empty(), &[7, 300]).aver_display(),
+            "[300, 7]"
+        );
     }
 
     #[test]

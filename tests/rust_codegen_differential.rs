@@ -731,8 +731,8 @@ fn nested_list_pattern_moves_the_other_fields() {
         "let __tco0 = put(__pat2, aver_rt::string_position(&a), b.add(&c));",
         "let other = Step::Vals(__pat1, __pat2);",
         "let __tco0 = put(__pat7, 0i64, i.clone());",
-        "let __pat0 = split(s, n.clone()); { let (__pat1, __pat2) = __pat0;",
-        "put(__pat2, aver_rt::string_position(&n), x.add(&y))",
+        "let __pat0 = split(s, aver_rt::AverInt::from_i64(n)); { let (__pat1, __pat2) = __pat0;",
+        "put(__pat2, n, x.add(&y))",
         "let whole = (__pat1, __pat2);",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
@@ -1523,7 +1523,7 @@ fn a_cross_module_indexed_call_forwards_the_index_on_rust_and_vm() {
         .expect("read the entry module");
     let _ = fs::remove_dir_all(&ws);
     assert!(
-        entry.contains("scan::skipTo__indexed(") && entry.contains("scan::skipTo(aver_rt::AverInt"),
+        entry.contains("scan::skipTo__indexed(") && entry.contains("scan::skipTo(0i64, "),
         "the worker forwards its index, the other call keeps the wrapper:\n{entry}"
     );
 }
@@ -5855,8 +5855,7 @@ fn rust_a_field_the_callee_only_replaces_is_taken_out_for_the_call() {
 
     let emitted = emitted_entry_module("field_take", src);
     assert!(
-        emitted
-            .contains("prepend_owned(aver_rt::AverInt::from_i64(k), std::mem::take(&mut q.out))")
+        emitted.contains("prepend_word_owned(k, std::mem::take(&mut q.out))")
             && emitted.matches("std::mem::take").count() == 1,
         "only `taken` may take the field out:\n{emitted}"
     );
@@ -6043,8 +6042,31 @@ fn rust_a_loop_param_its_recursion_keeps_in_range_is_a_word() {
     assert!(
         emitted.contains("mut n @ _: i64) -> aver_rt::AverIntList")
             && emitted.contains("((n) >> 7)")
-            && emitted.contains("mut acc @ _: aver_rt::AverInt) -> aver_rt::AverInt"),
-        "uv's n must be a word and grow's acc an Int:\n{emitted}"
+            && emitted.contains("mut acc @ _: aver_rt::AverInt) -> aver_rt::AverInt")
+            && emitted.contains("AverIntList::prepend_word_owned(((n & 127i64) + 128i64), acc)"),
+        "uv's n must be a word, prepended as one, and grow's acc an Int:\n{emitted}"
+    );
+}
+
+/// A param every caller passes as a word is a word, though its body hands it
+/// on to a param that takes any `Int`: the call boxes it there, as a
+/// builtin's argument is boxed, and every other read stays a word.
+#[test]
+fn rust_a_param_handed_on_to_a_general_int_stays_a_word() {
+    let src = include_str!("fixtures/param_word_handed_on.av");
+    let vm = run_vm_inline("param_word_handed_on", src).expect("vm run");
+    assert_eq!(vm, "6\n4\ntrue", "VM result");
+    let rust = build_run_rust_inline("param_word_handed_on", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("param_word_handed_on", src);
+    let block = emitted
+        .lines()
+        .find(|line| line.contains("fn block("))
+        .expect("block emitted");
+    assert!(
+        block.contains("mark @ _: i64"),
+        "block's mark must be a word:\n{emitted}"
     );
 }
 
