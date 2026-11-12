@@ -1,0 +1,34 @@
+module FieldAccumulator
+    intent = "A byte list kept in a record field, grown by functions that replace the field with their result."
+    depends [Bytes]
+    effects [Console.print]
+
+record P
+    out: List<Int>
+    n: Int
+    names: Int
+
+fn put(acc: List<Int>, k: Int) -> List<Int>
+    ? "A tag and a byte onto acc."
+    List.prepend(Bits.and(k, 127), List.prepend(19, acc))
+
+fn withName(q: P, out: List<Int>) -> P
+    ? "q with its output and one more name."
+    P.update(q, out = out, names = q.names + 1)
+
+fn step(q: P, k: Int) -> P
+    ? "One record written."
+    match List.len(q.out) >= 65536
+        true -> P.update(q, out = put([], k), n = q.n + List.len(q.out))
+        false -> withName(q, put(q.out, k))
+
+fn run(q: P, k: Int) -> P
+    ? "k records."
+    match k == 0
+        true -> q
+        false -> run(step(q, k), k - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    q = run(P(out = [], n = 0, names = 0), 40000)
+    Console.print(String.fromInt(q.n + q.names + List.len(q.out)))

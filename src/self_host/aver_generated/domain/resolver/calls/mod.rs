@@ -626,7 +626,7 @@ pub fn resolveOneCall(
                 if crate::aver_generated::domain::resolver::calls::isBuiltinCallName(&name) {
                     crate::aver_generated::domain::resolver::calls::resolveBuiltinCall(
                         name,
-                        &resolvedArgs,
+                        resolvedArgs,
                     )
                 } else {
                     crate::aver_generated::domain::ast::Expr::ExprCall({
@@ -644,16 +644,16 @@ pub fn resolveOneCall(
 #[inline(always)]
 pub fn resolveBuiltinCall(
     name @ _: AverStr,
-    resolvedArgs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut resolvedArgs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    if crate::aver_generated::domain::resolver::calls::isLiteralDivisorCall(&name, resolvedArgs) {
+    if crate::aver_generated::domain::resolver::calls::isLiteralDivisorCall(&name, &resolvedArgs) {
         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
             let __field0 = ::aver_rt::str_lit!("Result.withDefault");
             let __field1 = aver_rt::AverList::from_array([
                 crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
                     let __field0 = name;
-                    let __field1 = resolvedArgs.clone();
+                    let __field1 = resolvedArgs;
                     crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0)
                 }),
                 crate::aver_generated::domain::ast::Expr::ExprInt(
@@ -667,7 +667,7 @@ pub fn resolveBuiltinCall(
     } else {
         crate::aver_generated::domain::ast::Expr::ExprCallBuiltin({
             let __field0 = name;
-            let __field1 = resolvedArgs.clone();
+            let __field1 = resolvedArgs;
             crate::aver_generated::domain::ast::Expr__ExprCallBuiltin(__field1, __field0)
         })
     }

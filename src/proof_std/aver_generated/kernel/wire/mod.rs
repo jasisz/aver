@@ -120,7 +120,7 @@ pub fn withGiven(
             );
             {
                 let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
-                crate::proof_std::aver_generated::kernel::types::finOf(&g.ty, &__arg5, &__arg6)
+                crate::proof_std::aver_generated::kernel::types::finOf(&g.ty, &__arg5, __arg6)
             }
         });
         {

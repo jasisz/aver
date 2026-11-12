@@ -702,7 +702,12 @@ pub fn readAt(
         let __list_subject = cs;
         match aver_rt::list_uncons(__list_subject) {
             Some((c, rest)) => Ok(aver_rt::AverList::prepend_owned(
-                crate::proof_kernel::aver_generated::kernel::induct::readOne(c, h, xs, bound)?,
+                crate::proof_kernel::aver_generated::kernel::induct::readOne(
+                    c,
+                    h,
+                    xs.clone(),
+                    bound,
+                )?,
                 crate::proof_kernel::aver_generated::kernel::induct::readAt(&rest, h, xs, bound)?,
             )),
             None => Ok(aver_rt::AverList::empty()),
@@ -714,7 +719,7 @@ pub fn readAt(
 pub fn readOne(
     c @ _: &Call,
     h @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
-    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     bound @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<Call, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
@@ -723,7 +728,7 @@ pub fn readOne(
         let __arg9 @ _ = {
             let __arg8 @ _ =
                 crate::proof_kernel::aver_generated::kernel::proof::givenNames(&h.params);
-            crate::proof_kernel::aver_generated::kernel::induct::paramsAt(&__arg8, xs)
+            crate::proof_kernel::aver_generated::kernel::induct::paramsAt(__arg8, xs)
         };
         crate::proof_kernel::aver_generated::kernel::subst::unbind(&__arg9, c.inner.clone())
     };
@@ -753,12 +758,12 @@ pub fn unread(mut ns @ _: aver_rt::AverList<AverStr>, h @ _: AverStr) -> Result<
 
 /// Each parameter bound to its argument.
 pub fn paramsAt(
-    ps @ _: &aver_rt::AverList<AverStr>,
-    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ps @ _: aver_rt::AverList<AverStr>,
+    mut xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __int_match_subject = (ps.clone(), xs.clone());
+        let __int_match_subject = (ps, xs);
         let (__lit0, __lit1) = &__int_match_subject;
         if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
             let Some((p, morePs)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
@@ -769,7 +774,7 @@ pub fn paramsAt(
             };
             aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::term::bind(p, x),
-                crate::proof_kernel::aver_generated::kernel::induct::paramsAt(&morePs, &moreXs),
+                crate::proof_kernel::aver_generated::kernel::induct::paramsAt(morePs, moreXs),
             )
         } else {
             aver_rt::AverList::empty()
@@ -1963,7 +1968,7 @@ pub fn shorterArms(
                                 s.clone(),
                                 m,
                                 live,
-                                parts,
+                                parts.clone(),
                             ),
                         );
                         crate::proof_kernel::aver_generated::kernel::induct::shorter(
@@ -1985,7 +1990,7 @@ pub fn armParts(
     mut s @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     m @ _: &Shrink,
     live @ _: bool,
-    parts @ _: &aver_rt::AverList<AverStr>,
+    mut parts @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     match pat {
@@ -2002,9 +2007,7 @@ pub fn armParts(
                     {
                         let __arg9 @ _ = <aver_rt::AverList<AverStr>>::empty();
                         crate::proof_kernel::aver_generated::kernel::induct::smaller(
-                            __arg8,
-                            parts.clone(),
-                            __arg9,
+                            __arg8, parts, __arg9,
                         )
                     }
                 })
@@ -2021,9 +2024,7 @@ pub fn armParts(
                 {
                     let __arg11 @ _ = <aver_rt::AverList<AverStr>>::empty();
                     crate::proof_kernel::aver_generated::kernel::induct::smaller(
-                        __arg10,
-                        parts.clone(),
-                        __arg11,
+                        __arg10, parts, __arg11,
                     )
                 }
             } {
@@ -2274,7 +2275,7 @@ pub fn walks() -> crate::proof_kernel::aver_generated::kernel::proof::Def {
 
 /// A fixture for the tests: skip(n, rest) with these local bindings and this body.
 pub fn skipping(
-    lets @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    mut lets @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     mut body @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
 ) -> crate::proof_kernel::aver_generated::kernel::proof::Def {
     crate::proof_kernel::cancel_checkpoint();
@@ -2297,7 +2298,7 @@ pub fn skipping(
             },
         ]),
         ret: crate::proof_kernel::aver_generated::kernel::term::Ty::TyAny,
-        lets: lets.clone(),
+        lets: lets,
         body: body,
     }
 }

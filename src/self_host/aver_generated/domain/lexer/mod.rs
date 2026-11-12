@@ -1385,7 +1385,7 @@ pub fn lex(src @ _: AverStr) -> aver_rt::AverList<crate::aver_generated::domain:
 #[inline(always)]
 pub fn processIndentation(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
-    stack @ _: &aver_rt::AverIntList,
+    mut stack @ _: aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     {
@@ -1394,7 +1394,7 @@ pub fn processIndentation(
             Some((t, rest)) => {
                 crate::aver_generated::domain::lexer::processIndentToken(t.clone(), &rest, stack)
             }
-            None => crate::aver_generated::domain::lexer::emitFinalDedents(stack),
+            None => crate::aver_generated::domain::lexer::emitFinalDedents(&stack),
         }
     }
 }
@@ -1403,7 +1403,7 @@ pub fn processIndentation(
 pub fn processIndentToken(
     mut t @ _: crate::aver_generated::domain::token::Token,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
-    stack @ _: &aver_rt::AverIntList,
+    mut stack @ _: aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     match &t {
@@ -1411,7 +1411,7 @@ pub fn processIndentToken(
             crate::aver_generated::domain::lexer::processAfterNewline(rest, stack)
         }
         crate::aver_generated::domain::token::Token::TkEof => aver_rt::AverList::concat(
-            &crate::aver_generated::domain::lexer::emitFinalDedents(stack),
+            &crate::aver_generated::domain::lexer::emitFinalDedents(&stack),
             &aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkEof,
                 aver_rt::AverList::empty(),
@@ -1428,7 +1428,7 @@ pub fn processIndentToken(
 #[inline(always)]
 pub fn processAfterNewline(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
-    stack @ _: &aver_rt::AverIntList,
+    mut stack @ _: aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     {
@@ -1441,7 +1441,7 @@ pub fn processAfterNewline(
             ),
             None => aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkNewline,
-                crate::aver_generated::domain::lexer::emitFinalDedents(stack),
+                crate::aver_generated::domain::lexer::emitFinalDedents(&stack),
             ),
         }
     }
@@ -1451,7 +1451,7 @@ pub fn processAfterNewline(
 pub fn processAfterNewlineToken(
     mut t @ _: crate::aver_generated::domain::token::Token,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
-    stack @ _: &aver_rt::AverIntList,
+    mut stack @ _: aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     match &t {
@@ -1501,18 +1501,18 @@ pub fn processAfterNewlineToken(
 pub fn emitIndentChange(
     indent @ _: aver_rt::AverInt,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
-    stack @ _: &aver_rt::AverIntList,
+    mut stack @ _: aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
-    let currentIndent @ _ = crate::aver_generated::domain::lexer::stackTop(stack);
+    let currentIndent @ _ = crate::aver_generated::domain::lexer::stackTop(&stack);
     if (indent > currentIndent) {
         aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::token::Token::TkNewline,
             aver_rt::AverList::prepend_owned(
                 crate::aver_generated::domain::token::Token::TkIndent,
                 {
-                    let __arg4 @ _ = aver_rt::AverIntList::prepend(indent, stack);
-                    crate::aver_generated::domain::lexer::processIndentation(rest, &__arg4)
+                    let __arg4 @ _ = aver_rt::AverIntList::prepend_owned(indent, stack);
+                    crate::aver_generated::domain::lexer::processIndentation(rest, __arg4)
                 },
             ),
         )
@@ -1532,7 +1532,7 @@ pub fn emitIndentChange(
 pub fn emitDedents(
     targetIndent @ _: aver_rt::AverInt,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
-    stack @ _: &aver_rt::AverIntList,
+    mut stack @ _: aver_rt::AverIntList,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
     crate::cancel_checkpoint();
     let __arg3 @ _ = <aver_rt::AverList<crate::aver_generated::domain::token::Token>>::empty();
@@ -1544,66 +1544,19 @@ pub fn emitDedents(
 pub fn emitDedentsAcc(
     mut targetIndent @ _: aver_rt::AverInt,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
-    stack @ _: &aver_rt::AverIntList,
+    mut stack @ _: aver_rt::AverIntList,
     mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::token::Token>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::token::Token> {
-    let mut __hold2: aver_rt::AverIntList = <aver_rt::AverIntList>::empty();
-    let mut stack @ _: &aver_rt::AverIntList = stack;
     loop {
         crate::cancel_checkpoint();
         let reversed @ _ = acc.reverse();
-        {
-            let __list_subject = stack;
-            match aver_rt::list_uncons_lent(__list_subject) {
-                Some((top, below)) => {
-                    if (top > targetIndent) {
-                        {
-                            let __tco2 = below;
-                            let __tco3 = aver_rt::AverList::prepend_owned(
-                                crate::aver_generated::domain::token::Token::TkDedent,
-                                acc,
-                            );
-                            match __tco2 {
-                                aver_rt::ListRest::Lent(__rest) => {
-                                    stack = __rest;
-                                }
-                                aver_rt::ListRest::Owned(__rest) => {
-                                    __hold2 = __rest;
-                                    stack = &__hold2;
-                                }
-                                aver_rt::ListRest::Next => {
-                                    if ::core::ptr::eq(stack, &__hold2) {
-                                        aver_rt::list_step_rest(&mut __hold2);
-                                    } else {
-                                        __hold2 = aver_rt::list_rest(stack);
-                                    }
-                                    stack = &__hold2;
-                                }
-                            }
-                            acc = __tco3;
-                            continue;
-                        }
-                    } else {
-                        return aver_rt::AverList::concat(
-                            &reversed,
-                            &aver_rt::AverList::prepend_owned(
-                                crate::aver_generated::domain::token::Token::TkNewline,
-                                crate::aver_generated::domain::lexer::processIndentation(
-                                    rest, stack,
-                                ),
-                            ),
-                        );
-                    }
-                }
-                None => {
-                    return aver_rt::AverList::concat(&reversed, &{
-                        let __arg7 @ _ =
-                            aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]);
-                        crate::aver_generated::domain::lexer::processIndentation(rest, &__arg7)
-                    });
-                }
-            }
-        }
+        aver_list_match!(stack.clone(), [] => { return aver_rt::AverList::concat(&reversed, &{ let __arg7 @ _ = aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]); crate::aver_generated::domain::lexer::processIndentation(rest, __arg7) }); }, [top, below] => { if (top > targetIndent) { {
+            let __tco2 = below;
+            let __tco3 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkDedent, acc);
+            stack = __tco2;
+            acc = __tco3;
+            continue;
+        } } else { return aver_rt::AverList::concat(&reversed, &aver_rt::AverList::prepend_owned(crate::aver_generated::domain::token::Token::TkNewline, crate::aver_generated::domain::lexer::processIndentation(rest, stack))); } })
     }
 }
 
@@ -2478,7 +2431,7 @@ pub fn lex__indexed(
     );
     let processed @ _ = {
         let __arg4 @ _ = aver_rt::AverIntList::from_vec(vec![aver_rt::AverInt::from_i64(0)]);
-        crate::aver_generated::domain::lexer::processIndentation(&raw, &__arg4)
+        crate::aver_generated::domain::lexer::processIndentation(&raw, __arg4)
     };
     processed
 }

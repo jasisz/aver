@@ -1856,7 +1856,7 @@ fn owned_params_with(
         for (i, (name, ty)) in resolved.params.iter().enumerate() {
             let taken = !should_borrow_param(ty) || by_value.contains(&aver_name_to_rust(name));
             if !taken
-                && (matches!(ty, Type::Named { .. } | Type::Result(..))
+                && (matches!(ty, Type::Named { .. } | Type::Result(..) | Type::List(_))
                     || is_owned_collection_candidate(ty)
                     || lists.contains(&(*id, i)))
                 && mir_fn.params.get(i).is_some()
@@ -2634,15 +2634,15 @@ fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
                     }) || consumes_local(&arm.body.node, cx)
                 })
         }
+        // An update keeps the values it is given as a record does: the
+        // local at its last use stored in a field (`P.update(q, out = out)`).
         MirExpr::RecordUpdate(update) => {
             (local_of(&update.node.base.node).is_some_and(|base| base.slot == slot)
                 && crate::ir::mir::field_moves::update_base_is_final(&update.node))
                 || consumes_local(&update.node.base.node, cx)
-                || update
-                    .node
-                    .updates
-                    .iter()
-                    .any(|field| consumes_local(&field.value.node, cx))
+                || update.node.updates.iter().any(|field| {
+                    last_use_of(&field.value.node) || consumes_local(&field.value.node, cx)
+                })
         }
         _ => {
             // A record, constructor, tuple or list keeps what it is given:

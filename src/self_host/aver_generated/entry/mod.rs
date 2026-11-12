@@ -205,7 +205,7 @@ pub fn loadModules(
                             continue;
                         }
                     } else {
-                        return loadOneModule(dep, &rest, moduleRoot, &acc, loaded);
+                        return loadOneModule(dep, &rest, moduleRoot, acc, loaded);
                     }
                 }
                 None => {
@@ -221,7 +221,7 @@ pub fn loadOneModule(
     dep @ _: AverStr,
     rest @ _: &aver_rt::AverList<AverStr>,
     moduleRoot @ _: AverStr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut loaded @ _: aver_rt::AverMap<AverStr, bool>,
 ) -> Result<
     (
@@ -270,26 +270,26 @@ pub fn dotToSlash(
 /// Register functions with both qualified (Domain.Foo.bar) and unqualified (bar) names.
 #[inline(always)]
 pub fn qualifyFns(
-    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     prefix @ _: AverStr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
     let __arg3 @ _ = aver_rt::string_index_build(&prefix);
-    qualifyFns__indexed(fns.clone(), prefix, acc.clone(), &__arg3)
+    qualifyFns__indexed(fns, prefix, acc, &__arg3)
 }
 
 /// Add both qualified and unqualified versions.
 #[inline(always)]
 pub fn qualifyFnsOne(
     mut f @ _: crate::aver_generated::domain::ast::FnDef,
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     prefix @ _: AverStr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
     let __arg4 @ _ = aver_rt::string_index_build(&prefix);
-    qualifyFnsOne__indexed(f, rest.clone(), prefix, acc.clone(), &__arg4)
+    qualifyFnsOne__indexed(f, rest, prefix, acc, &__arg4)
 }
 
 /// Duplicate module function names first, then resolve locally so direct-call ids are consistent within that module.
@@ -1292,7 +1292,7 @@ pub fn loadOneModule__indexed(
     dep @ _: AverStr,
     rest @ _: &aver_rt::AverList<AverStr>,
     moduleRoot @ _: AverStr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut loaded @ _: aver_rt::AverMap<AverStr, bool>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<
@@ -1335,7 +1335,7 @@ pub fn loadOneModule__indexed(
     let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
     let moduleFns @ _ = resolveQualifiedModuleFns__indexed(&prog, dep.clone(), __str_index);
     let loaded2 @ _ = loaded.insert_owned(dep, true);
-    let innerResult @ _ = loadModules(&prog.deps, moduleRoot.clone(), acc.clone(), loaded2)?;
+    let innerResult @ _ = loadModules(&prog.deps, moduleRoot.clone(), acc, loaded2)?;
     {
         let (accWithInner, loaded3) = innerResult;
         {

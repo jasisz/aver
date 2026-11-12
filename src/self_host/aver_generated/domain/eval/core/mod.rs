@@ -509,7 +509,10 @@ fn __mutual_tco_trampoline_1(
                             let fnId = __fnId_fields.1.clone();
                             let argExprs = &__fnId_fields.0;
                             return crate::aver_generated::domain::eval::core::evalCallDirect(
-                                fnId, argExprs, &env, &*fns,
+                                fnId,
+                                argExprs.clone(),
+                                &env,
+                                &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(
@@ -1211,7 +1214,7 @@ fn __mutual_tco_trampoline_2(
                                     match __subject { Ok(nextEnv @ _) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailRecurEnv(nextEnv)) }, Err(e @ _) => { return Err(e) } }
                                 }
                             } else {
-                                match crate::aver_generated::domain::eval::core::evalCallDirectSlot(fnId, argExprs, &env, &*slotMap, &*fns) { Ok(v @ _) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v)) }, Err(e @ _) => { return Err(e) } }
+                                match crate::aver_generated::domain::eval::core::evalCallDirectSlot(fnId, argExprs.clone(), &env, &*slotMap, &*fns) { Ok(v @ _) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v)) }, Err(e @ _) => { return Err(e) } }
                             }
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprBoolBranch(
@@ -1817,7 +1820,11 @@ fn __mutual_tco_trampoline_3(
                             let fnId = __fnId_fields.1.clone();
                             let argExprs = &__fnId_fields.0;
                             return crate::aver_generated::domain::eval::core::evalCallDirectSlot(
-                                fnId, argExprs, &env, &*slotMap, &*fns,
+                                fnId,
+                                argExprs.clone(),
+                                &env,
+                                &*slotMap,
+                                &*fns,
                             );
                         }
                         crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(
@@ -4063,13 +4070,13 @@ pub fn evalArgsRev(
 
 /// Dispatch call: record update if Type.update, else normal call.
 pub fn callWithArgs(
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     name @ _: AverStr,
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    if crate::aver_generated::domain::eval::records::isRecordUpdate(&name, args) {
-        crate::aver_generated::domain::eval::records::doRecordUpdate(args)
+    if crate::aver_generated::domain::eval::records::isRecordUpdate(&name, &args) {
+        crate::aver_generated::domain::eval::records::doRecordUpdate(&args)
     } else {
         crate::aver_generated::domain::eval::core::callWithArgsNormal(args, name, fns)
     }
@@ -4077,13 +4084,13 @@ pub fn callWithArgs(
 
 /// Normal function call dispatch. Uses slot-based eval for resolved fns.
 pub fn callWithArgsNormal(
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     name @ _: AverStr,
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
-        Some(fd @ _) => crate::aver_generated::domain::eval::core::callResolved(&fd, args, fns),
+        Some(fd @ _) => crate::aver_generated::domain::eval::core::callResolved(&fd, &args, fns),
         None => crate::aver_generated::domain::builtins::callBuiltin(name, args),
     }
 }
@@ -4256,7 +4263,7 @@ pub fn evalResolvedSlotDirect(
             }
             crate::aver_generated::domain::ast::FnFastPath__view::FastSingleExpr => {
                 crate::aver_generated::domain::eval::core::evalResolvedSingleExprSlot(
-                    &fd.body,
+                    fd.body.clone(),
                     calleeEnv,
                     &fd.slotMap,
                     fns,
@@ -4402,7 +4409,7 @@ pub fn evalResolvedSlotStep(
             crate::aver_generated::domain::ast::FnFastPath__view::FastSingleExpr => {
                 crate::aver_generated::domain::eval::core::evalResolvedSingleExprSlotTail(
                     fnId,
-                    &fd.body,
+                    fd.body.clone(),
                     fd.slotCount.clone(),
                     &fd.slotMap,
                     calleeEnv,
@@ -4457,15 +4464,15 @@ pub fn evalResolvedNamedFn(
 
 /// Fast path for a single expression body in slot mode.
 pub fn evalResolvedSingleExprSlot(
-    body @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut body @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut calleeEnv @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     slotMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = body;
-        match aver_rt::list_uncons_cloned(__list_subject) {
+        let __list_subject = body.clone();
+        match aver_rt::list_uncons_cloned(&__list_subject) {
             Some((stmt, rest)) => {
                 if (rest == aver_rt::AverList::empty()) {
                     crate::aver_generated::domain::eval::core::evalResolvedSingleStmtSlot(
@@ -4473,18 +4480,12 @@ pub fn evalResolvedSingleExprSlot(
                     )
                 } else {
                     crate::aver_generated::domain::eval::core::evalStmtsSlot(
-                        body.clone(),
-                        calleeEnv,
-                        slotMap,
-                        fns,
+                        body, calleeEnv, slotMap, fns,
                     )
                 }
             }
             None => crate::aver_generated::domain::eval::core::evalStmtsSlot(
-                body.clone(),
-                calleeEnv,
-                slotMap,
-                fns,
+                body, calleeEnv, slotMap, fns,
             ),
         }
     }
@@ -4493,7 +4494,7 @@ pub fn evalResolvedSingleExprSlot(
 /// Tail-aware version of the single-expression fast path for slot functions.
 pub fn evalResolvedSingleExprSlotTail(
     selfId @ _: aver_rt::AverInt,
-    body @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut body @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     slotCount @ _: aver_rt::AverInt,
     slotMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     mut calleeEnv @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
@@ -4501,8 +4502,8 @@ pub fn evalResolvedSingleExprSlotTail(
 ) -> Result<SlotTailStep, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __list_subject = body;
-        match aver_rt::list_uncons_cloned(__list_subject) {
+        let __list_subject = body.clone();
+        match aver_rt::list_uncons_cloned(&__list_subject) {
             Some((stmt, rest)) => {
                 if (rest == aver_rt::AverList::empty()) {
                     crate::aver_generated::domain::eval::core::evalTailStmtSlot(
@@ -4510,10 +4511,7 @@ pub fn evalResolvedSingleExprSlotTail(
                     )
                 } else {
                     match crate::aver_generated::domain::eval::core::evalStmtsSlot(
-                        body.clone(),
-                        calleeEnv,
-                        slotMap,
-                        fns,
+                        body, calleeEnv, slotMap, fns,
                     ) {
                         Ok(v @ _) => Ok(
                             crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(
@@ -4526,10 +4524,7 @@ pub fn evalResolvedSingleExprSlotTail(
             }
             None => {
                 match crate::aver_generated::domain::eval::core::evalStmtsSlot(
-                    body.clone(),
-                    calleeEnv,
-                    slotMap,
-                    fns,
+                    body, calleeEnv, slotMap, fns,
                 ) {
                     Ok(v @ _) => Ok(
                         crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
@@ -4733,14 +4728,14 @@ pub fn evalCall(
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::core::evalArgs(argExprs, env, fns) {
         Err(e @ _) => Err(e),
-        Ok(args @ _) => crate::aver_generated::domain::eval::core::callWithArgs(&args, name, fns),
+        Ok(args @ _) => crate::aver_generated::domain::eval::core::callWithArgs(args, name, fns),
     }
 }
 
 /// Call a pre-resolved function directly using the function store.
 pub fn evalCallDirect(
     fnId @ _: aver_rt::AverInt,
-    argExprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut argExprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     env @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
@@ -4748,7 +4743,7 @@ pub fn evalCallDirect(
     let fd @ _ = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
     if (fd.slotCount > aver_rt::AverInt::from_i64(0)) {
         crate::aver_generated::domain::eval::core::evalCallDirectMapToSlot(
-            fnId, &fd, argExprs, env, fns,
+            fnId, &fd, &argExprs, env, fns,
         )
     } else {
         crate::aver_generated::domain::eval::core::evalCallDirectMapToNamed(&fd, argExprs, env, fns)
@@ -4786,7 +4781,7 @@ pub fn evalCallDirectMapToSlot(
 /// Call resolved function by evaluating args directly into the callee named env.
 pub fn evalCallDirectMapToNamed(
     fd @ _: &crate::aver_generated::domain::ast::FnDef,
-    argExprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut argExprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     env @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
@@ -4795,7 +4790,7 @@ pub fn evalCallDirectMapToNamed(
         let __arg5 @ _ =
             <aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>>::new();
         crate::aver_generated::domain::eval::core::evalArgsMapToNamedEnv(
-            argExprs.clone(),
+            argExprs,
             fd.params.clone(),
             env,
             fns,
@@ -4815,7 +4810,7 @@ pub fn evalCallBuiltin(
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::core::evalArgs(argExprs, env, fns) {
         Err(e @ _) => Err(e),
-        Ok(args @ _) => crate::aver_generated::domain::builtins::callBuiltin(name, &args),
+        Ok(args @ _) => crate::aver_generated::domain::builtins::callBuiltin(name, args),
     }
 }
 
@@ -5558,13 +5553,13 @@ pub fn evalCallSlot(
     crate::cancel_checkpoint();
     let args @ _ =
         crate::aver_generated::domain::eval::core::evalArgsSlot(argExprs, env, slotMap, fns)?;
-    crate::aver_generated::domain::eval::core::callWithArgs(&args, name, fns)
+    crate::aver_generated::domain::eval::core::callWithArgs(args, name, fns)
 }
 
 /// Call a pre-resolved function directly from slot mode using the function store.
 pub fn evalCallDirectSlot(
     fnId @ _: aver_rt::AverInt,
-    argExprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut argExprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     env @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     slotMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
@@ -5573,7 +5568,7 @@ pub fn evalCallDirectSlot(
     let fd @ _ = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
     if (fd.slotCount > aver_rt::AverInt::from_i64(0)) {
         crate::aver_generated::domain::eval::core::evalCallDirectSlotToSlot(
-            fnId, &fd, argExprs, env, slotMap, fns,
+            fnId, &fd, &argExprs, env, slotMap, fns,
         )
     } else {
         crate::aver_generated::domain::eval::core::evalCallDirectSlotToNamed(
@@ -5615,7 +5610,7 @@ pub fn evalCallDirectSlotToSlot(
 /// Call resolved function by evaluating args directly into a named env from slot caller state.
 pub fn evalCallDirectSlotToNamed(
     fd @ _: &crate::aver_generated::domain::ast::FnDef,
-    argExprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut argExprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     env @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     slotMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
@@ -5625,7 +5620,7 @@ pub fn evalCallDirectSlotToNamed(
         let __arg6 @ _ =
             <aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>>::new();
         crate::aver_generated::domain::eval::core::evalArgsSlotToNamedEnv(
-            argExprs.clone(),
+            argExprs,
             fd.params.clone(),
             env,
             slotMap,
@@ -5647,7 +5642,7 @@ pub fn evalCallBuiltinSlot(
     crate::cancel_checkpoint();
     let args @ _ =
         crate::aver_generated::domain::eval::core::evalArgsSlot(argExprs, env, slotMap, fns)?;
-    crate::aver_generated::domain::builtins::callBuiltin(name, &args)
+    crate::aver_generated::domain::builtins::callBuiltin(name, args)
 }
 
 /// Evaluate argument expressions in slot path.

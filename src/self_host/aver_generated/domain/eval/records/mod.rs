@@ -109,7 +109,7 @@ pub fn doRecordUpdateInner(
                         let namedFields = &__namedFields_fields.1;
                         crate::aver_generated::domain::eval::records::applyRecordUpdate(
                             baseVal,
-                            namedFields,
+                            namedFields.clone(),
                         )
                     }
                     _ => Err(::aver_rt::str_lit!("record update requires named fields")),
@@ -123,7 +123,7 @@ pub fn doRecordUpdateInner(
 /// Override fields in a record value.
 pub fn applyRecordUpdate(
     baseVal @ _: &crate::aver_generated::domain::value::Val,
-    namedFields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut namedFields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -151,95 +151,39 @@ pub fn applyRecordUpdate(
 #[inline(always)]
 pub fn mergeRecordFields(
     existing @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::list_builder_new(0usize);
     crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc__collected(
-        existing,
-        overrides.clone(),
-        __arg2,
+        existing, overrides, __arg2,
     )
 }
 
 /// Accumulate merged fields.
 #[inline(always)]
 pub fn mergeRecordFieldsAcc(
-    existing @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut existing @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
-    let mut __hold0: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
-        <aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>>::empty();
-    let mut existing @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> =
-        existing;
     loop {
         crate::cancel_checkpoint();
-        {
-            let __list_subject = existing;
-            match aver_rt::list_uncons_lent_head(__list_subject) {
-                Some((pair, rest)) => {
-                    let (k, v) = pair.clone();
-                    match crate::aver_generated::domain::eval::records::findOverride(&k, &overrides)
-                    {
-                        Some(__stp0 @ _) => {
-                            let __tco0 = rest;
-                            let __tco1 =
-                                crate::aver_generated::domain::eval::records::removeOverride(
-                                    &k, &overrides,
-                                );
-                            let __tco2 = aver_rt::AverList::prepend_owned((k, __stp0), acc);
-                            match __tco0 {
-                                aver_rt::ListRest::Lent(__rest) => {
-                                    existing = __rest;
-                                }
-                                aver_rt::ListRest::Owned(__rest) => {
-                                    __hold0 = __rest;
-                                    existing = &__hold0;
-                                }
-                                aver_rt::ListRest::Next => {
-                                    if ::core::ptr::eq(existing, &__hold0) {
-                                        aver_rt::list_step_rest(&mut __hold0);
-                                    } else {
-                                        __hold0 = aver_rt::list_rest(existing);
-                                    }
-                                    existing = &__hold0;
-                                }
-                            }
-                            overrides = __tco1;
-                            acc = __tco2;
-                            continue;
-                        }
-                        None => {
-                            let __tco0 = rest;
-                            let __tco2 = aver_rt::AverList::prepend_owned((k, v), acc);
-                            match __tco0 {
-                                aver_rt::ListRest::Lent(__rest) => {
-                                    existing = __rest;
-                                }
-                                aver_rt::ListRest::Owned(__rest) => {
-                                    __hold0 = __rest;
-                                    existing = &__hold0;
-                                }
-                                aver_rt::ListRest::Next => {
-                                    if ::core::ptr::eq(existing, &__hold0) {
-                                        aver_rt::list_step_rest(&mut __hold0);
-                                    } else {
-                                        __hold0 = aver_rt::list_rest(existing);
-                                    }
-                                    existing = &__hold0;
-                                }
-                            }
-                            acc = __tco2;
-                            continue;
-                        }
-                    }
-                }
-                None => {
-                    return aver_rt::AverList::concat(&(acc).reverse_owned(), &overrides);
-                }
-            }
-        }
+        aver_list_match!(existing, [] => { return aver_rt::AverList::concat(&(acc).reverse_owned(), &overrides); }, [pair, rest] => { { let (k, v) = pair; match crate::aver_generated::domain::eval::records::findOverride(&k, &overrides) { Some(__stp0 @ _) => { {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::eval::records::removeOverride(&k, &overrides);
+            let __tco2 = aver_rt::AverList::prepend_owned((k, __stp0), acc);
+            existing = __tco0;
+            overrides = __tco1;
+            acc = __tco2;
+            continue;
+        } }, None => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend_owned((k, v), acc);
+            existing = __tco0;
+            acc = __tco2;
+            continue;
+        } } } } })
     }
 }
 
@@ -248,28 +192,26 @@ pub fn mergeRecordFieldsAcc(
 pub fn mergeOneField(
     k @ _: AverStr,
     mut v @ _: crate::aver_generated::domain::value::Val,
-    rest @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    acc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut rest @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
-    match crate::aver_generated::domain::eval::records::findOverride(&k, overrides) {
+    match crate::aver_generated::domain::eval::records::findOverride(&k, &overrides) {
         Some(newV @ _) => {
             let __arg6 @ _ =
-                crate::aver_generated::domain::eval::records::removeOverride(&k, overrides);
+                crate::aver_generated::domain::eval::records::removeOverride(&k, &overrides);
             {
-                let __arg7 @ _ = aver_rt::AverList::prepend((k, newV), acc);
+                let __arg7 @ _ = aver_rt::AverList::prepend_owned((k, newV), acc);
                 crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
                     rest, __arg6, __arg7,
                 )
             }
         }
         None => {
-            let __arg8 @ _ = aver_rt::AverList::prepend((k, v), acc);
+            let __arg8 @ _ = aver_rt::AverList::prepend_owned((k, v), acc);
             crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
-                rest,
-                overrides.clone(),
-                __arg8,
+                rest, overrides, __arg8,
             )
         }
     }

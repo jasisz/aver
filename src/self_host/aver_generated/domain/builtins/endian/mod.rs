@@ -174,7 +174,7 @@ pub fn decodeBig(
     crate::cancel_checkpoint();
     let value @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let octets @ _ = crate::aver_generated::domain::builtins::helpers::expectBytes(&value)?;
-    let bytes @ _ = crate::aver_generated::bytes::fromList(&octets)?;
+    let bytes @ _ = crate::aver_generated::bytes::fromList(octets)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
         crate::aver_generated::domain::value::Val__ValInt(aver_rt::int_from_big_endian(
             (bytes).values.as_slice(),
@@ -189,7 +189,7 @@ pub fn decodeLittle(
     crate::cancel_checkpoint();
     let value @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let octets @ _ = crate::aver_generated::domain::builtins::helpers::expectBytes(&value)?;
-    let bytes @ _ = crate::aver_generated::bytes::fromList(&octets)?;
+    let bytes @ _ = crate::aver_generated::bytes::fromList(octets)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
         crate::aver_generated::domain::value::Val__ValInt(aver_rt::int_from_little_endian(
             (bytes).values.as_slice(),

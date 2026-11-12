@@ -164,31 +164,48 @@ impl ByteStack {
     /// carries over. The only value on its buffer writes without claiming
     /// the place (no one else can), giving back the places past its `len`;
     /// a shared one claims it as `push_onto` does.
-    #[inline]
+    #[inline(always)]
     fn push_owned(mut self, byte: u8) -> ByteStack {
-        use std::sync::atomic::Ordering;
         let len = self.len;
         if len < self.seg.bytes.len() {
             if let Some(seg) = crate::shared::Shared::get_mut(&mut self.seg) {
-                *seg.bytes[len].get_mut() = byte;
+                // SAFETY: `len` is below the buffer's length, checked above.
+                unsafe { *seg.bytes.get_unchecked_mut(len).get_mut() = byte };
                 *seg.used.get_mut() = len + 1;
                 self.len = len + 1;
                 return self;
             }
-            let seg = &self.seg;
-            if seg
-                .used
-                .compare_exchange(len, len + 1, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-            {
-                // SAFETY: the place was claimed above, and no value reads it yet.
-                unsafe { *seg.bytes[len].get() = byte };
-                self.len = len + 1;
-                return self;
-            }
-            return ByteStack::start(byte, FIRST_PLACES, Some(self));
+            return self.push_shared(byte);
         }
-        let places = (len * 2).min(MAX_PLACES);
+        self.push_past_end(byte)
+    }
+
+    /// [`ByteStack::push_owned`] on a buffer another value shares.
+    #[cold]
+    #[inline(never)]
+    fn push_shared(mut self, byte: u8) -> ByteStack {
+        use std::sync::atomic::Ordering;
+        let len = self.len;
+        let seg = &self.seg;
+        if seg
+            .used
+            .compare_exchange(len, len + 1, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            // SAFETY: the place was claimed above, and no value reads it yet.
+            unsafe { *seg.bytes[len].get() = byte };
+            self.len = len + 1;
+            return self;
+        }
+        ByteStack::start(byte, FIRST_PLACES, Some(self))
+    }
+
+    /// [`ByteStack::push_owned`] past the end of the buffer: a new one,
+    /// twice as long up to [`MAX_PLACES`].
+    #[cold]
+    #[inline(never)]
+    fn push_past_end(self, byte: u8) -> ByteStack {
+        let places = (self.len * 2).min(MAX_PLACES);
         ByteStack::start(byte, places, Some(self))
     }
 
