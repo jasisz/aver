@@ -652,7 +652,7 @@ fn a_nested_update_moves_the_rest_of_the_inner_record() {
             .map_err(|error| format!("read the generated entry module: {error}"))?;
         for expected in [
             "Setting { window: Window { created: setting.window.created.insert_owned(left.clone(), left.clone()), ..setting.window }, height: setting.height.add(",
-            "= Window { created: setting.window.created.clone().insert_owned(left.clone(), left.clone()), ..setting.window.clone() }; keptOn(&__arg2, &setting.window, left",
+            "= Window { created: setting.window.created.clone().insert_owned(aver_rt::AverInt::from_i64(left), aver_rt::AverInt::from_i64(left)), ..setting.window.clone() }; keptOn(&__arg2, &setting.window, left",
         ] {
             if !entry.contains(expected) {
                 return Err(format!(

@@ -1,0 +1,37 @@
+module LoopWordRange
+    intent = "A self-recursive loop whose param stays a word: every call keeps it in what its callers pass."
+    exposes opaque [Num]
+    depends []
+    effects [Console.print]
+
+record Num
+    value: Int
+
+fn numOf(n: Int) -> Result<Num, Bool>
+    ? "A number below 2^40."
+    match Bool.and(n >= 0, n <= 1099511627776)
+        true -> Result.Ok(Num(value = n))
+        false -> Result.Err(false)
+
+fn numAt(n: Int) -> Num
+    ? "n, or 0 out of range."
+    match numOf(n)
+        Result.Ok(x) -> x
+        Result.Err(_) -> Num(value = 0)
+
+fn uv(acc: List<Int>, n: Int) -> List<Int>
+    ? "n as a varint onto acc."
+    match n < 128
+        true -> List.prepend(n, acc)
+        false -> uv(List.prepend(Bits.and(n, 127) + 128, acc), Bits.shiftRight(n, 7))
+
+fn grow(n: Int, acc: Int) -> Int
+    ? "A sum that leaves the range of its start."
+    match n == 0
+        true -> acc
+        false -> grow(n - 1, acc + 1000000000000000000)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(List.len(uv(uv([], numAt(300).value), numAt(1099511627776).value))))
+    Console.print(String.fromInt(grow(20, 0)))

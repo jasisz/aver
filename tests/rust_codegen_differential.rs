@@ -1074,7 +1074,7 @@ fn stored_element_params_taken_by_value_match_vm() {
         "k @ _: i64, mut a @ _: Val) -> aver_rt::AverVector<Val>",
         "let __value = a; let __vec = v;",
         "__vec.set_unchecked(__idx, __value)",
-        "m.insert_owned(k, a)",
+        "m.insert_owned(aver_rt::AverInt::from_i64(k), a)",
         "pub fn cons(mut a @ _: Val,",
         // The rest a caller hands over at its last use is taken too.
         "aver_rt::AverList::prepend_owned(a, rest)",
@@ -5855,7 +5855,8 @@ fn rust_a_field_the_callee_only_replaces_is_taken_out_for_the_call() {
 
     let emitted = emitted_entry_module("field_take", src);
     assert!(
-        emitted.contains("prepend_owned(k, std::mem::take(&mut q.out))")
+        emitted
+            .contains("prepend_owned(aver_rt::AverInt::from_i64(k), std::mem::take(&mut q.out))")
             && emitted.matches("std::mem::take").count() == 1,
         "only `taken` may take the field out:\n{emitted}"
     );
@@ -6024,6 +6025,27 @@ fn rust_a_byte_list_grown_out_of_a_record_field_is_handed_over() {
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
     }
+}
+
+/// A self-recursive loop's param that every recursive call keeps within what
+/// its callers pass (`uv(.., Bits.shiftRight(n, 7))` over a word `n`) is a
+/// word, and its shifts and masks are machine operations; a param the
+/// recursion takes past that range (`grow`'s sum) stays an `Int`.
+#[test]
+fn rust_a_loop_param_its_recursion_keeps_in_range_is_a_word() {
+    let src = include_str!("fixtures/loop_word_range.av");
+    let vm = run_vm_inline("loop_word_range", src).expect("vm run");
+    assert_eq!(vm, "8\n20000000000000000000", "VM result");
+    let rust = build_run_rust_inline("loop_word_range", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("loop_word_range", src);
+    assert!(
+        emitted.contains("mut n @ _: i64) -> aver_rt::AverIntList")
+            && emitted.contains("((n) >> 7)")
+            && emitted.contains("mut acc @ _: aver_rt::AverInt) -> aver_rt::AverInt"),
+        "uv's n must be a word and grow's acc an Int:\n{emitted}"
+    );
 }
 
 /// `Option.withDefault(Vector.set(v, i, f(v)), v)` with `v` moving into the
@@ -6374,7 +6396,7 @@ fn dying_lists_and_read_strings_match_vm() {
         "[c, others, __list_slot] => { { let __arg",
         "fn digitAt__indexed(s @ _: &AverStr,",
         "digitAt__indexed(s, ",
-        "fn sameAt(s @ _: &AverStr, i @ _: aver_rt::AverInt, t @ _: &AverStr)",
+        "fn sameAt(s @ _: &AverStr, i @ _: i64, t @ _: &AverStr)",
         "sameAt(s, ",
         "aver_rt::string_split_byte(&::aver_rt::str_lit!(\"12\\n345\\n6x7\\n\\n89\"), 10u8)",
     ] {
@@ -6639,7 +6661,7 @@ fn a_value_looked_up_in_a_map_is_lent_to_a_function_that_only_reads_it() {
     for expected in [
         "pub fn hit(entry @ _: Option<&(Expr, Expr)>, e @ _: &Expr)",
         "let __arg3 @ _ = memo.get(&key); hit(__arg3, &e) }; match __subject { Some(_) => { memo }, None => { memo.insert_owned(",
-        "let x @ _ = memo.get(&k);\n    isNode(x)",
+        "let x @ _ = memo.get(&aver_rt::AverInt::from_i64(k));\n    isNode(x)",
         "pub fn deep(o @ _: Option<&Expr>) -> bool {\n    crate::cancel_checkpoint();\n    isNode(o)",
         "match o { Some(_) => { o.cloned() }",
         "Some(e @ _) => { Kept { e: Some(e.clone()), n: aver_rt::AverInt::from_i64(n) } }",
@@ -8772,7 +8794,8 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
         // Structural tripwire: the emitted Rust must carry the fn-pointer
         // param (`f @ _: fn(aver_rt::AverInt) -> aver_rt::AverInt` — `Int` lowers
         // to `AverInt` now), the FnValue passed by bare name
-        // (`applyIt(dbl, v)`), and the call-through-slot (`f(v)`). A
+        // (`applyIt(dbl, v)`), and the call-through-slot (`f(..v..)`, `v` a word
+        // boxed for the slot's `Int`). A
         // dropped FnValue or a mis-emitted slot call would erase these.
         let emitted = fs::read_to_string(
             project
@@ -8795,7 +8818,7 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
                  `applyIt(inc, v)` — the FnValue emit was dropped:\n{emitted}"
             ));
         }
-        if !emitted.contains("f(v)") {
+        if !emitted.contains("f(aver_rt::AverInt::from_i64(v))") {
             return Err(format!(
                 "emitted Rust is missing the call-through-slot `f(v)` — the \
                  LocalSlot call emit was dropped:\n{emitted}"
