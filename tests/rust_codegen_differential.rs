@@ -728,11 +728,11 @@ fn nested_list_pattern_moves_the_other_fields() {
     let emitted = emitted_entry_module("rust_nested_list_moves_fields", &src);
     for shape in [
         "let __pat0 = step(s, i.clone()); match __pat0 {",
-        "let __tco0 = put(__pat2, a, b.add(&c));",
+        "let __tco0 = put(__pat2, aver_rt::string_position(&a), b.add(&c));",
         "let other = Step::Vals(__pat1, __pat2);",
-        "let __tco0 = put(__pat7, aver_rt::AverInt::from_i64(0), i.clone());",
+        "let __tco0 = put(__pat7, 0i64, i.clone());",
         "let __pat0 = split(s, n.clone()); { let (__pat1, __pat2) = __pat0;",
-        "put(__pat2, n, x.add(&y))",
+        "put(__pat2, aver_rt::string_position(&n), x.add(&y))",
         "let whole = (__pat1, __pat2);",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
@@ -1071,7 +1071,7 @@ fn stored_element_params_taken_by_value_match_vm() {
     let src = fs::read_to_string(repo_root().join(relative)).expect("read fixture");
     let emitted = emitted_entry_module("rust_stored_element", &src);
     for shape in [
-        "k @ _: aver_rt::AverInt, mut a @ _: Val) -> aver_rt::AverVector<Val>",
+        "k @ _: i64, mut a @ _: Val) -> aver_rt::AverVector<Val>",
         "let __value = a; let __vec = v;",
         "__vec.set_unchecked(__idx, __value)",
         "m.insert_owned(k, a)",
@@ -4255,7 +4255,7 @@ fn mutual_tail_group_invariant_consumed_on_an_exit_moves() {
         "pub fn evenSteps(s @ _: Store, cfg @ _: &Cfg,",
         "pub fn oddSteps(s @ _: Store, cfg @ _: &Cfg,",
         "__MutualTco1::OddSteps(s, k.sub(",
-        "return put(s, aver_rt::AverInt::from_i64(0), acc)",
+        "return put(s, 0i64, acc)",
         "pub fn fill(v @ _: aver_rt::AverVector<aver_rt::AverInt>,",
         "pub fn drain(k @ _: aver_rt::AverInt, v @ _: aver_rt::AverVector<aver_rt::AverInt>,",
         "__MutualTco3::Fill(v, k.sub(",
@@ -5803,10 +5803,10 @@ fn rust_an_update_whose_values_read_a_kept_field_moves_the_replaced_ones() {
 
     let emitted = emitted_entry_module("update_kept_fields", src);
     for moved in [
-        "a: bump(x.a, aver_rt::AverInt::from_i64(0)), w: wrap(x.keep.clone()), ..x }",
-        "b: bump(x.a, aver_rt::AverInt::from_i64(1)), n: total(&x.keep,",
-        "a: bump(x.a, aver_rt::AverInt::from_i64(2)), n: x.n.add(&total(&x.w.v,",
-        "a: bump(x.a.clone(), aver_rt::AverInt::from_i64(3))",
+        "a: bump(x.a, 0i64), w: wrap(x.keep.clone()), ..x }",
+        "b: bump(x.a, 1i64), n: total(&x.keep,",
+        "a: bump(x.a, 2i64), n: x.n.add(&total(&x.w.v,",
+        "a: bump(x.a.clone(), 3i64)",
     ] {
         assert!(emitted.contains(moved), "expected `{moved}` in:\n{emitted}");
     }
@@ -5962,6 +5962,43 @@ fn rust_a_boxed_record_updated_in_a_mutual_loop_is_written_in_place() {
     assert!(
         emitted.contains("pub type W = Box<W__Fields>") && !emitted.contains("..*w"),
         "the update must write the box in place:\n{emitted}"
+    );
+}
+
+/// `W.update(mainOut(w, ..), di = ixStep(w.di.value + 1))` in a member of a
+/// mutual group: the argument order reads `w`'s fields before the call that
+/// takes `w`. It bound the carrier's raw `Int` (`w.di.value`) to a local the
+/// arithmetic after it took for an `AverInt`, and the crate did not build
+/// (`no method named add found for type i64`). The carrier itself is bound
+/// now, and its `Int` read off the local where it was.
+#[test]
+fn rust_a_carrier_field_read_before_the_call_that_takes_its_record_builds() {
+    let src = include_str!("fixtures/carrier_read_before_call.av");
+    let expected = "7 4 4";
+    let vm = run_vm_inline("carrier_read_before_call", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("carrier_read_before_call", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+}
+
+/// A vector index that is a machine word goes to a `usize` as it is
+/// (`usize::try_from(i)`), not through an `AverInt` made of it first, and a
+/// param read only as an index stays a word.
+#[test]
+fn rust_a_word_index_reaches_the_vector_without_an_int() {
+    let src = include_str!("fixtures/word_index.av");
+    let expected = "0 50 110 -1 -1\n3";
+    let vm = run_vm_inline("word_index", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("word_index", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("word_index", src);
+    assert!(
+        emitted.contains("j @ _: i64")
+            && emitted.contains("usize::try_from(ci)")
+            && !emitted.contains(")).to_usize()"),
+        "the index must go to a usize from the word:\n{emitted}"
     );
 }
 
@@ -6236,7 +6273,7 @@ fn a_param_moved_and_read_in_one_call_is_read_first_and_moved() {
     let emitted = emitted_entry_module("moved_and_read_in_one_call", &src);
     assert!(
         emitted.contains("pub fn exprLine(mut t @ _: Tables,")
-            && emitted.contains("addExpr(t, i, __arg")
+            && emitted.contains("addExpr(t, aver_rt::string_position(&i), __arg")
             && !emitted.contains("addExpr(t.clone()"),
         "exprLine must read `t` first and move it into addExpr:\n{emitted}"
     );

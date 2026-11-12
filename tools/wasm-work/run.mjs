@@ -63,6 +63,21 @@ if (isMainThread) {
             return ex().__rt_result_string_string_ok(ex().__rt_string_from_lm(bytes.length));
         } catch (error) { return ex().__rt_result_string_string_err(str(error.message)); }
     }
+    // The bytes go out of the transport memory the module copies them into.
+    function writeBytes(path, bytes, append) {
+        try {
+            const name = text(path);
+            const length = Number(ex().__rt_bytes_to_lm(bytes));
+            const buffer = new Uint8Array(ex().memory.buffer, 0, length);
+            if (append) fs.appendFileSync(name, buffer); else fs.writeFileSync(name, buffer);
+            return ex().__rt_result_unit_string_ok();
+        } catch (error) { return ex().__rt_result_unit_string_err(str(error.message)); }
+    }
+    function size(path) {
+        try {
+            return ex().__rt_result_int_string_ok(ex().__rt_aint_from_i64(BigInt(fs.statSync(text(path)).size)));
+        } catch (error) { return ex().__rt_result_int_string_err(str(error.message)); }
+    }
     const aver = {
         args_len: () => BigInt(args.length),
         args_get: index => str(args[Number(index)] ?? ""),
@@ -70,6 +85,9 @@ if (isMainThread) {
         console_warn: value => line(2)(`[warn] ${text(value)}`),
         disk_read_bytes_at: readBytesAt,
         disk_read_text: readText,
+        disk_write_bytes: (path, bytes) => writeBytes(path, bytes, false),
+        disk_append_bytes: (path, bytes) => writeBytes(path, bytes, true),
+        disk_size: size,
     };
     host = await createWorkHost(module, { imports: { aver }, onPrint: line(1), ...(options["--max-jobs"] && { maxJobs: options["--max-jobs"] }) });
     const e = host.instance.exports;

@@ -1,23 +1,25 @@
 module Main
     intent =
         "A command line program for the Node host test: it reads the file its"
-        "first argument names five bytes at a time and then whole, tries a"
-        "missing file, and ends with exit status 3."
+        "first argument names five bytes at a time and then whole, writes a"
+        "copy of its first bytes and adds one, tries a missing file, and ends"
+        "with exit status 3."
     depends [Bytes]
-    effects [Args.get, Console.print, Console.error, Disk.readBytesAt, Disk.readText]
+    effects [Args.get, Console.print, Console.error, Disk.readBytesAt, Disk.readText, Disk.writeBytes, Disk.appendBytes, Disk.size]
 
 fn main() -> Int
     ? "Reads the file in chunks and whole: status 3, or 2 without two paths."
-    ! [Args.get, Console.print, Console.error, Disk.readBytesAt, Disk.readText]
+    ! [Args.get, Console.print, Console.error, Disk.readBytesAt, Disk.readText, Disk.writeBytes, Disk.appendBytes, Disk.size]
     match Args.get()
         [path, missing] -> read(path, missing)
         _ -> 2
 
 fn read(path: String, missing: String) -> Int
-    ? "The chunks, the whole text, then the missing file on stderr."
-    ! [Console.print, Console.error, Disk.readBytesAt, Disk.readText]
+    ? "The chunks, the whole text, the copy, then the missing file on stderr."
+    ! [Console.print, Console.error, Disk.readBytesAt, Disk.readText, Disk.writeBytes, Disk.appendBytes, Disk.size]
     chunks(path, 0)
     whole(path)
+    copied(path, "{path}.copy")
     gone(missing)
     3
 
@@ -42,6 +44,19 @@ fn whole(path: String) -> Unit
     match Disk.readText(path)
         Result.Ok(t) -> Console.print("whole: {t}")
         Result.Err(_) -> Console.print("whole failed")
+
+fn copied(path: String, copy: String) -> Unit
+    ? "Writes the first five bytes to copy, adds a sixth and prints its size."
+    ! [Console.print, Disk.readBytesAt, Disk.writeBytes, Disk.appendBytes, Disk.size]
+    match Disk.readBytesAt(path, 0, 5)
+        Result.Err(_) -> Console.print("copy read failed")
+        Result.Ok(b) -> match Disk.writeBytes(copy, b)
+            Result.Err(_) -> Console.print("copy write failed")
+            Result.Ok(_) -> match Disk.appendBytes(copy, Bytes.fromList([33]))
+                Result.Err(_) -> Console.print("copy append failed")
+                Result.Ok(_) -> match Disk.size(copy)
+                    Result.Ok(n) -> Console.print("copy of {n} bytes")
+                    Result.Err(_) -> Console.print("copy size failed")
 
 fn gone(path: String) -> Unit
     ? "A file that is not there fails to read; only that it failed is printed, since each host words the reason its own way."

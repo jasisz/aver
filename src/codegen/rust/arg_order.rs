@@ -53,11 +53,13 @@ pub(super) fn bind_computed_arguments(ctx: &mut CodegenContext) {
             &mut mir_fn.body,
             Spanned::bare(MirExpr::Literal(Spanned::bare(crate::ast::Literal::Unit))),
         );
+        let carriers = |id: Option<crate::ir::TypeId>| super::carrier::is_i64_carrier(ctx, id);
         let calls = Calls {
             boxed_return: &boxed_return,
             builtins,
             self_bounces,
             carrier_ctors: &ctx.rust_i64_carrier_ctors,
+            carriers: &carriers,
         };
         rewrite(&mut body, mir_fn, &calls);
         mir_fn.body = body;
@@ -76,6 +78,8 @@ struct Calls<'a> {
     /// boxed machine word, the emitter binds the word itself and checks it
     /// raw (`emit_carrier_ctor_on_word`).
     carrier_ctors: &'a std::collections::HashMap<FnId, super::carrier::CarrierCtor>,
+    /// Records held as a raw machine integer (see [`hoist_fields`]).
+    carriers: &'a dyn Fn(Option<crate::ir::TypeId>) -> bool,
 }
 
 /// Rewrite every call in `expr`, innermost first.
@@ -84,7 +88,7 @@ fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, calls: &Calls<'_>) {
         rewrite(child, mir_fn, calls)
     });
     if matches!(expr.node, MirExpr::RecordUpdate(_)) {
-        let hoisted = hoist_reads_after_base_call(expr, mir_fn);
+        let hoisted = hoist_reads_after_base_call(expr, mir_fn, calls.carriers);
         wrap_in_lets(expr, hoisted);
         return;
     }
@@ -125,7 +129,7 @@ fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, calls: &Calls<'_>) {
                 .filter(|(_, a)| matches!(a.node, MirExpr::RecordUpdate(_)))
                 .map(|(j, _)| j)
                 .collect();
-            let hoisted = hoist_reads_after_update(expr, mir_fn, &updates);
+            let hoisted = hoist_reads_after_update(expr, mir_fn, &updates, calls.carriers);
             wrap_in_lets(expr, hoisted);
             return;
         }
@@ -164,7 +168,7 @@ fn rewrite(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn, calls: &Calls<'_>) {
     let hoisted = if write {
         Vec::new()
     } else {
-        hoist_reads_after_update(expr, mir_fn, &bound)
+        hoist_reads_after_update(expr, mir_fn, &bound, calls.carriers)
     };
     if !bound.is_empty() {
         apply(expr, mir_fn, &bound);
@@ -185,6 +189,7 @@ fn hoist_reads_after_update(
     expr: &mut Spanned<MirExpr>,
     mir_fn: &mut MirFn,
     bound: &[usize],
+    carriers: &dyn Fn(Option<crate::ir::TypeId>) -> bool,
 ) -> Vec<Binding> {
     let args = match &mut expr.node {
         MirExpr::Call(call) => &mut call.node.args,
@@ -211,7 +216,7 @@ fn hoist_reads_after_update(
             continue;
         }
         for arg in &mut args[i + 1..] {
-            hoist_fields(arg, slot, mir_fn, &mut hoisted);
+            hoist_fields(arg, slot, mir_fn, carriers, &mut hoisted);
         }
         if let MirExpr::RecordUpdate(update) = &mut args[i].node
             && let MirExpr::Local(base) = &mut update.node.base.node
@@ -227,7 +232,11 @@ fn hoist_reads_after_update(
 /// reads move before the call and the call takes the record over. The
 /// call's other arguments must not read the record, though bindings the
 /// argument order put before it may (they run first).
-fn hoist_reads_after_base_call(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn) -> Vec<Binding> {
+fn hoist_reads_after_base_call(
+    expr: &mut Spanned<MirExpr>,
+    mir_fn: &mut MirFn,
+    carriers: &dyn Fn(Option<crate::ir::TypeId>) -> bool,
+) -> Vec<Binding> {
     let MirExpr::RecordUpdate(update) = &mut expr.node else {
         return Vec::new();
     };
@@ -269,7 +278,7 @@ fn hoist_reads_after_base_call(expr: &mut Spanned<MirExpr>, mir_fn: &mut MirFn) 
         }
         let mut hoisted = Vec::new();
         for field in fields.iter_mut() {
-            hoist_fields(&mut field.value, slot, mir_fn, &mut hoisted);
+            hoist_fields(&mut field.value, slot, mir_fn, carriers, &mut hoisted);
         }
         if let MirExpr::Local(local) = &mut args[j].node {
             local.node.last_use = true;
@@ -312,18 +321,33 @@ fn fields_typed(expr: &mut Spanned<MirExpr>, slot: LocalId) -> bool {
 
 /// Replace every field read of `slot` in `expr` with a fresh local bound
 /// to it, none of them the last read of `slot`.
+///
+/// The `Int` of a carrier held as a raw machine integer (`w.di.value`)
+/// renders an `i64` where it is read, and the arithmetic around it was made
+/// raw on that read by the representation rewrite, which ran before. A
+/// fresh local is an `AverInt` to that arithmetic, so the carrier itself
+/// (`w.di`) is bound instead and its `Int` read off the local where it was.
 fn hoist_fields(
     expr: &mut Spanned<MirExpr>,
     slot: LocalId,
     mir_fn: &mut MirFn,
+    carriers: &dyn Fn(Option<crate::ir::TypeId>) -> bool,
     out: &mut Vec<Binding>,
 ) {
     let is_field =
         read_path(&expr.node).is_some_and(|(l, path)| l.slot == slot && !path.is_empty());
     if !is_field {
         crate::ir::mir::expr::walk_children_mut(&mut expr.node, &mut |child| {
-            hoist_fields(child, slot, mir_fn, out)
+            hoist_fields(child, slot, mir_fn, carriers, out)
         });
+        return;
+    }
+    if let MirExpr::Project(project) = &mut expr.node
+        && matches!(project.node.base.ty(), Some(Type::Named { id, .. }) if carriers(*id))
+        && read_path(&project.node.base.node)
+            .is_some_and(|(l, path)| l.slot == slot && !path.is_empty())
+    {
+        hoist_fields(&mut project.node.base, slot, mir_fn, carriers, out);
         return;
     }
     let fresh = LocalId(mir_fn.local_count);

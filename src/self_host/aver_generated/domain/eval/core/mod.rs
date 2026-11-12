@@ -2692,8 +2692,11 @@ fn __mutual_tco_trampoline_6(
                     Some(slot @ _) => {
                         let slot = slot.clone();
                         {
-                            let __arg6 @ _ =
-                                crate::aver_generated::domain::eval::slots::setSlot(env, slot, val);
+                            let __arg6 @ _ = crate::aver_generated::domain::eval::slots::setSlot(
+                                env,
+                                aver_rt::string_position(&slot),
+                                val,
+                            );
                             __MutualTco6::MergeBindingsSlot(rest, __arg6)
                         }
                     }
@@ -2775,8 +2778,11 @@ fn __mutual_tco_trampoline_7(
                     &*slotMap,
                     &*fns,
                 )?;
-                let nextEnv @ _ =
-                    crate::aver_generated::domain::eval::slots::setSlot(env, slot, v.clone());
+                let nextEnv @ _ = crate::aver_generated::domain::eval::slots::setSlot(
+                    env,
+                    aver_rt::string_position(&slot),
+                    v.clone(),
+                );
                 {
                     let __list_subject = rest.clone();
                     if __list_subject.is_empty() {
@@ -2983,7 +2989,11 @@ fn __mutual_tco_trampoline_8(
                     &*slotMap,
                     &*fns,
                 )?;
-                let __arg9 @ _ = crate::aver_generated::domain::eval::slots::setSlot(env, slot, v);
+                let __arg9 @ _ = crate::aver_generated::domain::eval::slots::setSlot(
+                    env,
+                    aver_rt::string_position(&slot),
+                    v,
+                );
                 __MutualTco8::EvalStmtsSlotTail(selfId, rest, slotCount, __arg9)
             }
             __MutualTco8::EvalStmtsSlotTailExpr(
@@ -4236,7 +4246,12 @@ pub fn evalResolvedSlotDirect(
                 let tailSlot = __slot_fields.2.clone();
                 let consLeaf = &__slot_fields.4;
                 crate::aver_generated::domain::eval::fast::fastListSlotBranch(
-                    calleeEnv, slot, emptyLeaf, headSlot, tailSlot, consLeaf,
+                    calleeEnv,
+                    slot,
+                    emptyLeaf,
+                    aver_rt::string_position(&headSlot),
+                    aver_rt::string_position(&tailSlot),
+                    consLeaf,
                 )
             }
             crate::aver_generated::domain::ast::FnFastPath__view::FastSingleExpr => {
@@ -4365,13 +4380,23 @@ pub fn evalResolvedSlotStep(
                 let headSlot = __slot_fields.1.clone();
                 let tailSlot = __slot_fields.2.clone();
                 let consLeaf = &__slot_fields.4;
-                match crate::aver_generated::domain::eval::fast::fastListSlotBranch(
-                    calleeEnv, slot, emptyLeaf, headSlot, tailSlot, consLeaf,
-                ) {
-                    Ok(v @ _) => Ok(
-                        crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
-                    ),
-                    Err(e @ _) => Err(e),
+                {
+                    let __subject = crate::aver_generated::domain::eval::fast::fastListSlotBranch(
+                        calleeEnv,
+                        slot,
+                        emptyLeaf,
+                        aver_rt::string_position(&headSlot),
+                        aver_rt::string_position(&tailSlot),
+                        consLeaf,
+                    );
+                    match __subject {
+                        Ok(v @ _) => Ok(
+                            crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(
+                                v,
+                            ),
+                        ),
+                        Err(e @ _) => Err(e),
+                    }
                 }
             }
             crate::aver_generated::domain::ast::FnFastPath__view::FastSingleExpr => {
@@ -5780,7 +5805,7 @@ pub fn evalArgsMapToSlotEnv(
                             let __tco0 = rest;
                             let __tco3 = crate::aver_generated::domain::eval::slots::setSlot(
                                 acc,
-                                idx.clone(),
+                                aver_rt::string_position(&idx),
                                 v,
                             );
                             let __tco4 = idx.add(&aver_rt::AverInt::from_i64(1));
@@ -5846,7 +5871,7 @@ pub fn evalArgsSlotToSlotEnv(
                             let __tco0 = rest;
                             let __tco4 = crate::aver_generated::domain::eval::slots::setSlot(
                                 acc,
-                                idx.clone(),
+                                aver_rt::string_position(&idx),
                                 v,
                             );
                             let __tco5 = idx.add(&aver_rt::AverInt::from_i64(1));
