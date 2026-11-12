@@ -62,6 +62,12 @@ impl PackedSequenceType {
     pub(super) fn is_view(&self) -> bool {
         self.type_idx != self.array_idx
     }
+
+    /// The `{mut i32 used}` cell `concat` hangs off a view whose array it
+    /// grows in place. Only meaningful for views.
+    pub(super) fn cell_idx(&self) -> u32 {
+        self.array_idx + 2
+    }
 }
 
 /// User-type lookup tables built once before any fn body emit.
@@ -2091,7 +2097,7 @@ impl TypeRegistry {
             let array_idx = self.user_type_count;
             self.user_type_count += 1;
             let type_idx = if views {
-                self.user_type_count += 1;
+                self.user_type_count += 2;
                 array_idx + 1
             } else {
                 array_idx

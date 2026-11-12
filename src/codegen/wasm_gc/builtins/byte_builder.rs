@@ -88,7 +88,7 @@ fn preamble(registry: &TypeRegistry) -> Result<String, WasmGcError> {
         Some(array) => {
             declarations[array as usize] = "(type $barr (array (mut i8)))".to_string();
             declarations[idx.bytes as usize] =
-                "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))"
+                "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32) (field structref)))"
                     .to_string();
         }
         None => declarations[idx.bytes as usize] = "(type $barr (array (mut i8)))".to_string(),
@@ -281,7 +281,7 @@ pub(super) fn emit_finalize(registry: &TypeRegistry) -> Result<Function, WasmGcE
         fixed_len = fixed_len,
         // The whole exact array, as the view a `Bytes` is.
         as_bytes = match contract_indices(registry)?.array {
-            Some(_) => "i32.const 0 local.get $len struct.new $bytes ",
+            Some(_) => "i32.const 0 local.get $len ref.null none struct.new $bytes ",
             None => "",
         },
         prefix = fixed_array(ERROR_PREFIX, "$string"),

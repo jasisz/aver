@@ -106,7 +106,7 @@ impl EndianTypes {
             let ty = if idx == self.string_idx {
                 "(type $string (array (mut i8)))"
             } else if idx == self.bytes_idx && self.array_idx.is_some() {
-                "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))"
+                "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32) (field structref)))"
             } else if Some(idx) == self.array_idx {
                 "(type $barr (array (mut i8)))"
             } else if idx == self.bytes_idx && self.packed {
@@ -217,7 +217,7 @@ pub(super) fn emit_to_endian(
     local.get $out local.get $i local.get $byte array.set $barr
     local.get $i i32.const 1 i32.add local.set $i
     br $copy))
-  local.get $out i32.const 0 local.get $width32 struct.new $bytes"#
+  local.get $out i32.const 0 local.get $width32 ref.null none struct.new $bytes"#
             ),
         )
     } else if types.packed {

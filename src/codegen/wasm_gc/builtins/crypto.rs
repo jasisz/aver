@@ -242,6 +242,7 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
   local.get $digest_bytes
   i32.const 0
   i32.const 32
+  ref.null none
   struct.new $bytes
   struct.new $digest"#
             .to_string()
@@ -615,7 +616,7 @@ fn crypto_types(
         } else if idx == word_array_idx {
             "(type $word_array (array (mut i32)))"
         } else if idx == bytes_idx && view_array.is_some() {
-            "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))"
+            "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32) (field structref)))"
         } else if Some(idx) == view_array {
             "(type $barr (array (mut i8)))"
         } else if idx == bytes_idx && packed_bytes {
