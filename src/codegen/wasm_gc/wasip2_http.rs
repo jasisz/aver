@@ -1685,6 +1685,7 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         f.instruction(&Instruction::End);
 
         // struct.new $list_string pops (val_str, tail), pushes new_list.
+        crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
         f.instruction(&Instruction::StructNew(indices.list_string_type_idx));
 
         // Map.set(map, name_str, new_list) → new map ref.

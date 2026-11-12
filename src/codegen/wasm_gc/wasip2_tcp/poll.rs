@@ -805,6 +805,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
         indices.int_key_box_type_idx,
     );
     function.instruction(&Instruction::LocalGet(list));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut function);
     function.instruction(&Instruction::StructNew(indices.list_int_type_idx));
     function.instruction(&Instruction::LocalSet(list));
     function.instruction(&Instruction::Br(0));

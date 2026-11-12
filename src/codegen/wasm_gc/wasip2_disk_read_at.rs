@@ -407,6 +407,7 @@ pub(super) fn emit_ok_bytes(
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::Call(ok.aint_from_i64));
     f.instruction(&Instruction::LocalGet(list));
+    crate::codegen::wasm_gc::lists::push_len_unknown(f);
     f.instruction(&Instruction::StructNew(ok.list_type));
     f.instruction(&Instruction::LocalSet(list));
     f.instruction(&Instruction::Br(0));

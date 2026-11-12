@@ -998,3 +998,58 @@ fn named_conversion_render_verifies_on_the_wasm_gc_runner() {
         "packed wasm-gc verify did not pass every case: {packed}"
     );
 }
+
+const BYTES_VIEWS: &str = r#"module Views
+    intent = "Bytes cut, sliced, joined, compared, hashed, decoded and encoded as views"
+    depends [Bytes, Crypto.Digest32]
+    effects [Console.print]
+
+fn eat(b: Bytes, acc: Int) -> Int
+    ? "Reads the first byte and drops it, to the end."
+    match Bytes.get(b, 0)
+        Option.Some(x) -> eat(Bytes.drop(b, 1), acc + x)
+        Option.None -> acc
+
+fn main() -> Unit
+    ! [Console.print]
+    b = Bytes.fromList([104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100])
+    c = Bytes.take(Bytes.drop(b, 6), 3)
+    Console.print("{Bytes.len(b)} {Bytes.len(c)} {eat(c, 0)} {eat(b, 0)} {Bytes.toHex(c)}")
+    Console.print("{Bytes.len(Bytes.concat(c, Bytes.drop(b, 9)))} {c == Bytes.take(Bytes.drop(b, 6), 3)} {c == b}")
+    match String.fromUtf8(Bytes.drop(b, 6))
+        Result.Ok(t) -> Console.print(t)
+        Result.Err(e) -> Console.print(e)
+    Console.print("{List.len(Bytes.octets(c))} {Bytes.len(String.toUtf8(Bytes.toHex(c)))} {Bytes.len(Bytes.drop(b, -2))} {Bytes.len(Bytes.take(b, 99))}")
+    Console.print(Crypto.Digest32.toHex(Crypto.sha256(Bytes.drop(b, 3))))
+    Console.print(String.fromInt(Int.fromLittleEndian(Bytes.take(Bytes.drop(b, 3), 4))))
+    m = Map.set(Map.set({}, Bytes.take(Bytes.drop(b, 2), 2), 1), Bytes.fromList([108, 108]), 2)
+    Console.print("{Map.len(m)} {Option.withDefault(Map.get(m, Bytes.fromList([108, 108])), 0)}")
+"#;
+
+/// A plain raw wasm-gc build holds `Bytes` as a view `(array, start, len)`:
+/// `take` and `drop` share the array, and every reader of the elements reads
+/// the view where it lies. It answers as the VM does, and as the array form
+/// (`AVER_NO_BYTES_VIEWS=1`, the form a `--certify` build keeps) does.
+#[test]
+fn bytes_views_answer_as_the_vm_and_the_array_form_do() {
+    let (vm_ok, vm) = run(BYTES_VIEWS, false, true);
+    let (views_ok, views) = run(BYTES_VIEWS, true, true);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(views_ok, "wasm-gc with views failed: {views}");
+    assert_eq!(views, vm);
+    let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("aver-bytes-array-{}-{id}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("main.av");
+    std::fs::write(&path, BYTES_VIEWS).expect("source");
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&path)
+        .arg("--wasm-gc")
+        .env("AVER_NO_BYTES_VIEWS", "1")
+        .output()
+        .expect("run aver");
+    let _ = std::fs::remove_dir_all(dir);
+    assert!(output.status.success(), "array form failed");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), vm);
+}

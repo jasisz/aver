@@ -1413,7 +1413,7 @@ pub(crate) fn emit_mir_expr(
                         let bytes_idx = ctx
                             .registry
                             .byte_payload_packed_sequence()
-                            .map(|packed| packed.type_idx)
+                            .map(|packed| packed.array_idx)
                             .ok_or(WasmGcError::Validation(
                                 "__byt_new requires proven packed-u8 `Bytes`".into(),
                             ))?;

@@ -82,6 +82,7 @@ pub(super) fn emit_args_get_inline(
     // acc = struct.new List<String> { head: s, tail: acc }
     func.instruction(&Instruction::LocalGet(s_slot));
     func.instruction(&Instruction::LocalGet(acc_slot));
+    crate::codegen::wasm_gc::lists::push_len_unknown(func);
     func.instruction(&Instruction::StructNew(list_string_idx));
     func.instruction(&Instruction::LocalSet(acc_slot));
     // i = i - 1

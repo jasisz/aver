@@ -725,17 +725,25 @@ fn emit_packed_sequence_eq_body(
     let packed = registry.packed_sequence(name).ok_or_else(|| {
         WasmGcError::Validation(format!("eq helper for packed `{name}`: type missing"))
     })?;
+    // A view is read through the array of the bytes it shows.
+    let view = registry.packed_view(name);
     let packed_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
         nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(packed.type_idx),
+        heap_type: wasm_encoder::HeapType::Concrete(packed.array_idx),
     });
     let mut f = Function::new(vec![(2, packed_ref), (2, wasm_encoder::ValType::I32)]);
     let heap = wasm_encoder::HeapType::Concrete(packed.type_idx);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::RefCastNonNull(heap));
+    if let Some(view) = view {
+        f.instruction(&Instruction::Call(view.array_of));
+    }
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::RefCastNonNull(heap));
+    if let Some(view) = view {
+        f.instruction(&Instruction::Call(view.array_of));
+    }
     f.instruction(&Instruction::LocalSet(3));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArrayLen);
@@ -764,10 +772,10 @@ fn emit_packed_sequence_eq_body(
             | crate::codegen::proof_lower::PackedIntElement::I8
             | crate::codegen::proof_lower::PackedIntElement::U16
             | crate::codegen::proof_lower::PackedIntElement::I16 => {
-                f.instruction(&Instruction::ArrayGetU(packed.type_idx));
+                f.instruction(&Instruction::ArrayGetU(packed.array_idx));
             }
             _ => {
-                f.instruction(&Instruction::ArrayGet(packed.type_idx));
+                f.instruction(&Instruction::ArrayGet(packed.array_idx));
             }
         }
     }

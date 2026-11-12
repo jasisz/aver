@@ -3215,6 +3215,7 @@ fn emit_map_walk_keys_to_list(
     f.instruction(&Instruction::ArrayGet(slots.keys_array));
     emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(4));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(4));
     // i--
@@ -3300,6 +3301,7 @@ fn emit_map_walk_values_to_list(
     f.instruction(&Instruction::ArrayGet(order_idx));
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::LocalGet(4));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(4));
     f.instruction(&Instruction::LocalGet(3));
@@ -4135,6 +4137,7 @@ fn emit_map_entries(
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::StructNew(tup_idx));
     f.instruction(&Instruction::LocalGet(5));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(lt_idx));
     f.instruction(&Instruction::LocalSet(5));
     f.instruction(&Instruction::LocalGet(4));

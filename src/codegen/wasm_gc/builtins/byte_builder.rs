@@ -19,6 +19,9 @@ const ERROR_SUFFIX: &[u8] = b" is outside 0..=255";
 struct ContractIndices {
     string: u32,
     bytes: u32,
+    /// The array a view of `bytes` shows, where `Bytes` is a view
+    /// (`packed_sequences::packed_views`); `None` when `bytes` is the array.
+    array: Option<u32>,
     builder: u32,
     mag: u32,
     aint: u32,
@@ -29,12 +32,11 @@ fn contract_indices(registry: &TypeRegistry) -> Result<ContractIndices, WasmGcEr
     let string = registry
         .string_array_type_idx
         .ok_or_else(|| WasmGcError::Validation("byte sink requires the String carrier".into()))?;
-    let bytes = registry
-        .byte_payload_packed_sequence()
-        .map(|packed| packed.type_idx)
-        .ok_or_else(|| {
-            WasmGcError::Validation("byte sink requires proven packed-u8 `Bytes`".into())
-        })?;
+    let packed = registry.byte_payload_packed_sequence().ok_or_else(|| {
+        WasmGcError::Validation("byte sink requires proven packed-u8 `Bytes`".into())
+    })?;
+    let bytes = packed.type_idx;
+    let array = packed.is_view().then_some(packed.array_idx);
     let builder = registry.byte_builder_type_idx.ok_or_else(|| {
         WasmGcError::Validation("byte sink requires its hidden builder type".into())
     })?;
@@ -52,6 +54,7 @@ fn contract_indices(registry: &TypeRegistry) -> Result<ContractIndices, WasmGcEr
     Ok(ContractIndices {
         string,
         bytes,
+        array,
         builder,
         mag,
         aint,
@@ -67,6 +70,7 @@ fn preamble(registry: &TypeRegistry) -> Result<String, WasmGcError> {
     let max = [
         idx.string,
         idx.bytes,
+        idx.array.unwrap_or(idx.bytes),
         idx.builder,
         idx.mag,
         idx.aint,
@@ -77,13 +81,24 @@ fn preamble(registry: &TypeRegistry) -> Result<String, WasmGcError> {
     .expect("contract index set is non-empty");
     let mut declarations = vec!["(type (struct))".to_string(); max as usize + 1];
     declarations[idx.string as usize] = "(type $string (array (mut i8)))".to_string();
-    declarations[idx.bytes as usize] = "(type $bytes (array (mut i8)))".to_string();
+    // `$barr` is the array that holds the bytes, `$bytes` the value a
+    // `Bytes` is: a view of `$barr` where views are on, `$barr` itself
+    // otherwise (`compile` then reads every `$bytes` as `$barr`).
+    match idx.array {
+        Some(array) => {
+            declarations[array as usize] = "(type $barr (array (mut i8)))".to_string();
+            declarations[idx.bytes as usize] =
+                "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))"
+                    .to_string();
+        }
+        None => declarations[idx.bytes as usize] = "(type $barr (array (mut i8)))".to_string(),
+    }
     declarations[idx.mag as usize] = "(type $mag (array (mut i64)))".to_string();
     declarations[idx.aint as usize] =
         "(type $aint (struct (field i64) (field (ref null $mag)) (field i32)))".to_string();
     declarations[idx.builder as usize] = "(type $builder (struct \
         (field (mut i32)) \
-        (field (mut (ref null $bytes))) \
+        (field (mut (ref null $barr))) \
         (field (mut (ref null $aint))) \
         (field (mut i32))))"
         .to_string();
@@ -100,9 +115,14 @@ fn compile(
     callees: &str,
     signature_and_body: &str,
 ) -> Result<Function, WasmGcError> {
-    let declarations = preamble(registry)?;
-    let wat =
-        format!("(module\n{declarations}{callees}(func (export \"helper\") {signature_and_body}))");
+    let (declarations, body) = match contract_indices(registry)?.array {
+        Some(_) => (preamble(registry)?, signature_and_body.to_string()),
+        None => (
+            preamble(registry)?.replace("$bytes", "$barr"),
+            signature_and_body.replace("$bytes", "$barr"),
+        ),
+    };
+    let wat = format!("(module\n{declarations}{callees}(func (export \"helper\") {body}))");
     wat_helper::compile_wat_helper(&wat)
 }
 
@@ -119,8 +139,8 @@ pub(super) fn emit_push(registry: &TypeRegistry) -> Result<Function, WasmGcError
             (local $needed i32)
             (local $needed64 i64)
             (local $grown64 i64)
-            (local $data (ref null $bytes))
-            (local $new_data (ref null $bytes))
+            (local $data (ref null $barr))
+            (local $new_data (ref null $barr))
 
             local.get $buf struct.get $builder 2 ref.is_null i32.eqz
             (if (then local.get $buf return))
@@ -155,15 +175,15 @@ pub(super) fn emit_push(registry: &TypeRegistry) -> Result<Function, WasmGcError
                   (if (then local.get $needed64 local.set $grown64))
 
                   local.get $grown64 i32.wrap_i64
-                  array.new_default $bytes local.set $new_data
+                  array.new_default $barr local.set $new_data
                   local.get $new_data i32.const 0
                   local.get $data i32.const 0
-                  local.get $len array.copy $bytes $bytes
+                  local.get $len array.copy $barr $barr
                   local.get $buf local.get $new_data struct.set $builder 1
                   local.get $new_data local.set $data))
 
                 local.get $data local.get $len local.get $small i32.wrap_i64
-                array.set $bytes
+                array.set $barr
                 local.get $buf local.get $needed struct.set $builder 0)
               (else
                 local.get $buf local.get $value struct.set $builder 2
@@ -199,8 +219,8 @@ pub(super) fn emit_finalize(registry: &TypeRegistry) -> Result<Function, WasmGcE
     let body = format!(
         r#"(param $buf (ref null $builder)) (result (ref null $result))
             (local $len i32)
-            (local $data (ref null $bytes))
-            (local $exact (ref null $bytes))
+            (local $data (ref null $barr))
+            (local $exact (ref null $barr))
             (local $bad (ref null $aint))
             (local $value_s (ref null $string))
             (local $index_s (ref null $string))
@@ -216,11 +236,11 @@ pub(super) fn emit_finalize(registry: &TypeRegistry) -> Result<Function, WasmGcE
                 (if
                   (then local.get $data local.set $exact)
                   (else
-                    local.get $len array.new_default $bytes local.set $exact
+                    local.get $len array.new_default $barr local.set $exact
                     local.get $exact i32.const 0
                     local.get $data i32.const 0
-                    local.get $len array.copy $bytes $bytes))
-                i32.const 1 local.get $exact ref.null $string struct.new $result)
+                    local.get $len array.copy $barr $barr))
+                i32.const 1 local.get $exact {as_bytes}ref.null $string struct.new $result)
               (else
                 local.get $bad call {formatter} local.set $value_s
                 local.get $buf struct.get $builder 3 i64.extend_i32_u
@@ -259,6 +279,11 @@ pub(super) fn emit_finalize(registry: &TypeRegistry) -> Result<Function, WasmGcE
                 i32.const 0 ref.null $bytes local.get $message struct.new $result))"#,
         formatter = formatter,
         fixed_len = fixed_len,
+        // The whole exact array, as the view a `Bytes` is.
+        as_bytes = match contract_indices(registry)?.array {
+            Some(_) => "i32.const 0 local.get $len struct.new $bytes ",
+            None => "",
+        },
         prefix = fixed_array(ERROR_PREFIX, "$string"),
         prefix_len = ERROR_PREFIX.len(),
         middle = fixed_array(ERROR_MIDDLE, "$string"),

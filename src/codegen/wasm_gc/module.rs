@@ -204,6 +204,22 @@ fn emit_module_pass(
     fn_exports: super::FnExports,
 ) -> Result<(ModuleOutput, std::collections::HashSet<String>), WasmGcError> {
     let certify = !matches!(twins_for, Certify::Off);
+    // Plain builds keep a list's length in its cells; a `--certify` build
+    // keeps the two-field cell its certificate's wall proves, and so does
+    // any build under `AVER_NO_COUNTED_LISTS=1`.
+    let _counted_lists = super::lists::CountedLists::set(
+        !certify && std::env::var_os("AVER_NO_COUNTED_LISTS").is_none(),
+    );
+    // Plain raw wasm-gc builds hold a packed refinement (`Bytes`) as a view
+    // of an array, so `drop` and `take` share it. A `--certify` build keeps
+    // the array its certificate's wall proves; so does a wasip2 component,
+    // whose host bridges move `Bytes` as arrays; and so does any build under
+    // `AVER_NO_BYTES_VIEWS=1`.
+    let _packed_views = super::packed_sequences::PackedViews::set(
+        !certify
+            && matches!(target, super::TargetMode::AverBridge)
+            && std::env::var_os("AVER_NO_BYTES_VIEWS").is_none(),
+    );
     // A `String` param a self loop grows by appending is held as a buffer,
     // except in a `--certify` build (`body/from_mir/str_builder.rs`).
     super::body::set_string_builders(!certify);
@@ -1463,6 +1479,11 @@ fn emit_module_pass(
         &mut next_type_idx,
     );
     packed_sequence_helpers.emit_helper_types(&mut types, &registry)?;
+    for (name, ops) in packed_sequence_helpers.iter() {
+        if let Some(views) = ops.views {
+            registry.packed_view_ops.insert(name.to_string(), views);
+        }
+    }
 
     // Per-(record/sum) `__eq_<TypeName>` helpers — slot allocation +
     // type emit. Bodies emitted after list helpers (they may call
@@ -7467,7 +7488,7 @@ fn emit_user_types(
     if let Some(idx) = registry.byte_builder_type_idx {
         let bytes_idx = registry
             .byte_payload_packed_sequence()
-            .map(|packed| packed.type_idx)
+            .map(|packed| packed.array_idx)
             .ok_or_else(|| {
                 WasmGcError::Validation(
                     "byte builder allocated without proven packed-u8 `Bytes`".into(),
@@ -7540,12 +7561,37 @@ fn emit_user_types(
             PackedIntElement::I64 => wasm_encoder::StorageType::Val(wasm_encoder::ValType::I64),
         };
         entries.push((
-            packed.type_idx,
+            packed.array_idx,
             mk_array(wasm_encoder::FieldType {
                 element_type,
                 mutable: true,
             }),
         ));
+        // A view: the array, the first element's place in it, and how many
+        // elements follow.
+        if packed.is_view() {
+            let array_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Concrete(packed.array_idx),
+            });
+            entries.push((
+                packed.type_idx,
+                mk_struct(vec![
+                    wasm_encoder::FieldType {
+                        element_type: wasm_encoder::StorageType::Val(array_ref),
+                        mutable: false,
+                    },
+                    wasm_encoder::FieldType {
+                        element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                        mutable: false,
+                    },
+                    wasm_encoder::FieldType {
+                        element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                        mutable: false,
+                    },
+                ]),
+            ));
+        }
     }
 
     // Scratch storage for the pure SHA-256 helper. Both arrays carry i32:
@@ -7812,19 +7858,25 @@ fn emit_user_types(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(own_idx),
         });
-        entries.push((
-            own_idx,
-            mk_struct(vec![
-                wasm_encoder::FieldType {
-                    element_type: wasm_encoder::StorageType::Val(elem_val),
-                    mutable: false,
-                },
-                wasm_encoder::FieldType {
-                    element_type: wasm_encoder::StorageType::Val(tail_ref),
-                    mutable: false,
-                },
-            ]),
-        ));
+        let mut fields = vec![
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(elem_val),
+                mutable: false,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(tail_ref),
+                mutable: false,
+            },
+        ];
+        // The length of the list from this cell on, or `LIST_LEN_UNKNOWN`
+        // until `List.len` counts it (see `lists::emit_list_len`).
+        if super::lists::counted_lists() {
+            fields.push(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                mutable: true,
+            });
+        }
+        entries.push((own_idx, mk_struct(fields)));
     }
 
     // Option<T> — `(struct (mut i32 tag) (mut T value))`.
@@ -9182,6 +9234,7 @@ fn emit_list_string_cons(registry: &TypeRegistry) -> Result<wasm_encoder::Functi
     let mut f = wasm_encoder::Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -11245,6 +11298,7 @@ fn emit_factory_list_string_cons(
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -11347,6 +11401,7 @@ fn emit_factory_list_cons_from(
         }
     }
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::End);
     Ok(f)

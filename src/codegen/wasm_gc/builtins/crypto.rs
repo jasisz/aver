@@ -42,6 +42,8 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
         .map(|p| p.type_idx)
         .or_else(|| registry.record_type_idx("Bytes"))
         .ok_or_else(|| WasmGcError::Validation("Crypto.sha256 requires Bytes".into()))?;
+    // The array a `Bytes` view shows, where `Bytes` is a view.
+    let view_array = packed_bytes.filter(|p| p.is_view()).map(|p| p.array_idx);
     let digest_idx = registry
         .record_type_idx("Digest32")
         .ok_or_else(|| WasmGcError::Validation("Crypto.sha256 requires Digest32 record".into()))?;
@@ -80,6 +82,7 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
         list_idx,
         aint_idx,
         packed_bytes.is_some(),
+        view_array,
     )?;
     let callees = if let (Some(from_i64_idx), Some(to_i64_idx)) = (from_i64_idx, to_i64_idx) {
         wat_helper::func_placeholders(&[
@@ -95,12 +98,44 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
     } else {
         String::new()
     };
-    let carrier_locals = if packed_bytes.is_some() {
+    let carrier_locals = if view_array.is_some() {
+        "(local $digest_bytes (ref null $barr)) (local $in_arr (ref null $barr)) (local $in_start i32)"
+    } else if packed_bytes.is_some() {
         "(local $digest_bytes (ref null $bytes))"
     } else {
         "(local $node (ref null $list_int))\n  (local $out (ref null $list_int))"
     };
-    let (input_length, input_copy) = if packed_bytes.is_some() {
+    let (input_length, input_copy) = if packed_bytes.is_some() && view_array.is_some() {
+        // The bytes the view shows, read where they lie in its array.
+        (
+            r#"local.get $input struct.get $bytes 0 local.set $in_arr
+  local.get $input struct.get $bytes 1 local.set $in_start
+  local.get $input struct.get $bytes 2 local.set $input_len"#
+                .to_string(),
+            r#"i32.const 0
+  local.set $i
+  (block $copy_done
+    (loop $copy
+      local.get $i
+      local.get $input_len
+      i32.ge_u
+      br_if $copy_done
+      local.get $message
+      local.get $i
+      local.get $in_arr
+      local.get $in_start
+      local.get $i
+      i32.add
+      array.get_u $barr
+      array.set $byte_array
+      local.get $i
+      i32.const 1
+      i32.add
+      local.set $i
+      br $copy))"#
+                .to_string(),
+        )
+    } else if packed_bytes.is_some() {
         (
             r#"local.get $input
   array.len
@@ -181,7 +216,36 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
             ),
         )
     };
-    let output_build = if packed_bytes.is_some() {
+    let output_build = if view_array.is_some() {
+        // The digest's array, whole, as the view a `Bytes` is.
+        r#"i32.const 32
+  array.new_default $barr
+  local.set $digest_bytes
+  i32.const 0 local.set $i
+  (block $output_done
+    (loop $output
+      local.get $i i32.const 32 i32.ge_u br_if $output_done
+      local.get $digest_bytes
+      local.get $i
+      local.get $words
+      local.get $i i32.const 2 i32.shr_u
+      array.get $word_array
+      i32.const 3
+      local.get $i i32.const 3 i32.and
+      i32.sub
+      i32.const 3 i32.shl
+      i32.shr_u
+      i32.const 255 i32.and
+      array.set $barr
+      local.get $i i32.const 1 i32.add local.set $i
+      br $output))
+  local.get $digest_bytes
+  i32.const 0
+  i32.const 32
+  struct.new $bytes
+  struct.new $digest"#
+            .to_string()
+    } else if packed_bytes.is_some() {
         r#"i32.const 32
   array.new_default $bytes
   local.set $digest_bytes
@@ -208,6 +272,7 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
             .to_string()
     } else {
         let from_i64_idx = from_i64_idx.expect("boxed path checked above");
+        let len_unknown = crate::codegen::wasm_gc::lists::wat_len_unknown();
         format!(
             r#"i32.const 31 local.set $i
   (block $output_done
@@ -224,6 +289,7 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
       i64.extend_i32_u
       call {from_i64_idx}
       local.get $out
+      {len_unknown}
       struct.new $list_int
       local.set $out
       local.get $i i32.eqz br_if $output_done
@@ -518,6 +584,7 @@ pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcErr
     wat_helper::compile_wat_helper(&wat)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn crypto_types(
     byte_array_idx: u32,
     word_array_idx: u32,
@@ -526,8 +593,10 @@ fn crypto_types(
     list_idx: Option<u32>,
     aint_idx: Option<u32>,
     packed_bytes: bool,
+    view_array: Option<u32>,
 ) -> Result<String, WasmGcError> {
     let mut named = vec![byte_array_idx, word_array_idx, bytes_idx, digest_idx];
+    named.extend(view_array);
     named.extend(list_idx);
     named.extend(aint_idx);
     let mut unique = named.clone();
@@ -545,6 +614,10 @@ fn crypto_types(
             "(type $byte_array (array (mut i32)))"
         } else if idx == word_array_idx {
             "(type $word_array (array (mut i32)))"
+        } else if idx == bytes_idx && view_array.is_some() {
+            "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))"
+        } else if Some(idx) == view_array {
+            "(type $barr (array (mut i8)))"
         } else if idx == bytes_idx && packed_bytes {
             "(type $bytes (array (mut i8)))"
         } else if idx == bytes_idx {
@@ -552,7 +625,11 @@ fn crypto_types(
         } else if idx == digest_idx {
             "(type $digest (struct (field (ref null $bytes))))"
         } else if Some(idx) == list_idx {
-            "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+            if crate::codegen::wasm_gc::lists::counted_lists() {
+                "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int)) (field (mut i32))))"
+            } else {
+                "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+            }
         } else if Some(idx) == aint_idx {
             // Only the reference identity is needed in this standalone WAT;
             // actual construction/conversion is delegated to the real helpers.

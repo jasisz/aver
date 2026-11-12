@@ -1490,6 +1490,7 @@ fn emit_tcp_send_impl(
                 ));
             }
             f.instruction(&Instruction::LocalGet(l_list_cursor));
+            crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
             f.instruction(&Instruction::StructNew(list_int_type_idx));
             f.instruction(&Instruction::LocalSet(l_list_cursor));
             f.instruction(&Instruction::Br(0));

@@ -931,6 +931,7 @@ fn emit_helper(function: &mut Function, kind: &HelperKind) {
                 function.instruction(&Instruction::I32Const(0));
                 function.instruction(&Instruction::LocalGet(0));
             }
+            crate::codegen::wasm_gc::lists::push_len_unknown(function);
             function.instruction(&Instruction::StructNew(*type_idx));
         }
         HelperKind::ListNil { type_idx } => {

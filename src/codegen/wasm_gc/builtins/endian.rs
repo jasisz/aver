@@ -19,6 +19,8 @@ struct EndianTypes {
     mag_idx: u32,
     aint_idx: u32,
     packed: bool,
+    /// The array a `Bytes` view shows, where `Bytes` is a view.
+    array_idx: Option<u32>,
 }
 
 impl EndianTypes {
@@ -74,6 +76,9 @@ impl EndianTypes {
             mag_idx,
             aint_idx,
             packed: packed_bytes.is_some(),
+            array_idx: packed_bytes
+                .filter(|packed| packed.is_view())
+                .map(|packed| packed.array_idx),
         })
     }
 
@@ -86,6 +91,7 @@ impl EndianTypes {
             self.aint_idx,
         ];
         indices.extend(self.list_idx);
+        indices.extend(self.array_idx);
         let mut unique = indices.clone();
         unique.sort_unstable();
         unique.dedup();
@@ -99,6 +105,10 @@ impl EndianTypes {
         for idx in 0..=max {
             let ty = if idx == self.string_idx {
                 "(type $string (array (mut i8)))"
+            } else if idx == self.bytes_idx && self.array_idx.is_some() {
+                "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))"
+            } else if Some(idx) == self.array_idx {
+                "(type $barr (array (mut i8)))"
             } else if idx == self.bytes_idx && self.packed {
                 "(type $bytes (array (mut i8)))"
             } else if idx == self.bytes_idx {
@@ -106,7 +116,11 @@ impl EndianTypes {
             } else if idx == self.result_idx {
                 "(type $result (struct (field (mut i32)) (field (mut (ref null $bytes))) (field (mut (ref null $string)))))"
             } else if Some(idx) == self.list_idx {
-                "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+                if crate::codegen::wasm_gc::lists::counted_lists() {
+                    "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int)) (field (mut i32))))"
+                } else {
+                    "(type $list_int (struct (field (ref null $aint)) (field (ref null $list_int))))"
+                }
             } else if idx == self.mag_idx {
                 "(type $mag (array (mut i64)))"
             } else if idx == self.aint_idx {
@@ -190,7 +204,23 @@ pub(super) fn emit_to_endian(
         local.get $pos i32.const 3 i32.and i32.const 3 i32.shl i64.extend_i32_u
         i64.shr_u i32.wrap_i64 i32.const 255 i32.and local.set $byte))"#
     );
-    let (carrier_locals, build) = if types.packed {
+    let (carrier_locals, build) = if types.array_idx.is_some() {
+        // The new array, whole, as the view a `Bytes` is.
+        (
+            "(local $out (ref null $barr))".to_string(),
+            format!(
+                r#"local.get $width32 array.new_default $barr local.set $out
+  i32.const 0 local.set $i
+  (block $copy_done (loop $copy
+    local.get $i local.get $width32 i32.ge_u br_if $copy_done
+    {load_byte}
+    local.get $out local.get $i local.get $byte array.set $barr
+    local.get $i i32.const 1 i32.add local.set $i
+    br $copy))
+  local.get $out i32.const 0 local.get $width32 struct.new $bytes"#
+            ),
+        )
+    } else if types.packed {
         (
             "(local $out (ref null $bytes))".to_string(),
             format!(
@@ -207,6 +237,7 @@ pub(super) fn emit_to_endian(
         )
     } else {
         let from_i64 = from_i64.expect("boxed carrier registered from-i64");
+        let len_unknown = crate::codegen::wasm_gc::lists::wat_len_unknown();
         (
             "(local $node (ref null $list_int))".to_string(),
             format!(
@@ -216,7 +247,7 @@ pub(super) fn emit_to_endian(
     local.get $i i32.const 1 i32.sub local.set $i
     {load_byte}
     local.get $byte i64.extend_i32_u call {from_i64}
-    local.get $node struct.new $list_int local.set $node
+    local.get $node {len_unknown}struct.new $list_int local.set $node
     br $copy))
   local.get $node struct.new $bytes"#
             ),
@@ -305,7 +336,19 @@ pub(super) fn emit_from_endian(
     } else {
         "local.get $i"
     };
-    let (carrier_locals, length, load, advance) = if types.packed {
+    let (carrier_locals, length, load, advance) = if types.array_idx.is_some() {
+        // The bytes the view shows, read where they lie in its array.
+        (
+            "(local $arr (ref null $barr)) (local $start i32)".to_string(),
+            "local.get $input struct.get $bytes 0 local.set $arr \
+             local.get $input struct.get $bytes 1 local.set $start \
+             local.get $input struct.get $bytes 2 local.set $len"
+                .to_string(),
+            "local.get $arr local.get $start local.get $i i32.add array.get_u $barr local.set $byte"
+                .to_string(),
+            String::new(),
+        )
+    } else if types.packed {
         (
             String::new(),
             "local.get $input array.len local.set $len".to_string(),

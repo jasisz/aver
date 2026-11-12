@@ -254,6 +254,7 @@ fn a_certified_build_compares_slices_in_place_outside_kept_functions() {
     let env = [
         ("AVER_NO_SELF_TAIL_LOOPS", "1"),
         ("AVER_NO_STRING_LITERAL_POOL", "1"),
+        ("AVER_NO_COUNTED_LISTS", "1"),
     ];
     let (plain, _) = compile_with_env(&repo_root, &entry, &[], false, &env).unwrap();
     let (certified, names) =

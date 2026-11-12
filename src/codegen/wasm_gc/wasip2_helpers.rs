@@ -536,6 +536,7 @@ pub(super) fn emit_decode_list_string(
     // acc = struct.new $list_string {head: arr, tail: acc}.
     f.instruction(&Instruction::LocalGet(l_arr));
     f.instruction(&Instruction::LocalGet(l_acc));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_string_type_idx));
     f.instruction(&Instruction::LocalSet(l_acc));
 
@@ -2908,6 +2909,7 @@ pub(super) fn emit_disk_list_dir(
     // acc = struct.new $list_string {head: arr, tail: acc}
     f.instruction(&Instruction::LocalGet(l_arr));
     f.instruction(&Instruction::LocalGet(l_acc));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_string_type_idx));
     f.instruction(&Instruction::LocalSet(l_acc));
 

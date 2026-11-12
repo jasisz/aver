@@ -28,6 +28,59 @@ use wasm_encoder::{BlockType, CodeSection, Function, HeapType, Instruction, RefT
 use super::WasmGcError;
 use super::types::TypeRegistry;
 
+/// The length a list cell is built with: not counted yet. A cell's third
+/// field holds the length of the list from it on once `List.len` has
+/// counted it, which a cell never changes after, so the count is kept
+/// there and a later `List.len` stops at the first counted cell.
+pub(crate) const LIST_LEN_UNKNOWN: i32 = -1;
+
+thread_local! {
+    /// Whether the module being emitted keeps that third field: every plain
+    /// build, never a `--certify` one, whose cons cell and `List.len` stay
+    /// the two-field forms the certificate's wall proves (see
+    /// `CountedLists`). One module is emitted on one thread.
+    static COUNTED_LISTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Sets [`counted_lists`] for one module's emission and puts it back after.
+pub(super) struct CountedLists(bool);
+
+impl CountedLists {
+    pub(super) fn set(on: bool) -> Self {
+        Self(COUNTED_LISTS.with(|flag| flag.replace(on)))
+    }
+}
+
+impl Drop for CountedLists {
+    fn drop(&mut self) {
+        COUNTED_LISTS.with(|flag| flag.set(self.0));
+    }
+}
+
+/// Whether list cells carry their length in the module being emitted.
+pub(crate) fn counted_lists() -> bool {
+    COUNTED_LISTS.with(std::cell::Cell::get)
+}
+
+/// The length a new cell is built with, when cells carry one: pushed just
+/// before every `struct.new` of a list type.
+pub(crate) fn push_len_unknown(f: &mut Function) {
+    if counted_lists() {
+        f.instruction(&Instruction::I32Const(LIST_LEN_UNKNOWN));
+    }
+}
+
+/// [`push_len_unknown`] for a helper written as a list of instructions.
+pub(crate) fn len_unknown() -> Option<Instruction<'static>> {
+    counted_lists().then_some(Instruction::I32Const(LIST_LEN_UNKNOWN))
+}
+
+/// The value pushed before `struct.new $list_int` in the helpers written
+/// as WAT text, when cells carry a length.
+pub(crate) fn wat_len_unknown() -> &'static str {
+    if counted_lists() { "i32.const -1 " } else { "" }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ListOps {
     pub(super) len: u32,
@@ -1200,8 +1253,109 @@ fn vector_slots_of_pair(
     registry.vector_slots(&format!("Vector<{}>", elem.trim()))
 }
 
-/// `len : (List<T>) -> i64`.
+/// `len : (List<T>) -> i64`. Walks to the first cell already counted (or
+/// the end), then walks again writing each cell's length on the way, so a
+/// list is counted once and a list grown in front of since its last
+/// `List.len` costs only its new cells.
 fn emit_list_len(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    if !counted_lists() {
+        return emit_list_len_walk(canonical, registry);
+    }
+    let list_idx = list_idx_of(canonical, registry)?;
+    let list_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_idx),
+    });
+    let len_field = |f: &mut Function| {
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: list_idx,
+            field_index: 2,
+        });
+    };
+    let tail = |f: &mut Function| {
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: list_idx,
+            field_index: 1,
+        });
+    };
+    // params: 0=in. locals: 1=cur, 2=count (i32), 3=known (i32).
+    let mut f = Function::new([(1, list_ref), (2, ValType::I32)]);
+    // Pass 1: count the cells up to a counted one or the end.
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(1));
+    len_field(&mut f);
+    f.instruction(&Instruction::LocalTee(3));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32GeS);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    tail(&mut f);
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // known = the counted rest (0 at the end); count = the whole length.
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    // Pass 2: write each uncounted cell's length, from the whole length
+    // down, stopping at the first cell already counted.
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(1));
+    len_field(&mut f);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32GeS);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::StructSet {
+        struct_type_index: list_idx,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(1));
+    tail(&mut f);
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `len : (List<T>) -> i64` over two-field cells: count every cell.
+fn emit_list_len_walk(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let list_ref = ValType::Ref(RefType {
         nullable: true,
@@ -1267,6 +1421,7 @@ fn emit_list_reverse(canonical: &str, registry: &TypeRegistry) -> Result<Functio
     f.instruction(&Instruction::LocalSet(3));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(2));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::LocalGet(1));
@@ -1436,10 +1591,15 @@ fn emit_string_split(
             Instruction::End,
             Instruction::LocalGet(7),
             Instruction::LocalGet(8),
-            Instruction::StructNew(list_idx),
-            Instruction::LocalSet(8),
         ];
-        for i in head.iter().chain(start).chain(tail.iter()) {
+        let cons = [Instruction::StructNew(list_idx), Instruction::LocalSet(8)];
+        for i in head
+            .iter()
+            .chain(start)
+            .chain(tail.iter())
+            .chain(len_unknown().as_ref())
+            .chain(cons.iter())
+        {
             f.instruction(i);
         }
     };
@@ -1868,6 +2028,7 @@ fn emit_list_concat(
         field_index: 0,
     });
     f.instruction(&Instruction::LocalGet(3));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(3));
     f.instruction(&Instruction::LocalGet(2));
@@ -1924,6 +2085,7 @@ fn emit_list_take(
         field_index: 0,
     });
     f.instruction(&Instruction::LocalGet(3));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(3));
     f.instruction(&Instruction::LocalGet(4));
@@ -2106,6 +2268,7 @@ fn emit_list_cons(canonical: &str, registry: &TypeRegistry) -> Result<Function, 
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -2167,6 +2330,7 @@ fn emit_vec_to_list(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArrayGet(vec_idx));
     f.instruction(&Instruction::LocalGet(1));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(1));
     // i--
@@ -2247,6 +2411,7 @@ fn emit_list_zip(
     f.instruction(&Instruction::StructNew(tuple_idx));
     // acc = struct.new $list_tuple(tuple, acc)
     f.instruction(&Instruction::LocalGet(4));
+    crate::codegen::wasm_gc::lists::push_len_unknown(&mut f);
     f.instruction(&Instruction::StructNew(lt_idx));
     f.instruction(&Instruction::LocalSet(4));
     // cur_a = cur_a.tail; cur_b = cur_b.tail
