@@ -6926,7 +6926,7 @@ fn packed_field_read(rendered: &str) -> Option<&str> {
 }
 
 /// The index `expr` (rendered as `rendered`) as an `Option<usize>`: a raw
-/// word is converted itself, any other through [`index_usize`].
+/// word is converted itself, any other through `to_usize`.
 fn index_usize_of(expr: &Spanned<MirExpr>, rendered: &str, ctx: &MirEmitCtx<'_>) -> String {
     match boxed_word(rendered) {
         Some(word) => format!("usize::try_from({word}).ok()"),
@@ -6955,17 +6955,6 @@ fn boxed_word(rendered: &str) -> Option<&str> {
                 depth >= 0
             }) && depth == 0
         })
-}
-
-/// A rendered `Int` index as an `Option<usize>`. An index the rewrite
-/// boxed from a machine word (`aver_rt::AverInt::from_i64(i)`) is converted
-/// from the word itself, without making an `AverInt` of it first; a negative
-/// word gives `None`, as `to_usize` does.
-fn index_usize(rendered: &str) -> String {
-    match boxed_word(rendered) {
-        Some(word) => format!("usize::try_from({word}).ok()"),
-        None => format!("({rendered}).to_usize()"),
-    }
 }
 
 /// Whether evaluating a match subject leaves temporaries behind: a call (or
