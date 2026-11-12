@@ -5944,6 +5944,27 @@ fn rust_a_record_whose_field_is_read_after_the_call_moves_into_it() {
     );
 }
 
+/// A record kept in a `Box` and updated several fields at once in a member
+/// of a mutual tail-call group. The member binds its state by value, as a
+/// `mut` binding of its own, but the update did not know it: a field the
+/// other branch moved out counted as moved here too, and the record was
+/// built again in a new box (`Box::new(W__Fields { .., ..*w })`).
+#[test]
+fn rust_a_boxed_record_updated_in_a_mutual_loop_is_written_in_place() {
+    let src = include_str!("fixtures/mutual_box_update.av");
+    let expected = "15";
+    let vm = run_vm_inline("mutual_box_update", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("mutual_box_update", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("mutual_box_update", src);
+    assert!(
+        emitted.contains("pub type W = Box<W__Fields>") && !emitted.contains("..*w"),
+        "the update must write the box in place:\n{emitted}"
+    );
+}
+
 /// `Option.withDefault(Vector.set(v, i, f(v)), v)` with `v` moving into the
 /// set: the value read `v` after the set had taken it, and the generated
 /// Rust did not build (E0382). The index and the value are now computed

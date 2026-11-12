@@ -9344,6 +9344,16 @@ pub(super) fn emit_mir_mutual_tco_block(
         // skips a clone.
         let mut policy = MirFnEmitPolicy::from_resolved(group_fns[i], scope, false);
         policy.rc_wrapped = rc_names.clone();
+        // The arm binds every param it carries in the state by value, as a
+        // `mut` binding of its own, so a record there is written in place
+        // as one an owned param holds; the invariants are passed beside the
+        // state and stay as they are.
+        policy.owned_params = group_fns[i]
+            .params
+            .iter()
+            .filter(|(name, _)| !invariant_names.contains(name))
+            .map(|(name, _)| aver_name_to_rust(name))
+            .collect();
         // The trampoline signature stays boxed, while the rewritten member
         // body may contain raw compiler-owned character locals. Use the MIR's
         // explicit restricted tags rather than the pre-rewrite whole-function
