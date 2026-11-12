@@ -26,6 +26,9 @@ struct OptionalSlot {
 enum BytesRepresentation {
     Packed {
         type_idx: u32,
+        /// The array a view shows, where `Bytes` is a view; `None` when
+        /// `type_idx` is the array.
+        array_idx: Option<u32>,
     },
     Boxed {
         bytes_idx: u32,
@@ -38,7 +41,7 @@ enum BytesRepresentation {
 impl BytesRepresentation {
     fn type_idx(self) -> u32 {
         match self {
-            Self::Packed { type_idx } => type_idx,
+            Self::Packed { type_idx, .. } => type_idx,
             Self::Boxed { bytes_idx, .. } => bytes_idx,
         }
     }
@@ -70,6 +73,7 @@ impl BytesBridge {
             }
             BytesRepresentation::Packed {
                 type_idx: bytes.type_idx,
+                array_idx: bytes.is_view().then_some(bytes.array_idx),
             }
         } else if let Some(bytes_idx) = registry.record_type_idx("Bytes") {
             let canonical = registry.canonical_type_name("Bytes");
@@ -182,9 +186,19 @@ impl BytesBridge {
         registry: &TypeRegistry,
     ) -> Result<(), WasmGcError> {
         match self.representation {
-            BytesRepresentation::Packed { type_idx } => {
+            BytesRepresentation::Packed {
+                type_idx,
+                array_idx: None,
+            } => {
                 codes.function(&emit_from_lm_packed(type_idx)?);
                 codes.function(&emit_to_lm_packed(type_idx)?);
+            }
+            BytesRepresentation::Packed {
+                array_idx: Some(array_idx),
+                ..
+            } => {
+                codes.function(&emit_from_lm_view(array_idx)?);
+                codes.function(&emit_to_lm_view(array_idx)?);
             }
             BytesRepresentation::Boxed {
                 bytes_idx,
@@ -471,4 +485,114 @@ fn emit_result_ok_from_lm(
     function.instruction(&Instruction::StructNew(result_idx));
     function.instruction(&Instruction::End);
     Ok(function)
+}
+
+/// The types of a `Bytes` view: the array at `array_idx` and the view right
+/// after it (`TypeRegistry::install_packed_sequences`).
+fn view_types(array_idx: u32) -> String {
+    format!(
+        "{}\n(type $barr (array (mut i8)))\n(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))",
+        wat_helper::padding_types(array_idx)
+    )
+}
+
+/// [`emit_from_lm_packed`] where `Bytes` is a view: the new array, whole.
+fn emit_from_lm_view(array_idx: u32) -> Result<Function, WasmGcError> {
+    let types = view_types(array_idx);
+    let wat = format!(
+        r#"
+        (module
+          {types}
+          (memory 1)
+          (func (export "helper") (param $len i32) (result (ref null $bytes))
+            (local $arr (ref null $barr))
+            (local $i i32)
+            local.get $len
+            array.new_default $barr
+            local.set $arr
+            (block $break
+              (loop $next
+                local.get $i
+                local.get $len
+                i32.ge_u
+                br_if $break
+                local.get $arr
+                local.get $i
+                local.get $i
+                i32.load8_u
+                array.set $barr
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $next))
+            local.get $arr
+            i32.const 0
+            local.get $len
+            struct.new $bytes)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// [`emit_to_lm_packed`] where `Bytes` is a view: the bytes it shows.
+fn emit_to_lm_view(array_idx: u32) -> Result<Function, WasmGcError> {
+    let types = view_types(array_idx);
+    let wat = format!(
+        r#"
+        (module
+          {types}
+          (memory 1)
+          (func (export "helper") (param $bytes (ref null $bytes)) (result i32)
+            (local $arr (ref null $barr))
+            (local $start i32)
+            (local $len i32)
+            (local $i i32)
+            (local $needed i32)
+            (local $current i32)
+            local.get $bytes struct.get $bytes 0 local.set $arr
+            local.get $bytes struct.get $bytes 1 local.set $start
+            local.get $bytes struct.get $bytes 2 local.set $len
+            local.get $len
+            i32.const 65535
+            i32.add
+            i32.const 16
+            i32.shr_u
+            local.set $needed
+            memory.size
+            local.set $current
+            local.get $needed
+            local.get $current
+            i32.gt_u
+            (if
+              (then
+                local.get $needed
+                local.get $current
+                i32.sub
+                memory.grow
+                drop))
+            (block $break
+              (loop $next
+                local.get $i
+                local.get $len
+                i32.ge_u
+                br_if $break
+                local.get $i
+                local.get $arr
+                local.get $start
+                local.get $i
+                i32.add
+                array.get_u $barr
+                i32.store8
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $next))
+            local.get $len)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
 }

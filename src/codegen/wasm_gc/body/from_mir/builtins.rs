@@ -2312,12 +2312,19 @@ pub(crate) fn emit_mir_list_builtin(
             // over every proof-packed structural refinement; `Bytes` merely
             // happens to be the first standard-library consumer.
             if matches!(dotted, "List.len" | "List.length")
-                && let Some((base, _)) = mir_packed_carrier_projection(&args[0], ctx)
+                && let Some((base, name)) = mir_packed_carrier_projection(&args[0], ctx)
             {
                 if emit_mir_expr(func, base, slots, ctx)?.is_none() {
                     return Ok(MirBuiltinEmit::Fallback);
                 }
-                func.instruction(&Instruction::ArrayLen);
+                // A view holds its length.
+                match ctx.registry.packed_sequence(&name).filter(|p| p.is_view()) {
+                    Some(view) => func.instruction(&Instruction::StructGet {
+                        struct_type_index: view.type_idx,
+                        field_index: 2,
+                    }),
+                    None => func.instruction(&Instruction::ArrayLen),
+                };
                 func.instruction(&Instruction::I64ExtendI32U);
                 lift_i64_result_to_aint(func, ctx)?;
                 return Ok(MirBuiltinEmit::Produced(true));

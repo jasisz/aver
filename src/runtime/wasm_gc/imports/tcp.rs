@@ -1687,6 +1687,36 @@ pub(super) fn decode_byte_payload(
     let bytes = bytes_ref
         .as_struct(&*caller)?
         .ok_or_else(|| wasmtime::Error::msg(format!("{effect}: payload must be Bytes")))?;
+    // A plain raw wasm-gc build holds Bytes as a view `(array, start, len)`
+    // of an `(array i8)` (`codegen::wasm_gc::packed_sequences`): the bytes it
+    // shows.
+    if let (Ok(Val::AnyRef(Some(array))), Ok(Val::I32(start)), Ok(Val::I32(len))) = (
+        bytes.field(&mut *caller, 0),
+        bytes.field(&mut *caller, 1),
+        bytes.field(&mut *caller, 2),
+    ) && let Some(array) = array.as_array(&*caller)?
+        && start >= 0
+        && len >= 0
+    {
+        let mut out = Vec::with_capacity(len as usize);
+        for idx in 0..len as u32 {
+            match array.get(&mut *caller, start as u32 + idx)? {
+                Val::I32(value) => out.push(value as u8),
+                _ => {
+                    return Err(wasmtime::Error::msg(format!(
+                        "{effect}: malformed packed Bytes view"
+                    )));
+                }
+            }
+        }
+        let values_json = aver::replay::JsonValue::Array(
+            out.iter()
+                .copied()
+                .map(|value| aver::replay::JsonValue::from(i64::from(value)))
+                .collect(),
+        );
+        return Ok((Ok(out), json_record("Bytes", vec![("values", values_json)])));
+    }
     let malformed = format!("{effect}: malformed Bytes.values carrier");
     let mut current = match bytes.field(&mut *caller, 0)? {
         Val::AnyRef(r) => r,

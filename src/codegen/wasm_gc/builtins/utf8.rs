@@ -18,6 +18,9 @@ struct Utf8Types {
     list_idx: Option<u32>,
     aint_idx: Option<u32>,
     packed: bool,
+    /// The array a `Bytes` view shows, where `Bytes` is a view
+    /// (`packed_sequences::packed_views`).
+    array_idx: Option<u32>,
 }
 
 impl Utf8Types {
@@ -68,11 +71,15 @@ impl Utf8Types {
             list_idx,
             aint_idx,
             packed: packed_bytes.is_some(),
+            array_idx: packed_bytes
+                .filter(|packed| packed.is_view())
+                .map(|packed| packed.array_idx),
         })
     }
 
     fn declarations(&self) -> Result<String, WasmGcError> {
         let mut indices = vec![self.string_idx, self.bytes_idx];
+        indices.extend(self.array_idx);
         indices.extend(self.result_idx);
         indices.extend(self.list_idx);
         indices.extend(self.aint_idx);
@@ -89,6 +96,10 @@ impl Utf8Types {
         for idx in 0..=max {
             let ty = if idx == self.string_idx {
                 "(type $string (array (mut i8)))"
+            } else if idx == self.bytes_idx && self.array_idx.is_some() {
+                "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))"
+            } else if Some(idx) == self.array_idx {
+                "(type $barr (array (mut i8)))"
             } else if idx == self.bytes_idx && self.packed {
                 "(type $bytes (array (mut i8)))"
             } else if idx == self.bytes_idx {
@@ -118,7 +129,30 @@ impl Utf8Types {
 pub(super) fn emit_to_utf8(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let types = Utf8Types::discover(registry, false)?;
     let declarations = types.declarations()?;
-    let (callees, locals, body) = if types.packed {
+    let (callees, locals, body) = if types.array_idx.is_some() {
+        // The new array, as a view of all of it.
+        (
+            String::new(),
+            "(local $out (ref null $barr))",
+            r#"local.get $s
+  array.len
+  array.new_default $barr
+  local.set $out
+  local.get $out
+  i32.const 0
+  local.get $s
+  i32.const 0
+  local.get $s
+  array.len
+  array.copy $barr $string
+  local.get $out
+  i32.const 0
+  local.get $out
+  array.len
+  struct.new $bytes"#
+                .to_string(),
+        )
+    } else if types.packed {
         (
             String::new(),
             "(local $out (ref null $bytes))",
@@ -181,7 +215,20 @@ pub(super) fn emit_to_utf8(registry: &TypeRegistry) -> Result<Function, WasmGcEr
 pub(super) fn emit_from_utf8(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let types = Utf8Types::discover(registry, true)?;
     let declarations = types.declarations()?;
-    let (callees, carrier_locals, length, load_byte, advance) = if types.packed {
+    let (callees, carrier_locals, length, load_byte, advance) = if types.array_idx.is_some() {
+        // The bytes the view shows, read where they lie in its array.
+        (
+            String::new(),
+            "(local $arr (ref null $barr)) (local $start i32)".to_string(),
+            "local.get $input struct.get $bytes 0 local.set $arr \
+             local.get $input struct.get $bytes 1 local.set $start \
+             local.get $input struct.get $bytes 2 local.set $len"
+                .to_string(),
+            "local.get $arr local.get $start local.get $i i32.add array.get_u $barr local.set $byte"
+                .to_string(),
+            String::new(),
+        )
+    } else if types.packed {
         (
             String::new(),
             String::new(),

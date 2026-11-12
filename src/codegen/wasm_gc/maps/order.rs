@@ -552,8 +552,29 @@ fn emit_cmp_packed_sequence(name: &str, registry: &TypeRegistry) -> Result<Funct
     );
     // locals 2=len(a), 3=len(b), 4=index, 5/6=current elements, 7=verdict.
     let element_val = if is_i64 { ValType::I64 } else { ValType::I32 };
-    let mut f = Function::new([(3, ValType::I32), (2, element_val), (1, ValType::I32)]);
-    for (source, target) in [(0, 2), (1, 3)] {
+    // A view is read through the array of the bytes it shows (locals 8, 9).
+    let view = registry.packed_view(name);
+    let array_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(packed.array_idx),
+    });
+    let mut locals = vec![(3, ValType::I32), (2, element_val), (1, ValType::I32)];
+    if view.is_some() {
+        locals.push((2, array_ref));
+    }
+    let mut f = Function::new(locals);
+    let (left, right) = match view {
+        Some(view) => {
+            for (source, target) in [(0, 8), (1, 9)] {
+                f.instruction(&Instruction::LocalGet(source));
+                f.instruction(&Instruction::Call(view.array_of));
+                f.instruction(&Instruction::LocalSet(target));
+            }
+            (8, 9)
+        }
+        None => (0, 1),
+    };
+    for (source, target) in [(left, 2), (right, 3)] {
         f.instruction(&Instruction::LocalGet(source));
         f.instruction(&Instruction::ArrayLen);
         f.instruction(&Instruction::LocalSet(target));
@@ -570,18 +591,18 @@ fn emit_cmp_packed_sequence(name: &str, registry: &TypeRegistry) -> Result<Funct
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::BrIf(1));
-    for (source, target) in [(0, 5), (1, 6)] {
+    for (source, target) in [(left, 5), (right, 6)] {
         f.instruction(&Instruction::LocalGet(source));
         f.instruction(&Instruction::LocalGet(4));
         match packed.layout.element {
             PackedIntElement::U8 | PackedIntElement::U16 => {
-                f.instruction(&Instruction::ArrayGetU(packed.type_idx));
+                f.instruction(&Instruction::ArrayGetU(packed.array_idx));
             }
             PackedIntElement::I8 | PackedIntElement::I16 => {
-                f.instruction(&Instruction::ArrayGetS(packed.type_idx));
+                f.instruction(&Instruction::ArrayGetS(packed.array_idx));
             }
             PackedIntElement::U32 | PackedIntElement::I32 | PackedIntElement::I64 => {
-                f.instruction(&Instruction::ArrayGet(packed.type_idx));
+                f.instruction(&Instruction::ArrayGet(packed.array_idx));
             }
         }
         f.instruction(&Instruction::LocalSet(target));

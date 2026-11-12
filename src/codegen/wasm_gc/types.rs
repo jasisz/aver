@@ -48,8 +48,20 @@ use crate::ast::{TopLevel, Type, TypeDef};
 /// field-projection boundaries.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PackedSequenceType {
+    /// The type a value of the refinement has: its array, or, where views
+    /// are on (`packed_sequences::packed_views`), a view of one.
     pub(super) type_idx: u32,
+    /// The array that holds the elements. The same as `type_idx` without
+    /// views.
+    pub(super) array_idx: u32,
     pub(super) layout: crate::codegen::proof_lower::PackedSequenceLayout,
+}
+
+impl PackedSequenceType {
+    /// Whether values of this type are views `(array, start, len)`.
+    pub(super) fn is_view(&self) -> bool {
+        self.type_idx != self.array_idx
+    }
 }
 
 /// User-type lookup tables built once before any fn body emit.
@@ -152,6 +164,11 @@ pub(super) struct TypeRegistry {
     /// bridge between `List<Int>` and the packed array explicitly.
     pub(super) packed_sequences: HashMap<String, PackedSequenceType>,
     pub(super) packed_sequence_order: Vec<String>,
+    /// Per packed type held as a view: its `array_of` helper
+    /// (`packed_sequences::ViewOps`), for the code outside the packed
+    /// helpers that reads the elements as an array. Filled once the helpers'
+    /// slots are assigned.
+    pub(super) packed_view_ops: HashMap<String, super::packed_sequences::ViewOps>,
     /// Identity-preserving qualified→bare type-name aliases derived by
     /// `flatten_multimodule` from its collision info: `"Dep.Octets"` →
     /// `"Octets"` ONLY when `Dep` is the sole declarer of the bare name
@@ -1548,6 +1565,7 @@ impl TypeRegistry {
             int_keys_boxed,
             packed_sequences: HashMap::new(),
             packed_sequence_order: Vec::new(),
+            packed_view_ops: HashMap::new(),
             // Populated post-build by `module.rs` from the aliases
             // `flatten_multimodule` derived; empty for single-module
             // programs and for callers that did not flatten.
@@ -2067,12 +2085,25 @@ impl TypeRegistry {
     ) {
         let mut names: Vec<String> = layouts.keys().cloned().collect();
         names.sort();
+        let views = super::packed_sequences::packed_views();
         for name in names {
             let layout = layouts[&name];
-            let type_idx = self.user_type_count;
+            let array_idx = self.user_type_count;
             self.user_type_count += 1;
-            self.packed_sequences
-                .insert(name.clone(), PackedSequenceType { type_idx, layout });
+            let type_idx = if views {
+                self.user_type_count += 1;
+                array_idx + 1
+            } else {
+                array_idx
+            };
+            self.packed_sequences.insert(
+                name.clone(),
+                PackedSequenceType {
+                    type_idx,
+                    array_idx,
+                    layout,
+                },
+            );
             self.packed_sequence_order.push(name);
         }
     }
@@ -2223,6 +2254,15 @@ impl TypeRegistry {
     /// Packed nominal carrier selected by the compiler-owned byte payload.
     /// Exact post-flatten identity matters when an entry type collides with
     /// the standard dependency's bare `Bytes` name.
+    /// The `array_of` helper of packed type `name`, when its values are
+    /// views.
+    pub(super) fn packed_view(&self, name: &str) -> Option<super::packed_sequences::ViewOps> {
+        self.packed_view_ops
+            .get(self.canonical_type_name(name))
+            .or_else(|| self.packed_view_ops.get(name))
+            .copied()
+    }
+
     pub(super) fn byte_payload_packed_sequence(&self) -> Option<PackedSequenceType> {
         let name = self.byte_payload_type_name.as_deref()?;
         self.packed_sequence(name).filter(|packed| {
