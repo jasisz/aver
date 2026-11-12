@@ -222,11 +222,18 @@ impl<E: PackedInt> AverPacked<E> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn as_slice(&self) -> &[E] {
-        self.storage
-            .as_ref()
-            .map_or(&[], |items| &items[self.start..self.end()])
+        match self.storage.as_ref() {
+            // Every view is made with `start <= end <= len` of its body, and
+            // a body never shrinks, so the range is not checked again at each
+            // read.
+            Some(items) => {
+                debug_assert!(self.start <= self.end() && self.end() <= items.len());
+                unsafe { items.get_unchecked(self.start..self.end()) }
+            }
+            None => &[],
+        }
     }
 
     #[inline]
@@ -328,12 +335,21 @@ impl AverPackedU8 {
     /// The octet at `position`, or `-1` at a negative position and at one at
     /// or past the length: the answer of the standard library's `Bytes.get`
     /// with `Option.None` as `-1`, which no octet is.
-    #[inline]
+    ///
+    /// One comparison against the length decides: a negative position is a
+    /// large one as an unsigned word. The range of the view is not checked
+    /// again (see [`AverPacked::as_slice`]), so a run of reads from one buffer
+    /// stays a few instructions each and inlines where it is written.
+    #[inline(always)]
     pub fn byte_at_i64(&self, position: i64) -> i64 {
-        usize::try_from(position)
-            .ok()
-            .and_then(|position| self.as_slice().get(position))
-            .map_or(-1, |byte| i64::from(*byte))
+        let index = position as u64;
+        match self.storage.as_ref() {
+            Some(items) if index < self.len() as u64 => {
+                debug_assert!(self.end() <= items.len());
+                i64::from(unsafe { *items.get_unchecked(self.start + index as usize) })
+            }
+            _ => -1,
+        }
     }
 }
 

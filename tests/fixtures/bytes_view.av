@@ -1,0 +1,32 @@
+module BytesView
+    intent = "Bytes.len, Bytes.drop and Bytes.take read the bytes where they lie, so a caller keeps lending them."
+    depends [Bytes]
+    effects [Console.print]
+
+fn rest(b: Bytes, i: Int) -> Int
+    ? "The length of the bytes past i."
+    Bytes.len(Bytes.drop(b, i))
+
+fn cut(b: Bytes, i: Int, n: Int) -> Int
+    ? "The sum of the first two of n bytes from i."
+    match Bytes.take(Bytes.drop(b, i), n)
+        bs -> Option.withDefault(Bytes.get(bs, 0), 0) + Option.withDefault(Bytes.get(bs, 1), 0)
+
+fn step(b: Bytes, i: Int) -> Int
+    ? "One read per position."
+    match Bytes.get(b, i)
+        Option.Some(34) -> rest(b, i)
+        Option.Some(x) -> x + Bytes.len(b) + cut(b, i, 2)
+        Option.None -> 0
+
+fn walk(b: Bytes, k: Int, s: Int) -> Int
+    ? "Every position, the bytes lent each time."
+    match k < 0
+        true -> s
+        false -> walk(b, k - 1, s + step(b, k))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(walk(Bytes.fromList([49, 34, 51, 52, 53]), 6, 0)))
+    Console.print(String.fromInt(rest(Bytes.fromList([1, 2, 3]), -4)))
+    Console.print(String.fromInt(cut(Bytes.fromList([1, 2, 3]), 2, 5)))

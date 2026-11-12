@@ -191,6 +191,13 @@ pub struct MirEmitCtx<'a> {
     /// an enclosing `match Vector.get` already wrote, and the name it bound
     /// the written vector to (see [`emit_vector_take_match`]).
     pub taken_vector: Option<(usize, &'a str)>,
+    /// The matches that read fields of a local before the call they match
+    /// on (see [`crate::ir::mir::field_moves::early_moves`]).
+    pub early_moves: &'a HashMap<usize, crate::ir::mir::field_moves::EarlyMove>,
+    /// While such a match is emitted: the local its subject moves into the
+    /// call, and the fields its arms read of it, each read already under a
+    /// name of its own (see [`emit_early_move_match`]).
+    pub early_move: Option<(LocalId, &'a [(String, String)])>,
     /// Elements a `match Vector.get(v, i)` lends out of a vector whose root
     /// local some arm hands on: the element's slot and name, and the root's
     /// slot (see [`lent_vector_get_in_wrapper`]). An arm that moves the root
@@ -283,6 +290,8 @@ impl<'a> MirEmitCtx<'a> {
             list_slot: None,
             record_alias: None,
             taken_vector: None,
+            early_moves: empty_early_moves(),
+            early_move: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -340,6 +349,8 @@ impl<'a> MirEmitCtx<'a> {
             list_slot: None,
             record_alias: None,
             taken_vector: None,
+            early_moves: &policy.early_moves,
+            early_move: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -384,6 +395,8 @@ impl<'a> MirEmitCtx<'a> {
             list_slot: None,
             record_alias: None,
             taken_vector: None,
+            early_moves: &policy.early_moves,
+            early_move: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -417,6 +430,12 @@ fn empty_slot_set() -> &'static HashSet<crate::ir::mir::LocalId> {
     static EMPTY: std::sync::OnceLock<HashSet<crate::ir::mir::LocalId>> =
         std::sync::OnceLock::new();
     EMPTY.get_or_init(HashSet::new)
+}
+
+fn empty_early_moves() -> &'static HashMap<usize, crate::ir::mir::field_moves::EarlyMove> {
+    static EMPTY: std::sync::OnceLock<HashMap<usize, crate::ir::mir::field_moves::EarlyMove>> =
+        std::sync::OnceLock::new();
+    EMPTY.get_or_init(HashMap::new)
 }
 
 fn empty_addr_set() -> &'static HashSet<usize> {
@@ -519,6 +538,8 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
             }
             // An empty literal names its element type, as the builtin does.
             let operand = mir_typed_empty_literal(arg, ctx).or_else(|| emit_mir_expr(arg, ctx))?;
+            // A packed carrier's field is counted where it lies.
+            let operand = packed_field_read(&operand).map_or(operand.clone(), str::to_string);
             Some(match arg.ty() {
                 Some(Type::Str) => format!("(({operand}).chars().count() as i64)"),
                 _ => format!("(({operand}).len() as i64)"),
@@ -636,6 +657,8 @@ pub(super) struct MirFnEmitPolicy {
     pub moved_roots: HashSet<crate::ir::mir::LocalId>,
     /// See [`MirEmitCtx::moved_paths`].
     pub moved_paths: Vec<(usize, crate::ir::mir::LocalId, Vec<String>)>,
+    /// See [`MirEmitCtx::early_moves`].
+    pub early_moves: HashMap<usize, crate::ir::mir::field_moves::EarlyMove>,
 }
 
 impl MirFnEmitPolicy {
@@ -656,6 +679,7 @@ impl MirFnEmitPolicy {
             taken_fields: HashSet::new(),
             moved_roots: HashSet::new(),
             moved_paths: Vec::new(),
+            early_moves: HashMap::new(),
         }
     }
 
@@ -696,6 +720,7 @@ impl MirFnEmitPolicy {
             taken_fields: HashSet::new(),
             moved_roots: HashSet::new(),
             moved_paths: Vec::new(),
+            early_moves: HashMap::new(),
         }
     }
 
@@ -713,6 +738,7 @@ impl MirFnEmitPolicy {
             crate::ir::mir::field_moves::moved_roots(&mir_fn.body.node, &self.movable_projections);
         self.moved_paths =
             crate::ir::mir::field_moves::moved_paths(&mir_fn.body.node, &self.movable_projections);
+        self.early_moves = crate::ir::mir::field_moves::early_moves(&mir_fn.body.node);
     }
 
     /// Record which field reads of `mir_fn`'s body take their field out of
@@ -998,10 +1024,13 @@ pub(super) fn param_handed_on(
     let consumed = consumed.and_then(|owned| owned.get(index)).copied() == Some(true);
     ((matches!(ty, Type::Named { .. }) || is_owned_collection_candidate(ty))
         && (consumed
-            || mir_fn
-                .params
-                .get(index)
-                .is_some_and(|param| result_hands_on(&mir_fn.body.node, param.local))))
+            || mir_fn.params.get(index).is_some_and(|param| {
+                let builtins = ctx
+                    .mir_program
+                    .as_ref()
+                    .map_or(&[][..], |program| &program.builtins[..]);
+                result_hands_on(&mir_fn.body.node, param.local, builtins)
+            })))
         || (matches!(ty, Type::List(_) | Type::Result(..)) && consumed)
 }
 
@@ -1015,7 +1044,8 @@ pub(super) fn param_handed_on(
 /// that hands its param on in its result takes it by value: borrowed, it
 /// would clone the value while the caller still holds it, so every Map and
 /// Vector inside has two owners and the next in-place update copies it.
-fn result_hands_on(expr: &MirExpr, slot: LocalId) -> bool {
+fn result_hands_on(expr: &MirExpr, slot: LocalId, builtins: &[String]) -> bool {
+    let result_hands_on = |expr: &MirExpr, slot| result_hands_on(expr, slot, builtins);
     match expr {
         MirExpr::Local(local) => local.node.slot == slot && local.node.last_use,
         MirExpr::RecordUpdate(update) => {
@@ -1024,14 +1054,19 @@ fn result_hands_on(expr: &MirExpr, slot: LocalId) -> bool {
         MirExpr::RecordCreate(record) => record.node.fields.iter().any(|field| {
             match &field.value.node {
                 // `R(memo = Map.set(r.memo, ..))`: the field goes on updated.
-                MirExpr::Call(call) => call.node.args.first().is_some_and(|target| {
-                    let MirExpr::Project(project) = &target.node else {
-                        return false;
-                    };
-                    local_of(&project.node.base.node).is_some_and(|base| {
-                        base.slot == slot && base.last_use && project.node.field == field.name
+                // `R(values = List.drop(r.values, n))` reads the field where
+                // it lies and makes a view of it, so the param is not taken
+                // for it.
+                MirExpr::Call(call) if !reads_list_in_place(&call.node.callee, builtins) => {
+                    call.node.args.first().is_some_and(|target| {
+                        let MirExpr::Project(project) = &target.node else {
+                            return false;
+                        };
+                        local_of(&project.node.base.node).is_some_and(|base| {
+                            base.slot == slot && base.last_use && project.node.field == field.name
+                        })
                     })
-                }),
+                }
                 // `R(st = St.update(r.st, ..))`: the rest of the field goes on
                 // into the new record.
                 MirExpr::RecordUpdate(update) => {
@@ -1794,7 +1829,7 @@ fn owned_params_with(
                     .map(|i| {
                         let slot = mir_fn.params[i].local;
                         !lends(i)
-                            || result_hands_on(&mir_fn.body.node, slot)
+                            || result_hands_on(&mir_fn.body.node, slot, &program.builtins)
                             || builtin_takes_local(&mir_fn.body.node, slot, &program.builtins)
                             || unwrapped_at_last_use(&mir_fn.body.node, slot)
                     })
@@ -1854,10 +1889,9 @@ fn owned_params_with(
     for (id, len) in &loops {
         let returns = |i: usize| {
             program.fn_by_id(*id).is_some_and(|mir_fn| {
-                mir_fn
-                    .params
-                    .get(i)
-                    .is_some_and(|param| result_hands_on(&mir_fn.body.node, param.local))
+                mir_fn.params.get(i).is_some_and(|param| {
+                    result_hands_on(&mir_fn.body.node, param.local, &program.builtins)
+                })
             })
         };
         consuming.insert(*id, (0..*len).map(returns).collect());
@@ -2004,6 +2038,19 @@ fn unwrapped_at_last_use(expr: &MirExpr, slot: LocalId) -> bool {
         found = found || unwrapped_at_last_use(child, slot);
     });
     found
+}
+
+/// Whether `callee` is a list built-in that reads the list it is given first
+/// through a borrow and makes its result as a view or a count of it
+/// (`List.drop`, `List.take`, `List.len`).
+fn reads_list_in_place(callee: &MirCallee, builtins: &[String]) -> bool {
+    let MirCallee::Builtin(id) = callee else {
+        return false;
+    };
+    matches!(
+        builtins.get(id.0 as usize).map(String::as_str),
+        Some("List.drop" | "List.take" | "List.len")
+    )
 }
 
 /// Whether `callee` is a built-in that only reads the collection it is given
@@ -3791,7 +3838,18 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 return Some(emit_mir_static_ref(&dotted, emit_ctx));
             }
             let base = emit_mir_expr(&proj.base, emit_ctx)?;
-            let projected = format!("{}.{}", base, aver_name_to_rust(&proj.field));
+            // A field read before the call its record was moved into (see
+            // [`emit_early_move_match`]).
+            let early = emit_ctx.early_move.and_then(|(slot, fields)| {
+                local_of(&proj.base.node)
+                    .filter(|local| local.slot == slot)
+                    .and_then(|_| fields.iter().find(|(field, _)| *field == proj.field))
+                    .map(|(_, name)| name.clone())
+            });
+            let projected = match early {
+                Some(name) => name,
+                None => format!("{}.{}", base, aver_name_to_rust(&proj.field)),
+            };
             if takes_field(&expr.node, emit_ctx) {
                 return Some(format!("std::mem::take(&mut {projected})"));
             }
@@ -5854,6 +5912,71 @@ fn emit_vector_take_match(
     ))
 }
 
+/// `match f(.., r, ..)` whose arms read only fields of the owned local `r`
+/// (see [`crate::ir::mir::field_moves::EarlyMove`]): the fields are read
+/// first, each under a name of its own, and `r` itself moves into the call
+/// rather than being copied whole for it.
+fn emit_early_move_match(
+    m: &MirMatch,
+    ctx: &MirEmitCtx<'_>,
+    render_arm: &dyn Fn(&Spanned<MirExpr>, &MirEmitCtx<'_>) -> Option<String>,
+) -> Option<String> {
+    if ctx.early_move.is_some() {
+        return None;
+    }
+    let early = ctx.early_moves.get(&(m as *const MirMatch as usize))?;
+    let MirExpr::Call(call) = &m.subject.node else {
+        return None;
+    };
+    let MirCallee::Fn(callee) = call.node.callee else {
+        return None;
+    };
+    let (index, local) = call.node.args.iter().enumerate().find_map(|(index, arg)| {
+        local_of(&arg.node)
+            .filter(|local| local.slot == early.slot)
+            .map(|local| (index, local))
+    })?;
+    if !super::ownership::root_is_owned(local, ctx) {
+        return None;
+    }
+    // A param the callee borrows is lent as it is: the arms then move the
+    // fields they read out of `r` themselves, and reading them first would
+    // copy them.
+    let name = ctx.symbol_table.fn_entry(callee).key.canonical();
+    let borrowed = callee_borrow_mask(&name, call.node.args.len(), ctx.codegen?);
+    if borrowed.get(index).copied().unwrap_or(true) {
+        return None;
+    }
+    let root = aver_name_to_rust(&local.name);
+    let depth = ctx.record_alias.map_or(0, |alias| alias.depth + 1);
+    let names: Vec<(String, String)> = early
+        .fields
+        .iter()
+        .map(|field| {
+            let name = format!("__early{depth}_{}", aver_name_to_rust(field));
+            (field.clone(), name)
+        })
+        .collect();
+    let reads: String = names
+        .iter()
+        .map(|(field, name)| {
+            format!(
+                "let mut {name} = {root}.{}.clone(); ",
+                aver_name_to_rust(field)
+            )
+        })
+        .collect();
+    // The subject moves `r`, and the arms read the fields under their
+    // names; the ordinary path emits both under this ctx, which keeps it
+    // from coming back here.
+    let inner = MirEmitCtx {
+        early_move: Some((early.slot, &names)),
+        ..*ctx
+    };
+    let matched = emit_mir_match_with(m, &inner, render_arm)?;
+    Some(format!("{{ {reads}{matched} }}"))
+}
+
 /// Core of [`emit_mir_match`], parameterized over how each arm body is
 /// rendered. `render_arm` turns one arm's `Spanned<MirExpr>` body into
 /// Rust source (or `None` → fall back). The default path renders bodies
@@ -5868,6 +5991,9 @@ fn emit_mir_match_with(
 ) -> Option<String> {
     if let Some(taken) = emit_vector_take_match(m, emit_ctx, render_arm) {
         return Some(taken);
+    }
+    if let Some(early) = emit_early_move_match(m, emit_ctx, render_arm) {
+        return Some(early);
     }
     // Translate patterns up front — bail if any pattern can't map.
     let mut arms: Vec<ResolvedMatchArm> = Vec::with_capacity(m.arms.len());
@@ -6770,6 +6896,30 @@ fn emit_dropped_head_match(
         emit_list_count(count, emit_mir_expr(count, ctx)?, ctx),
         rendered.join(", ")
     ))
+}
+
+/// The packed carrier a rendered `List<Int>` view of a field is made from
+/// (`(r.values).to_int_list()`), so a built-in that only reads the list can
+/// read the carrier where it lies.
+fn packed_field_read(rendered: &str) -> Option<&str> {
+    let mut text = rendered.trim();
+    while let Some(inner) = text.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
+        // Only parentheses that wrap the whole text.
+        let mut depth = 0i32;
+        let balanced = inner.chars().all(|c| {
+            depth += match c {
+                '(' => 1,
+                ')' => -1,
+                _ => 0,
+            };
+            depth >= 0
+        });
+        if !balanced || depth != 0 {
+            break;
+        }
+        text = inner.trim();
+    }
+    text.strip_suffix(".to_int_list()")
 }
 
 /// Whether evaluating a match subject leaves temporaries behind: a call (or
@@ -10896,8 +11046,12 @@ fn emit_mir_builtin_call(
             {
                 "aver_rt::AverInt::from_i64(0)".to_string()
             } else {
-                // Producer: wrap the `usize` length in `AverInt`.
-                format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0))
+                // Producer: wrap the `usize` length in `AverInt`. A packed
+                // carrier's field is counted where it lies, not through the
+                // `List<Int>` view it would otherwise be made into.
+                let list = arg!(0);
+                let list = packed_field_read(&list).unwrap_or(&list);
+                format!("aver_rt::AverInt::from_i64({list}.len() as i64)")
             }
         }
         "List.prepend" => {
@@ -10936,7 +11090,13 @@ fn emit_mir_builtin_call(
             // whole list here and nothing everywhere else. The list is read
             // before the count, in source order: ownership decided which of
             // them makes the last read of a variable both use.
-            if type_is_int_list(args[0].ty()) {
+            if let Some(carrier) = packed_field_read(&list) {
+                // A packed carrier's field is cut where it lies, as in
+                // `List.drop`.
+                format!(
+                    "{{ let {list_temp} = &{carrier}; let {count_temp} = {count}; aver_rt::AverIntList::from_packed({list_temp}.take_first({count_temp})) }}"
+                )
+            } else if type_is_int_list(args[0].ty()) {
                 format!(
                     "{{ let {list_temp} = &({list}); let {count_temp} = {count}; {list_temp}.take_first({count_temp}) }}"
                 )
@@ -10953,7 +11113,14 @@ fn emit_mir_builtin_call(
             let list_temp = generated_ident("xs");
             // `drop_first` shares the body and advances the offset, so the
             // step costs what it steps over rather than what is left behind.
-            // The list is read before the count, as in `List.take`.
+            // The list is read before the count, as in `List.take`. A packed
+            // carrier's field steps where it lies: the view shares its body,
+            // so it is not first made into a `List<Int>` view of its own.
+            if let Some(carrier) = packed_field_read(&list) {
+                return Some(format!(
+                    "{{ let {list_temp} = &{carrier}; let {count_temp} = {count}; aver_rt::AverIntList::from_packed({list_temp}.drop_first({count_temp})) }}"
+                ));
+            }
             format!(
                 "{{ let {list_temp} = &({list}); let {count_temp} = {count}; {list_temp}.drop_first({count_temp}) }}"
             )
@@ -11823,6 +11990,8 @@ mod tests {
             list_slot: None,
             record_alias: None,
             taken_vector: None,
+            early_moves: &policy.early_moves,
+            early_move: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],
@@ -13020,6 +13189,8 @@ mod tests {
             list_slot: None,
             record_alias: None,
             taken_vector: None,
+            early_moves: &policy.early_moves,
+            early_move: None,
             lent_elements: &[],
             self_loop: None,
             lent_rebinds: &[],

@@ -5902,6 +5902,48 @@ fn rust_a_byte_compared_to_a_literal_octet_is_read_in_place() {
     );
 }
 
+/// `Bytes.len`, `Bytes.drop` and `Bytes.take` read the octets where they
+/// lie. `Bytes.drop` took its `Bytes` by value (its result `Bytes(values =
+/// List.drop(bytes.values, n))` looked like a field going on), so every
+/// caller up the chain took the bytes by value too and a loop cloned them per
+/// step; `Bytes.len` counted a `List<Int>` view it first made of them.
+#[test]
+fn rust_bytes_cut_and_counted_where_they_lie_stay_lent() {
+    let src = include_str!("fixtures/bytes_view.av");
+    let expected = "573\n3\n3";
+    let vm = run_vm_inline("bytes_view", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("bytes_view", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("bytes_view", src);
+    assert!(
+        emitted.contains("pub fn rest(b @ _: &crate::aver_generated::bytes::Bytes")
+            && emitted.contains("pub fn step(b @ _: &crate::aver_generated::bytes::Bytes")
+            && !emitted.contains("b.clone()"),
+        "the bytes must stay lent down the chain:\n{emitted}"
+    );
+}
+
+/// `match took(q, la)` whose arms read only `la.next`: the field is read
+/// before the call and `la` moves into it, where the whole record was cloned
+/// for the call before.
+#[test]
+fn rust_a_record_whose_field_is_read_after_the_call_moves_into_it() {
+    let src = include_str!("fixtures/early_move.av");
+    let expected = "15\n19";
+    let vm = run_vm_inline("early_move", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("early_move", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("early_move", src);
+    assert!(
+        emitted.contains("took(q, la)") && !emitted.contains("la.clone()"),
+        "the record must move into the call:\n{emitted}"
+    );
+}
+
 /// `Option.withDefault(Vector.set(v, i, f(v)), v)` with `v` moving into the
 /// set: the value read `v` after the set had taken it, and the generated
 /// Rust did not build (E0382). The index and the value are now computed

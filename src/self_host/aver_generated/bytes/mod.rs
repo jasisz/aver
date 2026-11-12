@@ -277,7 +277,7 @@ pub fn empty() -> Bytes {
 #[inline(always)]
 pub fn len(bytes @ _: &Bytes) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    aver_rt::AverInt::from_i64((((bytes.values).to_int_list()).len() as i64))
+    aver_rt::AverInt::from_i64(((bytes.values).len() as i64))
 }
 
 /// The octet at a zero-based index; Option.None below zero or at the length and past it.
@@ -307,26 +307,26 @@ pub fn concat(mut left @ _: Bytes, right @ _: &Bytes) -> Bytes {
 }
 
 /// At most count octets from the front; non-positive counts give empty bytes.
-pub fn take(mut bytes @ _: Bytes, count @ _: i64) -> Bytes {
+pub fn take(bytes @ _: &Bytes, count @ _: i64) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed({
-            let __xs = &(aver_rt::AverIntList::from_packed(bytes.values));
+            let __xs = &(bytes.values);
             let __n = aver_rt::clamp_list_count_i64(count);
-            __xs.take_first(__n)
+            aver_rt::AverIntList::from_packed(__xs.take_first(__n))
         })
         .expect("proof-packed construction escaped its refinement gate"),
     }
 }
 
 /// The octets after count positions; non-positive counts preserve all bytes.
-pub fn drop(mut bytes @ _: Bytes, count @ _: i64) -> Bytes {
+pub fn drop(bytes @ _: &Bytes, count @ _: i64) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed({
-            let __xs = &(aver_rt::AverIntList::from_packed(bytes.values));
+            let __xs = &(bytes.values);
             let __n = aver_rt::clamp_list_count_i64(count);
-            __xs.drop_first(__n)
+            aver_rt::AverIntList::from_packed(__xs.drop_first(__n))
         })
         .expect("proof-packed construction escaped its refinement gate"),
     }
