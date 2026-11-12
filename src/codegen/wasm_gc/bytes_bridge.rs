@@ -491,7 +491,7 @@ fn emit_result_ok_from_lm(
 /// after it (`TypeRegistry::install_packed_sequences`).
 fn view_types(array_idx: u32) -> String {
     format!(
-        "{}\n(type $barr (array (mut i8)))\n(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))",
+        "{}\n(type $barr (array (mut i8)))\n(type $bytes (struct (field (ref null $barr)) (field i32) (field i32) (field structref)))",
         wat_helper::padding_types(array_idx)
     )
 }
@@ -529,6 +529,7 @@ fn emit_from_lm_view(array_idx: u32) -> Result<Function, WasmGcError> {
             local.get $arr
             i32.const 0
             local.get $len
+            ref.null none
             struct.new $bytes)
         )
     "#

@@ -97,7 +97,7 @@ impl Utf8Types {
             let ty = if idx == self.string_idx {
                 "(type $string (array (mut i8)))"
             } else if idx == self.bytes_idx && self.array_idx.is_some() {
-                "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32)))"
+                "(type $bytes (struct (field (ref null $barr)) (field i32) (field i32) (field structref)))"
             } else if Some(idx) == self.array_idx {
                 "(type $barr (array (mut i8)))"
             } else if idx == self.bytes_idx && self.packed {
@@ -149,6 +149,7 @@ pub(super) fn emit_to_utf8(registry: &TypeRegistry) -> Result<Function, WasmGcEr
   i32.const 0
   local.get $out
   array.len
+  ref.null none
   struct.new $bytes"#
                 .to_string(),
         )

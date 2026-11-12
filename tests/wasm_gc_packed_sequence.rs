@@ -1026,6 +1026,44 @@ fn main() -> Unit
     Console.print("{Map.len(m)} {Option.withDefault(Map.get(m, Bytes.fromList([108, 108])), 0)}")
 "#;
 
+const BYTES_APPEND: &str = r#"module Append
+    intent = "Bytes.concat grows a shared array in place without other views seeing it"
+    depends [Bytes]
+    effects [Console.print]
+
+fn grow(b: Bytes, pool: Bytes, n: Int) -> Bytes
+    ? "Appends one byte of the pool n times."
+    match n
+        0 -> b
+        _ -> grow(Bytes.concat(b, Bytes.take(Bytes.drop(pool, Int.mod(n, 4)), 1)), pool, n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    a = Bytes.concat(Bytes.fromList([1, 2]), Bytes.fromList([3]))
+    b = Bytes.concat(a, Bytes.fromList([4, 5]))
+    c = Bytes.concat(a, Bytes.fromList([6]))
+    d = Bytes.concat(b, Bytes.fromList([7]))
+    e = Bytes.concat(Bytes.take(d, 3), Bytes.fromList([8]))
+    f = Bytes.concat(Bytes.drop(d, 2), b)
+    g = grow(Bytes.fromList([0]), Bytes.fromList([9, 10, 11, 12]), 40)
+    h = Bytes.concat(Bytes.take(g, 5), g)
+    Console.print("{Bytes.toHex(a)} {Bytes.toHex(b)} {Bytes.toHex(c)} {Bytes.toHex(d)}")
+    Console.print("{Bytes.toHex(e)} {Bytes.toHex(f)} {Bytes.toHex(b)} {Bytes.toHex(Bytes.concat(c, c))}")
+    Console.print("{Bytes.len(g)} {Bytes.toHex(Bytes.drop(g, 30))} {Bytes.toHex(Bytes.take(h, 8))} {Bytes.len(h)}")
+"#;
+
+/// `Bytes.concat` on views writes the right side after a left side that ends
+/// where its array's use does, without copying the left. Views made earlier,
+/// and a second append to the same left side, must not see those bytes.
+#[test]
+fn bytes_append_in_place_answers_as_the_vm_does() {
+    let (vm_ok, vm) = run(BYTES_APPEND, false, true);
+    let (views_ok, views) = run(BYTES_APPEND, true, true);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(views_ok, "wasm-gc with views failed: {views}");
+    assert_eq!(views, vm);
+}
+
 /// A plain raw wasm-gc build holds `Bytes` as a view `(array, start, len)`:
 /// `take` and `drop` share the array, and every reader of the elements reads
 /// the view where it lies. It answers as the VM does, and as the array form

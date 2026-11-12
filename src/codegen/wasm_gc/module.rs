@@ -7589,7 +7589,28 @@ fn emit_user_types(
                         element_type: wasm_encoder::StorageType::Val(ValType::I32),
                         mutable: false,
                     },
+                    // Null, or the `cell_idx` cell: how much of the array
+                    // views sharing it use (see `emit_concat_view`).
+                    wasm_encoder::FieldType {
+                        element_type: wasm_encoder::StorageType::Val(ValType::Ref(
+                            wasm_encoder::RefType {
+                                nullable: true,
+                                heap_type: wasm_encoder::HeapType::Abstract {
+                                    shared: false,
+                                    ty: wasm_encoder::AbstractHeapType::Struct,
+                                },
+                            },
+                        )),
+                        mutable: false,
+                    },
                 ]),
+            ));
+            entries.push((
+                packed.cell_idx(),
+                mk_struct(vec![wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                }]),
             ));
         }
     }

@@ -515,6 +515,7 @@ fn emit_pack(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcErro
     if packed.is_view() {
         f.instruction(&Instruction::I32Const(0));
         f.instruction(&Instruction::LocalGet(2));
+        no_cell(&mut f);
         f.instruction(&Instruction::StructNew(packed.type_idx));
     }
     f.instruction(&Instruction::End);
@@ -768,7 +769,24 @@ fn emit_array_of(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGc
     Ok(f)
 }
 
-/// `take : (view, i64) -> view` of the same array.
+/// Push the "no cell" a view built outside `concat` carries.
+pub(super) fn no_cell(f: &mut Function) {
+    f.instruction(&Instruction::RefNull(HeapType::Abstract {
+        shared: false,
+        ty: wasm_encoder::AbstractHeapType::None,
+    }));
+}
+
+/// The cell type views of `name` share (`PackedSequenceType::cell_idx`).
+fn view_cell(name: &str, registry: &TypeRegistry) -> Result<u32, WasmGcError> {
+    registry
+        .packed_sequence(name)
+        .filter(|packed| packed.is_view())
+        .map(|packed| packed.cell_idx())
+        .ok_or_else(|| WasmGcError::Validation(format!("packed view `{name}` missing")))
+}
+
+/// `take : (view, i64) -> view` of the same array, keeping its cell.
 fn emit_take_view(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let (view, array, _) = view_parts(name, registry)?;
     // params: 0=view, 1=count. locals: 2=arr, 3=start, 4=len.
@@ -777,12 +795,14 @@ fn emit_take_view(name: &str, registry: &TypeRegistry) -> Result<Function, WasmG
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(3));
     clamped_count(&mut f, 1, 4);
+    f.instruction(&Instruction::LocalGet(0));
+    view_field(&mut f, view, 3);
     f.instruction(&Instruction::StructNew(view));
     f.instruction(&Instruction::End);
     Ok(f)
 }
 
-/// `drop : (view, i64) -> view` of the same array.
+/// `drop : (view, i64) -> view` of the same array, keeping its cell.
 fn emit_drop_view(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let (view, array, _) = view_parts(name, registry)?;
     // params: 0=view, 1=count. locals: 2=arr, 3=start, 4=len, 5=k.
@@ -797,24 +817,48 @@ fn emit_drop_view(name: &str, registry: &TypeRegistry) -> Result<Function, WasmG
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalGet(0));
+    view_field(&mut f, view, 3);
     f.instruction(&Instruction::StructNew(view));
     f.instruction(&Instruction::End);
     Ok(f)
 }
 
-/// `concat : (view, view) -> view`: one of them when the other is empty,
-/// otherwise both copied into one new array.
+/// `concat : (view, view) -> view`: one of them when the other is empty.
+///
+/// A view `concat` builds carries a cell saying how much of its array the
+/// views sharing it use. When the left side ends exactly there and the
+/// array has room, the right side is written after it and the cell moves
+/// on; the left side is not copied. No view of that array sees the new
+/// elements: every one of them ends at or before the old mark. Otherwise
+/// both sides are copied into a new array: exactly as long when the left
+/// side cannot grow, with room for as much again when it could but was
+/// full, so a run of appends copies each element a bounded number of times.
 fn emit_concat_view(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let (view, array, _) = view_parts(name, registry)?;
+    let cell = view_cell(name, registry)?;
     let arr = ref_ty(array);
-    // params: 0=left, 1=right. locals: 2=la, 3=ls, 4=ll, 5=ra, 6=rs, 7=rl, 8=out.
+    let cell_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(cell),
+    });
+    // params: 0=left, 1=right. locals: 2=la, 3=ls, 4=ll, 5=ra, 6=rs, 7=rl,
+    // 8=out, 9=cell, 10=end, 11=total, 12=cap.
     let mut f = Function::new([
         (1, arr),
         (2, ValType::I32),
         (1, arr),
         (2, ValType::I32),
         (1, arr),
+        (1, cell_ref),
+        (3, ValType::I32),
     ]);
+    let copy = |f: &mut Function| {
+        f.instruction(&Instruction::ArrayCopy {
+            array_type_index_dst: array,
+            array_type_index_src: array,
+        });
+    };
     view_open(&mut f, view, 0, 2, 3, 4);
     view_open(&mut f, view, 1, 5, 6, 7);
     f.instruction(&Instruction::LocalGet(4));
@@ -829,9 +873,74 @@ fn emit_concat_view(name: &str, registry: &TypeRegistry) -> Result<Function, Was
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
+    // end = ls + ll; total = ll + rl; cap = total.
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(10));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalTee(11));
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::LocalGet(0));
+    view_field(&mut f, view, 3);
+    f.instruction(&Instruction::RefCastNullable(HeapType::Concrete(cell)));
+    f.instruction(&Instruction::LocalTee(9));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // The left side ends where the array's use does: it may grow.
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: cell,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // Room after it: append in place.
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32LeU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(7));
+    copy(&mut f);
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::StructSet {
+        struct_type_index: cell,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::StructNew(view));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // Full: grow to twice what is needed, while that still fits an i32.
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I32Const(0x3fff_ffff));
+    f.instruction(&Instruction::I32LeU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(12));
     f.instruction(&Instruction::ArrayNewDefault(array));
     f.instruction(&Instruction::LocalSet(8));
     for (dst_at, src, src_at, n) in [(None, 2, 3, 4), (Some(4), 5, 6, 7)] {
@@ -843,16 +952,13 @@ fn emit_concat_view(name: &str, registry: &TypeRegistry) -> Result<Function, Was
         f.instruction(&Instruction::LocalGet(src));
         f.instruction(&Instruction::LocalGet(src_at));
         f.instruction(&Instruction::LocalGet(n));
-        f.instruction(&Instruction::ArrayCopy {
-            array_type_index_dst: array,
-            array_type_index_src: array,
-        });
+        copy(&mut f);
     }
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::StructNew(cell));
     f.instruction(&Instruction::StructNew(view));
     f.instruction(&Instruction::End);
     Ok(f)
