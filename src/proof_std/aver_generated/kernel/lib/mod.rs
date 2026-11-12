@@ -372,14 +372,14 @@ pub fn chain(
 /// terms[0] = terms[n] from n proofs, proof k of terms[k] = terms[k + 1]: the kernel's chain lists one term more than it has steps.
 #[inline(always)]
 pub fn trans(
-    terms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
-    proofs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>,
+    mut terms @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut proofs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
     if (((terms).len() as i64) == (((proofs).len() as i64) + 1i64)) {
         {
-            let __list_subject = proofs;
-            match aver_rt::list_uncons_cloned(__list_subject) {
+            let __list_subject = proofs.clone();
+            match aver_rt::list_uncons_cloned(&__list_subject) {
                 Some((p, __pat0)) => {
                     let __list_subject = __pat0;
                     if __list_subject.is_empty() {
@@ -388,8 +388,7 @@ pub fn trans(
                         Ok(
                             crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(
                                 crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(
-                                    terms.clone(),
-                                    proofs.clone(),
+                                    terms, proofs,
                                 ),
                             ),
                         )
@@ -398,8 +397,7 @@ pub fn trans(
                 None => Ok(
                     crate::proof_std::aver_generated::kernel::proof::Proof::PTrans(
                         crate::proof_std::aver_generated::kernel::proof::Proof__PTrans(
-                            terms.clone(),
-                            proofs.clone(),
+                            terms, proofs,
                         ),
                     ),
                 ),
@@ -543,7 +541,7 @@ pub fn bothSides(
                         crate::proof_std::aver_generated::kernel::proof::Proof__PSymm(r.proof),
                     ),
                 ]);
-                crate::proof_std::aver_generated::kernel::lib::trans(&__arg5, &__arg6)
+                crate::proof_std::aver_generated::kernel::lib::trans(__arg5, __arg6)
             }
         }
     } else {
@@ -670,7 +668,7 @@ pub fn __lent_evalNode(
                             s,
                             &::aver_rt::str_lit!("bi"),
                             name,
-                            &__arg24,
+                            __arg24,
                             &args,
                             depth.clone(),
                         )
@@ -695,7 +693,7 @@ pub fn __lent_evalNode(
                             s,
                             &::aver_rt::str_lit!("call"),
                             f,
-                            &__arg26,
+                            __arg26,
                             &args,
                             depth.clone(),
                         )
@@ -723,7 +721,7 @@ pub fn __lent_evalNode(
                     s,
                     t.clone(),
                     &subject,
-                    &arms,
+                    arms,
                     depth,
                 )
             }
@@ -908,7 +906,7 @@ pub fn evalMatch(
     s @ _: &Scope,
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
     mut subject @ _: crate::proof_std::aver_generated::kernel::term::Term,
-    arms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
     __lent_evalMatch(s, t, &subject, arms, depth)
@@ -919,7 +917,7 @@ pub fn __lent_evalMatch(
     s @ _: &Scope,
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
     subject @ _: &crate::proof_std::aver_generated::kernel::term::Term,
-    arms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
     crate::proof_std::cancel_checkpoint();
@@ -936,7 +934,7 @@ pub fn __lent_evalMatch(
                 let __arg11 @ _ = {
                     let __arg10 @ _ = crate::proof_std::aver_generated::kernel::lib::patternBinds(
                         arm.pattern,
-                        &parts,
+                        parts.clone(),
                     );
                     crate::proof_std::aver_generated::kernel::subst::__lent_subst(
                         &arm.body, &__arg10,
@@ -1075,19 +1073,19 @@ pub fn lookupKnown(x @ _: &AverStr, ks @ _: &aver_rt::AverList<Known>) -> Option
 pub fn rebuild(
     kind @ _: &AverStr,
     name @ _: AverStr,
-    xs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut xs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> crate::proof_std::aver_generated::kernel::term::Term {
     crate::proof_std::cancel_checkpoint();
     if (&**kind == "call") {
         crate::proof_std::aver_generated::kernel::term::Term::TCall({
             let __field0 = name;
-            let __field1 = xs.clone();
+            let __field1 = xs;
             crate::proof_std::aver_generated::kernel::term::Term__TCall(__field1, __field0)
         })
     } else {
         crate::proof_std::aver_generated::kernel::term::Term::TBi({
             let __field0 = name;
-            let __field1 = xs.clone();
+            let __field1 = xs;
             crate::proof_std::aver_generated::kernel::term::Term__TBi(__field1, __field0)
         })
     }
@@ -1099,7 +1097,7 @@ pub fn evalArgs(
     s @ _: &Scope,
     kind @ _: &AverStr,
     name @ _: AverStr,
-    done @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut done @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     todo @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Rw, AverStr> {
@@ -1117,7 +1115,7 @@ pub fn evalArgs(
                     s,
                     kind,
                     name,
-                    done,
+                    &done,
                     x.clone(),
                     &rest,
                     __arg9,
@@ -1148,7 +1146,7 @@ pub fn evalArg(
     let here @ _ = {
         let __arg10 @ _ =
             aver_rt::AverList::concat(&done.clone(), &aver_rt::AverList::prepend(x, rest));
-        crate::proof_std::aver_generated::kernel::lib::rebuild(kind, name.clone(), &__arg10)
+        crate::proof_std::aver_generated::kernel::lib::rebuild(kind, name.clone(), __arg10)
     };
     let step @ _ = if crate::proof_std::aver_generated::kernel::lib::isRefl(&r.proof) {
         crate::proof_std::aver_generated::kernel::lib::refl(here.clone())
@@ -1159,7 +1157,7 @@ pub fn evalArg(
                     &done.clone(),
                     &aver_rt::AverList::prepend(r.to.clone(), rest),
                 );
-                crate::proof_std::aver_generated::kernel::lib::rebuild(kind, name.clone(), &__arg11)
+                crate::proof_std::aver_generated::kernel::lib::rebuild(kind, name.clone(), __arg11)
             },
             proof: crate::proof_std::aver_generated::kernel::proof::Proof::PCongr(
                 crate::proof_std::aver_generated::kernel::proof::Proof__PCongr(
@@ -1174,7 +1172,7 @@ pub fn evalArg(
                         crate::proof_std::aver_generated::kernel::lib::rebuild(
                             kind,
                             name.clone(),
-                            &__arg12,
+                            __arg12,
                         )
                     },
                     r.proof,
@@ -1189,7 +1187,7 @@ pub fn evalArg(
                 &aver_rt::AverList::prepend_owned(r.to, aver_rt::AverList::empty()),
             );
             crate::proof_std::aver_generated::kernel::lib::evalArgs(
-                s, kind, name, &__arg13, rest, depth,
+                s, kind, name, __arg13, rest, depth,
             )
         }?;
         crate::proof_std::aver_generated::kernel::lib::chain(here, step, __arg14)
@@ -1485,13 +1483,18 @@ pub fn headStep(
                 let name = __name_fields.1.clone();
                 let args = __name_fields.0.clone();
                 Ok(crate::proof_std::aver_generated::kernel::lib::builtinStep(
-                    t, name, &args,
+                    t, name, args,
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
                 let f = __f_fields.1.clone();
                 let xs = &__f_fields.0;
-                crate::proof_std::aver_generated::kernel::lib::unfoldWithin(s, &f, xs, depth)
+                crate::proof_std::aver_generated::kernel::lib::unfoldWithin(
+                    s,
+                    &f,
+                    xs.clone(),
+                    depth,
+                )
             }
             _ => Ok(None),
         }
@@ -1503,10 +1506,10 @@ pub fn headStep(
 pub fn builtinStep(
     mut t @ _: crate::proof_std::aver_generated::kernel::term::Term,
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut args @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> Option<Rw> {
     crate::proof_std::cancel_checkpoint();
-    match crate::proof_std::aver_generated::kernel::lib::listEquation(name.clone(), args) {
+    match crate::proof_std::aver_generated::kernel::lib::listEquation(name.clone(), args.clone()) {
         Some(r @ _) => Some(r),
         None => {
             if (&*name == "List.prepend") {
@@ -1529,11 +1532,11 @@ pub fn builtinStep(
 /// Bool.and and Bool.or with one literal side, by the kernel's rules (both sides literal is computed instead).
 pub fn boolEquation(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut args @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> Option<Rw> {
     crate::proof_std::cancel_checkpoint();
     {
-        let (__pat0, __pat1) = (name, args.clone());
+        let (__pat0, __pat1) = (name, args);
         {
             let __dispatch_subject = __pat0;
             if &*__dispatch_subject == "Bool.and" {
@@ -1604,11 +1607,11 @@ pub fn boolEquation(
 /// The equations of List.len, List.take, List.concat and List.reverse on [] and on a cell, as the kernel's rules state them, and as compute shows them where the call is closed.
 pub fn listEquation(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut args @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> Option<Rw> {
     crate::proof_std::cancel_checkpoint();
     {
-        let (__pat0, __pat1) = (name, args.clone());
+        let (__pat0, __pat1) = (name, args);
         {
             let __dispatch_subject = __pat0;
             if &*__dispatch_subject == "List.len" {
@@ -1831,12 +1834,12 @@ pub fn findDef(
 
 /// Each parameter to its argument.
 pub fn zipBind(
-    ns @ _: &aver_rt::AverList<AverStr>,
-    xs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut ns @ _: aver_rt::AverList<AverStr>,
+    mut xs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __int_match_subject = (ns.clone(), xs.clone());
+        let __int_match_subject = (ns, xs);
         let (__lit0, __lit1) = &__int_match_subject;
         if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
             let Some((n, ns2)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
@@ -1847,7 +1850,7 @@ pub fn zipBind(
             };
             aver_rt::AverList::prepend_owned(
                 crate::proof_std::aver_generated::kernel::term::bind(n, x),
-                crate::proof_std::aver_generated::kernel::lib::zipBind(&ns2, &xs2),
+                crate::proof_std::aver_generated::kernel::lib::zipBind(ns2, xs2),
             )
         } else {
             aver_rt::AverList::empty()
@@ -1859,7 +1862,7 @@ pub fn zipBind(
 #[inline(always)]
 pub fn letBindings(
     d @ _: &crate::proof_std::aver_generated::kernel::proof::Def,
-    args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut args @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> Result<aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>, AverStr> {
     crate::proof_std::cancel_checkpoint();
     if (((d.params).len() as i64) == ((args).len() as i64)) {
@@ -1867,7 +1870,7 @@ pub fn letBindings(
             let __arg3 @ _ = ({
                 let __arg2 @ _ =
                     crate::proof_std::aver_generated::kernel::proof::givenNames(&d.params);
-                crate::proof_std::aver_generated::kernel::lib::zipBind(&__arg2, args)
+                crate::proof_std::aver_generated::kernel::lib::zipBind(__arg2, args)
             })
             .reverse_owned();
             crate::proof_std::aver_generated::kernel::lib::bindLets(&d.lets, __arg3)
@@ -1957,7 +1960,7 @@ pub fn bindLets(
 pub fn unfold(
     s @ _: &Scope,
     f @ _: &AverStr,
-    args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut args @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> Result<Option<Rw>, AverStr> {
     crate::proof_std::cancel_checkpoint();
     crate::proof_std::aver_generated::kernel::lib::unfoldWithin(
@@ -1973,7 +1976,7 @@ pub fn unfold(
 pub fn unfoldWithin(
     s @ _: &Scope,
     f @ _: &AverStr,
-    args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut args @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Option<Rw>, AverStr> {
     crate::proof_std::cancel_checkpoint();
@@ -1989,13 +1992,16 @@ pub fn unfoldWithin(
                     let arms = &__subject_fields.1;
                     {
                         let __arg7 @ _ =
-                            crate::proof_std::aver_generated::kernel::lib::letBindings(&d, args)?;
+                            crate::proof_std::aver_generated::kernel::lib::letBindings(
+                                &d,
+                                args.clone(),
+                            )?;
                         crate::proof_std::aver_generated::kernel::lib::unfoldAt(
                             s,
                             &d,
                             args,
                             subject.clone(),
-                            arms,
+                            arms.clone(),
                             &__arg7,
                             depth,
                         )
@@ -2012,7 +2018,8 @@ pub fn unfoldWithin(
                             to: {
                                 let __arg8 @ _ =
                                     crate::proof_std::aver_generated::kernel::lib::letBindings(
-                                        &d, args,
+                                        &d,
+                                        args.clone(),
                                     )?;
                                 crate::proof_std::aver_generated::kernel::subst::subst(
                                     d.body.clone(),
@@ -2023,7 +2030,7 @@ pub fn unfoldWithin(
                                 {
                                     let __field0 = d.name;
                                     let __field1 = aver_rt::AverInt::from_i64(0);
-                                    let __field2 = args.clone();
+                                    let __field2 = args;
                                     let __field3 = aver_rt::AverList::empty();
                                     let __field4 = aver_rt::AverList::empty();
                                     crate::proof_std::aver_generated::kernel::proof::Proof__PUnfold(
@@ -2199,9 +2206,9 @@ pub fn callsArms(
 pub fn unfoldAt(
     s @ _: &Scope,
     d @ _: &crate::proof_std::aver_generated::kernel::proof::Def,
-    args @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut args @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
     mut subject @ _: crate::proof_std::aver_generated::kernel::term::Term,
-    arms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
     outer @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
     depth @ _: aver_rt::AverInt,
 ) -> Result<Option<Rw>, AverStr> {
@@ -2219,7 +2226,7 @@ pub fn unfoldAt(
                     let __arg13 @ _ = aver_rt::AverList::concat(
                         &crate::proof_std::aver_generated::kernel::lib::patternBinds(
                             arm.pattern,
-                            &parts,
+                            parts.clone(),
                         ),
                         &outer.clone(),
                     );
@@ -2228,7 +2235,7 @@ pub fn unfoldAt(
                 proof: crate::proof_std::aver_generated::kernel::proof::Proof::PUnfold({
                     let __field0 = d.name.clone();
                     let __field1 = k;
-                    let __field2 = args.clone();
+                    let __field2 = args;
                     let __field3 = parts;
                     let __field4 =
                         aver_rt::AverList::prepend_owned(r.proof, aver_rt::AverList::empty());
@@ -2244,7 +2251,7 @@ pub fn unfoldAt(
 /// The arm a literal or a list value decides, counted from 1, with what the kernel's unfold takes as binders: the parts of a cell, nothing for a literal, the value itself for a catch-all; none when an earlier arm cannot be ruled out.
 #[inline(always)]
 pub fn selectArm(
-    arms @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Arm>,
     mut value @ _: crate::proof_std::aver_generated::kernel::term::Term,
 ) -> Option<(
     aver_rt::AverInt,
@@ -2253,7 +2260,7 @@ pub fn selectArm(
 )> {
     crate::proof_std::cancel_checkpoint();
     crate::proof_std::aver_generated::kernel::lib::selectFrom(
-        arms.clone(),
+        arms,
         value,
         aver_rt::AverInt::from_i64(1),
     )
@@ -2382,11 +2389,11 @@ pub fn isLiteral(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) -
 /// The names a cell pattern or a named catch-all binds.
 pub fn patternBinds(
     mut p @ _: crate::proof_std::aver_generated::kernel::term::Pat,
-    parts @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut parts @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding> {
     crate::proof_std::cancel_checkpoint();
     {
-        let (__pat0, ys) = (p, parts.clone());
+        let (__pat0, ys) = (p, parts);
         match __pat0 {
             crate::proof_std::aver_generated::kernel::term::Pat::PCons(h, t) => {
                 let __list_subject = ys;
@@ -2482,12 +2489,12 @@ pub fn fieldBinds(
 
 /// base, or base followed by the first number that makes a name not in used (often taken(goal)): a hypothesis or binder name must not clash with one in scope.
 #[inline(always)]
-pub fn fresh(base @ _: AverStr, used @ _: &aver_rt::AverList<AverStr>) -> AverStr {
+pub fn fresh(base @ _: AverStr, mut used @ _: aver_rt::AverList<AverStr>) -> AverStr {
     crate::proof_std::cancel_checkpoint();
     if used.contains(&base) {
         crate::proof_std::aver_generated::kernel::lib::freshFrom(
             base,
-            used.clone(),
+            used,
             aver_rt::AverInt::from_i64(1),
         )
     } else {

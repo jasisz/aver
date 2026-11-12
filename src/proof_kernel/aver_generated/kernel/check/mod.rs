@@ -101,33 +101,25 @@ fn __mutual_tco_trampoline_1(
             let (q,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PSymm>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PSymm(__f) => (__f.0.clone(),), _ => unreachable!() } };
             { let __arg89 @ _ = { let __arg88 @ _ = (path + &::aver_rt::str_lit!("/symm")); crate::proof_kernel::aver_generated::kernel::check::conclude(q, env, __arg88) }?; return crate::proof_kernel::aver_generated::kernel::check::flip(__arg89) }
         },
-        crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PTrans(__ts_fields) => {
-            let ts = &__ts_fields.0;
-            let ps = &__ts_fields.1;
+        crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PTrans(_) => {
+            let (ts, ps,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PTrans>() { Ok(__f) => (__f.0, __f.1,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PTrans(__f) => (__f.0.clone(), __f.1.clone(),), _ => unreachable!() } };
             return crate::proof_kernel::aver_generated::kernel::check::trans(ts, ps, &env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCongr(_) => {
             let (c, q,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PCongr>() { Ok(__f) => (__f.0, __f.1,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCongr(__f) => (__f.0.clone(), __f.1.clone(),), _ => unreachable!() } };
             return crate::proof_kernel::aver_generated::kernel::check::congr(c, q, &env, path)
         },
-        crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PUnfold(__f_fields) => {
-            let f = __f_fields.1.clone();
-            let k = __f_fields.0.clone();
-            let xs = &__f_fields.2;
-            let ys = &__f_fields.3;
-            let pre = &__f_fields.4;
+        crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PUnfold(_) => {
+            let (f, k, xs, ys, pre,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PUnfold>() { Ok(__f) => (__f.1, __f.0, __f.2, __f.3, __f.4,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PUnfold(__f) => (__f.1.clone(), __f.0.clone(), __f.2.clone(), __f.3.clone(), __f.4.clone(),), _ => unreachable!() } };
             return crate::proof_kernel::aver_generated::kernel::check::unfold(f, k, xs, ys, pre, env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PConst(_) => {
             let (n,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PConst>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PConst(__f) => (__f.0.clone(),), _ => unreachable!() } };
             return crate::proof_kernel::aver_generated::kernel::check::constant(n, &env, path)
         },
-        crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PArm(__k_fields) => {
-            let k = __k_fields.0.clone();
-            let ys = &__k_fields.1;
-            let t = &__k_fields.2;
-            let q = &__k_fields.3;
-            return crate::proof_kernel::aver_generated::kernel::check::armStep(k, ys, t.clone(), q.clone(), env, path)
+        crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PArm(_) => {
+            let (k, ys, t, q,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PArm>() { Ok(__f) => (__f.0, __f.1, __f.2, __f.3,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PArm(__f) => (__f.0.clone(), __f.1.clone(), __f.2.clone(), __f.3.clone(),), _ => unreachable!() } };
+            return crate::proof_kernel::aver_generated::kernel::check::armStep(k, ys, t, q, env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PProj(_) => {
             let (t,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PProj>() { Ok(__f) => (__f.0,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PProj(__f) => (__f.0.clone(),), _ => unreachable!() } };
@@ -145,13 +137,13 @@ fn __mutual_tco_trampoline_1(
             let id = __id_fields.0.clone();
             let bs = &__id_fields.1;
             let ps = &__id_fields.2;
-            return crate::proof_kernel::aver_generated::kernel::check::rule(id, bs, ps, &env, path)
+            return crate::proof_kernel::aver_generated::kernel::check::rule(id, bs, ps.clone(), &env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PLaw(__k_fields) => {
             let k = __k_fields.0.clone();
             let bs = &__k_fields.1;
             let ps = &__k_fields.2;
-            return crate::proof_kernel::aver_generated::kernel::check::lawStep(k, bs, ps, &env, path)
+            return crate::proof_kernel::aver_generated::kernel::check::lawStep(k, bs, ps.clone(), &env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCompute(_) => {
             let (a, b,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PCompute>() { Ok(__f) => (__f.0, __f.1,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PCompute(__f) => (__f.0.clone(), __f.1.clone(),), _ => unreachable!() } };
@@ -166,18 +158,15 @@ fn __mutual_tco_trampoline_1(
             let h = __on_fields.1.clone();
             let lits = &__on_fields.2;
             let cs = &__on_fields.3;
-            return crate::proof_kernel::aver_generated::kernel::check::split(on, h, lits, cs, &env, path)
+            return crate::proof_kernel::aver_generated::kernel::check::split(on, h, lits.clone(), cs.clone(), &env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PHave(_) => {
             let (h, fact, q, body,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PHave>() { Ok(__f) => (__f.0, __f.1, __f.2, __f.3,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PHave(__f) => (__f.0.clone(), __f.1.clone(), __f.2.clone(), __f.3.clone(),), _ => unreachable!() } };
             __MutualTco1::Have(h, fact, q, body, env, path)
         },
-        crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PEnum(__v_fields) => {
-            let v = __v_fields.0.clone();
-            let l = &__v_fields.1;
-            let r = &__v_fields.2;
-            let cs = &__v_fields.3;
-            return crate::proof_kernel::aver_generated::kernel::check::enumStep(v, l.clone(), r.clone(), cs, &env, path)
+        crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PEnum(_) => {
+            let (v, l, r, cs,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PEnum>() { Ok(__f) => (__f.0, __f.1, __f.2, __f.3,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PEnum(__f) => (__f.0.clone(), __f.1.clone(), __f.2.clone(), __f.3.clone(),), _ => unreachable!() } };
+            return crate::proof_kernel::aver_generated::kernel::check::enumStep(v, l, r, cs, &env, path)
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PAbsurd(_) => {
             let (q, l, r,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PAbsurd>() { Ok(__f) => (__f.0, __f.1, __f.2,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PAbsurd(__f) => (__f.0.clone(), __f.1.clone(), __f.2.clone(),), _ => unreachable!() } };
@@ -190,7 +179,7 @@ fn __mutual_tco_trampoline_1(
             let r = &__f_fields.3;
             let carry = &__f_fields.4;
             let cs = &__f_fields.5;
-            { let __arg92 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: l.clone(), rhs: r.clone() }; return crate::proof_kernel::aver_generated::kernel::check::induct(f, xs, __arg92, carry, cs, &env, path) }
+            { let __arg92 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: l.clone(), rhs: r.clone() }; return crate::proof_kernel::aver_generated::kernel::check::induct(f, xs.clone(), __arg92, carry, cs.clone(), &env, path) }
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PListInduct(__v_fields) => {
             let v = __v_fields.0.clone();
@@ -203,7 +192,7 @@ fn __mutual_tco_trampoline_1(
             let general = &__v_fields.7;
             let ihs = &__v_fields.8;
             let c = &__v_fields.9;
-            { let __arg93 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: l.clone(), rhs: r.clone() }; return crate::proof_kernel::aver_generated::kernel::check::listInduct(v, __arg93, carry, n.clone(), h, t, general, ihs, c.clone(), &env, path) }
+            { let __arg93 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: l.clone(), rhs: r.clone() }; return crate::proof_kernel::aver_generated::kernel::check::listInduct(v, __arg93, carry, n.clone(), h, t, general.clone(), ihs, c.clone(), &env, path) }
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PListCases(_) => {
             let (v, l, r, n, h, t, c,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PListCases>() { Ok(__f) => (__f.0, __f.1, __f.2, __f.3, __f.4, __f.5, __f.6,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PListCases(__f) => (__f.0.clone(), __f.1.clone(), __f.2.clone(), __f.3.clone(), __f.4.clone(), __f.5.clone(), __f.6.clone(),), _ => unreachable!() } };
@@ -219,7 +208,7 @@ fn __mutual_tco_trampoline_1(
             let hn = __v_fields.6.clone();
             let ih = __v_fields.7.clone();
             let c = &__v_fields.8;
-            { let __arg95 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: l.clone(), rhs: r.clone() }; { let __arg96 @ _ = aver_rt::AverList::from_array([n, hn, ih]); return crate::proof_kernel::aver_generated::kernel::check::lenInduct(v, __arg95, carry, general, &__arg96, c.clone(), &env, path) } }
+            { let __arg95 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: l.clone(), rhs: r.clone() }; { let __arg96 @ _ = aver_rt::AverList::from_array([n, hn, ih]); return crate::proof_kernel::aver_generated::kernel::check::lenInduct(v, __arg95, carry, general.clone(), &__arg96, c.clone(), &env, path) } }
         },
         crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PRing(_) => {
             let (l, r,) = match __t.try_take::<crate::proof_kernel::aver_generated::kernel::proof::Proof__PRing>() { Ok(__f) => (__f.0, __f.1,), Err(__t) => match __t.view() { crate::proof_kernel::aver_generated::kernel::proof::Proof__view::PRing(__f) => (__f.0.clone(), __f.1.clone(),), _ => unreachable!() } };
@@ -231,7 +220,7 @@ fn __mutual_tco_trampoline_1(
             let hs = &__g_fields.2;
             let ws = &__g_fields.3;
             let cs = &__g_fields.4;
-            return crate::proof_kernel::aver_generated::kernel::check::linear(g.clone(), v, hs, ws, cs, &env, path)
+            return crate::proof_kernel::aver_generated::kernel::check::linear(g.clone(), v, hs, ws.clone(), cs, &env, path)
         }
     }
                 }
@@ -371,7 +360,7 @@ fn __mutual_tco_trampoline_2(
                 mut path @ _,
             ) => {
                 crate::proof_kernel::cancel_checkpoint();
-                aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::splitDone(&before, path) }, [c, rest] => { if { let __arg9 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::freeVars(&*on), &crate::proof_kernel::aver_generated::kernel::check::hypNames(&env.hyps)); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(&c.binders, &__arg9, &*env, __arg10) } } { { let __arg16 @ _ = { let __arg14 @ _ = { let __arg12 @ _ = { let __arg11 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone()); crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, &__arg11) }; { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss); crate::proof_kernel::aver_generated::kernel::check::withVars(&__arg12, &__arg13) } }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(39usize); __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_display(&(c.ctor)); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), __arg14, __arg15) } }?; { let __arg17 @ _ = { let __xs = &(hss); let __n = 1usize; __xs.drop_first(__n) }; { let __arg18 @ _ = { let __xs = &(vss); let __n = 1usize; __xs.drop_first(__n) }; __MutualTco2::SplitNext(__arg16, c, rest, __arg17, __arg18, before, path) } } } } else { { let __arg19 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(48usize); __b.push_str(&::aver_rt::str_lit!("the names of case ")); __b }; __b.push_display(&(c.ctor)); __b }; __b.push_str(&::aver_rt::str_lit!(" are not fresh")); __b }); return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19) } } })
+                aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::splitDone(&before, path) }, [c, rest] => { if { let __arg9 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::subst::freeVars(&*on), &crate::proof_kernel::aver_generated::kernel::check::hypNames(&env.hyps)); { let __arg10 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(&c.binders, &__arg9, &*env, __arg10) } } { { let __arg16 @ _ = { let __arg14 @ _ = { let __arg12 @ _ = { let __arg11 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::firstHyps(&hss), &env.hyps.clone()); crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, __arg11) }; { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::check::firstVars(&vss); crate::proof_kernel::aver_generated::kernel::check::withVars(&__arg12, &__arg13) } }; { let __arg15 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(39usize); __b.push_display(&(path)); __b }; __b.push_str(&::aver_rt::str_lit!("/split.")); __b }; __b.push_display(&(c.ctor)); __b }); crate::proof_kernel::aver_generated::kernel::check::conclude(c.proof.clone(), __arg14, __arg15) } }?; { let __arg17 @ _ = { let __xs = &(hss); let __n = 1usize; __xs.drop_first(__n) }; { let __arg18 @ _ = { let __xs = &(vss); let __n = 1usize; __xs.drop_first(__n) }; __MutualTco2::SplitNext(__arg16, c, rest, __arg17, __arg18, before, path) } } } } else { { let __arg19 @ _ = aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(48usize); __b.push_str(&::aver_rt::str_lit!("the names of case ")); __b }; __b.push_display(&(c.ctor)); __b }; __b.push_str(&::aver_rt::str_lit!(" are not fresh")); __b }); return crate::proof_kernel::aver_generated::kernel::check::refuse(path, __arg19) } } })
             }
             __MutualTco2::SplitNext(
                 mut e @ _,
@@ -594,9 +583,7 @@ fn __mutual_tco_trampoline_3(
                                 &at,
                                 path.clone(),
                             )?;
-                        crate::proof_kernel::aver_generated::kernel::check::withHyps(
-                            &*env, &__arg13,
-                        )
+                        crate::proof_kernel::aver_generated::kernel::check::withHyps(&*env, __arg13)
                     };
                     crate::proof_kernel::aver_generated::kernel::check::conclude(
                         c,
@@ -1333,7 +1320,7 @@ pub fn bound(
 #[inline(always)]
 pub fn argsFit(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
-    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<(), AverStr> {
@@ -1342,7 +1329,7 @@ pub fn argsFit(
         {
             let __arg5 @ _ = {
                 let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::types::paramsOf(d);
-                crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg4, xs)
+                crate::proof_kernel::aver_generated::kernel::check::zipBind(__arg4, xs)
             };
             crate::proof_kernel::aver_generated::kernel::check::bound(
                 &__arg5,
@@ -1869,7 +1856,7 @@ pub fn constantDeclarationDeps(
                     if (&(c.name) == name) {
                         {
                             let __arg6 @ _ = <aver_rt::AverList<AverStr>>::empty();
-                            return crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(&c.value, &__arg6, ds, cs);
+                            return crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(&c.value, __arg6, ds, cs);
                         }
                     } else {
                         {
@@ -1986,7 +1973,10 @@ pub fn letDeclarationDeps(
         match aver_rt::list_uncons(__list_subject) {
             Some((b, rest)) => aver_rt::AverList::concat(
                 &crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(
-                    &b.value, &locals, ds, cs,
+                    &b.value,
+                    locals.clone(),
+                    ds,
+                    cs,
                 ),
                 &{
                     let __arg7 @ _ = aver_rt::AverList::prepend_owned(b.name.clone(), locals);
@@ -1996,7 +1986,7 @@ pub fn letDeclarationDeps(
                 },
             ),
             None => crate::proof_kernel::aver_generated::kernel::check::termDeclarationDeps(
-                body, &locals, ds, cs,
+                body, locals, ds, cs,
             ),
         }
     }
@@ -2006,7 +1996,7 @@ pub fn letDeclarationDeps(
 #[inline(always)]
 pub fn termDeclarationDeps(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
-    locals @ _: &aver_rt::AverList<AverStr>,
+    mut locals @ _: aver_rt::AverList<AverStr>,
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> {
@@ -2015,7 +2005,7 @@ pub fn termDeclarationDeps(
         &{
             let __arg5 @ _ = {
                 let __arg4 @ _ = crate::proof_kernel::aver_generated::kernel::subst::freeVars(t);
-                crate::proof_kernel::aver_generated::kernel::subst::without(&__arg4, locals.clone())
+                crate::proof_kernel::aver_generated::kernel::subst::without(&__arg4, locals)
             };
             crate::proof_kernel::aver_generated::kernel::check::constDependencyNodes(__arg5, cs)
         },
@@ -2528,8 +2518,8 @@ pub fn flip(
 /// A chain t0 = t1 = … = tn, each link proved by its step.
 #[inline(always)]
 pub fn trans(
-    ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    ps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut ts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -2552,20 +2542,20 @@ pub fn trans(
 
 /// Check link i and those after it; the result spans the whole chain.
 pub fn transFrom(
-    ts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    ps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut ts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
     path @ _: AverStr,
     i @ _: aver_rt::AverInt,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let (__pat0, __pat1) = (ts.clone(), ps.clone());
+        let (__pat0, __pat1) = (ts, ps);
         {
             let __list_subject = __pat0;
             match aver_rt::list_uncons(&__list_subject) {
                 Some((a, __pat2)) => {
-                    ::aver_rt::aver_list_match_reuse!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = { let __s = path; let mut __b = aver_rt::Buffer::with_capacity(39usize); __b.push_str(&::aver_rt::str_lit!("/trans.")); __b.push_display(&(i)); __s.append_buffer(__b) }; crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms, __list_slot] => { { let __list_subject = __pat1; match aver_rt::list_uncons(&__list_subject) { Some((p, moreSteps)) => { { let __arg13 @ _ = __list_slot.prepend(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), &__arg13, &moreSteps, env, path, i) } }, None => { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } } })
+                    ::aver_rt::aver_list_match_reuse!(__pat2, [] => { { let __list_subject = __pat1; if __list_subject.is_empty() { { let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: a.clone(), rhs: a.clone() }; { let __arg15 @ _ = { let __s = path; let mut __b = aver_rt::Buffer::with_capacity(39usize); __b.push_str(&::aver_rt::str_lit!("/trans.")); __b.push_display(&(i)); __s.append_buffer(__b) }; crate::proof_kernel::aver_generated::kernel::check::typedEquation(__arg14, env, __arg15) } } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } }, [b, moreTerms, __list_slot] => { { let __list_subject = __pat1; match aver_rt::list_uncons(&__list_subject) { Some((p, moreSteps)) => { { let __arg13 @ _ = __list_slot.prepend(b.clone(), moreTerms); crate::proof_kernel::aver_generated::kernel::check::transLink(a.clone(), b, p.clone(), __arg13, moreSteps, env, path, i) } }, None => { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("trans needs at least one step")) } } } })
                 }
                 None => crate::proof_kernel::aver_generated::kernel::check::refuse(
                     path,
@@ -2581,8 +2571,8 @@ pub fn transLink(
     mut a @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut b @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut p @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
-    rest @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    steps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut steps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
     path @ _: AverStr,
     i @ _: aver_rt::AverInt,
@@ -3190,8 +3180,8 @@ pub fn casesOfBool(
 pub fn split(
     on @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     h @ _: AverStr,
-    lits @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
+    mut lits @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -3240,20 +3230,20 @@ pub fn split(
 #[inline]
 pub fn splitLiterals(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
-    lits @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut lits @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     on @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     h @ _: AverStr,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    if (crate::proof_kernel::aver_generated::kernel::check::literalsOf(lits, t, env, path.clone())
-        && ((crate::proof_kernel::aver_generated::kernel::check::splitCtors(cs)
-            == crate::proof_kernel::aver_generated::kernel::check::litCtors(lits))
-            && (crate::proof_kernel::aver_generated::kernel::check::binderCounts(cs)
+    if (crate::proof_kernel::aver_generated::kernel::check::literalsOf(&lits, t, env, path.clone())
+        && ((crate::proof_kernel::aver_generated::kernel::check::splitCtors(&cs)
+            == crate::proof_kernel::aver_generated::kernel::check::litCtors(&lits))
+            && (crate::proof_kernel::aver_generated::kernel::check::binderCounts(&cs)
                 == crate::proof_kernel::aver_generated::kernel::check::litCounts(
-                    lits,
+                    &lits,
                     aver_rt::AverInt::from_i64(0),
                 ))))
     {
@@ -3263,23 +3253,21 @@ pub fn splitLiterals(
                     crate::proof_kernel::aver_generated::kernel::term::Term,
                 >>::empty();
                 crate::proof_kernel::aver_generated::kernel::check::litHyps(
-                    lits, cs, on, h, &__arg7,
+                    lits,
+                    cs.clone(),
+                    on,
+                    h,
+                    __arg7,
                 )
             };
             {
-                let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::check::noVars(cs);
+                let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::check::noVars(&cs);
                 {
                     let __arg10 @ _ = <aver_rt::AverList<
                         crate::proof_kernel::aver_generated::kernel::term::Eqn,
                     >>::empty();
                     crate::proof_kernel::aver_generated::kernel::check::splitCases(
-                        cs.clone(),
-                        __arg8,
-                        __arg9,
-                        on,
-                        __arg10,
-                        env,
-                        path,
+                        cs, __arg8, __arg9, on, __arg10, env, path,
                     )
                 }
             }
@@ -3325,7 +3313,7 @@ pub fn splitConstructors(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
     on @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     h @ _: AverStr,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -3335,8 +3323,8 @@ pub fn splitConstructors(
             ({
                 let __arg8 @ _ = crate::proof_kernel::aver_generated::kernel::check::tyEnv(env);
                 crate::proof_kernel::aver_generated::kernel::types::ctorsOf(t, &__arg8)
-            } == crate::proof_kernel::aver_generated::kernel::check::splitCtors(cs)),
-            crate::proof_kernel::aver_generated::kernel::check::caseVars(cs, t, env),
+            } == crate::proof_kernel::aver_generated::kernel::check::splitCtors(&cs)),
+            crate::proof_kernel::aver_generated::kernel::check::caseVars(&cs, t, env),
         );
         match __subject {
             (false, _) => {
@@ -3358,19 +3346,13 @@ pub fn splitConstructors(
             (_, Err(why)) => crate::proof_kernel::aver_generated::kernel::check::refuse(path, why),
             (true, Ok(vss)) => {
                 let __arg10 @ _ =
-                    crate::proof_kernel::aver_generated::kernel::check::ctorHyps(cs, on, h);
+                    crate::proof_kernel::aver_generated::kernel::check::ctorHyps(&cs, on, h);
                 {
                     let __arg11 @ _ = <aver_rt::AverList<
                         crate::proof_kernel::aver_generated::kernel::term::Eqn,
                     >>::empty();
                     crate::proof_kernel::aver_generated::kernel::check::splitCases(
-                        cs.clone(),
-                        __arg10,
-                        vss,
-                        on,
-                        __arg11,
-                        env,
-                        path,
+                        cs, __arg10, vss, on, __arg11, env, path,
                     )
                 }
             }
@@ -3456,7 +3438,8 @@ pub fn caseVars(
                         if (((fs).len() as i64) == ((c.binders).len() as i64)) {
                             Ok(aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::types::namedVars(
-                                    &c.binders, &fs,
+                                    c.binders.clone(),
+                                    fs,
                                 ),
                                 crate::proof_kernel::aver_generated::kernel::check::caseVars(
                                     &rest, t, env,
@@ -3696,15 +3679,15 @@ pub fn ctorHyps(
 
 /// Each case's hypotheses: h : on = k for a literal k, and for the last one (on == k) = false per literal, named by the case's names.
 pub fn litHyps(
-    lits @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
+    mut lits @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::SplitCase>,
     on @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     h @ _: AverStr,
-    seen @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut seen @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> aver_rt::AverList<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __int_match_subject = (lits.clone(), cs.clone());
+        let __int_match_subject = (lits, cs);
         let (__lit0, __lit1) = &__int_match_subject;
         if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
             let Some((k, ks)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
@@ -3726,11 +3709,11 @@ pub fn litHyps(
                 ),
                 {
                     let __arg11 @ _ = aver_rt::AverList::concat(
-                        &seen.clone(),
+                        &seen,
                         &aver_rt::AverList::prepend_owned(k, aver_rt::AverList::empty()),
                     );
                     crate::proof_kernel::aver_generated::kernel::check::litHyps(
-                        &ks, &more, on, h, &__arg11,
+                        ks, more, on, h, __arg11,
                     )
                 },
             )
@@ -3739,7 +3722,7 @@ pub fn litHyps(
                 unreachable!("Aver Rust codegen: tuple element list mismatch")
             };
             aver_rt::AverList::prepend_owned(
-                crate::proof_kernel::aver_generated::kernel::check::unequal(&c.binders, seen, on),
+                crate::proof_kernel::aver_generated::kernel::check::unequal(c.binders, seen, on),
                 aver_rt::AverList::empty(),
             )
         } else {
@@ -3750,13 +3733,13 @@ pub fn litHyps(
 
 /// Each name stating (on == k) = false for its literal k.
 pub fn unequal(
-    names @ _: &aver_rt::AverList<AverStr>,
-    lits @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut names @ _: aver_rt::AverList<AverStr>,
+    mut lits @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     on @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __int_match_subject = (names.clone(), lits.clone());
+        let __int_match_subject = (names, lits);
         let (__lit0, __lit1) = &__int_match_subject;
         if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
             let Some((n, ns)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
@@ -3781,7 +3764,7 @@ pub fn unequal(
                         ),
                     },
                 },
-                crate::proof_kernel::aver_generated::kernel::check::unequal(&ns, &ks, on),
+                crate::proof_kernel::aver_generated::kernel::check::unequal(ns, ks, on),
             )
         } else {
             aver_rt::AverList::empty()
@@ -3881,7 +3864,7 @@ pub fn linear(
     mut g @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     v @ _: bool,
     hs @ _: &aver_rt::AverList<AverStr>,
-    ws @ _: &aver_rt::AverIntList,
+    mut ws @ _: aver_rt::AverIntList,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
     env @ _: &Env,
     path @ _: AverStr,
@@ -3900,7 +3883,7 @@ pub fn linear(
             path.clone(),
         )
     }?;
-    crate::proof_kernel::aver_generated::kernel::check::linearOver(g, v, &facts, ws, cs, path)
+    crate::proof_kernel::aver_generated::kernel::check::linearOver(g, v, facts, ws, cs, path)
 }
 
 /// Each term compares two Int terms: what linear arithmetic may read as a row.
@@ -3960,14 +3943,14 @@ pub fn lhsOf(
 pub fn linearOver(
     mut g @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     v @ _: bool,
-    facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
-    ws @ _: &aver_rt::AverIntList,
+    mut facts @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    mut ws @ _: aver_rt::AverIntList,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     if {
-        let __arg6 @ _ = aver_rt::AverList::prepend(
+        let __arg6 @ _ = aver_rt::AverList::prepend_owned(
             crate::proof_kernel::aver_generated::kernel::term::Eqn {
                 lhs: g.clone(),
                 rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(
@@ -4091,7 +4074,7 @@ pub fn enumStep(
     v @ _: AverStr,
     mut l @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut r @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -4115,7 +4098,7 @@ pub fn enumStep(
                     v,
                     __arg8,
                     __arg9,
-                    cs.clone(),
+                    cs,
                     env,
                     path,
                     aver_rt::AverInt::from_i64(0),
@@ -4147,7 +4130,7 @@ pub fn finOfVar(
                 let __arg6 @ _ = crate::proof_kernel::aver_generated::kernel::check::tyEnv(env);
                 {
                     let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty();
-                    crate::proof_kernel::aver_generated::kernel::types::finOf(&t, &__arg6, &__arg7)
+                    crate::proof_kernel::aver_generated::kernel::types::finOf(&t, &__arg6, __arg7)
                 }
             }
             Err(why @ _) => None,
@@ -4185,7 +4168,7 @@ pub fn substHyps(
 /// The environment with its hypotheses replaced.
 pub fn withHyps(
     env @ _: &Env,
-    hs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    mut hs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
 ) -> Env {
     crate::proof_kernel::cancel_checkpoint();
     aver_rt::Counted::new(
@@ -4194,7 +4177,7 @@ pub fn withHyps(
             defs: env.defs.clone(),
             consts: env.consts.clone(),
             laws: env.laws.clone(),
-            hyps: hs.clone(),
+            hyps: hs,
             vars: env.vars.clone(),
             sums: env.sums.clone(),
             recs: env.recs.clone(),
@@ -4302,12 +4285,12 @@ pub fn constantIn(
 
 /// Pair names with terms, as far as both go.
 pub fn zipBind(
-    names @ _: &aver_rt::AverList<AverStr>,
-    values @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut names @ _: aver_rt::AverList<AverStr>,
+    mut values @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __int_match_subject = (names.clone(), values.clone());
+        let __int_match_subject = (names, values);
         let (__lit0, __lit1) = &__int_match_subject;
         if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
             let Some((n, ns)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
@@ -4318,7 +4301,7 @@ pub fn zipBind(
             };
             aver_rt::AverList::prepend_owned(
                 crate::proof_kernel::aver_generated::kernel::term::bind(n, v),
-                crate::proof_kernel::aver_generated::kernel::check::zipBind(&ns, &vs),
+                crate::proof_kernel::aver_generated::kernel::check::zipBind(ns, vs),
             )
         } else {
             aver_rt::AverList::empty()
@@ -4331,9 +4314,9 @@ pub fn zipBind(
 pub fn unfold(
     f @ _: AverStr,
     k @ _: aver_rt::AverInt,
-    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    pre @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut pre @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     mut env @ _: Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -4355,7 +4338,7 @@ pub fn unfold(
             let __subject = (
                 crate::proof_kernel::aver_generated::kernel::check::argsFit(
                     &d,
-                    xs,
+                    xs.clone(),
                     &env,
                     path.clone(),
                 ),
@@ -4378,9 +4361,9 @@ pub fn unfold(
 pub fn unfoldArm(
     mut d @ _: crate::proof_kernel::aver_generated::kernel::proof::Def,
     k @ _: aver_rt::AverInt,
-    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    pre @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut pre @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     mut env @ _: Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -4388,14 +4371,14 @@ pub fn unfoldArm(
     let outer @ _ = {
         let __arg10 @ _ = ({
             let __arg9 @ _ = crate::proof_kernel::aver_generated::kernel::types::paramsOf(&d);
-            crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg9, xs)
+            crate::proof_kernel::aver_generated::kernel::check::zipBind(__arg9, xs.clone())
         })
         .reverse_owned();
         crate::proof_kernel::aver_generated::kernel::check::bindLets(&d.lets, __arg10)
     }?;
     let lhs @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TCall({
         let __field0 = d.name;
-        let __field1 = xs.clone();
+        let __field1 = xs;
         crate::proof_kernel::aver_generated::kernel::term::Term__TCall(__field1, __field0)
     });
     {
@@ -4488,8 +4471,8 @@ pub fn unfoldMatch(
     body @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     k @ _: aver_rt::AverInt,
     outer @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    pre @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut pre @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     mut lhs @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut env @ _: Env,
     path @ _: AverStr,
@@ -4503,7 +4486,7 @@ pub fn unfoldMatch(
                 let arms = &__s_fields.1;
                 crate::proof_kernel::aver_generated::kernel::check::selected(
                     s.clone(),
-                    arms,
+                    arms.clone(),
                     k,
                     outer,
                     ys,
@@ -4524,7 +4507,7 @@ pub fn unfoldMatch(
 /// Arm k of an explicit match term, under its premise.
 pub fn armStep(
     k @ _: aver_rt::AverInt,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut q @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     mut env @ _: Env,
@@ -4545,7 +4528,7 @@ pub fn armStep(
                         let __arg9 @ _ =
                             aver_rt::AverList::prepend_owned(q, aver_rt::AverList::empty());
                         crate::proof_kernel::aver_generated::kernel::check::selected(
-                            s, &arms, k, &__arg8, ys, &__arg9, t, env, path,
+                            s, arms, k, &__arg8, ys, __arg9, t, env, path,
                         )
                     }
                 }
@@ -4561,11 +4544,11 @@ pub fn armStep(
 /// lhs = arm k, once the premise shows the subject has arm k's pattern.
 pub fn selected(
     mut s @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
     k @ _: aver_rt::AverInt,
     outer @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
-    pre @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut pre @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     mut lhs @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut env @ _: Env,
     path @ _: AverStr,
@@ -4574,7 +4557,7 @@ pub fn selected(
     {
         let (__pat0, __pat1) = (
             crate::proof_kernel::aver_generated::kernel::check::armAt(arms.clone(), k.clone()),
-            pre.clone(),
+            pre,
         );
         match __pat0 {
             None => {
@@ -4626,10 +4609,10 @@ pub fn selected(
 /// Check the arm is the first that can match, then the premise.
 pub fn selectedWith(
     mut s @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
     k @ _: aver_rt::AverInt,
     outer @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut q @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     mut lhs @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut env @ _: Env,
@@ -4726,7 +4709,7 @@ pub fn isCatchAll(p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat
 /// A catch-all arm chosen for one value: every earlier arm excludes it, the premise shows the subject is it, and a named catch-all binds it.
 pub fn catchAllArm(
     mut s @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
     k @ _: aver_rt::AverInt,
     mut chosen @ _: crate::proof_kernel::aver_generated::kernel::term::Arm,
     outer @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
@@ -4745,7 +4728,7 @@ pub fn catchAllArm(
             {
                 let __arg13 @ _ =
                     aver_rt::AverList::prepend_owned(v.clone(), aver_rt::AverList::empty());
-                crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg12, &__arg13)
+                crate::proof_kernel::aver_generated::kernel::check::zipBind(__arg12, __arg13)
             }
         };
         {
@@ -4761,9 +4744,7 @@ pub fn catchAllArm(
                         )?,
                         aver_rt::AverList::empty(),
                     );
-                    crate::proof_kernel::aver_generated::kernel::types::namedVars(
-                        &__arg14, &__arg15,
-                    )
+                    crate::proof_kernel::aver_generated::kernel::types::namedVars(__arg14, __arg15)
                 }
             };
             {
@@ -4802,7 +4783,7 @@ pub fn catchAllArm(
                         let __arg20 @ _ =
                             aver_rt::AverList::prepend_owned(v.clone(), aver_rt::AverList::empty());
                         crate::proof_kernel::aver_generated::kernel::check::zipBind(
-                            &__arg19, &__arg20,
+                            __arg19, __arg20,
                         )
                     }
                 },
@@ -4876,14 +4857,14 @@ pub fn catchAllBody(
 
 /// Every arm before arm k certainly does not match the value: by its shape, or a literal arm by a hypothesis (v == k) = false in scope.
 pub fn earlierExcludeValue(
-    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
     k @ _: aver_rt::AverInt,
     v @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     hs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __subject = (arms.clone(), (k > aver_rt::AverInt::from_i64(1)));
+        let __subject = (arms, (k > aver_rt::AverInt::from_i64(1)));
         {
             let __int_match_subject = __subject;
             let (__lit0, __lit1) = &__int_match_subject;
@@ -4899,7 +4880,7 @@ pub fn earlierExcludeValue(
                     v.clone(),
                     hs,
                 )) && crate::proof_kernel::aver_generated::kernel::check::earlierExcludeValue(
-                    &rest,
+                    rest,
                     k.sub(&aver_rt::AverInt::from_i64(1)),
                     v,
                     hs,
@@ -5072,7 +5053,7 @@ pub fn armEquation(
     mut s @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut chosen @ _: crate::proof_kernel::aver_generated::kernel::term::Arm,
     outer @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut q @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     mut lhs @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut env @ _: Env,
@@ -5081,7 +5062,7 @@ pub fn armEquation(
     crate::proof_kernel::cancel_checkpoint();
     let shape @ _ = crate::proof_kernel::aver_generated::kernel::check::patTerm(
         chosen.pattern.clone(),
-        ys,
+        ys.clone(),
         path.clone(),
     )?;
     let subject @ _ = crate::proof_kernel::aver_generated::kernel::subst::subst(s, outer)?;
@@ -5089,7 +5070,7 @@ pub fn armEquation(
         let __arg16 @ _ = {
             let __arg15 @ _ =
                 crate::proof_kernel::aver_generated::kernel::check::patFields(&chosen.pattern);
-            crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg15, ys)
+            crate::proof_kernel::aver_generated::kernel::check::zipBind(__arg15, ys)
         };
         {
             let __arg17 @ _ = aver_rt::AverList::prepend_owned(
@@ -5190,13 +5171,13 @@ pub fn armAt(
 
 /// Every arm before arm k has a head pattern p cannot share.
 pub fn earlierExclude(
-    arms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
+    mut arms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Arm>,
     k @ _: aver_rt::AverInt,
     p @ _: &crate::proof_kernel::aver_generated::kernel::term::Pat,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __subject = (arms.clone(), (k > aver_rt::AverInt::from_i64(1)));
+        let __subject = (arms, (k > aver_rt::AverInt::from_i64(1)));
         {
             let __int_match_subject = __subject;
             let (__lit0, __lit1) = &__int_match_subject;
@@ -5208,7 +5189,7 @@ pub fn earlierExclude(
                     a.pattern,
                     p.clone(),
                 ) && crate::proof_kernel::aver_generated::kernel::check::earlierExclude(
-                    &rest,
+                    rest,
                     k.sub(&aver_rt::AverInt::from_i64(1)),
                     p,
                 ))
@@ -5249,7 +5230,7 @@ pub fn headsDiffer(
 /// The value a pattern denotes once its names are bound to ys.
 pub fn patTerm(
     mut p @ _: crate::proof_kernel::aver_generated::kernel::term::Pat,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Term, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
@@ -5396,7 +5377,7 @@ pub fn patTerm(
 pub fn ctorTerm(
     c @ _: AverStr,
     names @ _: &aver_rt::AverList<AverStr>,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Term, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
@@ -5404,7 +5385,7 @@ pub fn ctorTerm(
         Ok(
             crate::proof_kernel::aver_generated::kernel::term::Term::TCtor({
                 let __field0 = c;
-                let __field1 = ys.clone();
+                let __field1 = ys;
                 crate::proof_kernel::aver_generated::kernel::term::Term__TCtor(__field1, __field0)
             }),
         )
@@ -5493,7 +5474,7 @@ pub fn instantiate(
 pub fn rule(
     id @ _: AverStr,
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-    ps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut ps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -5535,13 +5516,7 @@ pub fn rule(
                         )
                     };
                     crate::proof_kernel::aver_generated::kernel::check::ruleConclusion(
-                        &__arg8,
-                        &s.premises,
-                        s.concl,
-                        bs,
-                        ps,
-                        env,
-                        path,
+                        &__arg8, s.premises, s.concl, bs, ps, env, path,
                     )
                 }
             } else {
@@ -5583,18 +5558,18 @@ pub fn rule(
 /// Once the binders are typed: premises first, then the conclusion.
 pub fn ruleConclusion(
     typed @ _: &Result<(), AverStr>,
-    wanted @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
+    mut wanted @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
     mut concl @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-    ps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut ps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     typed.clone()?;
     crate::proof_kernel::aver_generated::kernel::check::premisesHold(
-        wanted.clone(),
-        ps.clone(),
+        wanted,
+        ps,
         bs,
         env,
         path.clone(),
@@ -5658,7 +5633,7 @@ pub fn findLaw(
 pub fn lawStep(
     key @ _: AverStr,
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
-    ps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut ps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -5713,7 +5688,7 @@ pub fn lawStep(
                                     rhs: l.rhs,
                                 };
                             crate::proof_kernel::aver_generated::kernel::check::ruleConclusion(
-                                &__arg8, &__arg9, __arg10, bs, ps, env, path,
+                                &__arg8, __arg9, __arg10, bs, ps, env, path,
                             )
                         }
                     }
@@ -5975,10 +5950,10 @@ pub fn commaJoined(ns @ _: &aver_rt::AverList<AverStr>) -> AverStr {
 #[inline(always)]
 pub fn induct(
     f @ _: AverStr,
-    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     carry @ _: &aver_rt::AverList<AverStr>,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
@@ -6024,22 +5999,27 @@ pub fn induct(
 pub fn inductOn(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
-    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     carry @ _: &aver_rt::AverList<AverStr>,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     env @ _: &Env,
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     {
         let __subject = (
-            crate::proof_kernel::aver_generated::kernel::check::argsFit(d, xs, env, path.clone()),
+            crate::proof_kernel::aver_generated::kernel::check::argsFit(
+                d,
+                xs.clone(),
+                env,
+                path.clone(),
+            ),
             {
                 let __arg11 @ _ =
                     crate::proof_kernel::aver_generated::kernel::proof::givenNames(&env.vars);
                 crate::proof_kernel::aver_generated::kernel::induct::varied(
-                    xs,
+                    &xs,
                     r.at.clone(),
                     __arg11,
                 )
@@ -6066,10 +6046,10 @@ pub fn inductOn(
 pub fn inductChecked(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
-    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut xs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Case>,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
     env @ _: &Env,
     path @ _: AverStr,
@@ -6112,7 +6092,7 @@ pub fn inductChecked(
                 let __arg13 @ _ = r.arms.clone();
                 {
                     let __arg14 @ _ = crate::proof_kernel::aver_generated::kernel::induct::Call {
-                        args: xs.clone(),
+                        args: xs,
                         inner: aver_rt::AverList::empty(),
                     };
                     {
@@ -6124,14 +6104,14 @@ pub fn inductChecked(
                             let __arg16 @ _ = {
                                 let __arg12 @ _ = crate::proof_kernel::aver_generated::kernel::check::notMentioningAny(&env.hyps, &varying);
                                 crate::proof_kernel::aver_generated::kernel::check::withHyps(
-                                    env, &__arg12,
+                                    env, __arg12,
                                 )
                             };
                             crate::proof_kernel::aver_generated::kernel::check::inductCases(
                                 d,
                                 r,
                                 __arg13,
-                                cs.clone(),
+                                cs,
                                 &__arg14,
                                 claim,
                                 vr,
@@ -6604,7 +6584,7 @@ pub fn inductCase(
                 let __arg12 @ _ =
                     crate::proof_kernel::aver_generated::kernel::check::namesToVars(&c.binders);
                 crate::proof_kernel::aver_generated::kernel::check::inductCaseNamed(
-                    d, r, a, c, &__arg12, at, claim, vr, carried, env, path,
+                    d, r, a, c, __arg12, at, claim, vr, carried, env, path,
                 )
             }
         }
@@ -6726,7 +6706,7 @@ pub fn inductCaseNamed(
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
     mut a @ _: crate::proof_kernel::aver_generated::kernel::induct::ArmCalls,
     mut c @ _: crate::proof_kernel::aver_generated::kernel::proof::Case,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     at @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
     claim @ _: &crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
@@ -6741,7 +6721,7 @@ pub fn inductCaseNamed(
             let __arg17 @ _ = {
                 let __arg16 @ _ =
                     crate::proof_kernel::aver_generated::kernel::check::patFields(&a.arm.pattern);
-                crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg16, ys)
+                crate::proof_kernel::aver_generated::kernel::check::zipBind(__arg16, ys.clone())
             };
             {
                 let __arg18 @ _ = aver_rt::AverList::prepend_owned(
@@ -6754,7 +6734,10 @@ pub fn inductCaseNamed(
         &{
             let __arg20 @ _ = {
                 let __arg19 @ _ = crate::proof_kernel::aver_generated::kernel::types::paramsOf(d);
-                crate::proof_kernel::aver_generated::kernel::check::zipBind(&__arg19, &at.args)
+                crate::proof_kernel::aver_generated::kernel::check::zipBind(
+                    __arg19,
+                    at.args.clone(),
+                )
             };
             crate::proof_kernel::aver_generated::kernel::check::withoutNames(__arg20, names)
         },
@@ -6777,7 +6760,7 @@ pub fn inductCaseNamed(
                 &crate::proof_kernel::aver_generated::kernel::check::caseGuard(
                     &r.guard,
                     a.arm.pattern.clone(),
-                    &c.binders,
+                    c.binders.clone(),
                     &rename,
                     path.clone(),
                 )?,
@@ -6790,13 +6773,13 @@ pub fn inductCaseNamed(
                     &env.hyps.clone(),
                 ),
             );
-            crate::proof_kernel::aver_generated::kernel::check::withHyps(env, &__arg21)
+            crate::proof_kernel::aver_generated::kernel::check::withHyps(env, __arg21)
         };
         {
             let __arg23 @ _ = crate::proof_kernel::aver_generated::kernel::check::caseVarsOf(
                 (&r.guard).as_ref(),
                 a.arm.pattern,
-                &c.binders,
+                c.binders,
                 vr.v.clone(),
                 env,
                 path.clone(),
@@ -6847,20 +6830,20 @@ pub fn inductCaseNamed(
                                 r.at.clone(),
                                 claim.clone(),
                                 vr,
-                                carried,
+                                carried.clone(),
                                 &scope,
                                 path.clone(),
                             )?,
                             &aver_rt::AverList::concat(
                                 &crate::proof_kernel::aver_generated::kernel::check::ihHyps(
-                                    &a.calls,
-                                    &c.ihs,
-                                    &c.carry,
+                                    a.calls.clone(),
+                                    c.ihs.clone(),
+                                    c.carry,
                                     &rename,
                                     r.at.clone(),
                                     claim.clone(),
                                     vr,
-                                    carried,
+                                    carried.clone(),
                                     &scope,
                                     path.clone(),
                                 )?,
@@ -6868,7 +6851,7 @@ pub fn inductCaseNamed(
                             ),
                         );
                         crate::proof_kernel::aver_generated::kernel::check::withHyps(
-                            &scope, &__arg25,
+                            &scope, __arg25,
                         )
                     };
                     {
@@ -6902,7 +6885,7 @@ pub fn inductCaseNamed(
 pub fn caseVarsOf(
     guard @ _: Option<&crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut p @ _: crate::proof_kernel::aver_generated::kernel::term::Pat,
-    binders @ _: &aver_rt::AverList<AverStr>,
+    mut binders @ _: aver_rt::AverList<AverStr>,
     v @ _: AverStr,
     env @ _: &Env,
     path @ _: AverStr,
@@ -6936,7 +6919,7 @@ pub fn caseVarsOf(
 /// The pattern with its parts, a wildcard part as well, taking these names in order.
 pub fn namedParts(
     mut p @ _: crate::proof_kernel::aver_generated::kernel::term::Pat,
-    names @ _: &aver_rt::AverList<AverStr>,
+    mut names @ _: aver_rt::AverList<AverStr>,
 ) -> crate::proof_kernel::aver_generated::kernel::term::Pat {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -6965,7 +6948,7 @@ pub fn namedParts(
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, ns) => {
-                crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, names.clone())
+                crate::proof_kernel::aver_generated::kernel::term::Pat::PCtor(c, names)
             }
             _ => p,
         }
@@ -6978,7 +6961,7 @@ pub fn caseValue(
     guard @ _: Option<&crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut p @ _: crate::proof_kernel::aver_generated::kernel::term::Pat,
     v @ _: AverStr,
-    ys @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut ys @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     path @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>, AverStr>
 {
@@ -7000,13 +6983,13 @@ pub fn caseValue(
 pub fn caseGuard(
     guard @ _: &Option<crate::proof_kernel::aver_generated::kernel::term::Term>,
     mut p @ _: crate::proof_kernel::aver_generated::kernel::term::Pat,
-    binders @ _: &aver_rt::AverList<AverStr>,
+    mut binders @ _: aver_rt::AverList<AverStr>,
     rename @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     path @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let (__pat0, __pat1, __pat2) = (guard.clone(), p, binders.clone());
+        let (__pat0, __pat1, __pat2) = (guard.clone(), p, binders);
         match __pat0 {
             None => Ok(aver_rt::AverList::empty()),
             Some(g @ _) => {
@@ -7089,22 +7072,22 @@ pub fn withoutNames(
 
 /// One hypothesis per recursive call, later ones in front: the claim at that call's arguments, once each carried hypothesis is proved there. A call named _ gives none.
 pub fn ihHyps(
-    calls @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::Call>,
-    ihs @ _: &aver_rt::AverList<AverStr>,
-    carry @ _: &aver_rt::AverList<
+    mut calls @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::induct::Call>,
+    mut ihs @ _: aver_rt::AverList<AverStr>,
+    mut carry @ _: aver_rt::AverList<
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     >,
     rename @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     j @ _: aver_rt::AverInt,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
-    carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    mut carried @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     scope @ _: &Env,
     path @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __int_match_subject = (calls.clone(), ihs.clone(), carry.clone());
+        let __int_match_subject = (calls, ihs, carry);
         let (__lit0, __lit1, __lit2) = &__int_match_subject;
         if !(*__lit0).is_empty() && !(*__lit1).is_empty() && !(*__lit2).is_empty() {
             let Some((c, moreCalls)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
@@ -7118,19 +7101,19 @@ pub fn ihHyps(
             };
             Ok(aver_rt::AverList::concat(
                 &crate::proof_kernel::aver_generated::kernel::check::ihHyps(
-                    &moreCalls,
-                    &moreNames,
-                    &moreProofs,
+                    moreCalls,
+                    moreNames,
+                    moreProofs,
                     rename,
                     j.clone(),
                     claim.clone(),
                     vr,
-                    carried,
+                    carried.clone(),
                     scope,
                     path.clone(),
                 )?,
                 &crate::proof_kernel::aver_generated::kernel::check::ihTaken(
-                    &c, h, &ps, rename, j, claim, vr, carried, scope, path,
+                    &c, h, ps, rename, j, claim, vr, carried, scope, path,
                 )?,
             ))
         } else {
@@ -7148,7 +7131,7 @@ pub fn moreHyps(
     j @ _: aver_rt::AverInt,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
-    carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    mut carried @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     scope @ _: &Env,
     path @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>, AverStr> {
@@ -7248,7 +7231,7 @@ pub fn moreHyps(
                             j.clone(),
                             claim.clone(),
                             vr,
-                            carried,
+                            carried.clone(),
                             scope,
                             path.clone(),
                         )?,
@@ -7264,14 +7247,15 @@ pub fn moreHyps(
                                 {
                                     let __arg12 @ _ = crate::proof_kernel::aver_generated::kernel::check::placeNames(&vr.general);
                                     crate::proof_kernel::aver_generated::kernel::check::zipBind(
-                                        &__arg12, &m.ih.at,
+                                        __arg12,
+                                        m.ih.at.clone(),
                                     )
                                 },
                             );
                             crate::proof_kernel::aver_generated::kernel::check::ihHolds(
                                 &__arg13,
                                 m.ih.name.clone(),
-                                &m.ih.carry,
+                                m.ih.carry.clone(),
                                 claim,
                                 carried,
                                 scope,
@@ -7581,12 +7565,12 @@ pub fn withLaws(
 pub fn ihTaken(
     c @ _: &crate::proof_kernel::aver_generated::kernel::induct::Call,
     h @ _: AverStr,
-    ps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut ps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     rename @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     j @ _: aver_rt::AverInt,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     vr @ _: &crate::proof_kernel::aver_generated::kernel::induct::Varied,
-    carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    mut carried @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     scope @ _: &Env,
     path @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>, AverStr> {
@@ -7660,9 +7644,9 @@ pub fn ihTaken(
 pub fn ihHolds(
     bs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     h @ _: AverStr,
-    ps @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
+    mut ps @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Proof>,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
-    carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    mut carried @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     scope @ _: &Env,
     path @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>, AverStr> {
@@ -7700,11 +7684,7 @@ pub fn ihHolds(
             __b
         });
         crate::proof_kernel::aver_generated::kernel::check::carriedHold(
-            carried.clone(),
-            ps.clone(),
-            bs,
-            scope,
-            __arg10,
+            carried, ps, bs, scope, __arg10,
         )
     }?;
     Ok(aver_rt::AverList::prepend_owned(
@@ -7937,7 +7917,7 @@ pub fn listInduct(
     mut n @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     h @ _: AverStr,
     t @ _: AverStr,
-    general @ _: &aver_rt::AverList<AverStr>,
+    mut general @ _: aver_rt::AverList<AverStr>,
     ihs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::IhAt>,
     mut c @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     env @ _: &Env,
@@ -7992,17 +7972,17 @@ pub fn listInduct(
                     {
                         let __arg20 @ _ = {
                             let __arg19 @ _ = aver_rt::AverList::concat(&carried.clone(), &{
-                                let __arg18 @ _ = aver_rt::AverList::prepend(v.clone(), general);
+                                let __arg18 @ _ = aver_rt::AverList::prepend(v.clone(), &general);
                                 crate::proof_kernel::aver_generated::kernel::check::notMentioningAny(
                                     &env.hyps, &__arg18,
                                 )
                             });
                             crate::proof_kernel::aver_generated::kernel::check::withHyps(
-                                env, &__arg19,
+                                env, __arg19,
                             )
                         };
                         crate::proof_kernel::aver_generated::kernel::check::listCases(
-                            v, e, claim, &carried, n, h, t, general, ihs, c, &__arg20, path,
+                            v, e, claim, carried, n, h, t, general, ihs, c, &__arg20, path,
                         )
                     }
                 } else {
@@ -8021,7 +8001,7 @@ pub fn lenInduct(
     v @ _: AverStr,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     carry @ _: &aver_rt::AverList<AverStr>,
-    general @ _: &aver_rt::AverList<AverStr>,
+    mut general @ _: aver_rt::AverList<AverStr>,
     names @ _: &aver_rt::AverList<AverStr>,
     mut c @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     env @ _: &Env,
@@ -8071,7 +8051,7 @@ pub fn lenInduct(
                                 match aver_rt::list_uncons_cloned(&__list_subject) {
                                     Some((hn, __pat4)) => {
                                         let __list_subject = __pat4;
-                                        match aver_rt::list_uncons_cloned(&__list_subject) { Some((ih, __pat5)) => { { let __list_subject = __pat5; if __list_subject.is_empty() { if { let __arg20 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::takenNames(&claim, &env.hyps), &crate::proof_kernel::aver_generated::kernel::check::hypLabels(&env.hyps)); { let __arg21 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(names, &__arg20, env, __arg21) } } { { let __arg25 @ _ = crate::proof_kernel::aver_generated::kernel::proof::Law { key: ih, givens: { let __arg22 @ _ = aver_rt::AverList::prepend(v.clone(), general); crate::proof_kernel::aver_generated::kernel::check::typedNames(&__arg22, env, path.clone()) }?, premise: aver_rt::AverList::prepend_owned({ let __arg23 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::term::Term::TBi({ let __field0 = ::aver_rt::str_lit!("List.len"); let __field1 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(v.clone())), aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::term::Term__TBi(__field1, __field0) }), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n.clone())))); { let __arg24 @ _ = crate::proof_kernel::aver_generated::kernel::check::factsOf(&carried, path.clone())?; crate::proof_kernel::aver_generated::kernel::check::conjoined(__arg23, &__arg24) } }, aver_rt::AverList::empty()), lhs: claim.lhs.clone(), rhs: claim.rhs.clone() }; crate::proof_kernel::aver_generated::kernel::check::lenCase(v, claim, &carried, general, n, hn, __arg25, c, env, path) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("the names are not fresh")) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("a length induction names a bound, its hypothesis and its law")) } } }, None => { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("a length induction names a bound, its hypothesis and its law")) } }
+                                        match aver_rt::list_uncons_cloned(&__list_subject) { Some((ih, __pat5)) => { { let __list_subject = __pat5; if __list_subject.is_empty() { if { let __arg20 @ _ = aver_rt::AverList::concat(&crate::proof_kernel::aver_generated::kernel::check::takenNames(&claim, &env.hyps), &crate::proof_kernel::aver_generated::kernel::check::hypLabels(&env.hyps)); { let __arg21 @ _ = <aver_rt::AverList<AverStr>>::empty(); crate::proof_kernel::aver_generated::kernel::check::freshAll(names, &__arg20, env, __arg21) } } { { let __arg25 @ _ = crate::proof_kernel::aver_generated::kernel::proof::Law { key: ih, givens: { let __arg22 @ _ = aver_rt::AverList::prepend(v.clone(), &general); crate::proof_kernel::aver_generated::kernel::check::typedNames(&__arg22, env, path.clone()) }?, premise: aver_rt::AverList::prepend_owned({ let __arg23 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(crate::proof_kernel::aver_generated::kernel::term::Term__TOp(::aver_rt::str_lit!("<"), crate::proof_kernel::aver_generated::kernel::term::Term::TBi({ let __field0 = ::aver_rt::str_lit!("List.len"); let __field1 = aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(v.clone())), aver_rt::AverList::empty()); crate::proof_kernel::aver_generated::kernel::term::Term__TBi(__field1, __field0) }), crate::proof_kernel::aver_generated::kernel::term::Term::TVar(crate::proof_kernel::aver_generated::kernel::term::Term__TVar(n.clone())))); { let __arg24 @ _ = crate::proof_kernel::aver_generated::kernel::check::factsOf(&carried, path.clone())?; crate::proof_kernel::aver_generated::kernel::check::conjoined(__arg23, &__arg24) } }, aver_rt::AverList::empty()), lhs: claim.lhs.clone(), rhs: claim.rhs.clone() }; crate::proof_kernel::aver_generated::kernel::check::lenCase(v, claim, &carried, general, n, hn, __arg25, c, env, path) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("the names are not fresh")) } } else { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("a length induction names a bound, its hypothesis and its law")) } } }, None => { crate::proof_kernel::aver_generated::kernel::check::refuse(path, ::aver_rt::str_lit!("a length induction names a bound, its hypothesis and its law")) } }
                                     }
                                     None => {
                                         crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -8102,7 +8082,7 @@ pub fn lenCase(
     v @ _: AverStr,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
     carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
-    general @ _: &aver_rt::AverList<AverStr>,
+    mut general @ _: aver_rt::AverList<AverStr>,
     n @ _: AverStr,
     hn @ _: AverStr,
     mut ih @ _: crate::proof_kernel::aver_generated::kernel::proof::Law,
@@ -8144,7 +8124,7 @@ pub fn lenCase(
     let hyps @ _ = aver_rt::AverList::prepend_owned(
         bounded,
         aver_rt::AverList::concat(&carried.clone(), &{
-            let __arg13 @ _ = aver_rt::AverList::prepend(v, general);
+            let __arg13 @ _ = aver_rt::AverList::prepend_owned(v, general);
             crate::proof_kernel::aver_generated::kernel::check::notMentioningAny(
                 &env.hyps, &__arg13,
             )
@@ -8338,7 +8318,7 @@ pub fn withRec(env @ _: &Env) -> Env {
 
 /// No definitions, laws or hypotheses, and these givens of list type.
 #[inline(always)]
-pub fn listsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
+pub fn listsEnv(mut ns @ _: aver_rt::AverList<AverStr>) -> Env {
     crate::proof_kernel::cancel_checkpoint();
     let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::check::emptyEnv();
     let __arg3 @ _ = {
@@ -8355,20 +8335,11 @@ pub fn listsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
 /// Each name with the one type.
 #[inline(always)]
 pub fn typedAll(
-    ns @ _: &aver_rt::AverList<AverStr>,
+    mut ns @ _: aver_rt::AverList<AverStr>,
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ty,
 ) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar> {
     crate::proof_kernel::cancel_checkpoint();
-    {
-        let __list_subject = ns;
-        match aver_rt::list_uncons_cloned(__list_subject) {
-            Some((n, rest)) => aver_rt::AverList::prepend_owned(
-                crate::proof_kernel::aver_generated::kernel::term::typed(n, t.clone()),
-                crate::proof_kernel::aver_generated::kernel::check::typedAll(&rest, t),
-            ),
-            None => aver_rt::AverList::empty(),
-        }
-    }
+    aver_list_match!(ns, [] => aver_rt::AverList::empty(), [n, rest] => aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::term::typed(n, t.clone()), crate::proof_kernel::aver_generated::kernel::check::typedAll(rest, t)))
 }
 
 /// The empty-list case, then the cell case; each under the hypotheses in scope at its value of v, the head and the tail typed by what the list holds, and the cell case under one hypothesis per entry of ihs once the carried ones are proved there. A split is these cases with no entry.
@@ -8376,11 +8347,11 @@ pub fn listCases(
     v @ _: AverStr,
     mut e @ _: crate::proof_kernel::aver_generated::kernel::term::Ty,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
-    carried @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    mut carried @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     mut n @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     h @ _: AverStr,
     t @ _: AverStr,
-    general @ _: &aver_rt::AverList<AverStr>,
+    mut general @ _: aver_rt::AverList<AverStr>,
     ihs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::IhAt>,
     mut c @ _: crate::proof_kernel::aver_generated::kernel::proof::Proof,
     env @ _: &Env,
@@ -8411,7 +8382,7 @@ pub fn listCases(
                     &atNil,
                     path.clone(),
                 )?;
-                crate::proof_kernel::aver_generated::kernel::check::withHyps(env, &__arg18)
+                crate::proof_kernel::aver_generated::kernel::check::withHyps(env, __arg18)
             };
             {
                 let __arg21 @ _ = aver_rt::AverStr::from({
@@ -8454,7 +8425,7 @@ pub fn listCases(
                 &atCell,
                 path.clone(),
             )?;
-            crate::proof_kernel::aver_generated::kernel::check::withHyps(env, &__arg23)
+            crate::proof_kernel::aver_generated::kernel::check::withHyps(env, __arg23)
         };
         {
             let __arg25 @ _ =
@@ -8489,7 +8460,7 @@ pub fn listCases(
                     }?,
                     &inCell.hyps.clone(),
                 );
-                crate::proof_kernel::aver_generated::kernel::check::withHyps(&inCell, &__arg27)
+                crate::proof_kernel::aver_generated::kernel::check::withHyps(&inCell, __arg27)
             };
             {
                 let __arg30 @ _ = {
@@ -8570,7 +8541,7 @@ pub fn splitList(
                             crate::proof_kernel::aver_generated::kernel::proof::IhAt,
                         >>::empty();
                         crate::proof_kernel::aver_generated::kernel::check::listCases(
-                            v, e, claim, &__arg13, n, h, t, &__arg14, &__arg15, c, env, path,
+                            v, e, claim, __arg13, n, h, t, __arg14, &__arg15, c, env, path,
                         )
                     }
                 }
@@ -8599,7 +8570,7 @@ pub fn hypLabels(
 
 /// No definitions, laws or hypotheses, and these givens of type Int.
 #[inline(always)]
-pub fn intsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
+pub fn intsEnv(mut ns @ _: aver_rt::AverList<AverStr>) -> Env {
     crate::proof_kernel::cancel_checkpoint();
     let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::check::emptyEnv();
     let __arg3 @ _ = {
@@ -8614,10 +8585,10 @@ pub fn intsEnv(ns @ _: &aver_rt::AverList<AverStr>) -> Env {
 pub fn smallerHyps(
     v @ _: AverStr,
     mut smaller @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    general @ _: &aver_rt::AverList<AverStr>,
+    mut general @ _: aver_rt::AverList<AverStr>,
     ihs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::IhAt>,
     mut claim @ _: crate::proof_kernel::aver_generated::kernel::term::Eqn,
-    cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
     scope @ _: &Env,
     path @ _: AverStr,
 ) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>, AverStr> {
@@ -8692,10 +8663,10 @@ pub fn smallerHyps(
                         &crate::proof_kernel::aver_generated::kernel::check::smallerHyps(
                             v.clone(),
                             smaller.clone(),
-                            general,
+                            general.clone(),
                             &rest,
                             claim.clone(),
-                            cs,
+                            cs.clone(),
                             scope,
                             path.clone(),
                         )?,
@@ -8703,13 +8674,14 @@ pub fn smallerHyps(
                             let __arg10 @ _ = aver_rt::AverList::prepend_owned(
                                 crate::proof_kernel::aver_generated::kernel::term::bind(v, smaller),
                                 crate::proof_kernel::aver_generated::kernel::check::zipBind(
-                                    general, &i.at,
+                                    general,
+                                    i.at.clone(),
                                 ),
                             );
                             crate::proof_kernel::aver_generated::kernel::check::ihHolds(
                                 &__arg10,
                                 i.name.clone(),
-                                &i.carry,
+                                i.carry.clone(),
                                 claim,
                                 cs,
                                 scope,

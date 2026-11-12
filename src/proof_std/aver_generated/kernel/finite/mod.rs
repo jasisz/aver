@@ -191,7 +191,10 @@ pub fn recValues(
                 crate::proof_std::aver_generated::kernel::term::Term::TRec(
                     crate::proof_std::aver_generated::kernel::term::Term__TRec(
                         n.clone(),
-                        crate::proof_std::aver_generated::kernel::finite::zipFields(names, r),
+                        crate::proof_std::aver_generated::kernel::finite::zipFields(
+                            names.clone(),
+                            r.clone(),
+                        ),
                     ),
                 ),
                 crate::proof_std::aver_generated::kernel::finite::recValues(n, names, &rest),
@@ -203,12 +206,12 @@ pub fn recValues(
 
 /// Pair field names with values.
 pub fn zipFields(
-    names @ _: &aver_rt::AverList<AverStr>,
-    vs @ _: &aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
+    mut names @ _: aver_rt::AverList<AverStr>,
+    mut vs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __int_match_subject = (names.clone(), vs.clone());
+        let __int_match_subject = (names, vs);
         let (__lit0, __lit1) = &__int_match_subject;
         if !(*__lit0).is_empty() && !(*__lit1).is_empty() {
             let Some((n, ns)) = aver_rt::list_uncons_cloned(&(*__lit0)) else {
@@ -219,7 +222,7 @@ pub fn zipFields(
             };
             aver_rt::AverList::prepend_owned(
                 crate::proof_std::aver_generated::kernel::term::Field { name: n, value: v },
-                crate::proof_std::aver_generated::kernel::finite::zipFields(&ns, &rest),
+                crate::proof_std::aver_generated::kernel::finite::zipFields(ns, rest),
             )
         } else {
             aver_rt::AverList::empty()

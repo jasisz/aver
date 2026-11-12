@@ -89,9 +89,9 @@ pub fn samePolynomial(
     let left @ _ = {
         let __arg4 @ _ =
             <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>>::empty();
-        crate::proof_kernel::aver_generated::kernel::ring::readPoly(a, &__arg4)
+        crate::proof_kernel::aver_generated::kernel::ring::readPoly(a, __arg4)
     };
-    let right @ _ = crate::proof_kernel::aver_generated::kernel::ring::readPoly(b, &left.atoms);
+    let right @ _ = crate::proof_kernel::aver_generated::kernel::ring::readPoly(b, left.atoms);
     (left.poly == right.poly)
 }
 
@@ -99,7 +99,7 @@ pub fn samePolynomial(
 #[inline(always)]
 pub fn readPoly(
     mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Read {
     __lent_readPoly(&t, atoms)
 }
@@ -107,7 +107,7 @@ pub fn readPoly(
 /// t as a polynomial over atoms, with the atoms it adds.
 pub fn __lent_readPoly(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
-    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Read {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -117,7 +117,7 @@ pub fn __lent_readPoly(
                 let n = __n_fields.0.clone();
                 crate::proof_kernel::aver_generated::kernel::ring::Read {
                     poly: crate::proof_kernel::aver_generated::kernel::ring::constant(n),
-                    atoms: atoms.clone(),
+                    atoms: atoms,
                 }
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(____pat0_fields) => {
@@ -196,7 +196,7 @@ pub fn __lent_combine(
 ) -> Read {
     crate::proof_kernel::cancel_checkpoint();
     let right @ _ =
-        crate::proof_kernel::aver_generated::kernel::ring::__lent_readPoly(b, &left.atoms);
+        crate::proof_kernel::aver_generated::kernel::ring::__lent_readPoly(b, left.atoms);
     {
         let __dispatch_subject = how;
         match __dispatch_subject {
@@ -261,12 +261,12 @@ pub fn constant(n @ _: aver_rt::AverInt) -> aver_rt::AverList<Mono> {
 #[inline(always)]
 pub fn atom(
     mut t @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
-    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Read {
     crate::proof_kernel::cancel_checkpoint();
     match crate::proof_kernel::aver_generated::kernel::ring::indexOf(
         &t,
-        atoms,
+        &atoms,
         aver_rt::AverInt::from_i64(0),
     ) {
         Some(i @ _) => crate::proof_kernel::aver_generated::kernel::ring::Read {
@@ -277,7 +277,7 @@ pub fn atom(
                 },
                 aver_rt::AverList::empty(),
             ),
-            atoms: atoms.clone(),
+            atoms: atoms,
         },
         None => crate::proof_kernel::aver_generated::kernel::ring::Read {
             poly: aver_rt::AverList::prepend_owned(
@@ -290,7 +290,7 @@ pub fn atom(
                 aver_rt::AverList::empty(),
             ),
             atoms: aver_rt::AverList::concat(
-                &atoms.clone(),
+                &atoms,
                 &aver_rt::AverList::prepend_owned(t, aver_rt::AverList::empty()),
             ),
         },
@@ -605,7 +605,7 @@ pub fn mergeSorted(
 pub fn linearContradiction(
     facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
     cuts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Cut>,
-    weights @ _: &aver_rt::AverIntList,
+    mut weights @ _: aver_rt::AverIntList,
 ) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -615,7 +615,7 @@ pub fn linearContradiction(
                 let __arg6 @ _ = <aver_rt::AverList<
                     crate::proof_kernel::aver_generated::kernel::term::Term,
                 >>::empty();
-                crate::proof_kernel::aver_generated::kernel::ring::readRows(facts, __arg5, &__arg6)
+                crate::proof_kernel::aver_generated::kernel::ring::readRows(facts, __arg5, __arg6)
             }
         };
         match __subject {
@@ -627,9 +627,7 @@ pub fn linearContradiction(
                         let __arg8 @ _ = {
                             let __arg7 @ _ = <aver_rt::AverList<Mono>>::empty();
                             crate::proof_kernel::aver_generated::kernel::ring::sumRows(
-                                all,
-                                weights.clone(),
-                                __arg7,
+                                all, weights, __arg7,
                             )
                         };
                         crate::proof_kernel::aver_generated::kernel::ring::negativeConstant(
@@ -647,15 +645,12 @@ pub fn linearContradiction(
 pub fn readRows(
     facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>,
     mut rows @ _: aver_rt::AverList<aver_rt::AverList<Mono>>,
-    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Option<aver_rt::AverList<aver_rt::AverList<Mono>>> {
     let mut __hold0: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn> =
         <aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>>::empty();
     let mut facts @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn> =
         facts;
-    let mut __hold2: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>;
-    let mut atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term> =
-        atoms;
     loop {
         crate::proof_kernel::cancel_checkpoint();
         {
@@ -702,8 +697,7 @@ pub fn readRows(
                                         }
                                     }
                                     rows = __tco1;
-                                    __hold2 = __tco2;
-                                    atoms = &__hold2;
+                                    atoms = __tco2;
                                     continue;
                                 }
                             }
@@ -954,7 +948,7 @@ pub fn isTruth(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term) 
 pub fn asNonneg(
     t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     value @ _: bool,
-    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Option<Read> {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -1027,7 +1021,7 @@ pub fn difference(
     mut upper @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut lower @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     k @ _: i64,
-    atoms @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut atoms @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     value @ _: bool,
     mut otherUpper @ _: crate::proof_kernel::aver_generated::kernel::term::Term,
     mut otherLower @ _: crate::proof_kernel::aver_generated::kernel::term::Term,

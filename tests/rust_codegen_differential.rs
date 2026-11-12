@@ -6002,6 +6002,30 @@ fn rust_a_word_index_reaches_the_vector_without_an_int() {
     );
 }
 
+/// A list of octets kept in a record field and grown by functions that
+/// replace the field with their result (`P.update(q, out = out)` of a param,
+/// `withName(q, put(q.out, k))`): the list params are taken by value and the
+/// field is taken out for the call, so each byte is written in place rather
+/// than claimed on a buffer another value shares.
+#[test]
+fn rust_a_byte_list_grown_out_of_a_record_field_is_handed_over() {
+    let src = include_str!("fixtures/field_accumulator.av");
+    let expected = "119999";
+    let vm = run_vm_inline("field_accumulator", src).expect("vm run");
+    assert_eq!(vm, expected, "VM result");
+    let rust = build_run_rust_inline("field_accumulator", src).expect("rust build+run");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+
+    let emitted = emitted_entry_module("field_accumulator", src);
+    for shape in [
+        "pub fn put(mut acc @ _: aver_rt::AverIntList,",
+        "pub fn withName(mut q @ _: P, mut out @ _: aver_rt::AverIntList)",
+        "put(std::mem::take(&mut q.out), k)",
+    ] {
+        assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
+    }
+}
+
 /// `Option.withDefault(Vector.set(v, i, f(v)), v)` with `v` moving into the
 /// set: the value read `v` after the set had taken it, and the generated
 /// Rust did not build (E0382). The index and the value are now computed

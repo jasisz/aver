@@ -109,7 +109,7 @@ pub fn matchPattern(
             )
         }
         crate::aver_generated::domain::ast::Pattern::PatTuple(pats) => {
-            crate::aver_generated::domain::match_mod::matchPatTuple(pats, &v)
+            crate::aver_generated::domain::match_mod::matchPatTuple(pats.clone(), &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatVar(name) => {
             let name = name.clone();
@@ -312,7 +312,7 @@ pub fn matchPatConstructor(
 
 /// Match tuple pattern with nested patterns.
 pub fn matchPatTuple(
-    pats @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    mut pats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
@@ -321,7 +321,7 @@ pub fn matchPatTuple(
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValTuple(__items_fields) => {
                 let items = &__items_fields.0;
-                crate::aver_generated::domain::match_mod::matchPatTupleItems(pats, items)
+                crate::aver_generated::domain::match_mod::matchPatTupleItems(pats, items.clone())
             }
             _ => Err(::aver_rt::str_lit!("no match")),
         }
@@ -330,17 +330,13 @@ pub fn matchPatTuple(
 
 /// Match each pattern against corresponding tuple item.
 pub fn matchPatTupleItems(
-    pats @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
-    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut pats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ =
         <aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>>::empty();
-    crate::aver_generated::domain::match_mod::matchPatTupleItemsAcc(
-        pats.clone(),
-        items.clone(),
-        __arg2,
-    )
+    crate::aver_generated::domain::match_mod::matchPatTupleItemsAcc(pats, items, __arg2)
 }
 
 /// Match a generic variant constructor pattern using the full name stored in the value.

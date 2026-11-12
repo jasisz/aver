@@ -220,16 +220,16 @@ pub fn firstOutOfRangeIndex(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
 
 /// Validate raw integers and construct a byte sequence.
 #[inline(always)]
-pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
+pub fn fromList(mut xs @ _: aver_rt::AverIntList) -> Result<Bytes, AverStr> {
     crate::cancel_checkpoint();
     if let Some(__packed) = xs.as_packed() {
         return Ok(Bytes {
             values: __packed.clone(),
         });
     }
-    if crate::aver_generated::bytes::allInRange(xs) {
+    if crate::aver_generated::bytes::allInRange(&xs) {
         Ok(crate::aver_generated::bytes::Bytes {
-            values: aver_rt::into_packed(xs.clone())
+            values: aver_rt::into_packed(xs)
                 .expect("proof-packed construction escaped its refinement gate"),
         })
     } else {
@@ -242,13 +242,13 @@ pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
                             __b.push_str(&::aver_rt::str_lit!("byte "));
                             __b
                         };
-                        __b.push_display(&(crate::aver_generated::bytes::firstOutOfRange(xs)));
+                        __b.push_display(&(crate::aver_generated::bytes::firstOutOfRange(&xs)));
                         __b
                     };
                     __b.push_str(&::aver_rt::str_lit!(" at index "));
                     __b
                 };
-                __b.push_display(&(crate::aver_generated::bytes::firstOutOfRangeIndex(xs)));
+                __b.push_display(&(crate::aver_generated::bytes::firstOutOfRangeIndex(&xs)));
                 __b
             };
             __b.push_str(&::aver_rt::str_lit!(" is outside 0..=255"));

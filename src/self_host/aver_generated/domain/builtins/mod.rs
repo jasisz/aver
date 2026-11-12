@@ -59,7 +59,7 @@ pub fn tuplesToMapOne(
 /// Dispatch qualified builtin calls to sub-module implementations.
 pub fn callBuiltin(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
@@ -166,7 +166,7 @@ pub fn callBuiltinByIdValues(
 /// Continue dispatch after List.
 pub fn callBuiltinAfterList(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
@@ -176,7 +176,7 @@ pub fn callBuiltinAfterList(
 /// Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, and variant constructors.
 pub fn callBuiltinOther(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
@@ -734,7 +734,7 @@ pub fn builtinMapRemoveInner(
 /// Dispatch Terminal.*, Time.*, Random.*, Http.*, Tcp.* service builtins.
 pub fn callBuiltinServices(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
@@ -1748,7 +1748,7 @@ pub fn builtinDiskListDir(
 #[inline(always)]
 pub fn tryVariantConstructor(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let __arg2 @ _ = aver_rt::string_index_build(&name);
@@ -3589,19 +3589,19 @@ pub fn builtinTcpClose(
 /// Synthesized indexed worker of `callBuiltin`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn callBuiltin__indexed(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::builtins::callBuiltinFast__indexed(
         name.clone(),
-        args,
+        &args,
         __str_index,
     ) {
         Some(result @ _) => result,
         None => {
             if name.starts_with("List.") {
-                crate::aver_generated::domain::builtins::list::call(name, args)
+                crate::aver_generated::domain::builtins::list::call(name, &args)
             } else {
                 crate::aver_generated::domain::builtins::callBuiltinAfterList__indexed(
                     name,
@@ -3721,21 +3721,21 @@ pub fn callBuiltinFast__indexed(
 /// Synthesized indexed worker of `callBuiltinAfterList`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn callBuiltinAfterList__indexed(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     if name.starts_with("Vector.") {
-        crate::aver_generated::domain::builtins::vector::call(name, args)
+        crate::aver_generated::domain::builtins::vector::call(name, &args)
     } else {
         if name.starts_with("Int.") {
-            crate::aver_generated::domain::builtins::primitives::callInt(name, args)
+            crate::aver_generated::domain::builtins::primitives::callInt(name, &args)
         } else {
             if name.starts_with("String.") {
-                crate::aver_generated::domain::builtins::primitives::callString(name, args)
+                crate::aver_generated::domain::builtins::primitives::callString(name, &args)
             } else {
                 if name.starts_with("Float.") {
-                    crate::aver_generated::domain::builtins::primitives::callFloat(name, args)
+                    crate::aver_generated::domain::builtins::primitives::callFloat(name, &args)
                 } else {
                     crate::aver_generated::domain::builtins::callBuiltinOther__indexed(
                         name,
@@ -3751,77 +3751,79 @@ pub fn callBuiltinAfterList__indexed(
 /// Synthesized indexed worker of `callBuiltinOther`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn callBuiltinOther__indexed(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
         if &*__dispatch_subject == "Console.print" {
-            crate::aver_generated::domain::builtins::builtinConsolePrint(args)
+            crate::aver_generated::domain::builtins::builtinConsolePrint(&args)
         } else {
             if &*__dispatch_subject == "Console.readLine" {
-                crate::aver_generated::domain::builtins::builtinConsoleReadLine(args)
+                crate::aver_generated::domain::builtins::builtinConsoleReadLine(&args)
             } else {
                 if &*__dispatch_subject == "Console.error" {
-                    crate::aver_generated::domain::builtins::builtinConsoleError(args)
+                    crate::aver_generated::domain::builtins::builtinConsoleError(&args)
                 } else {
                     if &*__dispatch_subject == "Console.warn" {
-                        crate::aver_generated::domain::builtins::builtinConsoleWarn(args)
+                        crate::aver_generated::domain::builtins::builtinConsoleWarn(&args)
                     } else {
                         if &*__dispatch_subject == "Disk.readText" {
-                            crate::aver_generated::domain::builtins::builtinDiskReadText(args)
+                            crate::aver_generated::domain::builtins::builtinDiskReadText(&args)
                         } else {
                             if &*__dispatch_subject == "Disk.writeText" {
-                                crate::aver_generated::domain::builtins::builtinDiskWriteText(args)
+                                crate::aver_generated::domain::builtins::builtinDiskWriteText(&args)
                             } else {
                                 if &*__dispatch_subject == "Disk.exists" {
-                                    crate::aver_generated::domain::builtins::builtinDiskExists(args)
+                                    crate::aver_generated::domain::builtins::builtinDiskExists(
+                                        &args,
+                                    )
                                 } else {
                                     if &*__dispatch_subject == "Disk.listDir" {
                                         crate::aver_generated::domain::builtins::builtinDiskListDir(
-                                            args,
+                                            &args,
                                         )
                                     } else {
                                         if &*__dispatch_subject == "Disk.appendText" {
-                                            crate::aver_generated::domain::builtins::builtinDiskAppendText(args)
+                                            crate::aver_generated::domain::builtins::builtinDiskAppendText(&args)
                                         } else {
                                             if &*__dispatch_subject == "Disk.delete" {
-                                                crate::aver_generated::domain::builtins::builtinDiskDelete(args)
+                                                crate::aver_generated::domain::builtins::builtinDiskDelete(&args)
                                             } else {
                                                 if &*__dispatch_subject == "Disk.deleteDir" {
-                                                    crate::aver_generated::domain::builtins::builtinDiskDeleteDir(args)
+                                                    crate::aver_generated::domain::builtins::builtinDiskDeleteDir(&args)
                                                 } else {
                                                     if &*__dispatch_subject == "Disk.makeDir" {
-                                                        crate::aver_generated::domain::builtins::builtinDiskMakeDir(args)
+                                                        crate::aver_generated::domain::builtins::builtinDiskMakeDir(&args)
                                                     } else {
                                                         if &*__dispatch_subject == "Env.get" {
-                                                            crate::aver_generated::domain::builtins::builtinEnvGet(args)
+                                                            crate::aver_generated::domain::builtins::builtinEnvGet(&args)
                                                         } else {
                                                             if &*__dispatch_subject == "Env.set" {
-                                                                crate::aver_generated::domain::builtins::builtinEnvSet(args)
+                                                                crate::aver_generated::domain::builtins::builtinEnvSet(&args)
                                                             } else {
                                                                 if &*__dispatch_subject
                                                                     == "Args.get"
                                                                 {
-                                                                    crate::aver_generated::domain::builtins::builtinArgsGet(args)
+                                                                    crate::aver_generated::domain::builtins::builtinArgsGet(&args)
                                                                 } else {
                                                                     if &*__dispatch_subject
                                                                         == "Result.Ok"
                                                                     {
-                                                                        crate::aver_generated::domain::builtins::wrappers::call(name, args)
+                                                                        crate::aver_generated::domain::builtins::wrappers::call(name, &args)
                                                                     } else {
                                                                         if &*__dispatch_subject
                                                                             == "Result.Err"
                                                                         {
-                                                                            crate::aver_generated::domain::builtins::wrappers::call(name, args)
+                                                                            crate::aver_generated::domain::builtins::wrappers::call(name, &args)
                                                                         } else {
                                                                             if &*__dispatch_subject
                                                                                 == "Result.withDefault"
                                                                             {
-                                                                                crate::aver_generated::domain::builtins::wrappers::call(name, args)
+                                                                                crate::aver_generated::domain::builtins::wrappers::call(name, &args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "Option.Some" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.None" { Ok(crate::aver_generated::domain::value::Val::ValNone) } else { if &*__dispatch_subject == "Option.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Result.fromOption" { crate::aver_generated::domain::builtins::wrappers::callResultFromOption(args) } else { if &*__dispatch_subject == "Bool.or" { crate::aver_generated::domain::builtins::builtinBoolOr(args) } else { if &*__dispatch_subject == "Bool.and" { crate::aver_generated::domain::builtins::builtinBoolAnd(args) } else { if &*__dispatch_subject == "Bool.not" { crate::aver_generated::domain::builtins::builtinBoolNot(args) } else { if &*__dispatch_subject == "Map.set" { crate::aver_generated::domain::builtins::builtinMapSet(args) } else { if &*__dispatch_subject == "Map.get" { crate::aver_generated::domain::builtins::builtinMapGet(args) } else { if &*__dispatch_subject == "Map.has" { crate::aver_generated::domain::builtins::builtinMapHas(args) } else { if &*__dispatch_subject == "Map.entries" { crate::aver_generated::domain::builtins::builtinMapEntries(args) } else { if &*__dispatch_subject == "Map.keys" { crate::aver_generated::domain::builtins::builtinMapKeys(args) } else { if &*__dispatch_subject == "Map.values" { crate::aver_generated::domain::builtins::builtinMapValues(args) } else { if &*__dispatch_subject == "Map.fromList" { crate::aver_generated::domain::builtins::builtinMapFromList(args) } else { if &*__dispatch_subject == "Map.size" { crate::aver_generated::domain::builtins::builtinMapSize(args) } else { if &*__dispatch_subject == "Map.len" { crate::aver_generated::domain::builtins::builtinMapSize(args) } else { if &*__dispatch_subject == "Map.remove" { crate::aver_generated::domain::builtins::builtinMapRemove(args) } else { crate::aver_generated::domain::builtins::callBuiltinServices__indexed(name, args, __str_index) } } } } } } } } } } } } } } } } }
+                                                                                if &*__dispatch_subject == "Option.Some" { crate::aver_generated::domain::builtins::wrappers::call(name, &args) } else { if &*__dispatch_subject == "Option.None" { Ok(crate::aver_generated::domain::value::Val::ValNone) } else { if &*__dispatch_subject == "Option.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, &args) } else { if &*__dispatch_subject == "Result.fromOption" { crate::aver_generated::domain::builtins::wrappers::callResultFromOption(&args) } else { if &*__dispatch_subject == "Bool.or" { crate::aver_generated::domain::builtins::builtinBoolOr(&args) } else { if &*__dispatch_subject == "Bool.and" { crate::aver_generated::domain::builtins::builtinBoolAnd(&args) } else { if &*__dispatch_subject == "Bool.not" { crate::aver_generated::domain::builtins::builtinBoolNot(&args) } else { if &*__dispatch_subject == "Map.set" { crate::aver_generated::domain::builtins::builtinMapSet(&args) } else { if &*__dispatch_subject == "Map.get" { crate::aver_generated::domain::builtins::builtinMapGet(&args) } else { if &*__dispatch_subject == "Map.has" { crate::aver_generated::domain::builtins::builtinMapHas(&args) } else { if &*__dispatch_subject == "Map.entries" { crate::aver_generated::domain::builtins::builtinMapEntries(&args) } else { if &*__dispatch_subject == "Map.keys" { crate::aver_generated::domain::builtins::builtinMapKeys(&args) } else { if &*__dispatch_subject == "Map.values" { crate::aver_generated::domain::builtins::builtinMapValues(&args) } else { if &*__dispatch_subject == "Map.fromList" { crate::aver_generated::domain::builtins::builtinMapFromList(&args) } else { if &*__dispatch_subject == "Map.size" { crate::aver_generated::domain::builtins::builtinMapSize(&args) } else { if &*__dispatch_subject == "Map.len" { crate::aver_generated::domain::builtins::builtinMapSize(&args) } else { if &*__dispatch_subject == "Map.remove" { crate::aver_generated::domain::builtins::builtinMapRemove(&args) } else { crate::aver_generated::domain::builtins::callBuiltinServices__indexed(name, args, __str_index) } } } } } } } } } } } } } } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -3846,92 +3848,92 @@ pub fn callBuiltinOther__indexed(
 /// Synthesized indexed worker of `callBuiltinServices`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn callBuiltinServices__indexed(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
         if &*__dispatch_subject == "Random.int" {
-            crate::aver_generated::domain::builtins::builtinRandomInt(args)
+            crate::aver_generated::domain::builtins::builtinRandomInt(&args)
         } else {
             if &*__dispatch_subject == "Time.now" {
-                crate::aver_generated::domain::builtins::builtinTimeNow(args)
+                crate::aver_generated::domain::builtins::builtinTimeNow(&args)
             } else {
                 if &*__dispatch_subject == "Time.sleep" {
-                    crate::aver_generated::domain::builtins::builtinTimeSleep(args)
+                    crate::aver_generated::domain::builtins::builtinTimeSleep(&args)
                 } else {
                     if &*__dispatch_subject == "Time.unixMs" {
-                        crate::aver_generated::domain::builtins::builtinTimeUnixMs(args)
+                        crate::aver_generated::domain::builtins::builtinTimeUnixMs(&args)
                     } else {
                         if &*__dispatch_subject == "Http.get" {
                             crate::aver_generated::domain::builtins::builtinHttpSimple(
-                                args,
+                                &args,
                                 ::aver_rt::str_lit!("get"),
                             )
                         } else {
                             if &*__dispatch_subject == "Http.head" {
                                 crate::aver_generated::domain::builtins::builtinHttpSimple(
-                                    args,
+                                    &args,
                                     ::aver_rt::str_lit!("head"),
                                 )
                             } else {
                                 if &*__dispatch_subject == "Http.delete" {
                                     crate::aver_generated::domain::builtins::builtinHttpSimple(
-                                        args,
+                                        &args,
                                         ::aver_rt::str_lit!("delete"),
                                     )
                                 } else {
                                     if &*__dispatch_subject == "Http.post" {
                                         crate::aver_generated::domain::builtins::builtinHttpBody(
-                                            args,
+                                            &args,
                                             ::aver_rt::str_lit!("post"),
                                         )
                                     } else {
                                         if &*__dispatch_subject == "Http.put" {
                                             crate::aver_generated::domain::builtins::builtinHttpBody(
-                                                args,
+                                                &args,
                                                 ::aver_rt::str_lit!("put"),
                                             )
                                         } else {
                                             if &*__dispatch_subject == "Http.patch" {
-                                                crate::aver_generated::domain::builtins::builtinHttpBody(args, ::aver_rt::str_lit!("patch"))
+                                                crate::aver_generated::domain::builtins::builtinHttpBody(&args, ::aver_rt::str_lit!("patch"))
                                             } else {
                                                 if &*__dispatch_subject == "Tcp.send" {
-                                                    crate::aver_generated::domain::builtins::builtinTcpSend(args)
+                                                    crate::aver_generated::domain::builtins::builtinTcpSend(&args)
                                                 } else {
                                                     if &*__dispatch_subject == "Tcp.ping" {
-                                                        crate::aver_generated::domain::builtins::builtinTcpPing(args)
+                                                        crate::aver_generated::domain::builtins::builtinTcpPing(&args)
                                                     } else {
                                                         if &*__dispatch_subject == "Tcp.connect" {
-                                                            crate::aver_generated::domain::builtins::builtinTcpConnect(args)
+                                                            crate::aver_generated::domain::builtins::builtinTcpConnect(&args)
                                                         } else {
                                                             if &*__dispatch_subject
                                                                 == "Tcp.beginConnect"
                                                             {
-                                                                crate::aver_generated::domain::builtins::builtinTcpBeginConnect(args)
+                                                                crate::aver_generated::domain::builtins::builtinTcpBeginConnect(&args)
                                                             } else {
                                                                 if &*__dispatch_subject
                                                                     == "Tcp.dialled"
                                                                 {
-                                                                    crate::aver_generated::domain::builtins::builtinTcpDialled(args)
+                                                                    crate::aver_generated::domain::builtins::builtinTcpDialled(&args)
                                                                 } else {
                                                                     if &*__dispatch_subject
                                                                         == "Tcp.listen"
                                                                     {
-                                                                        crate::aver_generated::domain::builtins::builtinTcpListen(args)
+                                                                        crate::aver_generated::domain::builtins::builtinTcpListen(&args)
                                                                     } else {
                                                                         if &*__dispatch_subject
                                                                             == "Tcp.accept"
                                                                         {
-                                                                            crate::aver_generated::domain::builtins::builtinTcpAccept(args)
+                                                                            crate::aver_generated::domain::builtins::builtinTcpAccept(&args)
                                                                         } else {
                                                                             if &*__dispatch_subject
                                                                                 == "Tcp.peerAddress"
                                                                             {
-                                                                                crate::aver_generated::domain::builtins::builtinTcpPeerAddress(args)
+                                                                                crate::aver_generated::domain::builtins::builtinTcpPeerAddress(&args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "Tcp.poll" { crate::aver_generated::domain::builtins::builtinTcpPoll(args) } else { if &*__dispatch_subject == "Tcp.writeLine" { crate::aver_generated::domain::builtins::builtinTcpWriteLine(args) } else { if &*__dispatch_subject == "Tcp.readLine" { crate::aver_generated::domain::builtins::builtinTcpReadLine(args) } else { if &*__dispatch_subject == "Tcp.close" { crate::aver_generated::domain::builtins::builtinTcpClose(args) } else { if &*__dispatch_subject == "Tcp.closeDial" { crate::aver_generated::domain::builtins::builtinTcpCloseDial(args) } else { if &*__dispatch_subject == "Tcp.closeListener" { crate::aver_generated::domain::builtins::builtinTcpCloseListener(args) } else { if &*__dispatch_subject == "Terminal.clear" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.flush" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.enableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.disableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.hideCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.showCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.resetColor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.readKey" { crate::aver_generated::domain::builtins::builtinTerminalReadKey(args) } else { if &*__dispatch_subject == "Terminal.size" { crate::aver_generated::domain::builtins::builtinTerminalSize(args) } else { if &*__dispatch_subject == "Terminal.print" { crate::aver_generated::domain::builtins::builtinTerminalPrint(args) } else { if &*__dispatch_subject == "Terminal.setColor" { crate::aver_generated::domain::builtins::builtinTerminalSetColor(args) } else { if &*__dispatch_subject == "Terminal.moveTo" { crate::aver_generated::domain::builtins::builtinTerminalMoveTo(args) } else { crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __str_index) } } } } } } } } } } } } } } } } } }
+                                                                                if &*__dispatch_subject == "Tcp.poll" { crate::aver_generated::domain::builtins::builtinTcpPoll(&args) } else { if &*__dispatch_subject == "Tcp.writeLine" { crate::aver_generated::domain::builtins::builtinTcpWriteLine(&args) } else { if &*__dispatch_subject == "Tcp.readLine" { crate::aver_generated::domain::builtins::builtinTcpReadLine(&args) } else { if &*__dispatch_subject == "Tcp.close" { crate::aver_generated::domain::builtins::builtinTcpClose(&args) } else { if &*__dispatch_subject == "Tcp.closeDial" { crate::aver_generated::domain::builtins::builtinTcpCloseDial(&args) } else { if &*__dispatch_subject == "Tcp.closeListener" { crate::aver_generated::domain::builtins::builtinTcpCloseListener(&args) } else { if &*__dispatch_subject == "Terminal.clear" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, &args, __str_index) } else { if &*__dispatch_subject == "Terminal.flush" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, &args, __str_index) } else { if &*__dispatch_subject == "Terminal.enableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, &args, __str_index) } else { if &*__dispatch_subject == "Terminal.disableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, &args, __str_index) } else { if &*__dispatch_subject == "Terminal.hideCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, &args, __str_index) } else { if &*__dispatch_subject == "Terminal.showCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, &args, __str_index) } else { if &*__dispatch_subject == "Terminal.resetColor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, &args, __str_index) } else { if &*__dispatch_subject == "Terminal.readKey" { crate::aver_generated::domain::builtins::builtinTerminalReadKey(&args) } else { if &*__dispatch_subject == "Terminal.size" { crate::aver_generated::domain::builtins::builtinTerminalSize(&args) } else { if &*__dispatch_subject == "Terminal.print" { crate::aver_generated::domain::builtins::builtinTerminalPrint(&args) } else { if &*__dispatch_subject == "Terminal.setColor" { crate::aver_generated::domain::builtins::builtinTerminalSetColor(&args) } else { if &*__dispatch_subject == "Terminal.moveTo" { crate::aver_generated::domain::builtins::builtinTerminalMoveTo(&args) } else { crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __str_index) } } } } } } } } } } } } } } } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -4008,7 +4010,7 @@ pub fn builtinTerminalNoArg__indexed(
 #[inline(always)]
 pub fn tryVariantConstructor__indexed(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
@@ -4020,7 +4022,7 @@ pub fn tryVariantConstructor__indexed(
                     __str_index,
                 ),
                 name,
-                args.clone(),
+                args,
             ),
         )),
         None => Err(aver_rt::AverStr::from({

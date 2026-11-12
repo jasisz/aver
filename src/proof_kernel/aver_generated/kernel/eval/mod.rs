@@ -224,7 +224,7 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(__name_fields) => {
                 let name = __name_fields.1.clone();
                 let args = &__name_fields.0;
-                crate::proof_kernel::aver_generated::kernel::eval::evalBuiltin(name, args)
+                crate::proof_kernel::aver_generated::kernel::eval::evalBuiltin(name, args.clone())
             }
             _ => None,
         }
@@ -482,7 +482,7 @@ pub fn listOp(
 /// The builtins the evaluator knows.
 pub fn evalBuiltin(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut args @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
     {
@@ -723,11 +723,11 @@ pub fn divided(
 /// List.prepend, concat, len, reverse, take and drop on closed lists, as Aver defines them: a count below zero counts as zero.
 pub fn listBuiltin(
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+    mut args @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
 ) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let (__pat0, __pat1) = (name, args.clone());
+        let (__pat0, __pat1) = (name, args);
         {
             let __dispatch_subject = __pat0;
             if &*__dispatch_subject == "List.prepend" {

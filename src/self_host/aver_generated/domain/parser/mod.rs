@@ -726,7 +726,7 @@ pub fn parseFnDefParams(
     }?;
     {
         let (params, pos3) = pr;
-        crate::aver_generated::domain::parser::parseFnDefBody(tokens, pos3, name, &params)
+        crate::aver_generated::domain::parser::parseFnDefBody(tokens, pos3, name, params)
     }
 }
 
@@ -735,7 +735,7 @@ pub fn parseFnDefBody(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    params @ _: &aver_rt::AverList<AverStr>,
+    mut params @ _: aver_rt::AverList<AverStr>,
 ) -> Result<(crate::aver_generated::domain::ast::FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 @ _ = crate::aver_generated::domain::parser_match::skipReturnType(tokens, pos);
@@ -758,7 +758,7 @@ pub fn parseFnDefBodyIndented(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    params @ _: &aver_rt::AverList<AverStr>,
+    mut params @ _: aver_rt::AverList<AverStr>,
 ) -> Result<(crate::aver_generated::domain::ast::FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 @ _ = crate::aver_generated::domain::parser_match::skipDescAndEffects(tokens, pos);
@@ -771,7 +771,7 @@ pub fn parseFnDefBodyIndented(
         Ok((
             crate::aver_generated::domain::ast::FnDef {
                 name: name,
-                params: params.clone(),
+                params: params,
                 body: (stmts).reverse_owned(),
                 slotCount: aver_rt::AverInt::from_i64(0),
                 slotMap: HashMap::new(),
@@ -788,7 +788,7 @@ pub fn parseFnDefBodyFlat(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    params @ _: &aver_rt::AverList<AverStr>,
+    mut params @ _: aver_rt::AverList<AverStr>,
 ) -> Result<(crate::aver_generated::domain::ast::FnDef, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let pos2 @ _ = crate::aver_generated::domain::parser_match::skipDescAndEffects(tokens, pos);
@@ -801,7 +801,7 @@ pub fn parseFnDefBodyFlat(
         Ok((
             crate::aver_generated::domain::ast::FnDef {
                 name: name,
-                params: params.clone(),
+                params: params,
                 body: (stmts).reverse_owned(),
                 slotCount: aver_rt::AverInt::from_i64(0),
                 slotMap: HashMap::new(),
