@@ -1,0 +1,91 @@
+module OctetBuffers
+    intent =
+        "Lists of octets built in front, threaded through records, parameters and"
+        "results, shared, and read as Bytes, next to a list that is not one."
+    depends [Bytes]
+    effects [Console.print]
+
+record Out
+    main: List<Int>
+    count: Int
+
+record Log
+    items: List<Int>
+
+fn varint(acc: List<Int>, n: Int) -> List<Int>
+    ? "n as a varint onto acc, nothing for a negative n."
+    match n < 0
+        true -> acc
+        false -> match n < 128
+            true -> List.prepend(n, acc)
+            false -> varint(List.prepend(Bits.and(n, 127) + 128, acc), Bits.shiftRight(n, 7))
+
+fn copied(acc: List<Int>, b: Bytes, i: Int) -> List<Int>
+    ? "The bytes of b from i on onto acc."
+    match Bytes.get(b, i)
+        Option.Some(x) -> copied(List.prepend(x, acc), b, i + 1)
+        Option.None -> acc
+
+fn put(o: Out, n: Int) -> Out
+    ? "One number written, then its low byte."
+    Out.update(o, main = List.prepend(Int.mod(n, 256), varint(o.main, n)), count = o.count + 1)
+
+fn fill(o: Out, k: Int) -> Out
+    ? "k numbers written."
+    match k == 0
+        true -> o
+        false -> fill(put(o, k * 37), k - 1)
+
+fn started(n: Int) -> Result<List<Int>, String>
+    ? "Two octets made as cells, where no buffer is known yet."
+    match n < 0
+        true -> Result.Err("negative")
+        false -> Result.Ok(List.prepend(Int.mod(n, 256), List.prepend(9, [])))
+
+fn written(o: Out, n: Int) -> Result<Out, String>
+    ? "The octets of started(n) and n as a varint over them."
+    Result.Ok(Out.update(o, main = varint(started(n)?, n)))
+
+fn flushed(o: Out) -> String
+    ? "How many octets, and the last eight as hex."
+    match Bytes.fromList(List.reverse(o.main))
+        Result.Ok(b) -> "{Bytes.len(b)} {Bytes.toHex(Bytes.drop(b, Bytes.len(b) - 8))}"
+        Result.Err(e) -> e
+
+fn last(o: Out, n: Int) -> String
+    ? "The last n octets pushed, as hex."
+    Bytes.toHex(Result.withDefault(Bytes.fromList(List.reverse(List.take(o.main, n))), Bytes.fromList([])))
+
+fn logged(l: Log, n: Int) -> Log
+    ? "A number that is no octet."
+    Log(items = List.prepend(n * 1000, l.items))
+
+fn firstOf(xs: List<Int>) -> Int
+    ? "The first number, -1 for none."
+    match xs
+        [] -> -1
+        [x, ..rest] -> x
+
+fn main() -> Unit
+    ! [Console.print]
+    o = fill(Out(main = [7, 1], count = 0), 200)
+    a = put(o, 300)
+    b = put(o, 5)
+    c = Out.update(o, main = copied(o.main, Bytes.fromList([9, 8, 255]), 0))
+    Console.print("{List.len(o.main)} {List.len(a.main)} {List.len(b.main)} {List.len(c.main)} {c.count}")
+    Console.print(flushed(a))
+    Console.print(flushed(b))
+    Console.print(flushed(c))
+    Console.print(flushed(o))
+    Console.print(flushed(Out(main = [], count = 0)))
+    match written(o, 300)
+        Result.Ok(w) -> Console.print(flushed(w))
+        Result.Err(e) -> Console.print(e)
+    match written(o, -1)
+        Result.Ok(w) -> Console.print(flushed(w))
+        Result.Err(e) -> Console.print(e)
+    Console.print("{last(o, -1)}|{last(o, 0)}|{last(o, 5)}|{Bytes.len(Result.withDefault(Bytes.fromList(List.reverse(List.take(o.main, 40))), Bytes.fromList([])))}|{last(c, 6)}")
+    Console.print(last(Out(main = [], count = 0), 3))
+    d = fill(Out(main = List.reverse([1, 2, 3]), count = 0), 3)
+    Console.print("{last(d, 1000)} {last(d, 2)}")
+    Console.print("{List.len(logged(Log(items = []), 3).items)} {firstOf(logged(Log(items = [1]), 2).items)}")

@@ -54,6 +54,7 @@ pub mod const_fold;
 pub mod dead_code;
 pub mod inline;
 pub mod list_refinement;
+pub mod octets;
 pub mod own_param;
 pub mod packed_index;
 

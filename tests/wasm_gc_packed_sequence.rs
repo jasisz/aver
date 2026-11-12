@@ -1091,3 +1091,65 @@ fn bytes_views_answer_as_the_vm_and_the_array_form_do() {
     assert!(output.status.success(), "array form failed");
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), vm);
 }
+
+/// Lists of octets built in front and read as `Bytes` (an octet group, see
+/// `ir::mir::optimize::octets`) are byte buffers in a plain raw wasm-gc
+/// build: through a record field, parameters, results and a `Result`'s `Ok`
+/// unwrapped by `?`, pushed onto again after another value took a push in
+/// place, copied from `Bytes`, and made as cells first. They answer as the VM
+/// does, and as the list form does (`AVER_NO_BYTES_VIEWS=1`, where buffers
+/// are off).
+#[test]
+fn octet_buffers_answer_as_the_vm_and_the_list_form_do() {
+    let src = include_str!("fixtures/octet_buffers.av");
+    let (vm_ok, vm) = run(src, false, true);
+    let (wasm_ok, wasm) = run(src, true, true);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(wasm_ok, "wasm-gc failed: {wasm}");
+    assert_eq!(wasm, vm);
+    assert!(
+        vm.contains("602 6f4a4a25250908ff"),
+        "fixture output moved: {vm}"
+    );
+    let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("aver-octets-{}-{id}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("main.av");
+    std::fs::write(&path, src).expect("source");
+    let list_form = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&path)
+        .arg("--wasm-gc")
+        .env("AVER_NO_BYTES_VIEWS", "1")
+        .output()
+        .expect("run aver");
+    let explained = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("compile")
+        .arg(&path)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("-o")
+        .arg(dir.join("out"))
+        .env("AVER_EXPLAIN_OCTETS", "1")
+        .output()
+        .expect("compile aver");
+    let _ = std::fs::remove_dir_all(dir);
+    assert!(list_form.status.success(), "list form failed");
+    assert_eq!(String::from_utf8_lossy(&list_form.stdout).trim(), vm);
+    // The groups: the output list and every slot it goes through are one;
+    // the log is not, for a value no octet and a match on its cells.
+    let explained = String::from_utf8_lossy(&explained.stderr);
+    assert!(
+        explained.contains(
+            "octets: Out.main, copied result, copied(acc), started Ok, varint result, varint(acc)\n"
+        ),
+        "{explained}"
+    );
+    assert!(
+        explained.contains(
+            "octets declined at Log.items: prepends a value not proven in 0..=255 (line 61); \
+             matched as a list (line 65)"
+        ),
+        "{explained}"
+    );
+}

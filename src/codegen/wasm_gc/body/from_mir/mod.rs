@@ -375,6 +375,8 @@ fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
             &[1]
         }
         "__str_fold_lower" | "__str_fold_upper" => &[0],
+        "__oct_push" => &[0],
+        "__oct_last" => &[1],
         _ => &[],
     }
 }

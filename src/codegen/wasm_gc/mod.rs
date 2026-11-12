@@ -73,6 +73,7 @@ mod jobs;
 mod lists;
 mod maps;
 mod module;
+mod octet_buffers;
 mod optimize;
 mod packed_sequences;
 mod run_fail;

@@ -67,6 +67,9 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::BytPush => Some((BYTE_BUILDER_PUSH, 2)),
         BuiltinIntrinsic::BytFinalize => Some((BYTE_BUILDER_FINALIZE, 1)),
         BuiltinIntrinsic::ToStr => None,
+        // wasm-gc only: the octet rewrite of that backend is their one
+        // producer.
+        BuiltinIntrinsic::OctPush | BuiltinIntrinsic::OctBytes | BuiltinIntrinsic::OctLast => None,
         // Rust only: the representation rewrite of the Rust backend is its
         // one producer.
         BuiltinIntrinsic::StrIndexPosition | BuiltinIntrinsic::PositionOffset => None,
