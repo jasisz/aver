@@ -157,7 +157,7 @@ pub fn builtinVectorSetInner(
                                 Ok(crate::aver_generated::domain::value::Val::ValNone)
                             } else {
                                 if (idx < aver_rt::AverInt::from_i64(((vec).len() as i64))) {
-                                    crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(vec.clone(), idx, valV)
+                                    crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(vec.clone(), aver_rt::string_position(&idx), valV)
                                 } else {
                                     Ok(crate::aver_generated::domain::value::Val::ValNone)
                                 }
@@ -176,12 +176,12 @@ pub fn builtinVectorSetInner(
 #[inline(always)]
 pub fn builtinVectorSetInBounds(
     mut vec @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
-    idx @ _: aver_rt::AverInt,
+    idx @ _: i64,
     mut valV @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __idx = (idx).to_usize();
+        let __idx = usize::try_from(idx).ok();
         let __value = valV;
         match __idx.filter(|__idx| *__idx < vec.len()) {
             Some(__idx) => {

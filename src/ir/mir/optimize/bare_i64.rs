@@ -176,6 +176,9 @@ pub struct RawOps {
     /// size of something already in memory, which the Rust backend reads as
     /// an `i64` (see [`RawOps::length`], [`LENGTH_TOP`]).
     lengths: HashSet<crate::ir::BuiltinId>,
+    /// `Vector.get` and `Vector.set`, whose index the Rust backend converts
+    /// to a `usize` from either representation (see [`RawOps::takes_index`]).
+    indexes: HashSet<crate::ir::BuiltinId>,
 }
 
 impl RawOps {
@@ -206,11 +209,19 @@ impl RawOps {
                 .collect(),
             false => HashSet::new(),
         };
+        let indexes = match on {
+            true => (0..program.builtins.len() as u32)
+                .map(crate::ir::BuiltinId)
+                .filter(|&id| matches!(program.builtin_name(id), "Vector.get" | "Vector.set"))
+                .collect(),
+            false => HashSet::new(),
+        };
         RawOps {
             on,
             builtins,
             counts,
             lengths,
+            indexes,
         }
     }
 
@@ -232,10 +243,23 @@ impl RawOps {
         }
     }
 
-    /// [`intrinsic_accepts_raw_position_arg`], or a count of list elements
-    /// ([`RawOps::takes_count`]).
+    /// Whether argument `i` of a call of `callee` is the index of a
+    /// `Vector.get` or `Vector.set`. The index is converted to a `usize`,
+    /// and a value past `i64` is out of every vector's range as its
+    /// saturated `i64` is, so it takes a position in either representation.
+    pub fn takes_index(&self, callee: &MirCallee, i: usize) -> bool {
+        match callee {
+            MirCallee::Builtin(id) => self.on && i == 1 && self.indexes.contains(id),
+            _ => false,
+        }
+    }
+
+    /// [`intrinsic_accepts_raw_position_arg`], a count of list elements
+    /// ([`RawOps::takes_count`]) or a vector index ([`RawOps::takes_index`]).
     pub fn takes_position(&self, callee: &MirCallee, i: usize) -> bool {
-        intrinsic_accepts_raw_position_arg(callee, i) || self.takes_count(callee, i)
+        intrinsic_accepts_raw_position_arg(callee, i)
+            || self.takes_count(callee, i)
+            || self.takes_index(callee, i)
     }
 
     /// The op a call of `callee` computes raw, if any. The literal forms

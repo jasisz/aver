@@ -6260,8 +6260,9 @@ fn emit_mir_match_with(
         let value_temp = generated_ident("value");
         let some = &arm_bodies[set.some_arm];
         let none = &arm_bodies[set.none_arm];
+        let usize_index = index_usize_of(set.index, &index, emit_ctx);
         return Some(format!(
-            "{{ let {index_temp} = ({index}).to_usize(); let {value_temp} = {value}; match {index_temp}.filter(|{index_temp}| *{index_temp} < {target}.len()) {{ Some({index_temp}) => {{ let {updated} = {moved}.set_unchecked({index_temp}, {value_temp}); {some} }} None => {{ {none} }} }} }}"
+            "{{ let {index_temp} = {usize_index}; let {value_temp} = {value}; match {index_temp}.filter(|{index_temp}| *{index_temp} < {target}.len()) {{ Some({index_temp}) => {{ let {updated} = {moved}.set_unchecked({index_temp}, {value_temp}); {some} }} None => {{ {none} }} }} }}"
         ));
     }
 
@@ -6399,11 +6400,13 @@ fn emit_mir_match_with(
             emit_mir_expr(key, emit_ctx)?
         )
     } else if let Some((vector, index)) = lent_element {
-        let index = emit_mir_expr(index, emit_ctx)?;
+        let index_expr = index;
+        let index = emit_mir_expr(index_expr, emit_ctx)?;
         let vector = emit_mir_expr(vector, emit_ctx)?;
         let temp = generated_ident("i");
+        let usize_index = index_usize_of(index_expr, &index, emit_ctx);
         format!(
-            "{{ let {temp} = ({index}).to_usize(); {temp}.and_then(|{temp}| ({vector}).get({temp})) }}"
+            "{{ let {temp} = {usize_index}; {temp}.and_then(|{temp}| ({vector}).get({temp})) }}"
         )
     } else if subject_is_bare {
         // A bare i64 subject: emit the plain value (no clone — Copy).
@@ -6920,6 +6923,49 @@ fn packed_field_read(rendered: &str) -> Option<&str> {
         text = inner.trim();
     }
     text.strip_suffix(".to_int_list()")
+}
+
+/// The index `expr` (rendered as `rendered`) as an `Option<usize>`: a raw
+/// word is converted itself, any other through [`index_usize`].
+fn index_usize_of(expr: &Spanned<MirExpr>, rendered: &str, ctx: &MirEmitCtx<'_>) -> String {
+    match boxed_word(rendered) {
+        Some(word) => format!("usize::try_from({word}).ok()"),
+        None if mir_expr_is_bare_i64(expr, ctx) && !rendered.contains("AverInt") => {
+            format!("usize::try_from({rendered}).ok()")
+        }
+        None => format!("({rendered}).to_usize()"),
+    }
+}
+
+/// The machine word `rendered` boxes, when it is wholly
+/// `aver_rt::AverInt::from_i64(word)`.
+fn boxed_word(rendered: &str) -> Option<&str> {
+    rendered
+        .trim()
+        .strip_prefix("aver_rt::AverInt::from_i64(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .filter(|inner| {
+            let mut depth = 0i32;
+            inner.chars().all(|c| {
+                depth += match c {
+                    '(' => 1,
+                    ')' => -1,
+                    _ => 0,
+                };
+                depth >= 0
+            }) && depth == 0
+        })
+}
+
+/// A rendered `Int` index as an `Option<usize>`. An index the rewrite
+/// boxed from a machine word (`aver_rt::AverInt::from_i64(i)`) is converted
+/// from the word itself, without making an `AverInt` of it first; a negative
+/// word gives `None`, as `to_usize` does.
+fn index_usize(rendered: &str) -> String {
+    match boxed_word(rendered) {
+        Some(word) => format!("usize::try_from({word}).ok()"),
+        None => format!("({rendered}).to_usize()"),
+    }
 }
 
 /// Whether evaluating a match subject leaves temporaries behind: a call (or
@@ -10550,12 +10596,14 @@ fn try_emit_mir_fusion(
                 // (`Vector.set(v, i, f(v))`): they are computed before it
                 // moves, as Aver computes every argument before the call.
                 let value_temp = generated_ident("value");
+                let usize_index = index_usize_of(&inner_args[1], &index, ctx);
                 return Some(format!(
-                    "{{ let {index_temp} = ({index}).to_usize(); let {value_temp} = {value}; let {vector_temp} = {vector}; match {index_temp} {{ Some({index_temp}) if {index_temp} < {vector_temp}.len() => {vector_temp}.set_unchecked({index_temp}, {value_temp}), _ => {vector_temp} }} }}"
+                    "{{ let {index_temp} = {usize_index}; let {value_temp} = {value}; let {vector_temp} = {vector}; match {index_temp} {{ Some({index_temp}) if {index_temp} < {vector_temp}.len() => {vector_temp}.set_unchecked({index_temp}, {value_temp}), _ => {vector_temp} }} }}"
                 ));
             }
+            let usize_index = index_usize_of(&inner_args[1], &index, ctx);
             Some(format!(
-                "{{ let {vector_temp} = {vector}; match ({index}).to_usize() {{ Some({index_temp}) if {index_temp} < {vector_temp}.len() => {vector_temp}.set_unchecked({index_temp}, {value}), _ => {vector_temp} }} }}"
+                "{{ let {vector_temp} = {vector}; match {usize_index} {{ Some({index_temp}) if {index_temp} < {vector_temp}.len() => {vector_temp}.set_unchecked({index_temp}, {value}), _ => {vector_temp} }} }}"
             ))
         }
         // Fusion #2: `Result.withDefault(Int.mod(a, b), default)` and the
@@ -10644,8 +10692,9 @@ fn try_emit_mir_fusion(
             } else {
                 ".cloned()"
             };
+            let usize_index = index_usize_of(&args[1], &index, ctx);
             Some(format!(
-                "({index}).to_usize().and_then(|{index_temp}| ({list}).get({index_temp}){cloned})"
+                "{usize_index}.and_then(|{index_temp}| ({list}).get({index_temp}){cloned})"
             ))
         }
         _ => None,
@@ -11380,7 +11429,10 @@ fn emit_mir_builtin_call(
             let index = generated_ident("i");
             // Index lookup: an out-of-`usize` index → `None` (Vector.get
             // already returns `Option`).
-            format!("({idx}).to_usize().and_then(|{index}| {vec}.get({index}).cloned())")
+            format!(
+                "{__usize}.and_then(|{index}| {vec}.get({index}).cloned())",
+                __usize = index_usize_of(&args[1], &idx, ctx)
+            )
         }
         "Vector.set" => {
             let vec = target!("Vector.set");
@@ -11390,7 +11442,10 @@ fn emit_mir_builtin_call(
             // `set_owned` returns `Option<Vector>` (None on out-of-range),
             // mirroring the VM. An out-of-`usize` index is likewise `None`,
             // via the checked conversion — never a wrapped index.
-            format!("({idx}).to_usize().and_then(|{index}| {vec}.set_owned({index}, {val}))")
+            format!(
+                "{__usize}.and_then(|{index}| {vec}.set_owned({index}, {val}))",
+                __usize = index_usize_of(&args[1], &idx, ctx)
+            )
         }
         "Vector.len" => format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0)),
         // A flat list's body is shared with the vector, not copied.

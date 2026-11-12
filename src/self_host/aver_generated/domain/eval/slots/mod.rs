@@ -109,12 +109,12 @@ pub fn lookupSlot(
 #[inline(always)]
 pub fn setSlot(
     mut env @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
-    slot @ _: aver_rt::AverInt,
+    slot @ _: i64,
     mut v @ _: crate::aver_generated::domain::value::Val,
 ) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     {
-        let __idx = (slot).to_usize();
+        let __idx = usize::try_from(slot).ok();
         let __value = v;
         let __vec = env;
         match __idx {

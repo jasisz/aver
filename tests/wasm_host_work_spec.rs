@@ -235,7 +235,8 @@ fn javascript_workers_run_the_coordinator_and_progress_independently() {
 
 /// `tools/wasm-work/run.mjs` runs a plain program's `main` under Node with the
 /// output the VM gives: its arguments, Console, positional and whole-file Disk
-/// reads, and the exit status `main -> Int` names.
+/// reads, Disk byte writes and appends and a file's size, and the exit status
+/// `main -> Int` names.
 #[test]
 fn node_runner_runs_a_plain_main_like_the_vm() {
     let Some((node, _)) = node_or_skip("node_runner_runs_a_plain_main_like_the_vm") else {
@@ -280,5 +281,10 @@ fn node_runner_runs_a_plain_main_like_the_vm() {
         String::from_utf8_lossy(&vm.stdout)
     );
     assert!(String::from_utf8_lossy(&vm.stdout).contains("end at 35"));
+    assert!(String::from_utf8_lossy(&vm.stdout).contains("copy of 6 bytes"));
+    assert_eq!(
+        std::fs::read(out.path().join("data.txt.copy")).expect("copy written"),
+        b"read !"
+    );
     assert_eq!(String::from_utf8_lossy(&v8.stderr), "missing file fails\n");
 }

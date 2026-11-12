@@ -1,0 +1,44 @@
+module CarrierReadBeforeCall
+    intent = "A carrier field of a record read for an update whose base is a call handed the record whole."
+    exposes opaque [Ix]
+    depends []
+    effects [Console.print]
+
+record Ix
+    value: Int
+
+fn ixOf(n: Int) -> Result<Ix, String>
+    ? "An id below 2^40."
+    match Bool.and(n >= -1, n <= 1099511627776)
+        true -> Result.Ok(Ix(value = n))
+        false -> Result.Err("id out of range")
+
+fn ixStep(n: Int) -> Ix
+    ? "The id n, none when it is out of range."
+    match ixOf(n)
+        Result.Ok(x) -> x
+        Result.Err(_) -> Ix(value = -1)
+
+record W
+    main: List<Int>
+    di: Ix
+    n: Int
+
+fn mainOut(w: W, out: List<Int>) -> W
+    ? "w with its output."
+    W.update(w, main = out, n = w.n + 1)
+
+fn written(w: W, k: Int) -> W
+    ? "Steps until k is 0."
+    match k <= 0
+        true -> w
+        false -> declWritten(w, k)
+
+fn declWritten(w: W, k: Int) -> W
+    ? "One step: the output, then the next id."
+    written(W.update(mainOut(w, List.prepend(k, w.main)), di = ixStep(w.di.value + 1)), k - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    w = written(W(main = [], di = ixStep(3), n = 0), 4)
+    Console.print("{w.di.value} {w.n} {List.len(w.main)}")

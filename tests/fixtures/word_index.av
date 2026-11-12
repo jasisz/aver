@@ -1,0 +1,53 @@
+module WordIndex
+    intent = "Vector indices that are machine words, read and written without an Int between."
+    exposes opaque [Ix]
+    depends []
+    effects [Console.print]
+
+record Ix
+    value: Int
+
+fn ixOf(n: Int) -> Result<Ix, String>
+    ? "An id below 2^40."
+    match Bool.and(n >= -1, n <= 1099511627776)
+        true -> Result.Ok(Ix(value = n))
+        false -> Result.Err("id out of range")
+
+fn ixAt(n: Int) -> Ix
+    ? "The id n, none when it is out of range."
+    match ixOf(n)
+        Result.Ok(x) -> x
+        Result.Err(_) -> Ix(value = -1)
+
+fn chunkSet(c: Vector<Int>, j: Int, x: Int) -> Vector<Int>
+    ? "x at j of c."
+    Option.withDefault(Vector.set(c, j, x), c)
+
+fn nget(v: Vector<Vector<Int>>, x: Ix) -> Int
+    ? "Number x, -1 for none."
+    match x.value < 0
+        true -> -1
+        false -> match Vector.get(v, Int.div(x.value, 4))
+            Option.Some(c) -> Option.withDefault(Vector.get(c, Int.mod(x.value, 4)), -1)
+            Option.None -> -1
+
+fn nset(v: Vector<Vector<Int>>, k: Ix, x: Int) -> Vector<Vector<Int>>
+    ? "v with x as number k."
+    ci = Int.div(Int.max(k.value, 0), 4)
+    match Bool.and(k.value >= 0, ci < Vector.len(v))
+        false -> v
+        true -> match Vector.get(v, ci)
+            Option.Some(c) -> Option.withDefault(Vector.set(v, ci, chunkSet(c, Int.mod(k.value, 4), x)), v)
+            Option.None -> v
+
+fn fill(v: Vector<Vector<Int>>, i: Int) -> Vector<Vector<Int>>
+    ? "Numbers 0 to i - 1 set to ten times their place."
+    match i <= 0
+        true -> v
+        false -> fill(nset(v, ixAt(i - 1), 10 * i - 10), i - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    v = fill(Vector.new(3, Vector.new(4, 0)), 12)
+    Console.print("{nget(v, ixAt(0))} {nget(v, ixAt(5))} {nget(v, ixAt(11))} {nget(v, ixAt(12))} {nget(v, ixAt(-1))}")
+    Console.print("{Vector.len(nset(v, ixAt(99), 1))}")

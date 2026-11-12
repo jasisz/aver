@@ -268,8 +268,8 @@ pub fn fastListSlotBranch(
     mut calleeEnv @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     slot @ _: aver_rt::AverInt,
     emptyLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
-    headSlot @ _: aver_rt::AverInt,
-    tailSlot @ _: aver_rt::AverInt,
+    headSlot @ _: i64,
+    tailSlot @ _: i64,
     consLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
@@ -294,8 +294,8 @@ pub fn fastListSlotBranchItems(
     items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut calleeEnv @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     emptyLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
-    headSlot @ _: aver_rt::AverInt,
-    tailSlot @ _: aver_rt::AverInt,
+    headSlot @ _: i64,
+    tailSlot @ _: i64,
     consLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
