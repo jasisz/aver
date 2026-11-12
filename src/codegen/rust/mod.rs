@@ -3586,7 +3586,7 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains(
-            "(idx).to_usize().and_then(|__i| grid.get(__i).cloned()).unwrap_or(aver_rt::AverInt::from_i64(0))"
+            "usize::try_from(idx).ok().and_then(|__i| grid.get(__i).cloned()).unwrap_or(aver_rt::AverInt::from_i64(0))"
         ));
     }
 
