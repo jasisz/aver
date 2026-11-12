@@ -1,0 +1,42 @@
+module EarlyMove
+    intent = "A record handed to a call that keeps a part of it, with only a field of it read after the call."
+    depends []
+    effects [Console.print]
+
+record Words
+    ws: List<String>
+    k: Int
+
+record At
+    words: Words
+    tag: String
+    next: Int
+    kind: Int
+
+record Acc
+    seen: Words
+    n: Int
+
+fn took(q: Acc, la: At) -> Result<Acc, String>
+    ? "keeps the words"
+    match la.kind
+        1 -> Result.Ok(Acc(seen = la.words, n = q.n + la.next))
+        _ -> Result.Err(la.tag)
+
+fn lineAt(s: Int) -> At
+    ? "a line"
+    At(words = Words(ws = ["a", "b"], k = s), tag = "t", next = s + 1, kind = 1)
+
+fn run(s: Int, end: Int, q: Acc) -> Int
+    ? "loop"
+    match s >= end
+        true -> q.n
+        false -> match lineAt(s)
+            la -> match took(q, la)
+                Result.Err(e) -> String.len(e)
+                Result.Ok(r) -> run(la.next, end, r)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run(0, 5, Acc(seen = Words(ws = [], k = 0), n = 0))))
+    Console.print(String.fromInt(run(7, 9, Acc(seen = Words(ws = ["z"], k = 3), n = 2))))

@@ -169,6 +169,94 @@ pub struct VectorTake<'a> {
     pub value: &'a Spanned<MirExpr>,
 }
 
+/// A `match f(.., r, ..)` that hands a function the local `r` while the
+/// arms read only fields of it afterwards (`match took(q, x, la)` with `la.next`
+/// read in an arm). Read before the call, those fields leave `r` free to be
+/// moved into the call, where otherwise the whole record is copied for it.
+pub struct EarlyMove {
+    pub slot: LocalId,
+    /// The fields the arms read of `r`, each once however often it is read.
+    pub fields: Vec<String>,
+}
+
+/// The matches of `body` (by address) that may read the fields of a local
+/// before the call they match on and move the local into it: the local is
+/// read nowhere in the function but once as an argument of that call and in
+/// field reads in its arms. See [`EarlyMove`].
+pub fn early_moves(body: &MirExpr) -> HashMap<usize, EarlyMove> {
+    let mut found = HashMap::new();
+    gather_early_moves(body, body, &mut found);
+    found
+}
+
+fn gather_early_moves(expr: &MirExpr, body: &MirExpr, found: &mut HashMap<usize, EarlyMove>) {
+    if let MirExpr::Match(m) = expr
+        && let Some(early) = early_move(&m.node, body)
+    {
+        found.insert(&m.node as *const MirMatch as usize, early);
+    }
+    walk_children(expr, &mut |child| gather_early_moves(child, body, found));
+}
+
+fn early_move(m: &MirMatch, body: &MirExpr) -> Option<EarlyMove> {
+    let MirExpr::Call(call) = &m.subject.node else {
+        return None;
+    };
+    if !matches!(call.node.callee, MirCallee::Fn(_)) {
+        return None;
+    }
+    let local = call.node.args.iter().find_map(|arg| match &arg.node {
+        MirExpr::Local(local) if !local.node.last_use => Some(local.node.slot),
+        _ => None,
+    })?;
+    let mut fields = Vec::new();
+    let mut stray = false;
+    for arm in &m.arms {
+        field_reads_only(&arm.body.node, local, &mut fields, &mut stray);
+    }
+    if stray || fields.is_empty() {
+        return None;
+    }
+    let reads_in_arms = {
+        let mut count = 0;
+        for arm in &m.arms {
+            count += local_reads(&arm.body.node, local);
+        }
+        count
+    };
+    // Read once in the subject, and elsewhere only in the arms' field reads.
+    if local_reads(&m.subject.node, local) != 1 || local_reads(body, local) != 1 + reads_in_arms {
+        return None;
+    }
+    fields.sort();
+    fields.dedup();
+    Some(EarlyMove {
+        slot: local,
+        fields,
+    })
+}
+
+/// Collects the fields `expr` reads of the local in `slot`; `stray` is set
+/// by a read of the local other than a field read.
+fn field_reads_only(expr: &MirExpr, slot: LocalId, fields: &mut Vec<String>, stray: &mut bool) {
+    match expr {
+        MirExpr::Project(project) if matches!(&project.node.base.node, MirExpr::Local(l) if l.node.slot == slot) =>
+        {
+            fields.push(project.node.field.clone());
+        }
+        MirExpr::Local(local) if local.node.slot == slot => *stray = true,
+        _ => walk_children(expr, &mut |child| {
+            field_reads_only(child, slot, fields, stray)
+        }),
+    }
+}
+
+fn local_reads(expr: &MirExpr, slot: LocalId) -> usize {
+    let mut count = usize::from(matches!(expr, MirExpr::Local(l) if l.node.slot == slot));
+    walk_children(expr, &mut |child| count += local_reads(child, slot));
+    count
+}
+
 /// See [`VectorTake`]. `builtins` names the program's builtin ids.
 pub fn vector_take_match<'a>(m: &'a MirMatch, builtins: &[String]) -> Option<VectorTake<'a>> {
     let call = |e: &'a MirExpr, name: &str| -> Option<&'a [Spanned<MirExpr>]> {

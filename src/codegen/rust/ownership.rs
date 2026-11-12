@@ -139,7 +139,7 @@ fn local_value_facts(local: &MirLocal, ctx: &MirEmitCtx<'_>) -> RustValueFacts {
         },
         can_move: mode == RustValueMode::Copy
             || (mode == RustValueMode::Owned
-                && local.last_use
+                && (local.last_use || ctx.early_move.is_some_and(|(slot, _)| slot == local.slot))
                 && !ctx.loop_carried_params.contains(name)),
         provider_resource: ctx
             .local_types
