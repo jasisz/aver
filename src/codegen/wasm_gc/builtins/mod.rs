@@ -190,6 +190,10 @@ pub(super) enum BuiltinName {
     /// first-error formatting have one implementation.
     BytPush,
     BytFinalize,
+    /// The octet groups' byte buffers (`octet_buffers`).
+    OctPush,
+    OctBytes,
+    OctLast,
     /// `String.replace(s, needle, repl) -> String`. Two-pass naive
     /// scan: count occurrences, allocate output of exact size, fill.
     /// Empty needle returns `s` unchanged.
@@ -347,6 +351,9 @@ impl BuiltinName {
             "__buf_finalize" => Some(Self::BufFinalize),
             "__byt_push" => Some(Self::BytPush),
             "__byt_finalize" => Some(Self::BytFinalize),
+            "__oct_push" => Some(Self::OctPush),
+            "__oct_bytes" => Some(Self::OctBytes),
+            "__oct_last" => Some(Self::OctLast),
             "String.replace" => Some(Self::StringReplace),
             "Crypto.sha256" => Some(Self::CryptoSha256),
             _ => None,
@@ -402,6 +409,9 @@ impl BuiltinName {
             Self::BufFinalize => "__buf_finalize",
             Self::BytPush => "__byt_push",
             Self::BytFinalize => "__byt_finalize",
+            Self::OctPush => "__oct_push",
+            Self::OctBytes => "__oct_bytes",
+            Self::OctLast => "__oct_last",
             Self::StringReplace => "String.replace",
             Self::CryptoSha256 => "Crypto.sha256",
             Self::IntModEuclid => "__int_mod_euclid",
@@ -516,6 +526,15 @@ impl BuiltinName {
             Self::BufFinalize => Ok(vec![buffer_ref_ty(registry)?]),
             Self::BytPush => Ok(vec![byte_builder_ref_ty(registry)?, aint_ref_ty(registry)?]),
             Self::BytFinalize => Ok(vec![byte_builder_ref_ty(registry)?]),
+            Self::OctPush => Ok(vec![
+                ValType::I64,
+                super::octet_buffers::list_ref(registry)?,
+            ]),
+            Self::OctBytes => Ok(vec![super::octet_buffers::list_ref(registry)?]),
+            Self::OctLast => Ok(vec![
+                super::octet_buffers::list_ref(registry)?,
+                ValType::I64,
+            ]),
             Self::StringReplace => Ok(vec![
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
@@ -618,6 +637,8 @@ impl BuiltinName {
                 registry,
                 "Result<__BytePayload,String>",
             )?]),
+            Self::OctPush => Ok(vec![super::octet_buffers::list_ref(registry)?]),
+            Self::OctBytes | Self::OctLast => Ok(vec![super::octet_buffers::bytes_ref(registry)?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
             Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Digest32")?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
@@ -712,6 +733,9 @@ impl BuiltinName {
             Self::BufFinalize => string_builder::emit_finalize(registry),
             Self::BytPush => byte_builder::emit_push(registry),
             Self::BytFinalize => byte_builder::emit_finalize(registry),
+            Self::OctPush => super::octet_buffers::emit_push(registry),
+            Self::OctBytes => super::octet_buffers::emit_bytes(registry),
+            Self::OctLast => super::octet_buffers::emit_last(registry),
             Self::StringReplace => emit_string_replace(registry),
             Self::CryptoSha256 => crypto::emit_sha256(registry),
             Self::IntModEuclid => emit_int_mod_euclid(),

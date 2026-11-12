@@ -685,6 +685,21 @@ pub enum BuiltinIntrinsic {
     /// standard library's own message about the first non-octet. The retarget
     /// wraps the `Ok` payload into the `Bytes` record in synthesized AST.
     BytFinalize,
+    /// `__oct_push(<list>, <octet>)` — `(List<Int>, Int) -> List<Int>`,
+    /// `List.prepend(octet, list)` on a list of an octet group
+    /// (`ir::mir::optimize::octets`): every value of the group is `[]` or a
+    /// byte buffer the backend keeps in push order, and the octet is proven
+    /// in `0..=255`. Only that MIR rewrite emits it, for a backend that
+    /// lowers it.
+    OctPush,
+    /// `__oct_bytes(<list>)` — `List<Int> -> Bytes`, the `Bytes` of
+    /// `List.reverse(list)` for a list of an octet group: its octets in push
+    /// order, which the buffer already holds.
+    OctBytes,
+    /// `__oct_last(<list>, <n>)` — `(List<Int>, Int) -> Bytes`, the `Bytes`
+    /// of `List.reverse(List.take(list, n))` for a list of an octet group:
+    /// the last `n` octets pushed, in push order.
+    OctLast,
     /// `__eq_same_ref(<a>, <b>)` — `(T, T) -> Bool`, whether the two values
     /// are one object (`ref.eq`). Only wasm-gc's structural equality
     /// functions (`codegen::wasm_gc::eq_fns`) contain it, where `T` holds no
@@ -758,6 +773,9 @@ impl BuiltinIntrinsic {
             Self::BytNew => "__byt_new",
             Self::BytPush => "__byt_push",
             Self::BytFinalize => "__byt_finalize",
+            Self::OctPush => "__oct_push",
+            Self::OctBytes => "__oct_bytes",
+            Self::OctLast => "__oct_last",
             Self::EqSameRef => "__eq_same_ref",
             Self::EqScope => "__eq_scope",
             Self::EqCount => "__eq_count",

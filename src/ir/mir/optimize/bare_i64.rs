@@ -294,7 +294,8 @@ fn is_code_carrier_call(e: &MirExpr) -> bool {
 pub(super) fn intrinsic_accepts_raw_code_arg(callee: &MirCallee, i: usize) -> bool {
     use crate::ir::hir::BuiltinIntrinsic as I;
     match callee {
-        MirCallee::Intrinsic(I::StrFoldLower | I::StrFoldUpper) => i == 0,
+        // The octet a byte buffer takes (`octets`), proven in `0..=255`.
+        MirCallee::Intrinsic(I::StrFoldLower | I::StrFoldUpper | I::OctPush) => i == 0,
         MirCallee::Intrinsic(
             I::StrCursorEnd | I::StrCursorHead | I::StrCursorNext | I::StrCursorCode,
         ) => i == 1,

@@ -620,6 +620,9 @@ fn emit_module_pass(
     };
     registry.install_packed_sequences(packed_sequence_layouts);
 
+    // Whether the octet rewrite pushed onto a byte buffer anywhere: its
+    // helpers are registered with the builtins below.
+    let mut octet_buffers_used = false;
     let mut mir_program: crate::ir::mir::MirProgram = {
         // Reuse the `optimized` MIR built above for carrier-eligibility
         // Map-key discovery — the box/unbox boundary rewrite is the only
@@ -681,6 +684,37 @@ fn emit_module_pass(
             .filter(|(fd, _)| for_certificate(fd))
             .map(|(_, rfd)| rfd.fn_id)
             .collect();
+        // Lists of octets built in front and read only as `Bytes` are held
+        // as byte buffers (`ir::mir::optimize::octets`, `octet_buffers`).
+        // A `--certify` build keeps its lists as the certificate proves them.
+        let mut optimized = optimized;
+        let octets_on = !certify && super::octet_buffers::enabled(&registry);
+        if octets_on || std::env::var_os("AVER_EXPLAIN_OCTETS").is_some() {
+            let bare = crate::ir::mir::optimize::bare_i64::analyze_with_fields(
+                &optimized,
+                &bare_carrier_intervals,
+                &field_carrier_intervals,
+                false,
+            );
+            let fields = |record: &str| {
+                items.iter().find_map(|item| match item {
+                    TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) if name == record => {
+                        Some(
+                            fields
+                                .iter()
+                                .map(|(f, t)| (f.clone(), crate::types::parse_type_str(t)))
+                                .collect(),
+                        )
+                    }
+                    _ => None,
+                })
+            };
+            let facts = crate::ir::mir::optimize::octets::analyze(&optimized, &bare, &fields);
+            if octets_on {
+                octet_buffers_used =
+                    crate::ir::mir::optimize::octets::rewrite(&mut optimized, &facts);
+            }
+        }
         let mut rewritten = crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_wasm_gc(
             optimized,
             &boxed,
@@ -734,6 +768,11 @@ fn emit_module_pass(
             &registry,
             &symbol_table,
         );
+    }
+    if octet_buffers_used {
+        builtin_registry.register(BuiltinName::OctPush);
+        builtin_registry.register(BuiltinName::OctBytes);
+        builtin_registry.register(BuiltinName::OctLast);
     }
     // A hidden Buffer type means the fabricating pass made the closed builder
     // contract reachable. Register the whole three-helper family together:
@@ -7612,6 +7651,13 @@ fn emit_user_types(
                     mutable: true,
                 }]),
             ));
+            // The octet groups' byte buffer (`octet_buffers`); an empty
+            // struct where lists keep no length.
+            let buffer = match super::octet_buffers::layout(registry, &packed) {
+                Some(layout) => mk_sub_struct(layout.buffer_fields, true, Some(layout.list_idx)),
+                None => mk_struct(Vec::new()),
+            };
+            entries.push((packed.octet_buffer_idx(), buffer));
         }
     }
 
@@ -7897,7 +7943,9 @@ fn emit_user_types(
                 mutable: true,
             });
         }
-        entries.push((own_idx, mk_struct(fields)));
+        // `List<Int>` has a subtype, the octet groups' byte buffer.
+        let open = canonical == "List<Int>" && super::octet_buffers::enabled(registry);
+        entries.push((own_idx, mk_sub_struct(fields, !open, None)));
     }
 
     // Option<T> — `(struct (mut i32 tag) (mut T value))`.
@@ -8783,6 +8831,10 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::BytNew
             | BuiltinIntrinsic::BytPush
             | BuiltinIntrinsic::BytFinalize
+            // The octet groups' byte buffers (`octets`).
+            | BuiltinIntrinsic::OctPush
+            | BuiltinIntrinsic::OctBytes
+            | BuiltinIntrinsic::OctLast
             // The structural equality functions (`eq_fns`).
             | BuiltinIntrinsic::EqSameRef
             | BuiltinIntrinsic::EqScope

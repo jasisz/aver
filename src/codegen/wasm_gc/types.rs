@@ -68,6 +68,15 @@ impl PackedSequenceType {
     pub(super) fn cell_idx(&self) -> u32 {
         self.array_idx + 2
     }
+
+    /// The byte buffer an octet group's list is held in
+    /// (`ir::mir::optimize::octets`): a `List<Int>` cell's subtype whose
+    /// length field counts its octets, kept in push order in an array of
+    /// this type, with the `cell_idx` cell saying how much of it is used.
+    /// Only meaningful for views.
+    pub(super) fn octet_buffer_idx(&self) -> u32 {
+        self.array_idx + 3
+    }
 }
 
 /// User-type lookup tables built once before any fn body emit.
@@ -2097,7 +2106,7 @@ impl TypeRegistry {
             let array_idx = self.user_type_count;
             self.user_type_count += 1;
             let type_idx = if views {
-                self.user_type_count += 2;
+                self.user_type_count += 3;
                 array_idx + 1
             } else {
                 array_idx

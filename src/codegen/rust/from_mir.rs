@@ -11907,8 +11907,13 @@ fn emit_mir_intrinsic_call(
             Some(format!("aver_rt::byte_builder_finalize({})", builder))
         }
         // wasm-gc only: the structural equality functions that hold these
-        // exist only in that backend's program.
-        BuiltinIntrinsic::EqSameRef
+        // exist only in that backend's program, and so does the octet
+        // rewrite (`ir::mir::optimize::octets`), Rust's lists of octets
+        // being byte stacks already.
+        BuiltinIntrinsic::OctPush
+        | BuiltinIntrinsic::OctBytes
+        | BuiltinIntrinsic::OctLast
+        | BuiltinIntrinsic::EqSameRef
         | BuiltinIntrinsic::EqScope
         | BuiltinIntrinsic::EqCount
         | BuiltinIntrinsic::EqPast
