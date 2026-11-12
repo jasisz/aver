@@ -1,0 +1,46 @@
+module MutualBoxUpdate
+    intent = "A record kept in a Box, several fields of it updated at once in a mutual loop."
+    depends []
+    effects [Console.print]
+
+record W
+    main: List<Int>
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+    i: Int
+    j: Int
+    k: Int
+    l: Int
+    m: Int
+    open: Vector<Int>
+
+fn written(n: Int, w: W, fs: Vector<Int>) -> W
+    ? "loop"
+    match n <= 0
+        true -> w
+        false -> nameWritten(n, w, fs, Int.mod(n, 3) - 1)
+
+fn nameWritten(n: Int, w: W, fs: Vector<Int>, f: Int) -> W
+    ? "a name"
+    match f == -1
+        true -> written(n - 1, W.update(w, main = List.prepend(1, List.prepend(0, w.main)), a = w.a + 1, b = w.b + 1), fs)
+        false -> written(n - 1, W.update(w, b = w.b + 1), fs)
+
+fn seti(v: Vector<Int>, i: Int, x: Int) -> Vector<Int>
+    ? "set"
+    Option.withDefault(Vector.set(v, Int.mod(i, 2), x), v)
+
+fn opened(w: W) -> Vector<Int>
+    ? "the open vector, grown"
+    Option.withDefault(Vector.set(w.open, 0, w.a), w.open)
+
+fn main() -> Unit
+    ! [Console.print]
+    w = written(7, W(main = [], a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, g = 0, h = 0, i = 0, j = 0, k = 0, l = 0, m = 0, open = Vector.new(2, 0)), Vector.new(2, 0))
+    Console.print(String.fromInt(w.a + w.b + List.len(w.main) + Vector.len(opened(w))))
