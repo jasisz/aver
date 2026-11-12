@@ -1172,6 +1172,10 @@ fn caller_ranges(
                 continue;
             };
             let mut hulls: HashMap<usize, Option<Interval>> = HashMap::new();
+            // The arguments the function's own recursion passes at a param
+            // other than the param itself, checked once the other calls
+            // give the param its hull.
+            let mut recursion: Vec<(usize, &Spanned<MirExpr>)> = Vec::new();
             for edge in calls {
                 let caller = program
                     .fn_by_id(edge.caller)
@@ -1204,11 +1208,12 @@ fn caller_ranges(
                         continue;
                     };
                     let range = if edge.caller == edge.target {
-                        // The recursion must hand the param on as it is.
-                        match subject_is_local(&arg.node, p.local) {
-                            true => continue,
-                            false => None,
+                        // The recursion hands the param on as it is, or
+                        // passes a value checked against its hull below.
+                        if !subject_is_local(&arg.node, p.local) {
+                            recursion.push((i, arg));
                         }
+                        continue;
                     } else {
                         let mut worst = Interval::point(0);
                         let r = eval_interval(&arg.node, &env, &mut worst, caller_facts);
@@ -1219,6 +1224,49 @@ fn caller_ranges(
                         (Some(a), Some(b)) => Some(a.hull(b)),
                         _ => None,
                     };
+                }
+            }
+            // A hull `H` the recursion keeps is an invariant of the loop:
+            // every recursive argument, read with each param over its own
+            // hull, lies in the hull of its param (`uv(.., Bits.shiftRight
+            // (n, 7))` over a word `n`). Otherwise the param has no range.
+            // A param dropped makes every other param's check read it as
+            // unbounded, so the checks run again until none drops.
+            if !recursion.is_empty() {
+                let own = &facts[target_id];
+                loop {
+                    let env: HashMap<LocalId, Interval> = own
+                        .values
+                        .iter()
+                        .filter_map(|(slot, fact)| {
+                            fact.is_bare()
+                                .then_some(fact.interval)
+                                .flatten()
+                                .map(|r| (*slot, r))
+                        })
+                        .chain(target.params.iter().enumerate().filter_map(|(k, p)| {
+                            match hulls.get(&k) {
+                                Some(cell) => *cell,
+                                None => ranges.get(&(*target_id, k)).copied(),
+                            }
+                            .map(|r| (p.local, r))
+                        }))
+                        .collect();
+                    let mut dropped = false;
+                    for &(i, arg) in &recursion {
+                        let Some(Some(hull)) = hulls.get(&i).copied() else {
+                            continue;
+                        };
+                        let mut worst = Interval::point(0);
+                        let r = eval_interval(&arg.node, &env, &mut worst, own);
+                        if !(r.fits_i64() && worst.fits_i64() && hull.hull(r) == hull) {
+                            hulls.insert(i, None);
+                            dropped = true;
+                        }
+                    }
+                    if !dropped {
+                        break;
+                    }
                 }
             }
             for (i, cell) in hulls {
@@ -2027,6 +2075,16 @@ fn arg_supplies_bare(
             supplies(&b.node.lhs.node) && supplies(&b.node.rhs.node)
         }
         MirExpr::Call(_) if is_code_carrier_call(arg) => true,
+        // A word shifted right by a literal is a word.
+        MirExpr::Call(c)
+            if c.node.callee
+                == MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::BitsShiftRight)
+                && matches!(c.node.args.as_slice(), [x, k]
+                    if matches!(&k.node, MirExpr::Literal(l) if matches!(l.node, Literal::Int(v) if v >= 0))
+                        && supplies(&x.node)) =>
+        {
+            true
+        }
         MirExpr::Call(c) => match c.node.callee {
             MirCallee::Fn(target) => bare_return.get(&target).copied().unwrap_or(false),
             _ => false,
@@ -4135,11 +4193,11 @@ fn scan_escapes(e: &MirExpr, self_fn: FnId, summary: &Summary, out: &mut HashSet
                 // does: raw when the call is raw, boxed by the rewrite when
                 // it is not.
                 let raw_op = summary.raw_ops.op(&c.node.callee).is_some();
-                // On Rust an interpolation's embed, lowered to `__to_str`,
-                // is boxed by the rewrite as the embed itself is.
-                let printed = summary.rust
-                    && c.node.callee
-                        == MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::ToStr);
+                // On Rust the representation rewrite boxes a raw value at a
+                // builtin's general-`Int` argument (`rewrite_boxed`), an
+                // interpolation's embed (`__to_str`) included, so it does not
+                // make the value a general `Int` everywhere else.
+                let printed = summary.rust;
                 for (i, a) in c.node.args.iter().enumerate() {
                     if !raw_op
                         && !printed
