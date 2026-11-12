@@ -2,6 +2,17 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.34.0 "Pack" (unreleased)
+
+> _Bytes and numbers take the room they need._
+
+- **Byte lists as buffers.** A list of bytes built by prepending and turned into `Bytes` no longer costs a heap object per byte, in compiled Rust and on wasm-gc (`AVER_EXPLAIN_OCTETS=1` shows which lists qualify).
+- **wasm-gc:** `Bytes.take` / `Bytes.drop` / `Bytes.concat` and `List.len` are no longer quadratic in loops.
+- **Compiled Rust:** refinements are stored in the narrowest integer their bound fits, more `Int` arithmetic stays on machine words, and fewer values are copied.
+- **Independent products** reuse their threads and run the first element on the calling thread.
+- A refined record may have several smart constructors.
+- `String.toLower` / `String.toUpper` follow the Unicode of Rust 1.100.
+
 ## 0.33.1 — 2026-11-08
 
 ### Fixed
