@@ -66,6 +66,11 @@ struct Wasip2Globals {
     /// any `Disk.*` is registered. -1 sentinel = "not yet
     /// fetched" or "no preopens"; helpers retry fetch on -1.
     disk_preopen_handle: Option<u32>,
+    /// The descriptor `Disk.readBytesAt` keeps open between calls (-1 when
+    /// none) and the path it was opened for (null when none). Populated when
+    /// `Disk.readBytesAt` is registered; see `ReadAtHandle`.
+    read_at_fd: Option<u32>,
+    read_at_path: Option<u32>,
     /// Phase 4 (0.20) — caches the `wasi:sockets/instance-network.
     /// instance-network` handle for the program's lifetime. -1
     /// sentinel = "not yet fetched". Populated when any Tcp.*
@@ -3212,12 +3217,44 @@ fn emit_module_pass(
         } else {
             None
         };
+        let (read_at_fd, read_at_path) = if effect_registry
+            .iter()
+            .any(|effect| effect == EffectName::DiskReadBytesAt)
+            && let Some(string_idx) = registry.string_array_type_idx
+        {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(-1),
+            );
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::Ref(wasm_encoder::RefType {
+                        nullable: true,
+                        heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+                    }),
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::ref_null(wasm_encoder::HeapType::Concrete(string_idx)),
+            );
+            let fd = next_global_idx;
+            next_global_idx += 2;
+            (Some(fd), Some(fd + 1))
+        } else {
+            (None, None)
+        };
         Some(Wasip2Globals {
             bump_alloc_ptr,
             stdout_handle,
             stderr_handle,
             stdin_handle,
             disk_preopen_handle,
+            read_at_fd,
+            read_at_path,
             network_handle,
             tcp_pool,
             tcp_next_id,
@@ -5063,6 +5100,19 @@ fn emit_module_pass(
             drop_input_stream,
         ));
     }
+    // Set when `Disk.readBytesAt` keeps its descriptor; every helper that
+    // changes the filesystem forgets it first.
+    let read_at_handle = disk_read_bytes_at.as_ref().and_then(|read_at| {
+        let globals = wasip2_globals.as_ref()?;
+        Some(super::wasip2_disk_read_at::ReadAtHandle {
+            fd_global: globals.read_at_fd?,
+            path_global: globals.read_at_path?,
+            string_type: read_at.string_type_idx,
+            drop_descriptor_fn: wasip2_imports.lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )?,
+        })
+    });
     if let Some(wt) = &disk_write_text {
         let preopen_global = wasip2_globals
             .as_ref()
@@ -5117,6 +5167,7 @@ fn emit_module_pass(
             drop_descriptor,
             drop_output_stream,
             false, // is_append: writeText uses CREATE | TRUNCATE + write-via-stream
+            read_at_handle,
         ));
     }
     if let Some(at) = &disk_append_text {
@@ -5173,6 +5224,7 @@ fn emit_module_pass(
             drop_descriptor,
             drop_output_stream,
             true, // is_append: CREATE only + append-via-stream (no offset arg)
+            read_at_handle,
         ));
     }
     if let Some(rb) = &disk_read_bytes {
@@ -5228,11 +5280,6 @@ fn emit_module_pass(
         let blocking_read = wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
             .expect("disk_read_bytes_at requires blocking-read");
-        let drop_descriptor = wasip2_imports
-            .lookup_wasm_fn_idx(
-                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
-            )
-            .expect("disk_read_bytes_at requires drop-descriptor");
         let drop_input_stream = wasip2_imports
             .lookup_wasm_fn_idx(
                 super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
@@ -5263,11 +5310,11 @@ fn emit_module_pass(
             open_at,
             read_via_stream,
             blocking_read,
-            drop_descriptor,
             drop_input_stream,
             result_ok,
             result_err,
             aint_from_i64,
+            read_at_handle.expect("disk_read_bytes_at requires its kept-descriptor globals"),
         ));
     }
     if let Some(wb) = &disk_write_bytes {
@@ -5333,6 +5380,7 @@ fn emit_module_pass(
             get_directories,
             op_fn,
             b"delete failed",
+            read_at_handle,
         ));
     }
     if let Some(d) = &disk_delete_dir {
@@ -5367,6 +5415,7 @@ fn emit_module_pass(
             get_directories,
             op_fn,
             b"deleteDir failed",
+            read_at_handle,
         ));
     }
     if let Some(d) = &disk_make_dir {
@@ -5401,6 +5450,7 @@ fn emit_module_pass(
             get_directories,
             op_fn,
             b"makeDir failed",
+            None,
         ));
     }
     if let Some(d) = &disk_sync {

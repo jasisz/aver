@@ -175,12 +175,14 @@ pub fn read_text(path: &str) -> Result<String, String> {
 }
 
 pub fn write_text(path: &str, content: &str) -> Result<(), String> {
+    forget_read_at_handle();
     std::fs::write(path, content)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
 
 pub fn append_text(path: &str, content: &str) -> Result<(), String> {
+    forget_read_at_handle();
     use std::io::Write;
 
     let mut file = std::fs::OpenOptions::new()
@@ -220,7 +222,17 @@ pub fn read_bytes_at(
         return Err("Disk.readBytesAt: length must be non-negative".to_string());
     }
 
-    let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut held = READ_AT_HANDLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if held.as_ref().is_none_or(|(held_path, _)| held_path != path) {
+        *held = None;
+        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        *held = Some((path.to_string(), file));
+    }
+    let Some((_, file)) = held.as_mut() else {
+        unreachable!("the handle was opened above");
+    };
     file.seek(std::io::SeekFrom::Start(offset as u64))
         .map_err(|error| error.to_string())?;
     // Room for what the read can return: `length`, or less when the file ends
@@ -235,6 +247,23 @@ pub fn read_bytes_at(
     Ok(bytes)
 }
 
+/// The file `read_bytes_at` read last, kept open for the next call.
+///
+/// A program reading many small ranges of one file would otherwise pay an
+/// open and a close for every range. Writes through an open handle are seen
+/// by it, but a file deleted or replaced under the same name is not, so every
+/// Disk call that changes the filesystem drops the handle first. A file
+/// replaced by another process while the program runs is read from the
+/// version that was open.
+static READ_AT_HANDLE: std::sync::Mutex<Option<(String, std::fs::File)>> =
+    std::sync::Mutex::new(None);
+
+fn forget_read_at_handle() {
+    *READ_AT_HANDLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+}
+
 pub fn file_size(path: &str) -> Result<crate::AverInt, String> {
     std::fs::metadata(path)
         .map(|metadata| crate::AverInt::from_bigint(num_bigint::BigInt::from(metadata.len())))
@@ -242,12 +271,14 @@ pub fn file_size(path: &str) -> Result<crate::AverInt, String> {
 }
 
 pub fn write_bytes(path: &str, content: &[u8]) -> Result<(), String> {
+    forget_read_at_handle();
     std::fs::write(path, content)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
 
 pub fn append_bytes(path: &str, content: &[u8]) -> Result<(), String> {
+    forget_read_at_handle();
     use std::io::Write;
 
     let mut file = std::fs::OpenOptions::new()
@@ -313,6 +344,7 @@ pub fn path_exists(path: &str) -> bool {
 }
 
 pub fn delete_file(path: &str) -> Result<(), String> {
+    forget_read_at_handle();
     let p = std::path::Path::new(path);
     if p.is_dir() {
         return Err(
@@ -326,6 +358,7 @@ pub fn delete_file(path: &str) -> Result<(), String> {
 }
 
 pub fn delete_dir(path: &str) -> Result<(), String> {
+    forget_read_at_handle();
     let p = std::path::Path::new(path);
     if !p.is_dir() {
         return Err(
@@ -447,7 +480,7 @@ fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
 
 #[cfg(test)]
 mod disk_binary_tests {
-    use super::{append_bytes, file_size, read_bytes, read_bytes_at, write_bytes};
+    use super::{append_bytes, delete_file, file_size, read_bytes, read_bytes_at, write_bytes};
     use crate::AverInt;
 
     fn temp_file() -> std::path::PathBuf {
@@ -502,6 +535,35 @@ mod disk_binary_tests {
                 .expect_err("negative length")
                 .contains("length must be non-negative")
         );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_kept_handle_follows_the_programs_own_changes() {
+        let path = temp_file();
+        let path_text = path.to_string_lossy();
+        let at = |offset: i64, length: i64| {
+            read_bytes_at(
+                &path_text,
+                &AverInt::from_i64(offset),
+                &AverInt::from_i64(length),
+            )
+        };
+        write_bytes(&path_text, &[1, 2, 3, 4]).expect("write bytes");
+        assert_eq!(at(1, 2).expect("first read"), [2, 3]);
+
+        write_bytes(&path_text, &[9, 8]).expect("rewrite");
+        assert_eq!(at(0, 9).expect("read after rewrite"), [9, 8]);
+
+        append_bytes(&path_text, &[7]).expect("append");
+        assert_eq!(at(2, 1).expect("read after append"), [7]);
+
+        delete_file(&path_text).expect("delete");
+        assert!(at(0, 1).is_err(), "a deleted file must not be read");
+
+        write_bytes(&path_text, &[5]).expect("recreate");
+        assert_eq!(at(0, 9).expect("read the new file"), [5]);
 
         let _ = std::fs::remove_file(path);
     }

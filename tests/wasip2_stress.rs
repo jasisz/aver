@@ -434,6 +434,53 @@ fn main() -> Result<Unit, String>
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `Disk.readBytesAt` keeps its descriptor between calls. Reads that switch
+/// between two files still read the right one, and a rewrite, an append, a
+/// delete and a new file under the same name are all seen by the next read.
+#[test]
+fn positional_reads_follow_the_programs_own_disk_changes() {
+    let dir = tempdir("disk-read-at-kept");
+    std::fs::write(dir.join("other.bin"), [170, 187]).expect("write second fixture");
+    let src = r#"module Probe
+    intent = "Exercise the descriptor Disk.readBytesAt keeps between calls."
+    depends [Bytes]
+    exposes [main]
+    effects [Console.print, Disk.readBytesAt, Disk.writeBytes, Disk.appendBytes, Disk.delete]
+
+fn shape(read: Result<Bytes, String>) -> String
+    ? "Hex of a read, or err so host error text stays out of the output."
+    match read
+        Result.Ok(bytes) -> Bytes.toHex(bytes)
+        Result.Err(_) -> "err"
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.readBytesAt, Disk.writeBytes, Disk.appendBytes, Disk.delete]
+    Disk.writeBytes("file.bin", Bytes.fromList([1, 2, 3, 4]))?
+    first = shape(Disk.readBytesAt("file.bin", 1, 2))
+    other = shape(Disk.readBytesAt("other.bin", 1, 1))
+    again = shape(Disk.readBytesAt("file.bin", 3, 1))
+    Disk.writeBytes("file.bin", Bytes.fromList([9, 8]))?
+    rewritten = shape(Disk.readBytesAt("file.bin", 0, 9))
+    Disk.appendBytes("file.bin", Bytes.fromList([7]))?
+    appended = shape(Disk.readBytesAt("file.bin", 2, 1))
+    Disk.delete("file.bin")?
+    deleted = shape(Disk.readBytesAt("file.bin", 0, 1))
+    Disk.writeBytes("file.bin", Bytes.fromList([5]))?
+    recreated = shape(Disk.readBytesAt("file.bin", 0, 9))
+    Console.print("{first}:{other}:{again}:{rewritten}:{appended}:{deleted}:{recreated}")
+    Result.Ok(Unit)
+"#;
+    let fixture = write_fixture(&dir, "read_at_kept.av", src);
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "read_at_kept.av");
+    let s = stdout(&out);
+    assert!(
+        s.contains("0203:bb:04:0908:07:err:05"),
+        "expected each read to see the file as the program left it, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn disk_sync_accepts_a_file_and_a_directory_and_leaves_content_alone() {
     let dir = tempdir("disk-sync");
