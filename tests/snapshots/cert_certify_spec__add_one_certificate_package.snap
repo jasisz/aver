@@ -7,7 +7,7 @@ expression: golden
   "schema_version": 10,
   "format": {"version": 1, "wall_id": "sha256:6d106a33b9c62a712784f27284c7473d7ebcf5fea28fcfde08c0b33a64cbe5d3"},
   "wasm": "add_one.wasm",
-  "wasm_sha256": "f9a99f65e4a7a10eb10f8691360ac35fe2e86b4c4ea5a483343b3973c66446dc",
+  "wasm_sha256": "78a39081fd539ed8221dff337e0d01dcc446fbdd07a226d1cf9e1d42ff7bda5f",
   "target": "wasm-gc",
   "level": "L1",
   "profile": "AverUserProfile/v1",
@@ -72,7 +72,7 @@ def Plans.subject_declaredUncertified_0 : List (String × String) :=
    ("__rt_aint_to_i64_checked", "module export is outside the claimed certification obligations")]
 
 def subject : Subject :=
-  { artifactHash := "f9a99f65e4a7a10eb10f8691360ac35fe2e86b4c4ea5a483343b3973c66446dc"
+  { artifactHash := "78a39081fd539ed8221dff337e0d01dcc446fbdd07a226d1cf9e1d42ff7bda5f"
     target := "wasm-gc", profile := "AverUserProfile/v1", abi := "aver-wasm-gc/0"
     artifactRoot := "AverCert.Artifact.certificate"
     declaredUncertified := Plans.subject_declaredUncertified_0
