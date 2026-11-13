@@ -8,6 +8,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 - wasm-gc: an empty list or `Option.None` in a `match` arm whose value is bound to a name, not returned, takes the type of the other arms. Before, the module could fail validation.
 - wasm-gc: the module no longer caps its memory at 128 MB, so `Disk.readBytesAt` can read a larger file at once.
+- A `match` outside a fn is refused by the checker with a message that says to move it into a fn. Before, the VM stopped with an internal error, and compiled Rust and wasm-gc could not build it.
 
 ## 0.34.0 "Pack" — 2026-11-12
 

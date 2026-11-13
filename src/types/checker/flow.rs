@@ -462,6 +462,27 @@ impl TypeChecker {
         self.current_fn_effectful = false;
     }
 
+    /// A `match` outside every fn has no frame for the names its patterns
+    /// bind, and no backend lowers one there: the VM failed with an
+    /// internal error, compiled Rust and wasm-gc with a backend gap. The
+    /// value belongs in a fn, bound by calling it.
+    fn reject_module_level_match(&mut self, expr: &Spanned<Expr>) {
+        let mut line = None;
+        crate::call_graph::walk_spanned(expr, &mut |e| {
+            if line.is_none() && matches!(e.node, Expr::Match { .. }) {
+                line = Some(if e.line > 0 { e.line } else { expr.line });
+            }
+        });
+        if let Some(line) = line {
+            self.error_at_line(
+                line,
+                "`match` is not allowed outside a fn: move it into a fn and bind its result, \
+                 `x = f()`"
+                    .to_string(),
+            );
+        }
+    }
+
     pub(super) fn check_top_level_stmts(&mut self, items: &[TopLevel]) {
         self.locals.clear();
         let no_effects: Vec<String> = vec![];
@@ -528,12 +549,14 @@ impl TypeChecker {
                                 inferred
                             };
                             self.check_effects_in_expr(expr, "<top-level>", &no_effects);
+                            self.reject_module_level_match(expr);
                             self.locals.insert(name.clone(), ty);
                         }
                     }
                     Stmt::Expr(expr) => {
                         let _ = self.infer_type(expr);
                         self.check_effects_in_expr(expr, "<top-level>", &no_effects);
+                        self.reject_module_level_match(expr);
                     }
                 }
             }
