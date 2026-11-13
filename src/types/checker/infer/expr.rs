@@ -1576,22 +1576,42 @@ impl TypeChecker {
                 // in arm positions (`[] -> Option.None`) pick up T without
                 // requiring per-arm annotation.
                 let arm_expected = self.current_fn_ret.clone();
-                let arm_expected_ref = arm_expected.as_ref();
-                // Infer from first arm; check remaining arms for consistency
-                if let Some(first_arm) = arms.first() {
-                    let first_ty = self.infer_type_with_pattern_bindings_expected(
-                        &first_arm.pattern,
-                        &subject_ty,
-                        &first_arm.body,
-                        arm_expected_ref,
-                    );
-                    for arm in arms.iter().skip(1) {
-                        let arm_ty = self.infer_type_with_pattern_bindings_expected(
+                // An arm that cannot type itself (`[]`, `Option.None`,
+                // `Result.Ok(v)`, ...) takes the type of its siblings, which
+                // are inferred first: the match need not be the fn's result
+                // (`index = match on ... false -> []`), and a stamp is set
+                // once, so it has to be right the first time.
+                let mut arm_tys: Vec<Option<Type>> = vec![None; arms.len()];
+                for (i, arm) in arms.iter().enumerate() {
+                    if !equality_needs_context(&arm.body.node) {
+                        arm_tys[i] = Some(self.infer_type_with_pattern_bindings_expected(
                             &arm.pattern,
                             &subject_ty,
                             &arm.body,
-                            arm_expected_ref,
-                        );
+                            arm_expected.as_ref(),
+                        ));
+                    }
+                }
+                let sibling = arm_tys
+                    .iter()
+                    .flatten()
+                    .find(|t| type_is_fully_concrete(t))
+                    .cloned();
+                let open_expected = sibling.or(arm_expected);
+                for (i, arm) in arms.iter().enumerate() {
+                    if arm_tys[i].is_none() {
+                        arm_tys[i] = Some(self.infer_type_with_pattern_bindings_expected(
+                            &arm.pattern,
+                            &subject_ty,
+                            &arm.body,
+                            open_expected.as_ref(),
+                        ));
+                    }
+                }
+                let mut arm_tys = arm_tys.into_iter().flatten();
+                // Check every arm against the first for consistency.
+                if let Some(first_ty) = arm_tys.next() {
+                    for arm_ty in arm_tys {
                         // Only report mismatch when both types are concrete.
                         // Phase B: route through `self.compatible` so the
                         // symbol table resolves either side's bare ↔

@@ -650,6 +650,59 @@ fn equal() -> Bool
 }
 
 #[test]
+fn an_open_match_arm_takes_its_siblings_type() {
+    // The match is bound, not returned, so the fn's return type says nothing
+    // about `[]` / `Option.None`; their siblings do, in either order. Left
+    // `List<T>`, wasm-gc guessed the first list type it had registered and
+    // the module failed validation.
+    let items = parse_items(
+        r#"
+fn later(on: Bool, b: String) -> Result<Int, String>
+    index = match on
+        true -> [b]
+        false -> []
+    Result.Ok(List.len(index))
+
+fn first(on: Bool, b: String) -> Result<Int, String>
+    index = match on
+        false -> []
+        true -> [b]
+    Result.Ok(List.len(index))
+
+fn none(on: Bool, b: String) -> Int
+    o = match on
+        true -> Option.None
+        false -> Option.Some(b)
+    String.len(Option.withDefault(o, ""))
+"#,
+    );
+    let errs = run_type_check(&items);
+    assert!(errs.is_empty(), "{errs:?}");
+    let arm_stamps = |name: &str| -> Vec<String> {
+        let fd = items
+            .iter()
+            .find_map(|item| match item {
+                TopLevel::FnDef(fd) if fd.name == name => Some(fd),
+                _ => None,
+            })
+            .expect("fn is defined");
+        let FnBody::Block(stmts) = fd.body.as_ref();
+        let Some(Stmt::Binding(_, _, value)) = stmts.first() else {
+            panic!("{name} starts with a binding")
+        };
+        let Expr::Match { arms, .. } = &value.node else {
+            panic!("{name} binds a match")
+        };
+        arms.iter()
+            .map(|arm| arm.body.ty().map_or("unstamped".to_string(), Type::display))
+            .collect()
+    };
+    assert_eq!(arm_stamps("later"), ["List<String>", "List<String>"]);
+    assert_eq!(arm_stamps("first"), ["List<String>", "List<String>"]);
+    assert_eq!(arm_stamps("none"), ["Option<String>", "Option<String>"]);
+}
+
+#[test]
 fn result_from_option_types_empty_error_from_expected() {
     // The error argument is unrelated to the subject's payload, so its
     // type can only come from the expected `Result`'s error side.

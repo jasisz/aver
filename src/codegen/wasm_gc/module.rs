@@ -2972,8 +2972,10 @@ fn emit_module_pass(
 
     // ── Memory section ─────────────────────────────────────────────
     //
-    // 1 page initial, 2048 max (128 MiB ceiling — matches Cloudflare
-    // Workers' per-request memory limit). The bridge helpers grow
+    // 1 page initial and no declared maximum: what the transport may
+    // hold is the host's to limit (a Worker has its own per-request
+    // limit, V8 stops a 32-bit memory at 4 GiB), not the module's — a
+    // 317 MB `Disk.readBytesAt` has to pass. The bridge helpers grow
     // on demand: `__rt_string_to_lm` checks if it can fit the
     // outgoing array and calls `memory.grow` if not.
     //
@@ -2995,7 +2997,7 @@ fn emit_module_pass(
         let mut memories = wasm_encoder::MemorySection::new();
         memories.memory(wasm_encoder::MemoryType {
             minimum: 1,
-            maximum: Some(2048),
+            maximum: None,
             memory64: false,
             shared: false,
             page_size_log2: None,
