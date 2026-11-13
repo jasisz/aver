@@ -13,6 +13,38 @@
 
 use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType, ValType};
 
+/// The descriptor `Disk.readBytesAt` opened last, kept for the next call.
+///
+/// A program reading many small ranges of one file would otherwise pay an
+/// `open-at` and a descriptor drop for every range. The two globals hold the
+/// path and its descriptor (-1 when none is held). A file deleted or replaced
+/// under the same name is not seen through a kept descriptor, so every Disk
+/// helper that changes the filesystem forgets it first.
+#[derive(Clone, Copy)]
+pub(super) struct ReadAtHandle {
+    pub fd_global: u32,
+    pub path_global: u32,
+    pub string_type: u32,
+    pub drop_descriptor_fn: u32,
+}
+
+impl ReadAtHandle {
+    /// Drops the kept descriptor, if any, and forgets its path.
+    pub(super) fn emit_forget(&self, f: &mut Function) {
+        f.instruction(&Instruction::GlobalGet(self.fd_global));
+        f.instruction(&Instruction::I32Const(-1));
+        f.instruction(&Instruction::I32Ne);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        f.instruction(&Instruction::GlobalGet(self.fd_global));
+        f.instruction(&Instruction::Call(self.drop_descriptor_fn));
+        f.instruction(&Instruction::I32Const(-1));
+        f.instruction(&Instruction::GlobalSet(self.fd_global));
+        f.instruction(&Instruction::RefNull(HeapType::Concrete(self.string_type)));
+        f.instruction(&Instruction::GlobalSet(self.path_global));
+        f.instruction(&Instruction::End);
+    }
+}
+
 pub(super) struct DiskReadBytesAtIndices {
     pub fn_type: u32,
     pub fn_idx: u32,
@@ -34,11 +66,11 @@ pub(super) fn emit_disk_read_bytes_at(
     open_at_fn: u32,
     read_via_stream_fn: u32,
     blocking_read_fn: u32,
-    drop_descriptor_fn: u32,
     drop_input_stream_fn: u32,
     result_ok_fn: u32,
     result_err_fn: u32,
     aint_from_i64_fn: u32,
+    handle: ReadAtHandle,
 ) -> Function {
     let string_ref = ValType::Ref(RefType {
         nullable: true,
@@ -214,7 +246,60 @@ pub(super) fn emit_disk_read_bytes_at(
     emit_err(&mut f, b"no preopens");
     f.instruction(&Instruction::End);
 
-    // Open the path for reading.
+    // Reuse the kept descriptor when it was opened for this same path:
+    // `l_data_ptr` is 1 when the kept path equals `p_path` byte for byte.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_data_ptr));
+    f.instruction(&Instruction::GlobalGet(handle.path_global));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::GlobalGet(handle.path_global));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(l_data_ptr));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_index));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_index));
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::GlobalGet(handle.path_global));
+    f.instruction(&Instruction::LocalGet(l_index));
+    f.instruction(&Instruction::ArrayGetU(indices.string_type_idx));
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::LocalGet(l_index));
+    f.instruction(&Instruction::ArrayGetU(indices.string_type_idx));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_data_ptr));
+    f.instruction(&Instruction::Br(2));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_index));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_index));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_data_ptr));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::GlobalGet(handle.fd_global));
+    f.instruction(&Instruction::LocalSet(l_fd));
+    f.instruction(&Instruction::Else);
+
+    // Otherwise drop what is kept and open the path for reading.
+    handle.emit_forget(&mut f);
     f.instruction(&Instruction::LocalGet(p_path));
     f.instruction(&Instruction::Call(str_to_lm_fn));
     f.instruction(&Instruction::LocalSet(l_path_len));
@@ -239,7 +324,25 @@ pub(super) fn emit_disk_read_bytes_at(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(l_retptr_open));
     f.instruction(&Instruction::I32Load(mem4_o4));
-    f.instruction(&Instruction::LocalSet(l_fd));
+    f.instruction(&Instruction::LocalTee(l_fd));
+    f.instruction(&Instruction::GlobalSet(handle.fd_global));
+    // Keep a copy of the path, so nothing that later reuses the caller's
+    // string can change which file the kept descriptor is taken for.
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::ArrayNewDefault(indices.string_type_idx));
+    f.instruction(&Instruction::GlobalSet(handle.path_global));
+    f.instruction(&Instruction::GlobalGet(handle.path_global));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: indices.string_type_idx,
+        array_type_index_src: indices.string_type_idx,
+    });
+    f.instruction(&Instruction::End);
 
     // Ask WASI for a stream beginning at the requested offset.
     f.instruction(&Instruction::I32Const(0));
@@ -255,8 +358,7 @@ pub(super) fn emit_disk_read_bytes_at(
     f.instruction(&Instruction::LocalGet(l_retptr_stream));
     f.instruction(&Instruction::I32Load8U(mem1));
     f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(l_fd));
-    f.instruction(&Instruction::Call(drop_descriptor_fn));
+    handle.emit_forget(&mut f);
     emit_err(&mut f, b"read-via-stream failed");
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(l_retptr_stream));
@@ -304,16 +406,14 @@ pub(super) fn emit_disk_read_bytes_at(
         &|f, message| {
             f.instruction(&Instruction::LocalGet(l_stream));
             f.instruction(&Instruction::Call(drop_input_stream_fn));
-            f.instruction(&Instruction::LocalGet(l_fd));
-            f.instruction(&Instruction::Call(drop_descriptor_fn));
+            handle.emit_forget(f);
             emit_err(f, message);
         },
     );
 
     f.instruction(&Instruction::LocalGet(l_stream));
+    // The descriptor stays open for the next read; only the stream goes.
     f.instruction(&Instruction::Call(drop_input_stream_fn));
-    f.instruction(&Instruction::LocalGet(l_fd));
-    f.instruction(&Instruction::Call(drop_descriptor_fn));
     f.instruction(&Instruction::LocalGet(l_saved));
     f.instruction(&Instruction::GlobalSet(bump_global));
 

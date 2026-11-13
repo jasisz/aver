@@ -1951,6 +1951,8 @@ pub(super) fn emit_disk_write_text(
     // fd, offset=0, retptr)` (2 args + retptr). The host appends
     // at end-of-file in this mode.
     is_append: bool,
+    // The descriptor `Disk.readBytesAt` keeps, forgotten before the write.
+    read_at: Option<super::wasip2_disk_read_at::ReadAtHandle>,
 ) -> wasm_encoder::Function {
     use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
 
@@ -1982,6 +1984,9 @@ pub(super) fn emit_disk_write_text(
     let l_list_len = 11u32;
     let l_write_off = 12u32;
     let l_arr = 13u32;
+    if let Some(read_at) = read_at {
+        read_at.emit_forget(&mut f);
+    }
 
     let mem4 = MemArg {
         offset: 0,
@@ -2242,6 +2247,8 @@ pub(super) fn emit_disk_simple_path_op(
     get_directories_fn: u32,
     op_fn: u32,
     err_msg: &[u8],
+    // The descriptor `Disk.readBytesAt` keeps, forgotten before the op.
+    read_at: Option<super::wasip2_disk_read_at::ReadAtHandle>,
 ) -> wasm_encoder::Function {
     use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
 
@@ -2262,6 +2269,9 @@ pub(super) fn emit_disk_simple_path_op(
     let l_list_ptr = 4u32;
     let l_list_len = 5u32;
     let l_arr = 6u32;
+    if let Some(read_at) = read_at {
+        read_at.emit_forget(&mut f);
+    }
 
     let mem4 = MemArg {
         offset: 0,
