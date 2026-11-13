@@ -2,6 +2,13 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.34.1 (unreleased)
+
+### Fixed
+
+- wasm-gc: an empty list or `Option.None` in a `match` arm whose value is bound to a name, not returned, takes the type of the other arms. Before, the module could fail validation.
+- wasm-gc: the module no longer caps its memory at 128 MB, so `Disk.readBytesAt` can read a larger file at once.
+
 ## 0.34.0 "Pack" — 2026-11-12
 
 > _Bytes and numbers take the room they need._
