@@ -650,6 +650,28 @@ fn equal() -> Bool
 }
 
 #[test]
+fn a_match_outside_a_fn_is_refused() {
+    // Bare (the nightly fuzz input) and bound, at the top or nested: no
+    // backend lowers a module-level match, so the checker says so instead.
+    for source in [
+        "match Option.Some(1)\n    Option.Some(n) -> n\n    Option.None -> 0\n",
+        "x = match 1 < 2\n    true -> 1\n    false -> 0\n",
+        "y = 1 + match 1 < 2\n    true -> 1\n    false -> 0\n",
+    ] {
+        let errs = errors(parse_items(source));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("`match` is not allowed outside a fn")),
+            "{source:?} -> {errs:?}"
+        );
+    }
+    let fine = errors(parse_items(
+        "fn one() -> Int\n    match 1 < 2\n        true -> 1\n        false -> 0\n\nx = one()\n",
+    ));
+    assert!(fine.is_empty(), "{fine:?}");
+}
+
+#[test]
 fn an_open_match_arm_takes_its_siblings_type() {
     // The match is bound, not returned, so the fn's return type says nothing
     // about `[]` / `Option.None`; their siblings do, in either order. Left
