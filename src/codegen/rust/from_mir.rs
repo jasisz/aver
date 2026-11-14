@@ -226,6 +226,9 @@ pub struct MirEmitCtx<'a> {
 pub struct SelfLoop {
     pub fn_id: crate::ir::FnId,
     pub held: Vec<(String, usize)>,
+    /// The params the loop walks from a root it holds (see
+    /// [`self_loop_roots`]), by name and position; the root is `__root{i}`.
+    pub roots: Vec<(String, usize)>,
 }
 
 /// How a lent self-loop param takes a value bound out of its own current
@@ -2317,6 +2320,146 @@ pub(super) fn self_loop_lends(ctx: &CodegenContext, fn_id: crate::ir::FnId, inde
             .get(&fn_id)
             .and_then(|abi| abi.get(index))
             .is_some_and(|by_value| !by_value)
+}
+
+/// Whether lone self-tail-recursive function `fn_id` walks param `index` from
+/// a root it holds.
+///
+/// A loop that descends a sum (`fnOf(e) = match e App(_, f, _) -> fnOf(f);
+/// _ -> e`) takes the value by value because it returns it, and rebinding the
+/// param to a part copied the part and dropped the node it came out of: one
+/// count up and one down on every step. Such a param keeps its by-value ABI,
+/// but the loop holds the value it was given as a root and walks it by
+/// borrow, the way a lent loop does: a step rebinds the borrow to a part, and
+/// returning the param hands the root back when the loop never stepped, or
+/// copies the part it reached. The param qualifies when the body consumes it
+/// nowhere but in its result and every step passes it unchanged or a part a
+/// match on it binds.
+pub(super) fn self_loop_roots(
+    ctx: &CodegenContext,
+    mir_fn: &crate::ir::mir::MirFn,
+    index: usize,
+) -> bool {
+    if ctx.mutual_tco_members.contains(&mir_fn.fn_id) || self_loop_lends(ctx, mir_fn.fn_id, index) {
+        return false;
+    }
+    let Some(fd) = ctx.resolved_program.fn_by_id(mir_fn.fn_id) else {
+        return false;
+    };
+    let Some(param) = mir_fn.params.get(index) else {
+        return false;
+    };
+    let is_sum = fd.params.get(index).is_some_and(|(_, ty)| {
+        matches!(ty, Type::Named { id, name } if matches!(
+            super::representation::named_type_def(*id, name, ctx, None),
+            Some(crate::ast::TypeDef::Sum { .. })
+        ))
+    });
+    let mut steps = false;
+    super::toplevel::resolved_fn_has_self_tailcall(fd)
+        && is_sum
+        && walked_only(&mir_fn.body.node, param.local, mir_fn.fn_id, index, true)
+        && steps_to_parts(
+            &mir_fn.body.node,
+            param.local,
+            mir_fn.fn_id,
+            index,
+            &HashSet::new(),
+            &mut steps,
+        )
+        && steps
+}
+
+/// Whether `expr` uses the param in `slot` only as a loop walks it: as the
+/// subject of a match, passed unchanged at `index` to a self tail call to
+/// `fn_id`, or returned in tail position (`tail`).
+fn walked_only(
+    expr: &MirExpr,
+    slot: LocalId,
+    fn_id: crate::ir::FnId,
+    index: usize,
+    tail: bool,
+) -> bool {
+    let is_slot = |e: &MirExpr| matches!(e, MirExpr::Local(local) if local.node.slot == slot);
+    match expr {
+        MirExpr::Local(local) => local.node.slot != slot || tail,
+        MirExpr::Match(m) => {
+            (is_slot(&m.node.subject.node)
+                || walked_only(&m.node.subject.node, slot, fn_id, index, false))
+                && m.node
+                    .arms
+                    .iter()
+                    .all(|arm| walked_only(&arm.body.node, slot, fn_id, index, tail))
+        }
+        MirExpr::IfThenElse(branches) => {
+            walked_only(&branches.node.cond.node, slot, fn_id, index, false)
+                && walked_only(&branches.node.then_branch.node, slot, fn_id, index, tail)
+                && walked_only(&branches.node.else_branch.node, slot, fn_id, index, tail)
+        }
+        MirExpr::Let(let_expr) => {
+            walked_only(&let_expr.node.value.node, slot, fn_id, index, false)
+                && walked_only(&let_expr.node.body.node, slot, fn_id, index, tail)
+        }
+        MirExpr::TailCall(tc) if tail && tc.node.target == fn_id => {
+            tc.node.args.iter().enumerate().all(|(i, arg)| {
+                (i == index && is_slot(&arg.node))
+                    || walked_only(&arg.node, slot, fn_id, index, false)
+            })
+        }
+        _ => {
+            let mut ok = true;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                ok = ok && walked_only(child, slot, fn_id, index, false);
+            });
+            ok
+        }
+    }
+}
+
+/// Whether every self tail call to `fn_id` in `expr` passes, at `index`, the
+/// param in `slot` itself or a part a match on it binds (`parts`, the
+/// binders of the enclosing arms of such matches). `steps` is set when one
+/// passes a part.
+fn steps_to_parts(
+    expr: &MirExpr,
+    slot: LocalId,
+    fn_id: crate::ir::FnId,
+    index: usize,
+    parts: &HashSet<LocalId>,
+    steps: &mut bool,
+) -> bool {
+    match expr {
+        MirExpr::TailCall(tc) if tc.node.target == fn_id => {
+            let arg_ok = match tc.node.args.get(index).map(|arg| &arg.node) {
+                Some(MirExpr::Local(local)) if local.node.slot == slot => true,
+                Some(MirExpr::Local(local)) if parts.contains(&local.node.slot) => {
+                    *steps = true;
+                    true
+                }
+                _ => false,
+            };
+            arg_ok
+                && tc.node.args.iter().enumerate().all(|(i, arg)| {
+                    i == index || steps_to_parts(&arg.node, slot, fn_id, index, parts, steps)
+                })
+        }
+        MirExpr::Match(m) if matches!(&m.node.subject.node, MirExpr::Local(local) if local.node.slot == slot) => {
+            m.node.arms.iter().all(|arm| {
+                let mut bound = Vec::new();
+                pattern_binder_slots(&arm.pattern, &mut bound);
+                let mut inner = parts.clone();
+                inner.extend(bound.into_iter().map(|(slot, _)| slot));
+                steps_to_parts(&arm.body.node, slot, fn_id, index, &inner, steps)
+            })
+        }
+        _ => {
+            let mut ok = true;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                ok = ok && steps_to_parts(child, slot, fn_id, index, parts, steps);
+            });
+            ok
+        }
+    }
 }
 
 /// Which params of each mutual tail-call member its wrapper takes by value.
@@ -8747,6 +8890,12 @@ pub(super) fn emit_mir_tco_fn(
     let lent: Vec<usize> = (0..resolved_fd.params.len())
         .filter(|&i| self_loop_lends(ctx, resolved_fd.fn_id, i))
         .collect();
+    // The params the loop walks from a root (see [`self_loop_roots`]): taken
+    // by value, borrowed in the loop.
+    let roots: Vec<usize> = (0..resolved_fd.params.len())
+        .filter(|i| !passthrough_indices.contains(i))
+        .filter(|&i| self_loop_roots(ctx, mir_fn, i))
+        .collect();
     // Borrow policy: owned `mut` params, except the lent ones. A param every
     // step passes on unchanged stays a plain owned local of the loop: the
     // loop owns it, so the exit that hands it on moves it out instead of
@@ -8762,7 +8911,7 @@ pub(super) fn emit_mir_tco_fn(
     // collection params). The signature emit (`emit_tco_params_mir`)
     // reads the same per-fn facts so both agree.
     policy.apply_bare_i64(mir_fn.fn_id, ctx);
-    for &i in &lent {
+    for &i in lent.iter().chain(&roots) {
         let name = &resolved_fd.params[i].0;
         policy.owned_params.remove(&aver_name_to_rust(name));
         policy.borrowed_params.insert(name.clone());
@@ -8781,6 +8930,11 @@ pub(super) fn emit_mir_tco_fn(
         held: lent
             .iter()
             .filter(|i| !passthrough_indices.contains(i))
+            .chain(&roots)
+            .map(|&i| (resolved_fd.params[i].0.clone(), i))
+            .collect(),
+        roots: roots
+            .iter()
             .map(|&i| (resolved_fd.params[i].0.clone(), i))
             .collect(),
     };
@@ -8816,7 +8970,9 @@ pub(super) fn emit_mir_tco_fn(
     ) {
         (None, None) => None,
         (Some(check), Some(facts))
-            if check.param == facts.param && !lent.contains(&check.param) =>
+            if check.param == facts.param
+                && !lent.contains(&check.param)
+                && !roots.contains(&check.param) =>
         {
             let mut fallback_ctx = emit_ctx;
             fallback_ctx.bare = &facts.facts;
@@ -8846,10 +9002,26 @@ pub(super) fn emit_mir_tco_fn(
                 .as_ref()
                 .is_some_and(|(_, fallback)| fallback.contains(text))
     };
-    for &i in lent.iter().filter(|i| !passthrough_indices.contains(i)) {
+    for &i in lent
+        .iter()
+        .filter(|i| !passthrough_indices.contains(i))
+        .chain(&roots)
+    {
         let (name, type_ann) = &fd.params[i];
         let rust_type = super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope);
         let hold = generated_ident(&format!("hold{i}"));
+        // A rooted param: the value it was given becomes the root, and the
+        // param a borrow of it.
+        let source = if roots.contains(&i) {
+            let root = generated_ident(&format!("root{i}"));
+            lines.push(format!(
+                "    let {root}: {rust_type} = {};",
+                aver_name_to_rust(name)
+            ));
+            format!("&{root}")
+        } else {
+            aver_name_to_rust(name)
+        };
         // A slot a list step compares the param with (`ListRest::Next`)
         // starts as `[]`, which allocates nothing, so it can be read.
         if emitted(&format!("aver_rt::list_step_rest(&mut {hold})")) {
@@ -8860,9 +9032,8 @@ pub(super) fn emit_mir_tco_fn(
             lines.push(format!("    let mut {hold}: {rust_type};"));
         }
         lines.push(format!(
-            "    let {}: &{rust_type} = {};",
+            "    let {}: &{rust_type} = {source};",
             explicit_parameter_pattern(name, true),
-            aver_name_to_rust(name)
         ));
     }
     if let Some((check, fallback)) = entry_check {
@@ -9017,6 +9188,23 @@ fn emit_mir_tco_tail_expr(
             let statement = emit_mir_let_statement(let_node, ctx)?;
             let tail = emit_mir_tco_tail_expr(&let_node.body, self_fn, params, passthrough, ctx)?;
             Some(format!("{{ {statement} {tail} }}"))
+        }
+        // A rooted param handed back: the root itself when the loop never
+        // stepped, else a copy of the part it reached (see
+        // [`self_loop_roots`]).
+        MirExpr::Local(local)
+            if let Some((_, i)) = ctx.self_loop.and_then(|self_loop| {
+                self_loop
+                    .roots
+                    .iter()
+                    .find(|(name, _)| *name == local.node.name)
+            }) =>
+        {
+            let param = aver_name_to_rust(&local.node.name);
+            let root = generated_ident(&format!("root{i}"));
+            Some(format!(
+                "{{ if ::core::ptr::eq({param}, &{root}) {{ return {root}; }} return {param}.clone(); }}"
+            ))
         }
         // Base-case value (or `?` value): `return <expr>;`.
         _ => Some(format!("return {};", emit_mir_value_return(expr, ctx)?)),
