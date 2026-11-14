@@ -116,5 +116,8 @@ pub(crate) fn take32(count: &std::sync::atomic::AtomicU32) -> bool {
 #[cfg_attr(feature = "plain-counts", allow(dead_code))]
 pub(crate) mod frozen {
     pub const F32: u32 = 0x4000_0000;
-    pub const F64: usize = 1 << 61;
+    /// An eighth of the range of `usize`: 2^61 on a 64-bit target, 2^29 on
+    /// a 32-bit one (wasm32), below the count of a node kept in a static
+    /// (three quarters of `isize::MAX`) on both.
+    pub const F64: usize = 1 << (usize::BITS - 3);
 }
