@@ -9422,11 +9422,6 @@ pub(super) fn emit_lent_result_fn(
         ),
         false => format!("&'a {ret}"),
     };
-    let builtins = ctx
-        .mir_program
-        .as_ref()
-        .map(|p| p.builtins.as_slice())
-        .unwrap_or(&[]);
     let inline = match ctx.rust_forced_inline.contains(&fn_id) {
         true => "#[inline(always)]\n",
         false => "",
@@ -9436,6 +9431,28 @@ pub(super) fn emit_lent_result_fn(
         super::lent_result::ret_name(&aver_name_to_rust(&fd.name)),
         params.join(", ")
     )];
+    lines.push(emit_lent_body(resolved_fd, mir_fn, lent, scope, ctx)?);
+    lines.push("}".to_string());
+    Some(lines.join("\n"))
+}
+
+/// The body of the borrowing version of `mir_fn` (see
+/// [`emit_lent_result_fn`]), or `None` when a value it returns does not
+/// render as a borrow in the body the emitter produces.
+fn emit_lent_body(
+    resolved_fd: &crate::ir::hir::ResolvedFnDef,
+    mir_fn: &crate::ir::mir::MirFn,
+    lent: &crate::codegen::RustLentResult,
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let fn_id = mir_fn.fn_id;
+    let builtins = ctx
+        .mir_program
+        .as_ref()
+        .map(|p| p.builtins.as_slice())
+        .unwrap_or(&[]);
+    let mut lines = Vec::new();
     match lent.walk {
         None => {
             let mut policy = MirFnEmitPolicy::from_resolved(resolved_fd, scope, true);
@@ -9478,7 +9495,7 @@ pub(super) fn emit_lent_result_fn(
             lines.push(format!(
                 "    let mut {} = {}.iter();",
                 walk.iter,
-                aver_name_to_rust(&fd.params.get(index)?.0)
+                aver_name_to_rust(&resolved_fd.params.get(index)?.0)
             ));
             lines.push("    loop {".to_string());
             lines.push("        crate::cancel_checkpoint();".to_string());
@@ -9486,8 +9503,21 @@ pub(super) fn emit_lent_result_fn(
             lines.push("    }".to_string());
         }
     }
-    lines.push("}".to_string());
     Some(lines.join("\n"))
+}
+
+/// Whether the borrowing version of `fn_id` renders (see [`emit_lent_body`]):
+/// the emitter is what decides whether a match binds borrows, so a version
+/// is kept only when its body, as emitted, returns borrows.
+pub(super) fn lent_body_renders(fn_id: crate::ir::FnId, ctx: &CodegenContext) -> bool {
+    let (Some(lent), Some(resolved_fd), Some(mir_fn)) = (
+        ctx.rust_lent_results.get(&fn_id),
+        ctx.resolved_program.fn_by_id(fn_id),
+        ctx.mir_program.as_ref().and_then(|p| p.fn_by_id(fn_id)),
+    ) else {
+        return false;
+    };
+    emit_lent_body(resolved_fd, mir_fn, lent, None, ctx).is_some()
 }
 
 /// The `List` param a borrowing loop walks with an iterator (see
@@ -9635,7 +9665,16 @@ fn emit_lent_place(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<Stri
         return Some(call);
     }
     match &expr.node {
+        // Only a place the emitter holds as a borrow: a match that cloned
+        // its subject binds owned locals, whose borrow would not outlive
+        // the function.
         MirExpr::Local(_) | MirExpr::Project(_) => {
+            let root = projection_root_local(&expr.node)?;
+            if !super::ownership::root_is_borrowed(root, ctx)
+                || ctx.lent_options.contains(&root.name)
+            {
+                return None;
+            }
             let code = emit_mir_expr(expr, ctx)?;
             Some(materialize_borrowed(code, &expr.node, ctx))
         }

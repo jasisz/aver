@@ -42,8 +42,32 @@ use crate::ir::mir::{LocalId, MirCallee, MirCtor, MirExpr, MirFn, MirPattern};
 use super::emit_ctx::should_borrow_param;
 
 /// The functions with a borrowing version, with the params their result
-/// borrows from; `used` marks the ones some call can reach.
-pub(super) fn compute(ctx: &CodegenContext) -> HashMap<FnId, RustLentResult> {
+/// borrows from; `used` marks the ones some call can reach. Each version a
+/// call reaches is rendered once to check it: whether a match binds borrows
+/// is the emitter's to decide (a match that clones its subject binds owned
+/// locals), so one whose body does not render as borrows is left out and the
+/// analysis runs again without it.
+pub(super) fn compute_checked(ctx: &mut CodegenContext) {
+    let mut excluded: HashSet<FnId> = HashSet::new();
+    loop {
+        ctx.rust_lent_results = compute(ctx, &excluded);
+        let mut failed: Vec<FnId> = ctx
+            .rust_lent_results
+            .iter()
+            .filter(|(_, lent)| lent.used)
+            .map(|(id, _)| *id)
+            .filter(|id| !super::from_mir::lent_body_renders(*id, ctx))
+            .collect();
+        if failed.is_empty() {
+            return;
+        }
+        failed.sort();
+        excluded.extend(failed);
+    }
+}
+
+/// [`compute_checked`]'s analysis, leaving out the functions in `excluded`.
+fn compute(ctx: &CodegenContext, excluded: &HashSet<FnId>) -> HashMap<FnId, RustLentResult> {
     let Some(program) = ctx.mir_program.as_ref() else {
         return HashMap::new();
     };
@@ -57,7 +81,8 @@ pub(super) fn compute(ctx: &CodegenContext) -> HashMap<FnId, RustLentResult> {
         let Some(resolved) = ctx.resolved_program.fn_by_id(*id) else {
             continue;
         };
-        if values.contains(&mir_fn.name)
+        if excluded.contains(id)
+            || values.contains(&mir_fn.name)
             || mir_fn.name == "main"
             || ctx.guest_entry.as_deref() == Some(resolved.name.as_str())
             || ctx.mutual_tco_members.contains(id)

@@ -138,6 +138,32 @@ fn firstNameLen(s: Shelf) -> Int
     ? "A field of a field of a call."
     String.len(tableOf(s).main.name)
 
+record Tx
+    id: Int
+    payload: List<Int>
+
+record Commitment
+    transaction: Tx
+
+record SpendCtx
+    spend: Option<Commitment>
+
+fn transactionOf(context: SpendCtx) -> Option<Tx>
+    ? "The transaction of the spend, matched out of an Option field."
+    match context.spend
+        Option.None -> Option.None
+        Option.Some(commitment) -> Option.Some(commitment.transaction)
+
+fn txId(t: Option<Tx>) -> Int
+    ? "The id of a transaction, or 0."
+    match t
+        Option.Some(x) -> x.id
+        Option.None -> 0
+
+fn spentTxId(context: SpendCtx) -> Int
+    ? "Read the spend's transaction id."
+    txId(transactionOf(context))
+
 fn fresh(st: St) -> Option<Expr>
     ? "A fresh value, never lent."
     match Map.len(st.inferCache) == 0
@@ -155,4 +181,4 @@ fn main() -> Unit
     one = typeGet(st, true, Expr.Var(1))
     h = Head(name = "a", ty = Expr.App(Expr.Var(1), Expr.Var(2)), params = [])
     t = Table(main = h, other = h)
-    Console.print("{report(hit)} {report(miss)} {report(one)} {tyOfFirst([h], h)} {report(fresh(st))} {cachedType(st, Expr.Var(4))} {nameLen(t)} {cachedApplied(st, Expr.Var(4))} {headTySize(t)} {firstNameLen(Shelf(table = t))}")
+    Console.print("{report(hit)} {report(miss)} {report(one)} {tyOfFirst([h], h)} {report(fresh(st))} {cachedType(st, Expr.Var(4))} {nameLen(t)} {cachedApplied(st, Expr.Var(4))} {headTySize(t)} {firstNameLen(Shelf(table = t))} {spentTxId(SpendCtx(spend = Option.Some(Commitment(transaction = Tx(id = 5, payload = [1])))))} {spentTxId(SpendCtx(spend = Option.None))}")

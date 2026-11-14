@@ -284,7 +284,7 @@ fn transpile_project(
         ctx.rust_field_layout = field_layout::compute(ctx);
         speculation::choose_wrapped(ctx);
         ctx.rust_dual_fns = from_mir::compute_dual_fns(ctx);
-        ctx.rust_lent_results = lent_result::compute(ctx);
+        lent_result::compute_checked(ctx);
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
@@ -1985,6 +1985,29 @@ fn tableOf(s: Shelf) -> Table
 fn firstNameLen(s: Shelf) -> Int
     String.len(tableOf(s).main.name)
 
+record Tx
+    id: Int
+    payload: List<Int>
+
+record Commitment
+    transaction: Tx
+
+record SpendCtx
+    spend: Option<Commitment>
+
+fn transactionOf(context: SpendCtx) -> Option<Tx>
+    match context.spend
+        Option.None -> Option.None
+        Option.Some(commitment) -> Option.Some(commitment.transaction)
+
+fn txId(t: Option<Tx>) -> Int
+    match t
+        Option.Some(x) -> x.id
+        Option.None -> 0
+
+fn spentTxId(context: SpendCtx) -> Int
+    txId(transactionOf(context))
+
 fn fresh(st: St) -> Option<Expr>
     match Map.len(st.inferCache) == 0
         true -> Option.Some(Expr.Var(1))
@@ -2041,6 +2064,10 @@ fn freshSize(st: St) -> Int
         assert!(entry.contains("(__ret_tableOf(s).main.name)"), "{entry}");
         // A value built in the function is never lent.
         assert!(!entry.contains("__ret_fresh"), "{entry}");
+        // A match that clones its subject (an `Option` field) binds owned
+        // locals: a borrow of one would not outlive the function, so the
+        // function keeps one version.
+        assert!(!entry.contains("__ret_transactionOf"), "{entry}");
     }
 
     #[test]
