@@ -400,6 +400,31 @@ impl<T> Block<T> {
     }
 }
 
+#[cfg(not(feature = "plain-counts"))]
+impl<T> Block<T> {
+    /// Freezes the block once `item` froze each element (see
+    /// `crate::freeze`).
+    pub(crate) fn freeze_with(
+        &self,
+        f: &mut crate::freeze::Freezer,
+        item: impl Fn(&T, &mut crate::freeze::Freezer) -> bool,
+    ) -> bool {
+        let bytes = Self::OFFSET + self.header().cap * size_of::<T>();
+        f.node64(&self.header().count, bytes, |f| {
+            self.iter().all(|x| item(x, f))
+        })
+    }
+}
+
+#[cfg(not(feature = "plain-counts"))]
+impl Untyped {
+    /// Freezes a block of integers of `bytes` bytes.
+    pub(crate) fn freeze(&self, f: &mut crate::freeze::Freezer, bytes: usize) -> bool {
+        // SAFETY: the allocation lives while this count does.
+        f.node64(unsafe { &self.0.as_ref().count }, bytes, |_| true)
+    }
+}
+
 impl<T> Deref for Block<T> {
     type Target = [T];
 

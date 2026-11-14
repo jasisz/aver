@@ -214,6 +214,10 @@ fn transpile_project(
         }
         crate::config::RustThreads::One => None,
     };
+    // A build with atomic counts whose program has an independent product
+    // freezes what the product hands to its threads (see
+    // `aver_rt::freeze`); only then do its types get a walk for it.
+    ctx.rust_freezes = !ctx.single_thread && has_independent_product(ctx);
     // Every refusal below is recorded on the context as it happens; this
     // transpile reports its own, not a previous one's.
     ctx.substituted_compile_errors.borrow_mut().clear();
@@ -1277,6 +1281,29 @@ fn first_threaded_construct(ctx: &CodegenContext) -> Option<String> {
         }
     }
     None
+}
+
+/// Whether some function or binding of the program, or of a module it
+/// uses, holds an independent product.
+fn has_independent_product(ctx: &CodegenContext) -> bool {
+    use crate::ast::{Expr, Stmt};
+    let holds = |expr: &crate::ast::Spanned<Expr>| {
+        crate::codegen::expr_walk::any(expr, &mut |e| {
+            matches!(e.node, Expr::IndependentProduct(..))
+        })
+    };
+    let in_fn = |fd: &FnDef| {
+        fd.body.stmts().iter().any(|stmt| match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => holds(expr),
+        })
+    };
+    ctx.items.iter().any(|item| match item {
+        TopLevel::FnDef(fd) => in_fn(fd),
+        TopLevel::Stmt(Stmt::Binding(_, _, expr)) | TopLevel::Stmt(Stmt::Expr(expr)) => holds(expr),
+        _ => false,
+    }) || ctx.modules.iter().any(|module| {
+        module.fn_defs.iter().any(in_fn) || module.bindings.iter().any(|b| holds(&b.value))
+    })
 }
 
 /// Detect which effectful services are used in the program (including modules).

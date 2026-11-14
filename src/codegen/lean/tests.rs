@@ -58,6 +58,7 @@ fn empty_ctx() -> CodegenContext {
         emit_self_host_support: false,
         single_thread: false,
         rust_equality_classes: 0,
+        rust_freezes: false,
         rust_classed_eq: std::cell::Cell::new(false),
         mutual_tco_members: HashSet::<crate::ir::FnId>::new(),
         recursive_fns: HashSet::<crate::ir::FnId>::new(),

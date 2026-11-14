@@ -131,6 +131,13 @@ impl<T: ?Sized> Shared<T> {
         this.node().count.load(Ordering::Relaxed)
     }
 
+    /// The node's count, for freezing it (see `crate::freeze`).
+    #[cfg(not(feature = "plain-counts"))]
+    #[inline]
+    pub(crate) fn count_ref(this: &Self) -> &AtomicUsize {
+        &this.node().count
+    }
+
     /// Whether the node is kept in a static, so cloning or dropping this
     /// `Shared` needs no count. Nothing changes a static node's count by
     /// half of [`STATIC_COUNT`], and no heap node gets that many owners.

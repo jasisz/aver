@@ -5861,7 +5861,30 @@ fn emit_mir_independent_product(
         return Some(code);
     }
 
+    // The first time the product at this place runs, everything its
+    // elements read from outside is frozen before its threads start (see
+    // `aver_rt::freeze`): a place in the code, a flag of its own. A
+    // capture of a type that cannot be frozen is skipped. Elements that read
+    // nothing from outside freeze nothing, and get no flag.
+    let mut captured: Vec<String> = Vec::new();
+    for item in &ip.items {
+        for local in mir_free_locals(&item.node).values() {
+            let name = aver_name_to_rust(&local.name);
+            if !captured.contains(&name) {
+                captured.push(name);
+            }
+        }
+    }
     let mut code = String::new();
+    if !captured.is_empty() {
+        let walks: String = captured
+            .iter()
+            .map(|name| format!("let _ = (&aver_rt::freeze::Probe(&{name})).freeze_into(__f); "))
+            .collect();
+        code.push_str(&format!(
+            "{{ {{ static __FROZEN_SITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false); aver_rt::freeze::at_first_fork(&__FROZEN_SITE, |__f| {{ #[allow(unused_imports)] use aver_rt::freeze::{{ViaFreeze as _, ViaSkip as _}}; {walks}}}); }} "
+        ));
+    }
     if has_replay {
         // Runtime branch: if recording/replaying, execute sequentially
         // with replay groups (thread_local state stays on one thread).
@@ -5967,6 +5990,9 @@ fn emit_mir_independent_product(
 
     if has_replay {
         code.push('}');
+    }
+    if !captured.is_empty() {
+        code.push_str(" }");
     }
     Some(code)
 }
@@ -13568,6 +13594,39 @@ mod tests {
              let __h1 = crate::spawn_branch(__s, move || aver_rt::AverInt::from_i64(9)); let __r0 = crate::run_first_branch(__h0).unwrap(); \
              let __r1 = __h1.join().unwrap(); (__r0, __r1) }) "
         );
+    }
+
+    #[test]
+    fn a_product_reading_locals_freezes_them_the_first_time_its_place_runs() {
+        // Both elements read `height`: the product freezes it, once per
+        // place, before its threads start (see `aver_rt::freeze`).
+        let local = || {
+            span(MirExpr::Local(span(MirLocal {
+                slot: LocalId(0),
+                name: "height".to_string(),
+                last_use: false,
+            })))
+        };
+        let expr = span(MirExpr::IndependentProduct(span(
+            crate::ir::mir::MirIndependentProduct {
+                items: vec![local(), local()],
+                unwrap_results: false,
+            },
+        )));
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("product should emit");
+        assert!(
+            emit.starts_with(
+                "{ { static __FROZEN_SITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false); \
+                 aver_rt::freeze::at_first_fork(&__FROZEN_SITE, |__f| {"
+            ),
+            "got: {emit}"
+        );
+        assert_eq!(
+            emit.matches("aver_rt::freeze::Probe(&height)").count(),
+            1,
+            "one walk per capture, however many elements read it: {emit}"
+        );
+        assert!(emit.contains("aver_rt::work::scope("), "got: {emit}");
     }
 
     #[test]

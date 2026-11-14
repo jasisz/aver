@@ -1308,3 +1308,38 @@ mod tests {
         assert_eq!(wide.get(3), None);
     }
 }
+
+/// Freezing a list of integers (see `crate::freeze`).
+#[cfg(not(feature = "plain-counts"))]
+mod freeze_impls {
+    use super::*;
+    use crate::freeze::{Freeze, Freezer};
+
+    impl Freeze for AverIntList {
+        fn freeze(&self, f: &mut Freezer) -> bool {
+            match self {
+                AverIntList::Packed(p) => p.freeze(f),
+                AverIntList::Wide(l) => l.freeze(f),
+                AverIntList::Narrow(n) => {
+                    // The block's own size is not kept beside it here; the
+                    // range read stands for it.
+                    let bytes = 32 + (n.end - n.start) as usize * 8;
+                    n.body.freeze(f, bytes)
+                }
+                AverIntList::Stack(s) => s.freeze(f),
+            }
+        }
+    }
+
+    impl Freeze for ByteStack {
+        fn freeze(&self, f: &mut Freezer) -> bool {
+            self.seg.freeze(f)
+        }
+    }
+
+    impl Freeze for Segment {
+        fn freeze(&self, f: &mut Freezer) -> bool {
+            self.below.freeze(f)
+        }
+    }
+}
