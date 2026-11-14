@@ -19,9 +19,12 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
-use std::sync::atomic::{self, AtomicUsize, Ordering};
+#[cfg(feature = "plain-counts")]
+use std::sync::atomic;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A soft limit on the count, as in `Shared`.
+#[cfg(feature = "plain-counts")]
 const MAX_REFCOUNT: usize = isize::MAX as usize;
 
 /// The count of owners kept in a record's fields (see the module docs). It
@@ -175,6 +178,13 @@ impl<T: Counts> Counted<T> {
         *Self::into_box(this)
     }
 
+    /// The node's count, for freezing it (see `crate::freeze`).
+    #[cfg(not(feature = "plain-counts"))]
+    #[inline]
+    pub(crate) fn count_ref(this: &Self) -> &AtomicUsize {
+        this.count()
+    }
+
     /// Whether both point to the same node.
     #[inline]
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
@@ -186,9 +196,16 @@ impl<T: Counts> Clone for Counted<T> {
     /// As `Shared::clone`.
     #[inline]
     fn clone(&self) -> Self {
-        let old = self.count().fetch_add(1, Ordering::Relaxed);
-        if old > MAX_REFCOUNT {
+        #[cfg(not(feature = "plain-counts"))]
+        if crate::counts::inc(self.count()) {
             std::process::abort();
+        }
+        #[cfg(feature = "plain-counts")]
+        {
+            let old = self.count().fetch_add(1, Ordering::Relaxed);
+            if old > MAX_REFCOUNT {
+                std::process::abort();
+            }
         }
         Self {
             ptr: self.ptr,
@@ -201,10 +218,17 @@ impl<T: Counts> Drop for Counted<T> {
     /// As `Shared::drop`.
     #[inline]
     fn drop(&mut self) {
-        if self.count().fetch_sub(1, Ordering::Release) != 1 {
+        #[cfg(not(feature = "plain-counts"))]
+        if !crate::counts::dec(self.count()) {
             return;
         }
-        atomic::fence(Ordering::Acquire);
+        #[cfg(feature = "plain-counts")]
+        {
+            if self.count().fetch_sub(1, Ordering::Release) != 1 {
+                return;
+            }
+            atomic::fence(Ordering::Acquire);
+        }
         drop(unsafe { Box::from_raw(self.ptr.as_ptr()) });
     }
 }

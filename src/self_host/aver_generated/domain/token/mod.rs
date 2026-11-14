@@ -44,6 +44,54 @@ pub enum Token {
     TkEof,
 }
 
+impl aver_rt::freeze::Freeze for Token {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        match self {
+            Token::TkInt(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Token::TkFloat(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Token::TkStr(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Token::TkIdent(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Token::TkTrue => true,
+            Token::TkFalse => true,
+            Token::TkPlus => true,
+            Token::TkMinus => true,
+            Token::TkStar => true,
+            Token::TkSlash => true,
+            Token::TkEq => true,
+            Token::TkEqEq => true,
+            Token::TkNeq => true,
+            Token::TkLt => true,
+            Token::TkGt => true,
+            Token::TkLte => true,
+            Token::TkGte => true,
+            Token::TkLParen => true,
+            Token::TkRParen => true,
+            Token::TkComma => true,
+            Token::TkArrow => true,
+            Token::TkLBracket => true,
+            Token::TkRBracket => true,
+            Token::TkDot => true,
+            Token::TkDotDot => true,
+            Token::TkQuestion => true,
+            Token::TkNewline => true,
+            Token::TkInterpStart => true,
+            Token::TkInterpEnd => true,
+            Token::TkColon => true,
+            Token::TkBang => true,
+            Token::TkFatArrow => true,
+            Token::TkIndent => true,
+            Token::TkDedent => true,
+            Token::TkLBrace => true,
+            Token::TkRBrace => true,
+            Token::TkFn => true,
+            Token::TkMatch => true,
+            Token::TkEof => true,
+        }
+    }
+}
+
 impl aver_rt::AverDisplay for Token {
     fn aver_display(&self) -> String {
         match self {

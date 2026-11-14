@@ -8,6 +8,16 @@ pub struct FnStore {
     pub globals: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 }
 
+impl aver_rt::freeze::Freeze for FnStore {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.nameToId)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.byId)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.globals)).freeze_into(f)
+    }
+}
+
 impl aver_rt::AverDisplay for FnStore {
     fn aver_display(&self) -> String {
         format!(

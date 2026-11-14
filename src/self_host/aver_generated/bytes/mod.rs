@@ -6,6 +6,14 @@ pub struct Bytes {
     pub values: aver_rt::AverPackedU8,
 }
 
+impl aver_rt::freeze::Freeze for Bytes {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.values)).freeze_into(f)
+    }
+}
+
 impl PartialOrd for Bytes {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))

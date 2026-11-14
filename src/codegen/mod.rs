@@ -511,6 +511,10 @@ pub struct CodegenContext {
     /// Rust: `MIN_STEPS` of the equality classes the generated `==` of a
     /// recursive sum keeps (`[rust] equality_classes`), 0 for none.
     pub rust_equality_classes: u32,
+    /// Rust: the build has atomic counts and the program an independent
+    /// product, so its types get a walk that freezes them (see
+    /// `aver_rt::freeze`).
+    pub rust_freezes: bool,
     /// Rust: the generated code calls `aver_rt::Walk::node_classed`, set by
     /// the emitter of a recursive sum's `==` when it writes the call. Only
     /// then does `Cargo.toml` turn on aver-rt's `equality-classes`.
@@ -1238,6 +1242,7 @@ pub fn build_context(
         emit_self_host_support: false,
         single_thread: false,
         rust_equality_classes: 0,
+        rust_freezes: false,
         rust_classed_eq: std::cell::Cell::new(false),
         mutual_tco_members,
         recursive_fns,
@@ -1796,6 +1801,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         emit_self_host_support: false,
         single_thread: false,
         rust_equality_classes: 0,
+        rust_freezes: false,
         rust_classed_eq: std::cell::Cell::new(false),
         mutual_tco_members: std::collections::HashSet::new(),
         recursive_fns: std::collections::HashSet::new(),

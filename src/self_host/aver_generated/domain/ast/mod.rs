@@ -55,11 +55,27 @@ pub struct Expr__ExprInt(pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Expr__ExprInt {}
 
+impl aver_rt::freeze::Freeze for Expr__ExprInt {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprFloat(pub f64);
 
 impl aver_rt::thin::HandOver for Expr__ExprFloat {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprFloat {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -67,11 +83,27 @@ pub struct Expr__ExprStr(pub AverStr);
 
 impl aver_rt::thin::HandOver for Expr__ExprStr {}
 
+impl aver_rt::freeze::Freeze for Expr__ExprStr {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprBool(pub bool);
 
 impl aver_rt::thin::HandOver for Expr__ExprBool {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprBool {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -93,17 +125,43 @@ impl aver_rt::thin::HandOver for Expr__ExprBoolBranch {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprBoolBranch {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprVar(pub AverStr);
 
 impl aver_rt::thin::HandOver for Expr__ExprVar {}
 
+impl aver_rt::freeze::Freeze for Expr__ExprVar {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprSlot(pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Expr__ExprSlot {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprSlot {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 #[derive(Clone)]
 #[repr(C)]
@@ -119,6 +177,16 @@ impl PartialEq for Expr__ExprBinopSlotInt {
 }
 
 impl aver_rt::thin::HandOver for Expr__ExprBinopSlotInt {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprBinopSlotInt {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+    }
+}
 
 impl std::fmt::Debug for Expr__ExprBinopSlotInt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -145,6 +213,16 @@ impl PartialEq for Expr__ExprBinopSlots {
 
 impl aver_rt::thin::HandOver for Expr__ExprBinopSlots {}
 
+impl aver_rt::freeze::Freeze for Expr__ExprBinopSlots {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+    }
+}
+
 impl std::fmt::Debug for Expr__ExprBinopSlots {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Expr__ExprBinopSlots")
@@ -170,6 +248,16 @@ impl PartialEq for Expr__ExprCmpSlotInt {
 
 impl aver_rt::thin::HandOver for Expr__ExprCmpSlotInt {}
 
+impl aver_rt::freeze::Freeze for Expr__ExprCmpSlotInt {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+    }
+}
+
 impl std::fmt::Debug for Expr__ExprCmpSlotInt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Expr__ExprCmpSlotInt")
@@ -194,6 +282,16 @@ impl PartialEq for Expr__ExprCmpSlots {
 }
 
 impl aver_rt::thin::HandOver for Expr__ExprCmpSlots {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprCmpSlots {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+    }
+}
 
 impl std::fmt::Debug for Expr__ExprCmpSlots {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -228,6 +326,16 @@ impl aver_rt::thin::HandOver for Expr__ExprVectorGetOrInt {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprVectorGetOrInt {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct Expr__ExprIntModOrInt(pub Expr, pub Expr, pub aver_rt::AverInt);
@@ -251,6 +359,16 @@ impl aver_rt::thin::HandOver for Expr__ExprIntModOrInt {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprIntModOrInt {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprAdd(pub Expr, pub Expr);
@@ -265,6 +383,15 @@ impl aver_rt::thin::HandOver for Expr__ExprAdd {
     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
         aver_rt::thin::HandOver::hand_over(self.0, pending);
         aver_rt::thin::HandOver::hand_over(self.1, pending);
+    }
+}
+
+impl aver_rt::freeze::Freeze for Expr__ExprAdd {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
     }
 }
 
@@ -285,6 +412,15 @@ impl aver_rt::thin::HandOver for Expr__ExprSub {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprSub {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprMul(pub Expr, pub Expr);
@@ -299,6 +435,15 @@ impl aver_rt::thin::HandOver for Expr__ExprMul {
     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
         aver_rt::thin::HandOver::hand_over(self.0, pending);
         aver_rt::thin::HandOver::hand_over(self.1, pending);
+    }
+}
+
+impl aver_rt::freeze::Freeze for Expr__ExprMul {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
     }
 }
 
@@ -319,6 +464,15 @@ impl aver_rt::thin::HandOver for Expr__ExprDiv {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprDiv {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprNeg(pub Expr);
@@ -332,6 +486,14 @@ impl aver_rt::WalkEq for Expr__ExprNeg {
 impl aver_rt::thin::HandOver for Expr__ExprNeg {
     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
         aver_rt::thin::HandOver::hand_over(self.0, pending);
+    }
+}
+
+impl aver_rt::freeze::Freeze for Expr__ExprNeg {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
     }
 }
 
@@ -352,6 +514,15 @@ impl aver_rt::thin::HandOver for Expr__ExprEq {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprEq {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprNeq(pub Expr, pub Expr);
@@ -366,6 +537,15 @@ impl aver_rt::thin::HandOver for Expr__ExprNeq {
     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
         aver_rt::thin::HandOver::hand_over(self.0, pending);
         aver_rt::thin::HandOver::hand_over(self.1, pending);
+    }
+}
+
+impl aver_rt::freeze::Freeze for Expr__ExprNeq {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
     }
 }
 
@@ -386,6 +566,15 @@ impl aver_rt::thin::HandOver for Expr__ExprLt {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprLt {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprGt(pub Expr, pub Expr);
@@ -400,6 +589,15 @@ impl aver_rt::thin::HandOver for Expr__ExprGt {
     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
         aver_rt::thin::HandOver::hand_over(self.0, pending);
         aver_rt::thin::HandOver::hand_over(self.1, pending);
+    }
+}
+
+impl aver_rt::freeze::Freeze for Expr__ExprGt {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
     }
 }
 
@@ -420,6 +618,15 @@ impl aver_rt::thin::HandOver for Expr__ExprLte {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprLte {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprGte(pub Expr, pub Expr);
@@ -437,6 +644,15 @@ impl aver_rt::thin::HandOver for Expr__ExprGte {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprGte {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprConcat(pub aver_rt::AverList<Expr>);
@@ -450,6 +666,14 @@ impl aver_rt::WalkEq for Expr__ExprConcat {
 }
 
 impl aver_rt::thin::HandOver for Expr__ExprConcat {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprConcat {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -465,6 +689,14 @@ impl aver_rt::WalkEq for Expr__ExprTuple {
 
 impl aver_rt::thin::HandOver for Expr__ExprTuple {}
 
+impl aver_rt::freeze::Freeze for Expr__ExprTuple {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprList(pub aver_rt::AverList<Expr>);
@@ -478,6 +710,14 @@ impl aver_rt::WalkEq for Expr__ExprList {
 }
 
 impl aver_rt::thin::HandOver for Expr__ExprList {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprList {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -493,6 +733,15 @@ impl aver_rt::WalkEq for Expr__ExprRecord {
 }
 
 impl aver_rt::thin::HandOver for Expr__ExprRecord {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprRecord {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug)]
 #[repr(C)]
@@ -516,6 +765,15 @@ impl aver_rt::thin::HandOver for Expr__ExprFieldAccess {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprFieldAccess {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone)]
 #[repr(C)]
 pub struct Expr__ExprCall(pub aver_rt::AverList<Expr>, pub AverStr);
@@ -536,6 +794,15 @@ impl aver_rt::WalkEq for Expr__ExprCall {
 }
 
 impl aver_rt::thin::HandOver for Expr__ExprCall {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprCall {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
 
 impl std::fmt::Debug for Expr__ExprCall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -567,6 +834,15 @@ impl aver_rt::WalkEq for Expr__ExprCallDirect {
 
 impl aver_rt::thin::HandOver for Expr__ExprCallDirect {}
 
+impl aver_rt::freeze::Freeze for Expr__ExprCallDirect {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 impl std::fmt::Debug for Expr__ExprCallDirect {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Expr__ExprCallDirect")
@@ -596,6 +872,15 @@ impl aver_rt::WalkEq for Expr__ExprCallBuiltin {
 }
 
 impl aver_rt::thin::HandOver for Expr__ExprCallBuiltin {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprCallBuiltin {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
 
 impl std::fmt::Debug for Expr__ExprCallBuiltin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -627,6 +912,15 @@ impl aver_rt::WalkEq for Expr__ExprCallBuiltinId {
 
 impl aver_rt::thin::HandOver for Expr__ExprCallBuiltinId {}
 
+impl aver_rt::freeze::Freeze for Expr__ExprCallBuiltinId {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 impl std::fmt::Debug for Expr__ExprCallBuiltinId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Expr__ExprCallBuiltinId")
@@ -655,6 +949,15 @@ impl aver_rt::thin::HandOver for Expr__ExprMatch {
     }
 }
 
+impl aver_rt::freeze::Freeze for Expr__ExprMatch {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Expr__ExprPropagate(pub Expr);
@@ -668,6 +971,14 @@ impl aver_rt::WalkEq for Expr__ExprPropagate {
 impl aver_rt::thin::HandOver for Expr__ExprPropagate {
     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
         aver_rt::thin::HandOver::hand_over(self.0, pending);
+    }
+}
+
+impl aver_rt::freeze::Freeze for Expr__ExprPropagate {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
     }
 }
 
@@ -691,6 +1002,15 @@ impl aver_rt::WalkEq for Expr__ExprIndependentProduct {
 }
 
 impl aver_rt::thin::HandOver for Expr__ExprIndependentProduct {}
+
+impl aver_rt::freeze::Freeze for Expr__ExprIndependentProduct {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
 
 impl aver_rt::WalkEq for Expr {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {
@@ -1894,6 +2214,16 @@ pub struct MatchArm {
     pub bindingSlots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 }
 
+impl aver_rt::freeze::Freeze for MatchArm {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.pattern)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.body)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.bindingSlots)).freeze_into(f)
+    }
+}
+
 impl MatchArm {
     fn aver_fast_eq(&self, other: &Self) -> bool {
         self.pattern.aver_fast_eq(&other.pattern)
@@ -2008,6 +2338,36 @@ pub enum Pattern {
     PatTuple(aver_rt::AverList<Pattern>),
     PatWild,
     PatVar(AverStr),
+}
+
+impl aver_rt::freeze::Freeze for Pattern {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        match self {
+            Pattern::PatInt(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Pattern::PatFloat(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Pattern::PatBool(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Pattern::PatStr(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Pattern::PatEmpty => true,
+            Pattern::PatCons(a0, a1) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+            }
+            Pattern::PatConstructor(a0, a1) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+            }
+            Pattern::PatConstructorId(a0, a1, a2) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a2)).freeze_into(f)
+            }
+            Pattern::PatTuple(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Pattern::PatWild => true,
+            Pattern::PatVar(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+        }
+    }
 }
 
 impl aver_rt::WalkEq for Pattern {
@@ -2359,6 +2719,24 @@ pub enum Stmt {
     StmtExpr(Expr),
 }
 
+impl aver_rt::freeze::Freeze for Stmt {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        match self {
+            Stmt::StmtBind(a0, a1) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+            }
+            Stmt::StmtBindSlot(a0, a1) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+            }
+            Stmt::StmtExpr(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+        }
+    }
+}
+
 impl aver_rt::AverDisplay for Stmt {
     fn aver_display(&self) -> String {
         match self {
@@ -2507,6 +2885,61 @@ pub enum FastLeaf {
     LeafVectorGetOrInt(aver_rt::AverInt, aver_rt::AverInt, aver_rt::AverInt),
     LeafBinopSlots(BinOp, aver_rt::AverInt, aver_rt::AverInt),
     LeafCmpSlots(CmpOp, aver_rt::AverInt, aver_rt::AverInt),
+}
+
+impl aver_rt::freeze::Freeze for FastLeaf {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        match self {
+            FastLeaf::LeafConstInt(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            FastLeaf::LeafConstFloat(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            FastLeaf::LeafConstStr(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            FastLeaf::LeafConstBool(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            FastLeaf::LeafSlot(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            FastLeaf::LeafFieldAccess(a0, a1) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+            }
+            FastLeaf::LeafMapGet(a0, a1) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+            }
+            FastLeaf::LeafMapSet(a0, a1, a2) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a2)).freeze_into(f)
+            }
+            FastLeaf::LeafMapHas(a0, a1) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+            }
+            FastLeaf::LeafMapRemove(a0, a1) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+            }
+            FastLeaf::LeafVectorNew(a0, a1) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+            }
+            FastLeaf::LeafVectorLen(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            FastLeaf::LeafVectorGetOrInt(a0, a1, a2) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a2)).freeze_into(f)
+            }
+            FastLeaf::LeafBinopSlots(a0, a1, a2) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a2)).freeze_into(f)
+            }
+            FastLeaf::LeafCmpSlots(a0, a1, a2) => {
+                (&aver_rt::freeze::Probe(&*a0)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a1)).freeze_into(f)
+                    && (&aver_rt::freeze::Probe(&*a2)).freeze_into(f)
+            }
+        }
+    }
 }
 
 impl aver_rt::AverDisplay for FastLeaf {
@@ -3018,17 +3451,44 @@ pub struct FnFastPath__FastLeaf(pub FastLeaf);
 
 impl aver_rt::thin::HandOver for FnFastPath__FastLeaf {}
 
+impl aver_rt::freeze::Freeze for FnFastPath__FastLeaf {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct FnFastPath__FastForwardCall(pub aver_rt::AverInt, pub aver_rt::AverIntList);
 
 impl aver_rt::thin::HandOver for FnFastPath__FastForwardCall {}
 
+impl aver_rt::freeze::Freeze for FnFastPath__FastForwardCall {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct FnFastPath__FastBoolSlotBranch(pub aver_rt::AverInt, pub FastLeaf, pub FastLeaf);
 
 impl aver_rt::thin::HandOver for FnFastPath__FastBoolSlotBranch {}
+
+impl aver_rt::freeze::Freeze for FnFastPath__FastBoolSlotBranch {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug)]
 #[repr(C)]
@@ -3051,6 +3511,17 @@ impl PartialEq for FnFastPath__FastEqIntBranch {
 
 impl aver_rt::thin::HandOver for FnFastPath__FastEqIntBranch {}
 
+impl aver_rt::freeze::Freeze for FnFastPath__FastEqIntBranch {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.3)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct FnFastPath__FastEqStringBranch(
@@ -3061,6 +3532,17 @@ pub struct FnFastPath__FastEqStringBranch(
 );
 
 impl aver_rt::thin::HandOver for FnFastPath__FastEqStringBranch {}
+
+impl aver_rt::freeze::Freeze for FnFastPath__FastEqStringBranch {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.3)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug)]
 #[repr(C)]
@@ -3082,6 +3564,17 @@ impl PartialEq for FnFastPath__FastLtIntSlotsBranch {
 }
 
 impl aver_rt::thin::HandOver for FnFastPath__FastLtIntSlotsBranch {}
+
+impl aver_rt::freeze::Freeze for FnFastPath__FastLtIntSlotsBranch {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.3)).freeze_into(f)
+    }
+}
 
 #[derive(Clone)]
 #[repr(C)]
@@ -3105,6 +3598,18 @@ impl PartialEq for FnFastPath__FastListSlotBranch {
 }
 
 impl aver_rt::thin::HandOver for FnFastPath__FastListSlotBranch {}
+
+impl aver_rt::freeze::Freeze for FnFastPath__FastListSlotBranch {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.3)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.4)).freeze_into(f)
+    }
+}
 
 impl std::fmt::Debug for FnFastPath__FastListSlotBranch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -3505,6 +4010,20 @@ pub struct FnDef {
     pub tailLoop: bool,
 }
 
+impl aver_rt::freeze::Freeze for FnDef {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.name)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.params)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.body)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.slotCount)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.slotMap)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.fastPath)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.tailLoop)).freeze_into(f)
+    }
+}
+
 impl PartialEq for FnDef {
     fn eq(&self, other: &Self) -> bool {
         self.slotCount == other.slotCount
@@ -3639,6 +4158,16 @@ pub struct Program {
     pub stmts: aver_rt::AverList<Stmt>,
 }
 
+impl aver_rt::freeze::Freeze for Program {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.deps)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.fns)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.stmts)).freeze_into(f)
+    }
+}
+
 impl aver_rt::AverDisplay for Program {
     fn aver_display(&self) -> String {
         format!(
@@ -3719,6 +4248,19 @@ pub enum BinOp {
     OpSub,
     OpMul,
     OpDiv,
+}
+
+impl aver_rt::freeze::Freeze for BinOp {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        match self {
+            BinOp::OpAdd => true,
+            BinOp::OpSub => true,
+            BinOp::OpMul => true,
+            BinOp::OpDiv => true,
+        }
+    }
 }
 
 impl BinOp {
@@ -3852,6 +4394,21 @@ pub enum CmpOp {
     CmpGt,
     CmpLte,
     CmpGte,
+}
+
+impl aver_rt::freeze::Freeze for CmpOp {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        match self {
+            CmpOp::CmpEq => true,
+            CmpOp::CmpNeq => true,
+            CmpOp::CmpLt => true,
+            CmpOp::CmpGt => true,
+            CmpOp::CmpLte => true,
+            CmpOp::CmpGte => true,
+        }
+    }
 }
 
 impl CmpOp {

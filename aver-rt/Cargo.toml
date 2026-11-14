@@ -79,4 +79,4 @@ js-sys = "0.3"
 
 [lints.rust]
 # `--cfg aver_reuse_stats` counts reuse tokens used and dropped (`thin::stats`).
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(aver_reuse_stats)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(aver_reuse_stats)', 'cfg(aver_asan)'] }

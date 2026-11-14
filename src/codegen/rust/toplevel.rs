@@ -124,6 +124,19 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
     }
 }
 
+/// `impl aver_rt::freeze::Freeze for {name}` whose walk is `body`, for a
+/// build with atomic counts (see `aver_rt::freeze`).
+fn freeze_impl(name: &str, body: &str) -> String {
+    format!(
+        "\nimpl aver_rt::freeze::Freeze for {name} {{\n    #[allow(unused_variables, unused_imports)]\n    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {{\n        use aver_rt::freeze::{{ViaFreeze as _, ViaSkip as _}};\n        {body}\n    }}\n}}\n"
+    )
+}
+
+/// The walk of one field, skipping a type that cannot be frozen.
+fn freeze_part(place: &str) -> String {
+    format!("(&aver_rt::freeze::Probe(&{place})).freeze_into(f)")
+}
+
 fn derive_line(capabilities: RepresentationCapabilities) -> String {
     derive_line_with(capabilities, true)
 }
@@ -754,6 +767,12 @@ fn emit_sum_type(
                 ctx,
                 scope,
             ));
+            if ctx.rust_freezes {
+                let parts: Vec<String> = (0..v.fields.len())
+                    .map(|i| freeze_part(&format!("self.{i}")))
+                    .collect();
+                payloads.push_str(&freeze_impl(&payload, &parts.join(" && ")));
+            }
             // Printed in declared order, as a derived `Debug` would print
             // the fields sitting as declared.
             if positions.is_some() {
@@ -842,6 +861,29 @@ fn emit_sum_type(
             ..derived
         });
         writeln!(out, "{derived}\n{visibility}enum {name} {{\n{body}}}").unwrap();
+        if ctx.rust_freezes {
+            let arms: Vec<String> = variants
+                .iter()
+                .map(|v| match v.fields.len() {
+                    0 => format!("{name}::{} => true,", v.name),
+                    n => {
+                        let binds: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
+                        let parts: Vec<String> =
+                            (0..n).map(|i| freeze_part(&format!("*a{i}"))).collect();
+                        format!(
+                            "{name}::{}({}) => {},",
+                            v.name,
+                            binds.join(", "),
+                            parts.join(" && ")
+                        )
+                    }
+                })
+                .collect();
+            out.push_str(&freeze_impl(
+                name,
+                &format!("match self {{ {} }}", arms.join(" ")),
+            ));
+        }
         if hashed {
             out.push_str(&through_sum_hash(name, variants, walking_in));
         }
@@ -1236,6 +1278,18 @@ fn emit_product_type(
             "\n// SAFETY: `count` is always the same field.\nunsafe impl aver_rt::Counts for {name} {{\n    fn count(&self) -> &aver_rt::Count {{\n        &self.{COUNT_FIELD}\n    }}\n}}\n"
         )
         .unwrap();
+    }
+    if ctx.rust_freezes {
+        let parts: Vec<String> = fields
+            .iter()
+            .map(|(field_name, _)| freeze_part(&format!("self.{}", aver_name_to_rust(field_name))))
+            .collect();
+        let body = if parts.is_empty() {
+            "true".to_string()
+        } else {
+            parts.join(" && ")
+        };
+        out.push_str(&freeze_impl(name, &body));
     }
     let walking_fields = Walking {
         types: &types,
@@ -2921,6 +2975,7 @@ mod tests {
             emit_self_host_support: false,
             single_thread: false,
             rust_equality_classes: 0,
+            rust_freezes: false,
             rust_classed_eq: std::cell::Cell::new(false),
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),

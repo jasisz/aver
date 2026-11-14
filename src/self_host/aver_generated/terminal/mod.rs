@@ -7,6 +7,15 @@ pub struct Size {
     pub height: aver_rt::AverInt,
 }
 
+impl aver_rt::freeze::Freeze for Size {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.width)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.height)).freeze_into(f)
+    }
+}
+
 impl PartialOrd for Size {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))

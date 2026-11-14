@@ -38,11 +38,27 @@ pub struct Val__ValInt(pub aver_rt::AverInt);
 
 impl aver_rt::thin::HandOver for Val__ValInt {}
 
+impl aver_rt::freeze::Freeze for Val__ValInt {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValFloat(pub f64);
 
 impl aver_rt::thin::HandOver for Val__ValFloat {}
+
+impl aver_rt::freeze::Freeze for Val__ValFloat {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -50,17 +66,41 @@ pub struct Val__ValStr(pub AverStr);
 
 impl aver_rt::thin::HandOver for Val__ValStr {}
 
+impl aver_rt::freeze::Freeze for Val__ValStr {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValBool(pub bool);
 
 impl aver_rt::thin::HandOver for Val__ValBool {}
 
+impl aver_rt::freeze::Freeze for Val__ValBool {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValFnRef(pub AverStr);
 
 impl aver_rt::thin::HandOver for Val__ValFnRef {}
+
+impl aver_rt::freeze::Freeze for Val__ValFnRef {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -76,6 +116,14 @@ impl aver_rt::WalkEq for Val__ValList {
 
 impl aver_rt::thin::HandOver for Val__ValList {}
 
+impl aver_rt::freeze::Freeze for Val__ValList {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValVector(pub aver_rt::AverVector<Val>);
@@ -90,6 +138,14 @@ impl aver_rt::WalkEq for Val__ValVector {
 
 impl aver_rt::thin::HandOver for Val__ValVector {}
 
+impl aver_rt::freeze::Freeze for Val__ValVector {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValOk(pub Val);
@@ -103,6 +159,14 @@ impl aver_rt::WalkEq for Val__ValOk {
 impl aver_rt::thin::HandOver for Val__ValOk {
     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
         aver_rt::thin::HandOver::hand_over(self.0, pending);
+    }
+}
+
+impl aver_rt::freeze::Freeze for Val__ValOk {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
     }
 }
 
@@ -122,6 +186,14 @@ impl aver_rt::thin::HandOver for Val__ValErr {
     }
 }
 
+impl aver_rt::freeze::Freeze for Val__ValErr {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValSome(pub Val);
@@ -135,6 +207,14 @@ impl aver_rt::WalkEq for Val__ValSome {
 impl aver_rt::thin::HandOver for Val__ValSome {
     fn hand_over(self, pending: aver_rt::thin::Pending<'_>) {
         aver_rt::thin::HandOver::hand_over(self.0, pending);
+    }
+}
+
+impl aver_rt::freeze::Freeze for Val__ValSome {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
     }
 }
 
@@ -152,6 +232,14 @@ impl aver_rt::WalkEq for Val__ValTuple {
 
 impl aver_rt::thin::HandOver for Val__ValTuple {}
 
+impl aver_rt::freeze::Freeze for Val__ValTuple {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValRecord(pub AverStr, pub aver_rt::AverList<(AverStr, Val)>);
@@ -167,11 +255,28 @@ impl aver_rt::WalkEq for Val__ValRecord {
 
 impl aver_rt::thin::HandOver for Val__ValRecord {}
 
+impl aver_rt::freeze::Freeze for Val__ValRecord {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValTcpConnection(pub crate::aver_generated::tcp::Connection);
 
 impl aver_rt::thin::HandOver for Val__ValTcpConnection {}
+
+impl aver_rt::freeze::Freeze for Val__ValTcpConnection {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -179,11 +284,27 @@ pub struct Val__ValTcpDial(pub crate::aver_generated::tcp::Dial);
 
 impl aver_rt::thin::HandOver for Val__ValTcpDial {}
 
+impl aver_rt::freeze::Freeze for Val__ValTcpDial {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValTcpListener(pub crate::aver_generated::tcp::Listener);
 
 impl aver_rt::thin::HandOver for Val__ValTcpListener {}
+
+impl aver_rt::freeze::Freeze for Val__ValTcpListener {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
@@ -205,6 +326,16 @@ impl aver_rt::WalkEq for Val__ValVariant {
 
 impl aver_rt::thin::HandOver for Val__ValVariant {}
 
+impl aver_rt::freeze::Freeze for Val__ValVariant {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.1)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.2)).freeze_into(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Val__ValMap(pub aver_rt::AverMap<AverStr, Val>);
@@ -218,6 +349,14 @@ impl aver_rt::WalkEq for Val__ValMap {
 }
 
 impl aver_rt::thin::HandOver for Val__ValMap {}
+
+impl aver_rt::freeze::Freeze for Val__ValMap {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.0)).freeze_into(f)
+    }
+}
 
 impl aver_rt::WalkEq for Val {
     fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {

@@ -10,6 +10,8 @@ pub mod crypto;
 mod display;
 #[cfg(feature = "equality-classes")]
 pub mod eq_classes;
+#[cfg(not(feature = "plain-counts"))]
+pub mod freeze;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod int;
@@ -20,6 +22,14 @@ mod mimalloc;
 pub mod packed;
 #[cfg(feature = "random")]
 pub mod random;
+
+/// With plain counts nothing is frozen: a thin sum has no freezing.
+#[cfg(feature = "plain-counts")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __thin_freeze {
+    ($($t:tt)*) => {};
+}
 mod runtime;
 mod service_types;
 mod shared;
@@ -4355,6 +4365,112 @@ mod tests {
                 AverList::concat(&joined, &AverList::empty()).len(),
                 edge + 1
             );
+        }
+    }
+}
+
+/// Freezing the runtime's values (see [`freeze`]).
+#[cfg(not(feature = "plain-counts"))]
+mod freeze_impls {
+    use super::*;
+    use crate::freeze::{Freeze, Freezer};
+
+    impl Freeze for AverStr {
+        fn freeze(&self, f: &mut Freezer) -> bool {
+            f.node64(Rc::count_ref(&self.0), self.0.len() + 8, |_| true)
+        }
+    }
+
+    impl<K: Freeze, V: Freeze> Freeze for AverMap<K, V> {
+        fn freeze(&self, f: &mut Freezer) -> bool {
+            let Some(table) = &self.inner else {
+                return true;
+            };
+            let bytes = 48 + table.capacity() * (size_of::<(K, V)>() + 1);
+            f.node64(Rc::count_ref(table), bytes, |f| {
+                table.iter().all(|(k, v)| k.freeze(f) && v.freeze(f))
+            })
+        }
+    }
+
+    impl<T: Freeze> Freeze for AverVector<T> {
+        fn freeze(&self, f: &mut Freezer) -> bool {
+            self.inner.freeze_with(f, T::freeze)
+        }
+    }
+
+    impl<T: Freeze> Freeze for AverList<T> {
+        fn freeze(&self, f: &mut Freezer) -> bool {
+            self.inner
+                .as_ref()
+                .is_none_or(|node| freeze_list_node(node, f))
+        }
+    }
+
+    impl<T: Freeze> Freeze for TraversalSegment<T> {
+        fn freeze(&self, f: &mut Freezer) -> bool {
+            match &self.source {
+                TraversalSource::Flat { items, .. } => items.freeze_with(f, T::freeze),
+                TraversalSource::PrependHead { node } => freeze_list_node(node, f),
+            }
+        }
+    }
+
+    /// A list node and all it holds, leaves first; a chain of `Prepend`s in
+    /// a loop rather than one call inside another.
+    fn freeze_list_node<T: Freeze>(node: &Rc<AverListInner<T>>, f: &mut Freezer) -> bool {
+        let bytes = size_of::<AverListInner<T>>() + 8;
+        let mut chain: Vec<&Rc<AverListInner<T>>> = Vec::new();
+        let mut cur = Some(node);
+        let mut below = true;
+        while let Some(n) = cur {
+            if Rc::count_ref(n).load(std::sync::atomic::Ordering::Relaxed)
+                >= crate::counts::frozen::F64
+            {
+                break;
+            }
+            match &**n {
+                AverListInner::Prepend { tail, .. } => {
+                    chain.push(n);
+                    cur = tail.inner.as_ref();
+                }
+                AverListInner::Flat { items } => {
+                    below = f.node64(Rc::count_ref(n), bytes, |f| items.freeze_with(f, T::freeze));
+                    break;
+                }
+                AverListInner::Concat { left, right, .. } => {
+                    below = f.node64(Rc::count_ref(n), bytes, |f| {
+                        left.freeze(f) && right.freeze(f)
+                    });
+                    break;
+                }
+                AverListInner::Indexed { parts, .. } => {
+                    below = f.node64(Rc::count_ref(n), bytes, |f| {
+                        f.node64(
+                            Rc::count_ref(parts),
+                            parts.len() * size_of::<TraversalSegment<T>>() + 32,
+                            |f| parts.iter().all(|seg| seg.freeze(f)),
+                        )
+                    });
+                    break;
+                }
+            }
+        }
+        for n in chain.into_iter().rev() {
+            if !below {
+                return false;
+            }
+            let AverListInner::Prepend { head, .. } = &**n else {
+                unreachable!()
+            };
+            below = f.node64(Rc::count_ref(n), bytes, |f| head.freeze(f));
+        }
+        below
+    }
+
+    impl<E> Freeze for AverPacked<E> {
+        fn freeze(&self, f: &mut Freezer) -> bool {
+            self.freeze_plain(f)
         }
     }
 }

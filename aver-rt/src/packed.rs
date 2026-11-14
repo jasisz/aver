@@ -353,6 +353,16 @@ impl AverPackedU8 {
     }
 }
 
+#[cfg(not(feature = "plain-counts"))]
+impl<E> AverPacked<E> {
+    /// Freezes the body (see `crate::freeze`); its elements are integers.
+    pub(crate) fn freeze_plain(&self, f: &mut crate::freeze::Freezer) -> bool {
+        self.storage
+            .as_ref()
+            .is_none_or(|block| block.freeze_with(f, |_, _| true))
+    }
+}
+
 impl<E: PackedInt> fmt::Debug for AverPacked<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.as_slice()).finish()

@@ -277,6 +277,14 @@ impl<S: ThinSum> Thin<S> {
         this.ptr.as_ptr().addr()
     }
 
+    /// The node's count, for freezing it (see `crate::freeze`); none for a
+    /// constructor without fields.
+    #[cfg(not(feature = "plain-counts"))]
+    #[inline]
+    pub(crate) fn count_ref(this: &Self) -> Option<&AtomicU32> {
+        (!this.is_empty_ctor()).then(|| &this.header().count)
+    }
+
     /// How many values point to this node, as `Arc::strong_count` (a
     /// `Relaxed` load). A constructor without fields has no node and no
     /// count; it reads as `usize::MAX`, owned everywhere.
@@ -1393,6 +1401,8 @@ macro_rules! thin_sum {
                 $crate::thin::Thin::ptr_eq(&a.0, &b.0)
             }
         }
+
+        $crate::__thin_freeze!($name; $( $tag $( ( $fields ) )? ),+ ; $( $lazy )?);
 
         // A comparison or a hash reaches a node through `view`, which has
         // made the call already; it goes on with the node the call returned.
