@@ -65,7 +65,10 @@ extern "C" fn set_options() {
     }
 }
 
-#[cfg(not(miri))]
+// An AddressSanitizer build (`--cfg aver_asan`) pads statics, which leaves
+// the pointer in the initializer section without a target: there the
+// options keep mimalloc's defaults.
+#[cfg(all(not(miri), not(aver_asan)))]
 #[used]
 #[cfg_attr(
     target_vendor = "apple",
