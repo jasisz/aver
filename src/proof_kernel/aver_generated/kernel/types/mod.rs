@@ -346,6 +346,30 @@ pub fn find(
     }
 }
 
+#[allow(dead_code)]
+#[inline(always)]
+pub fn __ret_find<'a>(
+    n @ _: &AverStr,
+    vs @ _: &'a aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::TypedVar>,
+) -> Option<&'a crate::proof_kernel::aver_generated::kernel::term::Ty> {
+    let mut __walk = vs.iter();
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        match __walk.next() {
+            None => {
+                return None;
+            }
+            Some(v @ _) => {
+                if (&(v.name) == n) {
+                    return Some(&v.ty);
+                } else {
+                    continue;
+                }
+            }
+        }
+    }
+}
+
 /// The declared type of a module-level binding.
 #[inline(always)]
 pub fn constType(

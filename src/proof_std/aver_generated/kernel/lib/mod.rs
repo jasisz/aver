@@ -900,6 +900,30 @@ pub fn fieldOf(
     }
 }
 
+#[allow(dead_code)]
+#[inline(always)]
+pub fn __ret_fieldOf<'a>(
+    fs @ _: &'a aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Field>,
+    f @ _: &AverStr,
+) -> Option<&'a crate::proof_std::aver_generated::kernel::term::Term> {
+    let mut __walk = fs.iter();
+    loop {
+        crate::proof_std::cancel_checkpoint();
+        match __walk.next() {
+            None => {
+                return None;
+            }
+            Some(x @ _) => {
+                if (&(x.name) == f) {
+                    return Some(&x.value);
+                } else {
+                    continue;
+                }
+            }
+        }
+    }
+}
+
 /// A match term: its subject evaluated, then the arm that value decides, evaluated further.
 #[inline(always)]
 pub fn evalMatch(
@@ -1062,6 +1086,30 @@ pub fn lookupKnown(x @ _: &AverStr, ks @ _: &aver_rt::AverList<Known>) -> Option
                 }
                 None => {
                     return None;
+                }
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[inline(always)]
+pub fn __ret_lookupKnown<'a>(
+    x @ _: &AverStr,
+    ks @ _: &'a aver_rt::AverList<Known>,
+) -> Option<&'a Known> {
+    let mut __walk = ks.iter();
+    loop {
+        crate::proof_std::cancel_checkpoint();
+        match __walk.next() {
+            None => {
+                return None;
+            }
+            Some(k @ _) => {
+                if (&(k.name) == x) {
+                    return Some(k);
+                } else {
+                    continue;
                 }
             }
         }
