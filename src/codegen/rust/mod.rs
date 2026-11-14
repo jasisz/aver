@@ -1914,15 +1914,19 @@ fn rebuilt(e: Expr) -> Expr
 
         // The step borrows the part instead of copying it, and the result is
         // the root itself when the loop never stepped, a copy otherwise.
-        assert!(entry.contains("fn fnOf(mut e @ _: Expr) -> Expr"), "{entry}");
+        assert!(
+            entry.contains("fn fnOf(mut e @ _: Expr) -> Expr"),
+            "{entry}"
+        );
         assert!(entry.contains("let __root0: Expr = e;"), "{entry}");
-        assert!(entry.contains("let mut e @ _: &Expr = &__root0;"), "{entry}");
+        assert!(
+            entry.contains("let mut e @ _: &Expr = &__root0;"),
+            "{entry}"
+        );
         let fn_of = &entry[entry.find("fn fnOf").unwrap()..entry.find("fn rebuilt").unwrap()];
         assert!(!fn_of.contains("f.clone()"), "{entry}");
         assert!(
-            entry.contains(
-                "if ::core::ptr::eq(e, &__root0) { return __root0; } return e.clone();"
-            ),
+            entry.contains("if ::core::ptr::eq(e, &__root0) { return __root0; } return e.clone();"),
             "{entry}"
         );
         // A step that builds a new value moves on by value.
