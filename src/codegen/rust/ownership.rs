@@ -74,6 +74,9 @@ pub(super) fn value_facts(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> RustValueFact
 
     if let MirExpr::Project(project) = expr {
         let copy = projection_result_is_copy(&project.node, ctx);
+        // A field read through a borrowing version's result (see
+        // `from_mir::reads_through_ret_call`) is a place behind a borrow.
+        let through_borrow = super::from_mir::reads_through_ret_call(expr, ctx);
         return RustValueFacts {
             mode: if copy {
                 RustValueMode::Copy
@@ -92,12 +95,13 @@ pub(super) fn value_facts(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> RustValueFact
             // moves: an update reads it through a `Box` (see
             // `through_counted`).
             can_move: copy
-                || super::from_mir::takes_field(expr, ctx)
-                || (!through_counted(expr, ctx)
-                    && match projection_root_local(&project.node.base.node) {
-                        None => true,
-                        Some(root) => projection_moves(expr, root, ctx),
-                    }),
+                || (!through_borrow
+                    && (super::from_mir::takes_field(expr, ctx)
+                        || (!through_counted(expr, ctx)
+                            && match projection_root_local(&project.node.base.node) {
+                                None => true,
+                                Some(root) => projection_moves(expr, root, ctx),
+                            }))),
             provider_resource: false,
         };
     }

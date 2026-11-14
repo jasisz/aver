@@ -1446,7 +1446,27 @@ fn emit_fn_def_with_visibility(
 ) -> String {
     let fn_id = resolved_fd.fn_id;
     if !ctx.rust_dual_fns.contains(&fn_id) {
-        return emit_fn_def_one(fd, resolved_fd, ctx, scope, public, None);
+        let code = emit_fn_def_one(fd, resolved_fd, ctx, scope, public, None);
+        // A function whose result borrows from its params also gets its
+        // borrowing version (see `lent_result`).
+        let lent = ctx
+            .mir_program
+            .as_ref()
+            .and_then(|p| p.fn_by_id(fn_id))
+            .and_then(|mir_fn| {
+                super::from_mir::emit_lent_result_fn(
+                    fd,
+                    resolved_fd,
+                    mir_fn,
+                    visibility_prefix(public),
+                    scope,
+                    ctx,
+                )
+            });
+        return match lent {
+            Some(lent) => format!("{code}\n\n{lent}"),
+            None => code,
+        };
     }
     // Two versions (see `from_mir::compute_dual_fns`): the by-value one,
     // whose root match hands a shared node to the lent one.
@@ -2933,6 +2953,7 @@ mod tests {
             rust_lent_strings: Default::default(),
             rust_lent_spines: Default::default(),
             rust_dual_fns: Default::default(),
+            rust_lent_results: Default::default(),
             rust_counted_records: Default::default(),
             rust_lent_options: Default::default(),
             rust_word_spec: Default::default(),

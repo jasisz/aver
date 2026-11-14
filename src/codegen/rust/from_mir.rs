@@ -126,6 +126,9 @@ pub struct MirEmitCtx<'a> {
     /// The `Option` names among `borrowed_params` emitted as `Option<&T>`
     /// rather than `&Option<T>` (see [`super::lent_option`]).
     pub lent_options: &'a HashSet<String>,
+    /// The `let` bindings a borrowing version's call serves (see
+    /// [`lent_result_lookups`]).
+    pub ret_bindings: &'a HashSet<String>,
     /// Self-TCO params whose identity rebind is elided for the tail call
     /// currently being emitted. Their source value remains live in the next
     /// loop iteration, so a syntactic `last_use` inside another tail-call
@@ -277,6 +280,7 @@ impl<'a> MirEmitCtx<'a> {
             rc_wrapped_are_borrowed_refs: false,
             borrowed_params: EMPTY_SET.get_or_init(HashSet::new),
             lent_options: EMPTY_SET.get_or_init(HashSet::new),
+            ret_bindings: EMPTY_SET.get_or_init(HashSet::new),
             loop_carried_params: EMPTY_SET.get_or_init(HashSet::new),
             owned_params: EMPTY_SET.get_or_init(HashSet::new),
             current_module_scope: None,
@@ -339,6 +343,7 @@ impl<'a> MirEmitCtx<'a> {
             rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
             lent_options: &policy.lent_options,
+            ret_bindings: &policy.ret_bindings,
             loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
@@ -376,6 +381,7 @@ impl<'a> MirEmitCtx<'a> {
             rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
             lent_options: &policy.lent_options,
+            ret_bindings: &policy.ret_bindings,
             loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
@@ -639,6 +645,8 @@ pub(super) struct MirFnEmitPolicy {
     /// See [`MirEmitCtx::lent_options`]. Empty until
     /// [`Self::apply_lent_options`] runs.
     pub lent_options: HashSet<String>,
+    /// See [`MirEmitCtx::ret_bindings`].
+    pub ret_bindings: HashSet<String>,
     /// Collection params `own_param` proved can use the owned Rust ABI — see the
     /// `MirEmitCtx::owned_params` doc. Default empty (no own_param facts
     /// applied); populated by [`Self::apply_own_param`].
@@ -675,6 +683,7 @@ impl MirFnEmitPolicy {
             rc_wrapped: HashSet::new(),
             borrowed_params: HashSet::new(),
             lent_options: HashSet::new(),
+            ret_bindings: HashSet::new(),
             owned_params: HashSet::new(),
             bare: crate::ir::mir::FnBareFacts::default(),
             current_module_scope: None,
@@ -716,6 +725,7 @@ impl MirFnEmitPolicy {
             rc_wrapped: HashSet::new(),
             borrowed_params,
             lent_options: HashSet::new(),
+            ret_bindings: HashSet::new(),
             owned_params: HashSet::new(),
             bare: crate::ir::mir::FnBareFacts::default(),
             current_module_scope: scope.map(String::from),
@@ -781,16 +791,27 @@ impl MirFnEmitPolicy {
             }
         }
         let mut found = Vec::new();
-        lent_lookups(
-            &mir_fn.body.node,
-            &mir_fn.body.node,
-            &MirEmitCtx::for_fn(ctx, self),
-            &mut found,
-        );
+        let mut borrows = Vec::new();
+        {
+            let emit_ctx = MirEmitCtx::for_fn(ctx, self);
+            lent_lookups(&mir_fn.body.node, &mir_fn.body.node, &emit_ctx, &mut found);
+            let before = found.len();
+            lent_result_lookups(
+                &mir_fn.body.node,
+                &mir_fn.body.node,
+                &emit_ctx,
+                &mut found,
+                &mut borrows,
+            );
+            self.ret_bindings.extend(found[before..].iter().cloned());
+        }
         for name in found {
             self.borrowed_params.insert(name.clone());
             self.lent_options.insert(name);
         }
+        // A result a borrowing version lends (see `lent_result`).
+        self.ret_bindings.extend(borrows.iter().cloned());
+        self.borrowed_params.extend(borrows);
     }
 
     /// Apply the Int "unboxing" facts to this policy: clone the per-fn
@@ -906,6 +927,252 @@ fn lent_lookups(expr: &MirExpr, body: &MirExpr, ctx: &MirEmitCtx<'_>, out: &mut 
     crate::ir::mir::expr::walk_children(expr, &mut |child| lent_lookups(child, body, ctx, out));
 }
 
+/// The bindings in `expr` of a call a borrowing version can serve (see
+/// [`super::lent_result`]): an `Option` one, or `Map.get` of a `&T` one,
+/// that only such reads use goes to `options`, read as an `Option<&T>`; a
+/// `&T` one that only borrowing reads use goes to `borrows`. Each source arg
+/// of the call is a place whose root nothing in the binding's scope moves.
+fn lent_result_lookups(
+    expr: &MirExpr,
+    body: &MirExpr,
+    ctx: &MirEmitCtx<'_>,
+    options: &mut Vec<String>,
+    borrows: &mut Vec<String>,
+) {
+    if let MirExpr::Let(binding) = expr
+        && let Some(codegen) = ctx.codegen
+        && !ctx.is_borrowed_param(&binding.node.binding_name)
+        && !binding.node.binding_name.is_empty()
+        && binder_count(body, &binding.node.binding_name) == 1
+    {
+        // `arg_order` may have bound the call's args first, in a block.
+        let (inner, value) = peel_lets(&binding.node.value.node);
+        let scope = &binding.node.body.node;
+        let sources_hold = |call: &MirExpr| lent_sources_hold(call, &inner, scope, codegen, ctx);
+        let option_ty = matches!(binding.node.value.ty(), Some(Type::Option(inner)) if should_borrow_param(inner));
+        let in_place = || {
+            super::lent_option::reads_in_place(
+                scope,
+                binding.node.binding,
+                &codegen.rust_lent_options,
+                false,
+            )
+        };
+        match super::lent_result::lent_call(value, &codegen.rust_lent_results) {
+            Some((lent, _)) if lent.used && lent.option => {
+                if option_ty && sources_hold(value) && in_place() {
+                    options.push(binding.node.binding_name.clone());
+                }
+            }
+            Some((lent, _)) if lent.used => {
+                if binding.node.value.ty().is_some_and(should_borrow_param)
+                    && sources_hold(value)
+                    && (read_only_for_fields(scope, binding.node.binding)
+                        || reads_only_borrow(scope, binding.node.binding, ctx))
+                {
+                    borrows.push(binding.node.binding_name.clone());
+                }
+            }
+            Some(_) => {}
+            None => {
+                if let Some((map, _)) = lent_lookup_parts(value, ctx)
+                    && super::lent_result::lent_call(&map.node, &codegen.rust_lent_results)
+                        .is_some_and(|(lent, _)| lent.used && !lent.option)
+                    && option_ty
+                    && sources_hold(&map.node)
+                    && in_place()
+                {
+                    options.push(binding.node.binding_name.clone());
+                }
+            }
+        }
+    }
+    crate::ir::mir::expr::walk_children(expr, &mut |child| {
+        lent_result_lookups(child, body, ctx, options, borrows)
+    });
+}
+
+/// Whether `expr` reads the local in `slot` only for one of its fields
+/// (`r.f`): a borrow of the record serves every such read.
+fn read_only_for_fields(expr: &MirExpr, slot: LocalId) -> bool {
+    match expr {
+        MirExpr::Local(local) => local.node.slot != slot,
+        MirExpr::Project(project) if matches!(&project.node.base.node, MirExpr::Local(l) if l.node.slot == slot) => {
+            true
+        }
+        _ => {
+            let mut only = true;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                only = only && read_only_for_fields(child, slot);
+            });
+            only
+        }
+    }
+}
+
+/// Whether `call`, the record a field is read out of (`f(x).field`), is a
+/// call a borrowing version serves where it stands: each of its source args
+/// is a place whose root is borrowed, so nothing can move it while the
+/// field is read, or such a call itself (see [`super::lent_result`]).
+pub(super) fn inline_ret_call(call: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    let Some(codegen) = ctx.codegen else {
+        return false;
+    };
+    let Some((lent, args)) = super::lent_result::lent_call(call, &codegen.rust_lent_results) else {
+        return false;
+    };
+    if lent.option || !lent.used {
+        return false;
+    }
+    args.iter().enumerate().all(|(i, arg)| {
+        if !lent.sources.get(i).copied().unwrap_or(false) {
+            return true;
+        }
+        match &arg.node {
+            MirExpr::Local(_) | MirExpr::Project(_) => {
+                place_reads_in_place(&arg.node, codegen)
+                    && projection_root_local(&arg.node)
+                        .is_some_and(|root| super::ownership::root_is_borrowed(root, ctx))
+            }
+            other => inline_ret_call(other, ctx),
+        }
+    })
+}
+
+/// Whether every field read on the way to a local renders as the field
+/// where it lies (see [`field_read_in_place`]).
+fn place_reads_in_place(expr: &MirExpr, codegen: &CodegenContext) -> bool {
+    match expr {
+        MirExpr::Local(_) => true,
+        MirExpr::Project(project) => {
+            field_read_in_place(project.node.base.ty(), codegen)
+                && place_reads_in_place(&project.node.base.node, codegen)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `expr` reads a field, or a field of a field, out of a call a
+/// borrowing version serves (see [`inline_ret_call`]): the read borrows, so
+/// an owner clones the field and nothing moves out of it.
+pub(super) fn reads_through_ret_call(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    match expr {
+        MirExpr::Project(project) => match &project.node.base.node {
+            base @ MirExpr::Project(_) => reads_through_ret_call(base, ctx),
+            base => inline_ret_call(base, ctx),
+        },
+        _ => false,
+    }
+}
+
+/// Whether every source arg of the borrowing call `call` is a place, or a
+/// borrowing call of its own whose sources hold, whose root `scope` does not
+/// move.
+fn lent_sources_hold(
+    call: &MirExpr,
+    inner: &[&crate::ir::mir::MirLet],
+    scope: &MirExpr,
+    codegen: &CodegenContext,
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
+    let Some((lent, args)) = super::lent_result::lent_call(call, &codegen.rust_lent_results) else {
+        return false;
+    };
+    args.iter().enumerate().all(|(i, arg)| {
+        if !lent.sources.get(i).copied().unwrap_or(false) {
+            return true;
+        }
+        if super::lent_result::lent_call(&arg.node, &codegen.rust_lent_results)
+            .is_some_and(|(inner, _)| inner.used && !inner.option)
+        {
+            return lent_sources_hold(&arg.node, inner, scope, codegen, ctx);
+        }
+        // A local the block binds first: the borrow of a borrowing call, or
+        // a value that ends with the block and lends nothing.
+        if let MirExpr::Local(local) = &arg.node
+            && let Some(bound) = inner.iter().find(|b| b.binding == local.node.slot)
+        {
+            return super::lent_result::lent_call(&bound.value.node, &codegen.rust_lent_results)
+                .is_some_and(|(callee, _)| callee.used && !callee.option)
+                && lent_sources_hold(&bound.value.node, inner, scope, codegen, ctx);
+        }
+        if !matches!(arg.node, MirExpr::Local(_) | MirExpr::Project(_)) {
+            return false;
+        }
+        let Some(root) = projection_root_local(&arg.node) else {
+            return false;
+        };
+        // No other arg of the call reads the root, so nothing moves it
+        // while the borrow is taken.
+        let others_read = args
+            .iter()
+            .enumerate()
+            .any(|(j, other)| j != i && reads_local(&other.node, root.slot));
+        !others_read
+            && (super::ownership::root_is_borrowed(root, ctx)
+                || reads_only_borrow(scope, root.slot, ctx))
+    })
+}
+
+/// A binding of a call a borrowing version serves (see
+/// [`lent_result_lookups`]): the call of that version, or `Map.get` of it.
+fn emit_lent_result_lookup(
+    binding: &crate::ir::mir::MirLet,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let name = &binding.binding_name;
+    if !ctx.ret_bindings.contains(name) {
+        return None;
+    }
+    let (inner, value) = peel_lets(&binding.value.node);
+    // The block's own bindings: a borrowing call binds its borrow.
+    let mut statements = Vec::new();
+    let mut borrowed = ctx.borrowed_params.clone();
+    for bound in &inner {
+        let mut inner_ctx = *ctx;
+        inner_ctx.borrowed_params = &borrowed;
+        match emit_ret_call(&bound.value.node, false, &inner_ctx) {
+            Some(call) => {
+                statements.push(format!(
+                    "let {} = {call};",
+                    explicit_binding_pattern(&bound.binding_name)
+                ));
+                borrowed.insert(bound.binding_name.clone());
+            }
+            None => statements.push(emit_mir_let_statement(bound, &inner_ctx)?),
+        }
+    }
+    let mut value_ctx = *ctx;
+    value_ctx.borrowed_params = &borrowed;
+    let ctx = &value_ctx;
+    let option = ctx.lent_options.contains(name);
+    let call = if let Some(call) = emit_ret_call(value, option, ctx) {
+        call
+    } else if option
+        && let Some((map, key)) = lent_lookup_parts(value, ctx)
+        && let Some(call) = emit_ret_call(&map.node, false, ctx)
+    {
+        format!("({call}).get(&{})", emit_mir_expr(key, ctx)?)
+    } else {
+        return None;
+    };
+    Some(match statements.is_empty() {
+        true => call,
+        false => format!("{{ {} {call} }}", statements.join(" ")),
+    })
+}
+
+/// The `let`s a value opens with, and the expression they end in.
+fn peel_lets(expr: &MirExpr) -> (Vec<&crate::ir::mir::MirLet>, &MirExpr) {
+    let mut lets = Vec::new();
+    let mut current = expr;
+    while let MirExpr::Let(binding) = current {
+        lets.push(&binding.node);
+        current = &binding.node.body.node;
+    }
+    (lets, current)
+}
+
 /// The map and key of a `Map.get(map, key)`.
 fn lent_lookup_parts<'a>(
     expr: &'a MirExpr,
@@ -920,6 +1187,9 @@ fn lent_lookup_parts<'a>(
 /// `map.get(&key)` for a lookup bound to a lent local (see
 /// [`MirFnEmitPolicy::apply_lent_options`]).
 fn emit_lent_lookup(binding: &crate::ir::mir::MirLet, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    if let Some(call) = emit_lent_result_lookup(binding, ctx) {
+        return Some(call);
+    }
     if !ctx.lent_options.contains(&binding.binding_name) {
         return None;
     }
@@ -1598,7 +1868,7 @@ fn collect_fn_calls<'e>(
     crate::ir::mir::expr::walk_children(expr, &mut |child| collect_fn_calls(child, out));
 }
 
-fn collect_fn_values(expr: &MirExpr, out: &mut HashSet<String>) {
+pub(super) fn collect_fn_values(expr: &MirExpr, out: &mut HashSet<String>) {
     if let MirExpr::FnValue(name) = expr {
         out.insert(name.clone());
     }
@@ -3011,6 +3281,23 @@ fn mir_record_rust_type(
 /// dangerous direction: the value would be re-typed as `PackedU8` on the
 /// strength of a string, and the emitted `.to_int_list()` does not exist on
 /// anything else. That is answered `None`, never `Some(true)`.
+/// Whether a field read of a value of `base` renders as the field where it
+/// lies (`r.f`): not out of a carrier held as a raw word, nor out of a packed
+/// octet record, both of which convert the field as they read it.
+pub(super) fn field_read_in_place(base: Option<&Type>, codegen: &CodegenContext) -> bool {
+    let Some(Type::Named { id, name }) = base else {
+        return true;
+    };
+    if super::carrier::storage_of(codegen, *id).is_some() {
+        return false;
+    }
+    let bare = match id {
+        Some(id) => codegen.symbol_table.type_entry(*id).key.name.clone(),
+        None => name.rsplit('.').next().unwrap_or(name).to_string(),
+    };
+    !super::uses_packed(codegen, &bare)
+}
+
 fn packed_u8_carrier(
     type_id: Option<crate::ir::TypeId>,
     type_name: &str,
@@ -3980,7 +4267,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             {
                 return Some(emit_mir_static_ref(&dotted, emit_ctx));
             }
-            let base = emit_mir_expr(&proj.base, emit_ctx)?;
+            // A field of a call a borrowing version serves reads the field
+            // through its borrow (see [`reads_through_ret_call`]).
+            let base = match inline_ret_call(&proj.base.node, emit_ctx) {
+                true => emit_ret_call(&proj.base.node, false, emit_ctx)?,
+                false => emit_mir_expr(&proj.base, emit_ctx)?,
+            };
             // A field read before the call its record was moved into (see
             // [`emit_early_move_match`]).
             let early = emit_ctx.early_move.and_then(|(slot, fields)| {
@@ -7615,7 +7907,12 @@ fn lent_rebinds(
 /// reads it nowhere else. Only the shapes the loop emits as a rebind count
 /// (a tail call under matches and conditionals); a read anywhere else, a
 /// `let` chain included, is a read of the value.
-fn rebinds_only(expr: &MirExpr, slot: LocalId, fn_id: crate::ir::FnId, index: usize) -> bool {
+pub(super) fn rebinds_only(
+    expr: &MirExpr,
+    slot: LocalId,
+    fn_id: crate::ir::FnId,
+    index: usize,
+) -> bool {
     let is_slot = |e: &MirExpr| matches!(e, MirExpr::Local(local) if local.node.slot == slot);
     match expr {
         MirExpr::TailCall(tc) if tc.node.target == fn_id => tc
@@ -7641,7 +7938,7 @@ fn rebinds_only(expr: &MirExpr, slot: LocalId, fn_id: crate::ir::FnId, index: us
 }
 
 /// The locals `pattern` binds, with their source names.
-fn pattern_binder_slots(pattern: &MirPattern, out: &mut Vec<(LocalId, String)>) {
+pub(super) fn pattern_binder_slots(pattern: &MirPattern, out: &mut Vec<(LocalId, String)>) {
     match pattern {
         MirPattern::Bind(slot, name) => out.push((*slot, name.clone())),
         MirPattern::Cons {
@@ -9059,6 +9356,360 @@ pub(super) fn emit_mir_tco_fn(
     Some(lines.join("\n"))
 }
 
+/// The borrowing version `__ret_<name>` of a function whose result borrows
+/// from its params (see [`super::lent_result`]): the same params, a result
+/// `&'a T` or `Option<&'a T>` that borrows from the params it came out of,
+/// and a body whose returned values are borrows. `None` when the function
+/// has no such version or no call reaches it.
+pub(super) fn emit_lent_result_fn(
+    fd: &crate::ast::FnDef,
+    resolved_fd: &crate::ir::hir::ResolvedFnDef,
+    mir_fn: &crate::ir::mir::MirFn,
+    visibility: &str,
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let lent = ctx.rust_lent_results.get(&mir_fn.fn_id)?;
+    if !lent.used {
+        return None;
+    }
+    let fn_id = mir_fn.fn_id;
+    let mask = super::expr::param_borrow_mask(fn_id, resolved_fd, ctx);
+    let bare_facts = ctx.bare_i64.for_fn(fn_id);
+    let params: Vec<String> = fd
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, (name, type_ann))| {
+            if bare_facts.is_some_and(|f| f.param_is_bare(i)) {
+                return format!("{}: i64", explicit_parameter_pattern(name, true));
+            }
+            let rust_type = super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope);
+            if super::lent_option::is_lent(&ctx.rust_lent_options, fn_id, i)
+                && let Some(inner) = rust_type
+                    .strip_prefix("Option<")
+                    .and_then(|t| t.strip_suffix('>'))
+            {
+                return format!(
+                    "{}: Option<&{inner}>",
+                    explicit_parameter_pattern(name, false)
+                );
+            }
+            if mask.get(i).copied().unwrap_or(false) {
+                let lifetime = match lent.sources.get(i).copied().unwrap_or(false) {
+                    true => "'a ",
+                    false => "",
+                };
+                return format!(
+                    "{}: &{lifetime}{rust_type}",
+                    explicit_parameter_pattern(name, false)
+                );
+            }
+            // An owned param the body may update in place; a Copy one is
+            // only read.
+            let copy = resolved_fd
+                .params
+                .get(i)
+                .is_some_and(|(_, ty)| is_copy_type(ty));
+            format!("{}: {rust_type}", explicit_parameter_pattern(name, !copy))
+        })
+        .collect();
+    let ret = super::types::type_annotation_to_rust_scoped(&fd.return_type, ctx, scope);
+    let ret = match lent.option {
+        true => format!(
+            "Option<&'a {}>",
+            ret.strip_prefix("Option<")?.strip_suffix('>')?
+        ),
+        false => format!("&'a {ret}"),
+    };
+    let inline = match ctx.rust_forced_inline.contains(&fn_id) {
+        true => "#[inline(always)]\n",
+        false => "",
+    };
+    let mut lines = vec![format!(
+        "#[allow(dead_code)]\n{inline}{visibility}fn {}<'a>({}) -> {ret} {{",
+        super::lent_result::ret_name(&aver_name_to_rust(&fd.name)),
+        params.join(", ")
+    )];
+    lines.push(emit_lent_body(resolved_fd, mir_fn, lent, scope, ctx)?);
+    lines.push("}".to_string());
+    Some(lines.join("\n"))
+}
+
+/// The body of the borrowing version of `mir_fn` (see
+/// [`emit_lent_result_fn`]), or `None` when a value it returns does not
+/// render as a borrow in the body the emitter produces.
+fn emit_lent_body(
+    resolved_fd: &crate::ir::hir::ResolvedFnDef,
+    mir_fn: &crate::ir::mir::MirFn,
+    lent: &crate::codegen::RustLentResult,
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let fn_id = mir_fn.fn_id;
+    let builtins = ctx
+        .mir_program
+        .as_ref()
+        .map(|p| p.builtins.as_slice())
+        .unwrap_or(&[]);
+    let mut lines = Vec::new();
+    match lent.walk {
+        None => {
+            let mut policy = MirFnEmitPolicy::from_resolved(resolved_fd, scope, true);
+            policy.borrowed_params.extend(lent_string_params_in(
+                ctx,
+                mir_fn,
+                &resolved_fd.params,
+                builtins,
+            ));
+            policy.apply_own_param(mir_fn, ctx);
+            policy.apply_bare_i64(fn_id, ctx);
+            policy.apply_field_moves(mir_fn, builtins);
+            policy.apply_taken_fields(mir_fn, ctx);
+            policy.apply_lent_options(mir_fn, ctx);
+            let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+            let body = emit_lent_tail(&mir_fn.body, lent.option, None, &emit_ctx)?;
+            lines.push("    crate::cancel_checkpoint();".to_string());
+            lines.push(format!("    {body}"));
+        }
+        Some(index) => {
+            let mut policy = MirFnEmitPolicy::from_resolved(resolved_fd, scope, false);
+            policy.apply_own_param(mir_fn, ctx);
+            policy.apply_bare_i64(fn_id, ctx);
+            for (i, (name, _)) in resolved_fd.params.iter().enumerate() {
+                if self_loop_lends(ctx, fn_id, i) {
+                    policy.owned_params.remove(&aver_name_to_rust(name));
+                    policy.borrowed_params.insert(name.clone());
+                }
+            }
+            policy.apply_field_moves(mir_fn, builtins);
+            policy.apply_taken_fields(mir_fn, ctx);
+            policy.apply_lent_options(mir_fn, ctx);
+            let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+            let walk = LentWalk {
+                fn_id,
+                slot: mir_fn.params.get(index)?.local,
+                iter: generated_ident("walk"),
+            };
+            let body = emit_lent_tail(&mir_fn.body, lent.option, Some(&walk), &emit_ctx)?;
+            lines.push(format!(
+                "    let mut {} = {}.iter();",
+                walk.iter,
+                aver_name_to_rust(&resolved_fd.params.get(index)?.0)
+            ));
+            lines.push("    loop {".to_string());
+            lines.push("        crate::cancel_checkpoint();".to_string());
+            lines.push(format!("        {body}"));
+            lines.push("    }".to_string());
+        }
+    }
+    Some(lines.join("\n"))
+}
+
+/// Whether the borrowing version of `fn_id` renders (see [`emit_lent_body`]):
+/// the emitter is what decides whether a match binds borrows, so a version
+/// is kept only when its body, as emitted, returns borrows.
+pub(super) fn lent_body_renders(fn_id: crate::ir::FnId, ctx: &CodegenContext) -> bool {
+    let (Some(lent), Some(resolved_fd), Some(mir_fn)) = (
+        ctx.rust_lent_results.get(&fn_id),
+        ctx.resolved_program.fn_by_id(fn_id),
+        ctx.mir_program.as_ref().and_then(|p| p.fn_by_id(fn_id)),
+    ) else {
+        return false;
+    };
+    emit_lent_body(resolved_fd, mir_fn, lent, None, ctx).is_some()
+}
+
+/// The `List` param a borrowing loop walks with an iterator (see
+/// [`super::lent_result`]).
+struct LentWalk {
+    fn_id: crate::ir::FnId,
+    slot: LocalId,
+    iter: String,
+}
+
+/// The tail of a borrowing version: matches, conditionals and `let`s as in
+/// any body, a returned value as a borrow (see [`emit_lent_value`]). In a
+/// walk every value is a `return` and a step is a `continue`, the list match
+/// taking the next element off the iterator.
+fn emit_lent_tail(
+    expr: &Spanned<MirExpr>,
+    option: bool,
+    walk: Option<&LentWalk>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    match &expr.node {
+        MirExpr::Match(m)
+            if walk.is_some_and(
+                |w| matches!(&m.node.subject.node, MirExpr::Local(l) if l.node.slot == w.slot),
+            ) =>
+        {
+            let walk = walk?;
+            let mut none_arm: Option<(&crate::ir::mir::MirMatchArm, Option<String>)> = None;
+            let mut some_arm: Option<(&crate::ir::mir::MirMatchArm, Option<String>)> = None;
+            for arm in &m.node.arms {
+                match &arm.pattern {
+                    MirPattern::EmptyList => none_arm = none_arm.or(Some((arm, None))),
+                    MirPattern::Cons { head_name, .. } => {
+                        some_arm = some_arm.or(Some((arm, Some(head_name.clone()))))
+                    }
+                    MirPattern::Wildcard => {
+                        none_arm = none_arm.or(Some((arm, None)));
+                        some_arm = some_arm.or(Some((arm, None)));
+                    }
+                    _ => return None,
+                }
+            }
+            let (none_arm, _) = none_arm?;
+            let (some_arm, head) = some_arm?;
+            let none = emit_lent_tail(&none_arm.body, option, Some(walk), ctx)?;
+            let head = head.filter(|name| !name.is_empty() && name != "_");
+            let mut borrowed = ctx.borrowed_params.clone();
+            if let Some(name) = &head {
+                borrowed.insert(name.clone());
+            }
+            let mut arm_ctx = *ctx;
+            arm_ctx.borrowed_params = &borrowed;
+            let some = emit_lent_tail(&some_arm.body, option, Some(walk), &arm_ctx)?;
+            let binder = head
+                .as_deref()
+                .map(explicit_binding_pattern)
+                .unwrap_or_else(|| "_".to_string());
+            Some(format!(
+                "match {}.next() {{ None => {{ {none} }}, Some({binder}) => {{ {some} }} }}",
+                walk.iter
+            ))
+        }
+        MirExpr::Match(m) => emit_mir_match_with(&m.node, ctx, &|arm_body, ctx| {
+            emit_lent_tail(arm_body, option, walk, ctx)
+        }),
+        MirExpr::IfThenElse(ite) => {
+            let (cond, then_src, else_src) = mir_if_cond_and_branches(&ite.node, ctx)?;
+            let then_branch = emit_lent_tail(then_src, option, walk, ctx)?;
+            let else_branch = emit_lent_tail(else_src, option, walk, ctx)?;
+            Some(format!(
+                "if {cond} {{ {then_branch} }} else {{ {else_branch} }}"
+            ))
+        }
+        MirExpr::Let(binding) => {
+            // A binding of a borrowing call binds the borrow, as the
+            // analysis takes it (see `lent_result`).
+            if !binding.node.binding_name.is_empty()
+                && let Some(call) = emit_ret_call(&binding.node.value.node, false, ctx)
+            {
+                let mut borrowed = ctx.borrowed_params.clone();
+                borrowed.insert(binding.node.binding_name.clone());
+                let mut body_ctx = *ctx;
+                body_ctx.borrowed_params = &borrowed;
+                let tail = emit_lent_tail(&binding.node.body, option, walk, &body_ctx)?;
+                return Some(format!(
+                    "{{ let {} = {call}; {tail} }}",
+                    explicit_binding_pattern(&binding.node.binding_name)
+                ));
+            }
+            let statement = emit_mir_let_statement(&binding.node, ctx)?;
+            let tail = emit_lent_tail(&binding.node.body, option, walk, ctx)?;
+            Some(format!("{{ {statement} {tail} }}"))
+        }
+        // A step: the iterator already stands at the rest.
+        MirExpr::TailCall(tc) if walk.is_some_and(|w| tc.node.target == w.fn_id) => {
+            Some("continue;".to_string())
+        }
+        _ => {
+            let value = emit_lent_value(expr, option, ctx)?;
+            Some(match walk {
+                Some(_) => format!("return {value};"),
+                None => value,
+            })
+        }
+    }
+}
+
+/// A value a borrowing version returns, as a borrow: `None`, `Some` of a
+/// place, `Map.get` of a place, a call of another borrowing version, or a
+/// place (see [`super::lent_result`]).
+fn emit_lent_value(expr: &Spanned<MirExpr>, option: bool, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    use crate::ir::hir::BuiltinCtor;
+    if let MirExpr::Construct(construct) = &expr.node
+        && option
+    {
+        return match &construct.node.ctor {
+            MirCtor::Builtin(BuiltinCtor::OptionNone) => Some("None".to_string()),
+            MirCtor::Builtin(BuiltinCtor::OptionSome) => Some(format!(
+                "Some({})",
+                emit_lent_place(construct.node.args.first()?, ctx)?
+            )),
+            _ => None,
+        };
+    }
+    if option {
+        if let Some(("Map.get", [map, key])) = mir_builtin_call_parts(&expr.node, ctx) {
+            return Some(format!(
+                "({}).get(&{})",
+                emit_lent_place(map, ctx)?,
+                emit_mir_expr(key, ctx)?
+            ));
+        }
+        if let Some(call) = emit_ret_call(&expr.node, true, ctx) {
+            return Some(call);
+        }
+        return Some(format!("({}).as_ref()", emit_lent_place(expr, ctx)?));
+    }
+    emit_lent_place(expr, ctx)
+}
+
+/// A place as a borrow `&'a T`: a call of a borrowing version that returns
+/// `&T`, or a local or field read where it lies.
+fn emit_lent_place(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    if let Some(call) = emit_ret_call(&expr.node, false, ctx) {
+        return Some(call);
+    }
+    match &expr.node {
+        // Only a place the emitter holds as a borrow: a match that cloned
+        // its subject binds owned locals, whose borrow would not outlive
+        // the function.
+        MirExpr::Local(_) | MirExpr::Project(_) => {
+            let root = projection_root_local(&expr.node)?;
+            if !super::ownership::root_is_borrowed(root, ctx)
+                || ctx.lent_options.contains(&root.name)
+            {
+                return None;
+            }
+            let code = emit_mir_expr(expr, ctx)?;
+            Some(materialize_borrowed(code, &expr.node, ctx))
+        }
+        _ => None,
+    }
+}
+
+/// A call of the borrowing version of a function (see
+/// [`super::lent_result`]) whose result is an `Option` when `option`; its
+/// source args that call a borrowing version themselves pass that borrow.
+fn emit_ret_call(expr: &MirExpr, option: bool, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    let cg = ctx.codegen?;
+    let (lent, args) = super::lent_result::lent_call(expr, &cg.rust_lent_results)?;
+    if lent.option != option || !lent.used {
+        return None;
+    }
+    let id = match expr {
+        MirExpr::Call(call) => match &call.node.callee {
+            MirCallee::Fn(id) => *id,
+            _ => return None,
+        },
+        MirExpr::TailCall(tc) => tc.node.target,
+        _ => return None,
+    };
+    let name = ctx.symbol_table.fn_entry(id).key.canonical();
+    let sources = lent.sources.clone();
+    let arg_override = |i: usize, arg: &Spanned<MirExpr>| -> Option<String> {
+        if !sources.get(i).copied().unwrap_or(false) {
+            return None;
+        }
+        emit_ret_call(&arg.node, false, ctx)
+    };
+    emit_named_call_with(&name, Some(id), args, ctx, Some(&arg_override))
+}
+
 /// Self-TCO param signature: params are `mut T` (rebound in the loop), lent
 /// params are `&T` (see [`self_loop_lends`]).
 /// Mirror of `emit_fn_params_tco`. A param the unboxing analysis proved
@@ -10122,6 +10773,20 @@ fn emit_named_call_to(
     args: &[Spanned<MirExpr>],
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
+    emit_named_call_with(name, callee, args, ctx, None)
+}
+
+/// [`emit_named_call_to`], or with `ret` the call of the callee's borrowing
+/// version (see [`super::lent_result`]), where `ret` renders the args it
+/// gives `Some` for.
+#[allow(clippy::type_complexity)]
+fn emit_named_call_with(
+    name: &str,
+    callee: Option<crate::ir::FnId>,
+    args: &[Spanned<MirExpr>],
+    ctx: &MirEmitCtx<'_>,
+    ret: Option<&dyn Fn(usize, &Spanned<MirExpr>) -> Option<String>>,
+) -> Option<String> {
     let (borrow_mask, lent_mask) = match ctx.codegen {
         Some(cg) => (
             callee_borrow_mask(name, args.len(), cg),
@@ -10141,6 +10806,10 @@ fn emit_named_call_to(
     let callee_bare = callee.and_then(|id| ctx.codegen.and_then(|cg| callee_bare_facts(id, cg)));
     let mut arg_strs = Vec::with_capacity(args.len());
     for (i, a) in args.iter().enumerate() {
+        if let Some(rendered) = ret.and_then(|ret| ret(i, a)) {
+            arg_strs.push(rendered);
+            continue;
+        }
         if callee_bare.is_some_and(|f| f.param_is_bare(i)) {
             // Bare `i64` param: render the arg in its raw form. A raw leaf /
             // compound / literal renders via `emit_bare_i64`; anything else
@@ -10189,6 +10858,13 @@ fn emit_named_call_to(
             None => lent_name(&head),
         },
         false => head,
+    };
+    let head = match ret {
+        Some(_) => match head.rsplit_once("::") {
+            Some((path, last)) => format!("{path}::{}", super::lent_result::ret_name(last)),
+            None => super::lent_result::ret_name(&head),
+        },
+        None => head,
     };
     Some(format!("{}({})", head, arg_strs.join(", ")))
 }
@@ -12235,6 +12911,7 @@ mod tests {
             rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
             lent_options: &policy.lent_options,
+            ret_bindings: &policy.ret_bindings,
             loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
@@ -13434,6 +14111,7 @@ mod tests {
             rc_wrapped_are_borrowed_refs: false,
             borrowed_params: &policy.borrowed_params,
             lent_options: &policy.lent_options,
+            ret_bindings: &policy.ret_bindings,
             loop_carried_params: empty_string_set(),
             owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),

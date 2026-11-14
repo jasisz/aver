@@ -13808,6 +13808,7 @@ error: build failed";
             rust_lent_strings: Default::default(),
             rust_lent_spines: Default::default(),
             rust_dual_fns: Default::default(),
+            rust_lent_results: Default::default(),
             rust_counted_records: Default::default(),
             rust_lent_options: Default::default(),
             rust_word_spec: Default::default(),
