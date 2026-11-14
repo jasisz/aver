@@ -1010,6 +1010,61 @@ fn read_only_for_fields(expr: &MirExpr, slot: LocalId) -> bool {
     }
 }
 
+/// Whether `call`, the record a field is read out of (`f(x).field`), is a
+/// call a borrowing version serves where it stands: each of its source args
+/// is a place whose root is borrowed, so nothing can move it while the
+/// field is read, or such a call itself (see [`super::lent_result`]).
+pub(super) fn inline_ret_call(call: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    let Some(codegen) = ctx.codegen else {
+        return false;
+    };
+    let Some((lent, args)) = super::lent_result::lent_call(call, &codegen.rust_lent_results) else {
+        return false;
+    };
+    if lent.option || !lent.used {
+        return false;
+    }
+    args.iter().enumerate().all(|(i, arg)| {
+        if !lent.sources.get(i).copied().unwrap_or(false) {
+            return true;
+        }
+        match &arg.node {
+            MirExpr::Local(_) | MirExpr::Project(_) => {
+                place_reads_in_place(&arg.node, codegen)
+                    && projection_root_local(&arg.node)
+                        .is_some_and(|root| super::ownership::root_is_borrowed(root, ctx))
+            }
+            other => inline_ret_call(other, ctx),
+        }
+    })
+}
+
+/// Whether every field read on the way to a local renders as the field
+/// where it lies (see [`field_read_in_place`]).
+fn place_reads_in_place(expr: &MirExpr, codegen: &CodegenContext) -> bool {
+    match expr {
+        MirExpr::Local(_) => true,
+        MirExpr::Project(project) => {
+            field_read_in_place(project.node.base.ty(), codegen)
+                && place_reads_in_place(&project.node.base.node, codegen)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `expr` reads a field, or a field of a field, out of a call a
+/// borrowing version serves (see [`inline_ret_call`]): the read borrows, so
+/// an owner clones the field and nothing moves out of it.
+pub(super) fn reads_through_ret_call(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    match expr {
+        MirExpr::Project(project) => match &project.node.base.node {
+            base @ MirExpr::Project(_) => reads_through_ret_call(base, ctx),
+            base => inline_ret_call(base, ctx),
+        },
+        _ => false,
+    }
+}
+
 /// Whether every source arg of the borrowing call `call` is a place, or a
 /// borrowing call of its own whose sources hold, whose root `scope` does not
 /// move.
@@ -4212,7 +4267,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             {
                 return Some(emit_mir_static_ref(&dotted, emit_ctx));
             }
-            let base = emit_mir_expr(&proj.base, emit_ctx)?;
+            // A field of a call a borrowing version serves reads the field
+            // through its borrow (see [`reads_through_ret_call`]).
+            let base = match inline_ret_call(&proj.base.node, emit_ctx) {
+                true => emit_ret_call(&proj.base.node, false, emit_ctx)?,
+                false => emit_mir_expr(&proj.base, emit_ctx)?,
+            };
             // A field read before the call its record was moved into (see
             // [`emit_early_move_match`]).
             let early = emit_ctx.early_move.and_then(|(slot, fields)| {

@@ -123,6 +123,21 @@ fn nameLen(t: Table) -> Int
     h = headIn(t, true)
     String.len(h.name)
 
+fn headTySize(t: Table) -> Int
+    ? "The size of one head's type, read out of the call."
+    sizeOf(headIn(t, false).ty)
+
+record Shelf
+    table: Table
+
+fn tableOf(s: Shelf) -> Table
+    ? "The shelf's table."
+    s.table
+
+fn firstNameLen(s: Shelf) -> Int
+    ? "A field of a field of a call."
+    String.len(tableOf(s).main.name)
+
 fn fresh(st: St) -> Option<Expr>
     ? "A fresh value, never lent."
     match Map.len(st.inferCache) == 0
@@ -140,4 +155,4 @@ fn main() -> Unit
     one = typeGet(st, true, Expr.Var(1))
     h = Head(name = "a", ty = Expr.App(Expr.Var(1), Expr.Var(2)), params = [])
     t = Table(main = h, other = h)
-    Console.print("{report(hit)} {report(miss)} {report(one)} {tyOfFirst([h], h)} {report(fresh(st))} {cachedType(st, Expr.Var(4))} {nameLen(t)} {cachedApplied(st, Expr.Var(4))}")
+    Console.print("{report(hit)} {report(miss)} {report(one)} {tyOfFirst([h], h)} {report(fresh(st))} {cachedType(st, Expr.Var(4))} {nameLen(t)} {cachedApplied(st, Expr.Var(4))} {headTySize(t)} {firstNameLen(Shelf(table = t))}")

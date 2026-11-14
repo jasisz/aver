@@ -543,10 +543,14 @@ fn mark_used(ctx: &CodegenContext, lent: &mut HashMap<FnId, RustLentResult>) {
 }
 
 /// The qualifying functions whose call a `let` in `expr` binds, alone or as
-/// the map of a `Map.get`.
+/// the map of a `Map.get`, or whose result a field is read out of.
 fn bound_calls(expr: &MirExpr, lent: &HashMap<FnId, RustLentResult>, out: &mut HashSet<FnId>) {
     if let MirExpr::Let(binding) = expr {
         called_for_result(&binding.node.value.node, lent, out);
+    }
+    // A field read straight out of a call (`f(x).field`).
+    if let MirExpr::Project(project) = expr {
+        called_for_result(&project.node.base.node, lent, out);
     }
     crate::ir::mir::expr::walk_children(expr, &mut |child| bound_calls(child, lent, out));
 }

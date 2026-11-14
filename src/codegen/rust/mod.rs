@@ -1973,6 +1973,18 @@ fn nameLen(t: Table) -> Int
     h = headIn(t, true)
     String.len(h.name)
 
+fn headTySize(t: Table) -> Int
+    sizeOf(headIn(t, false).ty)
+
+record Shelf
+    table: Table
+
+fn tableOf(s: Shelf) -> Table
+    s.table
+
+fn firstNameLen(s: Shelf) -> Int
+    String.len(tableOf(s).main.name)
+
 fn fresh(st: St) -> Option<Expr>
     match Map.len(st.inferCache) == 0
         true -> Option.Some(Expr.Var(1))
@@ -2020,6 +2032,13 @@ fn freshSize(st: St) -> Int
             entry.contains("let h @ _ = __ret_headIn(t, true);"),
             "{entry}"
         );
+        // A field read straight out of a call reads it through the borrow:
+        // an owner clones the field, not the record; a field of a field too.
+        assert!(
+            entry.contains("__ret_headIn(t, false).ty.clone()"),
+            "{entry}"
+        );
+        assert!(entry.contains("(__ret_tableOf(s).main.name)"), "{entry}");
         // A value built in the function is never lent.
         assert!(!entry.contains("__ret_fresh"), "{entry}");
     }
