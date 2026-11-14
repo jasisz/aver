@@ -1,0 +1,143 @@
+module Main
+    intent = "Lookups that return what they find in a borrowed argument: the Rust backend lends the result to a caller that only reads it."
+    exposes [main]
+    effects [Console.print]
+
+type Expr
+    Var(Int)
+    App(Expr, Expr)
+
+type Bucket
+    NoEntry
+    OneEntry(Tuple<Expr, Expr>)
+    Entries(List<Tuple<Expr, Expr>>)
+
+record St
+    inferCache: Map<Int, Bucket>
+    checkCache: Map<Int, Bucket>
+    name: String
+
+record Head
+    name: String
+    ty: Expr
+    params: List<Expr>
+
+fn cacheFor(st: St, only: Bool) -> Map<Int, Bucket>
+    ? "One of two caches."
+    match only
+        true -> st.inferCache
+        false -> st.checkCache
+
+fn findInList(es: List<Tuple<Expr, Expr>>, e: Expr) -> Option<Expr>
+    ? "Linear search."
+    match es
+        [] -> Option.None
+        [(k, v), ..rest] -> match k == e
+            true -> Option.Some(v)
+            false -> findInList(rest, e)
+
+fn findIn(bucket: Bucket, e: Expr) -> Option<Expr>
+    ? "The value paired with e."
+    match bucket
+        Bucket.NoEntry -> Option.None
+        Bucket.OneEntry((k, v)) -> match k == e
+            true -> Option.Some(v)
+            false -> Option.None
+        Bucket.Entries(es) -> findInList(es, e)
+
+fn find(m: Map<Int, Bucket>, key: Int, e: Expr) -> Option<Expr>
+    ? "Look up e under key."
+    match Map.get(m, key)
+        Option.Some(b) -> findIn(b, e)
+        Option.None -> Option.None
+
+fn hashOf(e: Expr) -> Int
+    ? "A hash."
+    match e
+        Expr.Var(n) -> n
+        Expr.App(_, _) -> 7
+
+fn cacheGet(cache: Map<Int, Bucket>, key: Expr) -> Option<Expr>
+    ? "A cached result."
+    find(cache, hashOf(key), key)
+
+fn typeGet(st: St, only: Bool, e: Expr) -> Option<Expr>
+    ? "Through the cache for the mode."
+    cacheGet(cacheFor(st, only), e)
+
+fn sizeOf(e: Expr) -> Int
+    ? "Tree size."
+    match e
+        Expr.Var(_) -> 1
+        Expr.App(a, b) -> sizeOf(a) + sizeOf(b)
+
+fn report(hit: Option<Expr>) -> Int
+    ? "Read a hit."
+    match hit
+        Option.Some(e) -> sizeOf(e)
+        Option.None -> 0
+
+fn headOf(heads: Map<String, Head>, name: String) -> Head
+    ? "A declaration head, or a default."
+    match Map.get(heads, name)
+        Option.Some(h) -> h
+        Option.None -> Head(name = "none", ty = Expr.Var(0), params = [])
+
+fn firstHead(hs: List<Head>, fallback: Head) -> Head
+    ? "The first head, or the fallback."
+    match hs
+        [] -> fallback
+        [h, ..rest] -> h
+
+fn tyOfFirst(hs: List<Head>, fallback: Head) -> Int
+    ? "Size of the first head's type."
+    h = firstHead(hs, fallback)
+    sizeOf(h.ty)
+
+fn orCached(hit: Option<Expr>, e: Expr) -> Int
+    ? "Size of the hit, or of e."
+    match hit
+        Option.Some(h) -> sizeOf(h)
+        Option.None -> sizeOf(e)
+
+fn cachedType(st: St, e: Expr) -> Int
+    ? "The cached answer, read in place."
+    orCached(cacheGet(st.inferCache, e), e)
+
+fn cachedApplied(st: St, e: Expr) -> Int
+    ? "The cached answer under a key built for the call."
+    orCached(cacheGet(st.inferCache, Expr.App(e, e)), e)
+
+record Table
+    main: Head
+    other: Head
+
+fn headIn(t: Table, first: Bool) -> Head
+    ? "One of the heads."
+    match first
+        true -> t.main
+        false -> t.other
+
+fn nameLen(t: Table) -> Int
+    ? "Length of the main head's name."
+    h = headIn(t, true)
+    String.len(h.name)
+
+fn fresh(st: St) -> Option<Expr>
+    ? "A fresh value, never lent."
+    match Map.len(st.inferCache) == 0
+        true -> Option.Some(Expr.Var(1))
+        false -> Option.None
+
+fn main() -> Unit
+    ! [Console.print]
+    entries = [(Expr.Var(1), Expr.App(Expr.Var(2), Expr.Var(3))), (Expr.Var(4), Expr.Var(5))]
+    m = Map.set(Map.fromList([]), 4, Bucket.Entries(entries))
+    m2 = Map.set(m, 1, Bucket.OneEntry((Expr.Var(1), Expr.Var(9))))
+    st = St(inferCache = m2, checkCache = Map.fromList([]), name = "s")
+    hit = typeGet(st, true, Expr.Var(4))
+    miss = typeGet(st, false, Expr.Var(4))
+    one = typeGet(st, true, Expr.Var(1))
+    h = Head(name = "a", ty = Expr.App(Expr.Var(1), Expr.Var(2)), params = [])
+    t = Table(main = h, other = h)
+    Console.print("{report(hit)} {report(miss)} {report(one)} {tyOfFirst([h], h)} {report(fresh(st))} {cachedType(st, Expr.Var(4))} {nameLen(t)} {cachedApplied(st, Expr.Var(4))}")

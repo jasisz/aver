@@ -14,6 +14,7 @@ mod free_calls;
 mod from_mir;
 mod knowing;
 mod lent_option;
+mod lent_result;
 pub use carrier::check_findings as carrier_check_findings;
 pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers};
 mod ownership;
@@ -283,6 +284,7 @@ fn transpile_project(
         ctx.rust_field_layout = field_layout::compute(ctx);
         speculation::choose_wrapped(ctx);
         ctx.rust_dual_fns = from_mir::compute_dual_fns(ctx);
+        ctx.rust_lent_results = lent_result::compute(ctx);
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
@@ -1884,6 +1886,142 @@ fn keep(s: String) -> String
         assert!(!entry.contains("s.clone()"), "{entry}");
         // A string returned is taken by value.
         assert!(entry.contains("fn keep(s @ _: AverStr"), "{entry}");
+    }
+
+    #[test]
+    fn a_lookup_lends_what_it_found_to_a_caller_that_only_reads_it() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Expr
+    Var(Int)
+    App(Expr, Expr)
+
+type Bucket
+    NoEntry
+    OneEntry(Tuple<Expr, Expr>)
+    Entries(List<Tuple<Expr, Expr>>)
+
+record St
+    inferCache: Map<Int, Bucket>
+    checkCache: Map<Int, Bucket>
+
+fn cacheFor(st: St, only: Bool) -> Map<Int, Bucket>
+    match only
+        true -> st.inferCache
+        false -> st.checkCache
+
+fn findInList(es: List<Tuple<Expr, Expr>>, e: Expr) -> Option<Expr>
+    match es
+        [] -> Option.None
+        [(k, v), ..rest] -> match k == e
+            true -> Option.Some(v)
+            false -> findInList(rest, e)
+
+fn findIn(bucket: Bucket, e: Expr) -> Option<Expr>
+    match bucket
+        Bucket.NoEntry -> Option.None
+        Bucket.OneEntry((k, v)) -> match k == e
+            true -> Option.Some(v)
+            false -> Option.None
+        Bucket.Entries(es) -> findInList(es, e)
+
+fn find(m: Map<Int, Bucket>, key: Int, e: Expr) -> Option<Expr>
+    match Map.get(m, key)
+        Option.Some(b) -> findIn(b, e)
+        Option.None -> Option.None
+
+fn hashOf(e: Expr) -> Int
+    match e
+        Expr.Var(n) -> n
+        Expr.App(_, _) -> 7
+
+fn cacheGet(cache: Map<Int, Bucket>, key: Expr) -> Option<Expr>
+    find(cache, hashOf(key), key)
+
+fn sizeOf(e: Expr) -> Int
+    match e
+        Expr.Var(_) -> 1
+        Expr.App(a, b) -> sizeOf(a) + sizeOf(b)
+
+fn orCached(hit: Option<Expr>, e: Expr) -> Int
+    match hit
+        Option.Some(h) -> sizeOf(h)
+        Option.None -> sizeOf(e)
+
+fn cachedType(st: St, only: Bool, e: Expr) -> Int
+    orCached(cacheGet(cacheFor(st, only), e), e)
+
+fn cachedApplied(st: St, e: Expr) -> Int
+    orCached(cacheGet(st.inferCache, Expr.App(e, e)), e)
+
+record Head
+    name: String
+    ty: Expr
+
+record Table
+    main: Head
+    other: Head
+
+fn headIn(t: Table, first: Bool) -> Head
+    match first
+        true -> t.main
+        false -> t.other
+
+fn nameLen(t: Table) -> Int
+    h = headIn(t, true)
+    String.len(h.name)
+
+fn fresh(st: St) -> Option<Expr>
+    match Map.len(st.inferCache) == 0
+        true -> Option.Some(Expr.Var(1))
+        false -> Option.None
+
+fn freshSize(st: St) -> Int
+    orCached(fresh(st), Expr.Var(0))
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // The chain down to the list walk returns borrows of the cache.
+        assert!(
+            entry.contains("fn __ret_cacheFor<'a>(st @ _: &'a St, only @ _: bool) -> &'a"),
+            "{entry}"
+        );
+        assert!(
+            entry.contains("if only { &st.inferCache } else { &st.checkCache }"),
+            "{entry}"
+        );
+        assert!(
+            entry.contains("fn __ret_findInList<'a>(es @ _: &'a aver_rt::AverList<(Expr, Expr)>, e @ _: &Expr) -> Option<&'a Expr>"),
+            "{entry}"
+        );
+        assert!(entry.contains("let mut __walk = es.iter();"), "{entry}");
+        assert!(entry.contains("return Some(v);"), "{entry}");
+        assert!(entry.contains("__ret_findIn(b, e)"), "{entry}");
+        // A key the call builds is not a source: only the cache is `'a`.
+        assert!(
+            entry.contains("fn __ret_cacheGet<'a>(cache @ _: &'a aver_rt::AverMap<aver_rt::AverInt, Bucket>, key @ _: &Expr)"),
+            "{entry}"
+        );
+        // The callers that only read the result call the borrowing versions.
+        assert!(entry.contains("__ret_cacheGet(__arg"), "{entry}");
+        assert!(entry.contains("= __ret_cacheFor(st, only);"), "{entry}");
+        assert!(
+            entry.contains("__ret_cacheGet(&st.inferCache, &__arg"),
+            "{entry}"
+        );
+        // A record read for one field is borrowed, not cloned whole.
+        assert!(
+            entry.contains("let h @ _ = __ret_headIn(t, true);"),
+            "{entry}"
+        );
+        // A value built in the function is never lent.
+        assert!(!entry.contains("__ret_fresh"), "{entry}");
     }
 
     #[test]

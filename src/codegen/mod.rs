@@ -427,6 +427,20 @@ pub struct RecordedSource {
     pub module_root: String,
 }
 
+/// A function with a version that returns a borrow (see
+/// `codegen::rust::lent_result`).
+#[derive(Debug, Clone, Default)]
+pub struct RustLentResult {
+    /// Per param: whether the borrowed result can point into it.
+    pub sources: Vec<bool>,
+    /// Whether the result is an `Option`, returned as `Option<&T>`.
+    pub option: bool,
+    /// For a self-tail loop, the `List` param it walks to its end.
+    pub walk: Option<usize>,
+    /// Whether some call reaches the borrowing version.
+    pub used: bool,
+}
+
 /// What the Rust transpile emits for MIR's word-speculation summary
 /// (`codegen::rust::speculation`). Empty everywhere else.
 #[derive(Clone, Debug, Default)]
@@ -737,6 +751,11 @@ pub struct CodegenContext {
     /// `codegen::rust::lent_option`). Computed with the facts above; empty
     /// everywhere else.
     pub rust_lent_options: HashMap<crate::ir::FnId, Vec<bool>>,
+    /// The functions the Rust backend also emits in a version that returns
+    /// a borrow of what it found in a borrowed argument (see
+    /// `codegen::rust::lent_result`). Computed with the facts above; empty
+    /// everywhere else.
+    pub rust_lent_results: HashMap<crate::ir::FnId, RustLentResult>,
     /// The machine-word twins and entries of the Rust transpile (see
     /// [`RustWordSpec`]); empty everywhere else.
     pub rust_word_spec: RustWordSpec,
@@ -1234,6 +1253,7 @@ pub fn build_context(
         rust_lent_strings: Default::default(),
         rust_lent_spines: Default::default(),
         rust_dual_fns: Default::default(),
+        rust_lent_results: Default::default(),
         rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
         rust_word_spec: Default::default(),
@@ -1808,6 +1828,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         rust_lent_strings: Default::default(),
         rust_lent_spines: Default::default(),
         rust_dual_fns: Default::default(),
+        rust_lent_results: Default::default(),
         rust_counted_records: Default::default(),
         rust_lent_options: Default::default(),
         rust_word_spec: Default::default(),

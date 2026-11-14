@@ -381,6 +381,17 @@ fn deep_recursion_in_a_product_branch_matches_main_on_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A lookup that returns what it found in a borrowed argument is called
+/// through its borrowing version where the caller only reads the result:
+/// through a map field, a bucket, a list walk and a record field, with a key
+/// built for the call. The borrows must pass the borrow checker and print
+/// what the VM prints.
+#[test]
+fn lent_results_match_vm() {
+    assert_plain_parity("tests/fixtures/lent_results_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A module-level binding is computed once per process and shared by every
 /// thread: the branches of an independent product read it first, at once,
 /// and `main` reads it after.
