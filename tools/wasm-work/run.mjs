@@ -36,6 +36,17 @@ if (isMainThread) {
         if (length > memory.buffer.byteLength) memory.grow(Math.ceil((length - memory.buffer.byteLength) / 65536));
         return new Uint8Array(memory.buffer, 0, length);
     };
+    // The file readBytesAt read last, kept open for the next call: a program
+    // reading many small ranges of one file would otherwise open and close it
+    // for every range. A write or append under any name forgets it first, so
+    // the program reads what it wrote; a file replaced by another process while
+    // the program runs is read from the version that was open.
+    let kept;
+    const forgetKept = () => { if (kept) { const { fd } = kept; kept = undefined; fs.closeSync(fd); } };
+    const fdFor = name => {
+        if (kept?.name !== name) { forgetKept(); kept = { name, fd: fs.openSync(name, "r") }; }
+        return kept.fd;
+    };
     // Positional reads go straight into the transport memory, so a large file is
     // never held whole: only the chunk a call asks for.
     function readBytesAt(path, offsetRef, lengthRef) {
@@ -45,15 +56,14 @@ if (isMainThread) {
         if (length === undefined) return err("Disk.readBytesAt: length must fit a 64-bit integer");
         if (offset < 0n) return err("Disk.readBytesAt: offset must be non-negative");
         if (length < 0n) return err("Disk.readBytesAt: length must be non-negative");
-        let fd;
         try {
-            fd = fs.openSync(text(path), "r");
+            const fd = fdFor(text(path));
             const left = BigInt(fs.fstatSync(fd).size) - offset;
             const buffer = memoryFor(Number(left < length ? (left > 0n ? left : 0n) : length));
             let read = 0;
             for (let n; read < buffer.length && (n = fs.readSync(fd, buffer, read, buffer.length - read, Number(offset) + read)); ) read += n;
             return ex().__rt_result_bytes_string_ok_from_lm(read);
-        } catch (error) { return err(error.message); } finally { if (fd !== undefined) fs.closeSync(fd); }
+        } catch (error) { forgetKept(); return err(error.message); }
     }
     function readText(path) {
         try {
@@ -67,6 +77,7 @@ if (isMainThread) {
     function writeBytes(path, bytes, append) {
         try {
             const name = text(path);
+            forgetKept();
             const length = Number(ex().__rt_bytes_to_lm(bytes));
             const buffer = new Uint8Array(ex().memory.buffer, 0, length);
             if (append) fs.appendFileSync(name, buffer); else fs.writeFileSync(name, buffer);
