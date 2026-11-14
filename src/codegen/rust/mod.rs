@@ -1887,6 +1887,49 @@ fn keep(s: String) -> String
     }
 
     #[test]
+    fn a_loop_that_returns_a_part_of_its_param_walks_it_from_a_root() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Expr
+    Var(Int)
+    App(Expr, Expr, Expr)
+
+fn fnOf(e: Expr) -> Expr
+    match e
+        Expr.App(_, f, _) -> fnOf(f)
+        _ -> e
+
+fn rebuilt(e: Expr) -> Expr
+    match e
+        Expr.App(a, f, x) -> rebuilt(Expr.App(f, a, x))
+        _ -> e
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        // The step borrows the part instead of copying it, and the result is
+        // the root itself when the loop never stepped, a copy otherwise.
+        assert!(entry.contains("fn fnOf(mut e @ _: Expr) -> Expr"), "{entry}");
+        assert!(entry.contains("let __root0: Expr = e;"), "{entry}");
+        assert!(entry.contains("let mut e @ _: &Expr = &__root0;"), "{entry}");
+        let fn_of = &entry[entry.find("fn fnOf").unwrap()..entry.find("fn rebuilt").unwrap()];
+        assert!(!fn_of.contains("f.clone()"), "{entry}");
+        assert!(
+            entry.contains(
+                "if ::core::ptr::eq(e, &__root0) { return __root0; } return e.clone();"
+            ),
+            "{entry}"
+        );
+        // A step that builds a new value moves on by value.
+        assert_eq!(entry.matches("__root0").count(), 4, "{entry}");
+    }
+
+    #[test]
     fn a_traversal_lends_the_tree_down_its_recursion() {
         let mut ctx = ctx_from_source(
             r#"
