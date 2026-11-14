@@ -8,6 +8,16 @@ pub struct Response {
     pub headers: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>>,
 }
 
+impl aver_rt::freeze::Freeze for Response {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        (&aver_rt::freeze::Probe(&self.status)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.body)).freeze_into(f)
+            && (&aver_rt::freeze::Probe(&self.headers)).freeze_into(f)
+    }
+}
+
 impl aver_rt::AverDisplay for Response {
     fn aver_display(&self) -> String {
         format!(

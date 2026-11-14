@@ -250,6 +250,19 @@ pub enum Socket {
     Sending(Connection),
 }
 
+impl aver_rt::freeze::Freeze for Socket {
+    #[allow(unused_variables, unused_imports)]
+    fn freeze(&self, f: &mut aver_rt::freeze::Freezer) -> bool {
+        use aver_rt::freeze::{ViaFreeze as _, ViaSkip as _};
+        match self {
+            Socket::Listening(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Socket::Dialing(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Socket::Connected(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+            Socket::Sending(a0) => (&aver_rt::freeze::Probe(&*a0)).freeze_into(f),
+        }
+    }
+}
+
 impl aver_rt::AverDisplay for Socket {
     fn aver_display(&self) -> String {
         match self {
