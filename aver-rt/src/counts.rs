@@ -23,7 +23,7 @@ use std::sync::atomic::Ordering;
 use std::sync::atomic::{self, Ordering};
 
 macro_rules! counts_for {
-    ($atomic:ty, $int:ty, $signed:ty, $inc:ident, $dec:ident) => {
+    ($atomic:ty, $int:ty, $signed:ty, $inc:ident, $dec:ident, $frozen:ident) => {
         /// A new owner: whether the count went past the most a count may
         /// reach, half its range, as `Arc`'s check before it aborts.
         #[inline(always)]
@@ -41,6 +41,10 @@ macro_rules! counts_for {
             }
             #[cfg(not(feature = "plain-counts"))]
             {
+                // A frozen node (see `frozen`) is never counted.
+                if count.load(Ordering::Relaxed) >= frozen::$frozen {
+                    return false;
+                }
                 count.fetch_add(1, Ordering::Relaxed) > <$signed>::MAX as $int
             }
         }
@@ -59,6 +63,9 @@ macro_rules! counts_for {
             }
             #[cfg(not(feature = "plain-counts"))]
             {
+                if count.load(Ordering::Relaxed) >= frozen::$frozen {
+                    return false;
+                }
                 if count.fetch_sub(1, Ordering::Release) != 1 {
                     return false;
                 }
@@ -69,8 +76,8 @@ macro_rules! counts_for {
     };
 }
 
-counts_for!(std::sync::atomic::AtomicU32, u32, i32, inc32, dec32);
-counts_for!(std::sync::atomic::AtomicUsize, usize, isize, inc, dec);
+counts_for!(std::sync::atomic::AtomicU32, u32, i32, inc32, dec32, F32);
+counts_for!(std::sync::atomic::AtomicUsize, usize, isize, inc, dec, F64);
 
 /// Takes a node its caller alone owns, as `Arc::try_unwrap`: whether
 /// the count was 1, in which case it is now 0.
@@ -91,4 +98,23 @@ pub(crate) fn take32(count: &std::sync::atomic::AtomicU32) -> bool {
             .compare_exchange(1, 0, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
     }
+}
+
+/// Frozen nodes (see [`crate::freeze`]).
+///
+/// A node whose count is at or past `F32` (a node of a recursive sum, whose
+/// count is 32 bits) or `F64` (every other node) is frozen: no one counts
+/// it and no one frees it, as no one frees a node kept in a static, whose
+/// count is past `F64` too. A build with atomic counts tests for it before
+/// each atomic increment and decrement and skips the operation, so threads
+/// that share a frozen node do not write to its cache line. A build with
+/// `plain-counts` runs on one thread, has nothing to gain, and neither
+/// tests nor freezes: its counts are changed as they always were.
+///
+/// The marks are far past any count of owners a program reaches (a quarter
+/// and an eighth of each range), so a live node never reads as frozen.
+#[cfg_attr(feature = "plain-counts", allow(dead_code))]
+pub(crate) mod frozen {
+    pub const F32: u32 = 0x4000_0000;
+    pub const F64: usize = 1 << 61;
 }
