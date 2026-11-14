@@ -1,0 +1,162 @@
+# One-off measurement of frozen counts on x86 (not part of CI): Pestka,
+# PGO against PGO, built by the Aver of this branch and by main's, Init at
+# 1 and 4 workers. Runs only on a push to this branch.
+name: measure-frozen-x86
+
+on:
+  push:
+    branches: [measure/frozen-x86]
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      CARGO_TERM_COLOR: never
+      RUSTC_WRAPPER: ""
+    steps:
+      - name: Checkout this branch (frozen counts)
+        uses: actions/checkout@v4
+        with:
+          path: aver-frozen
+      - name: Checkout main (base)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: aver-base
+      - name: Checkout Pestka at 90af711
+        uses: actions/checkout@v4
+        with:
+          repository: jasisz/pestka
+          ref: 90af711c6bc448b5f022115dd12c3eb245b560a6
+          path: pestka
+      - name: Checkout Lean Kernel Arena
+        uses: actions/checkout@v4
+        with:
+          repository: leanprover/lean-kernel-arena
+          path: lka
+
+      - name: Machine
+        run: |
+          lscpu | tee machine.txt
+          echo "nproc: $(nproc)" | tee -a machine.txt
+          free -g | tee -a machine.txt
+
+      - name: Tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q time
+          rustup toolchain install stable --profile minimal --component llvm-tools-preview
+          rustup default stable
+          rustc --version
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # perf, if the runner allows it
+          (sudo apt-get install -y -q linux-tools-common "linux-tools-$(uname -r)" \
+            && sudo sysctl -w kernel.perf_event_paranoid=-1 \
+            && perf stat -e instructions,cycles true) > perf-check.txt 2>&1 \
+            && echo PERF=1 >> "$GITHUB_ENV" || { echo PERF=0 >> "$GITHUB_ENV"; tail -5 perf-check.txt; }
+
+      - name: Build both Avers
+        run: |
+          for v in frozen base; do
+            (cd aver-$v && cargo build -q --bin aver)
+          done
+          cargo install -q --git https://github.com/jasisz/susz susz --root "$PWD/susz"
+
+      - name: Init export
+        working-directory: lka
+        run: |
+          uv run lka.py build-test init
+          ls -la _build/tests/
+          "$GITHUB_WORKSPACE/susz/bin/susz" pack --no-index _build/tests/init.ndjson "$GITHUB_WORKSPACE/init.susz"
+          ls -la "$GITHUB_WORKSPACE/init.susz"
+
+      - name: Build Pestka, PGO, both Avers
+        run: |
+          for v in base frozen; do
+            rm -rf "pestka-$v"
+            cp -r pestka "pestka-$v"
+            AVER="$GITHUB_WORKSPACE/aver-$v/target/debug/aver" \
+            AVER_RUNTIME_PATH="$GITHUB_WORKSPACE/aver-$v/aver-rt" \
+            FLAGS="-C target-cpu=native" \
+              sh "pestka-$v/bin/build-pgo" "$GITHUB_WORKSPACE/init.susz" > "build-$v.log" 2>&1 \
+              || { tail -40 "build-$v.log"; exit 1; }
+            grep -o 'features = \[[^]]*\]' "pestka-$v/.build/Cargo.toml"
+            cp "pestka-$v/.build/target/release/main" "bin-$v"
+            rm -rf "pestka-$v/.build/target" "pestka-$v/.build/target-pgo"
+          done
+          grep -c FROZEN_SITE -r pestka-frozen/.build/src || true
+          grep -c FROZEN_SITE -r pestka-base/.build/src || true
+
+      - name: Measure Init, 1 and 4 workers, 5 runs, alternating
+        run: |
+          cat init.susz > /dev/null
+          : > runs.tsv
+          for r in 1 2 3 4 5; do
+            for w in 1 4; do
+              for v in base frozen; do
+                if [ "$PERF" = 1 ]; then
+                  pre="perf stat -x, -e instructions,cycles -o perf.out"
+                else
+                  pre=""
+                fi
+                MIMALLOC_PURGE_DELAY=-1 /usr/bin/time -v -o time.out $pre "./bin-$v" init.susz $w > out.txt 2>&1
+                st=$?
+                ok=$(grep -c accepted out.txt)
+                wall=$(awk -F': ' '/Elapsed \(wall clock\)/{print $2}' time.out)
+                user=$(awk -F': ' '/User time/{print $2}' time.out)
+                rss=$(awk -F': ' '/Maximum resident/{print $2}' time.out)
+                ins=$( [ "$PERF" = 1 ] && awk -F, '/instructions/{print $1}' perf.out || echo -)
+                cyc=$( [ "$PERF" = 1 ] && awk -F, '/cycles/{print $1}' perf.out || echo -)
+                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$v" "$w" "$r" "$st$ok" "$wall" "$user" "$rss" "$ins" "$cyc" | tee -a runs.tsv
+              done
+            done
+          done
+
+      - name: Summary
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import statistics as st, collections, re
+          def secs(t):
+              p = [float(x) for x in t.split(':')]
+              return sum(v * 60 ** i for i, v in enumerate(reversed(p)))
+          cpu = next((l.split(':', 1)[1].strip() for l in open('machine.txt') if l.startswith('Model name')), '?')
+          nproc = next((l.split(':', 1)[1].strip() for l in open('machine.txt') if l.startswith('nproc')), '?')
+          d = collections.defaultdict(list)
+          for line in open('runs.tsv'):
+              v, w, r, ok, wall, user, rss, ins, cyc = line.rstrip('\n').split('\t')
+              d[(w, v)].append((ok, secs(wall), float(user), int(rss), ins, cyc))
+          print(f"CPU: {cpu}, nproc {nproc}\n")
+          print("| workers | build | accepted | wall (median) | user | max RSS | instructions | cycles |")
+          print("|---|---|---|---|---|---|---|---|")
+          for w in ['1', '4']:
+              base = None
+              for v in ['base', 'frozen']:
+                  rows = d[(w, v)]
+                  wall = st.median(x[1] for x in rows); user = st.median(x[2] for x in rows); rss = st.median(x[3] for x in rows)
+                  num = lambda i: st.median(int(x[i]) for x in rows) if all(x[i].isdigit() for x in rows) else None
+                  ins, cyc = num(4), num(5)
+                  if v == 'base':
+                      base = (wall, user, rss, ins, cyc)
+                  rel = lambda a, b: f" ({100 * (a / b - 1):+.1f}%)" if v == 'frozen' and b else ""
+                  f = lambda x, b, fmt: '-' if x is None else fmt(x) + rel(x, b)
+                  acc = sum(1 for x in rows if x[0].endswith('1'))
+                  print(f"| {w} | {v} | {acc}/{len(rows)} | {f(wall, base[0], lambda x: f'{x:.2f} s')} | {f(user, base[1], lambda x: f'{x:.2f} s')} | {f(rss, base[2], lambda x: f'{x/1024:.0f} MB')} | {f(ins, base[3], lambda x: f'{x/1e9:.1f} G')} | {f(cyc, base[4], lambda x: f'{x/1e9:.1f} G')} |")
+          PY
+
+      - name: Keep the raw numbers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: measure-frozen-x86
+          path: |
+            machine.txt
+            runs.tsv
+            perf-check.txt
+            build-*.log
