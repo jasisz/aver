@@ -13,6 +13,9 @@ impl Drop for Leaf {
         DROPS.fetch_add(1, Ordering::SeqCst);
     }
 }
+/// Two references to one leaf, the value the map holds.
+type Pair = Shared<(Shared<Leaf>, Shared<Leaf>)>;
+
 impl Freeze for Leaf {
     fn freeze(&self, _: &mut Freezer) -> bool {
         true
@@ -28,8 +31,7 @@ fn frozen_values_are_shared_by_threads_and_never_freed() {
             .map(|i| AverStr::from(format!("s{i}").as_str()))
             .collect(),
     );
-    let map: AverMap<i64, Shared<(Shared<Leaf>, Shared<Leaf>)>> =
-        AverMap::new().insert_owned(1, pair.clone());
+    let map: AverMap<i64, Pair> = AverMap::new().insert_owned(1, pair.clone());
     static SITE: AtomicBool = AtomicBool::new(false);
     at_first_fork(&SITE, |f| {
         assert!(f.freeze(&pair));
