@@ -133,6 +133,11 @@ jobs:
         # feature only; the producer's unit tests need `engine` as well.
         run: cargo test --workspace --exclude aver-lang && cargo test -p aver-cert --lib --all-features
 
+      - name: aver-rt born-frozen nodes
+        # Nodes are born in their own heap only under mimalloc as the global
+        # allocator; these test binaries set it, and need the feature.
+        run: cargo test -p aver-rt --features mimalloc --test born_frozen --test born_frozen_remote --test born_frozen_race
+
   proof_steps:
     name: Proof-step coverage ratchet
     runs-on: ubuntu-latest

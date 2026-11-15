@@ -3,6 +3,12 @@
 pub mod provider;
 
 mod block;
+#[cfg(all(
+    not(target_family = "wasm"),
+    feature = "mimalloc",
+    not(feature = "plain-counts")
+))]
+pub mod born;
 pub mod bytebuilder;
 mod counted;
 mod counts;
