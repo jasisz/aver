@@ -345,20 +345,19 @@ fn read_into(
         let read = {
             bytes.resize(start + want, 0);
             let r = read_at(file, &mut bytes[start + got..start + want], at + got as u64);
-            bytes.truncate(start + got);
+            // Keep what this read filled in, drop the rest of the zeroed room.
+            bytes.truncate(start + got + r.as_ref().map_or(0, |n| *n));
             r
         };
         match read {
             Ok(0) => break,
             Ok(n) => {
                 got += n;
-                // SAFETY: `pread` initialised these bytes (or `resize` did).
+                // SAFETY: `pread` initialised these bytes.
                 #[cfg(unix)]
                 unsafe {
                     bytes.set_len(start + got)
                 };
-                #[cfg(not(unix))]
-                bytes.resize(start + got, 0);
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) => return Err(error),
