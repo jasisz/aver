@@ -2,6 +2,14 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.35.0 "Frost" (unreleased)
+
+> _Data that threads share stops paying for its reference counts._
+
+- **Frozen shared data (compiled Rust, atomic counts).** What the first independent product at each place in the code, and the first `Work.begin` task begun at each place, hands to other threads is frozen: its nodes are no longer counted, so threads that read the same data no longer contend on its counts. Nodes the program built before its first fork are frozen by one scan of their heap instead of a walk. Testing for a frozen node is one branch on the sign bit of its count. Frozen nodes are never freed; the leak is bounded to one freeze per place and a quarter of physical memory. A build for one thread (`[rust] threads = "one"`) is unchanged. On a Lean kernel checker written in Aver: 4–8 workers 5–37% faster, at about +3% instructions.
+- **Fewer counts and copies in compiled Rust.** A self-recursive function that walks down a sum and returns a part of it by borrow no longer counts each step up and down. A lookup's result is lent to a caller that only reads it, including a field read straight off the call, instead of being copied.
+- **`Disk.readBytesAt` keeps the file open** between calls on the same path, in compiled Rust, on wasip2 and in the Node host for raw wasm-gc programs, so many small reads of one file no longer pay an open and close each. Compiled Rust reads with `pread` on a handle per thread. A write, append or delete through `Disk` closes it first.
+
 ## 0.34.1 — 2026-11-13
 
 ### Fixed
