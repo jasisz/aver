@@ -512,8 +512,8 @@ pub struct CodegenContext {
     /// recursive sum keeps (`[rust] equality_classes`), 0 for none.
     pub rust_equality_classes: u32,
     /// Rust: the build has atomic counts and the program an independent
-    /// product, so its types get a walk that freezes them (see
-    /// `aver_rt::freeze`).
+    /// product or a job kind, so its types get a walk that freezes them
+    /// (see `aver_rt::freeze`).
     pub rust_freezes: bool,
     /// Rust: the generated code calls `aver_rt::Walk::node_classed`, set by
     /// the emitter of a recursive sum's `==` when it writes the call. Only

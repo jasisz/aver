@@ -1,4 +1,5 @@
-//! Freezing what an independent product hands to its threads.
+//! Freezing what an independent product hands to its threads, and what a
+//! job's task carries.
 //!
 //! # The rule
 //!
@@ -10,6 +11,12 @@
 //! environment a checker hands to its workers, no longer write to the
 //! counts' cache lines on every copy and drop. A place freezes once: the
 //! next time it runs its values are left as they are.
+//!
+//! A task begun with the `begin` of a job kind (`Work.begin`) on the native
+//! path moves to the job's thread as it is, so the first task begun at a
+//! place freezes in the same way, before it is handed over. The job may
+//! outlive the code that began it; a frozen node does not mind. A task
+//! sent through its codec is copied instead, and freezes nothing.
 //!
 //! The walk goes from the leaves up: a node is frozen only once everything
 //! it holds is, and it stops at nodes already frozen and at nodes kept in
@@ -34,8 +41,9 @@
 //! What is frozen is never freed, so freezing leaks. It leaks at most:
 //!
 //! - once per place in the program, of which there are as many as `(a, b)!`
-//!   in its source, however many times each runs: a program that hands
-//!   fresh data to its threads in a loop freezes the first round's only;
+//!   and `begin` calls of job kinds in its source, however many times each
+//!   runs: a program that hands fresh data to its threads or begins jobs
+//!   with fresh tasks in a loop freezes the first round's only;
 //! - a quarter of the machine's physical memory over the whole process.
 //!   Past it a node is left as it is, and so is every node above it, which
 //!   is then counted and freed as before: what leaks is exactly the frozen
