@@ -4,6 +4,29 @@
 //! Rust value instead of walking it through a codec. Explicit host bindings
 //! always use the public value ABI, even if they copy a default's identity.
 
+/// `Work.begin` on the native path in a build that freezes (see
+/// `aver_rt::freeze`): the task moves to the job's thread as it is, so the
+/// first task begun at a place freezes everything it leads to, as an
+/// independent product freezes what it hands to its threads. A task
+/// encoded through its codec is copied, and freezes nothing.
+pub(super) const FROZEN_SUPPORT: &str = r#"
+pub fn encode_work_task_frozen<T: ProviderCodec + Send + 'static>(
+    value: T,
+    capability: &str,
+    place: &'static std::sync::atomic::AtomicBool,
+    freeze: fn(&T, &mut aver_rt::freeze::Freezer),
+) -> ProviderValue {
+    ensure_default_provider_bindings();
+    let providers = PROVIDERS.get().expect("provider registry initialized");
+    if native_work_enabled() && providers.native_work.contains(capability) {
+        aver_rt::freeze::at_first_fork(place, |f| freeze(&value, f));
+        pack_native_work(value)
+    } else {
+        encode(value, capability)
+    }
+}
+"#;
+
 pub(super) const SUPPORT: &str = r#"
 struct NativeWorkValue(std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>);
 

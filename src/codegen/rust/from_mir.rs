@@ -5198,18 +5198,24 @@ fn emit_mir_capability_call(
     let native_begin = job_kind && operation.canonical_name.ends_with(".begin");
     let native_take = job_kind && operation.canonical_name.ends_with(".take");
     let invoke_with = |names: &[String]| {
-        let encoder = if native_begin {
-            "encode_work_task"
-        } else {
-            "encode"
-        };
+        let freezes = ctx.codegen.is_some_and(|codegen| codegen.rust_freezes);
         let encoded = names
             .iter()
-            .map(|name| {
-                format!(
-                    "crate::provider_support::{encoder}({}, {:?})",
-                    name, operation.module
-                )
+            .map(|name| match (native_begin, freezes) {
+                // The first task begun here freezes what it holds (see
+                // `aver_rt::freeze`): a place in the code, a flag of its own.
+                (true, true) => format!(
+                    "crate::provider_support::encode_work_task_frozen({name}, {:?}, {{ static __FROZEN_TASK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false); &__FROZEN_TASK }}, |__task, __f| {{ #[allow(unused_imports)] use aver_rt::freeze::{{ViaFreeze as _, ViaSkip as _}}; let _ = (&aver_rt::freeze::Probe(__task)).freeze_into(__f); }})",
+                    operation.module
+                ),
+                (true, false) => format!(
+                    "crate::provider_support::encode_work_task({name}, {:?})",
+                    operation.module
+                ),
+                _ => format!(
+                    "crate::provider_support::encode({name}, {:?})",
+                    operation.module
+                ),
             })
             .collect::<Vec<_>>()
             .join(", ");

@@ -1,4 +1,5 @@
-//! Freezing what an independent product hands to its threads.
+//! Freezing what an independent product hands to its threads, and what a
+//! job's task carries.
 //!
 //! # The rule
 //!
@@ -10,6 +11,12 @@
 //! environment a checker hands to its workers, no longer write to the
 //! counts' cache lines on every copy and drop. A place freezes once: the
 //! next time it runs its values are left as they are.
+//!
+//! A task begun with the `begin` of a job kind (`Work.begin`) on the native
+//! path moves to the job's thread as it is, so the first task begun at a
+//! place freezes in the same way, before it is handed over. The job may
+//! outlive the code that began it; a frozen node does not mind. A task
+//! sent through its codec is copied instead, and freezes nothing.
 //!
 //! The walk goes from the leaves up: a node is frozen only once everything
 //! it holds is, and it stops at nodes already frozen and at nodes kept in
@@ -34,8 +41,9 @@
 //! What is frozen is never freed, so freezing leaks. It leaks at most:
 //!
 //! - once per place in the program, of which there are as many as `(a, b)!`
-//!   in its source, however many times each runs: a program that hands
-//!   fresh data to its threads in a loop freezes the first round's only;
+//!   and `begin` calls of job kinds in its source, however many times each
+//!   runs: a program that hands fresh data to its threads or begins jobs
+//!   with fresh tasks in a loop freezes the first round's only;
 //! - a quarter of the machine's physical memory over the whole process.
 //!   Past it a node is left as it is, and so is every node above it, which
 //!   is then counted and freed as before: what leaks is exactly the frozen
@@ -132,24 +140,53 @@ macro_rules! add_mark {
     }};
 }
 
+/// How much of the budget a walk takes at a time, so that freezing a node
+/// costs no atomic operation on the budget shared by the process.
+const BUDGET_CHUNK: isize = 1 << 20;
+
 /// One freezing walk.
 pub struct Freezer {
     /// The budget ran out: nothing more is frozen.
     spent: bool,
+    /// Budget this walk took and has not used yet; given back when it ends.
+    held: isize,
 }
 
 impl Freezer {
+    fn new() -> Self {
+        Freezer {
+            spent: remaining().load(Ordering::Relaxed) <= 0,
+            held: 0,
+        }
+    }
+
     /// Takes `bytes` from the budget: false, and the walk freezes nothing
     /// more, past it.
     #[inline]
     fn take(&mut self, bytes: usize) -> bool {
         let bytes = bytes as isize;
-        if remaining().fetch_sub(bytes, Ordering::Relaxed) < bytes {
-            remaining().fetch_add(bytes, Ordering::Relaxed);
-            self.spent = true;
+        if self.held < bytes && !self.take_more(bytes) {
             return false;
         }
+        self.held -= bytes;
         true
+    }
+
+    /// Takes another chunk of the budget, or what is left of it, for at
+    /// least `bytes`.
+    #[cold]
+    #[inline(never)]
+    fn take_more(&mut self, bytes: isize) -> bool {
+        let need = bytes - self.held;
+        for want in [BUDGET_CHUNK.max(need), need] {
+            if remaining().fetch_sub(want, Ordering::Relaxed) >= want {
+                self.held += want;
+                return true;
+            }
+            remaining().fetch_add(want, Ordering::Relaxed);
+        }
+        self.spent = true;
+        false
     }
 
     /// A node with a 64-bit count, of about `bytes` bytes, holding what
@@ -196,15 +233,22 @@ impl Freezer {
     }
 }
 
+impl Drop for Freezer {
+    /// The budget the walk took and did not use goes back.
+    fn drop(&mut self) {
+        if self.held > 0 {
+            remaining().fetch_add(self.held, Ordering::Relaxed);
+        }
+    }
+}
+
 /// Runs `walk` for the place `site` of an independent product the first
 /// time it runs there (see the module docs), unless the budget is spent.
 pub fn at_first_fork(site: &AtomicBool, walk: impl FnOnce(&mut Freezer)) {
     if site.load(Ordering::Relaxed) || site.swap(true, Ordering::Relaxed) {
         return;
     }
-    let mut f = Freezer {
-        spent: remaining().load(Ordering::Relaxed) <= 0,
-    };
+    let mut f = Freezer::new();
     if !f.spent {
         walk(&mut f);
     }

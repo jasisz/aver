@@ -214,10 +214,15 @@ fn transpile_project(
         }
         crate::config::RustThreads::One => None,
     };
-    // A build with atomic counts whose program has an independent product
-    // freezes what the product hands to its threads (see
-    // `aver_rt::freeze`); only then do its types get a walk for it.
-    ctx.rust_freezes = !ctx.single_thread && has_independent_product(ctx);
+    // A build with atomic counts whose program has an independent product or
+    // a job kind freezes what the product hands to its threads and what a
+    // task begun on the native path carries (see `aver_rt::freeze`); only
+    // then do its types get a walk for it.
+    ctx.rust_freezes = !ctx.single_thread
+        && (has_independent_product(ctx)
+            || crate::capability::work::job_kinds(&ctx.capabilities)
+                .iter()
+                .any(|(_, kind)| kind.is_ok()));
     // Every refusal below is recorded on the context as it happens; this
     // transpile reports its own, not a previous one's.
     ctx.substituted_compile_errors.borrow_mut().clear();
@@ -406,6 +411,7 @@ fn transpile_project(
                 ctx.runtime_policy_from_env,
                 &work_kinds,
                 work_max_jobs,
+                ctx.rust_freezes,
             ),
         ));
     }

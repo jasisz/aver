@@ -104,6 +104,7 @@ pub(super) fn generate_provider_runtime(
     runtime_policy_from_env: bool,
     work_kinds: &[WorkKindEmit],
     work_max_jobs: Option<usize>,
+    freezes: bool,
 ) -> String {
     let native_work = crate::capability::work::job_kinds(contracts)
         .iter()
@@ -127,6 +128,9 @@ pub(super) fn generate_provider_runtime(
     if native_work {
         out.push_str("struct ProviderState { registry: NativeProviderRegistry, native_work: std::collections::BTreeSet<String> }\n");
         out.push_str(native_work::SUPPORT);
+        if freezes {
+            out.push_str(native_work::FROZEN_SUPPORT);
+        }
         let enabled = if runtime_policy_from_env {
             "!crate::aver_replay::is_effect_tracking_active()"
         } else {
