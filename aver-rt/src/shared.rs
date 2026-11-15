@@ -31,13 +31,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A soft limit on the count, as in `Arc`: past it, a clone aborts rather
 /// than let the count wrap around (it would take `isize::MAX` leaked clones).
+#[cfg_attr(not(feature = "plain-counts"), allow(dead_code))]
 const MAX_REFCOUNT: usize = isize::MAX as usize;
 
-/// The count a node kept in a static starts with. No owner frees it: the
-/// last drop would have to bring it down from here to 0. It sits below
-/// [`MAX_REFCOUNT`], so a clone or drop that does count it stays correct,
-/// and far above any count of a heap node, which is how
-/// [`Shared::is_static`] tells the two apart.
+/// The count a node kept in a static starts with. No owner frees it, and no
+/// heap node gets that many owners, which is how [`Shared::is_static`] tells
+/// the two apart.
+///
+/// With atomic counts it has the top three bits set: its sign bit is the
+/// frozen mark (see `counts::frozen`), so no clone or drop counts it.
+#[cfg(not(feature = "plain-counts"))]
+const STATIC_COUNT: usize = !(usize::MAX >> 3);
+/// With `plain-counts` every clone and drop counts it, so it sits below
+/// [`MAX_REFCOUNT`], where a plain increment's sign test would abort, and
+/// the last drop would have to bring it down from here to 0.
+#[cfg(feature = "plain-counts")]
 const STATIC_COUNT: usize = MAX_REFCOUNT / 4 * 3;
 
 #[repr(C)]
@@ -139,11 +147,18 @@ impl<T: ?Sized> Shared<T> {
     }
 
     /// Whether the node is kept in a static, so cloning or dropping this
-    /// `Shared` needs no count. Nothing changes a static node's count by
-    /// half of [`STATIC_COUNT`], and no heap node gets that many owners.
+    /// `Shared` needs no count (see [`STATIC_COUNT`]): with atomic counts its
+    /// count has the sign bit set, as a frozen node's.
     #[inline]
     pub fn is_static(this: &Self) -> bool {
-        this.node().count.load(Ordering::Relaxed) > STATIC_COUNT / 2
+        #[cfg(not(feature = "plain-counts"))]
+        {
+            (this.node().count.load(Ordering::Relaxed) as isize) < 0
+        }
+        #[cfg(feature = "plain-counts")]
+        {
+            this.node().count.load(Ordering::Relaxed) > STATIC_COUNT / 2
+        }
     }
 
     /// Whether this is the only `Shared` to its node. The `Acquire` load

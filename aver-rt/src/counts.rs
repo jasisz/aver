@@ -25,7 +25,8 @@ use std::sync::atomic::{self, Ordering};
 macro_rules! counts_for {
     ($atomic:ty, $int:ty, $signed:ty, $inc:ident, $dec:ident, $frozen:ident) => {
         /// A new owner: whether the count went past the most a count may
-        /// reach, half its range, as `Arc`'s check before it aborts.
+        /// reach, half its range, as `Arc`'s check before it aborts. With
+        /// atomic counts that is never: see the increment below.
         #[inline(always)]
         pub(crate) fn $inc(count: &$atomic) -> bool {
             #[cfg(feature = "plain-counts")]
@@ -41,11 +42,18 @@ macro_rules! counts_for {
             }
             #[cfg(not(feature = "plain-counts"))]
             {
-                // A frozen node (see `frozen`) is never counted.
-                if count.load(Ordering::Relaxed) >= frozen::$frozen {
+                // A frozen node (see `frozen`) is never counted. The mark is
+                // the sign bit, so the test is one branch on it (`tbnz` on
+                // ARM, `js` on x86) after the load.
+                if (count.load(Ordering::Relaxed) as $signed) < 0 {
                     return false;
                 }
-                count.fetch_add(1, Ordering::Relaxed) > <$signed>::MAX as $int
+                // The result is not read, so this is `stadd` on ARM and
+                // `lock inc` on x86. There is no overflow test: a count that
+                // reaches the sign bit (2^31 or 2^63 owners) reads as frozen
+                // from then on, so the node is leaked, never freed early.
+                count.fetch_add(1, Ordering::Relaxed);
+                false
             }
         }
 
@@ -111,13 +119,101 @@ pub(crate) fn take32(count: &std::sync::atomic::AtomicU32) -> bool {
 /// `plain-counts` runs on one thread, has nothing to gain, and neither
 /// tests nor freezes: its counts are changed as they always were.
 ///
-/// The marks are far past any count of owners a program reaches (a quarter
-/// and an eighth of each range), so a live node never reads as frozen.
+/// The mark is the sign bit of each count, far past any count of owners a
+/// program reaches, so a live node never reads as frozen, and testing for it
+/// is a branch on one bit.
 #[cfg_attr(feature = "plain-counts", allow(dead_code))]
 pub(crate) mod frozen {
-    pub const F32: u32 = 0x4000_0000;
-    /// An eighth of the range of `usize`: 2^61 on a 64-bit target, 2^29 on
-    /// a 32-bit one (wasm32), below the count of a node kept in a static
-    /// (three quarters of `isize::MAX`) on both.
-    pub const F64: usize = 1 << (usize::BITS - 3);
+    pub const F32: u32 = 0x8000_0000;
+    /// The sign bit of `usize`: 2^63 on a 64-bit target, 2^31 on a 32-bit
+    /// one (wasm32). A node kept in a static starts past it too.
+    pub const F64: usize = 1 << (usize::BITS - 1);
+}
+
+#[cfg(all(test, not(feature = "plain-counts")))]
+mod frozen_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, AtomicUsize};
+    #[test]
+    fn frozen_stays_frozen_under_many_incs_and_decs() {
+        let c = AtomicU32::new(frozen::F32 + 5);
+        for _ in 0..(1u64 << 22) {
+            assert!(!inc32(&c));
+        }
+        assert!(c.load(Ordering::Relaxed) >= frozen::F32);
+        for _ in 0..(1u64 << 22) {
+            assert!(!dec32(&c));
+        }
+        assert!(c.load(Ordering::Relaxed) >= frozen::F32);
+        // threads mixing both
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for i in 0..(1u64 << 20) {
+                        if i & 1 == 0 {
+                            assert!(!inc32(&c))
+                        } else {
+                            assert!(!dec32(&c))
+                        }
+                    }
+                });
+            }
+        });
+        assert!(c.load(Ordering::Relaxed) >= frozen::F32);
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for _ in 0..(1u64 << 20) {
+                        assert!(!dec32(&c))
+                    }
+                });
+            }
+        });
+        assert!(c.load(Ordering::Relaxed) >= frozen::F32);
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for _ in 0..(1u64 << 20) {
+                        assert!(!inc32(&c))
+                    }
+                });
+            }
+        });
+        assert!(c.load(Ordering::Relaxed) >= frozen::F32);
+        let d = AtomicUsize::new(frozen::F64 + 1);
+        for _ in 0..1000 {
+            assert!(!inc(&d));
+            assert!(!dec(&d));
+            assert!(!dec(&d));
+        }
+        assert!(d.load(Ordering::Relaxed) >= frozen::F64);
+    }
+    #[test]
+    fn live_counts() {
+        let c = AtomicU32::new(1);
+        assert!(!inc32(&c));
+        assert!(!inc32(&c));
+        assert!(!dec32(&c));
+        assert!(!dec32(&c));
+        assert!(dec32(&c));
+        let d = AtomicUsize::new(1);
+        assert!(!inc(&d));
+        assert!(!dec(&d));
+        assert!(dec(&d));
+        // racing last drops: exactly one sees the last
+        for _ in 0..2000 {
+            let c = AtomicU32::new(8);
+            let lasts = AtomicU32::new(0);
+            std::thread::scope(|s| {
+                for _ in 0..8 {
+                    s.spawn(|| {
+                        if dec32(&c) {
+                            lasts.fetch_add(1, Ordering::Relaxed);
+                        }
+                    });
+                }
+            });
+            assert_eq!(lasts.load(Ordering::Relaxed), 1);
+        }
+    }
 }
