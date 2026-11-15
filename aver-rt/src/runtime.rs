@@ -207,8 +207,6 @@ pub fn read_bytes_at(
     offset: &crate::AverInt,
     length: &crate::AverInt,
 ) -> Result<Vec<u8>, String> {
-    use std::io::{Read, Seek};
-
     let offset = offset
         .to_i64()
         .ok_or_else(|| "Disk.readBytesAt: offset must fit a 64-bit integer".to_string())?;
@@ -222,46 +220,154 @@ pub fn read_bytes_at(
         return Err("Disk.readBytesAt: length must be non-negative".to_string());
     }
 
-    let mut held = READ_AT_HANDLE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if held.as_ref().is_none_or(|(held_path, _)| held_path != path) {
-        *held = None;
-        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
-        *held = Some((path.to_string(), file));
-    }
-    let Some((_, file)) = held.as_mut() else {
-        unreachable!("the handle was opened above");
-    };
-    file.seek(std::io::SeekFrom::Start(offset as u64))
-        .map_err(|error| error.to_string())?;
-    // Room for what the read can return: `length`, or less when the file ends
-    // sooner, so a large `length` reserves no more than the file holds.
-    let left = file
-        .metadata()
-        .map_or(0, |meta| meta.len().saturating_sub(offset as u64));
-    let mut bytes = Vec::with_capacity(left.min(length as u64) as usize);
-    file.take(length as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    Ok(bytes)
+    read_at_held(path, offset as u64, length as u64)
 }
 
-/// The file `read_bytes_at` read last, kept open for the next call.
+/// Bumped by every Disk call that changes the filesystem: a thread's held
+/// file opened before then is dropped before its next read.
+static READ_AT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The file `read_bytes_at` read last on this thread, kept open for the
+/// next call, with the generation it was opened in.
 ///
 /// A program reading many small ranges of one file would otherwise pay an
-/// open and a close for every range. Writes through an open handle are seen
-/// by it, but a file deleted or replaced under the same name is not, so every
-/// Disk call that changes the filesystem drops the handle first. A file
+/// open and a close for every range. Each thread holds its own handle and
+/// reads at an offset (`pread`), so threads reading the same file take no
+/// lock and wait for no one. Writes through an open handle are seen by it,
+/// but a file deleted or replaced under the same name is not, so every Disk
+/// call that changes the filesystem starts a new generation first. A file
 /// replaced by another process while the program runs is read from the
 /// version that was open.
-static READ_AT_HANDLE: std::sync::Mutex<Option<(String, std::fs::File)>> =
-    std::sync::Mutex::new(None);
+struct HeldFile {
+    generation: u64,
+    path: String,
+    file: std::fs::File,
+    /// The file's length when it was opened: the room a read reserves.
+    len: u64,
+}
+
+thread_local! {
+    static READ_AT_HELD: std::cell::RefCell<Option<HeldFile>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Reads into `buf` from `offset` of `file`: how many bytes, 0 at the end.
+#[cfg(not(unix))]
+fn read_at(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::FileExt::seek_read(file, buf, offset)
+    }
+    #[cfg(not(windows))]
+    {
+        use std::io::{Read, Seek};
+        let mut file = file;
+        file.seek(std::io::SeekFrom::Start(offset))?;
+        file.read(buf)
+    }
+}
+
+fn read_at_held(path: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+    let generation = READ_AT_GENERATION.load(std::sync::atomic::Ordering::Acquire);
+    READ_AT_HELD.with(|cell| {
+        let mut held = cell.borrow_mut();
+        if held
+            .as_ref()
+            .is_none_or(|h| h.generation != generation || h.path != path)
+        {
+            *held = None;
+            let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+            let len = file.metadata().map_or(0, |meta| meta.len());
+            *held = Some(HeldFile {
+                generation,
+                path: path.to_string(),
+                file,
+                len,
+            });
+        }
+        let Some(h) = held.as_ref() else {
+            unreachable!("the handle was opened above");
+        };
+        // Room for what the file held past `offset` when it was opened, so
+        // a large `length` reserves no more than that; a file that has grown
+        // since is read on in larger rooms.
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut room = length.min(h.len.saturating_sub(offset)).max(1 << 12);
+        let mut at = offset;
+        loop {
+            let want = (length - bytes.len() as u64).min(room) as usize;
+            let got =
+                read_into(&h.file, &mut bytes, want, at).map_err(|error| error.to_string())?;
+            if got < want || bytes.len() as u64 == length {
+                return Ok(bytes);
+            }
+            at += got as u64;
+            room = room.saturating_mul(2);
+        }
+    })
+}
+
+/// Appends up to `want` bytes of `file` from `at` to `bytes`, reading until
+/// that many or the end: how many.
+fn read_into(
+    file: &std::fs::File,
+    bytes: &mut Vec<u8>,
+    want: usize,
+    at: u64,
+) -> std::io::Result<usize> {
+    bytes.reserve_exact(want);
+    let start = bytes.len();
+    let mut got = 0;
+    while got < want {
+        #[cfg(unix)]
+        let read = {
+            use std::os::fd::AsRawFd;
+            unsafe extern "C" {
+                fn pread(fd: i32, buf: *mut u8, count: usize, offset: i64) -> isize;
+            }
+            // SAFETY: the room past `start + got` is reserved above, and
+            // `pread` writes at most `want - got` bytes there.
+            let n = unsafe {
+                pread(
+                    file.as_raw_fd(),
+                    bytes.as_mut_ptr().add(start + got),
+                    want - got,
+                    (at + got as u64) as i64,
+                )
+            };
+            if n < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(n as usize)
+            }
+        };
+        #[cfg(not(unix))]
+        let read = {
+            bytes.resize(start + want, 0);
+            let r = read_at(file, &mut bytes[start + got..start + want], at + got as u64);
+            // Keep what this read filled in, drop the rest of the zeroed room.
+            bytes.truncate(start + got + r.as_ref().map_or(0, |n| *n));
+            r
+        };
+        match read {
+            Ok(0) => break,
+            Ok(n) => {
+                got += n;
+                // SAFETY: `pread` initialised these bytes.
+                #[cfg(unix)]
+                unsafe {
+                    bytes.set_len(start + got)
+                };
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(got)
+}
 
 fn forget_read_at_handle() {
-    *READ_AT_HANDLE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    READ_AT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 }
 
 pub fn file_size(path: &str) -> Result<crate::AverInt, String> {
@@ -537,6 +643,32 @@ mod disk_binary_tests {
         );
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn threads_read_ranges_of_one_file_at_once() {
+        let path = temp_file();
+        let path_text = path.to_string_lossy().into_owned();
+        let content: Vec<u8> = (0..100_000u32).map(|i| (i % 251) as u8).collect();
+        write_bytes(&path_text, &content).expect("write bytes");
+        std::thread::scope(|s| {
+            for t in 0..8u64 {
+                let (path_text, content) = (&path_text, &content);
+                s.spawn(move || {
+                    for i in 0..500u64 {
+                        let at = (t * 7919 + i * 104_729) % 99_000;
+                        let got = read_bytes_at(
+                            path_text,
+                            &AverInt::from_i64(at as i64),
+                            &AverInt::from_i64(1000),
+                        )
+                        .expect("read at");
+                        assert_eq!(got, content[at as usize..at as usize + 1000]);
+                    }
+                });
+            }
+        });
+        delete_file(&path_text).expect("delete");
     }
 
     #[test]

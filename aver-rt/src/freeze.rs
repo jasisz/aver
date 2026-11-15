@@ -248,6 +248,14 @@ pub fn at_first_fork(site: &AtomicBool, walk: impl FnOnce(&mut Freezer)) {
     if site.load(Ordering::Relaxed) || site.swap(true, Ordering::Relaxed) {
         return;
     }
+    // The nodes born before this first fork are frozen by one scan of
+    // their heap, and the walk stops at them (see `crate::born`).
+    #[cfg(all(
+        not(target_family = "wasm"),
+        feature = "mimalloc",
+        not(feature = "plain-counts")
+    ))]
+    crate::born::freeze_born();
     let mut f = Freezer::new();
     if !f.spent {
         walk(&mut f);

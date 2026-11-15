@@ -65,6 +65,18 @@ libmimalloc-sys = { version = "0.1.49", default-features = false }
 name = "list_concat"
 harness = false
 
+[[test]]
+name = "born_frozen"
+harness = false
+
+[[test]]
+name = "born_frozen_remote"
+harness = false
+
+[[test]]
+name = "born_frozen_race"
+harness = false
+
 # On wasm32-unknown-unknown:
 # - `rand` pulls in `getrandom`, which needs the `js` feature to use
 #   the browser's crypto API. Configuring getrandom here (not behind

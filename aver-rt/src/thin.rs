@@ -174,14 +174,40 @@ impl<S: ThinSum> Thin<S> {
     /// `P` is the field struct of constructor `tag` of `S`.
     #[inline]
     pub unsafe fn new<P>(tag: u32, fields: P) -> Self {
-        let node = Box::new(Node {
+        let node = Node {
             header: Header {
                 count: AtomicU32::new(1),
                 tag: AtomicU32::new(tag),
             },
             fields,
-        });
-        let ptr = NonNull::from(Box::leak(node)).cast::<Header>();
+        };
+        // Before the first fork a node may be born in the heap that the
+        // fork freezes by one scan (see `crate::born`).
+        #[cfg(all(
+            not(target_family = "wasm"),
+            feature = "mimalloc",
+            not(feature = "plain-counts")
+        ))]
+        let born: *mut Node<P> = if align_of::<Node<P>>() <= 16 {
+            crate::born::alloc(size_of::<Node<P>>()).cast()
+        } else {
+            std::ptr::null_mut()
+        };
+        #[cfg(not(all(
+            not(target_family = "wasm"),
+            feature = "mimalloc",
+            not(feature = "plain-counts")
+        )))]
+        let born: *mut Node<P> = std::ptr::null_mut();
+        let ptr = match NonNull::new(born) {
+            // SAFETY: fresh memory of the node's size and alignment, which
+            // the global allocator gives back as it does a box of the node.
+            Some(at) => unsafe {
+                at.write(node);
+                at.cast::<Header>()
+            },
+            None => NonNull::from(Box::leak(Box::new(node))).cast::<Header>(),
+        };
         // An allocation never sits in the first page; were one to, a node
         // would read as a constructor without fields. A sum without such a
         // constructor never reads a node as one, so it has nothing to check.
@@ -335,6 +361,12 @@ impl<S: ThinSum> Thin<S> {
         if !crate::counts::take32(count) {
             return Err(self);
         }
+        #[cfg(all(
+            not(target_family = "wasm"),
+            feature = "mimalloc",
+            not(feature = "plain-counts")
+        ))]
+        crate::born::on_free();
         let this = ManuallyDrop::new(self);
         let node = this.ptr.cast::<Node<P>>().as_ptr();
         // SAFETY: the fields are moved out once, and the box is then freed
@@ -359,6 +391,12 @@ impl<S: ThinSum> Thin<S> {
         if !crate::counts::take32(count) {
             return Err(self);
         }
+        #[cfg(all(
+            not(target_family = "wasm"),
+            feature = "mimalloc",
+            not(feature = "plain-counts")
+        ))]
+        crate::born::on_free();
         let this = ManuallyDrop::new(self);
         let node = this.ptr.cast::<Node<P>>().as_ptr();
         // SAFETY: the fields are moved out once; the memory is kept by the
@@ -394,17 +432,19 @@ impl<S: ThinSum> Thin<S> {
                 continue;
             }
             token.held.set(None);
-            let node = Node {
-                header: Header {
-                    count: AtomicU32::new(1),
-                    tag: AtomicU32::new(tag),
-                },
-                fields,
-            };
             // SAFETY: the token holds an allocation of `layout`, which is
-            // `Node<P>`'s, that nothing reads; the node is freed by
-            // `free_node::<P>` with the same layout.
-            unsafe { held.ptr.cast::<Node<P>>().write(node) };
+            // `Node<P>`'s, whose header is still there with a count of 0
+            // and whose fields nothing reads; the node is freed by
+            // `free_node::<P>` with the same layout. The header is written
+            // by atomic stores: the scan of the born heap (`crate::born`)
+            // may read the count of a block meanwhile.
+            unsafe {
+                let node = held.ptr.cast::<Node<P>>().as_ptr();
+                (&raw mut (*node).fields).write(fields);
+                let header = &(*node).header;
+                header.tag.store(tag, Ordering::Relaxed);
+                header.count.store(1, Ordering::Relaxed);
+            }
             #[cfg(aver_reuse_stats)]
             stats::REUSED.fetch_add(1, Ordering::Relaxed);
             return Self::from_ptr(held.ptr);
@@ -419,6 +459,14 @@ impl<S: ThinSum> Thin<S> {
     #[cold]
     #[inline(never)]
     fn drop_slow(&mut self) {
+        // A node of the born heap goes back only through here, a take or
+        // a lazy fill: see `crate::born`.
+        #[cfg(all(
+            not(target_family = "wasm"),
+            feature = "mimalloc",
+            not(feature = "plain-counts")
+        ))]
+        crate::born::on_free();
         let tag = self.header().tag.load(Ordering::Relaxed) & Self::TAG_MASK;
         let mut put_aside = Vec::new();
         unsafe { S::free(self.ptr, tag, Pending::new(&mut put_aside)) };
@@ -1017,6 +1065,12 @@ impl<S: ThinSum + HandOver> Thin<S> {
             unsafe { into.write(value.fields::<P>().clone()) };
             return;
         }
+        #[cfg(all(
+            not(target_family = "wasm"),
+            feature = "mimalloc",
+            not(feature = "plain-counts")
+        ))]
+        crate::born::on_free();
         let value = ManuallyDrop::new(value);
         let from = value.ptr.cast::<Node<P>>().as_ptr();
         unsafe { into.write(std::ptr::read(&raw const (*from).fields)) };
