@@ -108,6 +108,12 @@ static NEXT_SLOT: AtomicU32 = AtomicU32::new(1);
 /// Slots given back by threads that ended.
 static FREE_SLOTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
+/// How many slots [`FREE_SLOTS`] holds, kept beside it so that a thread
+/// with no slot looks at the lock only when one may be free. Without it,
+/// every join of every thread past [`SLOTS`] took the lock, and on many
+/// threads they spent most of their time waiting for it.
+static FREE_COUNT: AtomicU32 = AtomicU32::new(0);
+
 struct Classes {
     /// This thread's slot: 0 until it first gives an id, [`NO_SLOT`] when
     /// all were taken.
@@ -165,7 +171,15 @@ impl Classes {
     /// next never used. A thread that found none tries again later.
     fn slot(&mut self) -> bool {
         if self.slot == 0 || self.slot == NO_SLOT {
-            let back = FREE_SLOTS.lock().ok().and_then(|mut free| free.pop());
+            let back = if FREE_COUNT.load(Ordering::Relaxed) == 0 {
+                None
+            } else {
+                FREE_SLOTS.lock().ok().and_then(|mut free| {
+                    let slot = free.pop();
+                    FREE_COUNT.store(free.len() as u32, Ordering::Relaxed);
+                    slot
+                })
+            };
             self.slot = match back {
                 Some(slot) => slot,
                 // A thread that loses the race to another taking a slot
@@ -188,6 +202,7 @@ impl Drop for Classes {
             && let Ok(mut free) = FREE_SLOTS.lock()
         {
             free.push(self.slot);
+            FREE_COUNT.store(free.len() as u32, Ordering::Relaxed);
         }
     }
 }
@@ -374,6 +389,41 @@ mod tests {
                 });
             }
         });
+    }
+
+    #[test]
+    fn threads_past_the_slots_still_join_and_a_freed_slot_is_taken() {
+        // More threads than slots at once: those without a slot join many
+        // times (each join once took the lock), and none of them breaks.
+        let threads = 3 * SLOTS as usize;
+        let start = std::sync::Barrier::new(threads);
+        let with_classes = AtomicU32::new(0);
+        std::thread::scope(|scope| {
+            for t in 0..threads {
+                let (start, with_classes) = (&start, &with_classes);
+                scope.spawn(move || {
+                    start.wait();
+                    for k in 0..1000 {
+                        let base = 0x10_0000 + (t * 1000 + k) * 0x20;
+                        let (x, y) = (fake(base), fake(base + 0x10));
+                        join(&x, &y);
+                        if k == 0 && same_nodes(&x, &y) {
+                            with_classes.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+        });
+        assert!(with_classes.load(Ordering::Relaxed) >= 1);
+        // Their slots came back: a later thread has classes again.
+        let later = std::thread::spawn(|| {
+            let (x, y) = (fake(0x9_0000), fake(0x9_1000));
+            join(&x, &y);
+            same_nodes(&x, &y)
+        })
+        .join()
+        .unwrap();
+        assert!(later);
     }
 
     #[test]
