@@ -965,7 +965,11 @@ fn mul_slow(a: &AverInt, b: &AverInt) -> AverInt {
 /// vector) mostly is. `None` when the operands are not of that shape or the
 /// long one is dense, where the general algorithm is as good.
 fn mul_long_short(x: &BigInt, y: &BigInt) -> Option<BigInt> {
-    let (long, short) = if x.magnitude().bits() >= y.magnitude().bits() { (x, y) } else { (y, x) };
+    let (long, short) = if x.magnitude().bits() >= y.magnitude().bits() {
+        (x, y)
+    } else {
+        (y, x)
+    };
     let s: Vec<u64> = short.magnitude().to_u64_digits();
     if s.is_empty() || s.len() > 32 || long.magnitude().bits() < 64 * 64 {
         return None;
@@ -1000,7 +1004,11 @@ fn mul_long_short(x: &BigInt, y: &BigInt) -> Option<BigInt> {
         digits.push(w as u32);
         digits.push((w >> 32) as u32);
     }
-    let sign = if long.sign() == short.sign() { Sign::Plus } else { Sign::Minus };
+    let sign = if long.sign() == short.sign() {
+        Sign::Plus
+    } else {
+        Sign::Minus
+    };
     Some(BigInt::from_biguint(sign, BigUint::new(digits)))
 }
 
@@ -1089,7 +1097,11 @@ fn rem_euclid_slow(a: &AverInt, b: &AverInt) -> AverInt {
         }
         // The remainder of the magnitude; a negative value's Euclidean
         // remainder is the complement.
-        let r = if x.sign() == Sign::Minus && r != 0 { m - r } else { r };
+        let r = if x.sign() == Sign::Minus && r != 0 {
+            m - r
+        } else {
+            r
+        };
         return AverInt::from_i64(r as i64);
     }
     let (_q, r) = euclid_div_rem(&a.to_bigint(), &b.to_bigint());
@@ -1988,7 +2000,11 @@ mod tests {
     fn sparse(n: usize, gap: usize, negative: bool) -> BigInt {
         let mut digits = Vec::new();
         for i in 0..n {
-            let d: u64 = if i % gap == 0 { 0x9e37_79b9_7f4a_7c15u64.wrapping_mul(i as u64 + 1) } else { 0 };
+            let d: u64 = if i % gap == 0 {
+                0x9e37_79b9_7f4a_7c15u64.wrapping_mul(i as u64 + 1)
+            } else {
+                0
+            };
             digits.push(d as u32);
             digits.push((d >> 32) as u32);
         }
@@ -2004,7 +2020,9 @@ mod tests {
                 let x = sparse(n, gap, neg);
                 for &m in &[1i64, 2, 3, 255, 2147483647, 4294967295, 4294967296, 1 << 40] {
                     let (_q, want) = euclid_div_rem(&x, &BigInt::from(m));
-                    let got = AverInt::from_bigint(x.clone()).rem_euclid(&AverInt::from_i64(m)).unwrap();
+                    let got = AverInt::from_bigint(x.clone())
+                        .rem_euclid(&AverInt::from_i64(m))
+                        .unwrap();
                     assert_eq!(got.into_bigint(), want, "n={n} gap={gap} m={m} neg={neg}");
                 }
             }
@@ -2013,8 +2031,18 @@ mod tests {
 
     #[test]
     fn long_by_short_products_agree_with_the_general_product() {
-        for &(na, ga, na_neg) in &[(80usize, 7usize, false), (300, 2, true), (5000, 13, false), (100, 1, false)] {
-            for &(nb, gb, nb_neg) in &[(1usize, 1usize, false), (4, 1, true), (31, 2, false), (40, 1, false)] {
+        for &(na, ga, na_neg) in &[
+            (80usize, 7usize, false),
+            (300, 2, true),
+            (5000, 13, false),
+            (100, 1, false),
+        ] {
+            for &(nb, gb, nb_neg) in &[
+                (1usize, 1usize, false),
+                (4, 1, true),
+                (31, 2, false),
+                (40, 1, false),
+            ] {
                 let (a, b) = (sparse(na, ga, na_neg), sparse(nb, gb, nb_neg));
                 let want = &a * &b;
                 let got = AverInt::from_bigint(a.clone()).mul(&AverInt::from_bigint(b.clone()));
