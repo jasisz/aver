@@ -177,7 +177,7 @@ fn count_reaches_sign_tail(n: &AverInt, value: &AverInt) -> bool {
 ///
 /// The word is odd for an inline integer `n`, stored as `2n + 1`, which covers
 /// `[-2^62, 2^62)`. It is even for any other value: then it is the address of
-/// a heap `BigInt` that this value owns, allocated by a `Box` (so aligned to at
+/// a heap `BigInt` that this value owns, allocated in an `Arc` (so aligned to at
 /// least 8, its lowest bit is 0). Neither form is zero, so `Option<AverInt>`
 /// takes the zero word for `None` and is one word too.
 ///
@@ -192,6 +192,7 @@ mod repr {
     use core::num::NonZeroU64;
 
     use num_bigint::BigInt;
+    use std::sync::Arc;
 
     /// The smallest value stored inline.
     pub(super) const INLINE_MIN: i64 = -(1 << 62);
@@ -200,9 +201,10 @@ mod repr {
 
     pub(super) struct Repr {
         word: NonZeroU64,
-        // An even word owns a `Box<BigInt>`: `Send`, `Sync` and drop check
-        // follow from it.
-        _owns: PhantomData<Box<BigInt>>,
+        // An even word owns one count of an `Arc<BigInt>`: `Send`, `Sync`
+        // and drop check follow from it. A copy shares the integer, so
+        // passing a large value around costs a count, not its digits.
+        _owns: PhantomData<Arc<BigInt>>,
     }
 
     impl Repr {
@@ -234,8 +236,8 @@ mod repr {
         /// Box `b`. Canonical form wants `b` outside the inline range; that is
         /// the caller's rule, not a condition of memory safety.
         pub(super) fn from_big(b: BigInt) -> Self {
-            let address = Box::into_raw(Box::new(b)).expose_provenance() as u64;
-            debug_assert!(address & 1 == 0, "a BigInt box is aligned");
+            let address = Arc::into_raw(Arc::new(b)).expose_provenance() as u64;
+            debug_assert!(address & 1 == 0, "a BigInt in an Arc is aligned");
             Repr {
                 word: NonZeroU64::new(address).expect("a Box address is not null"),
                 _owns: PhantomData,
@@ -243,8 +245,14 @@ mod repr {
         }
 
         #[inline(always)]
-        fn pointer(&self) -> *mut BigInt {
-            core::ptr::with_exposed_provenance_mut(self.word.get() as usize)
+        fn pointer(&self) -> *const BigInt {
+            core::ptr::with_exposed_provenance(self.word.get() as usize)
+        }
+
+        /// Whether two boxed words share one heap integer.
+        #[inline(always)]
+        pub(super) fn same_box(&self, other: &Repr) -> bool {
+            self.word == other.word
         }
 
         /// The heap integer, when the word is an address.
@@ -265,9 +273,10 @@ mod repr {
             if this.is_inline() {
                 return Err(this.word());
             }
-            // SAFETY: as in `big`; `this` is never dropped, so the box is
-            // freed once, by the returned value.
-            Ok(*unsafe { Box::from_raw(this.pointer()) })
+            // SAFETY: as in `big`; `this` is never dropped, so its count is
+            // given up once, here.
+            let shared = unsafe { Arc::from_raw(this.pointer()) };
+            Ok(Arc::try_unwrap(shared).unwrap_or_else(|shared| (*shared).clone()))
         }
     }
 
@@ -303,14 +312,19 @@ mod repr {
         #[inline(never)]
         fn drop_big(&mut self) {
             // SAFETY: as in `big`; drop runs once, and only for a boxed word.
-            drop(unsafe { Box::from_raw(self.pointer()) });
+            drop(unsafe { Arc::from_raw(self.pointer()) });
         }
 
         #[cold]
         #[inline(never)]
         fn clone_big(&self) -> Self {
-            // SAFETY: as in `big`; called only for a boxed word.
-            Repr::from_big(unsafe { &*self.pointer() }.clone())
+            // SAFETY: as in `big`; called only for a boxed word, whose count
+            // this value holds, so the integer is alive.
+            unsafe { Arc::increment_strong_count(self.pointer()) };
+            Repr {
+                word: self.word,
+                _owns: PhantomData,
+            }
         }
     }
 }
@@ -916,7 +930,7 @@ impl Eq for AverInt {}
 #[cold]
 #[inline(never)]
 fn eq_slow(a: &AverInt, b: &AverInt) -> bool {
-    a.0.big() == b.0.big()
+    a.0.same_box(&b.0) || a.0.big() == b.0.big()
 }
 
 // The `BigInt` paths of the arithmetic above, kept out of line so the
@@ -937,7 +951,57 @@ fn sub_slow(a: &AverInt, b: &AverInt) -> AverInt {
 #[cold]
 #[inline(never)]
 fn mul_slow(a: &AverInt, b: &AverInt) -> AverInt {
-    AverInt::from_bigint(&*a.to_bigint() * &*b.to_bigint())
+    let (x, y) = (a.to_bigint(), b.to_bigint());
+    if let Some(p) = mul_long_short(&x, &y) {
+        return AverInt::from_bigint(p);
+    }
+    AverInt::from_bigint(&*x * &*y)
+}
+
+/// The product of a long operand and a short one (at most 32 digits), by
+/// rows over the long one's digits that skips its zero digits: the general
+/// algorithm runs a row over the whole long operand per digit of the short
+/// one, zero digits included, which a sparse long operand (a bit-sliced
+/// vector) mostly is. `None` when the operands are not of that shape or the
+/// long one is dense, where the general algorithm is as good.
+fn mul_long_short(x: &BigInt, y: &BigInt) -> Option<BigInt> {
+    let (long, short) = if x.magnitude().bits() >= y.magnitude().bits() { (x, y) } else { (y, x) };
+    let s: Vec<u64> = short.magnitude().to_u64_digits();
+    if s.is_empty() || s.len() > 32 || long.magnitude().bits() < 64 * 64 {
+        return None;
+    }
+    let l: Vec<u64> = long.magnitude().to_u64_digits();
+    let nonzero = l.iter().filter(|&&d| d != 0).count();
+    if nonzero * 4 > l.len() * 3 {
+        return None;
+    }
+    let mut acc = vec![0u64; l.len() + s.len() + 1];
+    for (i, &d) in l.iter().enumerate() {
+        if d == 0 {
+            continue;
+        }
+        let mut carry: u128 = 0;
+        let row = &mut acc[i..];
+        for (j, &e) in s.iter().enumerate() {
+            let t = row[j] as u128 + (d as u128) * (e as u128) + carry;
+            row[j] = t as u64;
+            carry = t >> 64;
+        }
+        let mut k = s.len();
+        while carry != 0 {
+            let t = row[k] as u128 + carry;
+            row[k] = t as u64;
+            carry = t >> 64;
+            k += 1;
+        }
+    }
+    let mut digits: Vec<u32> = Vec::with_capacity(acc.len() * 2);
+    for w in acc {
+        digits.push(w as u32);
+        digits.push((w >> 32) as u32);
+    }
+    let sign = if long.sign() == short.sign() { Sign::Plus } else { Sign::Minus };
+    Some(BigInt::from_biguint(sign, BigUint::new(digits)))
 }
 
 #[cold]
@@ -1010,6 +1074,24 @@ fn div_euclid_slow(a: &AverInt, b: &AverInt) -> AverInt {
 #[cold]
 #[inline(never)]
 fn rem_euclid_slow(a: &AverInt, b: &AverInt) -> AverInt {
+    // A large value modulo a positive divisor below 2^32 (a hash modulus,
+    // a digit base): one pass over its digits on machine words, with no
+    // quotient made, where the general division builds a quotient as long
+    // as the value.
+    if let (View::Big(x), View::Small(m)) = (a.view(), b.view())
+        && m > 0
+        && m <= u32::MAX as i64
+    {
+        let m = m as u64;
+        let mut r: u64 = 0;
+        for d in x.magnitude().iter_u32_digits().rev() {
+            r = ((r << 32) | d as u64) % m;
+        }
+        // The remainder of the magnitude; a negative value's Euclidean
+        // remainder is the complement.
+        let r = if x.sign() == Sign::Minus && r != 0 { m - r } else { r };
+        return AverInt::from_i64(r as i64);
+    }
     let (_q, r) = euclid_div_rem(&a.to_bigint(), &b.to_bigint());
     AverInt::from_bigint(r)
 }
@@ -1898,6 +1980,48 @@ mod tests {
                 "huge >>",
             );
             assert_eq!(a.shift_left(&huge), Err(ShiftCountError::TooLarge));
+        }
+    }
+
+    /// A value of `n` 64-bit digits, every `gap`-th one set to a pattern,
+    /// the rest zero, with the given sign.
+    fn sparse(n: usize, gap: usize, negative: bool) -> BigInt {
+        let mut digits = Vec::new();
+        for i in 0..n {
+            let d: u64 = if i % gap == 0 { 0x9e37_79b9_7f4a_7c15u64.wrapping_mul(i as u64 + 1) } else { 0 };
+            digits.push(d as u32);
+            digits.push((d >> 32) as u32);
+        }
+        digits.push(1);
+        let m = BigUint::new(digits);
+        BigInt::from_biguint(if negative { Sign::Minus } else { Sign::Plus }, m)
+    }
+
+    #[test]
+    fn remainder_by_a_small_divisor_agrees_with_division() {
+        for &neg in &[false, true] {
+            for &(n, gap) in &[(1usize, 1usize), (3, 1), (70, 3), (500, 1)] {
+                let x = sparse(n, gap, neg);
+                for &m in &[1i64, 2, 3, 255, 2147483647, 4294967295, 4294967296, 1 << 40] {
+                    let (_q, want) = euclid_div_rem(&x, &BigInt::from(m));
+                    let got = AverInt::from_bigint(x.clone()).rem_euclid(&AverInt::from_i64(m)).unwrap();
+                    assert_eq!(got.into_bigint(), want, "n={n} gap={gap} m={m} neg={neg}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn long_by_short_products_agree_with_the_general_product() {
+        for &(na, ga, na_neg) in &[(80usize, 7usize, false), (300, 2, true), (5000, 13, false), (100, 1, false)] {
+            for &(nb, gb, nb_neg) in &[(1usize, 1usize, false), (4, 1, true), (31, 2, false), (40, 1, false)] {
+                let (a, b) = (sparse(na, ga, na_neg), sparse(nb, gb, nb_neg));
+                let want = &a * &b;
+                let got = AverInt::from_bigint(a.clone()).mul(&AverInt::from_bigint(b.clone()));
+                assert_eq!(got.into_bigint(), want.clone());
+                let got = AverInt::from_bigint(b).mul(&AverInt::from_bigint(a));
+                assert_eq!(got.into_bigint(), want);
+            }
         }
     }
 }
