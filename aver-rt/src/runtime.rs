@@ -325,13 +325,17 @@ fn read_into(
             unsafe extern "C" {
                 fn pread(fd: i32, buf: *mut u8, count: usize, offset: i64) -> isize;
             }
+            // macOS refuses a count above `i32::MAX` with EINVAL, where
+            // Linux reads less: one call asks for at most 1 GiB, and the
+            // loop goes on from where it stopped.
+            let count = (want - got).min(1 << 30);
             // SAFETY: the room past `start + got` is reserved above, and
-            // `pread` writes at most `want - got` bytes there.
+            // `pread` writes at most `count <= want - got` bytes there.
             let n = unsafe {
                 pread(
                     file.as_raw_fd(),
                     bytes.as_mut_ptr().add(start + got),
-                    want - got,
+                    count,
                     (at + got as u64) as i64,
                 )
             };
