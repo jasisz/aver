@@ -2,6 +2,18 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.36.0 "Abacus" (unreleased)
+
+> _Large integers are shared, not copied._
+
+- **Shared large `Int` values (compiled Rust).** A large integer holds a counted, shared reference to its digits instead of its own copy, so a match binding or an argument passed by value shares the digits instead of copying them, and two copies compare equal starting from a pointer compare.
+- **Faster large `Int` arithmetic (compiled Rust).** The remainder of a large value by a positive divisor below 2^32 is computed in one pass over its digits, without building the quotient. A product of a long operand by a short one skips the long operand's zero digits when at least a quarter of them are zero, and a product by a one-digit factor (such as `* 256`) goes straight to the scalar multiply. Its digits are read in place, not copied (on an 8193-bit operand, `* 256` takes 75 ns instead of 207–548 ns). On a Lean kernel checker written in Aver, a matrix product over GF(3) runs in half the instructions and half the time.
+
+### Fixed
+
+- Compiled Rust: with more threads than equality-class slots (15), a thread without a slot no longer takes a lock on every join. With 32 or more threads they spent most of their time waiting for that lock.
+- Compiled Rust: `Disk.readBytesAt` asks the system for at most 1 GiB per read, so reading a section larger than 2 GiB no longer fails on macOS with `os error 22`.
+
 ## 0.35.0 "Frost" — 2026-11-15
 
 > _Data that threads share stops paying for its reference counts._
