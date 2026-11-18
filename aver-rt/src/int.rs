@@ -958,29 +958,38 @@ fn mul_slow(a: &AverInt, b: &AverInt) -> AverInt {
     AverInt::from_bigint(&*x * &*y)
 }
 
-/// The product of a long operand and a short one (at most 32 digits), by
+/// The product of a long operand and a short one (2 to 32 digits), by
 /// rows over the long one's digits that skips its zero digits: the general
 /// algorithm runs a row over the whole long operand per digit of the short
 /// one, zero digits included, which a sparse long operand (a bit-sliced
 /// vector) mostly is. `None` when the operands are not of that shape or the
-/// long one is dense, where the general algorithm is as good.
+/// long one is dense, where the general algorithm is as good. The shapes
+/// are told from the bit lengths before any digit is copied: a one-digit
+/// factor (a shift by a byte, say) is left to num-bigint's scalar row,
+/// which is one pass and no worse, and the long operand's digits are read
+/// in place, not copied, to count its zero ones.
 fn mul_long_short(x: &BigInt, y: &BigInt) -> Option<BigInt> {
-    let (long, short) = if x.magnitude().bits() >= y.magnitude().bits() {
-        (x, y)
+    let (xb, yb) = (x.magnitude().bits(), y.magnitude().bits());
+    let (long, short, long_bits, short_bits) = if xb >= yb {
+        (x, y, xb, yb)
     } else {
-        (y, x)
+        (y, x, yb, xb)
     };
+    if short_bits <= 64 || short_bits > 64 * 32 || long_bits < 64 * 64 {
+        return None;
+    }
+    let len = long_bits.div_ceil(64) as usize;
+    let nonzero = long
+        .magnitude()
+        .iter_u64_digits()
+        .filter(|&d| d != 0)
+        .count();
+    if nonzero * 4 > len * 3 {
+        return None;
+    }
     let s: Vec<u64> = short.magnitude().to_u64_digits();
-    if s.is_empty() || s.len() > 32 || long.magnitude().bits() < 64 * 64 {
-        return None;
-    }
-    let l: Vec<u64> = long.magnitude().to_u64_digits();
-    let nonzero = l.iter().filter(|&&d| d != 0).count();
-    if nonzero * 4 > l.len() * 3 {
-        return None;
-    }
-    let mut acc = vec![0u64; l.len() + s.len() + 1];
-    for (i, &d) in l.iter().enumerate() {
+    let mut acc = vec![0u64; len + s.len() + 1];
+    for (i, d) in long.magnitude().iter_u64_digits().enumerate() {
         if d == 0 {
             continue;
         }
