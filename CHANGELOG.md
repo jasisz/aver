@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.36.0 "Abacus" (unreleased)
+## 0.36.0 "Abacus" — 2026-11-18
 
 > _Large integers are shared, not copied._
 
