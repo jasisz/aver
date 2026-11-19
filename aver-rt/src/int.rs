@@ -48,10 +48,14 @@ pub enum ShiftCountError {
 }
 
 /// Maximum number of result bits one `shift_left` / `low_bits` call may have
-/// to materialize. The corresponding raw magnitude is about 2 MiB. This is a
+/// to materialize: 2^29 bits, a raw magnitude of 64 MiB. The bound keeps
+/// `shiftLeft(x, n)` of any `x` up to 2^29 bits within the 2^30-bit BigInt of
+/// the wasm-gc host, and is of the order of the Lean kernel's own 128 MiB
+/// bound on a `Nat` result, so certificates that build megabyte-sized numerals
+/// by shifting check on every backend. This is a
 /// language constant, not a host `usize` limit, so VM, generated Rust, wasm,
 /// and proof models share one refusal boundary.
-pub const MAX_MATERIALIZED_BITS: usize = 16 * 1024 * 1024;
+pub const MAX_MATERIALIZED_BITS: usize = 512 * 1024 * 1024;
 
 /// Public fixed-width Int encoder refusal text, derived from the shared
 /// encoder budget rather than repeated in compiler backends.

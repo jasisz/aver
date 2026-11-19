@@ -492,7 +492,7 @@ fn main() -> Unit
     huge = Bits.shiftLeft(1, 100)
     Console.print("{Bits.and(6, 3)}|{Bits.or(6, 3)}|{Bits.xor(6, 3)}|{Bits.and(-1, 42)}|{Bits.not(-1)}")
     Console.print("{huge}|{Bits.not(huge)}|{Bits.or(huge, 1)}|{Bits.xor(huge, huge)}|{Bits.and(Bits.not(huge), huge)}")
-    Console.print("{Bits.shiftRight(-3, 1)}|{Bits.low(-1, 8)}|{Bits.low(123, 0)}|{dynamic(4)}|{dynamic(-1)}|{dynamic(16777217)}|{dynamic(4294967296)}")
+    Console.print("{Bits.shiftRight(-3, 1)}|{Bits.low(-1, 8)}|{Bits.low(123, 0)}|{dynamic(4)}|{dynamic(-1)}|{dynamic(536870913)}|{dynamic(4294967296)}")
     Console.print("{Bits.shiftRight(-3, 9223372036854775808)}|{dynamicDown(-3, 4294967296)}|{dynamicLow(42, 4294967296)}|{dynamicLow(-1, 4294967296)}")
 "#;
 
@@ -532,8 +532,8 @@ fn wasm_gc_bits_namespace_matches_vm() {
         "2|7|5|42|0\n\
          1267650600228229401496703205376|-1267650600228229401496703205377|\
          1267650600228229401496703205377|0|0\n\
-         -2|255|0|ok 16|negative shift count|shift count exceeds the 16777216 bit limit|shift count exceeds the 16777216 bit limit\n\
-         -1|ok -1|ok 42|bit width exceeds the 16777216 bit limit\n",
+         -2|255|0|ok 16|negative shift count|shift count exceeds the 536870912 bit limit|shift count exceeds the 536870912 bit limit\n\
+         -1|ok -1|ok 42|bit width exceeds the 536870912 bit limit\n",
         "wasm-gc Bits results must match the VM verbatim"
     );
     assert!(
