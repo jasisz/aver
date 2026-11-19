@@ -229,7 +229,7 @@ pub fn is_literal_nonzero_int_divisor(expr: &Spanned<Expr>) -> bool {
 /// families are partial for different reasons. Division is undefined only at
 /// `0`, so `-3` discharges it; a materializing bit count is refused below zero
 /// and above the fixed bound, so `0` discharges (`Bits.low(x, 0)` is a
-/// well-defined `0`) while `-3`, `16_777_217`, and every `BigInt` literal stay
+/// well-defined `0`) while `-3`, `536_870_913`, and every `BigInt` literal stay
 /// on the catchable `Result` path.
 ///
 /// Everything else — an identifier, a named constant, a constant expression

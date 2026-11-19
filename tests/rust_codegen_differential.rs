@@ -3594,10 +3594,10 @@ fn main() -> Unit
     Console.print(large())
     Console.print(dynamic(4))
     Console.print(dynamic(-1))
-    Console.print(dynamic(16777217))
+    Console.print(dynamic(536870913))
     Console.print(dynamic(4294967296))
 "#;
-    let expected = "2 7 5 42 -1 -7 -1 0\n1267650600228229401496703205376 -2 1 255 0\n-1267650600228229401496703205377 1267650600228229401496703205377 0 0 -2\nok 16\nerr negative shift count\nerr shift count exceeds the 16777216 bit limit\nerr shift count exceeds the 16777216 bit limit";
+    let expected = "2 7 5 42 -1 -7 -1 0\n1267650600228229401496703205376 -2 1 255 0\n-1267650600228229401496703205377 1267650600228229401496703205377 0 0 -2\nok 16\nerr negative shift count\nerr shift count exceeds the 536870912 bit limit\nerr shift count exceeds the 536870912 bit limit";
 
     let vm = run_vm_inline("bits_namespace", src).expect("vm run");
     let rust =

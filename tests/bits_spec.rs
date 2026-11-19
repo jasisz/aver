@@ -322,11 +322,11 @@ fn main() -> Unit
     ! [Console.print]
     Console.print(shift(1, 4))
     Console.print(shift(1, -1))
-    Console.print(shift(1, 16777217))
+    Console.print(shift(1, 536870913))
     Console.print(shift(1, 4294967296))
     Console.print(down(-3, 1))
     Console.print(down(-3, -1))
-    Console.print(down(-3, 16777217))
+    Console.print(down(-3, 536870913))
     Console.print(down(3, 4294967296))
     Console.print(width(-1, 8))
     Console.print(width(-1, -1))
@@ -338,8 +338,8 @@ fn main() -> Unit
         got,
         "ok 16\n\
          err negative shift count\n\
-         err shift count exceeds the 16777216 bit limit\n\
-         err shift count exceeds the 16777216 bit limit\n\
+         err shift count exceeds the 536870912 bit limit\n\
+         err shift count exceeds the 536870912 bit limit\n\
          ok -2\n\
          err negative shift count\n\
          ok -1\n\
@@ -347,7 +347,7 @@ fn main() -> Unit
          ok 255\n\
          err negative bit width\n\
          ok 42\n\
-         err bit width exceeds the 16777216 bit limit"
+         err bit width exceeds the 536870912 bit limit"
     );
 }
 
@@ -447,7 +447,7 @@ fn a_non_literal_count_keeps_the_result_type() {
         ("identifier", "amount"),
         ("constant expression", "4 + 1"),
         ("negated literal", "-1"),
-        ("literal above the materialization limit", "16777217"),
+        ("literal above the materialization limit", "536870913"),
         ("reported 2^32 literal", "4294967296"),
     ] {
         let src = format!(
