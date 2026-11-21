@@ -1,0 +1,63 @@
+module SampleHash
+    intent =
+        "Int.sampleHash's golden vectors: zero, both signs, the edges of the"
+        "inline and 64-bit ranges, and numbers of 63, 64, 65 and 656 base-2^64"
+        "digits, two of which differ only in a digit the hash does not read,"
+        "so every backend can be held to one output."
+    effects [Console.print]
+
+fn digits(c: Int, j: Int) -> Int
+    ? "c * 2^(64 * j), for a dynamic digit position."
+    match Bits.shiftLeft(c, 64 * j)
+        Result.Ok(v) -> v
+        Result.Err(_) -> 0
+
+fn hashOf(x: Int) -> Int
+    ? "The hash of one value."
+    Int.sampleHash(x)
+
+verify hashOf
+    hashOf(0) => 4073552104164651883
+    hashOf(1) => 3430279828413672537
+    hashOf(0 - 1) => 1265306096322925805
+    hashOf(4611686018427387903) => 4429467860349389547
+    hashOf(4611686018427387904) => 785016102583015066
+    hashOf(0 - 4611686018427387904) => 1482895451591862603
+    hashOf(9223372036854775808) => 1695053514697690827
+    hashOf(0 - 9223372036854775808) => 3190229909601451097
+    hashOf(18446744073709551616) => 4469833122817736503
+    hashOf(0 - 18446744073709551616) => 3355857316112120590
+    hashOf(Bits.shiftLeft(1, 3968) + 12345) => 3681128214180528190
+    hashOf(Bits.shiftLeft(1, 4032) + Bits.shiftLeft(7, 640) + 3) => 2010308551039741372
+    hashOf(Bits.shiftLeft(1, 4096) + Bits.shiftLeft(1, 1984) + 9) => 2708841112741538185
+    hashOf(0 - (Bits.shiftLeft(1, 4096) + Bits.shiftLeft(1, 1984) + 9)) => 3976537259737979144
+    hashOf(Bits.shiftLeft(5, 41920) + 1) => 4079519304160750755
+    hashOf(Bits.shiftLeft(6, 41920) + 1) => 2841501888161152879
+    hashOf(Bits.shiftLeft(5, 41920) + Bits.shiftLeft(1, 38400) + 1) => 4079519304160750755
+
+fn line(name: String, x: Int) -> String
+    ? "One golden vector, with the words the Rust backend computes raw from it."
+    h = Int.sampleHash(x)
+    "{name} {h} {Bits.and(Int.sampleHash(x), 2147483647)} {Bits.low(Int.sampleHash(x), 20)} {Bits.popCount(Int.sampleHash(x), 62)}"
+
+fn main() -> Unit
+    ? "Every golden vector, its digits built at run time."
+    ! [Console.print]
+    Console.print(line("0", 0))
+    Console.print(line("1", 1))
+    Console.print(line("-1", 0 - 1))
+    Console.print(line("2^62-1", 4611686018427387903))
+    Console.print(line("2^62", 4611686018427387904))
+    Console.print(line("-2^62", 0 - 4611686018427387904))
+    Console.print(line("2^63", digits(1, 0) * 9223372036854775808))
+    Console.print(line("-2^63", 0 - 9223372036854775808))
+    Console.print(line("2^64", digits(1, 1)))
+    Console.print(line("-2^64", 0 - digits(1, 1)))
+    Console.print(line("63-digits", digits(1, 62) + 12345))
+    Console.print(line("64-digits", digits(1, 63) + digits(7, 10) + 3))
+    Console.print(line("65-digits", digits(1, 64) + digits(1, 31) + 9))
+    Console.print(line("-65-digits", 0 - (digits(1, 64) + digits(1, 31) + 9)))
+    Console.print(line("656-digits-A", digits(5, 655) + 1))
+    Console.print(line("656-digits-B", digits(6, 655) + 1))
+    Console.print(line("656-digits-A-unread", digits(5, 655) + digits(1, 600) + 1))
+    Console.print("{Int.sampleHash(digits(5, 655) + 1) == Int.sampleHash(digits(6, 655) + 1)} {Int.sampleHash(digits(5, 655) + 1) == Int.sampleHash(digits(5, 655) + digits(1, 600) + 1)}")

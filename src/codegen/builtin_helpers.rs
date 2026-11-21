@@ -106,6 +106,13 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
         doc: "The one bits among the low bits of an `Int`, backing `Bits.popCount`.",
     },
     BuiltinHelper {
+        key: "AverSampleHash",
+        body_tokens: &["AverSampleHash."],
+        depends_on: &[],
+        doc: "A hash of an `Int` read from at most 64 of its digits, backing \
+              `Int.sampleHash`.",
+    },
+    BuiltinHelper {
         key: "AverMeasure",
         body_tokens: &["AverMeasure."],
         depends_on: &[],
@@ -268,6 +275,7 @@ mod tests {
                 "StringCodePoint",
                 "AverBits",
                 "AverBitCount",
+                "AverSampleHash",
                 "AverMeasure",
                 "AverMap",
                 "ProofFuel",

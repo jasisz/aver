@@ -110,6 +110,7 @@ impl TypeChecker {
             ("Int.fromString", &[Type::Str], int_result(), &[]),
             ("Int.fromFloat", &[Type::Float], Type::Int, &[]),
             ("Int.abs", &[Type::Int], Type::Int, &[]),
+            ("Int.sampleHash", &[Type::Int], Type::Int, &[]),
             ("Int.min", &[Type::Int, Type::Int], Type::Int, &[]),
             ("Int.max", &[Type::Int, Type::Int], Type::Int, &[]),
             // `Int.mod` / `Int.div` register the dynamic-divisor type. When

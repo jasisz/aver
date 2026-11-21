@@ -261,6 +261,7 @@ fn isBuiltinCallName(name: String) -> Bool
         "Http.post",
         "Http.put",
         "Int.abs",
+        "Int.sampleHash",
         "Int.div",
         "Int.fromString",
         "Int.toBigEndian",

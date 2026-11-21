@@ -2679,6 +2679,16 @@ pub(super) fn fn_uses_float_bits(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     )
 }
 
+/// Whether `Int.sampleHash` is reachable, the gate of its
+/// `__aint_sample_hash` helper.
+pub(super) fn fn_uses_sample_hash(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    use crate::ir::hir::ResolvedCallee;
+    fn_body_reaches(
+        fd,
+        &|callee| matches!(callee, ResolvedCallee::Builtin(name) if name == "Int.sampleHash"),
+    )
+}
+
 /// Whether `fd` matches a list pattern on `List.drop(x.field, n)`, the shape
 /// of an indexed read through a structural refinement's carrier (as
 /// `Bytes.get` is written). It gates the per-packed-type `get` helper the
@@ -2730,6 +2740,7 @@ fn builtin_touches_int(name: &str) -> bool {
         "Int.fromString"
             | "Int.fromFloat"
             | "Int.abs"
+            | "Int.sampleHash"
             | "Int.min"
             | "Int.max"
             | "Int.div"

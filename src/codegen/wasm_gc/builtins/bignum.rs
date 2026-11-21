@@ -730,6 +730,15 @@ pub(super) fn emit_aint_low_u64(registry: &TypeRegistry) -> Result<Function, Was
     wat_helper::compile_wat_helper(&wat)
 }
 
+/// `__aint_sample_hash(a) -> i64` — `Int.sampleHash`, the steps of
+/// `aver_rt::AverInt::sample_hash` over 64-bit digits paired from the
+/// 32-bit limbs of a Big, with no 128-bit product anywhere.
+pub(super) fn emit_aint_sample_hash(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/sample_hash.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
 /// `__aint_cmp(a, b) -> i32` (-1/0/1). Two Small operands compare as
 /// machine words; otherwise sign first, then unsigned magnitude (flipped for
 /// two negatives). Mirrors `AverInt::cmp`.
@@ -1209,6 +1218,10 @@ mod validation_guard {
             (
                 "__aint_low_u64",
                 render_simple(&registry, include_str!("wat/low_u64.wat")),
+            ),
+            (
+                "__aint_sample_hash",
+                render_simple(&registry, include_str!("wat/sample_hash.wat")),
             ),
             (
                 "__aint_abs",

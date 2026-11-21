@@ -570,6 +570,7 @@ Key `Int` API:
 - `Int.abs : Int -> Int`; `Int.min`, `Int.max` are `(Int, Int) -> Int`
 - `Int.div`, `Int.mod`: `(Int, Int) -> Result<Int, String>`, Euclidean, see the operators section above
 - `Int.fromString : String -> Result<Int, String>`, `Int.fromFloat : Float -> Int`
+- `Int.sampleHash : Int -> Int`: a hash in `[0, 2^62)` read from at most 64 base-2^64 digits, the same on every backend; not a hash of the whole value, so keep comparing for equality
 - `Int.toBigEndian`, `Int.toLittleEndian : (Int, Int) -> Result<Bytes, String>`; `Int.fromBigEndian`, `Int.fromLittleEndian : Bytes -> Int`
 
 Key `Float` API:

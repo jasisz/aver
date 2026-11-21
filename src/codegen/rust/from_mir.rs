@@ -11733,6 +11733,8 @@ fn emit_mir_builtin_call(
         // ---- Int ----
         // `AverInt::abs` promotes `|i64::MIN|` to `Big` (no wrap/panic).
         "Int.abs" => format!("{}.abs()", arg!(0)),
+        // Read where the value lies; the hash is always an inline `Int`.
+        "Int.sampleHash" => format!("({}).sample_hash_int()", arg!(0)),
         // Float→Int truncation MUST funnel through `from_f64_trunc` (NOT
         // `from_i64(f as i64)`, which saturates a huge finite float to
         // `i64::MAX`). Mirrors the VM's `float_to_aver_int`.

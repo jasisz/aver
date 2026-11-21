@@ -42,6 +42,7 @@ vm_builtins! {
     IntToLittleEndian => "Int.toLittleEndian",
     IntFromBigEndian => "Int.fromBigEndian",
     IntFromLittleEndian => "Int.fromLittleEndian",
+    IntSampleHash => "Int.sampleHash",
 
     BitsAnd => "Bits.and",
     BitsOr => "Bits.or",
@@ -203,7 +204,8 @@ impl VmBuiltin {
             | Self::IntToBigEndian
             | Self::IntToLittleEndian
             | Self::IntFromBigEndian
-            | Self::IntFromLittleEndian => int::call_nv(self.name(), args, arena),
+            | Self::IntFromLittleEndian
+            | Self::IntSampleHash => int::call_nv(self.name(), args, arena),
 
             Self::FloatFromString
             | Self::FloatFromInt

@@ -101,8 +101,8 @@ use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
 use super::types::{
-    TypeRegistry, fn_uses_bits, fn_uses_float_bits, fn_uses_pop_count, param_types_with_repr,
-    record_struct_type, return_results_with_repr,
+    TypeRegistry, fn_uses_bits, fn_uses_float_bits, fn_uses_pop_count, fn_uses_sample_hash,
+    param_types_with_repr, record_struct_type, return_results_with_repr,
 };
 use super::wasip2_disk_bytes::{
     DiskReadBytesIndices, DiskSizeIndices, DiskWriteBytesIndices, emit_disk_read_bytes,
@@ -898,6 +898,10 @@ fn emit_module_pass(
     if registry.bignum && resolved_fn_defs.iter().any(fn_uses_float_bits) {
         builtin_registry.register(BuiltinName::AintFromU64);
         builtin_registry.register(BuiltinName::AintLowU64);
+    }
+    // `Int.sampleHash`'s digit walk, registered only when a program calls it.
+    if registry.bignum && resolved_fn_defs.iter().any(fn_uses_sample_hash) {
+        builtin_registry.register(BuiltinName::AintSampleHash);
     }
     if registry.bignum
         && effect_registry

@@ -53,6 +53,7 @@ fn sig(name: String) -> Option<Sig>
         "Int.max" -> Option.Some(Sig(params = [Ty.TyInt, Ty.TyInt], ret = Ty.TyInt))
         "Int.min" -> Option.Some(Sig(params = [Ty.TyInt, Ty.TyInt], ret = Ty.TyInt))
         "Int.mod" -> Option.Some(Sig(params = [Ty.TyInt, Ty.TyInt], ret = Ty.TyResult(Ty.TyInt, Ty.TyStr)))
+        "Int.sampleHash" -> Option.Some(Sig(params = [Ty.TyInt], ret = Ty.TyInt))
         "Int.toBigEndian" -> Option.Some(Sig(params = [Ty.TyInt, Ty.TyInt], ret = Ty.TyResult(Ty.TyNamed("Bytes"), Ty.TyStr)))
         "Int.toLittleEndian" -> Option.Some(Sig(params = [Ty.TyInt, Ty.TyInt], ret = Ty.TyResult(Ty.TyNamed("Bytes"), Ty.TyStr)))
         "List.concat" -> Option.Some(Sig(params = [Ty.TyList(Ty.TyVar("T", false)), Ty.TyList(Ty.TyVar("T", false))], ret = Ty.TyList(Ty.TyVar("T", false))))

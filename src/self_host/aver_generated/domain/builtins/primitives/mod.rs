@@ -22,50 +22,51 @@ pub fn callInt(
                     if &*__dispatch_subject == "Int.abs" {
                         crate::aver_generated::domain::builtins::primitives::builtinIntAbs(args)
                     } else {
-                        if &*__dispatch_subject == "Int.mod" {
-                            crate::aver_generated::domain::builtins::primitives::builtinIntMod(args)
+                        if &*__dispatch_subject == "Int.sampleHash" {
+                            crate::aver_generated::domain::builtins::primitives::builtinIntSampleHash(args)
                         } else {
-                            if &*__dispatch_subject == "Int.div" {
-                                crate::aver_generated::domain::builtins::primitives::builtinIntDiv(
+                            if &*__dispatch_subject == "Int.mod" {
+                                crate::aver_generated::domain::builtins::primitives::builtinIntMod(
                                     args,
                                 )
                             } else {
-                                if &*__dispatch_subject == "Int.max" {
-                                    crate::aver_generated::domain::builtins::primitives::builtinIntMax(args)
+                                if &*__dispatch_subject == "Int.div" {
+                                    crate::aver_generated::domain::builtins::primitives::builtinIntDiv(args)
                                 } else {
-                                    if &*__dispatch_subject == "Int.min" {
-                                        crate::aver_generated::domain::builtins::primitives::builtinIntMin(args)
+                                    if &*__dispatch_subject == "Int.max" {
+                                        crate::aver_generated::domain::builtins::primitives::builtinIntMax(args)
                                     } else {
-                                        if &*__dispatch_subject == "Int.toBigEndian" {
-                                            crate::aver_generated::domain::builtins::endian::call(
-                                                name, args,
-                                            )
+                                        if &*__dispatch_subject == "Int.min" {
+                                            crate::aver_generated::domain::builtins::primitives::builtinIntMin(args)
                                         } else {
-                                            if &*__dispatch_subject == "Int.toLittleEndian" {
+                                            if &*__dispatch_subject == "Int.toBigEndian" {
                                                 crate::aver_generated::domain::builtins::endian::call(name, args)
                                             } else {
-                                                if &*__dispatch_subject == "Int.fromBigEndian" {
+                                                if &*__dispatch_subject == "Int.toLittleEndian" {
                                                     crate::aver_generated::domain::builtins::endian::call(name, args)
                                                 } else {
-                                                    if &*__dispatch_subject
-                                                        == "Int.fromLittleEndian"
-                                                    {
+                                                    if &*__dispatch_subject == "Int.fromBigEndian" {
                                                         crate::aver_generated::domain::builtins::endian::call(name, args)
                                                     } else {
-                                                        Err(aver_rt::AverStr::from({
-                                                            let mut __b = {
-                                                                let mut __b =
-                                                                    aver_rt::Buffer::with_capacity(
-                                                                        37usize,
+                                                        if &*__dispatch_subject
+                                                            == "Int.fromLittleEndian"
+                                                        {
+                                                            crate::aver_generated::domain::builtins::endian::call(name, args)
+                                                        } else {
+                                                            Err(aver_rt::AverStr::from({
+                                                                let mut __b = {
+                                                                    let mut __b = aver_rt::Buffer::with_capacity(37usize);
+                                                                    __b.push_str(
+                                                                        &::aver_rt::str_lit!(
+                                                                            "unknown int builtin: "
+                                                                        ),
                                                                     );
-                                                                __b.push_str(&::aver_rt::str_lit!(
-                                                                    "unknown int builtin: "
-                                                                ));
+                                                                    __b
+                                                                };
+                                                                __b.push_display(&(name));
                                                                 __b
-                                                            };
-                                                            __b.push_display(&(name));
-                                                            __b
-                                                        }))
+                                                            }))
+                                                        }
                                                     }
                                                 }
                                             }
@@ -273,6 +274,20 @@ pub fn builtinIntAbs(
     let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValInt(
         crate::aver_generated::domain::value::Val__ValInt(n.abs()),
+    ))
+}
+
+/// Int.sampleHash(n) -> a hash in [0, 2^62) read from at most 64 digits of n.
+pub fn builtinIntSampleHash(
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    let n @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
+    Ok(crate::aver_generated::domain::value::Val::ValInt(
+        crate::aver_generated::domain::value::Val__ValInt(aver_rt::AverInt::from_i64(
+            (n).sample_hash(),
+        )),
     ))
 }
 

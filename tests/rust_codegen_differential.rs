@@ -3845,6 +3845,24 @@ fn rust_bits_pop_count_matches_vm() {
     assert_eq!(rust.trim(), expected, "Rust popCount diverged from the VM");
 }
 
+/// `Int.sampleHash`'s golden vectors on the Rust backend: the program
+/// `cross_backend_stress` runs on the VM and wasm-gc.
+#[test]
+fn rust_int_sample_hash_matches_vm() {
+    let src = include_str!("fixtures/int_sample_hash.av");
+    let expected = include_str!("fixtures/int_sample_hash.expected").trim();
+
+    let vm = run_vm_inline("int_sample_hash", src).expect("vm run");
+    let rust =
+        build_run_rust_inline("int_sample_hash", src).expect("rust compile + cargo build + run");
+    assert_eq!(vm.trim(), expected, "VM sampleHash contract changed");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust sampleHash diverged from the VM"
+    );
+}
+
 /// The walks over `Map.keys`, `Map.values`, `Map.entries` and
 /// `List.reverse` on the Rust backend: the program `cross_backend_stress`
 /// runs on the VM and wasm-gc.

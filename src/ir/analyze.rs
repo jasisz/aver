@@ -68,6 +68,7 @@ pub struct NeutralAllocPolicy;
 /// surface by a test below.
 pub(crate) const NON_ALLOCATING_BUILTINS: &[&str] = &[
     "Int.abs",
+    "Int.sampleHash",
     "Int.min",
     "Int.max",
     "Bits.and",

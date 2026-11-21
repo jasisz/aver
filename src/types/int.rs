@@ -19,6 +19,11 @@
 ///                       → Result<Bytes, String> — unsigned fixed-width codec
 ///   Int.fromBigEndian(bytes) / Int.fromLittleEndian(bytes)
 ///                       → Int                  — total unsigned decode
+///   Int.sampleHash(n)   → Int                  — a hash in [0, 2^62) read from
+///                                                  at most 64 of the value's
+///                                                  base-2^64 digits; NOT a hash
+///                                                  of the whole value (see
+///                                                  `AverInt::sample_hash`)
 ///
 /// When the divisor is a syntactic nonzero integer literal, the typechecker
 /// discharges `Int.div` / `Int.mod` to plain `Int` and the compiler emits the
@@ -79,6 +84,7 @@ pub fn call_nv(
         "Int.toLittleEndian" => Some(to_endian_nv(args, arena, false)),
         "Int.fromBigEndian" => Some(from_endian_nv(args, arena, true)),
         "Int.fromLittleEndian" => Some(from_endian_nv(args, arena, false)),
+        "Int.sampleHash" => Some(sample_hash_nv(args, arena)),
         _ => None,
     }
 }
@@ -204,6 +210,21 @@ fn abs_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     }
     let r = v.as_aver_int(arena).abs();
     Ok(NanValue::from_aver_int(r, arena))
+}
+
+/// `Int.sampleHash`, read from the arena's integer where it lies.
+fn sample_hash_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let v = nv_check1("Int.sampleHash", args)?;
+    if !v.is_int() {
+        return Err(RuntimeError::Error(
+            "Int.sampleHash: argument must be an Int".to_string(),
+        ));
+    }
+    let h = match v.int_ref(arena) {
+        aver_memory::ArenaIntRef::Small(n) => aver_rt::sample_hash_i64(n),
+        aver_memory::ArenaIntRef::Big(b) => aver_rt::sample_hash_bigint(b),
+    };
+    Ok(NanValue::new_int(h, arena))
 }
 
 fn min_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

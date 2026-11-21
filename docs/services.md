@@ -130,8 +130,11 @@ Source: `src/types/int.rs`
 | `Int.toLittleEndian` | `(Int, Int) -> Result<Bytes, String>` | Unsigned `(value, width)` encoding |
 | `Int.fromBigEndian` | `Bytes -> Int` | Total unsigned decoding |
 | `Int.fromLittleEndian` | `Bytes -> Int` | Total unsigned decoding |
+| `Int.sampleHash` | `Int -> Int` | A hash in `[0, 2^62)` read from at most 64 digits; NOT a whole-content hash, see below |
 
 The endian encoders produce exactly `width` octets, padded with zeroes on the most-significant side. They reject a negative value, a value that does not fit, and a width outside `0..=1048576`. When both arguments are literals, the `Result` discharges to plain `Bytes` only if the compiler can prove those conditions. Dynamic calls keep `Result<Bytes, String>`. Width zero encodes only zero, as `Bytes.empty()`, and both decoders read `Bytes.empty()` as zero. Signed fixed-width intent stays explicit: encode `Bits.low(value, 8 * width)`.
+
+`Int.sampleHash(n)` is a deterministic hash in `[0, 2^62)`, the same on every backend, that costs at most 64 digit reads however long `n` is and never copies it. It reads the sign, the number `d` of base-2^64 digits of `|n|`, and the digits themselves: every one when `d <= 64`, otherwise the 64 at positions `floor(k * (d - 1) / 63)` for `k = 0 .. 63`, which include the least and the most significant digit. It is therefore **not a hash of the whole value**: two numbers of more than 64 digits that differ only in digits it does not read hash alike. Use it for buckets and caches that still compare the values for equality, never as a fingerprint. Equal values always hash alike. Precisely, with all arithmetic modulo 2^64, `s` = 1 for a negative `n` and 0 otherwise, `d_i` the `i`-th digit (least significant first) and `mix` the splitmix64 finalizer (`z ^= z >> 30; z *= 0xbf58476d1ce4e5b9; z ^= z >> 27; z *= 0x94d049bb133111eb; z ^= z >> 31`): `h = mix(K0 ^ d ^ (s << 63))`, then for each read position `i` in increasing order `h = mix(h ^ d_i ^ mix(i + K1))`, and the result is `h >> 2`, where `K0 = 0x9e3779b97f4a7c15` (the 64-bit golden ratio) and `K1 = 0x6a09e667f3bcc908` (the fractional bits of the square root of 2). `Int.sampleHash(0)` is `4073552104164651883`.
 
 ### `Bits` namespace
 

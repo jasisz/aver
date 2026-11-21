@@ -150,6 +150,76 @@ pub fn bit_width_too_large_message() -> String {
     format!("bit width exceeds the {MAX_MATERIALIZED_BITS} bit limit")
 }
 
+/// `Int.sampleHash`'s seed constant: the 64-bit golden ratio, splitmix64's
+/// own increment.
+pub const SAMPLE_HASH_K0: u64 = 0x9e37_79b9_7f4a_7c15;
+/// `Int.sampleHash`'s position constant: the first 64 fractional bits of
+/// `sqrt(2)` (SHA-512's first initial word).
+pub const SAMPLE_HASH_K1: u64 = 0x6a09_e667_f3bc_c908;
+/// The most base-2^64 digits `Int.sampleHash` reads.
+pub const SAMPLE_HASH_DIGITS: u64 = 64;
+
+/// The splitmix64 finalizer, `Int.sampleHash`'s mixer: a bijection on
+/// 64-bit words, every step modulo 2^64.
+#[inline(always)]
+pub const fn sample_hash_mix(z: u64) -> u64 {
+    let z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    let z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// The `k`-th of the 64 digit positions `Int.sampleHash` reads from a
+/// number of `n > 64` digits: `floor(k * (n - 1) / 63)`, so the first is the
+/// least significant digit, the last the most significant one, and no two
+/// are the same.
+#[inline(always)]
+pub const fn sample_hash_position(k: u64, n: u64) -> u64 {
+    ((k as u128 * (n as u128 - 1)) / (SAMPLE_HASH_DIGITS as u128 - 1)) as u64
+}
+
+/// `Int.sampleHash` over a sign, a digit count and a digit reader: the one
+/// definition every Rust caller shares. `digit(i)` is the `i`-th base-2^64
+/// digit of the magnitude, least significant first.
+#[inline]
+fn sample_hash_of(negative: bool, n: u64, mut digit: impl FnMut(u64) -> u64) -> i64 {
+    let mut h = sample_hash_mix(SAMPLE_HASH_K0 ^ n ^ ((negative as u64) << 63));
+    let mut step = |h: u64, i: u64| {
+        sample_hash_mix(h ^ digit(i) ^ sample_hash_mix(i.wrapping_add(SAMPLE_HASH_K1)))
+    };
+    if n <= SAMPLE_HASH_DIGITS {
+        for i in 0..n {
+            h = step(h, i);
+        }
+    } else {
+        for k in 0..SAMPLE_HASH_DIGITS {
+            h = step(h, sample_hash_position(k, n));
+        }
+    }
+    (h >> 2) as i64
+}
+
+/// [`AverInt::sample_hash`] of the integer `v`, for a host that holds it as
+/// an `i64`.
+#[inline]
+pub fn sample_hash_i64(v: i64) -> i64 {
+    let d = v.unsigned_abs();
+    sample_hash_of(v < 0, u64::from(d != 0), |_| d)
+}
+
+/// [`AverInt::sample_hash`] of the integer `b`, read where it lies, for a
+/// host that holds it as a `BigInt`.
+pub fn sample_hash_bigint(b: &BigInt) -> i64 {
+    let mut digits = b.magnitude().iter_u64_digits();
+    let n = digits.len() as u64;
+    // The positions only grow, so one forward pass reads them.
+    let mut next = 0u64;
+    sample_hash_of(b.sign() == Sign::Minus, n, |i| {
+        let d = digits.nth((i - next) as usize).unwrap_or(0);
+        next = i + 1;
+        d
+    })
+}
+
 /// Validate a count for an operation that may allocate proportionally to it.
 fn materializing_count(n: &AverInt) -> Result<usize, ShiftCountError> {
     if n < &AverInt::zero() {
@@ -724,6 +794,33 @@ impl AverInt {
             ));
         }
         pop_count_slow(self, width)
+    }
+
+    /// `Int.sampleHash`: a hash of the value in `[0, 2^62)` read from at
+    /// most 64 of its base-2^64 digits, at their positions, with their count
+    /// and the sign. It is NOT a hash of the whole value: two numbers of more
+    /// than 64 digits that differ only in digits it does not read hash
+    /// alike. Equal values hash alike in either representation. O(64), and
+    /// the number is read where it lies, never copied.
+    ///
+    /// With `s` the sign (1 below zero), `d_0 .. d_{n-1}` the digits of
+    /// `|x|` and all arithmetic modulo 2^64:
+    /// `h = mix(K0 ^ n ^ (s << 63))`, then for each read position `i` in
+    /// increasing order `h = mix(h ^ d_i ^ mix(i + K1))`, and the result is
+    /// `h >> 2`. Every position is read when `n <= 64`; otherwise the 64
+    /// positions `floor(k * (n - 1) / 63)` for `k = 0 .. 63`.
+    #[inline]
+    pub fn sample_hash(&self) -> i64 {
+        match self.view() {
+            View::Small(v) => sample_hash_i64(v),
+            View::Big(b) => sample_hash_bigint(b),
+        }
+    }
+
+    /// `Int.sampleHash` as an `AverInt`, always inline.
+    #[inline]
+    pub fn sample_hash_int(&self) -> AverInt {
+        AverInt::inline(self.sample_hash())
     }
 
     // -- Checked conversions to machine integers --------------------------
@@ -1626,6 +1723,106 @@ mod tests {
     /// A power of two as an `AverInt`, past the i64 cliff when `n >= 63`.
     fn two_pow(n: usize) -> AverInt {
         AverInt::from_bigint(BigInt::from(1u8) << n)
+    }
+
+    /// `sign * sum(c * 2^(64 * j))` over `(c, j)`.
+    fn digits_value(sign: i8, terms: &[(u64, usize)]) -> AverInt {
+        let value = terms.iter().fold(BigInt::from(0u8), |acc, &(c, j)| {
+            acc + (BigInt::from(c) << (64 * j))
+        });
+        AverInt::from_bigint(if sign < 0 { -value } else { value })
+    }
+
+    /// The golden vectors every backend's `Int.sampleHash` answers
+    /// (`tests/fixtures/int_sample_hash.av` runs the same ones).
+    #[test]
+    fn sample_hash_golden_vectors() {
+        let i = AverInt::from_i64;
+        let golden: Vec<(&str, AverInt, i64)> = vec![
+            ("0", i(0), 4073552104164651883),
+            ("1", i(1), 3430279828413672537),
+            ("-1", i(-1), 1265306096322925805),
+            ("2^62-1", i((1 << 62) - 1), 4429467860349389547),
+            ("2^62", two_pow(62), 785016102583015066),
+            ("-2^62", i(-(1 << 62)), 1482895451591862603),
+            ("2^63", two_pow(63), 1695053514697690827),
+            ("-2^63", i(i64::MIN), 3190229909601451097),
+            ("2^64", two_pow(64), 4469833122817736503),
+            ("-2^64", two_pow(64).neg(), 3355857316112120590),
+            (
+                "63 digits",
+                digits_value(1, &[(1, 62), (12345, 0)]),
+                3681128214180528190,
+            ),
+            (
+                "64 digits",
+                digits_value(1, &[(1, 63), (7, 10), (3, 0)]),
+                2010308551039741372,
+            ),
+            (
+                "65 digits",
+                digits_value(1, &[(1, 64), (1, 31), (9, 0)]),
+                2708841112741538185,
+            ),
+            (
+                "-65 digits",
+                digits_value(-1, &[(1, 64), (1, 31), (9, 0)]),
+                3976537259737979144,
+            ),
+            (
+                "656 digits A",
+                digits_value(1, &[(5, 655), (1, 0)]),
+                4079519304160750755,
+            ),
+            (
+                "656 digits B",
+                digits_value(1, &[(6, 655), (1, 0)]),
+                2841501888161152879,
+            ),
+            // Digit 600 is not among the 64 read, so this one collides with A.
+            (
+                "656 digits A + 2^(64*600)",
+                digits_value(1, &[(5, 655), (1, 600), (1, 0)]),
+                4079519304160750755,
+            ),
+        ];
+        for (name, x, expected) in golden {
+            assert_eq!(x.sample_hash(), expected, "sampleHash({name})");
+            assert!((0..1 << 62).contains(&x.sample_hash()), "{name} in range");
+            assert_eq!(x.sample_hash_int(), i(expected));
+        }
+    }
+
+    #[test]
+    fn sample_hash_reads_the_value_not_the_representation() {
+        for n in [
+            0,
+            1,
+            -1,
+            5,
+            -5,
+            i64::MAX,
+            i64::MIN,
+            (1 << 62) - 1,
+            -(1 << 62),
+        ] {
+            assert_eq!(
+                AverInt::from_i64(n).sample_hash(),
+                via_bigint(n).sample_hash()
+            );
+        }
+    }
+
+    #[test]
+    fn sample_hash_positions_are_distinct_and_cover_both_ends() {
+        for n in [65u64, 66, 127, 128, 656, 1 << 20, u32::MAX as u64] {
+            let positions: Vec<u64> = (0..SAMPLE_HASH_DIGITS)
+                .map(|k| sample_hash_position(k, n))
+                .collect();
+            assert_eq!(positions[0], 0);
+            assert_eq!(positions[63], n - 1);
+            assert!(positions.windows(2).all(|w| w[0] < w[1]), "n = {n}");
+        }
     }
 
     #[test]
