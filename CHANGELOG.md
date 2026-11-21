@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.36.1 (unreleased)
+
+### Fixed
+
+- `Bits.shiftLeft` and a negative `Bits.low` may materialize up to 2^29 result bits (a 64 MiB magnitude), up from 2^24 bits (2 MiB), in the VM, compiled Rust, wasm-gc and the proof models. A numeral of several megabytes built by shifting, which the Lean kernel accepts, is no longer refused.
+
 ## 0.36.0 "Abacus" — 2026-11-18
 
 > _Large integers are shared, not copied._
