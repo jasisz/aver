@@ -973,6 +973,12 @@ fn mul_slow(a: &AverInt, b: &AverInt) -> AverInt {
 /// factor (a shift by a byte, say) is left to num-bigint's scalar row,
 /// which is one pass and no worse, and the long operand's digits are read
 /// in place, not copied, to count its zero ones.
+///
+/// The product is accumulated in 32-bit halves, two to a 64-bit digit, as
+/// `BigUint::new` takes it: num-bigint has no constructor from 64-bit
+/// digits, so a 64-bit accumulator was split into a second vector of
+/// halves first, and a sparse product spent more on that copy and the
+/// constructor's own repacking than on its rows.
 fn mul_long_short(x: &BigInt, y: &BigInt) -> Option<BigInt> {
     let (xb, yb) = (x.magnitude().bits(), y.magnitude().bits());
     let (long, short, long_bits, short_bits) = if xb >= yb {
@@ -993,37 +999,39 @@ fn mul_long_short(x: &BigInt, y: &BigInt) -> Option<BigInt> {
         return None;
     }
     let s: Vec<u64> = short.magnitude().to_u64_digits();
-    let mut acc = vec![0u64; len + s.len() + 1];
+    let mut acc = vec![0u32; 2 * (len + s.len() + 1)];
     for (i, d) in long.magnitude().iter_u64_digits().enumerate() {
         if d == 0 {
             continue;
         }
-        let mut carry: u128 = 0;
-        let row = &mut acc[i..];
-        for (j, &e) in s.iter().enumerate() {
-            let t = row[j] as u128 + (d as u128) * (e as u128) + carry;
-            row[j] = t as u64;
-            carry = t >> 64;
+        let mut cells = acc[2 * i..].chunks_exact_mut(2);
+        let mut carry: u64 = 0;
+        // The short digits lead the zip, so it stops without taking a cell
+        // past the row: the carry goes on from that cell.
+        for (&e, cell) in s.iter().zip(cells.by_ref()) {
+            let t = u128::from(u64::from(cell[0]) | u64::from(cell[1]) << 32)
+                + u128::from(d) * u128::from(e)
+                + u128::from(carry);
+            cell[0] = t as u32;
+            cell[1] = (t >> 32) as u32;
+            carry = (t >> 64) as u64;
         }
-        let mut k = s.len();
-        while carry != 0 {
-            let t = row[k] as u128 + carry;
-            row[k] = t as u64;
-            carry = t >> 64;
-            k += 1;
+        for cell in cells {
+            if carry == 0 {
+                break;
+            }
+            let (sum, out) = (u64::from(cell[0]) | u64::from(cell[1]) << 32).overflowing_add(carry);
+            cell[0] = sum as u32;
+            cell[1] = (sum >> 32) as u32;
+            carry = u64::from(out);
         }
-    }
-    let mut digits: Vec<u32> = Vec::with_capacity(acc.len() * 2);
-    for w in acc {
-        digits.push(w as u32);
-        digits.push((w >> 32) as u32);
     }
     let sign = if long.sign() == short.sign() {
         Sign::Plus
     } else {
         Sign::Minus
     };
-    Some(BigInt::from_biguint(sign, BigUint::new(digits)))
+    Some(BigInt::from_biguint(sign, BigUint::new(acc)))
 }
 
 #[cold]
@@ -2117,6 +2125,36 @@ mod tests {
                         .unwrap();
                     assert_eq!(got.into_bigint(), want, "n={n} gap={gap} m={m} neg={neg}");
                 }
+            }
+        }
+    }
+
+    /// Products of long values (up to 2999 digits, dense and sparse, both
+    /// signs) by short ones of every length the long-by-short rows take and
+    /// just past it, against num-bigint's general product; a short factor
+    /// of all-ones digits drives carries through every cell.
+    #[test]
+    fn long_by_short_products_of_random_values_agree_with_the_general_product() {
+        let values = long_values();
+        let mut shorts = Vec::new();
+        for n in [2usize, 3, 13, 21, 32, 33] {
+            let ones = (BigInt::from(1u8) << (64 * n)) - 1u8;
+            shorts.push(-&ones);
+            shorts.push(ones);
+            let pattern = values
+                .iter()
+                .find(|v| v.bits() > 64 * n as u64 + 64)
+                .unwrap();
+            let (_, cut) = euclid_div_rem(pattern, &(BigInt::from(1u8) << (64 * n)));
+            shorts.push(cut | (BigInt::from(1u8) << (64 * n - 1)));
+        }
+        for x in values.iter().filter(|v| v.bits() > 64 * 64) {
+            for y in &shorts {
+                let want = x * y;
+                let a = AverInt::from_bigint(x.clone());
+                let b = AverInt::from_bigint(y.clone());
+                assert_eq!(*a.mul(&b).to_bigint(), want);
+                assert_eq!(*b.mul(&a).to_bigint(), want);
             }
         }
     }

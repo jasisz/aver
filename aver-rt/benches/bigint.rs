@@ -42,5 +42,23 @@ fn bit_reads(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bit_reads);
+fn long_by_short(c: &mut Criterion) {
+    let mut group = c.benchmark_group("long by short");
+    group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
+    for (len, short, gap, what) in [
+        (2290, 21, 25, "sparse"),
+        (9500, 13, 25, "sparse"),
+        (2290, 21, 5, "a fifth nonzero"),
+        (2290, 21, 1, "dense"),
+    ] {
+        let (x, y) = (value(len, gap, false), value(short, 1, false));
+        group.bench_function(format!("{len} x {short} digits, {what}"), |b| {
+            b.iter(|| black_box(&x).mul(black_box(&y)))
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bit_reads, long_by_short);
 criterion_main!(benches);
