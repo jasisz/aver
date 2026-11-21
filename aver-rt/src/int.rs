@@ -909,8 +909,8 @@ impl AverInt {
         match self.view() {
             View::Small(n) => n as u64,
             View::Big(b) => {
-                let digits = b.to_u64_digits().1;
-                let magnitude = digits.first().copied().unwrap_or(0);
+                // The lowest digit, read where it lies.
+                let magnitude = b.iter_u64_digits().next().unwrap_or(0);
                 if b.sign() == Sign::Minus {
                     magnitude.wrapping_neg()
                 } else {

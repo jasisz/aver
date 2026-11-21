@@ -1672,6 +1672,26 @@ fn int_sample_hash_verify_vm_and_wasm_gc() {
     }
 }
 
+/// Builtin results with a known interval feeding a word carrier, over
+/// operands far outside `i64`. `tests/rust_codegen_differential.rs` holds
+/// Rust, where those results are machine words, to the same output.
+const WORD_INTERVALS_SRC: &str = include_str!("fixtures/word_builtin_intervals.av");
+const WORD_INTERVALS_OUT: &str = include_str!("fixtures/word_builtin_intervals.expected");
+
+#[test]
+fn word_builtin_intervals_vm_and_wasm_gc() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-wordintervals-vm", WORD_INTERVALS_SRC),
+        WORD_INTERVALS_OUT.trim(),
+    );
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-wordintervals-wasmgc", WORD_INTERVALS_SRC),
+        WORD_INTERVALS_OUT.trim(),
+    );
+}
+
 // ─── Float.toBits / Float.fromBits ──────────────────────────────────────
 
 /// The binary64 patterns of zeros, subnormals, the largest finite values,

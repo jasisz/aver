@@ -516,6 +516,68 @@ fn bare_comparison_operands(
     Some((raw(&bop.lhs, lhs)?, raw(&bop.rhs, rhs)?))
 }
 
+/// The answer of a comparison of two raw words that their intervals decide,
+/// whatever values they hold: `lhs <= rhs` when every value of the left
+/// one is at most every value of the right one, and so on. Only for words
+/// computed without a call of a function, which could fail to return:
+/// leaving out the computation must not change what the program does. The
+/// builtins a raw word is made of are total.
+fn decided_comparison(bop: &crate::ir::mir::MirBinOp, ctx: &MirEmitCtx<'_>) -> Option<bool> {
+    use crate::ir::interval::Bound;
+    fn total(e: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+        match e {
+            MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::Project(_) => true,
+            MirExpr::Neg(inner) => total(&inner.node, ctx),
+            MirExpr::BinOp(b) => total(&b.node.lhs.node, ctx) && total(&b.node.rhs.node, ctx),
+            MirExpr::Call(c) => {
+                (ctx.bare.word_call(e).is_some() || ctx.bare.raw_op_call(e).is_some())
+                    && c.node.args.iter().all(|a| total(&a.node, ctx))
+            }
+            _ => false,
+        }
+    }
+    if !(total(&bop.lhs.node, ctx) && total(&bop.rhs.node, ctx)) {
+        return None;
+    }
+    let (l, r) = (
+        ctx.bare.bare_expr_interval(&bop.lhs.node)?,
+        ctx.bare.bare_expr_interval(&bop.rhs.node)?,
+    );
+    let (Bound::Finite(llo), Bound::Finite(lhi), Bound::Finite(rlo), Bound::Finite(rhi)) =
+        (l.lo, l.hi, r.lo, r.hi)
+    else {
+        return None;
+    };
+    // `always(a, b)`: every left value is below (or at) every right one.
+    let lt = |strict: bool| match strict {
+        true => (lhi < rlo)
+            .then_some(true)
+            .or((llo >= rhi).then_some(false)),
+        false => (lhi <= rlo)
+            .then_some(true)
+            .or((llo > rhi).then_some(false)),
+    };
+    let gt = |strict: bool| match strict {
+        true => (llo > rhi)
+            .then_some(true)
+            .or((lhi <= rlo).then_some(false)),
+        false => (llo >= rhi)
+            .then_some(true)
+            .or((lhi < rlo).then_some(false)),
+    };
+    let disjoint = lhi < rlo || rhi < llo;
+    let one_point = llo == lhi && rlo == rhi && llo == rlo;
+    match bop.op {
+        BinOp::Lt => lt(true),
+        BinOp::Lte => lt(false),
+        BinOp::Gt => gt(true),
+        BinOp::Gte => gt(false),
+        BinOp::Eq => disjoint.then_some(false).or(one_point.then_some(true)),
+        BinOp::Neq => disjoint.then_some(true).or(one_point.then_some(false)),
+        _ => None,
+    }
+}
+
 /// Emit `expr` as a raw `i64` expression, assuming [`mir_expr_is_bare_i64`]
 /// already returned `true`. Literals become the bare `{N}i64` form,
 /// arithmetic uses native operators, and a bare `Local` is its plain
@@ -565,6 +627,20 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
             if c.node.callee == MirCallee::Intrinsic(BuiltinIntrinsic::PositionOffset) =>
         {
             position_offset(&c.node.args, ctx)
+        }
+        // A word read off an operand in either representation, where that
+        // operand lies (see `bare_i64::WordOp` for why each fits).
+        MirExpr::Call(_) if let Some((op, operand)) = ctx.bare.word_call(&expr.node) => {
+            use crate::ir::mir::bare_i64::WordOp;
+            let x = emit_mir_expr(operand, ctx)?;
+            Some(match op {
+                WordOp::SampleHash => format!("({x}).sample_hash()"),
+                WordOp::AndMask(c) => format!("((({x}).low_u64() as i64) & {c}i64)"),
+                WordOp::Low(_) => format!("((({x}).low_u64() & {}u64) as i64)", op.mask()),
+                WordOp::PopCount(_) => {
+                    format!("((({x}).low_u64() & {}u64).count_ones() as i64)", op.mask())
+                }
+            })
         }
         // A builtin computed raw, when its operands are raw.
         MirExpr::Call(_)
@@ -3907,6 +3983,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
             ) && let Some((lb, rb)) = bare_comparison_operands(bop, emit_ctx)
             {
+                if let Some(answer) = decided_comparison(bop, emit_ctx) {
+                    return Some(answer.to_string());
+                }
                 let op = match bop.op {
                     BinOp::Eq => "==",
                     BinOp::Neq => "!=",
@@ -3990,6 +4069,10 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         // `Int`, so anywhere else it is the `i64` it reads (a `let` slot, a
         // comparison).
         MirExpr::Call(_) if emit_ctx.bare.length_interval(&expr.node).is_some() => {
+            emit_bare_i64(expr, emit_ctx)
+        }
+        // So does a word read off a boxed operand (`bare_i64::WordOp`).
+        MirExpr::Call(_) if emit_ctx.bare.word_call(&expr.node).is_some() => {
             emit_bare_i64(expr, emit_ctx)
         }
         MirExpr::Call(spanned_call) => {
@@ -10094,6 +10177,7 @@ fn mir_if_cond_and_branches<'a>(
             // `i64 == 0i64`, not `i64 == AverInt`). Mirror of the
             // comparison bare path in `emit_mir_expr`.
             let cond = match bare_comparison_operands(bop, ctx) {
+                Some(_) if let Some(answer) = decided_comparison(bop, ctx) => answer.to_string(),
                 Some((l, r)) => format!("({} {} {})", l, op_str, r),
                 None => {
                     let (l, r) = (emit_mir_expr(&bop.lhs, ctx)?, emit_mir_expr(&bop.rhs, ctx)?);
@@ -11100,8 +11184,24 @@ fn emit_carrier_ctor_on_word(
         Ok(k) => Some(format!("{k}i64")),
         Err(_) => None,
     };
+    // A word whose own interval is inside what the check admits cannot fail
+    // it (`bare_i64::WordOp`, a bounded slot, raw arithmetic over them): the
+    // carrier is built from it as it is.
+    let proven = ctx.bare.bare_expr_interval(&word.node).is_some_and(
+        |iv| matches!((iv.lo, iv.hi), (Bound::Finite(a), Bound::Finite(b)) if lo <= a && b <= hi),
+    );
     let (lo, hi) = (bound(lo)?, bound(hi)?);
     let word = emit_mir_expr(word, ctx)?;
+    if proven {
+        // The unreached arm only names the constructor's `Err` type.
+        return Some(format!(
+            "{{ let __word: i64 = {word}; if true {{ Ok({} {{ {}: {} }}) }} else {{ {}(aver_rt::AverInt::from_i64(__word)) }} }}",
+            mir_record_rust_type(Some(*type_id), record, ctx),
+            aver_name_to_rust(field),
+            super::carrier::narrowed("__word", storage, false),
+            named_call_head(name, ctx),
+        ));
+    }
     Some(format!(
         "{{ let __word: i64 = {word}; if ({lo}..={hi}).contains(&__word) {{ Ok({} {{ {}: {} }}) }} else {{ {}(aver_rt::AverInt::from_i64(__word)) }} }}",
         mir_record_rust_type(Some(*type_id), record, ctx),

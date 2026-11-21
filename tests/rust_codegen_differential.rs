@@ -3863,6 +3863,64 @@ fn rust_int_sample_hash_matches_vm() {
     );
 }
 
+/// Builtin results with a known interval on the Rust backend: the same
+/// output as the VM, and in the generated crate the words are read off
+/// their operands where they lie (no `AverInt` built for them) and the word
+/// carrier is built from them with no range check.
+#[test]
+fn rust_word_builtin_intervals_match_vm_and_skip_the_check() {
+    let src = include_str!("fixtures/word_builtin_intervals.av");
+    let expected = include_str!("fixtures/word_builtin_intervals.expected").trim();
+
+    let vm = run_vm_inline("word_builtin_intervals", src).expect("vm run");
+    assert_eq!(vm.trim(), expected, "VM word intervals contract changed");
+    let rust = build_run_rust_inline("word_builtin_intervals", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust word intervals diverged from the VM"
+    );
+
+    let ws = temp_dir("word_builtin_intervals_src");
+    let file = ws.join("word_builtin_intervals.av");
+    fs::write(&file, src).expect("write source");
+    let project = ws.join("project");
+    compile_rust(&file, &project, "word_builtin_intervals", None, &[]).expect("compile");
+    let generated = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+        .expect("read generated entry module");
+    let _ = fs::remove_dir_all(&ws);
+    let body = |name: &str| -> String {
+        let at = generated
+            .find(&format!("pub fn {name}("))
+            .unwrap_or_else(|| panic!("no `{name}` in:\n{generated}"));
+        let rest = &generated[at..];
+        rest[..rest.find("\n}\n").unwrap_or(rest.len())].to_string()
+    };
+    assert!(
+        body("hashWord").contains("(n).sample_hash() & 2147483647i64"),
+        "hashWord reads the hash as a word:\n{}",
+        body("hashWord")
+    );
+    assert!(
+        body("countWord").contains(".low_u64()") && body("lowWord").contains(".low_u64()"),
+        "popCount and low read the low 64 bits:\n{}\n{}",
+        body("countWord"),
+        body("lowWord")
+    );
+    let mixed = body("mixed");
+    assert!(
+        mixed.contains("-> i64") && !mixed.contains("AverInt::from_i64"),
+        "the word arithmetic stays on i64:\n{mixed}"
+    );
+    let word = body("word");
+    assert!(
+        word.contains("if true { Ok(Word { value: __word }) }")
+            && !word.contains("contains(&__word)"),
+        "the carrier is built with no range check:\n{word}"
+    );
+}
+
 /// The walks over `Map.keys`, `Map.values`, `Map.entries` and
 /// `List.reverse` on the Rust backend: the program `cross_backend_stress`
 /// runs on the VM and wasm-gc.

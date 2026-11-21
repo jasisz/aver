@@ -160,6 +160,61 @@ impl RawOp {
     }
 }
 
+/// A builtin whose `Int` result is a machine word whatever its `Int`
+/// operand is, even one far outside `i64`: the Rust backend computes the
+/// word from the operand where it lies (`AverInt::sample_hash`, or the low
+/// 64 bits `AverInt::low_u64` reads) and never builds an `AverInt` for it.
+///
+/// Each variant's interval is a theorem of the builtin's semantics, for
+/// EVERY operand, which is what lets a raw value carry it:
+///
+/// - `Int.sampleHash(x)` is `h >> 2` of a 64-bit word `h`, so it is in
+///   `[0, 2^62 - 1]` (`aver_rt::AverInt::sample_hash`; the Lean model states
+///   it as `AverSampleHash.sampleHash_range` and proves it).
+/// - `Bits.and(x, c)` for a literal `c >= 0`: under infinite two's
+///   complement the result has no bit `c` lacks, so it is in `[0, c]`, and
+///   it is the low 64 bits of `x` masked by `c`, since `c < 2^63`.
+/// - `Bits.low(x, k)` for a literal `0 <= k <= 63`: `x mod 2^k`, in
+///   `[0, 2^k - 1]`, the low 64 bits of `x` masked.
+/// - `Bits.popCount(x, k)` for a literal `0 <= k <= 64`: a count of `k`
+///   bits, in `[0, k]`, the one bits of the low 64 bits of `x` masked.
+///
+/// The `Bits` ones are found only with the other operand a literal the
+/// resolver or the source wrote, never through a computed value. A width
+/// past those bounds keeps the boxed call (its interval would still hold,
+/// but the word is not read off 64 bits).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordOp {
+    SampleHash,
+    /// The mask `c`.
+    AndMask(i64),
+    /// The width `k`.
+    Low(u32),
+    /// The width `k`.
+    PopCount(u32),
+}
+
+impl WordOp {
+    /// The result's interval (see the type's documentation).
+    pub fn interval(self) -> Interval {
+        match self {
+            WordOp::SampleHash => Interval::between(0, (1i128 << 62) - 1),
+            WordOp::AndMask(c) => Interval::between(0, c as i128),
+            WordOp::Low(k) => Interval::between(0, (1i128 << k) - 1),
+            WordOp::PopCount(k) => Interval::between(0, k as i128),
+        }
+    }
+
+    /// The low-bits mask a `Bits` word applies to the operand's low 64 bits.
+    pub fn mask(self) -> u64 {
+        match self {
+            WordOp::SampleHash => u64::MAX,
+            WordOp::AndMask(c) => c as u64,
+            WordOp::Low(k) | WordOp::PopCount(k) => u64::MAX.checked_shr(64 - k).unwrap_or(0),
+        }
+    }
+}
+
 /// The largest length the Rust backend assumes ([`FnBareFacts::length_interval`]).
 const LENGTH_TOP: i128 = 1 << 62;
 
@@ -179,6 +234,10 @@ pub struct RawOps {
     /// `Vector.get` and `Vector.set`, whose index the Rust backend converts
     /// to a `usize` from either representation (see [`RawOps::takes_index`]).
     indexes: HashSet<crate::ir::BuiltinId>,
+    /// `Int.sampleHash` and `Bits.and`, whose result is a word whatever the
+    /// operand (see [`WordOp`]); the literal `Bits.low` and `Bits.popCount`
+    /// reach MIR as intrinsics.
+    words: HashMap<crate::ir::BuiltinId, &'static str>,
 }
 
 impl RawOps {
@@ -216,12 +275,54 @@ impl RawOps {
                 .collect(),
             false => HashSet::new(),
         };
+        let words = match on {
+            true => (0..program.builtins.len() as u32)
+                .map(crate::ir::BuiltinId)
+                .filter_map(|id| match program.builtin_name(id) {
+                    "Int.sampleHash" => Some((id, "Int.sampleHash")),
+                    "Bits.and" => Some((id, "Bits.and")),
+                    _ => None,
+                })
+                .collect(),
+            false => HashMap::new(),
+        };
         RawOps {
             on,
             builtins,
             counts,
             lengths,
             indexes,
+            words,
+        }
+    }
+
+    /// The word a call of `callee` on `args` computes whatever its `Int`
+    /// operand is ([`WordOp`]), when its literal operand admits one.
+    pub fn word_op(&self, callee: &MirCallee, args: &[Spanned<MirExpr>]) -> Option<WordOp> {
+        use crate::ir::hir::BuiltinIntrinsic as I;
+        if !self.on {
+            return None;
+        }
+        let literal = |i: usize| match args.get(i).map(|a| &a.node) {
+            Some(MirExpr::Literal(l)) => match l.node {
+                Literal::Int(k) => Some(k),
+                _ => None,
+            },
+            _ => None,
+        };
+        match callee {
+            MirCallee::Builtin(id) => match (*self.words.get(id)?, args.len()) {
+                ("Int.sampleHash", 1) => Some(WordOp::SampleHash),
+                ("Bits.and", 2) => literal(1).filter(|c| *c >= 0).map(WordOp::AndMask),
+                _ => None,
+            },
+            MirCallee::Intrinsic(I::BitsLow) if args.len() == 2 => literal(1)
+                .filter(|k| (0..=63).contains(k))
+                .map(|k| WordOp::Low(k as u32)),
+            MirCallee::Intrinsic(I::BitsPopCount) if args.len() == 2 => literal(1)
+                .filter(|k| (0..=64).contains(k))
+                .map(|k| WordOp::PopCount(k as u32)),
+            _ => None,
         }
     }
 
@@ -737,6 +838,36 @@ impl FnBareFacts {
         self.call_returns.get(&target).copied()
     }
 
+    /// Rust: `e` as a builtin whose result is a word read off its operand
+    /// wherever that lies ([`WordOp`]), with that operand, which stays
+    /// boxed. `None` where the builtin is computed raw over raw operands
+    /// instead ([`FnBareFacts::raw_op_call`]), so the two never both claim
+    /// one call.
+    pub fn word_call<'e>(&self, e: &'e MirExpr) -> Option<(WordOp, &'e Spanned<MirExpr>)> {
+        if self.words_only {
+            return None;
+        }
+        let MirExpr::Call(c) = e else {
+            return None;
+        };
+        let op = self.raw_ops.word_op(&c.node.callee, &c.node.args)?;
+        if self.raw_op_interval(e).is_some() {
+            return None;
+        }
+        Some((op, c.node.args.first()?))
+    }
+
+    /// The result interval of a [`FnBareFacts::word_call`].
+    pub fn word_call_interval(&self, e: &MirExpr) -> Option<Interval> {
+        self.word_call(e).map(|(op, _)| op.interval())
+    }
+
+    /// Whether `e` is a builtin computed raw over raw operands, the call
+    /// whose arguments the rewrite keeps raw.
+    pub fn raw_op_over_raw(&self, e: &MirExpr) -> bool {
+        self.raw_op_interval(e).is_some()
+    }
+
     /// The bound of a raw builtin call over raw operands; `None` when an
     /// operand is not raw or not the literal the op takes.
     fn raw_op_interval(&self, e: &MirExpr) -> Option<Interval> {
@@ -793,7 +924,8 @@ impl FnBareFacts {
             MirExpr::Call(_) => carrier_call_interval(e)
                 .or_else(|| self.call_return_interval(e))
                 .or_else(|| self.length_interval(e))
-                .or_else(|| self.raw_op_interval(e)),
+                .or_else(|| self.raw_op_interval(e))
+                .or_else(|| self.word_call_interval(e)),
             // Rust: a `let` block is worth its body.
             MirExpr::Let(l) if self.rust => self.bare_expr_interval(&l.node.body.node),
             MirExpr::Neg(_) | MirExpr::BinOp(_) if self.words_only => None,
@@ -842,6 +974,7 @@ impl FnBareFacts {
                     || self.call_return_interval(e).is_some()
                     || self.length_interval(e).is_some()
                     || self.raw_op_interval(e).is_some()
+                    || self.word_call(e).is_some()
             }
             MirExpr::Let(l) if self.rust => self.expr_is_bare_i64(&l.node.body.node),
             // A compound: require the WHOLE-TREE result interval to fit i64.
@@ -4055,8 +4188,18 @@ fn eval_interval(
             {
                 return iv;
             }
+            // A word whatever the operand is ([`WordOp`]) is in its
+            // interval; a raw op over bounded operands may know a narrower
+            // one, and both hold.
+            let word = match e {
+                MirExpr::Call(c) if !facts.words_only => facts
+                    .raw_ops
+                    .word_op(&c.node.callee, &c.node.args)
+                    .map(WordOp::interval),
+                _ => None,
+            };
             let Some((op, args)) = facts.raw_op_call(e) else {
-                return Interval::unbounded();
+                return word.unwrap_or_else(Interval::unbounded);
             };
             let a = eval_interval(&args[0].node, env, worst, facts);
             let b = match op.literal_operand(&args[1].node) {
@@ -4067,6 +4210,7 @@ fn eval_interval(
             let r = b
                 .and_then(|b| op.interval(a, b))
                 .unwrap_or_else(Interval::unbounded);
+            let r = word.map_or(r, |w| r.intersect(w));
             *worst = worst.hull(r);
             r
         }
@@ -6492,6 +6636,21 @@ fn capped(w: Word) -> Int
 
 fn mixed(w: Word, k: Int) -> Int
     Bits.and(w.value, k)
+
+fn sampled(n: Int) -> Int
+    Bits.and(Int.sampleHash(n), 2147483647)
+
+fn counted(n: Int) -> Int
+    Bits.popCount(n, 64)
+
+fn wideCount(n: Int) -> Int
+    Bits.popCount(n, 65)
+
+fn masked(n: Int) -> Int
+    Bits.and(n, 1048575)
+
+fn sampledWord(n: Int) -> Word
+    word(Int.sampleHash(n))
 "#;
 
     fn word_facts(rust: bool) -> (MirProgram, BareI64Facts) {
@@ -6571,6 +6730,77 @@ fn mixed(w: Word, k: Int) -> Int
         }
         // A mask that is a general Int keeps the call boxed.
         assert!(!raw_in("mixed", true, is_call));
+    }
+
+    #[test]
+    fn rust_reads_the_word_builtins_off_a_boxed_operand() {
+        for name in ["sampled", "counted", "masked"] {
+            assert!(raw_in(name, true, is_call), "{name} should be raw on Rust");
+            assert!(
+                !raw_in(name, false, is_call),
+                "{name} stays boxed on wasm-gc"
+            );
+        }
+        // A width past 64 bits keeps the boxed call.
+        assert!(!raw_in("wideCount", true, is_call));
+    }
+
+    /// Each [`WordOp`]'s interval and the word the Rust backend reads off the
+    /// low 64 bits, against the runtime's own `Int` operations on values on
+    /// both sides of every representation seam.
+    #[test]
+    fn word_op_intervals_hold_for_the_runtime_operations() {
+        use aver_rt::AverInt;
+        let i = AverInt::from_i64;
+        let pow = |k: i64| i(1).shift_left(&i(k)).unwrap();
+        let mut values = vec![
+            i(0),
+            i(1),
+            i(-1),
+            i(i64::MAX),
+            i(i64::MIN),
+            i((1 << 62) - 1),
+        ];
+        for k in [62, 63, 64, 65, 127, 128, 4096, 41920] {
+            values.extend([
+                pow(k),
+                pow(k).neg(),
+                pow(k).sub(&i(1)),
+                pow(k).add(&i(12345)).neg(),
+            ]);
+        }
+        let inside =
+            |iv: Interval, v: &AverInt| v.to_i64().is_some_and(|v| iv.contains_point(v as i128));
+        for x in &values {
+            let h = AverInt::from_i64(x.sample_hash());
+            assert!(inside(WordOp::SampleHash.interval(), &h), "sampleHash({x})");
+            for c in [0i64, 1, 255, 2147483647, (1 << 62) - 1, i64::MAX] {
+                let op = WordOp::AndMask(c);
+                let r = x.bit_and(&i(c));
+                assert!(inside(op.interval(), &r), "and({x}, {c})");
+                assert_eq!(r, i((x.low_u64() as i64) & c), "and({x}, {c}) off 64 bits");
+            }
+            for k in [0u32, 1, 20, 31, 62, 63] {
+                let op = WordOp::Low(k);
+                let r = x.low_bits(&i(k as i64)).unwrap();
+                assert!(inside(op.interval(), &r), "low({x}, {k})");
+                assert_eq!(
+                    r,
+                    i((x.low_u64() & op.mask()) as i64),
+                    "low({x}, {k}) off 64 bits"
+                );
+            }
+            for k in [0u32, 1, 31, 63, 64] {
+                let op = WordOp::PopCount(k);
+                let r = x.pop_count(&i(k as i64)).unwrap();
+                assert!(inside(op.interval(), &r), "popCount({x}, {k})");
+                assert_eq!(
+                    r,
+                    i((x.low_u64() & op.mask()).count_ones() as i64),
+                    "popCount({x}, {k}) off 64 bits"
+                );
+            }
+        }
     }
 
     #[test]
