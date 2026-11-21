@@ -65,6 +65,10 @@ libmimalloc-sys = { version = "0.1.49", default-features = false }
 name = "list_concat"
 harness = false
 
+[[bench]]
+name = "bigint"
+harness = false
+
 [[test]]
 name = "born_frozen"
 harness = false

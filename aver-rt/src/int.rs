@@ -812,8 +812,9 @@ impl AverInt {
         match self.view() {
             View::Small(n) => n as u64,
             View::Big(b) => {
-                let digits = b.to_u64_digits().1;
-                let magnitude = digits.first().copied().unwrap_or(0);
+                // The lowest digit is read in place; the rest of the
+                // magnitude is never copied.
+                let magnitude = b.magnitude().iter_u64_digits().next().unwrap_or(0);
                 if b.sign() == Sign::Minus {
                     magnitude.wrapping_neg()
                 } else {
@@ -1053,36 +1054,42 @@ fn pop_count_slow(x: &AverInt, width: &AverInt) -> Result<AverInt, ShiftCountErr
         return Err(ShiftCountError::Negative);
     }
     let value = x.to_bigint();
+    let magnitude = value.magnitude();
     if value.sign() == Sign::Minus {
         // The low bits of a negative `x` are the complement of the low bits
-        // of `-x - 1`, which is non-negative.
-        let zeros = low_ones(&(-&*value - 1u8), width);
+        // of `-x - 1`, which is non-negative: the magnitude less one, whose
+        // digits are read off the magnitude's (its zero digits up to the
+        // first nonzero one borrow, the rest are its own) rather than made.
+        let mut borrow = true;
+        let less_one = magnitude.iter_u64_digits().map(|digit| {
+            let (less, out) = digit.overflowing_sub(u64::from(borrow));
+            borrow = out;
+            less
+        });
+        let zeros = low_ones(less_one, magnitude.bits(), width);
         return Ok(width.sub(&AverInt::from_i64(zeros as i64)));
     }
-    Ok(AverInt::from_i64(low_ones(&value, width) as i64))
+    Ok(AverInt::from_i64(
+        low_ones(magnitude.iter_u64_digits(), magnitude.bits(), width) as i64,
+    ))
 }
 
-/// The one bits of a non-negative `value` among its lowest `width` bits.
-fn low_ones(value: &BigInt, width: &AverInt) -> u64 {
-    let magnitude = value.magnitude();
-    let Some(width) = width
-        .to_usize()
-        .filter(|width| (*width as u64) < magnitude.bits())
-    else {
+/// The one bits among the lowest `width` bits of the non-negative integer
+/// whose 64-bit digits, least significant first, are `digits` and which has
+/// at most `bits` bits. Only the digits under the window are read.
+fn low_ones(digits: impl Iterator<Item = u64>, bits: u64, width: &AverInt) -> u64 {
+    let ones = |digit: u64| u64::from(digit.count_ones());
+    let Some(width) = width.to_usize().filter(|width| (*width as u64) < bits) else {
         // The window covers every set bit.
-        return magnitude.count_ones();
+        return digits.map(ones).sum();
     };
-    let mut digits = magnitude.iter_u64_digits();
-    let whole: u64 = digits
-        .by_ref()
-        .take(width / 64)
-        .map(|digit| u64::from(digit.count_ones()))
-        .sum();
+    let mut digits = digits;
+    let whole: u64 = digits.by_ref().take(width / 64).map(ones).sum();
     let rest = width % 64;
     let partial = digits
         .next()
-        .map_or(0, |digit| (digit & ((1u64 << rest) - 1)).count_ones());
-    whole + u64::from(partial)
+        .map_or(0, |digit| ones(digit & ((1u64 << rest) - 1)));
+    whole + partial
 }
 
 #[cold]
@@ -1099,6 +1106,22 @@ fn rem_euclid_slow(a: &AverInt, b: &AverInt) -> AverInt {
     // a digit base): one pass over its digits on machine words, with no
     // quotient made, where the general division builds a quotient as long
     // as the value.
+    if let (View::Big(x), View::Small(m)) = (a.view(), b.view())
+        && m > 0
+        && (m as u64).is_power_of_two()
+    {
+        // A power of two (a bit mask written as a modulus) keeps the low
+        // bits of the magnitude: its lowest digit decides, the rest is not
+        // read.
+        let m = m as u64;
+        let low = x.magnitude().iter_u64_digits().next().unwrap_or(0) & (m - 1);
+        let r = if x.sign() == Sign::Minus && low != 0 {
+            m - low
+        } else {
+            low
+        };
+        return AverInt::from_i64(r as i64);
+    }
     if let (View::Big(x), View::Small(m)) = (a.view(), b.view())
         && m > 0
         && m <= u32::MAX as i64
@@ -2024,6 +2047,62 @@ mod tests {
         digits.push(1);
         let m = BigUint::new(digits);
         BigInt::from_biguint(if negative { Sign::Minus } else { Sign::Plus }, m)
+    }
+
+    /// Random values of `0..3000` 64-bit digits, dense or sparse, with
+    /// runs of zero digits at the low end, of both signs: what the bit
+    /// reads below must read past without looking at the rest.
+    fn long_values() -> Vec<BigInt> {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut values = Vec::new();
+        for &len in &[1usize, 2, 3, 17, 64, 65, 300, 2290, 2999] {
+            for &zero_low in &[0usize, 1, 5] {
+                for &density in &[1u64, 4, 25] {
+                    let mut digits = Vec::new();
+                    for i in 0..len {
+                        let d = if i < zero_low.min(len - 1) || next() % density != 0 {
+                            0
+                        } else {
+                            next()
+                        };
+                        digits.push(d as u32);
+                        digits.push((d >> 32) as u32);
+                    }
+                    digits.push(1 + (next() as u32 & 0xff));
+                    let m = BigInt::from_biguint(Sign::Plus, BigUint::new(digits));
+                    values.push(-&m);
+                    values.push(m);
+                }
+            }
+        }
+        values
+    }
+
+    #[test]
+    fn bit_reads_of_long_values_agree_with_the_definition() {
+        for x in long_values() {
+            let a = AverInt::from_bigint(x.clone());
+            let (_, low64) = euclid_div_rem(&x, &(BigInt::from(1u8) << 64));
+            assert_eq!(BigInt::from(a.low_u64()), low64, "low_u64({x:x})");
+            for k in [0usize, 1, 2, 7, 31, 32, 33, 61] {
+                let m = BigInt::from(1u8) << k;
+                let (_, want) = euclid_div_rem(&x, &m);
+                let got = a.rem_euclid(&AverInt::from_bigint(m)).unwrap();
+                assert_eq!(*got.to_bigint(), want, "{x:x} mod 2^{k}");
+            }
+            for w in [0usize, 1, 63, 64, 65, 128, 4096, 64 * 2290 + 3, 200_000] {
+                let (_, low) = euclid_div_rem(&x, &(BigInt::from(1u8) << w));
+                let want = low.magnitude().count_ones();
+                let got = a.pop_count(&AverInt::from_i64(w as i64)).unwrap();
+                assert_eq!(got.to_i64(), Some(want as i64), "popCount({x:x}, {w})");
+            }
+        }
     }
 
     #[test]
