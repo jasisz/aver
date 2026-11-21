@@ -518,10 +518,13 @@ fn bare_comparison_operands(
 
 /// The answer of a comparison of two raw words that their intervals decide,
 /// whatever values they hold: `lhs <= rhs` when every value of the left
-/// one is at most every value of the right one, and so on. Only for words
-/// computed without a call of a function, which could fail to return:
-/// leaving out the computation must not change what the program does. The
-/// builtins a raw word is made of are total.
+/// one is at most every value of the right one, and so on. The intervals are
+/// [`crate::ir::mir::FnBareFacts::proven_interval`], theorems of the
+/// builtins and carriers the words are made of, never of the ranges the
+/// analysis gives a parameter from its callers. Only for words computed
+/// without a call of a function, which could fail to return: leaving out
+/// the computation must not change what the program does. The builtins a
+/// raw word is made of are total.
 fn decided_comparison(bop: &crate::ir::mir::MirBinOp, ctx: &MirEmitCtx<'_>) -> Option<bool> {
     use crate::ir::interval::Bound;
     fn total(e: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
@@ -540,8 +543,8 @@ fn decided_comparison(bop: &crate::ir::mir::MirBinOp, ctx: &MirEmitCtx<'_>) -> O
         return None;
     }
     let (l, r) = (
-        ctx.bare.bare_expr_interval(&bop.lhs.node)?,
-        ctx.bare.bare_expr_interval(&bop.rhs.node)?,
+        ctx.bare.proven_interval(&bop.lhs.node)?,
+        ctx.bare.proven_interval(&bop.rhs.node)?,
     );
     let (Bound::Finite(llo), Bound::Finite(lhi), Bound::Finite(rlo), Bound::Finite(rhi)) =
         (l.lo, l.hi, r.lo, r.hi)
@@ -10177,7 +10180,11 @@ fn mir_if_cond_and_branches<'a>(
             // `i64 == 0i64`, not `i64 == AverInt`). Mirror of the
             // comparison bare path in `emit_mir_expr`.
             let cond = match bare_comparison_operands(bop, ctx) {
-                Some(_) if let Some(answer) = decided_comparison(bop, ctx) => answer.to_string(),
+                // The condition is the canonical comparison, the negation of
+                // `bop` when `invert` swaps the branches.
+                Some(_) if let Some(answer) = decided_comparison(bop, ctx) => {
+                    (answer != invert).to_string()
+                }
                 Some((l, r)) => format!("({} {} {})", l, op_str, r),
                 None => {
                     let (l, r) = (emit_mir_expr(&bop.lhs, ctx)?, emit_mir_expr(&bop.rhs, ctx)?);
@@ -11185,9 +11192,9 @@ fn emit_carrier_ctor_on_word(
         Err(_) => None,
     };
     // A word whose own interval is inside what the check admits cannot fail
-    // it (`bare_i64::WordOp`, a bounded slot, raw arithmetic over them): the
-    // carrier is built from it as it is.
-    let proven = ctx.bare.bare_expr_interval(&word.node).is_some_and(
+    // it (`FnBareFacts::proven_interval`: a `bare_i64::WordOp`, a carrier's
+    // field, raw arithmetic over them): the carrier is built from it as it is.
+    let proven = ctx.bare.proven_interval(&word.node).is_some_and(
         |iv| matches!((iv.lo, iv.hi), (Bound::Finite(a), Bound::Finite(b)) if lo <= a && b <= hi),
     );
     let (lo, hi) = (bound(lo)?, bound(hi)?);

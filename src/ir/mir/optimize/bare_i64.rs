@@ -862,6 +862,55 @@ impl FnBareFacts {
         self.word_call(e).map(|(op, _)| op.interval())
     }
 
+    /// Rust: the interval of a raw word that holds whatever this function's
+    /// parameters and locals hold and whatever its callers pass: a literal,
+    /// a carrier's field (its constructors' check), a [`WordOp`], and a raw
+    /// op or raw arithmetic over those, with every local and every call of a
+    /// function taken as unbounded. So it is a theorem of the builtins and
+    /// the carriers alone, never of the analysis' caller ranges, and a
+    /// value the compiled code decides by it (a check left out, a comparison
+    /// answered) is decided by what the operations are, not by where they
+    /// are called from. `None` for a word it cannot bound in `i64`.
+    pub fn proven_interval(&self, e: &MirExpr) -> Option<Interval> {
+        let iv = self.proven_interval_inner(e)?;
+        iv.fits_i64().then_some(iv)
+    }
+
+    fn proven_interval_inner(&self, e: &MirExpr) -> Option<Interval> {
+        let iv = match e {
+            MirExpr::Literal(l) => match l.node {
+                Literal::Int(k) => Interval::point(k as i128),
+                _ => return None,
+            },
+            MirExpr::Local(_) => Interval::unbounded(),
+            MirExpr::Project(_) => self.carrier_project_interval(e)?,
+            MirExpr::Call(_) if let Some((op, _)) = self.word_call(e) => op.interval(),
+            MirExpr::Call(_) if self.raw_op_over_raw(e) => {
+                let (op, args) = self.raw_op_call(e)?;
+                let a = self.proven_interval_inner(&args[0].node)?;
+                let b = match op.literal_operand(&args[1].node) {
+                    Some(k) => Interval::point(k?),
+                    None => self.proven_interval_inner(&args[1].node)?,
+                };
+                op.interval(a, b)?
+            }
+            MirExpr::Neg(inner) => Interval::point(0).sub(self.proven_interval_inner(&inner.node)?),
+            MirExpr::BinOp(b) => {
+                let l = self.proven_interval_inner(&b.node.lhs.node)?;
+                let r = self.proven_interval_inner(&b.node.rhs.node)?;
+                match b.node.op {
+                    BinOp::Add => l.add(r),
+                    BinOp::Sub => l.sub(r),
+                    BinOp::Mul => l.mul(r),
+                    _ => return None,
+                }
+            }
+            MirExpr::Let(l) if self.rust => self.proven_interval_inner(&l.node.body.node)?,
+            _ => return None,
+        };
+        Some(iv)
+    }
+
     /// Whether `e` is a builtin computed raw over raw operands, the call
     /// whose arguments the rewrite keeps raw.
     pub fn raw_op_over_raw(&self, e: &MirExpr) -> bool {

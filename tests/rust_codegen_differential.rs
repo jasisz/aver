@@ -3913,12 +3913,25 @@ fn rust_word_builtin_intervals_match_vm_and_skip_the_check() {
         mixed.contains("-> i64") && !mixed.contains("AverInt::from_i64"),
         "the word arithmetic stays on i64:\n{mixed}"
     );
-    let word = body("word");
+    let direct = body("directWord");
     assert!(
-        word.contains("if true { Ok(Word { value: __word }) }")
-            && !word.contains("contains(&__word)"),
-        "the carrier is built with no range check:\n{word}"
+        direct.contains("if true { Ok(Word { value: __word }) }")
+            && !direct.contains("contains(&__word)"),
+        "the carrier is built with no range check:\n{direct}"
     );
+    // `word` takes any value its callers pass: its check stays.
+    assert!(
+        body("word").contains("contains(&__word)"),
+        "{}",
+        body("word")
+    );
+    for name in ["ge", "lt", "gt", "le", "eq", "ne"] {
+        let decided = body(name);
+        assert!(
+            !decided.contains("low_u64"),
+            "`{name}` is answered by the result's range:\n{decided}"
+        );
+    }
 }
 
 /// The walks over `Map.keys`, `Map.values`, `Map.entries` and

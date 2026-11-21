@@ -51,6 +51,52 @@ fn mixed(n: Int) -> Int
     ? "Word arithmetic over the raw results: stays within i64."
     Bits.and(Int.sampleHash(n), 2147483647) * 2147483648 + Bits.popCount(n, 64) * 33554432 + Bits.low(n, 25)
 
+fn directWord(n: Int) -> Word
+    ? "The low 31 bits of the sample hash, through the smart constructor itself."
+    match fromInt(Bits.and(Int.sampleHash(n), 2147483647))
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 0)
+
+fn ge(n: Int) -> Int
+    ? "1 when the count of bits is at least 100, which it never is."
+    match Bits.popCount(n, 64) >= 100
+        true -> 1
+        false -> 0
+
+fn lt(n: Int) -> Int
+    ? "1 when the count of bits is below 100, which it always is."
+    match Bits.popCount(n, 64) < 100
+        true -> 1
+        false -> 0
+
+fn gt(n: Int) -> Int
+    ? "1 when 100 is above the count of bits."
+    match 100 > Bits.popCount(n, 64)
+        true -> 1
+        false -> 0
+
+fn le(n: Int) -> Int
+    ? "1 when 100 is at most the count of bits."
+    match 100 <= Bits.popCount(n, 64)
+        true -> 1
+        false -> 0
+
+fn eq(n: Int) -> Int
+    ? "1 when the low 20 bits are 2^20, which they never are."
+    match Bits.and(n, 1048575) == 1048576
+        true -> 1
+        false -> 0
+
+fn ne(n: Int) -> Int
+    ? "1 when the low 20 bits are not 2^20."
+    match Bits.and(n, 1048575) != 1048576
+        true -> 1
+        false -> 0
+
+fn decided(n: Int) -> String
+    ? "Comparisons the ranges of the builtin results decide."
+    "{ge(n)} {lt(n)} {gt(n)} {le(n)} {eq(n)} {ne(n)} {directWord(n).value}"
+
 fn line(n: Int) -> String
     ? "Every word of one value."
     "{hashWord(n).value} {wholeHash(n).value} {lowWord(n).value} {countWord(n).value} {maskWord(n).value} {mixed(n)}"
@@ -72,4 +118,5 @@ fn main() -> Unit
     Console.print(line(18446744073709551615))
     Console.print(line(big))
     Console.print(line(0 - big))
+    Console.print(decided(big))
     Console.print("{checked(0 - 1)} {checked(4611686018427387904)} {checked(big)} {checked(4611686018427387903)}")
