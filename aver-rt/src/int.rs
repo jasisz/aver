@@ -909,8 +909,9 @@ impl AverInt {
         match self.view() {
             View::Small(n) => n as u64,
             View::Big(b) => {
-                // The lowest digit, read where it lies.
-                let magnitude = b.iter_u64_digits().next().unwrap_or(0);
+                // The lowest digit is read in place; the rest of the
+                // magnitude is never copied.
+                let magnitude = b.magnitude().iter_u64_digits().next().unwrap_or(0);
                 if b.sign() == Sign::Minus {
                     magnitude.wrapping_neg()
                 } else {
@@ -1069,6 +1070,12 @@ fn mul_slow(a: &AverInt, b: &AverInt) -> AverInt {
 /// factor (a shift by a byte, say) is left to num-bigint's scalar row,
 /// which is one pass and no worse, and the long operand's digits are read
 /// in place, not copied, to count its zero ones.
+///
+/// The product is accumulated in 32-bit halves, two to a 64-bit digit, as
+/// `BigUint::new` takes it: num-bigint has no constructor from 64-bit
+/// digits, so a 64-bit accumulator was split into a second vector of
+/// halves first, and a sparse product spent more on that copy and the
+/// constructor's own repacking than on its rows.
 fn mul_long_short(x: &BigInt, y: &BigInt) -> Option<BigInt> {
     let (xb, yb) = (x.magnitude().bits(), y.magnitude().bits());
     let (long, short, long_bits, short_bits) = if xb >= yb {
@@ -1089,37 +1096,39 @@ fn mul_long_short(x: &BigInt, y: &BigInt) -> Option<BigInt> {
         return None;
     }
     let s: Vec<u64> = short.magnitude().to_u64_digits();
-    let mut acc = vec![0u64; len + s.len() + 1];
+    let mut acc = vec![0u32; 2 * (len + s.len() + 1)];
     for (i, d) in long.magnitude().iter_u64_digits().enumerate() {
         if d == 0 {
             continue;
         }
-        let mut carry: u128 = 0;
-        let row = &mut acc[i..];
-        for (j, &e) in s.iter().enumerate() {
-            let t = row[j] as u128 + (d as u128) * (e as u128) + carry;
-            row[j] = t as u64;
-            carry = t >> 64;
+        let mut cells = acc[2 * i..].chunks_exact_mut(2);
+        let mut carry: u64 = 0;
+        // The short digits lead the zip, so it stops without taking a cell
+        // past the row: the carry goes on from that cell.
+        for (&e, cell) in s.iter().zip(cells.by_ref()) {
+            let t = u128::from(u64::from(cell[0]) | u64::from(cell[1]) << 32)
+                + u128::from(d) * u128::from(e)
+                + u128::from(carry);
+            cell[0] = t as u32;
+            cell[1] = (t >> 32) as u32;
+            carry = (t >> 64) as u64;
         }
-        let mut k = s.len();
-        while carry != 0 {
-            let t = row[k] as u128 + carry;
-            row[k] = t as u64;
-            carry = t >> 64;
-            k += 1;
+        for cell in cells {
+            if carry == 0 {
+                break;
+            }
+            let (sum, out) = (u64::from(cell[0]) | u64::from(cell[1]) << 32).overflowing_add(carry);
+            cell[0] = sum as u32;
+            cell[1] = (sum >> 32) as u32;
+            carry = u64::from(out);
         }
-    }
-    let mut digits: Vec<u32> = Vec::with_capacity(acc.len() * 2);
-    for w in acc {
-        digits.push(w as u32);
-        digits.push((w >> 32) as u32);
     }
     let sign = if long.sign() == short.sign() {
         Sign::Plus
     } else {
         Sign::Minus
     };
-    Some(BigInt::from_biguint(sign, BigUint::new(digits)))
+    Some(BigInt::from_biguint(sign, BigUint::new(acc)))
 }
 
 #[cold]
@@ -1150,36 +1159,42 @@ fn pop_count_slow(x: &AverInt, width: &AverInt) -> Result<AverInt, ShiftCountErr
         return Err(ShiftCountError::Negative);
     }
     let value = x.to_bigint();
+    let magnitude = value.magnitude();
     if value.sign() == Sign::Minus {
         // The low bits of a negative `x` are the complement of the low bits
-        // of `-x - 1`, which is non-negative.
-        let zeros = low_ones(&(-&*value - 1u8), width);
+        // of `-x - 1`, which is non-negative: the magnitude less one, whose
+        // digits are read off the magnitude's (its zero digits up to the
+        // first nonzero one borrow, the rest are its own) rather than made.
+        let mut borrow = true;
+        let less_one = magnitude.iter_u64_digits().map(|digit| {
+            let (less, out) = digit.overflowing_sub(u64::from(borrow));
+            borrow = out;
+            less
+        });
+        let zeros = low_ones(less_one, magnitude.bits(), width);
         return Ok(width.sub(&AverInt::from_i64(zeros as i64)));
     }
-    Ok(AverInt::from_i64(low_ones(&value, width) as i64))
+    Ok(AverInt::from_i64(
+        low_ones(magnitude.iter_u64_digits(), magnitude.bits(), width) as i64,
+    ))
 }
 
-/// The one bits of a non-negative `value` among its lowest `width` bits.
-fn low_ones(value: &BigInt, width: &AverInt) -> u64 {
-    let magnitude = value.magnitude();
-    let Some(width) = width
-        .to_usize()
-        .filter(|width| (*width as u64) < magnitude.bits())
-    else {
+/// The one bits among the lowest `width` bits of the non-negative integer
+/// whose 64-bit digits, least significant first, are `digits` and which has
+/// at most `bits` bits. Only the digits under the window are read.
+fn low_ones(digits: impl Iterator<Item = u64>, bits: u64, width: &AverInt) -> u64 {
+    let ones = |digit: u64| u64::from(digit.count_ones());
+    let Some(width) = width.to_usize().filter(|width| (*width as u64) < bits) else {
         // The window covers every set bit.
-        return magnitude.count_ones();
+        return digits.map(ones).sum();
     };
-    let mut digits = magnitude.iter_u64_digits();
-    let whole: u64 = digits
-        .by_ref()
-        .take(width / 64)
-        .map(|digit| u64::from(digit.count_ones()))
-        .sum();
+    let mut digits = digits;
+    let whole: u64 = digits.by_ref().take(width / 64).map(ones).sum();
     let rest = width % 64;
     let partial = digits
         .next()
-        .map_or(0, |digit| (digit & ((1u64 << rest) - 1)).count_ones());
-    whole + u64::from(partial)
+        .map_or(0, |digit| ones(digit & ((1u64 << rest) - 1)));
+    whole + partial
 }
 
 #[cold]
@@ -1196,6 +1211,22 @@ fn rem_euclid_slow(a: &AverInt, b: &AverInt) -> AverInt {
     // a digit base): one pass over its digits on machine words, with no
     // quotient made, where the general division builds a quotient as long
     // as the value.
+    if let (View::Big(x), View::Small(m)) = (a.view(), b.view())
+        && m > 0
+        && (m as u64).is_power_of_two()
+    {
+        // A power of two (a bit mask written as a modulus) keeps the low
+        // bits of the magnitude: its lowest digit decides, the rest is not
+        // read.
+        let m = m as u64;
+        let low = x.magnitude().iter_u64_digits().next().unwrap_or(0) & (m - 1);
+        let r = if x.sign() == Sign::Minus && low != 0 {
+            m - low
+        } else {
+            low
+        };
+        return AverInt::from_i64(r as i64);
+    }
     if let (View::Big(x), View::Small(m)) = (a.view(), b.view())
         && m > 0
         && m <= u32::MAX as i64
@@ -2223,6 +2254,62 @@ mod tests {
         BigInt::from_biguint(if negative { Sign::Minus } else { Sign::Plus }, m)
     }
 
+    /// Random values of `0..3000` 64-bit digits, dense or sparse, with
+    /// runs of zero digits at the low end, of both signs: what the bit
+    /// reads below must read past without looking at the rest.
+    fn long_values() -> Vec<BigInt> {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut values = Vec::new();
+        for &len in &[1usize, 2, 3, 17, 64, 65, 300, 2290, 2999] {
+            for &zero_low in &[0usize, 1, 5] {
+                for &density in &[1u64, 4, 25] {
+                    let mut digits = Vec::new();
+                    for i in 0..len {
+                        let d = if i < zero_low.min(len - 1) || next() % density != 0 {
+                            0
+                        } else {
+                            next()
+                        };
+                        digits.push(d as u32);
+                        digits.push((d >> 32) as u32);
+                    }
+                    digits.push(1 + (next() as u32 & 0xff));
+                    let m = BigInt::from_biguint(Sign::Plus, BigUint::new(digits));
+                    values.push(-&m);
+                    values.push(m);
+                }
+            }
+        }
+        values
+    }
+
+    #[test]
+    fn bit_reads_of_long_values_agree_with_the_definition() {
+        for x in long_values() {
+            let a = AverInt::from_bigint(x.clone());
+            let (_, low64) = euclid_div_rem(&x, &(BigInt::from(1u8) << 64));
+            assert_eq!(BigInt::from(a.low_u64()), low64, "low_u64({x:x})");
+            for k in [0usize, 1, 2, 7, 31, 32, 33, 61] {
+                let m = BigInt::from(1u8) << k;
+                let (_, want) = euclid_div_rem(&x, &m);
+                let got = a.rem_euclid(&AverInt::from_bigint(m)).unwrap();
+                assert_eq!(*got.to_bigint(), want, "{x:x} mod 2^{k}");
+            }
+            for w in [0usize, 1, 63, 64, 65, 128, 4096, 64 * 2290 + 3, 200_000] {
+                let (_, low) = euclid_div_rem(&x, &(BigInt::from(1u8) << w));
+                let want = low.magnitude().count_ones();
+                let got = a.pop_count(&AverInt::from_i64(w as i64)).unwrap();
+                assert_eq!(got.to_i64(), Some(want as i64), "popCount({x:x}, {w})");
+            }
+        }
+    }
+
     #[test]
     fn remainder_by_a_small_divisor_agrees_with_division() {
         for &neg in &[false, true] {
@@ -2235,6 +2322,36 @@ mod tests {
                         .unwrap();
                     assert_eq!(got.into_bigint(), want, "n={n} gap={gap} m={m} neg={neg}");
                 }
+            }
+        }
+    }
+
+    /// Products of long values (up to 2999 digits, dense and sparse, both
+    /// signs) by short ones of every length the long-by-short rows take and
+    /// just past it, against num-bigint's general product; a short factor
+    /// of all-ones digits drives carries through every cell.
+    #[test]
+    fn long_by_short_products_of_random_values_agree_with_the_general_product() {
+        let values = long_values();
+        let mut shorts = Vec::new();
+        for n in [2usize, 3, 13, 21, 32, 33] {
+            let ones = (BigInt::from(1u8) << (64 * n)) - 1u8;
+            shorts.push(-&ones);
+            shorts.push(ones);
+            let pattern = values
+                .iter()
+                .find(|v| v.bits() > 64 * n as u64 + 64)
+                .unwrap();
+            let (_, cut) = euclid_div_rem(pattern, &(BigInt::from(1u8) << (64 * n)));
+            shorts.push(cut | (BigInt::from(1u8) << (64 * n - 1)));
+        }
+        for x in values.iter().filter(|v| v.bits() > 64 * 64) {
+            for y in &shorts {
+                let want = x * y;
+                let a = AverInt::from_bigint(x.clone());
+                let b = AverInt::from_bigint(y.clone());
+                assert_eq!(*a.mul(&b).to_bigint(), want);
+                assert_eq!(*b.mul(&a).to_bigint(), want);
             }
         }
     }
