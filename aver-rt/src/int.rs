@@ -153,14 +153,20 @@ pub fn bit_width_too_large_message() -> String {
 /// `Int.sampleHash`'s seed constant: the 64-bit golden ratio, splitmix64's
 /// own increment.
 pub const SAMPLE_HASH_K0: u64 = 0x9e37_79b9_7f4a_7c15;
-/// `Int.sampleHash`'s position constant: the first 64 fractional bits of
-/// `sqrt(2)` (SHA-512's first initial word).
+/// `Int.sampleHash`'s position constant, which a digit's position is
+/// multiplied by: the first 64 fractional bits of `sqrt(2)` (SHA-512's first
+/// initial word).
 pub const SAMPLE_HASH_K1: u64 = 0x6a09_e667_f3bc_c908;
+/// The odd multiplier of `Int.sampleHash`'s step: the 64-bit golden ratio
+/// again (Fibonacci hashing).
+pub const SAMPLE_HASH_STEP: u64 = 0x9e37_79b9_7f4a_7c15;
+/// The rotation of `Int.sampleHash`'s step.
+pub const SAMPLE_HASH_ROTATE: u32 = 26;
 /// The most base-2^64 digits `Int.sampleHash` reads.
 pub const SAMPLE_HASH_DIGITS: u64 = 64;
 
-/// The splitmix64 finalizer, `Int.sampleHash`'s mixer: a bijection on
-/// 64-bit words, every step modulo 2^64.
+/// The splitmix64 finalizer, which `Int.sampleHash` applies once to its
+/// last word: a bijection on 64-bit words, every step modulo 2^64.
 #[inline(always)]
 pub const fn sample_hash_mix(z: u64) -> u64 {
     let z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -179,23 +185,39 @@ pub const fn sample_hash_position(k: u64, n: u64) -> u64 {
 
 /// `Int.sampleHash` over a sign, a digit count and a digit reader: the one
 /// definition every Rust caller shares. `digit(i)` is the `i`-th base-2^64
-/// digit of the magnitude, least significant first.
+/// digit of the magnitude, least significant first. One multiply per digit
+/// beside the position's: the finalizer runs once, on the last word. The
+/// positions of a long number are stepped by the quotient and remainder of
+/// `(n - 1) / 63`, which gives `floor(k * (n - 1) / 63)` with no division in
+/// the loop.
 #[inline]
 fn sample_hash_of(negative: bool, n: u64, mut digit: impl FnMut(u64) -> u64) -> i64 {
-    let mut h = sample_hash_mix(SAMPLE_HASH_K0 ^ n ^ ((negative as u64) << 63));
+    let mut h = SAMPLE_HASH_K0 ^ n ^ ((negative as u64) << 63);
     let mut step = |h: u64, i: u64| {
-        sample_hash_mix(h ^ digit(i) ^ sample_hash_mix(i.wrapping_add(SAMPLE_HASH_K1)))
+        (h.rotate_left(SAMPLE_HASH_ROTATE) ^ digit(i) ^ i.wrapping_mul(SAMPLE_HASH_K1))
+            .wrapping_mul(SAMPLE_HASH_STEP)
     };
     if n <= SAMPLE_HASH_DIGITS {
         for i in 0..n {
             h = step(h, i);
         }
     } else {
-        for k in 0..SAMPLE_HASH_DIGITS {
-            h = step(h, sample_hash_position(k, n));
+        let (q, r) = (
+            (n - 1) / (SAMPLE_HASH_DIGITS - 1),
+            (n - 1) % (SAMPLE_HASH_DIGITS - 1),
+        );
+        let (mut pos, mut acc) = (0u64, 0u64);
+        for _ in 0..SAMPLE_HASH_DIGITS {
+            h = step(h, pos);
+            pos += q;
+            acc += r;
+            if acc >= SAMPLE_HASH_DIGITS - 1 {
+                acc -= SAMPLE_HASH_DIGITS - 1;
+                pos += 1;
+            }
         }
     }
-    (h >> 2) as i64
+    (sample_hash_mix(h) >> 2) as i64
 }
 
 /// [`AverInt::sample_hash`] of the integer `v`, for a host that holds it as
@@ -804,10 +826,10 @@ impl AverInt {
     /// the number is read where it lies, never copied.
     ///
     /// With `s` the sign (1 below zero), `d_0 .. d_{n-1}` the digits of
-    /// `|x|` and all arithmetic modulo 2^64:
-    /// `h = mix(K0 ^ n ^ (s << 63))`, then for each read position `i` in
-    /// increasing order `h = mix(h ^ d_i ^ mix(i + K1))`, and the result is
-    /// `h >> 2`. Every position is read when `n <= 64`; otherwise the 64
+    /// `|x|` and all arithmetic modulo 2^64: `h = K0 ^ n ^ (s << 63)`, then
+    /// for each read position `i` in increasing order
+    /// `h = (rotl(h, 26) ^ d_i ^ i * K1) * STEP`, and the result is
+    /// `mix(h) >> 2`, `mix` the splitmix64 finalizer. Every position is read when `n <= 64`; otherwise the 64
     /// positions `floor(k * (n - 1) / 63)` for `k = 0 .. 63`.
     #[inline]
     pub fn sample_hash(&self) -> i64 {
@@ -1771,50 +1793,50 @@ mod tests {
         let i = AverInt::from_i64;
         let golden: Vec<(&str, AverInt, i64)> = vec![
             ("0", i(0), 4073552104164651883),
-            ("1", i(1), 3430279828413672537),
-            ("-1", i(-1), 1265306096322925805),
-            ("2^62-1", i((1 << 62) - 1), 4429467860349389547),
-            ("2^62", two_pow(62), 785016102583015066),
-            ("-2^62", i(-(1 << 62)), 1482895451591862603),
-            ("2^63", two_pow(63), 1695053514697690827),
-            ("-2^63", i(i64::MIN), 3190229909601451097),
-            ("2^64", two_pow(64), 4469833122817736503),
-            ("-2^64", two_pow(64).neg(), 3355857316112120590),
+            ("1", i(1), 2002933399595234092),
+            ("-1", i(-1), 3522702157042720953),
+            ("2^62-1", i((1 << 62) - 1), 677213541392434302),
+            ("2^62", two_pow(62), 279350520809238470),
+            ("-2^62", i(-(1 << 62)), 4142181659051566089),
+            ("2^63", two_pow(63), 2769678075778260847),
+            ("-2^63", i(i64::MIN), 2389962711238891874),
+            ("2^64", two_pow(64), 2524483964172277186),
+            ("-2^64", two_pow(64).neg(), 814754748962987607),
             (
                 "63 digits",
                 digits_value(1, &[(1, 62), (12345, 0)]),
-                3681128214180528190,
+                1407338844095500708,
             ),
             (
                 "64 digits",
                 digits_value(1, &[(1, 63), (7, 10), (3, 0)]),
-                2010308551039741372,
+                2064600137342120339,
             ),
             (
                 "65 digits",
                 digits_value(1, &[(1, 64), (1, 31), (9, 0)]),
-                2708841112741538185,
+                1389404020924965972,
             ),
             (
                 "-65 digits",
                 digits_value(-1, &[(1, 64), (1, 31), (9, 0)]),
-                3976537259737979144,
+                510135969639493638,
             ),
             (
                 "656 digits A",
                 digits_value(1, &[(5, 655), (1, 0)]),
-                4079519304160750755,
+                2714175153022404763,
             ),
             (
                 "656 digits B",
                 digits_value(1, &[(6, 655), (1, 0)]),
-                2841501888161152879,
+                1075586810661326426,
             ),
             // Digit 600 is not among the 64 read, so this one collides with A.
             (
                 "656 digits A + 2^(64*600)",
                 digits_value(1, &[(5, 655), (1, 600), (1, 0)]),
-                4079519304160750755,
+                2714175153022404763,
             ),
         ];
         for (name, x, expected) in golden {

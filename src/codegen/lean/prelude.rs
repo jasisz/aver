@@ -599,14 +599,16 @@ def popCount (x w : Int) : Int := ((natCount w.toNat (x % 2 ^ w.toNat).toNat : N
 /// acceleration, so a literal argument decides by `decide`. `finish` keeps
 /// the result below `2^62` by construction, and `sampleHash_range` states
 /// it; the Rust backend's interval for the builtin's result is this fact.
-/// A certificate model gets the definitions and the theorem, without the
-/// smoke examples.
+/// The runtime steps a long number's positions by the quotient and the
+/// remainder of `(n - 1) / 63`; the model states the same positions in
+/// closed form. A certificate model gets the definitions and the theorem,
+/// without the smoke examples.
 fn aver_sample_hash_prelude(cert_model: bool) -> String {
     let examples = if cert_model {
         String::new()
     } else {
         "\n\nexample : sampleHash 0 = 4073552104164651883 := by decide\n\
-         example : sampleHash (-(2 ^ 63)) = 3190229909601451097 := by decide"
+         example : sampleHash (-(2 ^ 63)) = 2389962711238891874 := by decide"
             .to_string()
     };
     format!(
@@ -616,6 +618,13 @@ fn aver_sample_hash_prelude(cert_model: bool) -> String {
 def word : Nat := 18446744073709551616
 def k0 : Nat := {k0}
 def k1 : Nat := {k1}
+def stepMul : Nat := {step}
+
+/-- A left rotation of a word below `2^64` by `r < 64`. -/
+def rotl (h r : Nat) : Nat := ((h <<< r) % word) ||| (h >>> (64 - r))
+
+/-- One read digit `d` at position `i`: `(rotl(h, {rot}) ^ d ^ i * k1) * stepMul`. -/
+def step (h i d : Nat) : Nat := ((rotl h {rot} ^^^ d ^^^ (i * k1 % word)) * stepMul) % word
 
 /-- The splitmix64 finalizer on a word below `2^64`. -/
 def mix (z : Nat) : Nat :=
@@ -634,8 +643,8 @@ def digit (m i : Nat) : Nat := (m >>> (64 * i)) % word
 def positions (n : Nat) : List Nat :=
   if n ≤ 64 then List.range n else (List.range 64).map (fun k => k * (n - 1) / 63)
 
-/-- The last step, `h >> 2` of a word. -/
-def finish (h : Nat) : Int := ((h % word / 4 : Nat) : Int)
+/-- The last step, `mix(h) >> 2` of a word. -/
+def finish (h : Nat) : Int := ((mix (h % word) % word / 4 : Nat) : Int)
 
 /-- A hash of `x` read from at most 64 of its digits: NOT of its whole
     value. -/
@@ -643,8 +652,8 @@ def sampleHash (x : Int) : Int :=
   let m := x.natAbs
   let n := digitCount m
   finish ((positions n).foldl
-    (fun h i => mix (h ^^^ digit m i ^^^ mix ((i + k1) % word)))
-    (mix (k0 ^^^ n ^^^ ((if x < 0 then 1 else 0) <<< 63))))
+    (fun h i => step h i (digit m i))
+    (k0 ^^^ n ^^^ ((if x < 0 then 1 else 0) <<< 63)))
 
 theorem finish_range (h : Nat) : 0 ≤ finish h ∧ finish h < 4611686018427387904 := by
   unfold finish word; omega
@@ -657,6 +666,8 @@ theorem sampleHash_range (x : Int) :
 end AverSampleHash"#,
         k0 = aver_rt::SAMPLE_HASH_K0,
         k1 = aver_rt::SAMPLE_HASH_K1,
+        step = aver_rt::SAMPLE_HASH_STEP,
+        rot = aver_rt::SAMPLE_HASH_ROTATE,
     )
 }
 
