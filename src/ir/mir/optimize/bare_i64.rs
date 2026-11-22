@@ -710,6 +710,9 @@ pub struct FnBareFacts {
     /// value with a proven interval ([`proven_locals`]): a theorem of the
     /// operations that compute it, never of the ranges callers pass.
     pub proven_slots: std::sync::Arc<HashMap<LocalId, Interval>>,
+    /// Rust: the interval of what each function returns, whatever its
+    /// arguments are ([`proven_returns`]).
+    pub proven_returns: std::sync::Arc<HashMap<FnId, Interval>>,
     /// wasm-gc: the fn is kept in its ordinary form for a `--certify`
     /// build's certificate. Only the reads of a word record's machine word
     /// render raw; arithmetic over them stays `Int`, so the word trees
@@ -949,8 +952,9 @@ impl FnBareFacts {
     /// leaves are a literal, a carrier's field (its constructors' check), a
     /// builtin whose result is bounded whatever its operand ([`WordOp`]), a
     /// length, a compiler-owned character code, a local bound once to such
-    /// a value ([`FnBareFacts::proven_slots`]); a parameter and a call of a
-    /// function are any `Int`. Unbounded for anything else.
+    /// a value ([`FnBareFacts::proven_slots`]) and a call of a function
+    /// whose every result is bounded ([`FnBareFacts::proven_returns`]); a
+    /// parameter is any `Int`. Unbounded for anything else.
     pub fn proven_value(&self, e: &MirExpr) -> Interval {
         proven_value(e, self, &|slot| self.proven_slots.get(&slot).copied())
     }
@@ -1241,14 +1245,20 @@ fn analyze_inner(
         }
     }
 
+    // Rust: what each value is whatever the callers pass, for the
+    // decisions the backend makes by it.
+    let (proven_returns, mut proven_slots) = match rust_positions {
+        true => {
+            let (returns, slots) = proven_returns(program, &summary.raw_ops, &carrier_ids);
+            (std::sync::Arc::new(returns), slots)
+        }
+        false => Default::default(),
+    };
     let mut fns: HashMap<FnId, FnBareFacts> = HashMap::new();
     for (id, f) in program.iter() {
         let mut facts = analyze_fn(f, &summary, carrier, field_carrier, None, rust_positions);
-        // Rust: what each local is whatever the callers pass, for the
-        // decisions the backend makes by it.
-        if rust_positions {
-            facts.proven_slots = std::sync::Arc::new(proven_locals(f, &facts));
-        }
+        facts.proven_returns = proven_returns.clone();
+        facts.proven_slots = proven_slots.remove(id).unwrap_or_default();
         if let Some(checked) = summary.checked.get(id) {
             let on_fallback = MirFn {
                 body: checked.fallback.clone(),
@@ -1263,6 +1273,7 @@ fn analyze_inner(
                 rust_positions,
             );
             if rust_positions {
+                fallback_facts.proven_returns = proven_returns.clone();
                 fallback_facts.proven_slots =
                     std::sync::Arc::new(proven_locals(&on_fallback, &fallback_facts));
             }
@@ -1933,6 +1944,8 @@ fn compute_summary(
         //      caller's per-slot facts and demote any bare-returning callee
         //      bound to a non-bare slot. (Mirror of C2's discipline, keyed on
         //      the binding repr instead of the consumer position.)
+        //      On Rust the rewrite boxes a raw return bound to a boxed
+        //      `let` (`rewrite_let_value`), so the return stays raw there.
         let tmp = Summary {
             bare_params: bare_params.clone(),
             bare_return: bare_return.clone(),
@@ -1945,7 +1958,7 @@ fn compute_summary(
             return_intervals: return_intervals.clone(),
             rust: rust_positions,
         };
-        for (_caller, f) in program.iter() {
+        for (_caller, f) in program.iter().filter(|_| !rust_positions) {
             let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
             let mut demote: Vec<FnId> = Vec::new();
             collect_let_bound_boxed_returns(&f.body.node, &facts, &bare_return, &mut demote);
@@ -4595,7 +4608,11 @@ fn tail_value_is_bare(
             // ETAP-2 carrier-`i64`: a tail `c.value` over a bare carrier reads raw
             // i64, so the fn may return bare i64 (skip the project bridge).
             MirExpr::Project(_) => facts.is_carrier_project(e),
-            MirExpr::Call(_) => is_code_carrier_call(e) || facts.call_return_interval(e).is_some(),
+            // A call that renders raw: a character code, a call of a
+            // function that returns a raw `i64`, and on Rust a length, a
+            // builtin computed raw over raw operands or a word read off any
+            // operand ([`WordOp`]).
+            MirExpr::Call(_) | MirExpr::Neg(_) => facts.expr_is_bare_i64(e),
             _ => false,
         }
     })
@@ -4629,6 +4646,13 @@ fn proven_value(
         MirExpr::Call(c) => {
             if let Some(iv) = carrier_call_interval(e).or_else(|| facts.length_interval(e)) {
                 return iv;
+            }
+            if let MirCallee::Fn(target) = c.node.callee {
+                return facts
+                    .proven_returns
+                    .get(&target)
+                    .copied()
+                    .unwrap_or_else(Interval::unbounded);
             }
             // A word whatever the operand is, and the bound a computed op
             // gives over its operands' intervals: both hold.
@@ -4757,6 +4781,98 @@ fn proven_locals(f: &MirFn, facts: &FnBareFacts) -> HashMap<LocalId, Interval> {
         .into_iter()
         .filter_map(|(slot, iv)| Some((slot, iv?)))
         .collect()
+}
+
+/// The hull of what a body returns ([`proven_returns`]): each result value
+/// and each early `return` wherever it stands, with a recursive tail call
+/// to `self_fn` left out (its value is the value of the call it makes,
+/// which by induction on the calls that return is one of the others).
+/// `None` when no result returns a value.
+fn proven_result(body: &Spanned<MirExpr>, self_fn: FnId, facts: &FnBareFacts) -> Option<Interval> {
+    // The value of each `return` that stands anywhere but at a result.
+    fn early<'a>(e: &'a MirExpr, out: &mut Vec<&'a Spanned<MirExpr>>) {
+        if let MirExpr::Return(inner) = e {
+            out.push(inner);
+        }
+        visit_children(e, &mut |c| early(c, out));
+    }
+    let mut results = Vec::new();
+    crate::ir::mir::result_values::collect(body, &mut results);
+    let mut hull: Option<Interval> = None;
+    let mut returned = Vec::new();
+    early(&body.node, &mut returned);
+    for inner in returned {
+        if let Some(iv) = proven_result(inner, self_fn, facts) {
+            hull = Some(hull.map_or(iv, |h| h.hull(iv)));
+        }
+    }
+    for r in results {
+        let iv = match &r.node {
+            MirExpr::TailCall(tc) if tc.node.target == self_fn => continue,
+            MirExpr::TailCall(tc) => facts
+                .proven_returns
+                .get(&tc.node.target)
+                .copied()
+                .unwrap_or_else(Interval::unbounded),
+            MirExpr::Return(inner) => match proven_result(inner, self_fn, facts) {
+                Some(iv) => iv,
+                None => continue,
+            },
+            leaf => facts.proven_value(leaf),
+        };
+        hull = Some(hull.map_or(iv, |h| h.hull(iv)));
+    }
+    hull
+}
+
+/// Rust: per function, the interval of every value it returns, with its
+/// parameters at any value of their type (a carrier's field within its
+/// constructors' check), and the proven intervals of its locals. Functions
+/// are taken callee first, so a caller sees what each callee returns; a
+/// call of a function not yet taken (a recursive one, or one in a cycle of
+/// calls) is any value. Each interval is a theorem given the ones before
+/// it, so the table holds whoever calls what. Only bounded returns and only
+/// `Int` results are kept.
+fn proven_returns(
+    program: &MirProgram,
+    raw_ops: &std::sync::Arc<RawOps>,
+    carrier_ids: &std::sync::Arc<CarrierIds>,
+) -> (
+    HashMap<FnId, Interval>,
+    HashMap<FnId, std::sync::Arc<HashMap<LocalId, Interval>>>,
+) {
+    let mut edges: Vec<CallEdge> = Vec::new();
+    for (caller, f) in program.iter() {
+        collect_call_edges(*caller, &f.body.node, &mut edges);
+    }
+    let mut facts = FnBareFacts {
+        rust: true,
+        raw_ops: raw_ops.clone(),
+        carrier_ids: carrier_ids.clone(),
+        ..FnBareFacts::default()
+    };
+    let mut locals = HashMap::new();
+    for id in callee_first(program, &edges) {
+        let Some(f) = program.fn_by_id(id) else {
+            continue;
+        };
+        let slots = std::sync::Arc::new(proven_locals(f, &facts));
+        facts.proven_slots = slots.clone();
+        locals.insert(id, slots);
+        if !ty_str_is_int(&f.return_type) {
+            continue;
+        }
+        if let Some(iv) = proven_result(&f.body, id, &facts)
+            && iv != Interval::unbounded()
+        {
+            std::sync::Arc::make_mut(&mut facts.proven_returns).insert(id, iv);
+        }
+    }
+    let returns = std::mem::take(&mut facts.proven_returns);
+    (
+        std::sync::Arc::try_unwrap(returns).unwrap_or_else(|shared| (*shared).clone()),
+        locals,
+    )
 }
 
 // ── shared traversal + helpers ──────────────────────────────────────────
@@ -6608,6 +6724,80 @@ fn main() -> Int
         );
         let joined = wasm.for_fn(fn_id_by_name(&program, "joined")).unwrap();
         assert!(joined.proven_slots.is_empty());
+    }
+
+    #[test]
+    fn proven_intervals_follow_locals_branches_and_results() {
+        // Each interval holds whatever is passed: `hashOf` and `fold` are
+        // bounded by their remainders, `joined` through a local bound to a
+        // branch and a call of `hashOf`; `depth`'s recursion under `+ 1`,
+        // `head`'s list element and `ident`'s parameter are any value.
+        let src = r#"
+fn hashOf(n: Int) -> Int
+    Int.mod(n * 31 + 7, 2147483647)
+
+fn fold(xs: List<Int>, h: Int) -> Int
+    match xs
+        [] -> Int.mod(h, 65536)
+        [x, ..rest] -> fold(rest, h * 31 + x)
+
+fn depth(n: Int) -> Int
+    match n <= 0
+        true -> 0
+        false -> depth(n - 1) + 1
+
+fn joined(n: Int) -> Int
+    k = match n > 0
+        true -> 5
+        false -> Bits.and(n, 1023)
+    k * 2 + hashOf(n)
+
+fn head(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [x, ..rest] -> x
+
+fn ident(n: Int) -> Int
+    m = n
+    m
+
+fn main() -> Int
+    hashOf(3) + fold([1], 2) + depth(3) + joined(4) + head([1]) + ident(2)
+"#;
+        let (program, _) = facts_for(src);
+        let facts = analyze_rust(&program, &CarrierIds::new(), None);
+        let main = facts.for_fn(fn_id_by_name(&program, "main")).unwrap();
+        let ret = |name: &str| {
+            main.proven_returns
+                .get(&fn_id_by_name(&program, name))
+                .copied()
+        };
+        assert_eq!(ret("hashOf"), Some(Interval::between(0, 2147483646)));
+        assert_eq!(ret("fold"), Some(Interval::between(0, 65535)));
+        assert_eq!(ret("joined"), Some(Interval::between(0, 2046 + 2147483646)));
+        for name in ["depth", "head", "ident", "main"] {
+            assert_eq!(ret(name), None, "{name} returns any value");
+        }
+        let joined = facts.for_fn(fn_id_by_name(&program, "joined")).unwrap();
+        let mut slots: Vec<Interval> = joined.proven_slots.values().copied().collect();
+        slots.sort_by_key(|iv| format!("{iv:?}"));
+        assert!(
+            slots.contains(&Interval::between(0, 1023)),
+            "`k` is in [0, 1023]: {slots:?}"
+        );
+        // The wasm-gc facts carry none of it.
+        let vm = analyze_with_fields(
+            &program,
+            &CarrierIntervals::new(),
+            &FieldCarrierIntervals::new(),
+            false,
+        );
+        assert!(
+            vm.for_fn(fn_id_by_name(&program, "main"))
+                .unwrap()
+                .proven_returns
+                .is_empty()
+        );
     }
 
     #[test]

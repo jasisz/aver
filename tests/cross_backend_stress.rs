@@ -1692,6 +1692,26 @@ fn word_builtin_intervals_vm_and_wasm_gc() {
     );
 }
 
+/// Intervals carried through locals, branches and the results of functions,
+/// over negative, 64-bit edge and long values. `tests/rust_codegen_differential.rs`
+/// holds Rust, which decides by them, to the same output.
+const PROVEN_INTERVALS_SRC: &str = include_str!("fixtures/proven_intervals.av");
+const PROVEN_INTERVALS_OUT: &str = include_str!("fixtures/proven_intervals.expected");
+
+#[test]
+fn proven_intervals_vm_and_wasm_gc() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-provenintervals-vm", PROVEN_INTERVALS_SRC),
+        PROVEN_INTERVALS_OUT.trim(),
+    );
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-provenintervals-wasmgc", PROVEN_INTERVALS_SRC),
+        PROVEN_INTERVALS_OUT.trim(),
+    );
+}
+
 // ─── Float.toBits / Float.fromBits ──────────────────────────────────────
 
 /// The binary64 patterns of zeros, subnormals, the largest finite values,

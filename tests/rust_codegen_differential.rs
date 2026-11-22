@@ -3934,6 +3934,85 @@ fn rust_word_builtin_intervals_match_vm_and_skip_the_check() {
     }
 }
 
+/// Intervals that follow from the operations alone, carried through
+/// locals, branches and the results of functions: the Rust backend leaves
+/// out the checks and answers the comparisons they decide, and computes
+/// `Int.mod` by a literal as a machine word, with the VM's output.
+#[test]
+fn rust_proven_intervals_match_vm_and_decide_by_them() {
+    let src = include_str!("fixtures/proven_intervals.av");
+    let expected = include_str!("fixtures/proven_intervals.expected").trim();
+
+    let vm = run_vm_inline("proven_intervals", src).expect("vm run");
+    assert_eq!(vm.trim(), expected, "VM proven intervals contract changed");
+    let rust =
+        build_run_rust_inline("proven_intervals", src).expect("rust compile + cargo build + run");
+    assert_eq!(
+        rust.trim(),
+        expected,
+        "Rust proven intervals diverged from the VM"
+    );
+
+    let ws = temp_dir("proven_intervals_src");
+    let file = ws.join("proven_intervals.av");
+    fs::write(&file, src).expect("write source");
+    let project = ws.join("project");
+    compile_rust(&file, &project, "proven_intervals", None, &[]).expect("compile");
+    let generated = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+        .expect("read generated entry module");
+    let _ = fs::remove_dir_all(&ws);
+    let body = |name: &str| -> String {
+        let at = generated
+            .find(&format!("pub fn {name}("))
+            .unwrap_or_else(|| panic!("no `{name}` in:\n{generated}"));
+        let rest = &generated[at..];
+        rest[..rest.find("\n}\n").unwrap_or(rest.len())].to_string()
+    };
+    let unchecked = |name: &str| {
+        let b = body(name);
+        assert!(
+            b.contains("if true { Ok(Word { value: __word }) }")
+                && !b.contains("contains(&__word)"),
+            "`{name}` builds its word with no check:\n{b}"
+        );
+    };
+    // A remainder by a literal is a word, returned as one.
+    for name in ["residue", "hashOf"] {
+        let b = body(name);
+        assert!(
+            b.contains("-> i64") && b.contains(".rem_euclid_word("),
+            "`{name}` returns its remainder as a word:\n{b}"
+        );
+    }
+    // Through locals, a branch, the results of calls and a tail recursion.
+    for name in ["viaLocals", "joined", "pair"] {
+        unchecked(name);
+    }
+    // `t` fills the range exactly; `u = t + 1` and a negative result do not.
+    let edge = body("edge");
+    assert_eq!(edge.matches("if true { Ok(Word").count(), 1, "{edge}");
+    assert_eq!(edge.matches("contains(&__word)").count(), 1, "{edge}");
+    assert!(body("signedWord").contains("contains(&__word)"));
+    // The comparisons a local's interval decides are answered.
+    let decided = body("decided");
+    assert!(
+        !decided.contains("(r >= 10i64)") && decided.contains("(r == 3i64)"),
+        "{decided}"
+    );
+    let joined = body("joined");
+    assert!(
+        !joined.contains("(k < ") && !joined.contains("(k > "),
+        "`k < 2000` and `k > 1023` are answered:\n{joined}"
+    );
+    // A tail recursion's result is bounded; one under `+ 1` is not.
+    let recursive = body("recursive");
+    assert!(
+        recursive.contains("(fold(&xs, n.clone()) * 65536i64); if true {"),
+        "{recursive}"
+    );
+    assert!(recursive.contains("depth("), "{recursive}");
+}
+
 /// The walks over `Map.keys`, `Map.values`, `Map.entries` and
 /// `List.reverse` on the Rust backend: the program `cross_backend_stress`
 /// runs on the VM and wasm-gc.

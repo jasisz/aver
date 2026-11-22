@@ -1634,13 +1634,13 @@ fn g(n: Int) -> Int
         0 -> 0
         _ -> g(n - 1)
 
-fn h(s: String) -> Int
+fn h(s: String, k: Int) -> Int
     match String.len(s) > 1
         true -> g(2)
-        false -> String.len(s)
+        false -> k
 
 fn main() -> Int
-    h("ab")
+    h("ab", 7)
 "#;
         let program = rewritten(src);
         let g = fn_named(&program, "g");

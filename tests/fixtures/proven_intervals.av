@@ -1,0 +1,181 @@
+module ProvenIntervals
+    intent =
+        "Intervals that follow from the operations alone, carried through"
+        "locals, branches and the results of functions: Int.mod by a literal"
+        "over any Int, words bound to locals and joined over branches, and"
+        "functions whose every result is bounded, feeding a word carrier and"
+        "comparisons, over negative, 64-bit edge and long values."
+    exposes opaque [Word]
+    effects [Console.print]
+
+record Word
+    value: Int
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "A word: at least zero and at most 2^62 - 1."
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+fn shown(r: Result<Word, String>) -> String
+    ? "The word, or why there is none."
+    match r
+        Result.Ok(w) -> "{w.value}"
+        Result.Err(e) -> e
+
+fn residue(n: Int) -> Int
+    ? "Euclidean: in [0, 1000002] whatever the sign or length of n."
+    Int.mod(n, 1000003)
+
+fn wideResidue(n: Int) -> Int
+    ? "In [0, 2^63 - 2]: a word, but not always an inline Int."
+    Int.mod(n, 9223372036854775807)
+
+fn scaled(n: Int) -> Int
+    ? "Past i64 for a large residue: stays a general Int."
+    wideResidue(n) * 4
+
+fn signedResidue(n: Int) -> Int
+    ? "In [-50, 49]: below the word's range for some n."
+    Int.mod(n, 100) - 50
+
+fn viaLocals(n: Int) -> String
+    ? "Words bound to locals: the sum is at most 2^62 - 1 whatever n is."
+    h = Bits.and(Int.sampleHash(n), 2147483647)
+    s = h * 64 + Bits.popCount(n, 63)
+    shown(fromInt(s * 33554432 + Bits.low(n, 25)))
+
+fn edge(n: Int) -> String
+    ? "The low 62 bits fill the word's range exactly; one more leaves it."
+    t = Bits.low(n, 62)
+    u = t + 1
+    "{shown(fromInt(t))} {shown(fromInt(u))}"
+
+fn joined(n: Int) -> String
+    ? "A local bound to a branch: in [0, 1023] on every path."
+    k = match n > 0
+        true -> 5
+        false -> Bits.and(n, 1023)
+    below = match k < 2000
+        true -> 1
+        false -> 0
+    above = match k > 1023
+        true -> 1
+        false -> 0
+    "{shown(fromInt(k * 4503599627370496))} {below} {above}"
+
+fn hashOf(n: Int) -> Int
+    ? "A hash below the prime 2^31 - 1."
+    Int.mod(n * 31 + 7, 2147483647)
+
+fn pair(a: Int, b: Int) -> String
+    ? "Two hashes packed in one word, through the results of a call."
+    shown(fromInt(hashOf(a) * 2147483648 + hashOf(b)))
+
+fn signedWord(n: Int) -> String
+    ? "A result that can be negative keeps the check."
+    shown(fromInt(signedResidue(n)))
+
+fn fold(xs: List<Int>, h: Int) -> Int
+    ? "Tail recursion: every result is the one of the empty list."
+    match xs
+        [] -> Int.mod(h, 65536)
+        [x, ..rest] -> fold(rest, h * 31 + x)
+
+fn depth(n: Int) -> Int
+    ? "Recursion under arithmetic: no bound."
+    match n <= 0
+        true -> 0
+        false -> depth(n - 1) + 1
+
+fn evenFold(n: Int, h: Int) -> Int
+    ? "Mutual recursion, even half."
+    match n <= 0
+        true -> Int.mod(h, 1000)
+        false -> oddFold(n - 1, h * 7 + n)
+
+fn oddFold(n: Int, h: Int) -> Int
+    ? "Mutual recursion, odd half."
+    match n <= 0
+        true -> Int.mod(h, 10)
+        false -> evenFold(n - 1, h * 3 + n)
+
+fn recursive(n: Int) -> String
+    ? "Results of recursive functions."
+    xs = [n, 0 - n, 3, Bits.shiftLeft(n, 70)]
+    "{shown(fromInt(fold(xs, n) * 65536))} {shown(fromInt(depth(5) * 4611686018427387903))} {evenFold(5, n)} {oddFold(4, n)}"
+
+fn shiftedField(w: Word) -> Int
+    ? "The top bits of a word: below 2^31."
+    Bits.shiftRight(w.value, 31)
+
+fn decided(n: Int) -> String
+    ? "Comparisons a local's interval answers, both ways round."
+    r = Int.mod(n, 10)
+    a = match r >= 10
+        true -> "never"
+        false -> "ok"
+    b = match r != 10
+        true -> "ok"
+        false -> "never"
+    c = match 0 <= r
+        true -> "ok"
+        false -> "never"
+    d = match r < 0
+        true -> "never"
+        false -> "ok"
+    e = match r == 3
+        true -> "three"
+        false -> "other"
+    "{a} {b} {c} {d} {e}"
+
+fn consumers(n: Int) -> String
+    ? "A raw result where a general Int is wanted."
+    r = residue(n)
+    xs = [r, residue(n + 1)]
+    big = Bits.shiftLeft(1, 70)
+    same = match residue(n) == big
+        true -> "same"
+        false -> "apart"
+    "{r} {List.len(xs)} {List.contains(xs, residue(n + 1))} {same} {String.fromInt(residue(n) + big)}"
+
+fn unary(n: Int) -> String
+    ? "Int.abs and Bits.not over a word in [-512, 511], and a length in bytes."
+    a = Bits.and(n, 1023) - 512
+    text = "héllo {n}"
+    "{Int.abs(a)} {Bits.not(a)} {shown(fromInt(Int.abs(a) * 4503599627370496))} {String.byteLength(text) - String.len(text)}"
+
+fn line(n: Int) -> String
+    ? "Everything about one value."
+    w = match fromInt(Bits.low(n, 62))
+        Result.Ok(v) -> v
+        Result.Err(_) -> Word(value = 0)
+    "{residue(n)} {wideResidue(n)} {scaled(n)} {viaLocals(n)} {edge(n)} {joined(n)} {pair(n, n + 1)} {signedWord(n)} {recursive(n)} {shiftedField(w)} {decided(n)} {consumers(n)} {unary(n)}"
+
+verify residue
+    residue(0 - 1) => 1000002
+    residue(1000003) => 0
+
+verify fold
+    fold([], 70000) => 4464
+    fold([1, 2], 0) => 33
+
+fn main() -> Unit
+    ? "Small, negative, 64-bit edge and long values."
+    ! [Console.print]
+    big = Bits.shiftLeft(5, 41920) + Bits.shiftLeft(12345, 64) + 987654321
+    Console.print(line(0))
+    Console.print(line(1))
+    Console.print(line(0 - 1))
+    Console.print(line(1000003))
+    Console.print(line(0 - 1000003))
+    Console.print(line(4611686018427387903))
+    Console.print(line(4611686018427387904))
+    Console.print(line(0 - 4611686018427387904))
+    Console.print(line(0 - 4611686018427387905))
+    Console.print(line(9223372036854775807))
+    Console.print(line(0 - 9223372036854775808))
+    Console.print(line(9223372036854775808))
+    Console.print(line(18446744073709551615))
+    Console.print(line(big))
+    Console.print(line(0 - big))
