@@ -583,6 +583,11 @@ fn rewrite_raw(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<MirExpr> {
     if call_returns_raw(&e.node, ctx) {
         return rewrite_children(e, ctx);
     }
+    // A branch is computed as a general `Int`, every arm boxed where it
+    // renders raw, and narrowed once.
+    if matches!(&e.node, MirExpr::Match(_) | MirExpr::IfThenElse(_)) {
+        return unbox_node(rewrite_boxed(e, ctx));
+    }
     // Any other value reaching a raw context (`i64` param / return) is a
     // boxed `AverInt` and must be narrowed via `Unbox` (the checked
     // `to_i64`).

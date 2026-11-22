@@ -4696,6 +4696,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         }
         MirExpr::Unbox(inner) => {
             let boxed = emit_mir_expr(inner, emit_ctx)?;
+            // A branch narrowed as a whole is parenthesized.
+            let boxed = match inner.node {
+                MirExpr::Match(_) | MirExpr::IfThenElse(_) => format!("({boxed})"),
+                _ => boxed,
+            };
             Some(format!(
                 "{}.to_i64().expect(\"Int out of i64 range\")",
                 boxed
