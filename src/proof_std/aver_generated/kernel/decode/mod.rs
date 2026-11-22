@@ -129,7 +129,7 @@ pub fn termOf(
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Term, AverStr> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __dispatch_subject = tag.clone();
+        let __dispatch_subject = &*tag;
         if &*__dispatch_subject == "i" {
             crate::proof_std::aver_generated::kernel::decode::intTerm(args)
         } else {
@@ -265,31 +265,32 @@ pub fn boolTerm(
             Some((__pat0, __pat1)) => {
                 match __pat0 {
                     crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat2) => {
-                        let __pat2 = __pat2.clone();
-                        {
-                            let __dispatch_subject = __pat2;
-                            if &*__dispatch_subject == "true" {
+                        let __dispatch_subject = &**__pat2;
+                        if &*__dispatch_subject == "true" {
+                            {
+                                let __list_subject = __pat1;
+                                if __list_subject.is_empty() {
+                                    Ok(crate::proof_std::aver_generated::kernel::term::Term::TBool(
+                                        crate::proof_std::aver_generated::kernel::term::Term__TBool(
+                                            true,
+                                        ),
+                                    ))
+                                } else {
+                                    Err(::aver_rt::str_lit!("malformed Bool"))
+                                }
+                            }
+                        } else {
+                            if &*__dispatch_subject == "false" {
                                 {
                                     let __list_subject = __pat1;
                                     if __list_subject.is_empty() {
-                                        Ok(crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(true)))
+                                        Ok(crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(false)))
                                     } else {
                                         Err(::aver_rt::str_lit!("malformed Bool"))
                                     }
                                 }
                             } else {
-                                if &*__dispatch_subject == "false" {
-                                    {
-                                        let __list_subject = __pat1;
-                                        if __list_subject.is_empty() {
-                                            Ok(crate::proof_std::aver_generated::kernel::term::Term::TBool(crate::proof_std::aver_generated::kernel::term::Term__TBool(false)))
-                                        } else {
-                                            Err(::aver_rt::str_lit!("malformed Bool"))
-                                        }
-                                    }
-                                } else {
-                                    Err(::aver_rt::str_lit!("malformed Bool"))
-                                }
+                                Err(::aver_rt::str_lit!("malformed Bool"))
                             }
                         }
                     }
@@ -410,7 +411,7 @@ pub fn headed(
                         let __arg5 @ _ =
                             crate::proof_std::aver_generated::kernel::decode::terms(&rest)?;
                         crate::proof_std::aver_generated::kernel::decode::headedOf(
-                            kind, name, __arg5,
+                            &kind, name, __arg5,
                         )
                     }
                 }
@@ -440,13 +441,13 @@ pub fn headed(
 /// The term for a headed form.
 #[inline(always)]
 pub fn headedOf(
-    kind @ _: AverStr,
+    kind @ _: &AverStr,
     name @ _: AverStr,
     mut xs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Term>,
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Term, AverStr> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __dispatch_subject = kind;
+        let __dispatch_subject = &**kind;
         if &*__dispatch_subject == "call" {
             Ok(crate::proof_std::aver_generated::kernel::term::Term::TCall(
                 {
@@ -591,8 +592,7 @@ pub fn arm(
             match aver_rt::list_uncons(__list_subject) {
                 Some((__pat1, __pat2)) => match __pat1 {
                     crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                        let __pat3 = __pat3.clone();
-                        match &*__pat3 {
+                        match &**__pat3 {
                             "arm" => {
                                 let __list_subject = __pat2;
                                 match aver_rt::list_uncons(&__list_subject) {
@@ -644,7 +644,7 @@ pub fn patOf(
 ) -> Result<crate::proof_std::aver_generated::kernel::term::Pat, AverStr> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __dispatch_subject = tag.clone();
+        let __dispatch_subject = &*tag;
         if &*__dispatch_subject == "pw" {
             Ok(crate::proof_std::aver_generated::kernel::term::Pat::PWild)
         } else {
@@ -1012,7 +1012,7 @@ pub fn proofOf(
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __dispatch_subject = tag.clone();
+        let __dispatch_subject = &*tag;
         if &*__dispatch_subject == "refl" {
             Ok(
                 crate::proof_std::aver_generated::kernel::proof::Proof::PRefl(
@@ -1332,7 +1332,7 @@ pub fn instanceProof(
                                             &ps,
                                         )?;
                                     crate::proof_std::aver_generated::kernel::decode::instanceOf(
-                                        kind, id, __arg7, __arg8,
+                                        &kind, id, __arg7, __arg8,
                                     )
                                 }
                             }
@@ -1373,13 +1373,13 @@ pub fn instanceProof(
 
 /// A rule or law instance.
 pub fn instanceOf(
-    kind @ _: AverStr,
+    kind @ _: &AverStr,
     id @ _: AverStr,
     mut bs @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::term::Binding>,
     mut ps @ _: aver_rt::AverList<crate::proof_std::aver_generated::kernel::proof::Proof>,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    match &*kind {
+    match &**kind {
         "rule" => Ok(
             crate::proof_std::aver_generated::kernel::proof::Proof::PRule(
                 crate::proof_std::aver_generated::kernel::proof::Proof__PRule(id, bs, ps),
@@ -1510,8 +1510,7 @@ pub fn splitCases(
                     match aver_rt::list_uncons(__list_subject) {
                         Some((__pat2, __pat3)) => match __pat2 {
                             crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat4) => {
-                                let __pat4 = __pat4.clone();
-                                match &*__pat4 {
+                                match &**__pat4 {
                                     "case" => {
                                         let __list_subject = __pat3;
                                         match aver_rt::list_uncons(&__list_subject) { Some((__pat5, __pat6)) => { match __pat5 {
@@ -1626,37 +1625,32 @@ pub fn linearProof(
                 match aver_rt::list_uncons(&__list_subject) {
                     Some((__pat1, __pat2)) => match __pat1 {
                         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                            let __pat3 = __pat3.clone();
-                            {
-                                let __dispatch_subject = __pat3;
-                                if &*__dispatch_subject == "true" {
+                            let __dispatch_subject = &**__pat3;
+                            if &*__dispatch_subject == "true" {
+                                {
+                                    let __list_subject = __pat2;
+                                    match aver_rt::list_uncons(&__list_subject) {
+                                        Some((hs, __pat4)) => {
+                                            let __list_subject = __pat4;
+                                            match aver_rt::list_uncons(&__list_subject) { Some((ws, cs)) => { Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PLinear({ let __field0 = crate::proof_std::aver_generated::kernel::decode::term(g)?; let __field1 = true; let __field2 = { let __arg14 @ _ = crate::proof_std::aver_generated::kernel::decode::items(hs)?; crate::proof_std::aver_generated::kernel::decode::atoms(&__arg14) }?; let __field3 = { let __arg15 @ _ = crate::proof_std::aver_generated::kernel::decode::items(ws)?; crate::proof_std::aver_generated::kernel::decode::ints(&__arg15) }?; let __field4 = crate::proof_std::aver_generated::kernel::decode::cuts(&cs)?; crate::proof_std::aver_generated::kernel::proof::Proof__PLinear(__field1, __field0, __field2, __field3, __field4) })) }, None => { Err(::aver_rt::str_lit!("malformed linear")) } }
+                                        }
+                                        None => Err(::aver_rt::str_lit!("malformed linear")),
+                                    }
+                                }
+                            } else {
+                                if &*__dispatch_subject == "false" {
                                     {
                                         let __list_subject = __pat2;
                                         match aver_rt::list_uncons(&__list_subject) {
-                                            Some((hs, __pat4)) => {
-                                                let __list_subject = __pat4;
-                                                match aver_rt::list_uncons(&__list_subject) { Some((ws, cs)) => { Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PLinear({ let __field0 = crate::proof_std::aver_generated::kernel::decode::term(g)?; let __field1 = true; let __field2 = { let __arg14 @ _ = crate::proof_std::aver_generated::kernel::decode::items(hs)?; crate::proof_std::aver_generated::kernel::decode::atoms(&__arg14) }?; let __field3 = { let __arg15 @ _ = crate::proof_std::aver_generated::kernel::decode::items(ws)?; crate::proof_std::aver_generated::kernel::decode::ints(&__arg15) }?; let __field4 = crate::proof_std::aver_generated::kernel::decode::cuts(&cs)?; crate::proof_std::aver_generated::kernel::proof::Proof__PLinear(__field1, __field0, __field2, __field3, __field4) })) }, None => { Err(::aver_rt::str_lit!("malformed linear")) } }
+                                            Some((hs, __pat5)) => {
+                                                let __list_subject = __pat5;
+                                                match aver_rt::list_uncons(&__list_subject) { Some((ws, cs)) => { Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PLinear({ let __field0 = crate::proof_std::aver_generated::kernel::decode::term(g)?; let __field1 = false; let __field2 = { let __arg16 @ _ = crate::proof_std::aver_generated::kernel::decode::items(hs)?; crate::proof_std::aver_generated::kernel::decode::atoms(&__arg16) }?; let __field3 = { let __arg17 @ _ = crate::proof_std::aver_generated::kernel::decode::items(ws)?; crate::proof_std::aver_generated::kernel::decode::ints(&__arg17) }?; let __field4 = crate::proof_std::aver_generated::kernel::decode::cuts(&cs)?; crate::proof_std::aver_generated::kernel::proof::Proof__PLinear(__field1, __field0, __field2, __field3, __field4) })) }, None => { Err(::aver_rt::str_lit!("malformed linear")) } }
                                             }
                                             None => Err(::aver_rt::str_lit!("malformed linear")),
                                         }
                                     }
                                 } else {
-                                    if &*__dispatch_subject == "false" {
-                                        {
-                                            let __list_subject = __pat2;
-                                            match aver_rt::list_uncons(&__list_subject) {
-                                                Some((hs, __pat5)) => {
-                                                    let __list_subject = __pat5;
-                                                    match aver_rt::list_uncons(&__list_subject) { Some((ws, cs)) => { Ok(crate::proof_std::aver_generated::kernel::proof::Proof::PLinear({ let __field0 = crate::proof_std::aver_generated::kernel::decode::term(g)?; let __field1 = false; let __field2 = { let __arg16 @ _ = crate::proof_std::aver_generated::kernel::decode::items(hs)?; crate::proof_std::aver_generated::kernel::decode::atoms(&__arg16) }?; let __field3 = { let __arg17 @ _ = crate::proof_std::aver_generated::kernel::decode::items(ws)?; crate::proof_std::aver_generated::kernel::decode::ints(&__arg17) }?; let __field4 = crate::proof_std::aver_generated::kernel::decode::cuts(&cs)?; crate::proof_std::aver_generated::kernel::proof::Proof__PLinear(__field1, __field0, __field2, __field3, __field4) })) }, None => { Err(::aver_rt::str_lit!("malformed linear")) } }
-                                                }
-                                                None => {
-                                                    Err(::aver_rt::str_lit!("malformed linear"))
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        Err(::aver_rt::str_lit!("malformed linear"))
-                                    }
+                                    Err(::aver_rt::str_lit!("malformed linear"))
                                 }
                             }
                         }
@@ -1685,8 +1679,7 @@ pub fn cuts(
                     match aver_rt::list_uncons(__list_subject) {
                         Some((__pat2, __pat3)) => match __pat2 {
                             crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat4) => {
-                                let __pat4 = __pat4.clone();
-                                match &*__pat4 {
+                                match &**__pat4 {
                                     "cut" => {
                                         let __list_subject = __pat3;
                                         match aver_rt::list_uncons(&__list_subject) { Some((__pat5, __pat6)) => { match __pat5 {
@@ -2162,8 +2155,7 @@ pub fn carried(
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat0) => {
             { let __list_subject = __pat0; match aver_rt::list_uncons(&__list_subject) { Some((__pat1, ns)) => { match __pat1 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat2) => {
-            let __pat2 = __pat2.clone();
-            match &*__pat2 {
+            match &**__pat2 {
         "carry" => {
             Ok((crate::proof_std::aver_generated::kernel::decode::atoms(&ns)?, rest))
         },
@@ -2198,8 +2190,7 @@ pub fn cases(
                     match aver_rt::list_uncons(__list_subject) {
                         Some((__pat2, __pat3)) => match __pat2 {
                             crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat4) => {
-                                let __pat4 = __pat4.clone();
-                                match &*__pat4 {
+                                match &**__pat4 {
                                     "case" => {
                                         let __list_subject = __pat3;
                                         match aver_rt::list_uncons(&__list_subject) {
@@ -2438,29 +2429,31 @@ pub fn typ(
     crate::proof_std::cancel_checkpoint();
     match s {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat0) => {
-            let __pat0 = __pat0.clone();
-            {
-                let __dispatch_subject = __pat0;
-                if &*__dispatch_subject == "int" {
-                    Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyInt)
+            let __dispatch_subject = &**__pat0;
+            if &*__dispatch_subject == "int" {
+                Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyInt)
+            } else {
+                if &*__dispatch_subject == "bool" {
+                    Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyBool)
                 } else {
-                    if &*__dispatch_subject == "bool" {
-                        Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyBool)
+                    if &*__dispatch_subject == "str" {
+                        Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyStr)
                     } else {
-                        if &*__dispatch_subject == "str" {
-                            Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyStr)
+                        if &*__dispatch_subject == "float" {
+                            Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyFloat)
                         } else {
-                            if &*__dispatch_subject == "float" {
-                                Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyFloat)
+                            if &*__dispatch_subject == "unit" {
+                                Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyUnit)
                             } else {
-                                if &*__dispatch_subject == "unit" {
-                                    Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyUnit)
+                                if &*__dispatch_subject == "_" {
+                                    Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyRigid(
+                                        crate::proof_std::aver_generated::kernel::term::Ty__TyRigid(
+                                            ::aver_rt::str_lit!(""),
+                                            false,
+                                        ),
+                                    ))
                                 } else {
-                                    if &*__dispatch_subject == "_" {
-                                        Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyRigid(crate::proof_std::aver_generated::kernel::term::Ty__TyRigid(::aver_rt::str_lit!(""), false)))
-                                    } else {
-                                        Err(::aver_rt::str_lit!("malformed type"))
-                                    }
+                                    Err(::aver_rt::str_lit!("malformed type"))
                                 }
                             }
                         }
@@ -2473,13 +2466,11 @@ pub fn typ(
             match aver_rt::list_uncons(__list_subject) {
                 Some((__pat2, ts)) => match __pat2 {
                     crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                        let __pat3 = __pat3.clone();
-                        {
-                            let __dispatch_subject = __pat3;
-                            if &*__dispatch_subject == "var" {
-                                {
-                                    let __list_subject = ts;
-                                    match aver_rt::list_uncons(&__list_subject) { Some((__pat4, __pat5)) => { match __pat4 {
+                        let __dispatch_subject = &**__pat3;
+                        if &*__dispatch_subject == "var" {
+                            {
+                                let __list_subject = ts;
+                                match aver_rt::list_uncons(&__list_subject) { Some((__pat4, __pat5)) => { match __pat4 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(n) => {
             let n = n.clone();
             aver_list_match!(__pat5, [] => crate::proof_std::aver_generated::kernel::decode::typeVar(n, false, vars), [__pat6, __pat7] => { match __pat6 {
@@ -2502,16 +2493,32 @@ pub fn typ(
             Err(::aver_rt::str_lit!("malformed type"))
         }
     } }, None => { Err(::aver_rt::str_lit!("malformed type")) } }
+                            }
+                        } else {
+                            if &*__dispatch_subject == "list" {
+                                {
+                                    let __list_subject = ts;
+                                    match aver_rt::list_uncons(&__list_subject) {
+                                        Some((t, __pat9)) => {
+                                            let __list_subject = __pat9;
+                                            if __list_subject.is_empty() {
+                                                Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyList(crate::proof_std::aver_generated::kernel::term::Ty__TyList(crate::proof_std::aver_generated::kernel::decode::typ(t, vars)?)))
+                                            } else {
+                                                Err(::aver_rt::str_lit!("malformed type"))
+                                            }
+                                        }
+                                        None => Err(::aver_rt::str_lit!("malformed type")),
+                                    }
                                 }
                             } else {
-                                if &*__dispatch_subject == "list" {
+                                if &*__dispatch_subject == "option" {
                                     {
                                         let __list_subject = ts;
                                         match aver_rt::list_uncons(&__list_subject) {
-                                            Some((t, __pat9)) => {
-                                                let __list_subject = __pat9;
+                                            Some((t, __pat10)) => {
+                                                let __list_subject = __pat10;
                                                 if __list_subject.is_empty() {
-                                                    Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyList(crate::proof_std::aver_generated::kernel::term::Ty__TyList(crate::proof_std::aver_generated::kernel::decode::typ(t, vars)?)))
+                                                    Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyOption(crate::proof_std::aver_generated::kernel::term::Ty__TyOption(crate::proof_std::aver_generated::kernel::decode::typ(t, vars)?)))
                                                 } else {
                                                     Err(::aver_rt::str_lit!("malformed type"))
                                                 }
@@ -2520,14 +2527,14 @@ pub fn typ(
                                         }
                                     }
                                 } else {
-                                    if &*__dispatch_subject == "option" {
+                                    if &*__dispatch_subject == "vector" {
                                         {
                                             let __list_subject = ts;
                                             match aver_rt::list_uncons(&__list_subject) {
-                                                Some((t, __pat10)) => {
-                                                    let __list_subject = __pat10;
+                                                Some((t, __pat11)) => {
+                                                    let __list_subject = __pat11;
                                                     if __list_subject.is_empty() {
-                                                        Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyOption(crate::proof_std::aver_generated::kernel::term::Ty__TyOption(crate::proof_std::aver_generated::kernel::decode::typ(t, vars)?)))
+                                                        Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyVector(crate::proof_std::aver_generated::kernel::term::Ty__TyVector(crate::proof_std::aver_generated::kernel::decode::typ(t, vars)?)))
                                                     } else {
                                                         Err(::aver_rt::str_lit!("malformed type"))
                                                     }
@@ -2536,18 +2543,27 @@ pub fn typ(
                                             }
                                         }
                                     } else {
-                                        if &*__dispatch_subject == "vector" {
+                                        if &*__dispatch_subject == "result" {
                                             {
                                                 let __list_subject = ts;
                                                 match aver_rt::list_uncons(&__list_subject) {
-                                                    Some((t, __pat11)) => {
-                                                        let __list_subject = __pat11;
-                                                        if __list_subject.is_empty() {
-                                                            Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyVector(crate::proof_std::aver_generated::kernel::term::Ty__TyVector(crate::proof_std::aver_generated::kernel::decode::typ(t, vars)?)))
-                                                        } else {
-                                                            Err(::aver_rt::str_lit!(
+                                                    Some((t, __pat12)) => {
+                                                        let __list_subject = __pat12;
+                                                        match aver_rt::list_uncons(&__list_subject)
+                                                        {
+                                                            Some((e, __pat13)) => {
+                                                                let __list_subject = __pat13;
+                                                                if __list_subject.is_empty() {
+                                                                    Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyResult(crate::proof_std::aver_generated::kernel::term::Ty__TyResult(crate::proof_std::aver_generated::kernel::decode::typ(t, vars)?, crate::proof_std::aver_generated::kernel::decode::typ(e, vars)?)))
+                                                                } else {
+                                                                    Err(::aver_rt::str_lit!(
+                                                                        "malformed type"
+                                                                    ))
+                                                                }
+                                                            }
+                                                            None => Err(::aver_rt::str_lit!(
                                                                 "malformed type"
-                                                            ))
+                                                            )),
                                                         }
                                                     }
                                                     None => {
@@ -2556,19 +2572,19 @@ pub fn typ(
                                                 }
                                             }
                                         } else {
-                                            if &*__dispatch_subject == "result" {
+                                            if &*__dispatch_subject == "map" {
                                                 {
                                                     let __list_subject = ts;
                                                     match aver_rt::list_uncons(&__list_subject) {
-                                                        Some((t, __pat12)) => {
-                                                            let __list_subject = __pat12;
+                                                        Some((k, __pat14)) => {
+                                                            let __list_subject = __pat14;
                                                             match aver_rt::list_uncons(
                                                                 &__list_subject,
                                                             ) {
-                                                                Some((e, __pat13)) => {
-                                                                    let __list_subject = __pat13;
+                                                                Some((v, __pat15)) => {
+                                                                    let __list_subject = __pat15;
                                                                     if __list_subject.is_empty() {
-                                                                        Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyResult(crate::proof_std::aver_generated::kernel::term::Ty__TyResult(crate::proof_std::aver_generated::kernel::decode::typ(t, vars)?, crate::proof_std::aver_generated::kernel::decode::typ(e, vars)?)))
+                                                                        Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyMap(crate::proof_std::aver_generated::kernel::term::Ty__TyMap(crate::proof_std::aver_generated::kernel::decode::typ(k, vars)?, crate::proof_std::aver_generated::kernel::decode::typ(v, vars)?)))
                                                                     } else {
                                                                         Err(::aver_rt::str_lit!(
                                                                             "malformed type"
@@ -2586,50 +2602,13 @@ pub fn typ(
                                                     }
                                                 }
                                             } else {
-                                                if &*__dispatch_subject == "map" {
-                                                    {
-                                                        let __list_subject = ts;
-                                                        match aver_rt::list_uncons(&__list_subject)
-                                                        {
-                                                            Some((k, __pat14)) => {
-                                                                let __list_subject = __pat14;
-                                                                match aver_rt::list_uncons(
-                                                                    &__list_subject,
-                                                                ) {
-                                                                    Some((v, __pat15)) => {
-                                                                        let __list_subject =
-                                                                            __pat15;
-                                                                        if __list_subject.is_empty()
-                                                                        {
-                                                                            Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyMap(crate::proof_std::aver_generated::kernel::term::Ty__TyMap(crate::proof_std::aver_generated::kernel::decode::typ(k, vars)?, crate::proof_std::aver_generated::kernel::decode::typ(v, vars)?)))
-                                                                        } else {
-                                                                            Err(
-                                                                                ::aver_rt::str_lit!(
-                                                                                    "malformed type"
-                                                                                ),
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                    None => {
-                                                                        Err(::aver_rt::str_lit!(
-                                                                            "malformed type"
-                                                                        ))
-                                                                    }
-                                                                }
-                                                            }
-                                                            None => Err(::aver_rt::str_lit!(
-                                                                "malformed type"
-                                                            )),
-                                                        }
-                                                    }
+                                                if &*__dispatch_subject == "tuple" {
+                                                    Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyTuple(crate::proof_std::aver_generated::kernel::term::Ty__TyTuple(crate::proof_std::aver_generated::kernel::decode::tys(&ts, vars)?)))
                                                 } else {
-                                                    if &*__dispatch_subject == "tuple" {
-                                                        Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyTuple(crate::proof_std::aver_generated::kernel::term::Ty__TyTuple(crate::proof_std::aver_generated::kernel::decode::tys(&ts, vars)?)))
-                                                    } else {
-                                                        if &*__dispatch_subject == "named" {
-                                                            {
-                                                                let __list_subject = ts;
-                                                                match aver_rt::list_uncons(&__list_subject) { Some((__pat16, __pat17)) => { match __pat16 {
+                                                    if &*__dispatch_subject == "named" {
+                                                        {
+                                                            let __list_subject = ts;
+                                                            match aver_rt::list_uncons(&__list_subject) { Some((__pat16, __pat17)) => { match __pat16 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(n) => {
             let n = n.clone();
             { let __list_subject = __pat17; if __list_subject.is_empty() { Ok(crate::proof_std::aver_generated::kernel::term::Ty::TyNamed(crate::proof_std::aver_generated::kernel::term::Ty__TyNamed(n))) } else { Err(::aver_rt::str_lit!("malformed type")) } }
@@ -2638,12 +2617,9 @@ pub fn typ(
             Err(::aver_rt::str_lit!("malformed type"))
         }
     } }, None => { Err(::aver_rt::str_lit!("malformed type")) } }
-                                                            }
-                                                        } else {
-                                                            Err(::aver_rt::str_lit!(
-                                                                "malformed type"
-                                                            ))
                                                         }
+                                                    } else {
+                                                        Err(::aver_rt::str_lit!("malformed type"))
                                                     }
                                                 }
                                             }
@@ -2755,8 +2731,7 @@ pub fn premise(
             match aver_rt::list_uncons(__list_subject) {
                 Some((__pat1, __pat2)) => match __pat1 {
                     crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                        let __pat3 = __pat3.clone();
-                        match &*__pat3 {
+                        match &**__pat3 {
                             "none" => {
                                 let __list_subject = __pat2;
                                 if __list_subject.is_empty() {
@@ -2805,18 +2780,133 @@ pub fn law(
                 Some((__pat1, __pat2)) => {
                     match __pat1 {
                         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(h) => {
-                            let h = h.clone();
-                            {
-                                let __list_subject = __pat2;
-                                match aver_rt::list_uncons(&__list_subject) { Some((__pat3, __pat4)) => { match __pat3 {
-        crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(k) => {
-            let k = k.clone();
-            { let __list_subject = __pat4; match aver_rt::list_uncons(&__list_subject) { Some((gs, __pat5)) => { { let __list_subject = __pat5; match aver_rt::list_uncons(&__list_subject) { Some((p, __pat6)) => { { let __list_subject = __pat6; match aver_rt::list_uncons(&__list_subject) { Some((l, __pat7)) => { { let __list_subject = __pat7; match aver_rt::list_uncons(&__list_subject) { Some((r, __pat8)) => { { let __list_subject = __pat8; if __list_subject.is_empty() { { let __arg18 @ _ = (h == head); { let __arg19 @ _ = { let __arg17 @ _ = crate::proof_std::aver_generated::kernel::decode::items(gs)?; crate::proof_std::aver_generated::kernel::decode::typedVars(&__arg17, true) }?; { let __arg20 @ _ = crate::proof_std::aver_generated::kernel::decode::premise(p)?; { let __arg21 @ _ = crate::proof_std::aver_generated::kernel::decode::term(l)?; { let __arg22 @ _ = crate::proof_std::aver_generated::kernel::decode::term(r)?; crate::proof_std::aver_generated::kernel::decode::lawOf(__arg18, k, __arg19, __arg20, __arg21, __arg22) } } } } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(26usize); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } } }, None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(26usize); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } } } }, None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(26usize); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } } } }, None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(26usize); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } } } }, None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(26usize); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } } }
-        },
-        _ => {
-            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(26usize); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b }))
-        }
-    } }, None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(26usize); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b })) } }
+                            let __list_subject = __pat2;
+                            match aver_rt::list_uncons(&__list_subject) {
+                                Some((__pat3, __pat4)) => match __pat3 {
+                                    crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(
+                                        k,
+                                    ) => {
+                                        let k = k.clone();
+                                        {
+                                            let __list_subject = __pat4;
+                                            match aver_rt::list_uncons(&__list_subject) {
+                                                Some((gs, __pat5)) => {
+                                                    let __list_subject = __pat5;
+                                                    match aver_rt::list_uncons(&__list_subject) {
+                                                        Some((p, __pat6)) => {
+                                                            let __list_subject = __pat6;
+                                                            match aver_rt::list_uncons(
+                                                                &__list_subject,
+                                                            ) {
+                                                                Some((l, __pat7)) => {
+                                                                    let __list_subject = __pat7;
+                                                                    match aver_rt::list_uncons(
+                                                                        &__list_subject,
+                                                                    ) {
+                                                                        Some((r, __pat8)) => {
+                                                                            let __list_subject =
+                                                                                __pat8;
+                                                                            if __list_subject
+                                                                                .is_empty()
+                                                                            {
+                                                                                {
+                                                                                    let __arg18 @ _ = (h == &(head));
+                                                                                    {
+                                                                                        let __arg19 @ _ = { let __arg17 @ _ = crate::proof_std::aver_generated::kernel::decode::items(gs)?; crate::proof_std::aver_generated::kernel::decode::typedVars(&__arg17, true) }?;
+                                                                                        {
+                                                                                            let __arg20 @ _ = crate::proof_std::aver_generated::kernel::decode::premise(p)?;
+                                                                                            {
+                                                                                                let __arg21 @ _ = crate::proof_std::aver_generated::kernel::decode::term(l)?;
+                                                                                                {
+                                                                                                    let __arg22 @ _ = crate::proof_std::aver_generated::kernel::decode::term(r)?;
+                                                                                                    crate::proof_std::aver_generated::kernel::decode::lawOf(__arg18, k, __arg19, __arg20, __arg21, __arg22)
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            } else {
+                                                                                Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(26usize); __b.push_str(&::aver_rt::str_lit!("malformed ")); __b }; __b.push_display(&(head)); __b }))
+                                                                            }
+                                                                        }
+                                                                        None => Err(
+                                                                            aver_rt::AverStr::from(
+                                                                                {
+                                                                                    let mut __b = {
+                                                                                        let mut __b = aver_rt::Buffer::with_capacity(26usize);
+                                                                                        __b.push_str(&::aver_rt::str_lit!("malformed "));
+                                                                                        __b
+                                                                                    };
+                                                                                    __b.push_display(&(head));
+                                                                                    __b
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                    }
+                                                                }
+                                                                None => {
+                                                                    Err(aver_rt::AverStr::from({
+                                                                        let mut __b = {
+                                                                            let mut __b = aver_rt::Buffer::with_capacity(26usize);
+                                                                            __b.push_str(&::aver_rt::str_lit!("malformed "));
+                                                                            __b
+                                                                        };
+                                                                        __b.push_display(&(head));
+                                                                        __b
+                                                                    }))
+                                                                }
+                                                            }
+                                                        }
+                                                        None => Err(aver_rt::AverStr::from({
+                                                            let mut __b = {
+                                                                let mut __b =
+                                                                    aver_rt::Buffer::with_capacity(
+                                                                        26usize,
+                                                                    );
+                                                                __b.push_str(&::aver_rt::str_lit!(
+                                                                    "malformed "
+                                                                ));
+                                                                __b
+                                                            };
+                                                            __b.push_display(&(head));
+                                                            __b
+                                                        })),
+                                                    }
+                                                }
+                                                None => Err(aver_rt::AverStr::from({
+                                                    let mut __b = {
+                                                        let mut __b =
+                                                            aver_rt::Buffer::with_capacity(26usize);
+                                                        __b.push_str(&::aver_rt::str_lit!(
+                                                            "malformed "
+                                                        ));
+                                                        __b
+                                                    };
+                                                    __b.push_display(&(head));
+                                                    __b
+                                                })),
+                                            }
+                                        }
+                                    }
+                                    _ => Err(aver_rt::AverStr::from({
+                                        let mut __b = {
+                                            let mut __b = aver_rt::Buffer::with_capacity(26usize);
+                                            __b.push_str(&::aver_rt::str_lit!("malformed "));
+                                            __b
+                                        };
+                                        __b.push_display(&(head));
+                                        __b
+                                    })),
+                                },
+                                None => Err(aver_rt::AverStr::from({
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(26usize);
+                                        __b.push_str(&::aver_rt::str_lit!("malformed "));
+                                        __b
+                                    };
+                                    __b.push_display(&(head));
+                                    __b
+                                })),
                             }
                         }
                         _ => Err(aver_rt::AverStr::from({
@@ -2918,8 +3008,7 @@ pub fn withCited(
             match aver_rt::list_uncons(__list_subject) {
                 Some((__pat1, __pat2)) => match __pat1 {
                     crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                        let __pat3 = __pat3.clone();
-                        match &*__pat3 {
+                        match &**__pat3 {
                             "fact" => {
                                 let __list_subject = __pat2;
                                 match aver_rt::list_uncons(&__list_subject) { Some((__pat4, __pat5)) => { match __pat4 {
@@ -2991,8 +3080,7 @@ pub fn def(
             match aver_rt::list_uncons(__list_subject) {
                 Some((__pat1, __pat2)) => match __pat1 {
                     crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                        let __pat3 = __pat3.clone();
-                        match &*__pat3 {
+                        match &**__pat3 {
                             "def" => {
                                 let __list_subject = __pat2;
                                 match aver_rt::list_uncons(&__list_subject) { Some((__pat4, __pat5)) => { match __pat4 {
@@ -3046,8 +3134,7 @@ pub fn constant(
             match aver_rt::list_uncons(__list_subject) {
                 Some((__pat1, __pat2)) => match __pat1 {
                     crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                        let __pat3 = __pat3.clone();
-                        match &*__pat3 {
+                        match &**__pat3 {
                             "const" => {
                                 let __list_subject = __pat2;
                                 match aver_rt::list_uncons(&__list_subject) { Some((__pat4, __pat5)) => { match __pat4 {
@@ -3105,8 +3192,7 @@ pub fn sums(
                     match aver_rt::list_uncons(__list_subject) {
                         Some((__pat2, __pat3)) => match __pat2 {
                             crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat4) => {
-                                let __pat4 = __pat4.clone();
-                                match &*__pat4 {
+                                match &**__pat4 {
                                     "sum" => {
                                         let __list_subject = __pat3;
                                         match aver_rt::list_uncons(&__list_subject) { Some((__pat5, __pat6)) => { match __pat5 {
@@ -3114,8 +3200,7 @@ pub fn sums(
             let n = n.clone();
             { let __list_subject = __pat6.clone(); match aver_rt::list_uncons(&__list_subject) { Some((__pat7, __pat8)) => { match __pat7 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat9) => {
-            let __pat9 = __pat9.clone();
-            match &*__pat9 {
+            match &**__pat9 {
         "eq" => {
             Ok(aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::proof::Sum { name: n, eq: true, variants: crate::proof_std::aver_generated::kernel::decode::variants(&__pat8)? }, crate::proof_std::aver_generated::kernel::decode::sums(&rest)?))
         },
@@ -3196,8 +3281,7 @@ pub fn recs(
                     match aver_rt::list_uncons(__list_subject) {
                         Some((__pat2, __pat3)) => match __pat2 {
                             crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat4) => {
-                                let __pat4 = __pat4.clone();
-                                match &*__pat4 {
+                                match &**__pat4 {
                                     "rec" => {
                                         let __list_subject = __pat3;
                                         match aver_rt::list_uncons(&__list_subject) { Some((__pat5, __pat6)) => { match __pat5 {
@@ -3205,8 +3289,7 @@ pub fn recs(
             let n = n.clone();
             { let __list_subject = __pat6.clone(); match aver_rt::list_uncons(&__list_subject) { Some((__pat7, __pat8)) => { match __pat7 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat9) => {
-            let __pat9 = __pat9.clone();
-            match &*__pat9 {
+            match &**__pat9 {
         "eq" => {
             Ok(aver_rt::AverList::prepend_owned(crate::proof_std::aver_generated::kernel::proof::Rec { name: n, eq: true, fields: crate::proof_std::aver_generated::kernel::decode::typedVars(&__pat8, false)? }, crate::proof_std::aver_generated::kernel::decode::recs(&rest)?))
         },
@@ -3304,63 +3387,55 @@ pub fn script(
             match aver_rt::list_uncons(__list_subject) {
                 Some((__pat1, __pat2)) => match __pat1 {
                     crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                        let __pat3 = __pat3.clone();
-                        match &*__pat3 {
+                        match &**__pat3 {
                             "steps" => {
                                 let __list_subject = __pat2;
                                 match aver_rt::list_uncons(&__list_subject) { Some((__pat4, rest)) => { match __pat4 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(v) => {
             let v = v.clone();
-            match &*v.clone() {
+            match &*v {
         "16" => {
             { let __list_subject = rest; match aver_rt::list_uncons(&__list_subject) { Some((o, __pat5)) => { { let __list_subject = __pat5; match aver_rt::list_uncons(&__list_subject) { Some((__pat6, __pat7)) => { match __pat6 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat8) => {
             { let __list_subject = __pat8; match aver_rt::list_uncons(__list_subject) { Some((__pat9, ds)) => { match __pat9 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat10) => {
-            let __pat10 = __pat10.clone();
-            match &*__pat10 {
+            match &**__pat10 {
         "defs" => {
             { let __list_subject = __pat7; match aver_rt::list_uncons(&__list_subject) { Some((__pat11, __pat12)) => { match __pat11 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat13) => {
             { let __list_subject = __pat13; match aver_rt::list_uncons(__list_subject) { Some((__pat14, cs)) => { match __pat14 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat15) => {
-            let __pat15 = __pat15.clone();
-            match &*__pat15 {
+            match &**__pat15 {
         "consts" => {
             { let __list_subject = __pat12; match aver_rt::list_uncons(&__list_subject) { Some((__pat16, __pat17)) => { match __pat16 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat18) => {
             { let __list_subject = __pat18; match aver_rt::list_uncons(__list_subject) { Some((__pat19, ss)) => { match __pat19 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat20) => {
-            let __pat20 = __pat20.clone();
-            match &*__pat20 {
+            match &**__pat20 {
         "sums" => {
             { let __list_subject = __pat17; match aver_rt::list_uncons(&__list_subject) { Some((__pat21, __pat22)) => { match __pat21 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat23) => {
             { let __list_subject = __pat23; match aver_rt::list_uncons(__list_subject) { Some((__pat24, rs)) => { match __pat24 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat25) => {
-            let __pat25 = __pat25.clone();
-            match &*__pat25 {
+            match &**__pat25 {
         "recs" => {
             { let __list_subject = __pat22; match aver_rt::list_uncons(&__list_subject) { Some((__pat26, __pat27)) => { match __pat26 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat28) => {
             { let __list_subject = __pat28; match aver_rt::list_uncons(__list_subject) { Some((__pat29, gs)) => { match __pat29 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat30) => {
-            let __pat30 = __pat30.clone();
-            match &*__pat30 {
+            match &**__pat30 {
         "sigs" => {
             { let __list_subject = __pat27; match aver_rt::list_uncons(&__list_subject) { Some((__pat31, __pat32)) => { match __pat31 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat33) => {
             { let __list_subject = __pat33; match aver_rt::list_uncons(__list_subject) { Some((__pat34, ls)) => { match __pat34 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat35) => {
-            let __pat35 = __pat35.clone();
-            match &*__pat35 {
+            match &**__pat35 {
         "laws" => {
             { let __list_subject = __pat32; match aver_rt::list_uncons(&__list_subject) { Some((__pat36, __pat37)) => { match __pat36 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Node(__pat38) => {
             { let __list_subject = __pat38; match aver_rt::list_uncons(__list_subject) { Some((__pat39, __pat40)) => { match __pat39 {
         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat41) => {
-            let __pat41 = __pat41.clone();
-            match &*__pat41 {
+            match &**__pat41 {
         "proof" => {
             { let __list_subject = __pat40; match aver_rt::list_uncons(&__list_subject) { Some((p, __pat42)) => { { let __list_subject = __pat42; if __list_subject.is_empty() { { let __list_subject = __pat37; if __list_subject.is_empty() { { let __arg54 @ _ = crate::proof_std::aver_generated::kernel::decode::law(o, ::aver_rt::str_lit!("obligation"))?; { let __arg55 @ _ = crate::proof_std::aver_generated::kernel::decode::defs(&ds)?; { let __arg56 @ _ = crate::proof_std::aver_generated::kernel::decode::consts(&cs)?; { let __arg57 @ _ = crate::proof_std::aver_generated::kernel::decode::sums(&ss)?; { let __arg58 @ _ = crate::proof_std::aver_generated::kernel::decode::recs(&rs)?; { let __arg59 @ _ = crate::proof_std::aver_generated::kernel::decode::sigs(&gs)?; { let __arg60 @ _ = crate::proof_std::aver_generated::kernel::decode::laws(&ls)?; { let __arg61 @ _ = crate::proof_std::aver_generated::kernel::decode::proof(p)?; crate::proof_std::aver_generated::kernel::decode::scriptOf(__arg54, __arg55, __arg56, __arg57, __arg58, __arg59, &__arg60, __arg61) } } } } } } } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(48usize); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(48usize); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } } }, None => { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(48usize); __b.push_str(&::aver_rt::str_lit!("unsupported step format version ")); __b }; __b.push_display(&(v)); __b })) } } }
         },

@@ -850,8 +850,7 @@ pub fn expand(mut s @ _: Sexp) -> Result<Sexp, AverStr> {
                 match aver_rt::list_uncons(&__list_subject) {
                     Some((__pat1, __pat2)) => match __pat1 {
                         crate::proof_std::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
-                            let __pat3 = __pat3.clone();
-                            match &*__pat3 {
+                            match &**__pat3 {
                                 "shared" => {
                                     let __list_subject = __pat2;
                                     match aver_rt::list_uncons(&__list_subject) { Some((__pat4, __pat5)) => { match __pat4 {

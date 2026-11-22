@@ -28,7 +28,7 @@ pub fn evalVarFallbackNamed(
         None => match crate::aver_generated::domain::builtins::splitDotted(&name) {
             Some(_) => Ok(crate::aver_generated::domain::value::Val::ValVariant(
                 crate::aver_generated::domain::value::Val__ValVariant(
-                    crate::aver_generated::domain::ast::ctorNameToTag(name.clone()),
+                    crate::aver_generated::domain::ast::ctorNameToTag(&name),
                     name,
                     aver_rt::AverList::empty(),
                 ),

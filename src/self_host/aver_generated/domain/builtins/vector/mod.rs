@@ -9,7 +9,7 @@ pub fn call(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "Vector.new" {
             crate::aver_generated::domain::builtins::vector::builtinVectorNew(args)
         } else {

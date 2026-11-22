@@ -1812,18 +1812,18 @@ pub fn declarationDeps(
         let __t = node;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__n_fields) => {
-                let n = __n_fields.0.clone();
+                let n = &__n_fields.0;
                 crate::proof_kernel::aver_generated::kernel::check::constantDeclarationDeps(
-                    &n, cs, ds, cs,
+                    n, cs, ds, cs,
                 )
             }
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TCall(__f_fields) => {
-                let f = __f_fields.1.clone();
+                let f = &__f_fields.1;
                 let __pat0 = &__f_fields.0;
                 {
                     let __list_subject = __pat0;
                     if __list_subject.is_empty() {
-                        crate::proof_kernel::aver_generated::kernel::check::definitionDeclarationDeps(&f, ds, ds, cs)
+                        crate::proof_kernel::aver_generated::kernel::check::definitionDeclarationDeps(f, ds, ds, cs)
                     } else {
                         aver_rt::AverList::empty()
                     }
@@ -3561,7 +3561,7 @@ pub fn splitValue(
     {
         let (__pat0, __pat1) = (c.ctor.clone(), c.binders.clone());
         {
-            let __dispatch_subject = __pat0;
+            let __dispatch_subject = &*__pat0;
             if &*__dispatch_subject == "nil" {
                 crate::proof_kernel::aver_generated::kernel::term::Term::TList(
                     crate::proof_kernel::aver_generated::kernel::term::Term__TList(
@@ -4958,9 +4958,9 @@ pub fn excludes(
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TCtor(
                         __d_fields,
                     ) => {
-                        let d = __d_fields.1.clone();
+                        let d = &__d_fields.1;
                         let ys = __d_fields.0.clone();
-                        (c != d)
+                        (&(c) != d)
                     }
                     _ => false,
                 }
@@ -4971,9 +4971,9 @@ pub fn excludes(
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(
                         ____pat2_fields,
                     ) => {
-                        let __pat2 = ____pat2_fields.1.clone();
+                        let __pat2 = &____pat2_fields.1;
                         let __pat3 = &____pat2_fields.0;
-                        match &*__pat2 {
+                        match &**__pat2 {
                             "List.prepend" => {
                                 let __list_subject = __pat3;
                                 match aver_rt::list_uncons_cloned(__list_subject) {
@@ -5479,7 +5479,7 @@ pub fn rule(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    match crate::proof_kernel::aver_generated::kernel::rules::schema(id.clone()) {
+    match crate::proof_kernel::aver_generated::kernel::rules::schema(&id) {
         None => {
             let __arg6 @ _ = aver_rt::AverStr::from({
                 let mut __b = {

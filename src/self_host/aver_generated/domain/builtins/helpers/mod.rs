@@ -113,9 +113,9 @@ pub fn expectBytes(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValRecord(__name_fields) => {
-                let name = __name_fields.0.clone();
+                let name = &__name_fields.0;
                 let fields = &__name_fields.1;
-                if (&*name == "Bytes") {
+                if (&**name == "Bytes") {
                     crate::aver_generated::domain::builtins::helpers::expectBytesFields(fields)
                 } else {
                     Err(::aver_rt::str_lit!("expected Bytes argument"))

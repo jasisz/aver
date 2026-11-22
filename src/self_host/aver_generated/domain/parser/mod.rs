@@ -268,7 +268,7 @@ fn __mutual_tco_trampoline_3(
                 crate::cancel_checkpoint();
                 let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
                 {
-                    let __dispatch_subject = kw;
+                    let __dispatch_subject = &*kw;
                     if &*__dispatch_subject == "module" {
                         __MutualTco3::ParseProgramModuleHeader(nextPos, fns, stmts)
                     } else {

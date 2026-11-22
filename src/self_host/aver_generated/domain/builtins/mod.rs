@@ -2072,13 +2072,13 @@ pub fn builtinTimeNow(
 /// Http.get/head/delete(url) -> Result<Http.Response, String> forwarded to host.
 pub fn builtinHttpSimple(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    method @ _: AverStr,
+    method @ _: &AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let url @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     {
-        let __dispatch_subject = method;
+        let __dispatch_subject = &**method;
         if &*__dispatch_subject == "get" {
             Ok({
                 let __arg4 @ _ = {
@@ -2172,7 +2172,7 @@ pub fn builtinHttpSimple(
 /// Http.post/put/patch(url, body, contentType, headers) forwarded to host.
 pub fn builtinHttpBody(
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    method @ _: AverStr,
+    method @ _: &AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -2205,14 +2205,14 @@ pub fn builtinHttpBodyInner(
     bodyV @ _: &crate::aver_generated::domain::value::Val,
     ctV @ _: &crate::aver_generated::domain::value::Val,
     hdrsV @ _: &crate::aver_generated::domain::value::Val,
-    method @ _: AverStr,
+    method @ _: &AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let url @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(urlV)?;
     let body @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(bodyV)?;
     let ct @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(ctV)?;
     {
-        let __dispatch_subject = method;
+        let __dispatch_subject = &**method;
         if &*__dispatch_subject == "post" {
             Ok({
                 let __arg8 @ _ = {
@@ -3105,7 +3105,7 @@ pub fn valToTcpSocket(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVariant(__name_fields) => {
-                let name = __name_fields.1.clone();
+                let name = &__name_fields.1;
                 let fields = &__name_fields.2;
                 crate::aver_generated::domain::builtins::valVariantToTcpSocket(name, fields)
             }
@@ -3117,12 +3117,12 @@ pub fn valToTcpSocket(
 /// Decode one named Tcp.Socket variant.
 #[inline(always)]
 pub fn valVariantToTcpSocket(
-    name @ _: AverStr,
+    name @ _: &AverStr,
     fields @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::tcp::Socket, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name;
+        let __dispatch_subject = &**name;
         if &*__dispatch_subject == "Tcp.Socket.Listening" {
             match crate::aver_generated::domain::builtins::helpers::oneArg(fields) {
                 Ok(listenerV @ _) => Ok(crate::aver_generated::tcp::Socket::Listening(
@@ -3622,7 +3622,7 @@ pub fn callBuiltinFast__indexed(
 ) -> Option<Result<crate::aver_generated::domain::value::Val, AverStr>> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "Map.set" {
             Some(crate::aver_generated::domain::builtins::builtinMapSet(args))
         } else {
@@ -3756,7 +3756,7 @@ pub fn callBuiltinOther__indexed(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "Console.print" {
             crate::aver_generated::domain::builtins::builtinConsolePrint(&args)
         } else {
@@ -3853,7 +3853,7 @@ pub fn callBuiltinServices__indexed(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "Random.int" {
             crate::aver_generated::domain::builtins::builtinRandomInt(&args)
         } else {
@@ -3869,35 +3869,35 @@ pub fn callBuiltinServices__indexed(
                         if &*__dispatch_subject == "Http.get" {
                             crate::aver_generated::domain::builtins::builtinHttpSimple(
                                 &args,
-                                ::aver_rt::str_lit!("get"),
+                                &::aver_rt::str_lit!("get"),
                             )
                         } else {
                             if &*__dispatch_subject == "Http.head" {
                                 crate::aver_generated::domain::builtins::builtinHttpSimple(
                                     &args,
-                                    ::aver_rt::str_lit!("head"),
+                                    &::aver_rt::str_lit!("head"),
                                 )
                             } else {
                                 if &*__dispatch_subject == "Http.delete" {
                                     crate::aver_generated::domain::builtins::builtinHttpSimple(
                                         &args,
-                                        ::aver_rt::str_lit!("delete"),
+                                        &::aver_rt::str_lit!("delete"),
                                     )
                                 } else {
                                     if &*__dispatch_subject == "Http.post" {
                                         crate::aver_generated::domain::builtins::builtinHttpBody(
                                             &args,
-                                            ::aver_rt::str_lit!("post"),
+                                            &::aver_rt::str_lit!("post"),
                                         )
                                     } else {
                                         if &*__dispatch_subject == "Http.put" {
                                             crate::aver_generated::domain::builtins::builtinHttpBody(
                                                 &args,
-                                                ::aver_rt::str_lit!("put"),
+                                                &::aver_rt::str_lit!("put"),
                                             )
                                         } else {
                                             if &*__dispatch_subject == "Http.patch" {
-                                                crate::aver_generated::domain::builtins::builtinHttpBody(&args, ::aver_rt::str_lit!("patch"))
+                                                crate::aver_generated::domain::builtins::builtinHttpBody(&args, &::aver_rt::str_lit!("patch"))
                                             } else {
                                                 if &*__dispatch_subject == "Tcp.send" {
                                                     crate::aver_generated::domain::builtins::builtinTcpSend(&args)
@@ -3963,7 +3963,7 @@ pub fn builtinTerminalNoArg__indexed(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "Terminal.clear" {
             crate::aver_generated::domain::builtins::termClear()
         } else {
@@ -4017,10 +4017,7 @@ pub fn tryVariantConstructor__indexed(
     match crate::aver_generated::domain::builtins::splitDotted__indexed(&name, __str_index) {
         Some(_) => Ok(crate::aver_generated::domain::value::Val::ValVariant(
             crate::aver_generated::domain::value::Val__ValVariant(
-                crate::aver_generated::domain::ast::ctorNameToTag__indexed(
-                    name.clone(),
-                    __str_index,
-                ),
+                crate::aver_generated::domain::ast::ctorNameToTag__indexed(&name, __str_index),
                 name,
                 args,
             ),

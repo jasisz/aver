@@ -19,7 +19,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::TokenizeDefault__indexed(mut c @ _, mut src @ _, mut pos @ _) => {
                 crate::cancel_checkpoint();
-                if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
+                if crate::aver_generated::domain::lexer::chars::isDigit(&c) {
                     return crate::aver_generated::domain::lexer::tokenizeDigit__indexed(
                         src,
                         pos,
@@ -549,7 +549,7 @@ fn __mutual_tco_trampoline_3(
             }
             __MutualTco3::TokenizeInterpExprChar__indexed(mut src @ _, mut pos @ _, mut c @ _) => {
                 crate::cancel_checkpoint();
-                if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
+                if crate::aver_generated::domain::lexer::chars::isDigit(&c) {
                     return crate::aver_generated::domain::lexer::tokenizeInterpDigit__indexed(
                         src,
                         pos,
@@ -1700,7 +1700,7 @@ pub fn tokenizeAfterIntDot__indexed(
     match aver_rt::string_index_char_at_i64(&src, &__str_index, aver_rt::string_position(&nextPos))
     {
         Some(d @ _) => {
-            if crate::aver_generated::domain::lexer::chars::isDigit(d) {
+            if crate::aver_generated::domain::lexer::chars::isDigit(&d) {
                 crate::aver_generated::domain::lexer::tokenizeFloat__indexed(
                     src,
                     nextPos,
@@ -2011,7 +2011,7 @@ pub fn tokenizeInterpAfterIntDot__indexed(
     match aver_rt::string_index_char_at_i64(&src, &__str_index, aver_rt::string_position(&nextPos))
     {
         Some(d @ _) => {
-            if crate::aver_generated::domain::lexer::chars::isDigit(d) {
+            if crate::aver_generated::domain::lexer::chars::isDigit(&d) {
                 crate::aver_generated::domain::lexer::tokenizeInterpFloat__indexed(
                     src,
                     nextPos,

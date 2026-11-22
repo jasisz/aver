@@ -519,7 +519,7 @@ pub fn rewritePatConstructor(
 ) -> crate::aver_generated::domain::ast::Pattern {
     crate::cancel_checkpoint();
     let canonical @ _ = crate::aver_generated::domain::ast::canonicalCtorName(name);
-    let tag @ _ = crate::aver_generated::domain::ast::ctorNameToTag(canonical.clone());
+    let tag @ _ = crate::aver_generated::domain::ast::ctorNameToTag(&canonical);
     crate::aver_generated::domain::ast::Pattern::PatConstructorId(tag, canonical, bindings)
 }
 
@@ -721,7 +721,7 @@ pub fn rewriteInternalBuiltin(
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "Option.withDefault" {
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalOptionWithDefault(args)
         } else {
