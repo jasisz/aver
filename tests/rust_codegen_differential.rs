@@ -1763,9 +1763,11 @@ fn a_computed_fallback_runs_only_when_missing_on_rust_and_vm() {
     let entry = fs::read_to_string(ws.join("src/aver_generated/entry/mod.rs"))
         .expect("read the entry module");
     let _ = fs::remove_dir_all(&ws);
+    // `fresh` returns its length as a machine word, boxed where the
+    // fallback is made.
     for lazy in [
-        "unwrap_or_else(|| fresh())",
-        "unwrap_or_else(|_| fresh())",
+        "unwrap_or_else(|| aver_rt::AverInt::from_i64(fresh()))",
+        "unwrap_or_else(|_| aver_rt::AverInt::from_i64(fresh()))",
         "ok_or_else(|| ",
     ] {
         assert!(entry.contains(lazy), "missing `{lazy}`:\n{entry}");
@@ -4440,7 +4442,7 @@ fn mutual_tail_group_invariant_consumed_on_an_exit_moves() {
         "__MutualTco3::Fill(v, k.sub(",
         "pub fn peekA(s @ _: &Store,",
         "pub fn readA(cfg @ _: &Cfg,",
-        "let __tco0 = evenSteps(s, cfg,",
+        "let __tco0 = { let __arg4 @ _ = aver_rt::AverInt::from_i64((i).rem_euclid_word(5i64)); evenSteps(s, cfg, __arg4,",
         "let kept @ _ = evenSteps(s.clone(), &cfg,",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
@@ -6870,7 +6872,7 @@ fn a_value_looked_up_in_a_map_is_lent_to_a_function_that_only_reads_it() {
         "both((&__arg2).as_ref(), &__arg3)",
         "(deep((&o).as_ref()) == isNode((&o).as_ref()))",
         "if { let __arg6 @ _ = memo.get(&k); isNode(__arg6) }",
-        "let __arg6 @ _ = memo.get(&(i).rem_euclid(&(aver_rt::AverInt::from_i64(5))).unwrap()); hit(__arg6, &e) }",
+        "let __arg6 @ _ = memo.get(&aver_rt::AverInt::from_i64((i).rem_euclid_word(5i64))); hit(__arg6, &e) }",
     ] {
         assert!(
             emitted.contains(expected),

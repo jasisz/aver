@@ -4825,6 +4825,9 @@ fn proven_result(body: &Spanned<MirExpr>, self_fn: FnId, facts: &FnBareFacts) ->
     hull
 }
 
+/// The proven intervals of one function's locals ([`proven_locals`]).
+type ProvenSlots = std::sync::Arc<HashMap<LocalId, Interval>>;
+
 /// Rust: per function, the interval of every value it returns, with its
 /// parameters at any value of their type (a carrier's field within its
 /// constructors' check), and the proven intervals of its locals. Functions
@@ -4837,10 +4840,7 @@ fn proven_returns(
     program: &MirProgram,
     raw_ops: &std::sync::Arc<RawOps>,
     carrier_ids: &std::sync::Arc<CarrierIds>,
-) -> (
-    HashMap<FnId, Interval>,
-    HashMap<FnId, std::sync::Arc<HashMap<LocalId, Interval>>>,
-) {
+) -> (HashMap<FnId, Interval>, HashMap<FnId, ProvenSlots>) {
     let mut edges: Vec<CallEdge> = Vec::new();
     for (caller, f) in program.iter() {
         collect_call_edges(*caller, &f.body.node, &mut edges);
