@@ -41,6 +41,12 @@ pub(super) fn hoisted(e: Node<'_>) -> Option<String> {
     })
 }
 
+/// Whether `e` is a leaf an exact path reads from its binding, a borrow of
+/// the value evaluated ahead: it cannot be moved.
+pub(super) fn is_hoisted(e: Node<'_>) -> bool {
+    HOISTED.with(|h| h.borrow().contains_key(&key(e)))
+}
+
 /// The operation `e` is, when it is one on `AverInt`s (not one the
 /// `bare_i64` facts already render raw).
 fn op_of<'e>(e: Node<'e>, ctx: &MirEmitCtx<'_>) -> Option<(IntOp, Node<'e>, Option<Node<'e>>)> {

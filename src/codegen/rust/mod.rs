@@ -2579,6 +2579,14 @@ fn twice(x: Int) -> Int
 
 fn kept(x: Int, y: Int) -> List<Int>
     [Bits.or(x, y), x - y, y]
+
+fn first(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [x, .._] -> x
+
+fn fits(n: Int, xs: List<Int>) -> Bool
+    List.len(xs) * 2 == n + first(xs)
 "#,
             "demo",
         );

@@ -10924,16 +10924,20 @@ fn int_operand_given_up(
     rhs: &Spanned<MirExpr>,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<GivenUp> {
-    let moves = |expr: &MirExpr| {
-        let facts = super::ownership::value_facts(expr, ctx);
-        facts.mode == super::ownership::RustValueMode::Owned && facts.can_move
+    // A leaf of an `Int` tree's exact path is read from a borrow of the
+    // value evaluated ahead (see `int_tree`), whatever the expression is.
+    let moves = |expr: &Spanned<MirExpr>| {
+        let facts = super::ownership::value_facts(&expr.node, ctx);
+        facts.mode == super::ownership::RustValueMode::Owned
+            && facts.can_move
+            && !int_tree::is_hoisted(expr)
     };
     let one_word = |expr: &MirExpr| {
         matches!(expr, MirExpr::Box(_))
             || matches!(expr, MirExpr::Literal(lit) if matches!(lit.node, crate::ast::Literal::Int(_)))
     };
-    let lhs_moves = moves(&lhs.node);
-    let rhs_moves = moves(&rhs.node)
+    let lhs_moves = moves(lhs);
+    let rhs_moves = moves(rhs)
         && projection_root_local(&rhs.node)
             .is_none_or(|root| !super::arg_order::reads_slot(&lhs.node, root.slot));
     match (lhs_moves, rhs_moves) {
