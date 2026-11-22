@@ -87,10 +87,10 @@ fn i64_interval() -> Interval {
 
 /// A builtin the Rust backend computes on raw `i64` operands: the
 /// remainder and quotient by a literal `k > 0` (Euclidean, as `Int` is),
-/// the bitwise operations, a shift or the low bits by a literal count, and
-/// the smaller or larger of two. Each gives the exact `Int` result for
-/// operands within `i64` and a result its bound ([`RawOp::interval`]) keeps
-/// within `i64`.
+/// the bitwise operations, a shift or the low bits by a literal count, the
+/// smaller or larger of two, the absolute value and the complement. Each
+/// gives the exact `Int` result for operands within `i64` and a result its
+/// bound ([`RawOp::interval`]) keeps within `i64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawOp {
     Mod,
@@ -98,6 +98,11 @@ pub enum RawOp {
     And,
     Or,
     Xor,
+    /// `Int.abs(x)`, of one operand: raw only when its bound keeps it
+    /// within `i64`, so never of `i64::MIN`.
+    Abs,
+    /// `Bits.not(x)`, of one operand: `-x - 1`.
+    Not,
     Min,
     Max,
     /// `Bits.shiftRight(x, k)`: rounds down, as Euclidean division by `2^k`.
@@ -118,8 +123,40 @@ impl RawOp {
             "Bits.xor" => RawOp::Xor,
             "Int.min" => RawOp::Min,
             "Int.max" => RawOp::Max,
+            "Int.abs" => RawOp::Abs,
+            "Bits.not" => RawOp::Not,
             _ => return None,
         })
+    }
+
+    /// How many operands the op takes.
+    pub fn arity(self) -> usize {
+        match self {
+            RawOp::Abs | RawOp::Not => 1,
+            _ => 2,
+        }
+    }
+
+    /// The result's bound from the bound `value` gives each operand, with
+    /// a literal second operand read as the literal it must be. `None`
+    /// when an operand has none, or is not the literal the op takes.
+    pub fn over(
+        self,
+        args: &[Spanned<MirExpr>],
+        mut value: impl FnMut(&MirExpr) -> Option<Interval>,
+    ) -> Option<Interval> {
+        if args.len() != self.arity() {
+            return None;
+        }
+        let a = value(&args[0].node)?;
+        if self.arity() == 1 {
+            return self.interval(a, a);
+        }
+        let b = match self.literal_operand(&args[1].node) {
+            Some(k) => Interval::point(k?),
+            None => value(&args[1].node)?,
+        };
+        self.interval(a, b)
     }
 
     /// The literal the second operand must be: a divisor above zero, or a
@@ -153,6 +190,8 @@ impl RawOp {
             RawOp::Or | RawOp::Xor => a.bit_or(b),
             RawOp::Min => a.min_with(b),
             RawOp::Max => a.max_with(b),
+            RawOp::Abs => a.abs(),
+            RawOp::Not => Interval::point(-1).sub(a),
             RawOp::Shr => a.div_euclid_by(1i128 << k?),
             RawOp::Shl => a.mul(Interval::point(1i128 << k?)),
             RawOp::Low => Interval::rem_euclid_by(1i128 << k?),
@@ -178,6 +217,10 @@ impl RawOp {
 ///   `[0, 2^k - 1]`, the low 64 bits of `x` masked.
 /// - `Bits.popCount(x, k)` for a literal `0 <= k <= 64`: a count of `k`
 ///   bits, in `[0, k]`, the one bits of the low 64 bits of `x` masked.
+/// - `Int.mod(x, k)` for a literal `k > 0`: the remainder is Euclidean (the
+///   VM, `aver_rt::AverInt::rem_euclid` and the Lean model's `Int.emod`
+///   agree), so it is in `[0, k - 1]` for every `x`, whatever its sign or
+///   length (`aver_rt::AverInt::rem_euclid_word` computes it).
 ///
 /// The `Bits` ones are found only with the other operand a literal the
 /// resolver or the source wrote, never through a computed value. A width
@@ -192,6 +235,8 @@ pub enum WordOp {
     Low(u32),
     /// The width `k`.
     PopCount(u32),
+    /// The divisor `k > 0`.
+    Mod(i64),
 }
 
 impl WordOp {
@@ -202,13 +247,14 @@ impl WordOp {
             WordOp::AndMask(c) => Interval::between(0, c as i128),
             WordOp::Low(k) => Interval::between(0, (1i128 << k) - 1),
             WordOp::PopCount(k) => Interval::between(0, k as i128),
+            WordOp::Mod(k) => Interval::rem_euclid_by(k as i128),
         }
     }
 
     /// The low-bits mask a `Bits` word applies to the operand's low 64 bits.
     pub fn mask(self) -> u64 {
         match self {
-            WordOp::SampleHash => u64::MAX,
+            WordOp::SampleHash | WordOp::Mod(_) => u64::MAX,
             WordOp::AndMask(c) => c as u64,
             WordOp::Low(k) | WordOp::PopCount(k) => u64::MAX.checked_shr(64 - k).unwrap_or(0),
         }
@@ -227,10 +273,13 @@ pub struct RawOps {
     /// `List.take` and `List.drop`, whose count the Rust backend clamps to
     /// a `usize` from either representation (see [`RawOps::takes_count`]).
     counts: HashSet<crate::ir::BuiltinId>,
-    /// The lengths (`List.len`, `Vector.len`, `Map.len`, `String.len`): the
-    /// size of something already in memory, which the Rust backend reads as
-    /// an `i64` (see [`RawOps::length`], [`LENGTH_TOP`]).
+    /// The lengths (`List.len`, `Vector.len`, `Map.len`, `String.len`,
+    /// `String.byteLength`): the size of something already in memory, which
+    /// the Rust backend reads as an `i64` (see [`RawOps::length`],
+    /// [`LENGTH_TOP`]).
     lengths: HashSet<crate::ir::BuiltinId>,
+    /// `String.byteLength`, the one length of a string that counts bytes.
+    byte_lengths: HashSet<crate::ir::BuiltinId>,
     /// `Vector.get` and `Vector.set`, whose index the Rust backend converts
     /// to a `usize` from either representation (see [`RawOps::takes_index`]).
     indexes: HashSet<crate::ir::BuiltinId>,
@@ -262,12 +311,17 @@ impl RawOps {
                 .filter(|&id| {
                     matches!(
                         program.builtin_name(id),
-                        "List.len" | "Vector.len" | "Map.len" | "String.len"
+                        "List.len" | "Vector.len" | "Map.len" | "String.len" | "String.byteLength"
                     )
                 })
                 .collect(),
             false => HashSet::new(),
         };
+        let byte_lengths = lengths
+            .iter()
+            .copied()
+            .filter(|&id| program.builtin_name(id) == "String.byteLength")
+            .collect();
         let indexes = match on {
             true => (0..program.builtins.len() as u32)
                 .map(crate::ir::BuiltinId)
@@ -291,6 +345,7 @@ impl RawOps {
             builtins,
             counts,
             lengths,
+            byte_lengths,
             indexes,
             words,
         }
@@ -322,6 +377,11 @@ impl RawOps {
             MirCallee::Intrinsic(I::BitsPopCount) if args.len() == 2 => literal(1)
                 .filter(|k| (0..=64).contains(k))
                 .map(|k| WordOp::PopCount(k as u32)),
+            // Only a divisor above zero: a negative one (a negation, or a
+            // literal folded from one) keeps the boxed call.
+            MirCallee::Intrinsic(I::IntModEuclid) if args.len() == 2 => {
+                literal(1).filter(|k| *k > 0).map(WordOp::Mod)
+            }
             _ => None,
         }
     }
@@ -330,6 +390,12 @@ impl RawOps {
     /// `0..=LENGTH_TOP` (see [`RawOps::lengths`]).
     pub fn length(&self, callee: &MirCallee) -> bool {
         matches!(callee, MirCallee::Builtin(id) if self.lengths.contains(id))
+    }
+
+    /// Whether a length of `callee` counts the bytes of a string, not its
+    /// characters (`String.byteLength`).
+    pub fn counts_bytes(&self, callee: &MirCallee) -> bool {
+        matches!(callee, MirCallee::Builtin(id) if self.byte_lengths.contains(id))
     }
 
     /// Whether argument `i` of a call of `callee` is a count of list
@@ -640,6 +706,13 @@ pub struct FnBareFacts {
     /// Rust: the functions that return a raw `i64`, with the range of what
     /// they return. A call of one is a raw leaf of the arithmetic around it.
     pub call_returns: std::sync::Arc<HashMap<FnId, Interval>>,
+    /// Rust: the interval of each local of this function bound once to a
+    /// value with a proven interval ([`proven_locals`]): a theorem of the
+    /// operations that compute it, never of the ranges callers pass.
+    pub proven_slots: std::sync::Arc<HashMap<LocalId, Interval>>,
+    /// Rust: the interval of what each function returns, whatever its
+    /// arguments are ([`proven_returns`]).
+    pub proven_returns: std::sync::Arc<HashMap<FnId, Interval>>,
     /// wasm-gc: the fn is kept in its ordinary form for a `--certify`
     /// build's certificate. Only the reads of a word record's machine word
     /// render raw; arithmetic over them stays `Int`, so the word trees
@@ -805,7 +878,7 @@ impl FnBareFacts {
             return None;
         };
         let op = self.raw_ops.op(&c.node.callee)?;
-        (c.node.args.len() == 2).then_some((op, c.node.args.as_slice()))
+        (c.node.args.len() == op.arity()).then_some((op, c.node.args.as_slice()))
     }
 
     /// Rust: the range of a length (`Vector.len(v)` …): the count of
@@ -862,53 +935,28 @@ impl FnBareFacts {
         self.word_call(e).map(|(op, _)| op.interval())
     }
 
-    /// Rust: the interval of a raw word that holds whatever this function's
-    /// parameters and locals hold and whatever its callers pass: a literal,
-    /// a carrier's field (its constructors' check), a [`WordOp`], and a raw
-    /// op or raw arithmetic over those, with every local and every call of a
-    /// function taken as unbounded. So it is a theorem of the builtins and
-    /// the carriers alone, never of the analysis' caller ranges, and a
-    /// value the compiled code decides by it (a check left out, a comparison
-    /// answered) is decided by what the operations are, not by where they
-    /// are called from. `None` for a word it cannot bound in `i64`.
+    /// Rust: the interval of a value that holds whatever this function's
+    /// parameters hold and whatever its callers pass, in `i64`: see
+    /// [`FnBareFacts::proven_value`]. A value the compiled code decides by
+    /// it (a check left out, a comparison answered) is decided by what the
+    /// operations are, not by where they are called from. `None` for a
+    /// value it cannot bound in `i64`.
     pub fn proven_interval(&self, e: &MirExpr) -> Option<Interval> {
-        let iv = self.proven_interval_inner(e)?;
+        let iv = self.proven_value(e);
         iv.fits_i64().then_some(iv)
     }
 
-    fn proven_interval_inner(&self, e: &MirExpr) -> Option<Interval> {
-        let iv = match e {
-            MirExpr::Literal(l) => match l.node {
-                Literal::Int(k) => Interval::point(k as i128),
-                _ => return None,
-            },
-            MirExpr::Local(_) => Interval::unbounded(),
-            MirExpr::Project(_) => self.carrier_project_interval(e)?,
-            MirExpr::Call(_) if let Some((op, _)) = self.word_call(e) => op.interval(),
-            MirExpr::Call(_) if self.raw_op_over_raw(e) => {
-                let (op, args) = self.raw_op_call(e)?;
-                let a = self.proven_interval_inner(&args[0].node)?;
-                let b = match op.literal_operand(&args[1].node) {
-                    Some(k) => Interval::point(k?),
-                    None => self.proven_interval_inner(&args[1].node)?,
-                };
-                op.interval(a, b)?
-            }
-            MirExpr::Neg(inner) => Interval::point(0).sub(self.proven_interval_inner(&inner.node)?),
-            MirExpr::BinOp(b) => {
-                let l = self.proven_interval_inner(&b.node.lhs.node)?;
-                let r = self.proven_interval_inner(&b.node.rhs.node)?;
-                match b.node.op {
-                    BinOp::Add => l.add(r),
-                    BinOp::Sub => l.sub(r),
-                    BinOp::Mul => l.mul(r),
-                    _ => return None,
-                }
-            }
-            MirExpr::Let(l) if self.rust => self.proven_interval_inner(&l.node.body.node)?,
-            _ => return None,
-        };
-        Some(iv)
+    /// The interval every value of `e` lies in, for every run of the
+    /// program, whatever this function's callers pass: a theorem of the
+    /// operations alone, independent of how a value is represented. Its
+    /// leaves are a literal, a carrier's field (its constructors' check), a
+    /// builtin whose result is bounded whatever its operand ([`WordOp`]), a
+    /// length, a compiler-owned character code, a local bound once to such
+    /// a value ([`FnBareFacts::proven_slots`]) and a call of a function
+    /// whose every result is bounded ([`FnBareFacts::proven_returns`]); a
+    /// parameter is any `Int`. Unbounded for anything else.
+    pub fn proven_value(&self, e: &MirExpr) -> Interval {
+        proven_value(e, self, &|slot| self.proven_slots.get(&slot).copied())
     }
 
     /// Whether `e` is a builtin computed raw over raw operands, the call
@@ -921,12 +969,8 @@ impl FnBareFacts {
     /// operand is not raw or not the literal the op takes.
     fn raw_op_interval(&self, e: &MirExpr) -> Option<Interval> {
         let (op, args) = self.raw_op_call(e)?;
-        let a = self.bare_expr_interval(&args[0].node)?;
-        let b = match op.literal_operand(&args[1].node) {
-            Some(k) => Interval::point(k?),
-            None => self.bare_expr_interval(&args[1].node)?,
-        };
-        op.interval(a, b).filter(|iv| iv.fits_i64())
+        op.over(args, |a| self.bare_expr_interval(a))
+            .filter(|iv| iv.fits_i64())
     }
 
     /// ETAP-2 carrier-`i64`: does `e` read a bare carrier's i64 `.value`
@@ -1201,27 +1245,44 @@ fn analyze_inner(
         }
     }
 
+    // Rust: what each value is whatever the callers pass, for the
+    // decisions the backend makes by it.
+    let (proven_returns, mut proven_slots) = match rust_positions {
+        true => {
+            let (returns, slots) = proven_returns(program, &summary.raw_ops, &carrier_ids);
+            (std::sync::Arc::new(returns), slots)
+        }
+        false => Default::default(),
+    };
     let mut fns: HashMap<FnId, FnBareFacts> = HashMap::new();
     for (id, f) in program.iter() {
         let mut facts = analyze_fn(f, &summary, carrier, field_carrier, None, rust_positions);
+        facts.proven_returns = proven_returns.clone();
+        facts.proven_slots = proven_slots.remove(id).unwrap_or_default();
         if let Some(checked) = summary.checked.get(id) {
             let on_fallback = MirFn {
                 body: checked.fallback.clone(),
                 ..f.clone()
             };
+            let mut fallback_facts = analyze_fn(
+                &on_fallback,
+                &summary,
+                carrier,
+                field_carrier,
+                Some(checked.param),
+                rust_positions,
+            );
+            if rust_positions {
+                fallback_facts.proven_returns = proven_returns.clone();
+                fallback_facts.proven_slots =
+                    std::sync::Arc::new(proven_locals(&on_fallback, &fallback_facts));
+            }
             facts.entry_check = Some(std::boxed::Box::new(EntryCheck {
                 param: checked.param,
                 lo: 0,
                 hi: POSITION_TOP as i64,
                 fallback: checked.fallback.clone(),
-                facts: analyze_fn(
-                    &on_fallback,
-                    &summary,
-                    carrier,
-                    field_carrier,
-                    Some(checked.param),
-                    rust_positions,
-                ),
+                facts: fallback_facts,
             }));
         }
         fns.insert(*id, facts);
@@ -1883,6 +1944,8 @@ fn compute_summary(
         //      caller's per-slot facts and demote any bare-returning callee
         //      bound to a non-bare slot. (Mirror of C2's discipline, keyed on
         //      the binding repr instead of the consumer position.)
+        //      On Rust the rewrite boxes a raw return bound to a boxed
+        //      `let` (`rewrite_let_value`), so the return stays raw there.
         let tmp = Summary {
             bare_params: bare_params.clone(),
             bare_return: bare_return.clone(),
@@ -1895,7 +1958,7 @@ fn compute_summary(
             return_intervals: return_intervals.clone(),
             rust: rust_positions,
         };
-        for (_caller, f) in program.iter() {
+        for (_caller, f) in program.iter().filter(|_| !rust_positions) {
             let facts = analyze_fn(f, &tmp, carrier, field_carrier, None, rust_positions);
             let mut demote: Vec<FnId> = Vec::new();
             collect_let_bound_boxed_returns(&f.body.node, &facts, &bare_return, &mut demote);
@@ -4162,13 +4225,15 @@ fn walk_let_chain(
 ) {
     match e {
         MirExpr::Let(l) => {
+            // The value first, so a branch's own bindings are known when
+            // the value is read.
+            walk_let_chain(&l.node.value.node, env, op_classes, facts);
             let mut worst = Interval::point(0);
             let iv = eval_interval(&l.node.value.node, env, &mut worst, facts);
             env.insert(l.node.binding, iv);
             // The binding's op class is the worst-join over its value
             // expression (so a transient out-of-i64 intermediate demotes).
             op_classes.insert(l.node.binding, OpClass::of_interval(worst.hull(iv)));
-            walk_let_chain(&l.node.value.node, env, op_classes, facts);
             walk_let_chain(&l.node.body.node, env, op_classes, facts);
         }
         // A `match subject { y -> … }` Ident-binding arm ALIASES the subject:
@@ -4250,14 +4315,8 @@ fn eval_interval(
             let Some((op, args)) = facts.raw_op_call(e) else {
                 return word.unwrap_or_else(Interval::unbounded);
             };
-            let a = eval_interval(&args[0].node, env, worst, facts);
-            let b = match op.literal_operand(&args[1].node) {
-                Some(Some(k)) => Some(Interval::point(k)),
-                Some(None) => None,
-                None => Some(eval_interval(&args[1].node, env, worst, facts)),
-            };
-            let r = b
-                .and_then(|b| op.interval(a, b))
+            let r = op
+                .over(args, |a| Some(eval_interval(a, env, worst, facts)))
                 .unwrap_or_else(Interval::unbounded);
             let r = word.map_or(r, |w| r.intersect(w));
             *worst = worst.hull(r);
@@ -4280,7 +4339,41 @@ fn eval_interval(
             *worst = worst.hull(result);
             result
         }
+        // A branch is worth the hull of its arms' values. Bound to a raw
+        // local, it is computed on `AverInt`s and narrowed once
+        // (`bare_i64_rewrite::rewrite_raw`); an arm that leaves the
+        // function gives no bound here.
+        MirExpr::Match(_) | MirExpr::IfThenElse(_) => {
+            let mut leaves = Vec::new();
+            branch_values(e, &mut leaves);
+            let mut hull: Option<Interval> = None;
+            for leaf in leaves {
+                let iv = match leaf {
+                    MirExpr::Return(_) | MirExpr::TailCall(_) => Interval::unbounded(),
+                    leaf => eval_interval(leaf, env, worst, facts),
+                };
+                hull = Some(hull.map_or(iv, |h| h.hull(iv)));
+            }
+            hull.unwrap_or_else(Interval::unbounded)
+        }
         _ => Interval::unbounded(),
+    }
+}
+
+/// The values a block or a branch may give: each arm's, each `let`'s body.
+fn branch_values<'a>(e: &'a MirExpr, out: &mut Vec<&'a MirExpr>) {
+    match e {
+        MirExpr::Let(l) => branch_values(&l.node.body.node, out),
+        MirExpr::Match(m) => {
+            for arm in &m.node.arms {
+                branch_values(&arm.body.node, out);
+            }
+        }
+        MirExpr::IfThenElse(ite) => {
+            branch_values(&ite.node.then_branch.node, out);
+            branch_values(&ite.node.else_branch.node, out);
+        }
+        leaf => out.push(leaf),
     }
 }
 
@@ -4515,10 +4608,271 @@ fn tail_value_is_bare(
             // ETAP-2 carrier-`i64`: a tail `c.value` over a bare carrier reads raw
             // i64, so the fn may return bare i64 (skip the project bridge).
             MirExpr::Project(_) => facts.is_carrier_project(e),
-            MirExpr::Call(_) => is_code_carrier_call(e) || facts.call_return_interval(e).is_some(),
+            // A call that renders raw: a character code, a call of a
+            // function that returns a raw `i64`, and on Rust a length, a
+            // builtin computed raw over raw operands or a word read off any
+            // operand ([`WordOp`]).
+            MirExpr::Call(_) | MirExpr::Neg(_) => facts.expr_is_bare_i64(e),
             _ => false,
         }
     })
+}
+
+// ── Proven intervals ────────────────────────────────────────────────────
+//
+// What a value is, not how it is held: the intervals below hold for every
+// run of the program and every caller, so the Rust backend may decide by
+// them (leave a constructor's check out, answer a comparison). The ranges
+// the analysis above gives a parameter from what its callers pass only
+// choose a representation and never reach these.
+
+/// The interval of `e` ([`FnBareFacts::proven_value`]), with each local read
+/// through `slot`.
+fn proven_value(
+    e: &MirExpr,
+    facts: &FnBareFacts,
+    slot: &dyn Fn(LocalId) -> Option<Interval>,
+) -> Interval {
+    let value = |e: &MirExpr| proven_value(e, facts, slot);
+    match e {
+        MirExpr::Literal(l) => match l.node {
+            Literal::Int(k) => Interval::point(k as i128),
+            _ => Interval::unbounded(),
+        },
+        MirExpr::Local(local) => slot(local.node.slot).unwrap_or_else(Interval::unbounded),
+        MirExpr::Project(_) => facts
+            .carrier_project_interval(e)
+            .unwrap_or_else(Interval::unbounded),
+        MirExpr::Call(c) => {
+            if let Some(iv) = carrier_call_interval(e).or_else(|| facts.length_interval(e)) {
+                return iv;
+            }
+            if let MirCallee::Fn(target) = c.node.callee {
+                return facts
+                    .proven_returns
+                    .get(&target)
+                    .copied()
+                    .unwrap_or_else(Interval::unbounded);
+            }
+            // A word whatever the operand is, and the bound a computed op
+            // gives over its operands' intervals: both hold.
+            let word = facts
+                .raw_ops
+                .word_op(&c.node.callee, &c.node.args)
+                .map(WordOp::interval);
+            let op = facts
+                .raw_ops
+                .op(&c.node.callee)
+                .and_then(|op| op.over(&c.node.args, |a| Some(value(a))));
+            match (word, op) {
+                (Some(w), Some(r)) => w.intersect(r),
+                (Some(w), None) => w,
+                (None, Some(r)) => r,
+                (None, None) => Interval::unbounded(),
+            }
+        }
+        MirExpr::Neg(inner) => Interval::point(0).sub(value(&inner.node)),
+        MirExpr::BinOp(b) => {
+            let (l, r) = (value(&b.node.lhs.node), value(&b.node.rhs.node));
+            match b.node.op {
+                BinOp::Add => l.add(r),
+                BinOp::Sub => l.sub(r),
+                BinOp::Mul => l.mul(r),
+                _ => Interval::unbounded(),
+            }
+        }
+        // The value of a block or a branch is one of its results; a result
+        // that leaves the function (`return`) is none of them.
+        MirExpr::Let(_) | MirExpr::Match(_) | MirExpr::IfThenElse(_) => {
+            let mut leaves = Vec::new();
+            branch_values(e, &mut leaves);
+            let mut hull: Option<Interval> = None;
+            for leaf in leaves {
+                if matches!(leaf, MirExpr::Return(_)) {
+                    continue;
+                }
+                let iv = value(leaf);
+                hull = Some(hull.map_or(iv, |h| h.hull(iv)));
+            }
+            hull.unwrap_or_else(Interval::unbounded)
+        }
+        // A representation boundary keeps the value.
+        MirExpr::Box(inner) | MirExpr::Unbox(inner) => value(&inner.node),
+        _ => Interval::unbounded(),
+    }
+}
+
+/// The interval of every local of `f` bound only by `let`s, or by a
+/// `match` arm that names its subject, to values with a known interval:
+/// the hull over every binding of the slot, each read with the locals bound
+/// before it. A parameter, and a local bound by any other pattern (a field,
+/// a list's head), is any value and is left out, also when it is bound by a
+/// `let` elsewhere too.
+fn proven_locals(f: &MirFn, facts: &FnBareFacts) -> HashMap<LocalId, Interval> {
+    fn define(slots: &mut HashMap<LocalId, Option<Interval>>, slot: LocalId, iv: Option<Interval>) {
+        slots
+            .entry(slot)
+            .and_modify(|cell| {
+                *cell = match (*cell, iv) {
+                    (Some(a), Some(b)) => Some(a.hull(b)),
+                    _ => None,
+                }
+            })
+            .or_insert(iv);
+    }
+    fn unknown_binders(p: &MirPattern, slots: &mut HashMap<LocalId, Option<Interval>>) {
+        match p {
+            MirPattern::Bind(slot, _) => define(slots, *slot, None),
+            MirPattern::Cons { head, tail, .. } => {
+                define(slots, *head, None);
+                define(slots, *tail, None);
+            }
+            MirPattern::Tuple(items) => {
+                for item in items {
+                    unknown_binders(item, slots);
+                }
+            }
+            MirPattern::Ctor { bindings, .. } => {
+                for slot in bindings {
+                    define(slots, *slot, None);
+                }
+            }
+            MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => {}
+        }
+    }
+    fn walk(e: &MirExpr, facts: &FnBareFacts, slots: &mut HashMap<LocalId, Option<Interval>>) {
+        match e {
+            MirExpr::Let(l) => {
+                walk(&l.node.value.node, facts, slots);
+                let iv = {
+                    let read = |s: LocalId| slots.get(&s).copied().flatten();
+                    proven_value(&l.node.value.node, facts, &read)
+                };
+                // An unbounded binding is any value, as an unknown one is.
+                let known = (iv != Interval::unbounded()).then_some(iv);
+                define(slots, l.node.binding, known);
+                walk(&l.node.body.node, facts, slots);
+            }
+            MirExpr::Match(m) => {
+                walk(&m.node.subject.node, facts, slots);
+                let subject = {
+                    let read = |s: LocalId| slots.get(&s).copied().flatten();
+                    proven_value(&m.node.subject.node, facts, &read)
+                };
+                let known = (subject != Interval::unbounded()).then_some(subject);
+                for arm in &m.node.arms {
+                    match &arm.pattern {
+                        // The arm names the subject itself.
+                        MirPattern::Bind(slot, _) => define(slots, *slot, known),
+                        p => unknown_binders(p, slots),
+                    }
+                    walk(&arm.body.node, facts, slots);
+                }
+            }
+            _ => visit_children(e, &mut |c| walk(c, facts, slots)),
+        }
+    }
+    let mut slots: HashMap<LocalId, Option<Interval>> = HashMap::new();
+    for p in &f.params {
+        define(&mut slots, p.local, None);
+    }
+    walk(&f.body.node, facts, &mut slots);
+    slots
+        .into_iter()
+        .filter_map(|(slot, iv)| Some((slot, iv?)))
+        .collect()
+}
+
+/// The hull of what a body returns ([`proven_returns`]): each result value
+/// and each early `return` wherever it stands, with a recursive tail call
+/// to `self_fn` left out (its value is the value of the call it makes,
+/// which by induction on the calls that return is one of the others).
+/// `None` when no result returns a value.
+fn proven_result(body: &Spanned<MirExpr>, self_fn: FnId, facts: &FnBareFacts) -> Option<Interval> {
+    // The value of each `return` that stands anywhere but at a result.
+    fn early<'a>(e: &'a MirExpr, out: &mut Vec<&'a Spanned<MirExpr>>) {
+        if let MirExpr::Return(inner) = e {
+            out.push(inner);
+        }
+        visit_children(e, &mut |c| early(c, out));
+    }
+    let mut results = Vec::new();
+    crate::ir::mir::result_values::collect(body, &mut results);
+    let mut hull: Option<Interval> = None;
+    let mut returned = Vec::new();
+    early(&body.node, &mut returned);
+    for inner in returned {
+        if let Some(iv) = proven_result(inner, self_fn, facts) {
+            hull = Some(hull.map_or(iv, |h| h.hull(iv)));
+        }
+    }
+    for r in results {
+        let iv = match &r.node {
+            MirExpr::TailCall(tc) if tc.node.target == self_fn => continue,
+            MirExpr::TailCall(tc) => facts
+                .proven_returns
+                .get(&tc.node.target)
+                .copied()
+                .unwrap_or_else(Interval::unbounded),
+            MirExpr::Return(inner) => match proven_result(inner, self_fn, facts) {
+                Some(iv) => iv,
+                None => continue,
+            },
+            leaf => facts.proven_value(leaf),
+        };
+        hull = Some(hull.map_or(iv, |h| h.hull(iv)));
+    }
+    hull
+}
+
+/// The proven intervals of one function's locals ([`proven_locals`]).
+type ProvenSlots = std::sync::Arc<HashMap<LocalId, Interval>>;
+
+/// Rust: per function, the interval of every value it returns, with its
+/// parameters at any value of their type (a carrier's field within its
+/// constructors' check), and the proven intervals of its locals. Functions
+/// are taken callee first, so a caller sees what each callee returns; a
+/// call of a function not yet taken (a recursive one, or one in a cycle of
+/// calls) is any value. Each interval is a theorem given the ones before
+/// it, so the table holds whoever calls what. Only bounded returns and only
+/// `Int` results are kept.
+fn proven_returns(
+    program: &MirProgram,
+    raw_ops: &std::sync::Arc<RawOps>,
+    carrier_ids: &std::sync::Arc<CarrierIds>,
+) -> (HashMap<FnId, Interval>, HashMap<FnId, ProvenSlots>) {
+    let mut edges: Vec<CallEdge> = Vec::new();
+    for (caller, f) in program.iter() {
+        collect_call_edges(*caller, &f.body.node, &mut edges);
+    }
+    let mut facts = FnBareFacts {
+        rust: true,
+        raw_ops: raw_ops.clone(),
+        carrier_ids: carrier_ids.clone(),
+        ..FnBareFacts::default()
+    };
+    let mut locals = HashMap::new();
+    for id in callee_first(program, &edges) {
+        let Some(f) = program.fn_by_id(id) else {
+            continue;
+        };
+        let slots = std::sync::Arc::new(proven_locals(f, &facts));
+        facts.proven_slots = slots.clone();
+        locals.insert(id, slots);
+        if !ty_str_is_int(&f.return_type) {
+            continue;
+        }
+        if let Some(iv) = proven_result(&f.body, id, &facts)
+            && iv != Interval::unbounded()
+        {
+            std::sync::Arc::make_mut(&mut facts.proven_returns).insert(id, iv);
+        }
+    }
+    let returns = std::mem::take(&mut facts.proven_returns);
+    (
+        std::sync::Arc::try_unwrap(returns).unwrap_or_else(|shared| (*shared).clone()),
+        locals,
+    )
 }
 
 // ── shared traversal + helpers ──────────────────────────────────────────
@@ -6334,6 +6688,119 @@ fn main() -> Int
     }
 
     #[test]
+    fn proven_locals_follow_lets_and_branches() {
+        // `k` is in [0, 1023] on both paths, `j` is `k` doubled; `x`, a
+        // list's element, and `m`, a parameter's copy, are any value.
+        let src = r#"
+fn joined(n: Int, xs: List<Int>) -> Int
+    k = match n > 0
+        true -> 5
+        false -> Bits.and(n, 1023)
+    j = k * 2
+    m = n
+    match xs
+        [] -> j + m
+        [x, ..rest] -> x
+
+fn main() -> Int
+    joined(4, [1])
+"#;
+        let (program, _) = facts_for(src);
+        let facts = analyze_rust(&program, &CarrierIds::new(), None);
+        let joined = facts.for_fn(fn_id_by_name(&program, "joined")).unwrap();
+        let mut slots: Vec<Interval> = joined.proven_slots.values().copied().collect();
+        slots.sort_by_key(|iv| format!("{iv:?}"));
+        assert_eq!(
+            slots,
+            vec![Interval::between(0, 1023), Interval::between(0, 2046)],
+            "only `k` and `j` are bounded"
+        );
+        // The wasm-gc facts carry none of it.
+        let wasm = analyze_with_fields(
+            &program,
+            &CarrierIntervals::new(),
+            &FieldCarrierIntervals::new(),
+            false,
+        );
+        let joined = wasm.for_fn(fn_id_by_name(&program, "joined")).unwrap();
+        assert!(joined.proven_slots.is_empty());
+    }
+
+    #[test]
+    fn proven_intervals_follow_locals_branches_and_results() {
+        // Each interval holds whatever is passed: `hashOf` and `fold` are
+        // bounded by their remainders, `joined` through a local bound to a
+        // branch and a call of `hashOf`; `depth`'s recursion under `+ 1`,
+        // `head`'s list element and `ident`'s parameter are any value.
+        let src = r#"
+fn hashOf(n: Int) -> Int
+    Int.mod(n * 31 + 7, 2147483647)
+
+fn fold(xs: List<Int>, h: Int) -> Int
+    match xs
+        [] -> Int.mod(h, 65536)
+        [x, ..rest] -> fold(rest, h * 31 + x)
+
+fn depth(n: Int) -> Int
+    match n <= 0
+        true -> 0
+        false -> depth(n - 1) + 1
+
+fn joined(n: Int) -> Int
+    k = match n > 0
+        true -> 5
+        false -> Bits.and(n, 1023)
+    k * 2 + hashOf(n)
+
+fn head(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [x, ..rest] -> x
+
+fn ident(n: Int) -> Int
+    m = n
+    m
+
+fn main() -> Int
+    hashOf(3) + fold([1], 2) + depth(3) + joined(4) + head([1]) + ident(2)
+"#;
+        let (program, _) = facts_for(src);
+        let facts = analyze_rust(&program, &CarrierIds::new(), None);
+        let main = facts.for_fn(fn_id_by_name(&program, "main")).unwrap();
+        let ret = |name: &str| {
+            main.proven_returns
+                .get(&fn_id_by_name(&program, name))
+                .copied()
+        };
+        assert_eq!(ret("hashOf"), Some(Interval::between(0, 2147483646)));
+        assert_eq!(ret("fold"), Some(Interval::between(0, 65535)));
+        assert_eq!(ret("joined"), Some(Interval::between(0, 2046 + 2147483646)));
+        for name in ["depth", "head", "ident", "main"] {
+            assert_eq!(ret(name), None, "{name} returns any value");
+        }
+        let joined = facts.for_fn(fn_id_by_name(&program, "joined")).unwrap();
+        let mut slots: Vec<Interval> = joined.proven_slots.values().copied().collect();
+        slots.sort_by_key(|iv| format!("{iv:?}"));
+        assert!(
+            slots.contains(&Interval::between(0, 1023)),
+            "`k` is in [0, 1023]: {slots:?}"
+        );
+        // The wasm-gc facts carry none of it.
+        let vm = analyze_with_fields(
+            &program,
+            &CarrierIntervals::new(),
+            &FieldCarrierIntervals::new(),
+            false,
+        );
+        assert!(
+            vm.for_fn(fn_id_by_name(&program, "main"))
+                .unwrap()
+                .proven_returns
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn a_length_is_a_raw_leaf_on_rust() {
         // A length is the size of something in memory, so `List.len(xs) + 1`
         // fits `i64` and `count` returns it raw on Rust; the general analysis
@@ -6849,7 +7316,60 @@ fn sampledWord(n: Int) -> Word
                     "popCount({x}, {k}) off 64 bits"
                 );
             }
+            for k in [
+                1i64,
+                2,
+                7,
+                2147483647,
+                1 << 32,
+                (1 << 62) - 1,
+                1 << 62,
+                i64::MAX,
+            ] {
+                let op = WordOp::Mod(k);
+                let r = x.rem_euclid(&i(k)).unwrap();
+                assert!(inside(op.interval(), &r), "mod({x}, {k})");
+                assert_eq!(r, i(x.rem_euclid_word(k)), "mod({x}, {k}) as a word");
+            }
         }
+    }
+
+    /// The bounds of the one-operand ops computed raw, `Int.abs` and
+    /// `Bits.not`, against the runtime's own operations over values at the
+    /// ends of each interval and of `i64`, of both signs.
+    #[test]
+    fn unary_raw_op_intervals_hold_for_the_runtime_operations() {
+        use aver_rt::AverInt;
+        let i = AverInt::from_i64;
+        let inside =
+            |iv: Interval, v: &AverInt| v.to_i64().is_some_and(|v| iv.contains_point(v as i128));
+        let (min, max) = (i64::MIN as i128, i64::MAX as i128);
+        for (lo, hi) in [
+            (-512i128, 511),
+            (0, 7),
+            (-7, 0),
+            (-9, -3),
+            (3, 9),
+            (min + 1, max),
+            (min, -1),
+            (-(1 << 62), (1 << 62) - 1),
+        ] {
+            let iv = Interval::between(lo, hi);
+            let abs = RawOp::Abs.interval(iv, iv).unwrap();
+            let not = RawOp::Not.interval(iv, iv).unwrap();
+            for x in [lo, hi, (lo + hi) / 2, lo.max(-1).min(hi), 0.max(lo).min(hi)] {
+                let v = i(x as i64);
+                let a = v.abs();
+                let n = v.bit_not();
+                assert_eq!(a.to_string(), x.abs().to_string(), "the runtime's abs({x})");
+                assert!(abs.contains_point(x.abs()), "abs({x}) in {abs:?}");
+                assert!(inside(not, &n), "not({x}) in {not:?}");
+            }
+        }
+        // `i64::MIN` has no `i64` absolute value, so its bound leaves `i64`
+        // and the op is not computed raw.
+        let edge = Interval::between(min, 0);
+        assert!(!RawOp::Abs.interval(edge, edge).unwrap().fits_i64());
     }
 
     #[test]

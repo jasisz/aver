@@ -409,6 +409,21 @@ impl Interval {
         within_i64_or_unbounded(self, other)
     }
 
+    /// `Int.abs(self)`.
+    pub fn abs(self) -> Interval {
+        let negated = Interval::point(0).sub(self);
+        if Bound::Finite(0).le(self.lo) {
+            self
+        } else if self.hi.le(Bound::Finite(0)) {
+            negated
+        } else {
+            Interval {
+                lo: Bound::Finite(0),
+                hi: self.hi.max(negated.hi),
+            }
+        }
+    }
+
     /// `Int.min(self, other)`.
     pub fn min_with(self, other: Interval) -> Interval {
         Interval {

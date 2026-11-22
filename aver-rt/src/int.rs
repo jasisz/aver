@@ -921,6 +921,24 @@ impl AverInt {
         }
     }
 
+    /// `Int.mod(self, k)` for a divisor `k > 0`, as the machine word it
+    /// always is: the Euclidean remainder lies in `[0, k - 1]` whatever
+    /// `self` is, so no `AverInt` is built for it. A large value is reduced
+    /// where it lies, as [`AverInt::rem_euclid`] does.
+    ///
+    /// # Panics
+    ///
+    /// When `k <= 0`.
+    #[inline]
+    pub fn rem_euclid_word(&self, k: i64) -> i64 {
+        assert!(k > 0, "rem_euclid_word takes a divisor above zero");
+        match self.view() {
+            View::Small(n) => n.rem_euclid(k),
+            // Below `k`, so its lowest 64 bits are all of it.
+            View::Big(_) => rem_euclid_slow(self, &AverInt::from_i64(k)).low_u64() as i64,
+        }
+    }
+
     /// `self` as `f64`, lossily. Huge magnitudes saturate to `±∞` (never
     /// `NaN`), matching the Lean prelude's `Float.ofInt`/IEEE coercion. This
     /// is the only intentionally-lossy conversion.
@@ -1732,6 +1750,50 @@ mod tests {
         assert_eq!(big("-9223372036854775809").low_u64(), (1 << 63) - 1);
         for n in [0u64, 1, 1 << 63, u64::MAX, 4607182418800017408] {
             assert_eq!(AverInt::from_u64(n).low_u64(), n);
+        }
+    }
+
+    #[test]
+    fn rem_euclid_word_is_the_euclidean_remainder_on_both_sides_of_every_seam() {
+        let big = |s: &str| AverInt::from_str(s).unwrap();
+        let values = [
+            AverInt::from_i64(0),
+            AverInt::from_i64(1),
+            AverInt::from_i64(-1),
+            AverInt::from_i64(INLINE_MAX),
+            AverInt::from_i64(INLINE_MIN),
+            AverInt::from_i64(INLINE_MAX + 1),
+            AverInt::from_i64(INLINE_MIN - 1),
+            AverInt::from_i64(i64::MAX),
+            AverInt::from_i64(i64::MIN),
+            big("9223372036854775808"),
+            big("-9223372036854775809"),
+            big("18446744073709551621"),
+            big("-18446744073709551621"),
+            big("340282366920938463463374607431768211457"),
+            big("-340282366920938463463374607431768211457"),
+            via_bigint(12345),
+            via_bigint(-12345),
+        ];
+        let divisors = [
+            1i64,
+            2,
+            7,
+            1 << 31,
+            2147483647,
+            1 << 32,
+            (1 << 32) + 15,
+            INLINE_MAX,
+            INLINE_MAX + 1,
+            i64::MAX,
+        ];
+        for x in &values {
+            for &k in &divisors {
+                let exact = x.rem_euclid(&AverInt::from_i64(k)).unwrap();
+                let word = x.rem_euclid_word(k);
+                assert!((0..k).contains(&word), "{x} mod {k} = {word}");
+                assert_eq!(AverInt::from_i64(word), exact, "{x} mod {k}");
+            }
         }
     }
 

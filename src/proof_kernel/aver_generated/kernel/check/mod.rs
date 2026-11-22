@@ -6562,7 +6562,7 @@ pub fn inductCase(
     crate::proof_kernel::cancel_checkpoint();
     {
         let __subject = (
-            (aver_rt::AverInt::from_i64(((c.binders).len() as i64))
+            (((c.binders).len() as i64)
                 == crate::proof_kernel::aver_generated::kernel::check::caseNames(r, &a.arm)),
             {
                 let __arg11 @ _ = <aver_rt::AverList<AverStr>>::empty();
@@ -6596,14 +6596,14 @@ pub fn inductCase(
 pub fn caseNames(
     r @ _: &crate::proof_kernel::aver_generated::kernel::induct::Recursion,
     a @ _: &crate::proof_kernel::aver_generated::kernel::term::Arm,
-) -> aver_rt::AverInt {
+) -> i64 {
     crate::proof_kernel::cancel_checkpoint();
     match r.guard.clone() {
-        None => aver_rt::AverInt::from_i64(
+        None => {
             ((crate::proof_kernel::aver_generated::kernel::check::patFields(&a.pattern)).len()
-                as i64),
-        ),
-        Some(g @ _) => aver_rt::AverInt::from_i64(1),
+                as i64)
+        }
+        Some(g @ _) => 1i64,
     }
 }
 

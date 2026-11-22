@@ -615,7 +615,9 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
             // A packed carrier's field is counted where it lies.
             let operand = packed_field_read(&operand).map_or(operand.clone(), str::to_string);
             Some(match arg.ty() {
-                Some(Type::Str) => format!("(({operand}).chars().count() as i64)"),
+                Some(Type::Str) if !ctx.bare.raw_ops.counts_bytes(&c.node.callee) => {
+                    format!("(({operand}).chars().count() as i64)")
+                }
                 _ => format!("(({operand}).len() as i64)"),
             })
         }
@@ -638,6 +640,7 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
             let x = emit_mir_expr(operand, ctx)?;
             Some(match op {
                 WordOp::SampleHash => format!("({x}).sample_hash()"),
+                WordOp::Mod(k) => format!("({x}).rem_euclid_word({k}i64)"),
                 WordOp::AndMask(c) => format!("((({x}).low_u64() as i64) & {c}i64)"),
                 WordOp::Low(_) => format!("((({x}).low_u64() & {}u64) as i64)", op.mask()),
                 WordOp::PopCount(_) => {
@@ -654,8 +657,13 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
             let a = emit_bare_i64(&args[0], ctx)?;
             // A shift or a mask by its literal count; the facts admitted
             // only counts that keep it exact.
-            let count = op.literal_operand(&args[1].node).flatten();
-            let b = emit_bare_i64(&args[1], ctx)?;
+            let count = args
+                .get(1)
+                .and_then(|b| op.literal_operand(&b.node).flatten());
+            let b = match args.get(1) {
+                Some(b) => emit_bare_i64(b, ctx)?,
+                None => String::new(),
+            };
             Some(match op {
                 RawOp::Mod => format!("({a}).rem_euclid({b})"),
                 RawOp::Div => format!("({a}).div_euclid({b})"),
@@ -664,6 +672,9 @@ fn emit_bare_i64(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String
                 RawOp::Xor => format!("({a} ^ {b})"),
                 RawOp::Min => format!("({a}).min({b})"),
                 RawOp::Max => format!("({a}).max({b})"),
+                // The facts admit no operand of `i64::MIN`.
+                RawOp::Abs => format!("({a}).abs()"),
+                RawOp::Not => format!("(!{a})"),
                 RawOp::Shr => format!("(({a}) >> {})", count?),
                 RawOp::Shl => format!("(({a}) * {}i64)", 1i128 << count?),
                 RawOp::Low => format!("(({a}) & {}i64)", (1i128 << count?) - 1),
@@ -4685,6 +4696,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         }
         MirExpr::Unbox(inner) => {
             let boxed = emit_mir_expr(inner, emit_ctx)?;
+            // A branch narrowed as a whole is parenthesized.
+            let boxed = match inner.node {
+                MirExpr::Match(_) | MirExpr::IfThenElse(_) => format!("({boxed})"),
+                _ => boxed,
+            };
             Some(format!(
                 "{}.to_i64().expect(\"Int out of i64 range\")",
                 boxed

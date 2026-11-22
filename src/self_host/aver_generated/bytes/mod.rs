@@ -283,9 +283,9 @@ pub fn empty() -> Bytes {
 
 /// The number of octets in a byte sequence.
 #[inline(always)]
-pub fn len(bytes @ _: &Bytes) -> aver_rt::AverInt {
+pub fn len(bytes @ _: &Bytes) -> i64 {
     crate::cancel_checkpoint();
-    aver_rt::AverInt::from_i64(((bytes.values).len() as i64))
+    ((bytes.values).len() as i64)
 }
 
 /// The octet at a zero-based index; Option.None below zero or at the length and past it.
@@ -467,11 +467,9 @@ pub fn highNibble(value @ _: aver_rt::AverInt) -> aver_rt::AverInt {
 
 /// Compute a validated octet's low nibble by total modulo on a literal divisor.
 #[inline(always)]
-pub fn lowNibble(value @ _: aver_rt::AverInt) -> aver_rt::AverInt {
+pub fn lowNibble(value @ _: aver_rt::AverInt) -> i64 {
     crate::cancel_checkpoint();
-    (value)
-        .rem_euclid(&(aver_rt::AverInt::from_i64(16)))
-        .unwrap()
+    (value).rem_euclid_word(16i64)
 }
 
 /// Encode one validated octet as two lowercase hexadecimal characters.
@@ -481,7 +479,7 @@ pub fn byteToHex(value @ _: aver_rt::AverInt) -> AverStr {
         let __arg1 @ _ = crate::aver_generated::bytes::highNibble(value.clone());
         crate::aver_generated::bytes::hexDigit(__arg1)
     } + &{
-        let __arg2 @ _ = crate::aver_generated::bytes::lowNibble(value);
+        let __arg2 @ _ = aver_rt::AverInt::from_i64(crate::aver_generated::bytes::lowNibble(value));
         crate::aver_generated::bytes::hexDigit(__arg2)
     })
 }
