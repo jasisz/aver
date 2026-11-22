@@ -128,6 +128,7 @@ pub fn emit_builtin_call(
         }
         IntFromBigEndian => format!("Bytes.intFromBigEndian {}", p(&a[0])),
         IntFromLittleEndian => format!("Bytes.intFromLittleEndian {}", p(&a[0])),
+        IntSampleHash => format!("AverSampleHash.sampleHash {}", p(&a[0])),
 
         // ---- Float ----
         FloatAbs => format!("Float.abs {}", p(&a[0])),

@@ -1,0 +1,122 @@
+module WordIntervals
+    intent =
+        "Builtin results with a known interval: Int.sampleHash, and Bits.and,"
+        "Bits.low and Bits.popCount by a literal, feeding a word carrier whose"
+        "check they always pass, over operands far outside i64 and negative."
+    exposes opaque [Word]
+    effects [Console.print]
+
+record Word
+    value: Int
+
+fn fromInt(n: Int) -> Result<Word, String>
+    ? "A word: at least zero and at most 2^62 - 1."
+    match Bool.and(n >= 0, n <= 4611686018427387903)
+        true -> Result.Ok(Word(value = n))
+        false -> Result.Err("word out of range")
+
+fn word(n: Int) -> Word
+    ? "A word from a value its callers keep in range; zero otherwise."
+    match fromInt(n)
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 0)
+
+fn checked(n: Int) -> String
+    ? "The check itself, on any value: what keeps fromInt's own check in place."
+    match fromInt(n)
+        Result.Ok(w) -> "{w.value}"
+        Result.Err(e) -> e
+
+fn hashWord(n: Int) -> Word
+    ? "The low 31 bits of the sample hash."
+    word(Bits.and(Int.sampleHash(n), 2147483647))
+
+fn wholeHash(n: Int) -> Word
+    ? "The sample hash itself, all of [0, 2^62)."
+    word(Int.sampleHash(n))
+
+fn lowWord(n: Int) -> Word
+    ? "The low 40 bits."
+    word(Bits.low(n, 40))
+
+fn countWord(n: Int) -> Word
+    ? "The one bits among the low 64."
+    word(Bits.popCount(n, 64))
+
+fn maskWord(n: Int) -> Word
+    ? "The low 20 bits by a mask."
+    word(Bits.and(n, 1048575))
+
+fn mixed(n: Int) -> Int
+    ? "Word arithmetic over the raw results: stays within i64."
+    Bits.and(Int.sampleHash(n), 2147483647) * 2147483648 + Bits.popCount(n, 64) * 33554432 + Bits.low(n, 25)
+
+fn directWord(n: Int) -> Word
+    ? "The low 31 bits of the sample hash, through the smart constructor itself."
+    match fromInt(Bits.and(Int.sampleHash(n), 2147483647))
+        Result.Ok(w) -> w
+        Result.Err(_) -> Word(value = 0)
+
+fn ge(n: Int) -> Int
+    ? "1 when the count of bits is at least 100, which it never is."
+    match Bits.popCount(n, 64) >= 100
+        true -> 1
+        false -> 0
+
+fn lt(n: Int) -> Int
+    ? "1 when the count of bits is below 100, which it always is."
+    match Bits.popCount(n, 64) < 100
+        true -> 1
+        false -> 0
+
+fn gt(n: Int) -> Int
+    ? "1 when 100 is above the count of bits."
+    match 100 > Bits.popCount(n, 64)
+        true -> 1
+        false -> 0
+
+fn le(n: Int) -> Int
+    ? "1 when 100 is at most the count of bits."
+    match 100 <= Bits.popCount(n, 64)
+        true -> 1
+        false -> 0
+
+fn eq(n: Int) -> Int
+    ? "1 when the low 20 bits are 2^20, which they never are."
+    match Bits.and(n, 1048575) == 1048576
+        true -> 1
+        false -> 0
+
+fn ne(n: Int) -> Int
+    ? "1 when the low 20 bits are not 2^20."
+    match Bits.and(n, 1048575) != 1048576
+        true -> 1
+        false -> 0
+
+fn decided(n: Int) -> String
+    ? "Comparisons the ranges of the builtin results decide."
+    "{ge(n)} {lt(n)} {gt(n)} {le(n)} {eq(n)} {ne(n)} {directWord(n).value}"
+
+fn line(n: Int) -> String
+    ? "Every word of one value."
+    "{hashWord(n).value} {wholeHash(n).value} {lowWord(n).value} {countWord(n).value} {maskWord(n).value} {mixed(n)}"
+
+verify line
+    line(0) => "1590129515 4073552104164651883 0 0 0 3414777131664670720"
+
+fn main() -> Unit
+    ? "The words of small, negative, 64-bit edge and long values."
+    ! [Console.print]
+    big = Bits.shiftLeft(5, 41920) + Bits.shiftLeft(12345, 64) + 987654321
+    Console.print(line(0))
+    Console.print(line(1))
+    Console.print(line(0 - 1))
+    Console.print(line(4611686018427387903))
+    Console.print(line(0 - 4611686018427387904))
+    Console.print(line(9223372036854775807))
+    Console.print(line(0 - 9223372036854775808))
+    Console.print(line(18446744073709551615))
+    Console.print(line(big))
+    Console.print(line(0 - big))
+    Console.print(decided(big))
+    Console.print("{checked(0 - 1)} {checked(4611686018427387904)} {checked(big)} {checked(4611686018427387903)}")

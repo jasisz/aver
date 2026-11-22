@@ -375,6 +375,13 @@ pub(crate) fn emit_mir_native_scalar_builtin(
             func.instruction(&Instruction::Call(low_u64));
             func.instruction(&Instruction::F64ReinterpretI64);
         }
+        // A word in `[0, 2^62)`, lifted to the `$AverInt` it is.
+        "Int.sampleHash" if args.len() == 1 && ctx.registry.bignum => {
+            let sample_hash = aint_helper(ctx, "__aint_sample_hash")?;
+            arg!(0);
+            func.instruction(&Instruction::Call(sample_hash));
+            lift_i64_result_to_aint(func, ctx)?;
+        }
         "Float.fromInt" if args.len() == 1 => {
             arg!(0);
             func.instruction(&Instruction::F64ConvertI64S);

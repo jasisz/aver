@@ -1632,6 +1632,66 @@ fn bits_pop_count_wasm_gc() {
     );
 }
 
+// ─── Int.sampleHash ─────────────────────────────────────────────────────
+
+/// `Int.sampleHash`'s golden vectors (the same ones `aver-rt`'s unit test
+/// and the Lean prelude hold), with the words of each a Rust build computes
+/// raw. `tests/wasip2_stress.rs` and `tests/rust_codegen_differential.rs`
+/// hold wasip2 and Rust to the same output.
+const SAMPLE_HASH_SRC: &str = include_str!("fixtures/int_sample_hash.av");
+const SAMPLE_HASH_OUT: &str = include_str!("fixtures/int_sample_hash.expected");
+
+#[test]
+fn int_sample_hash_vm_and_wasm_gc() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-samplehash-vm", SAMPLE_HASH_SRC),
+        SAMPLE_HASH_OUT.trim(),
+    );
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-samplehash-wasmgc", SAMPLE_HASH_SRC),
+        SAMPLE_HASH_OUT.trim(),
+    );
+}
+
+/// The golden vectors as verify cases, on both backends.
+#[test]
+fn int_sample_hash_verify_vm_and_wasm_gc() {
+    for wasm_gc in [false, true] {
+        let (ok, summary) =
+            run_verify_summary("aver-cross-samplehash-verify", SAMPLE_HASH_SRC, wasm_gc);
+        assert!(
+            ok,
+            "sampleHash verify failed (wasm-gc: {wasm_gc}): {summary}"
+        );
+        assert!(
+            summary.contains("17/17 cases passed | 0 failed"),
+            "sampleHash verify summary (wasm-gc: {wasm_gc}): {summary}"
+        );
+    }
+}
+
+/// Builtin results with a known interval feeding a word carrier, over
+/// operands far outside `i64`. `tests/rust_codegen_differential.rs` holds
+/// Rust, where those results are machine words, to the same output.
+const WORD_INTERVALS_SRC: &str = include_str!("fixtures/word_builtin_intervals.av");
+const WORD_INTERVALS_OUT: &str = include_str!("fixtures/word_builtin_intervals.expected");
+
+#[test]
+fn word_builtin_intervals_vm_and_wasm_gc() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-wordintervals-vm", WORD_INTERVALS_SRC),
+        WORD_INTERVALS_OUT.trim(),
+    );
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-wordintervals-wasmgc", WORD_INTERVALS_SRC),
+        WORD_INTERVALS_OUT.trim(),
+    );
+}
+
 // ─── Float.toBits / Float.fromBits ──────────────────────────────────────
 
 /// The binary64 patterns of zeros, subnormals, the largest finite values,

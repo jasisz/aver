@@ -858,7 +858,9 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
     // A builtin computed raw, or a negation, over raw operands keeps them
     // raw.
     let raw_node = renders_raw(&e.node, ctx.facts);
-    let raw_op = raw_node && ctx.facts.raw_op_call(&e.node).is_some();
+    // A word read off a boxed operand ([`super::bare_i64::WordOp`]) renders
+    // raw too, but its operand is a general `Int`.
+    let raw_op = raw_node && ctx.facts.raw_op_over_raw(&e.node);
     match e.node {
         MirExpr::BinOp(mut b) => {
             let op = b.node.op;

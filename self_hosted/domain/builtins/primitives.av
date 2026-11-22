@@ -11,6 +11,7 @@ fn callInt(name: String, args: List<Val>) -> Result<Val, String>
         "Float.fromInt" -> builtinIntToFloat(args)
         "Int.fromString" -> builtinIntFromString(args)
         "Int.abs" -> builtinIntAbs(args)
+        "Int.sampleHash" -> builtinIntSampleHash(args)
         "Int.mod" -> builtinIntMod(args)
         "Int.div" -> builtinIntDiv(args)
         "Int.max" -> builtinIntMax(args)
@@ -129,6 +130,16 @@ fn builtinIntAbs(args: List<Val>) -> Result<Val, String>
 verify builtinIntAbs
     builtinIntAbs([Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
     builtinIntAbs([Val.ValStr("x")]) => Result.Err("expected int argument")
+
+fn builtinIntSampleHash(args: List<Val>) -> Result<Val, String>
+    ? "Int.sampleHash(n) -> a hash in [0, 2^62) read from at most 64 digits of n."
+    v = Domain.Builtins.Helpers.oneArg(args)?
+    n = Domain.Builtins.Helpers.expectInt(v)?
+    Result.Ok(Val.ValInt(Int.sampleHash(n)))
+
+verify builtinIntSampleHash
+    builtinIntSampleHash([Val.ValInt(0)]) => Result.Ok(Val.ValInt(4073552104164651883))
+    builtinIntSampleHash([Val.ValStr("x")]) => Result.Err("expected int argument")
 
 fn builtinIntMod(args: List<Val>) -> Result<Val, String>
     ? "Int.mod(a, b) -> a mod b as Result."

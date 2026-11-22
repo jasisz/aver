@@ -43,6 +43,10 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
                 detail: "fn(Int, Int) -> Result<Int, String>",
             },
             Member {
+                name: "sampleHash",
+                detail: "fn(Int) -> Int",
+            },
+            Member {
                 name: "toFloat",
                 detail: "fn(Int) -> Float",
             },

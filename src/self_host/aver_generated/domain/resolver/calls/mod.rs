@@ -792,6 +792,7 @@ pub fn isBuiltinCallName(name @ _: &AverStr) -> bool {
         ::aver_rt::str_lit!("Http.post"),
         ::aver_rt::str_lit!("Http.put"),
         ::aver_rt::str_lit!("Int.abs"),
+        ::aver_rt::str_lit!("Int.sampleHash"),
         ::aver_rt::str_lit!("Int.div"),
         ::aver_rt::str_lit!("Int.fromString"),
         ::aver_rt::str_lit!("Int.toBigEndian"),

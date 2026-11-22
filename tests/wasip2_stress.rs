@@ -219,6 +219,25 @@ fn bits_pop_count_matches_expected() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `Int.sampleHash`'s golden vectors give the VM's answers on wasip2
+/// (`cross_backend_stress` holds the VM and wasm-gc to the same output).
+#[test]
+fn int_sample_hash_matches_expected() {
+    let dir = tempdir("samplehash");
+    let fixture = write_fixture(
+        &dir,
+        "samplehash.av",
+        include_str!("fixtures/int_sample_hash.av"),
+    );
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "samplehash.av");
+    assert_eq!(
+        stdout(&out).trim(),
+        include_str!("fixtures/int_sample_hash.expected").trim()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An empty literal bound to a name and typed by a later read builds on
 /// wasip2 and prints what the VM prints (`cross_backend_stress` runs the
 /// VM and wasm-gc).

@@ -69,6 +69,7 @@ codegen_builtins! {
     IntToLittleEndian => "Int.toLittleEndian",
     IntFromBigEndian => "Int.fromBigEndian",
     IntFromLittleEndian => "Int.fromLittleEndian",
+    IntSampleHash => "Int.sampleHash",
 
     // --- Bits (a bit-level view of Int, not a type) ---
     BitsAnd => "Bits.and",

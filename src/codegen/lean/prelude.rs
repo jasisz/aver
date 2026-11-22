@@ -593,6 +593,73 @@ def natCount : Nat → Nat → Nat
     complement: those of `x % 2 ^ w`, the value `AverBits.low x w` has. -/
 def popCount (x w : Int) : Int := ((natCount w.toNat (x % 2 ^ w.toNat).toNat : Nat) : Int)"#;
 
+/// `Int.sampleHash`'s proof model, step for step the runtime's
+/// (`aver_rt::AverInt::sample_hash`): every word operation is a `Nat`
+/// operation taken modulo `2^64`, which the kernel reduces with its GMP
+/// acceleration, so a literal argument decides by `decide`. `finish` keeps
+/// the result below `2^62` by construction, and `sampleHash_range` states
+/// it; the Rust backend's interval for the builtin's result is this fact.
+/// A certificate model gets the definitions and the theorem, without the
+/// smoke examples.
+fn aver_sample_hash_prelude(cert_model: bool) -> String {
+    let examples = if cert_model {
+        String::new()
+    } else {
+        "\n\nexample : sampleHash 0 = 4073552104164651883 := by decide\n\
+         example : sampleHash (-(2 ^ 63)) = 3190229909601451097 := by decide"
+            .to_string()
+    };
+    format!(
+        r#"namespace AverSampleHash
+
+/-- `2^64`: every word step is taken modulo it. -/
+def word : Nat := 18446744073709551616
+def k0 : Nat := {k0}
+def k1 : Nat := {k1}
+
+/-- The splitmix64 finalizer on a word below `2^64`. -/
+def mix (z : Nat) : Nat :=
+  let z := ((z ^^^ (z >>> 30)) * 0xbf58476d1ce4e5b9) % word
+  let z := ((z ^^^ (z >>> 27)) * 0x94d049bb133111eb) % word
+  z ^^^ (z >>> 31)
+
+/-- The number of base-`2^64` digits of `m`. -/
+def digitCount (m : Nat) : Nat := if m = 0 then 0 else m.log2 / 64 + 1
+
+/-- The `i`-th base-`2^64` digit of `m`, least significant first. -/
+def digit (m i : Nat) : Nat := (m >>> (64 * i)) % word
+
+/-- The positions read from a number of `n` digits: every one up to 64,
+    otherwise the 64 positions `k * (n - 1) / 63`. -/
+def positions (n : Nat) : List Nat :=
+  if n ≤ 64 then List.range n else (List.range 64).map (fun k => k * (n - 1) / 63)
+
+/-- The last step, `h >> 2` of a word. -/
+def finish (h : Nat) : Int := ((h % word / 4 : Nat) : Int)
+
+/-- A hash of `x` read from at most 64 of its digits: NOT of its whole
+    value. -/
+def sampleHash (x : Int) : Int :=
+  let m := x.natAbs
+  let n := digitCount m
+  finish ((positions n).foldl
+    (fun h i => mix (h ^^^ digit m i ^^^ mix ((i + k1) % word)))
+    (mix (k0 ^^^ n ^^^ ((if x < 0 then 1 else 0) <<< 63))))
+
+theorem finish_range (h : Nat) : 0 ≤ finish h ∧ finish h < 4611686018427387904 := by
+  unfold finish word; omega
+
+/-- The interval of `Int.sampleHash`: `[0, 2^62 - 1]`. -/
+theorem sampleHash_range (x : Int) :
+    0 ≤ sampleHash x ∧ sampleHash x < 4611686018427387904 :=
+  finish_range _{examples}
+
+end AverSampleHash"#,
+        k0 = aver_rt::SAMPLE_HASH_K0,
+        k1 = aver_rt::SAMPLE_HASH_K1,
+    )
+}
+
 const LEAN_PRELUDE_AVER_MEASURE: &str = r#"namespace AverMeasure
 def list (elemMeasure : α → Nat) : List α → Nat
   | [] => 1
@@ -1585,6 +1652,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             "StringCodePoint" => parts.push(LEAN_PRELUDE_STRING_CODE_POINT.to_string()),
             "AverBits" => parts.push(LEAN_PRELUDE_AVER_BITS.to_string()),
             "AverBitCount" => parts.push(aver_bit_count_prelude(false)),
+            "AverSampleHash" => parts.push(aver_sample_hash_prelude(false)),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(body, include_all_helpers)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),
@@ -1914,6 +1982,7 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
             "AverBits" if cert_model => {}
             "AverBits" => parts.push(LEAN_PRELUDE_AVER_BITS.to_string()),
             "AverBitCount" => parts.push(aver_bit_count_prelude(cert_model)),
+            "AverSampleHash" => parts.push(aver_sample_hash_prelude(cert_model)),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(union_body, false)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),
