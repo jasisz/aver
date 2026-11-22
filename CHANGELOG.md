@@ -2,6 +2,20 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.37.0 "Permafrost" — 2026-11-22
+
+> _What threads share stays frozen, all the way down._
+
+- **Frozen all the way down (compiled Rust, atomic counts).** Freezing a node now freezes what it holds: strings, large `Int` values, list and map nodes and vectors under a frozen node no longer keep live counts. A module-level value is frozen once it is computed. Before, a string inside data shared by every thread (a name, say) was still counted, and threads that only read it contended on its count. On a Lean kernel checker written in Aver, 32 workers on x86 (AMD EPYC, 32 cores) ran a slice of 630,000 declarations in 4:38 instead of 8:11 at the same instructions: 69% fewer cycles, 2.11 instructions per cycle instead of 0.65. On 4 workers on Apple M2 the extra cycles of running in parallel went from +43% to none. Work that did not contend is unchanged; the cost is +1–4% instructions and +4–8% peak memory.
+- **`Int.sampleHash(x: Int) -> Int`.** A hash of an integer read from at most 64 of its base-2^64 digits, spread over its whole length (first and last always included), with their positions, the digit count and the sign. The result is in `[0, 2^62)`, deterministic, and the same in the VM, compiled Rust, wasm-gc, wasip2 and the Lean proof model (golden vectors shared by all). It costs one multiply per digit read, so hashing a huge number is bounded. Two numbers that differ only in unsampled digits hash the same: it is for buckets, not for equality.
+- **Integer ranges proved, then used (compiled Rust).** A builtin whose result lies in a known interval returns a machine word: `Int.sampleHash`, `Bits.and` with a non-negative literal mask, `Bits.low`, `Bits.popCount`, `Int.mod` by a positive literal (Aver's remainder is Euclidean, so never negative), `Int.abs` and `Bits.not` of bounded values. Intervals now flow through immutable local bindings, `match`/`if` arms, and the results of user functions (recursion is unbounded), so such a function can return a raw `i64`. A carrier's range check is skipped and a comparison folded only where the interval is proved. The VM, wasm and certificates are unchanged and trust nothing new.
+- **Strings only compared are borrowed (compiled Rust).** A string bound by a pattern and only read in place (string builtins, `==`, a match on literals, a borrowed parameter) is borrowed instead of copied.
+- **Faster large `Int` paths (compiled Rust).** Fewer copies and repacks in long-by-short multiplication, low-bit reads and shifts used as bit tests.
+
+### Fixed
+
+- Compiled Rust: in `match s { "" -> …; op -> f(op) }` the named arm bound a `&str`, so passing `op` on, appending to it or comparing it did not compile. It binds the string.
+
 ## 0.36.1 — 2026-11-21
 
 ### Fixed
