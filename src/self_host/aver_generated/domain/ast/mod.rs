@@ -4632,7 +4632,9 @@ pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) ->
         })();
         match __word {
             Some(__word) => aver_rt::AverInt::from_inline_word(__word),
-            None => acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code),
+            None => acc
+                .mul_owned(&aver_rt::AverInt::from_i64(131))
+                .add_owned(&code),
         }
     });
     (next).rem_euclid_word(1000003i64)
@@ -4821,8 +4823,8 @@ pub fn ctorNameToTag__indexed(
                     if &*__dispatch_subject == "Option.None" {
                         aver_rt::AverInt::from_i64(4)
                     } else {
-                        aver_rt::AverInt::from_i64(100).add(
-                            &crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
+                        aver_rt::AverInt::from_i64(100).add_owned_rhs(
+                            crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
                                 name,
                                 __str_index,
                             ),
@@ -4862,7 +4864,7 @@ pub fn userCtorTagOffsetLoop__indexed(
         Some(__start) => __start,
         None => {
             crate::cancel_checkpoint();
-            let accPlusOne @ _ = acc.add(&aver_rt::AverInt::from_i64(1));
+            let accPlusOne @ _ = acc.add_owned_rhs(aver_rt::AverInt::from_i64(1));
             if (pos < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index))) {
                 return accPlusOne;
             } else {
@@ -4872,7 +4874,7 @@ pub fn userCtorTagOffsetLoop__indexed(
     };
     loop {
         crate::cancel_checkpoint();
-        let accPlusOne @ _ = acc.add(&aver_rt::AverInt::from_i64(1));
+        let accPlusOne @ _ = acc.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         if (aver_rt::AverInt::from_i64(pos)
             < aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index)))
         {
@@ -4911,7 +4913,7 @@ pub fn canonicalCtorName__indexed(
     let total @ _ = aver_rt::AverInt::from_i64(aver_rt::string_index_len(&__str_index));
     let __arg3 @ _ = crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
         &name,
-        total.sub(&aver_rt::AverInt::from_i64(1)),
+        total.sub_owned_rhs(aver_rt::AverInt::from_i64(1)),
         __str_index,
     );
     crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot__indexed(
@@ -4935,7 +4937,7 @@ pub fn canonicalCtorNameAtLastDot__indexed(
         {
             let __arg4 @ _ = crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
                 &name,
-                lastDot.sub(&aver_rt::AverInt::from_i64(1)),
+                lastDot.sub_owned_rhs(aver_rt::AverInt::from_i64(1)),
                 __str_index,
             );
             crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots__indexed(
@@ -4968,7 +4970,7 @@ pub fn canonicalCtorNameAtBothDots__indexed(
             let __arg5 @ _ = aver_rt::string_index_slice_i64(
                 &name,
                 &__str_index,
-                aver_rt::string_position(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
+                aver_rt::string_position(&prevDot.add_owned_rhs(aver_rt::AverInt::from_i64(1))),
                 lastDot,
             );
             {
@@ -4984,7 +4986,7 @@ pub fn canonicalCtorNameAtBothDots__indexed(
             aver_rt::string_index_slice_i64(
                 &name,
                 &__str_index,
-                aver_rt::string_position(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
+                aver_rt::string_position(&prevDot.add_owned(&aver_rt::AverInt::from_i64(1))),
                 total,
             )
         } else {

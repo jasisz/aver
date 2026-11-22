@@ -567,7 +567,7 @@ pub fn helperBody(
                 &h.lets,
                 f.clone(),
                 ds,
-                fuel.sub(&aver_rt::AverInt::from_i64(1)),
+                fuel.sub_owned_rhs(aver_rt::AverInt::from_i64(1)),
             )? == aver_rt::AverInt::from_i64(0)),
         );
         match __subject {
@@ -618,7 +618,7 @@ pub fn helperBody(
                             f,
                             &__arg9,
                             ds,
-                            fuel.sub(&aver_rt::AverInt::from_i64(1)),
+                            fuel.sub_owned(&aver_rt::AverInt::from_i64(1)),
                         )
                     }
                 }?;
@@ -879,8 +879,8 @@ pub fn letCalls(
                 }?)
                 .len() as i64),
             )
-            .add(
-                &crate::proof_kernel::aver_generated::kernel::induct::letCalls(&rest, f, ds, fuel)?,
+            .add_owned_rhs(
+                crate::proof_kernel::aver_generated::kernel::induct::letCalls(&rest, f, ds, fuel)?,
             )),
             None => Ok(aver_rt::AverInt::from_i64(0)),
         }
@@ -1740,7 +1740,7 @@ pub fn shorterSomewhere(
                         f: f.clone(),
                         p: p,
                         j: j.clone(),
-                        n: j.add(&aver_rt::AverInt::from_i64(((ps).len() as i64))),
+                        n: j.add_owned_rhs(aver_rt::AverInt::from_i64(((ps).len() as i64))),
                     };
                     {
                         let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty();
@@ -1752,7 +1752,7 @@ pub fn shorterSomewhere(
                     body,
                     f,
                     &rest,
-                    j.add(&aver_rt::AverInt::from_i64(1)),
+                    j.add_owned(&aver_rt::AverInt::from_i64(1)),
                 ))
             }
             None => false,
@@ -2614,7 +2614,7 @@ pub fn indexOf(
         crate::proof_kernel::cancel_checkpoint();
         aver_list_match!(xs, [] => { return aver_rt::AverInt::from_i64(-1); }, [y, rest] => { if (&(y) == x) { return i; } else { {
             let __tco0 = rest;
-            let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
+            let __tco2 = i.add_owned(&aver_rt::AverInt::from_i64(1));
             xs = __tco0;
             i = __tco2;
             continue;
@@ -2643,7 +2643,7 @@ pub fn nthTerm(
                     } else {
                         {
                             let __tco0 = rest;
-                            let __tco1 = i.sub(&aver_rt::AverInt::from_i64(1));
+                            let __tco1 = i.sub_owned(&aver_rt::AverInt::from_i64(1));
                             match __tco0 {
                                 aver_rt::ListRest::Lent(__rest) => {
                                     xs = __rest;
@@ -2802,7 +2802,7 @@ pub fn reaches(
                                     ),
                                 );
                                 let __tco3 = aver_rt::AverList::prepend_owned(g, seen);
-                                let __tco4 = fuel.sub(&aver_rt::AverInt::from_i64(1));
+                                let __tco4 = fuel.sub_owned(&aver_rt::AverInt::from_i64(1));
                                 frontier = __tco0;
                                 seen = __tco3;
                                 fuel = __tco4;
@@ -3208,11 +3208,11 @@ pub fn generalised(
                             if (((k != j) && (&(n) != v))
                                 && (givens.contains(&n) && (!seen.contains(&n))))
                             {
-                                return aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::induct::Place { at: k.clone(), name: n.clone() }, crate::proof_kernel::aver_generated::kernel::induct::generalised(&rest, k.add(&aver_rt::AverInt::from_i64(1)), j, v, givens, aver_rt::AverList::prepend_owned(n, seen)));
+                                return aver_rt::AverList::prepend_owned(crate::proof_kernel::aver_generated::kernel::induct::Place { at: k.clone(), name: n.clone() }, crate::proof_kernel::aver_generated::kernel::induct::generalised(&rest, k.add_owned(&aver_rt::AverInt::from_i64(1)), j, v, givens, aver_rt::AverList::prepend_owned(n, seen)));
                             } else {
                                 {
                                     let __tco0 = rest;
-                                    let __tco1 = k.add(&aver_rt::AverInt::from_i64(1));
+                                    let __tco1 = k.add_owned(&aver_rt::AverInt::from_i64(1));
                                     __hold0 = __tco0;
                                     xs = &__hold0;
                                     k = __tco1;
@@ -3222,7 +3222,7 @@ pub fn generalised(
                         }
                         _ => {
                             let __tco0 = rest;
-                            let __tco1 = k.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco1 = k.add_owned(&aver_rt::AverInt::from_i64(1));
                             __hold0 = __tco0;
                             xs = &__hold0;
                             k = __tco1;

@@ -149,7 +149,7 @@ pub fn listTake(
                     item.clone(),
                     crate::aver_generated::domain::builtins::list::listTake(
                         &rest,
-                        count.sub(&aver_rt::AverInt::from_i64(1)),
+                        count.sub_owned(&aver_rt::AverInt::from_i64(1)),
                     ),
                 ),
                 None => aver_rt::AverList::empty(),
@@ -198,7 +198,7 @@ pub fn listDrop(
         if (count > aver_rt::AverInt::from_i64(0)) {
             aver_list_match!(items, [] => { return aver_rt::AverList::empty(); }, [_item, rest] => { {
             let __tco0 = rest;
-            let __tco1 = count.sub(&aver_rt::AverInt::from_i64(1));
+            let __tco1 = count.sub_owned(&aver_rt::AverInt::from_i64(1));
             items = __tco0;
             count = __tco1;
             continue;

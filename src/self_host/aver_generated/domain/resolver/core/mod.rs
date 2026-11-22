@@ -433,7 +433,7 @@ pub fn buildParamSlots(
                 Some((p, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = slots.insert_owned(p, next.clone());
-                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = next.add_owned(&aver_rt::AverInt::from_i64(1));
                     match __tco0 {
                         aver_rt::ListRest::Lent(__rest) => {
                             params = __rest;
@@ -497,13 +497,13 @@ pub fn computeSlotCount(
     crate::cancel_checkpoint();
     let maxFromBody @ _ = crate::aver_generated::domain::resolver::core::maxSlotInStmts(
         &body,
-        baseSlot.sub(&aver_rt::AverInt::from_i64(1)),
+        baseSlot.sub_owned(&aver_rt::AverInt::from_i64(1)),
     );
     crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: body,
-        slotCount: maxFromBody.add(&aver_rt::AverInt::from_i64(1)),
+        slotCount: maxFromBody.add_owned(&aver_rt::AverInt::from_i64(1)),
         slotMap: slotMap,
         fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
         tailLoop: false,
@@ -753,7 +753,7 @@ pub fn resolveStmts(
             { let (__stp3, __stp2) = crate::aver_generated::domain::resolver::core::resolveExpr(__stp0.clone(), slots); { let __stp4 = __stp2.insert_owned(__stp1, next.clone()); {
             let __tco0 = rest;
             let __tco1 = __stp4;
-            let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+            let __tco2 = next.add_owned_rhs(aver_rt::AverInt::from_i64(1));
             let __tco3 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::ast::Stmt::StmtBindSlot(next, __stp3), acc);
             stmts = __tco0;
             slots = __tco1;
@@ -766,7 +766,7 @@ pub fn resolveStmts(
             { let (__stp6, __stp5) = crate::aver_generated::domain::resolver::core::resolveExpr(__stp0.clone(), slots); {
             let __tco0 = rest;
             let __tco1 = __stp5.clone();
-            let __tco2 = { let __arg14 @ _ = crate::aver_generated::domain::resolver::core::mapMaxVal(&__stp5).add(&aver_rt::AverInt::from_i64(1)); crate::aver_generated::domain::resolver::core::maxInt(next, __arg14) };
+            let __tco2 = { let __arg14 @ _ = crate::aver_generated::domain::resolver::core::mapMaxVal(&__stp5).add_owned(&aver_rt::AverInt::from_i64(1)); crate::aver_generated::domain::resolver::core::maxInt(next, __arg14) };
             let __tco3 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::ast::Stmt::StmtExpr(__stp6), acc);
             stmts = __tco0;
             slots = __tco1;
@@ -851,7 +851,7 @@ pub fn resolveStmtExpr(
             {
                 let __arg7 @ _ =
                     crate::aver_generated::domain::resolver::core::mapMaxVal(&newSlots)
-                        .add(&aver_rt::AverInt::from_i64(1));
+                        .add_owned(&aver_rt::AverInt::from_i64(1));
                 crate::aver_generated::domain::resolver::core::maxInt(next, __arg7)
             },
             aver_rt::AverList::prepend_owned(
@@ -903,7 +903,7 @@ pub fn resolveStmtBindFinish(
     crate::aver_generated::domain::resolver::core::resolveStmts(
         rest,
         newSlots,
-        next.add(&aver_rt::AverInt::from_i64(1)),
+        next.add_owned_rhs(aver_rt::AverInt::from_i64(1)),
         aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::ast::Stmt::StmtBindSlot(next, newExpr),
             acc,
@@ -1912,7 +1912,7 @@ pub fn patternBindingSlots(
 ) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
     crate::cancel_checkpoint();
     let nextSlot @ _ = crate::aver_generated::domain::resolver::core::mapMaxVal(slots)
-        .add(&aver_rt::AverInt::from_i64(1));
+        .add_owned(&aver_rt::AverInt::from_i64(1));
     {
         let (bindingSlots, _) = {
             let __arg4 @ _ = <aver_rt::AverMap<AverStr, aver_rt::AverInt>>::new();
@@ -1939,7 +1939,7 @@ pub fn patternBindingSlotsInner(
             let name = name.clone();
             (
                 bindingSlots.insert_owned(name, next.clone()),
-                next.add(&aver_rt::AverInt::from_i64(1)),
+                next.add_owned(&aver_rt::AverInt::from_i64(1)),
             )
         }
         crate::aver_generated::domain::ast::Pattern::PatCons(h, t) => {
@@ -1990,8 +1990,8 @@ pub fn patternBindingSlotsCons(
     crate::cancel_checkpoint();
     let bindingSlots2 @ _ = bindingSlots.insert_owned(h, next.clone());
     (
-        bindingSlots2.insert_owned(t, next.add(&aver_rt::AverInt::from_i64(1))),
-        next.add(&aver_rt::AverInt::from_i64(2)),
+        bindingSlots2.insert_owned(t, next.add_owned_rhs(aver_rt::AverInt::from_i64(1))),
+        next.add_owned(&aver_rt::AverInt::from_i64(2)),
     )
 }
 
@@ -2015,7 +2015,7 @@ pub fn patternBindingSlotsConstructor(
                 Some((name, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = bindingSlots.insert_owned(name, next.clone());
-                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = next.add_owned(&aver_rt::AverInt::from_i64(1));
                     match __tco0 {
                         aver_rt::ListRest::Lent(__rest) => {
                             bindings = __rest;
@@ -2114,7 +2114,7 @@ pub fn addPatternSlots(
 ) {
     crate::cancel_checkpoint();
     let nextSlot @ _ = crate::aver_generated::domain::resolver::core::mapMaxVal(&slots)
-        .add(&aver_rt::AverInt::from_i64(1));
+        .add_owned(&aver_rt::AverInt::from_i64(1));
     crate::aver_generated::domain::resolver::core::addPatternSlotsInner(pat, slots, nextSlot)
 }
 
@@ -2216,7 +2216,7 @@ pub fn addPatternSlotsInner(
             let name = name.clone();
             (
                 slots.insert_owned(name, next.clone()),
-                next.add(&aver_rt::AverInt::from_i64(1)),
+                next.add_owned(&aver_rt::AverInt::from_i64(1)),
             )
         }
         crate::aver_generated::domain::ast::Pattern::PatCons(h, t) => {
@@ -2254,8 +2254,8 @@ pub fn addConsSlots(
     crate::cancel_checkpoint();
     let slots2 @ _ = slots.insert_owned(h, next.clone());
     (
-        slots2.insert_owned(t, next.add(&aver_rt::AverInt::from_i64(1))),
-        next.add(&aver_rt::AverInt::from_i64(2)),
+        slots2.insert_owned(t, next.add_owned_rhs(aver_rt::AverInt::from_i64(1))),
+        next.add_owned(&aver_rt::AverInt::from_i64(2)),
     )
 }
 
@@ -2279,7 +2279,7 @@ pub fn addConstructorSlots(
                 Some((name, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = slots.insert_owned(name, next.clone());
-                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = next.add_owned(&aver_rt::AverInt::from_i64(1));
                     match __tco0 {
                         aver_rt::ListRest::Lent(__rest) => {
                             bindings = __rest;
@@ -2400,7 +2400,7 @@ pub fn resolveStmts__collected(
                                 {
                                     let __tco0 = rest;
                                     let __tco1 = __stp4;
-                                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
+                                    let __tco2 = next.add_owned_rhs(aver_rt::AverInt::from_i64(1));
                                     let __tco3 = aver_rt::list_builder_push(
                                         acc,
                                         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
@@ -2446,7 +2446,7 @@ pub fn resolveStmts__collected(
                                     crate::aver_generated::domain::resolver::core::mapMaxVal(
                                         &__stp5,
                                     )
-                                    .add(&aver_rt::AverInt::from_i64(1));
+                                    .add_owned(&aver_rt::AverInt::from_i64(1));
                                 crate::aver_generated::domain::resolver::core::maxInt(next, __arg14)
                             };
                             let __tco3 = aver_rt::list_builder_push(

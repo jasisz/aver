@@ -319,7 +319,7 @@ pub fn indexOf(
                     } else {
                         {
                             let __tco1 = rest;
-                            let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco2 = i.add_owned(&aver_rt::AverInt::from_i64(1));
                             match __tco1 {
                                 aver_rt::ListRest::Lent(__rest) => {
                                     atoms = __rest;
@@ -416,7 +416,7 @@ pub fn insertMono(mut m @ _: Mono, p @ _: &aver_rt::AverList<Mono>) -> aver_rt::
                             let __arg4 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::ring::Mono {
                                     atoms: x.atoms,
-                                    coef: x.coef.add(&m.coef),
+                                    coef: x.coef.add_owned(&m.coef),
                                 };
                             crate::proof_kernel::aver_generated::kernel::ring::nonzero(__arg4)
                         },

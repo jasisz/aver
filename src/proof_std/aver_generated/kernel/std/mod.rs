@@ -893,7 +893,9 @@ fn __mutual_tco_trampoline_1(
                                 {
                                     let __arg10 @ _ =
                                         crate::proof_std::aver_generated::kernel::std::Node {
-                                            depth: n.depth.add(&aver_rt::AverInt::from_i64(1)),
+                                            depth: n
+                                                .depth
+                                                .add_owned_rhs(aver_rt::AverInt::from_i64(1)),
                                             ..here
                                         };
                                     __MutualTco1::Within(__arg10, next)
@@ -1061,7 +1063,7 @@ pub fn caseCount(
             Some((g, rest)) => aver_rt::AverInt::from_i64(
                 ((crate::proof_std::aver_generated::kernel::finite::values(&g.fin)).len() as i64),
             )
-            .mul(&crate::proof_std::aver_generated::kernel::std::caseCount(
+            .mul_owned_rhs(crate::proof_std::aver_generated::kernel::std::caseCount(
                 &rest,
             )),
             None => aver_rt::AverInt::from_i64(1),
@@ -1383,7 +1385,7 @@ pub fn rounds(
                         s,
                         hyps,
                         step.to.clone(),
-                        n.sub(&aver_rt::AverInt::from_i64(1)),
+                        n.sub_owned(&aver_rt::AverInt::from_i64(1)),
                     )?;
                     crate::proof_std::aver_generated::kernel::lib::chain(r.to.clone(), step, __arg6)
                 };
@@ -2051,7 +2053,7 @@ pub fn first(
                             }
                             crate::proof_std::aver_generated::kernel::std::Stop::Refused(why) => {
                                 let __tco1 = rest;
-                                let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
+                                let __tco2 = i.add_owned_rhs(aver_rt::AverInt::from_i64(1));
                                 let __tco3 = aver_rt::AverList::prepend_owned(
                                     aver_rt::AverStr::from({
                                         let mut __b = {

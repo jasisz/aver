@@ -4010,8 +4010,17 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     }
                     _ => unreachable!("int_arith only set for Add/Sub/Mul/Div"),
                 };
-                let l = detach_borrow_before_later_move(l, &bop.lhs, &[&bop.rhs], emit_ctx);
-                return Some(format!("{}.{}(&{})", l, method, r));
+                return Some(match int_operand_given_up(&bop.lhs, &bop.rhs, emit_ctx) {
+                    Some(GivenUp::Lhs) => format!("{}.{}_owned(&{})", l, method, r),
+                    Some(GivenUp::Rhs) => {
+                        let l = detach_borrow_before_later_move(l, &bop.lhs, &[&bop.rhs], emit_ctx);
+                        format!("{}.{}_owned_rhs({})", l, method, r)
+                    }
+                    None => {
+                        let l = detach_borrow_before_later_move(l, &bop.lhs, &[&bop.rhs], emit_ctx);
+                        format!("{}.{}(&{})", l, method, r)
+                    }
+                });
             }
             // Int unboxing: a comparison (`==`, `<`, `<=`, `>`, `>=`, `!=`)
             // between two proven-bare `i64` operands emits a raw operator
@@ -10890,6 +10899,51 @@ fn mir_call_borrow_overlaps_later_move(
         })
 }
 
+/// The operand of a two-operand `Int` operation that is given up.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GivenUp {
+    Lhs,
+    Rhs,
+}
+
+/// Which operand of `+ - *` or `Bits.and / or / xor` on `Int` the
+/// operation takes by value: one Rust holds as an owned `AverInt` that
+/// moves there, a local at its last use or a computed value. The owned forms
+/// of `aver_rt::AverInt` (`add_owned`, `bit_xor_owned_rhs`, ...) then write
+/// a large result into that operand's digits when nothing else holds them,
+/// so `acc = Bits.xor(acc, x)` or `acc * 3` over megabyte numbers writes
+/// `acc` in place instead of copying it into a new integer every step.
+///
+/// The left operand is preferred, unless it is one word (an `Int` literal,
+/// a machine word boxed) and the right one can be given up: in `3 * acc` it
+/// is `acc` that may be large. The right one is given up only when the left
+/// one does not read its variable: in `x + x` the left read borrows `x`
+/// while the right one would move it.
+fn int_operand_given_up(
+    lhs: &Spanned<MirExpr>,
+    rhs: &Spanned<MirExpr>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<GivenUp> {
+    let moves = |expr: &MirExpr| {
+        let facts = super::ownership::value_facts(expr, ctx);
+        facts.mode == super::ownership::RustValueMode::Owned && facts.can_move
+    };
+    let one_word = |expr: &MirExpr| {
+        matches!(expr, MirExpr::Box(_))
+            || matches!(expr, MirExpr::Literal(lit) if matches!(lit.node, crate::ast::Literal::Int(_)))
+    };
+    let lhs_moves = moves(&lhs.node);
+    let rhs_moves = moves(&rhs.node)
+        && projection_root_local(&rhs.node)
+            .is_none_or(|root| !super::arg_order::reads_slot(&lhs.node, root.slot));
+    match (lhs_moves, rhs_moves) {
+        (true, true) if one_word(&lhs.node) && !one_word(&rhs.node) => Some(GivenUp::Rhs),
+        (true, _) => Some(GivenUp::Lhs),
+        (false, true) => Some(GivenUp::Rhs),
+        (false, false) => None,
+    }
+}
+
 /// Detach an operand Rust holds borrowed while it evaluates later operands.
 ///
 /// A method receiver (`x.add(&rhs)`, `c.ticks.max_ref(&rhs)`), a comparison
@@ -12475,9 +12529,21 @@ fn emit_mir_builtin_call(
         // refuse negatives; only paths that may grow/materialize a result
         // apply the fixed bound (`shiftLeft`, plus `low` for negative input).
         // `shiftRight` reaches the 0/-1 sign tail without allocating.
-        "Bits.and" => format!("({}).bit_and(&({}))", arg!(0), arg!(1)),
-        "Bits.or" => format!("({}).bit_or(&({}))", arg!(0), arg!(1)),
-        "Bits.xor" => format!("({}).bit_xor(&({}))", arg!(0), arg!(1)),
+        // An operand moved at its last use is given up to the owned form,
+        // which writes a large result into its digits (see
+        // `int_operand_given_up`).
+        "Bits.and" | "Bits.or" | "Bits.xor" => {
+            let method = match name {
+                "Bits.and" => "bit_and",
+                "Bits.or" => "bit_or",
+                _ => "bit_xor",
+            };
+            match int_operand_given_up(&args[0], &args[1], ctx) {
+                Some(GivenUp::Lhs) => format!("({}).{method}_owned(&({}))", clone!(0), arg!(1)),
+                Some(GivenUp::Rhs) => format!("({}).{method}_owned_rhs({})", arg!(0), clone!(1)),
+                None => format!("({}).{method}(&({}))", arg!(0), arg!(1)),
+            }
+        }
         "Bits.not" => format!("({}).bit_not()", arg!(0)),
         "Bits.shiftLeft" => emit_bits_counted(
             "shift_left",

@@ -305,8 +305,8 @@ pub fn readNumberLoop__indexed(
                                 match __word {
                                     Some(__word) => aver_rt::AverInt::from_inline_word(__word),
                                     None => acc
-                                        .mul(&aver_rt::AverInt::from_i64(10))
-                                        .add(&aver_rt::AverInt::from_i64(__leaf0)),
+                                        .mul_owned(&aver_rt::AverInt::from_i64(10))
+                                        .add_owned(&aver_rt::AverInt::from_i64(__leaf0)),
                                 }
                             });
                             pos = __tco1;

@@ -599,7 +599,7 @@ fn root_local_mut(expr: &mut MirExpr) -> Option<&mut MirLocal> {
 }
 
 /// Whether `expr` reads `slot` anywhere, including as a called fn value.
-fn reads_slot(expr: &MirExpr, slot: LocalId) -> bool {
+pub(super) fn reads_slot(expr: &MirExpr, slot: LocalId) -> bool {
     match expr {
         MirExpr::Local(local) => local.node.slot == slot,
         MirExpr::Call(call) if matches!(&call.node.callee, MirCallee::LocalSlot { slot: s, .. } if u32::from(*s) == slot.0) => {

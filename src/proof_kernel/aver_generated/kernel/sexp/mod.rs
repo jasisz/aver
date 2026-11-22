@@ -1023,7 +1023,7 @@ pub fn withinAll(
                     {
                         let __tco0 = rest;
                         let __tco2 = aver_rt::AverList::prepend_owned(y, acc);
-                        let __tco3 = size.add(&n);
+                        let __tco3 = size.add_owned(&n);
                         match __tco0 {
                             aver_rt::ListRest::Lent(__rest) => {
                                 xs = __rest;

@@ -21,7 +21,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::ParseIdentPatternMaybeConstructor(mut pos @ _, mut name @ _) => {
                 crate::cancel_checkpoint();
-                let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+                let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkDot => {
                         __MutualTco1::ParseIdentPatternDotted(nextPos, name)
@@ -53,7 +53,7 @@ fn __mutual_tco_trampoline_1(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkIdent(s) => {
                         __MutualTco1::ParseIdentPatternMaybeConstructor(
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             ((prefix + &::aver_rt::str_lit!(".")) + &s),
                         )
                     }
@@ -132,12 +132,12 @@ fn __mutual_tco_trampoline_2(
                                 name,
                                 (acc).reverse_owned(),
                             ),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     crate::aver_generated::domain::token::Token::TkIdent(binding) => {
                         __MutualTco2::ParseConstructorPatternTail(
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             name,
                             aver_rt::AverList::prepend_owned(binding, acc),
                         )
@@ -154,7 +154,7 @@ fn __mutual_tco_trampoline_2(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkComma => {
                         __MutualTco2::ParseConstructorPatternBindings(
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             name,
                             acc,
                         )
@@ -165,7 +165,7 @@ fn __mutual_tco_trampoline_2(
                                 name,
                                 (acc).reverse_owned(),
                             ),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => {
@@ -253,7 +253,7 @@ fn __mutual_tco_trampoline_3(
                             crate::aver_generated::domain::ast::Pattern::PatTuple(
                                 (acc).reverse_owned(),
                             ),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => __MutualTco3::ParseTuplePatternElement(pos, acc),
@@ -276,7 +276,7 @@ fn __mutual_tco_trampoline_3(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkComma => {
                         __MutualTco3::ParseTuplePatternElements(
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             acc,
                         )
                     }
@@ -285,7 +285,7 @@ fn __mutual_tco_trampoline_3(
                             crate::aver_generated::domain::ast::Pattern::PatTuple(
                                 (acc).reverse_owned(),
                             ),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => return Err(::aver_rt::str_lit!("Expected ',' or ')' in tuple pattern")),
@@ -357,7 +357,7 @@ fn __mutual_tco_trampoline_4(
         __state = match __state {
             __MutualTco4::SkipBlockFlat(mut pos @ _) => {
                 crate::cancel_checkpoint();
-                let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+                let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkEof => return pos,
                     crate::aver_generated::domain::token::Token::TkNewline => {
@@ -437,14 +437,14 @@ fn __mutual_tco_trampoline_5(
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
                             (acc).reverse_owned(),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     crate::aver_generated::domain::token::Token::TkIdent(name) => {
                         let __arg4 @ _ =
                             crate::aver_generated::domain::parser_match::skipTypeAnnotation(
                                 &*tokens,
-                                pos.add(&aver_rt::AverInt::from_i64(1)),
+                                pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             );
                         {
                             let __arg5 @ _ = aver_rt::AverList::prepend_owned(name, acc);
@@ -460,11 +460,14 @@ fn __mutual_tco_trampoline_5(
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return Ok((
                             (acc).reverse_owned(),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     crate::aver_generated::domain::token::Token::TkComma => {
-                        __MutualTco5::ParseParamList(pos.add(&aver_rt::AverInt::from_i64(1)), acc)
+                        __MutualTco5::ParseParamList(
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
+                            acc,
+                        )
                     }
                     _ => return Err(::aver_rt::str_lit!("Expected ',' or ')' in parameter list")),
                 }
@@ -526,7 +529,7 @@ pub fn tokenAtWalk(
                     } else {
                         {
                             let __tco0 = rest;
-                            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco2 = idx.add_owned(&aver_rt::AverInt::from_i64(1));
                             match __tco0 {
                                 aver_rt::ListRest::Lent(__rest) => {
                                     tokens = __rest;
@@ -605,7 +608,7 @@ pub fn continuationAtWalk(
                     } else {
                         {
                             let __tco0 = rest;
-                            let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco2 = idx.add_owned(&aver_rt::AverInt::from_i64(1));
                             __hold0 = __tco0;
                             tokens = &__hold0;
                             idx = __tco2;
@@ -641,7 +644,7 @@ pub fn expect(
     crate::cancel_checkpoint();
     let t @ _ = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone());
     if crate::aver_generated::domain::parser_match::isToken(&t, expected) {
-        Ok(pos.add(&aver_rt::AverInt::from_i64(1)))
+        Ok(pos.add_owned(&aver_rt::AverInt::from_i64(1)))
     } else {
         Err(aver_rt::AverStr::from({
             let mut __b = {
@@ -672,7 +675,7 @@ pub fn skipNewlines(
         crate::cancel_checkpoint();
         match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkNewline => {
-                let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                let __tco1 = pos.add_owned(&aver_rt::AverInt::from_i64(1));
                 pos = __tco1;
                 continue;
             }
@@ -690,7 +693,7 @@ pub fn skipNewlinesAndDedents(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkNewline => {
                 let __tco1 = nextPos;
@@ -721,7 +724,7 @@ pub fn parsePattern(
     AverStr,
 > {
     crate::cancel_checkpoint();
-    let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+    let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
     let t @ _ = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
     match &t {
         crate::aver_generated::domain::token::Token::TkInt(n) => {
@@ -829,12 +832,12 @@ pub fn parseListPattern(
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkRBracket => Ok((
             crate::aver_generated::domain::ast::Pattern::PatEmpty,
-            pos.add(&aver_rt::AverInt::from_i64(1)),
+            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
         )),
         crate::aver_generated::domain::token::Token::TkIdent(head) => {
             crate::aver_generated::domain::parser_match::parseConsPattern(
                 tokens,
-                pos.add(&aver_rt::AverInt::from_i64(1)),
+                pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                 head,
             )
         }
@@ -871,7 +874,7 @@ pub fn parseConsPattern(
             crate::aver_generated::domain::ast::Pattern::PatCons(head, tail),
             crate::aver_generated::domain::parser_match::expect(
                 tokens,
-                pos3.add(&aver_rt::AverInt::from_i64(1)),
+                pos3.add_owned(&aver_rt::AverInt::from_i64(1)),
                 &crate::aver_generated::domain::token::Token::TkRBracket,
             )?,
         )),
@@ -891,7 +894,7 @@ pub fn skipTypeAnnotation(
         crate::aver_generated::domain::token::Token::TkColon => {
             crate::aver_generated::domain::parser_match::skipTypeExpr(
                 tokens,
-                pos.add(&aver_rt::AverInt::from_i64(1)),
+                pos.add_owned(&aver_rt::AverInt::from_i64(1)),
             )
         }
         _ => pos,
@@ -904,7 +907,7 @@ pub fn skipTypeExpr(
     pos @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+    let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
         crate::aver_generated::domain::token::Token::TkIdent(_) => {
             crate::aver_generated::domain::parser_match::skipTypeExprTail(tokens, nextPos)
@@ -927,7 +930,7 @@ pub fn skipTypeExprTail(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkLt => {
                 return crate::aver_generated::domain::parser_match::skipUntilGt(
@@ -939,7 +942,7 @@ pub fn skipTypeExprTail(
             crate::aver_generated::domain::token::Token::TkDot => {
                 match crate::aver_generated::domain::parser_match::tokenAt(tokens, nextPos) {
                     crate::aver_generated::domain::token::Token::TkIdent(_) => {
-                        let __tco1 = pos.add(&aver_rt::AverInt::from_i64(2));
+                        let __tco1 = pos.add_owned(&aver_rt::AverInt::from_i64(2));
                         pos = __tco1;
                         continue;
                     }
@@ -964,7 +967,7 @@ pub fn skipUntilGt(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         if (depth == aver_rt::AverInt::from_i64(0)) {
             return pos;
         } else {
@@ -974,14 +977,14 @@ pub fn skipUntilGt(
                 }
                 crate::aver_generated::domain::token::Token::TkLt => {
                     let __tco1 = nextPos;
-                    let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = depth.add_owned(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     depth = __tco2;
                     continue;
                 }
                 crate::aver_generated::domain::token::Token::TkGt => {
                     let __tco1 = nextPos;
-                    let __tco2 = depth.sub(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = depth.sub_owned(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     depth = __tco2;
                     continue;
@@ -1005,7 +1008,7 @@ pub fn skipUntilClose(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         if (depth == aver_rt::AverInt::from_i64(0)) {
             return pos;
         } else {
@@ -1015,14 +1018,14 @@ pub fn skipUntilClose(
                 }
                 crate::aver_generated::domain::token::Token::TkLParen => {
                     let __tco1 = nextPos;
-                    let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = depth.add_owned(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     depth = __tco2;
                     continue;
                 }
                 crate::aver_generated::domain::token::Token::TkRParen => {
                     let __tco1 = nextPos;
-                    let __tco2 = depth.sub(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = depth.sub_owned(&aver_rt::AverInt::from_i64(1));
                     pos = __tco1;
                     depth = __tco2;
                     continue;
@@ -1047,7 +1050,7 @@ pub fn skipReturnType(
         crate::aver_generated::domain::token::Token::TkArrow => {
             crate::aver_generated::domain::parser_match::skipTypeExpr(
                 tokens,
-                pos.add(&aver_rt::AverInt::from_i64(1)),
+                pos.add_owned(&aver_rt::AverInt::from_i64(1)),
             )
         }
         _ => pos,
@@ -1061,7 +1064,7 @@ pub fn skipDescAndEffects(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkQuestion => {
                 let __tco1 =
@@ -1092,7 +1095,7 @@ pub fn skipEffectsBlock(
         crate::aver_generated::domain::token::Token::TkLBracket => {
             crate::aver_generated::domain::parser_match::skipUntilRBracket(
                 tokens,
-                pos.add(&aver_rt::AverInt::from_i64(1)),
+                pos.add_owned(&aver_rt::AverInt::from_i64(1)),
             )
         }
         _ => crate::aver_generated::domain::parser_match::skipToNextLine(tokens, pos),
@@ -1106,7 +1109,7 @@ pub fn skipUntilRBracket(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkEof => {
                 return pos;
@@ -1130,7 +1133,7 @@ pub fn skipToNextLine(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkEof => {
                 return pos;
@@ -1158,7 +1161,7 @@ pub fn skipBlock(
         crate::aver_generated::domain::token::Token::TkIndent => {
             crate::aver_generated::domain::parser_match::skipIndentBlock(
                 tokens,
-                pos2.add(&aver_rt::AverInt::from_i64(1)),
+                pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
                 aver_rt::AverInt::from_i64(1),
             )
         }
@@ -1175,14 +1178,14 @@ pub fn skipIndentBlock(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
             crate::aver_generated::domain::token::Token::TkEof => {
                 return pos;
             }
             crate::aver_generated::domain::token::Token::TkIndent => {
                 let __tco1 = nextPos;
-                let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
+                let __tco2 = depth.add_owned(&aver_rt::AverInt::from_i64(1));
                 pos = __tco1;
                 depth = __tco2;
                 continue;
@@ -1191,7 +1194,7 @@ pub fn skipIndentBlock(
                 if (depth > aver_rt::AverInt::from_i64(1)) {
                     {
                         let __tco1 = nextPos;
-                        let __tco2 = depth.sub(&aver_rt::AverInt::from_i64(1));
+                        let __tco2 = depth.sub_owned(&aver_rt::AverInt::from_i64(1));
                         pos = __tco1;
                         depth = __tco2;
                         continue;
@@ -1233,7 +1236,7 @@ pub fn findDependsInRange(
 ) -> aver_rt::AverList<AverStr> {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         if (pos < endPos) {
             match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkIdent(kw) => {
@@ -1272,7 +1275,7 @@ pub fn findDependsListAt(
         crate::aver_generated::domain::token::Token::TkLBracket => {
             crate::aver_generated::domain::parser_match::collectDependsNames(
                 tokens,
-                pos.add(&aver_rt::AverInt::from_i64(1)),
+                pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                 endPos,
                 aver_rt::AverList::empty(),
             )
@@ -1291,7 +1294,7 @@ pub fn collectDependsNames(
 ) -> aver_rt::AverList<AverStr> {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
         if (pos < endPos) {
             match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkRBracket => {

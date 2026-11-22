@@ -366,6 +366,25 @@ mod repr {
             Some(unsafe { &*self.pointer() })
         }
 
+        /// The heap integer, mutably, when the word is an address and this
+        /// value is its only owner: its count is 1, which a frozen integer's
+        /// never is (see `crate::freeze`), so a shared or frozen integer is
+        /// never written. The caller keeps the canonical form: a result in
+        /// the inline range is made inline again (see `AverInt::canonical`).
+        #[inline]
+        pub(super) fn big_mut(&mut self) -> Option<&mut BigInt> {
+            if self.is_inline() {
+                return None;
+            }
+            // SAFETY: as in `big`; the clone is given back at once, and the
+            // count of 1 makes this value the only one that reaches the
+            // integer, so no other reference to it exists while `self` is
+            // borrowed mutably.
+            let mut this = ManuallyDrop::new(unsafe { Shared::from_raw(self.pointer()) });
+            let big: *mut BigInt = Shared::get_mut(&mut this)?;
+            Some(unsafe { &mut *big })
+        }
+
         /// The count of the heap integer and the integer, when the word is
         /// an address, for freezing it (see `crate::freeze`).
         #[cfg(not(feature = "plain-counts"))]
@@ -745,7 +764,7 @@ impl AverInt {
         if let Some((a, b)) = AverInt::words(self, rhs) {
             return AverInt(Repr::from_word(a & b));
         }
-        bitwise_slow(self, rhs, |a, b| a & b)
+        and_slow(self, rhs)
     }
 
     /// Pointwise `or`. `bit_or(-1, x) == -1`, `bit_or(0, x) == x`.
@@ -754,7 +773,7 @@ impl AverInt {
         if let Some((a, b)) = AverInt::words(self, rhs) {
             return AverInt(Repr::from_word(a | b));
         }
-        bitwise_slow(self, rhs, |a, b| a | b)
+        or_slow(self, rhs)
     }
 
     /// Pointwise `xor`. `bit_xor(-1, x) == bit_not(x)`, `bit_xor(x, x) == 0`.
@@ -764,7 +783,140 @@ impl AverInt {
             // The lowest bits cancel; `from_word` sets it again.
             return AverInt(Repr::from_word(a ^ b));
         }
-        bitwise_slow(self, rhs, |a, b| a ^ b)
+        xor_slow(self, rhs)
+    }
+
+    // -- Owned forms ---------------------------------------------------------
+    //
+    // `x.add_owned(&y)` is `x.add(&y)` for a caller that gives `x` up (its
+    // last use), and `y.add_owned_rhs(x)` is `y.add(&x)` giving `x` up; so
+    // for `sub_owned`, `mul_owned` and the `Bits` operations. The value is
+    // the same; what differs is where a large result is written. When the
+    // operand given up is a heap integer this value is the only owner of
+    // (count 1: never a shared or a frozen one, see `Repr::big_mut`), the
+    // result is computed in its digits, in place, and the integer's node is
+    // kept: `acc = Bits.xor(acc, x)` over megabyte numbers writes `acc`'s
+    // digits once per step, where the borrowing form copies all of them
+    // into a new integer and frees the old one. Otherwise these are the
+    // borrowing forms, inline fast path included. Generated Rust calls them
+    // where an operand is moved; the VM keeps the borrowing forms.
+
+    /// `self + rhs`, giving `self` up.
+    #[inline]
+    pub fn add_owned(self, rhs: &AverInt) -> AverInt {
+        if let Some((a, b)) = AverInt::words(&self, rhs)
+            && let Some(s) = a.checked_add(b ^ 1)
+        {
+            return AverInt(Repr::from_word(s));
+        }
+        owned_slow(self, rhs, |x, y| *x += y, add_slow)
+    }
+
+    /// `self + rhs`, giving `rhs` up.
+    #[inline]
+    pub fn add_owned_rhs(&self, rhs: AverInt) -> AverInt {
+        rhs.add_owned(self)
+    }
+
+    /// `self - rhs`, giving `self` up.
+    #[inline]
+    pub fn sub_owned(self, rhs: &AverInt) -> AverInt {
+        if let Some((a, b)) = AverInt::words(&self, rhs)
+            && let Some(s) = a.checked_sub(b ^ 1)
+        {
+            return AverInt(Repr::from_word(s));
+        }
+        owned_slow(self, rhs, |x, y| *x -= y, sub_slow)
+    }
+
+    /// `self - rhs`, giving `rhs` up.
+    #[inline]
+    pub fn sub_owned_rhs(&self, rhs: AverInt) -> AverInt {
+        if let Some((a, b)) = AverInt::words(self, &rhs)
+            && let Some(s) = a.checked_sub(b ^ 1)
+        {
+            return AverInt(Repr::from_word(s));
+        }
+        // `rhs` is the one written: `rhs := self - rhs`.
+        owned_slow(
+            rhs,
+            self,
+            |x, y| *x = y - core::mem::take(x),
+            |x, y| sub_slow(y, x),
+        )
+    }
+
+    /// `self * rhs`, giving `self` up. Only a factor of at most 64 bits is
+    /// multiplied in place, the one-row product; a longer product needs a
+    /// buffer of its own anyway.
+    #[inline]
+    pub fn mul_owned(self, rhs: &AverInt) -> AverInt {
+        if let Some((a, b)) = AverInt::words(&self, rhs)
+            && let Some(p) = (a >> 1).checked_mul(b ^ 1)
+        {
+            return AverInt(Repr::from_word(p | 1));
+        }
+        mul_owned_slow(self, rhs)
+    }
+
+    /// `self * rhs`, giving `rhs` up.
+    #[inline]
+    pub fn mul_owned_rhs(&self, rhs: AverInt) -> AverInt {
+        rhs.mul_owned(self)
+    }
+
+    /// `Bits.and(self, rhs)`, giving `self` up.
+    #[inline]
+    pub fn bit_and_owned(self, rhs: &AverInt) -> AverInt {
+        if let Some((a, b)) = AverInt::words(&self, rhs) {
+            return AverInt(Repr::from_word(a & b));
+        }
+        and_owned_slow(self, rhs)
+    }
+
+    /// `Bits.and(self, rhs)`, giving `rhs` up.
+    #[inline]
+    pub fn bit_and_owned_rhs(&self, rhs: AverInt) -> AverInt {
+        rhs.bit_and_owned(self)
+    }
+
+    /// `Bits.or(self, rhs)`, giving `self` up.
+    #[inline]
+    pub fn bit_or_owned(self, rhs: &AverInt) -> AverInt {
+        if let Some((a, b)) = AverInt::words(&self, rhs) {
+            return AverInt(Repr::from_word(a | b));
+        }
+        or_owned_slow(self, rhs)
+    }
+
+    /// `Bits.or(self, rhs)`, giving `rhs` up.
+    #[inline]
+    pub fn bit_or_owned_rhs(&self, rhs: AverInt) -> AverInt {
+        rhs.bit_or_owned(self)
+    }
+
+    /// `Bits.xor(self, rhs)`, giving `self` up.
+    #[inline]
+    pub fn bit_xor_owned(self, rhs: &AverInt) -> AverInt {
+        if let Some((a, b)) = AverInt::words(&self, rhs) {
+            return AverInt(Repr::from_word(a ^ b));
+        }
+        owned_slow(self, rhs, |x, y| *x ^= y, xor_slow)
+    }
+
+    /// `Bits.xor(self, rhs)`, giving `rhs` up.
+    #[inline]
+    pub fn bit_xor_owned_rhs(&self, rhs: AverInt) -> AverInt {
+        rhs.bit_xor_owned(self)
+    }
+
+    /// This value in canonical form after its heap integer was written in
+    /// place: inline when it is now in the inline range.
+    fn canonical(self) -> AverInt {
+        match self.0.big().and_then(BigInt::to_i64) {
+            Some(n) if (INLINE_MIN..=INLINE_MAX).contains(&n) => AverInt::inline(n),
+            _ => self,
+        }
     }
 
     /// Pointwise complement — equivalently `-self - 1` over ℤ, which is the
@@ -1232,10 +1384,110 @@ fn mul_long_short(x: &BigInt, y: &BigInt) -> Option<BigInt> {
     Some(BigInt::from_biguint(sign, BigUint::new(acc)))
 }
 
-#[cold]
-#[inline(never)]
 fn bitwise_slow(a: &AverInt, b: &AverInt, op: fn(&BigInt, &BigInt) -> BigInt) -> AverInt {
     AverInt::from_bigint(op(&a.to_bigint(), &b.to_bigint()))
+}
+
+/// The lowest 64 bits of the result of `and` / `or` with an inline operand
+/// whose infinite tail decides every bit above them: all zeroes for `and`
+/// with a non-negative `n`, all ones for `or` with a negative one. The
+/// result is then `n`'s 64-bit word with the other operand's lowest digit
+/// (read in place, see [`AverInt::low_u64`]), sign-extended: in `[0, n]`
+/// or `[n, -1]`, so inline, with no heap integer built for either.
+#[inline]
+fn tail_decides(a: &AverInt, b: &AverInt, or: bool) -> Option<AverInt> {
+    let (n, other) = match (a.view(), b.view()) {
+        (View::Small(n), _) => (n, b),
+        (_, View::Small(n)) => (n, a),
+        _ => return None,
+    };
+    if (n < 0) != or {
+        return None;
+    }
+    let low = other.low_u64();
+    let word = if or { low | n as u64 } else { low & n as u64 };
+    Some(AverInt::inline(word as i64))
+}
+
+#[cold]
+#[inline(never)]
+fn and_slow(a: &AverInt, b: &AverInt) -> AverInt {
+    tail_decides(a, b, false).unwrap_or_else(|| bitwise_slow(a, b, |a, b| a & b))
+}
+
+#[cold]
+#[inline(never)]
+fn or_slow(a: &AverInt, b: &AverInt) -> AverInt {
+    tail_decides(a, b, true).unwrap_or_else(|| bitwise_slow(a, b, |a, b| a | b))
+}
+
+#[cold]
+#[inline(never)]
+fn xor_slow(a: &AverInt, b: &AverInt) -> AverInt {
+    bitwise_slow(a, b, |a, b| a ^ b)
+}
+
+/// The large path of an owned form (see [`AverInt::add_owned`]): `assign`
+/// writes the result into `a`'s heap integer when `a` is its only owner,
+/// and `borrowed`, the borrowing form, computes it otherwise.
+#[cold]
+#[inline(never)]
+fn owned_slow(
+    mut a: AverInt,
+    b: &AverInt,
+    assign: fn(&mut BigInt, &BigInt),
+    borrowed: fn(&AverInt, &AverInt) -> AverInt,
+) -> AverInt {
+    let Some(big) = a.0.big_mut() else {
+        return borrowed(&a, b);
+    };
+    match b.view() {
+        View::Small(n) => assign(big, &BigInt::from(n)),
+        View::Big(other) => assign(big, other),
+    }
+    a.canonical()
+}
+
+/// The large path of [`AverInt::bit_and_owned`]: a result an inline
+/// operand decides (see [`tail_decides`]) is inline, with no write.
+#[cold]
+#[inline(never)]
+fn and_owned_slow(a: AverInt, b: &AverInt) -> AverInt {
+    match tail_decides(&a, b, false) {
+        Some(r) => r,
+        None => owned_slow(a, b, |x, y| *x &= y, and_slow),
+    }
+}
+
+/// The large path of [`AverInt::bit_or_owned`], as [`and_owned_slow`].
+#[cold]
+#[inline(never)]
+fn or_owned_slow(a: AverInt, b: &AverInt) -> AverInt {
+    match tail_decides(&a, b, true) {
+        Some(r) => r,
+        None => owned_slow(a, b, |x, y| *x |= y, or_slow),
+    }
+}
+
+/// The large path of [`AverInt::mul_owned`]: a factor of at most 64 bits
+/// multiplies `a`'s heap integer in place when `a` is its only owner.
+#[cold]
+#[inline(never)]
+fn mul_owned_slow(mut a: AverInt, b: &AverInt) -> AverInt {
+    let factor = match b.view() {
+        View::Small(n) => Some((n.unsigned_abs(), n < 0)),
+        View::Big(m) => m.magnitude().to_u64().map(|d| (d, m.sign() == Sign::Minus)),
+    };
+    if let Some((d, negative)) = factor
+        && let Some(big) = a.0.big_mut()
+    {
+        *big *= d;
+        if negative {
+            *big = -core::mem::take(big);
+        }
+        return a.canonical();
+    }
+    mul_slow(&a, b)
 }
 
 #[cold]
@@ -2523,5 +2775,238 @@ mod tests {
                 assert_eq!(got.into_bigint(), want);
             }
         }
+    }
+
+    /// Operands for the owned forms' differential tests: the inline
+    /// boundaries, the `i64` and 64-bit ones, powers of two and their
+    /// neighbours (two's complement edges), sparse and dense multi-digit
+    /// values, each with both signs, and random ones of 1 to 40 digits.
+    fn owned_form_operands() -> Vec<BigInt> {
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut out: Vec<BigInt> = Vec::new();
+        for n in [0i64, 1, 2, 3, 15, 255, INLINE_MAX, INLINE_MAX - 1, i64::MAX] {
+            out.push(BigInt::from(n));
+            out.push(-BigInt::from(n));
+        }
+        out.push(BigInt::from(INLINE_MIN));
+        out.push(BigInt::from(INLINE_MIN) - 1);
+        out.push(BigInt::from(i64::MIN));
+        for k in [61u32, 62, 63, 64, 65, 127, 128, 129, 640] {
+            let p: BigInt = BigInt::from(1u8) << k;
+            for v in [p.clone() - 1, p.clone(), p + 1] {
+                out.push(-v.clone());
+                out.push(v);
+            }
+        }
+        let sparse: BigInt = (BigInt::from(1u8) << 1000) + (BigInt::from(7u8) << 300) + 5;
+        let dense = (BigInt::from(1u8) << 1000) - 1;
+        for v in [sparse, dense] {
+            out.push(-v.clone());
+            out.push(v);
+        }
+        for _ in 0..40 {
+            let digits = 1 + (next() % 40) as usize;
+            let mut v = BigInt::from(0);
+            for _ in 0..digits {
+                let d = match next() % 4 {
+                    0 => 0,
+                    1 => u64::MAX,
+                    _ => next(),
+                };
+                v = (v << 64) + d;
+            }
+            if next() % 2 == 0 {
+                v = -v;
+            }
+            out.push(v);
+        }
+        out
+    }
+
+    type Borrowed = fn(&AverInt, &AverInt) -> AverInt;
+    type OwnedLeft = fn(AverInt, &AverInt) -> AverInt;
+    type OwnedRight = fn(&AverInt, AverInt) -> AverInt;
+
+    fn owned_forms() -> [(&'static str, Borrowed, OwnedLeft, OwnedRight); 6] {
+        [
+            (
+                "add",
+                AverInt::add,
+                AverInt::add_owned,
+                AverInt::add_owned_rhs,
+            ),
+            (
+                "sub",
+                AverInt::sub,
+                AverInt::sub_owned,
+                AverInt::sub_owned_rhs,
+            ),
+            (
+                "mul",
+                AverInt::mul,
+                AverInt::mul_owned,
+                AverInt::mul_owned_rhs,
+            ),
+            (
+                "and",
+                AverInt::bit_and,
+                AverInt::bit_and_owned,
+                AverInt::bit_and_owned_rhs,
+            ),
+            (
+                "or",
+                AverInt::bit_or,
+                AverInt::bit_or_owned,
+                AverInt::bit_or_owned_rhs,
+            ),
+            (
+                "xor",
+                AverInt::bit_xor,
+                AverInt::bit_xor_owned,
+                AverInt::bit_xor_owned_rhs,
+            ),
+        ]
+    }
+
+    /// The operation on `BigInt`, num-bigint's own, as the reference.
+    fn reference(name: &str, a: &BigInt, b: &BigInt) -> BigInt {
+        match name {
+            "add" => a + b,
+            "sub" => a - b,
+            "mul" => a * b,
+            "and" => a & b,
+            "or" => a | b,
+            "xor" => a ^ b,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Whether `v` is in canonical form: inline exactly in the inline range.
+    fn canonical_form(v: &AverInt) -> bool {
+        let inline = v.0.is_inline();
+        let fits = v
+            .to_i64()
+            .is_some_and(|n| (INLINE_MIN..=INLINE_MAX).contains(&n));
+        inline == fits
+    }
+
+    #[test]
+    fn owned_forms_agree_with_the_borrowing_forms_on_every_operand_pair() {
+        let values = owned_form_operands();
+        for (name, borrowed, left, right) in owned_forms() {
+            for a in &values {
+                for b in &values {
+                    let want = reference(name, a, b);
+                    let (x, y) = (
+                        AverInt::from_bigint(a.clone()),
+                        AverInt::from_bigint(b.clone()),
+                    );
+                    let plain = borrowed(&x, &y);
+                    assert_eq!(plain.to_bigint().as_ref(), &want, "{name} {a} {b}");
+                    // A fresh heap integer is uniquely owned: written in place.
+                    let got = left(AverInt::from_bigint(a.clone()), &y);
+                    assert_eq!(got.to_bigint().as_ref(), &want, "{name}_owned {a} {b}");
+                    assert!(canonical_form(&got), "{name}_owned {a} {b}");
+                    let got = right(&x, AverInt::from_bigint(b.clone()));
+                    assert_eq!(got.to_bigint().as_ref(), &want, "{name}_owned_rhs {a} {b}");
+                    assert!(canonical_form(&got), "{name}_owned_rhs {a} {b}");
+                    // A shared one is read, and the other owner keeps its value.
+                    let keep = x.clone();
+                    let got = left(x.clone(), &y);
+                    assert_eq!(
+                        got.to_bigint().as_ref(),
+                        &want,
+                        "{name}_owned shared {a} {b}"
+                    );
+                    assert_eq!(keep.to_bigint().as_ref(), a);
+                    let keep = y.clone();
+                    let got = right(&x, y.clone());
+                    assert_eq!(
+                        got.to_bigint().as_ref(),
+                        &want,
+                        "{name}_owned_rhs shared {a} {b}"
+                    );
+                    assert_eq!(keep.to_bigint().as_ref(), b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owned_forms_on_one_value_twice_read_it_and_leave_it() {
+        for v in owned_form_operands() {
+            for (name, _, left, right) in owned_forms() {
+                let want = reference(name, &v, &v);
+                // `x op x`: the operand given up is the other's second owner.
+                let x = AverInt::from_bigint(v.clone());
+                let got = left(x.clone(), &x);
+                assert_eq!(got.to_bigint().as_ref(), &want, "{name} {v}");
+                assert_eq!(x.to_bigint().as_ref(), &v);
+                let got = right(&x, x.clone());
+                assert_eq!(got.to_bigint().as_ref(), &want, "{name} rhs {v}");
+                assert_eq!(x.to_bigint().as_ref(), &v);
+                // Two heap integers of one value.
+                let got = left(AverInt::from_bigint(v.clone()), &x);
+                assert_eq!(got.to_bigint().as_ref(), &want, "{name} copy {v}");
+                assert_eq!(x.to_bigint().as_ref(), &v);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "plain-counts"))]
+    #[test]
+    fn owned_forms_never_write_a_frozen_integer() {
+        let values = owned_form_operands();
+        for v in values
+            .iter()
+            .filter(|v| !AverInt::from_bigint((*v).clone()).0.is_inline())
+        {
+            let frozen = AverInt::from_bigint(v.clone()).kept();
+            let count = frozen.big_count_for_tests();
+            assert!(count >= 1 << 61, "frozen {count:#x}");
+            for (name, _, left, right) in owned_forms() {
+                for b in values.iter().step_by(7) {
+                    let y = AverInt::from_bigint(b.clone());
+                    let got = left(frozen.clone(), &y);
+                    assert_eq!(got.to_bigint().as_ref(), &reference(name, v, b));
+                    let got = right(&y, frozen.clone());
+                    assert_eq!(got.to_bigint().as_ref(), &reference(name, b, v));
+                    assert_eq!(frozen.to_bigint().as_ref(), v, "{name} {v} {b}");
+                    assert_eq!(frozen.big_count_for_tests(), count);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owned_forms_write_a_unique_integer_where_it_lies() {
+        let digits: BigInt = (BigInt::from(1u8) << 4096) - 1;
+        let x = AverInt::from_bigint(digits.clone());
+        let y = AverInt::from_bigint(BigInt::from(1u8) << 4000);
+        let before = x.0.word();
+        let got = x.bit_xor_owned(&y);
+        assert_eq!(got.0.word(), before, "the node is kept");
+        assert_eq!(got.big_count_for_tests(), 1);
+        assert_eq!(
+            got.to_bigint().as_ref(),
+            &(&digits ^ (BigInt::from(1u8) << 4000))
+        );
+        let got = got.mul_owned(&AverInt::from_i64(-3));
+        assert_eq!(
+            got.0.word(),
+            before,
+            "a one-digit factor is multiplied in place"
+        );
+        // A result back in the inline range is inline, its node freed.
+        let one = AverInt::from_bigint(digits.clone());
+        let got = one.sub_owned(&AverInt::from_bigint(digits.clone() - 5));
+        assert!(got.0.is_inline());
+        assert_eq!(got.to_i64(), Some(5));
     }
 }

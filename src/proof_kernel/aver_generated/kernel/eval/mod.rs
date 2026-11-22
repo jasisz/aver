@@ -181,7 +181,7 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TCtor(__d_fields) => {
             let d = &__d_fields.1;
             let ys = &__d_fields.0;
-            { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(((xs).len() as i64)).add(&aver_rt::AverInt::from_i64(((ys).len() as i64))); crate::proof_kernel::aver_generated::kernel::eval::sameCtor(c, d, __arg14) }; crate::proof_kernel::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
+            { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(((xs).len() as i64)).add_owned(&aver_rt::AverInt::from_i64(((ys).len() as i64))); crate::proof_kernel::aver_generated::kernel::eval::sameCtor(c, d, __arg14) }; crate::proof_kernel::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
         },
         _ => {
             { let __arg16 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(a); { let __arg17 @ _ = crate::proof_kernel::aver_generated::kernel::eval::evalClosed(b); crate::proof_kernel::aver_generated::kernel::eval::evalOp(o, &__arg16, &__arg17) } }
@@ -335,7 +335,7 @@ pub fn negated(a @ _: Option<&Val>) -> Option<Val> {
                 let x = x.clone();
                 Some(
                     crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
-                        aver_rt::AverInt::from_i64(0).sub(&x),
+                        aver_rt::AverInt::from_i64(0).sub_owned_rhs(x),
                     ),
                 )
             }
@@ -392,13 +392,17 @@ pub fn intOp(o @ _: &AverStr, x @ _: aver_rt::AverInt, y @ _: aver_rt::AverInt) 
     {
         let __dispatch_subject = &**o;
         if &*__dispatch_subject == "+" {
-            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.add(&y)))
+            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.add_owned(&y)))
         } else {
             if &*__dispatch_subject == "-" {
-                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.sub(&y)))
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.sub_owned(&y)))
             } else {
                 if &*__dispatch_subject == "*" {
-                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.mul(&y)))
+                    Some(
+                        crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
+                            x.mul_owned(&y),
+                        ),
+                    )
                 } else {
                     if &*__dispatch_subject == "<" {
                         Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x < y)))
