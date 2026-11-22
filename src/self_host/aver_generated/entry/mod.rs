@@ -377,7 +377,7 @@ pub fn shiftFnIdsInFastPath(
                 let slotArgs = &__targetId_fields.1;
                 crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(
                     crate::aver_generated::domain::ast::FnFastPath__FastForwardCall(
-                        targetId.add(&offset),
+                        targetId.add_owned(&offset),
                         slotArgs.clone(),
                     ),
                 )
@@ -693,7 +693,7 @@ pub fn __lent_shiftFnIdsInExprCalls(
                 let fnId = __fnId_fields.1.clone();
                 let args = &__fnId_fields.0;
                 crate::aver_generated::domain::ast::Expr::ExprCallDirect({
-                    let __field0 = fnId.add(&offset);
+                    let __field0 = fnId.add_owned(&offset);
                     let __field1 = {
                         let __arg18 @ _ = aver_rt::list_builder_new(0usize);
                         shiftFnIdsInExprs__collected(args, offset, __arg18)
@@ -1388,7 +1388,7 @@ pub fn findModulePath__indexed(
             if (depth < aver_rt::AverInt::from_i64(3)) {
                 {
                     let __tco1 = (root + &::aver_rt::str_lit!("/.."));
-                    let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = depth.add_owned(&aver_rt::AverInt::from_i64(1));
                     root = __tco1;
                     depth = __tco2;
                     continue;

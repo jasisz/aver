@@ -603,7 +603,7 @@ fn __mutual_tco_trampoline_3(
                         xs,
                         rest,
                         path,
-                        i.add(&aver_rt::AverInt::from_i64(1)),
+                        i.add_owned(&aver_rt::AverInt::from_i64(1)),
                     )
                 } else {
                     return crate::proof_kernel::aver_generated::kernel::check::refuse(
@@ -743,7 +743,7 @@ fn __mutual_tco_trampoline_4(
                         ws,
                         rest,
                         path,
-                        i.add(&aver_rt::AverInt::from_i64(1)),
+                        i.add_owned(&aver_rt::AverInt::from_i64(1)),
                     )
                 } else {
                     return Err(aver_rt::AverStr::from({
@@ -878,7 +878,7 @@ fn __mutual_tco_trampoline_5(
                                 moreCases,
                                 claim,
                                 path,
-                                i.add(&aver_rt::AverInt::from_i64(1)),
+                                i.add_owned(&aver_rt::AverInt::from_i64(1)),
                             )
                         }
                     } else {
@@ -1785,7 +1785,7 @@ pub fn declarationCycle(
                             {
                                 let __tco0 = aver_rt::AverList::concat(&rest, &crate::proof_kernel::aver_generated::kernel::check::declarationDeps(&n, ds, cs));
                                 let __tco4 = aver_rt::AverList::prepend_owned(n, seen);
-                                let __tco5 = fuel.sub(&aver_rt::AverInt::from_i64(1));
+                                let __tco5 = fuel.sub_owned(&aver_rt::AverInt::from_i64(1));
                                 frontier = __tco0;
                                 seen = __tco4;
                                 fuel = __tco5;
@@ -2615,7 +2615,7 @@ pub fn transLink(
                 steps,
                 env,
                 path,
-                i.add(&aver_rt::AverInt::from_i64(1)),
+                i.add_owned(&aver_rt::AverInt::from_i64(1)),
             )?;
             crate::proof_kernel::aver_generated::kernel::check::joinRest(a, __arg11)
         }
@@ -3640,7 +3640,7 @@ pub fn litCounts(
                 aver_rt::AverInt::from_i64(0),
                 crate::proof_kernel::aver_generated::kernel::check::litCounts(
                     &rest,
-                    n.add(&aver_rt::AverInt::from_i64(1)),
+                    n.add_owned(&aver_rt::AverInt::from_i64(1)),
                 ),
             ),
             None => aver_rt::AverIntList::from_vec(vec![n]),
@@ -4881,7 +4881,7 @@ pub fn earlierExcludeValue(
                     hs,
                 )) && crate::proof_kernel::aver_generated::kernel::check::earlierExcludeValue(
                     rest,
-                    k.sub(&aver_rt::AverInt::from_i64(1)),
+                    k.sub_owned(&aver_rt::AverInt::from_i64(1)),
                     v,
                     hs,
                 ))
@@ -5154,7 +5154,7 @@ pub fn armAt(
                 if (k > aver_rt::AverInt::from_i64(1)) {
                     {
                         let __tco0 = rest;
-                        let __tco1 = k.sub(&aver_rt::AverInt::from_i64(1));
+                        let __tco1 = k.sub_owned(&aver_rt::AverInt::from_i64(1));
                         arms = __tco0;
                         k = __tco1;
                         continue;
@@ -5190,7 +5190,7 @@ pub fn earlierExclude(
                     p.clone(),
                 ) && crate::proof_kernel::aver_generated::kernel::check::earlierExclude(
                     rest,
-                    k.sub(&aver_rt::AverInt::from_i64(1)),
+                    k.sub_owned(&aver_rt::AverInt::from_i64(1)),
                     p,
                 ))
             } else {
@@ -6442,8 +6442,8 @@ pub fn countName(want @ _: &AverStr, names @ _: &aver_rt::AverList<AverStr>) -> 
             match aver_rt::list_uncons_cloned(__list_subject) {
                 Some((n, rest)) => {
                     if (&(n) == want) {
-                        return aver_rt::AverInt::from_i64(1).add(
-                            &crate::proof_kernel::aver_generated::kernel::check::countName(
+                        return aver_rt::AverInt::from_i64(1).add_owned_rhs(
+                            crate::proof_kernel::aver_generated::kernel::check::countName(
                                 want, &rest,
                             ),
                         );
@@ -7292,7 +7292,7 @@ pub fn callAt(
                     } else {
                         {
                             let __tco0 = rest;
-                            let __tco1 = k.sub(&aver_rt::AverInt::from_i64(1));
+                            let __tco1 = k.sub_owned(&aver_rt::AverInt::from_i64(1));
                             match __tco0 {
                                 aver_rt::ListRest::Lent(__rest) => {
                                     calls = __rest;
@@ -7772,13 +7772,13 @@ pub fn readArgs(
                                 &rest,
                                 j,
                                 ps,
-                                k.add(&aver_rt::AverInt::from_i64(1)),
+                                k.add_owned(&aver_rt::AverInt::from_i64(1)),
                             ),
                         );
                     } else {
                         {
                             let __tco0 = rest;
-                            let __tco3 = k.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco3 = k.add_owned(&aver_rt::AverInt::from_i64(1));
                             __hold0 = __tco0;
                             xs = &__hold0;
                             k = __tco3;

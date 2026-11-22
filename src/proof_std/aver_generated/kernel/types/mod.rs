@@ -645,7 +645,7 @@ pub fn nth(
                 };
                 {
                     let __tco0 = rest;
-                    let __tco1 = i.sub(&aver_rt::AverInt::from_i64(1));
+                    let __tco1 = i.sub_owned(&aver_rt::AverInt::from_i64(1));
                     ts = __tco0;
                     i = __tco1;
                     continue;

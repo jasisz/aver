@@ -1677,7 +1677,7 @@ fn walk(n: Int) -> Int
             "Worker module must emit its OWN helper:\n{worker}"
         );
         assert!(
-            worker.contains("n.add(&aver_rt::AverInt::from_i64(100))"),
+            worker.contains("n.add_owned(&aver_rt::AverInt::from_i64(100))"),
             "Worker.helper body must keep its OWN literal (100):\n{worker}"
         );
         // Critical anti-shadow check: Worker.walk calls Worker.helper
@@ -1695,7 +1695,7 @@ fn walk(n: Int) -> Int
             "Entry module must emit its OWN helper:\n{entry}"
         );
         assert!(
-            entry.contains("n.add(&aver_rt::AverInt::from_i64(1))"),
+            entry.contains("n.add_owned(&aver_rt::AverInt::from_i64(1))"),
             "Entry.helper body must keep its OWN literal (1):\n{entry}"
         );
         // Entry's `Worker.walk(20)` must qualify through the crate
@@ -2559,6 +2559,55 @@ fn make(n: Int) -> Nine
     }
 
     #[test]
+    fn an_int_operand_at_its_last_use_is_given_up_to_the_operation() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn xorAll(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [x, ..rest] -> xorAll(rest, Bits.xor(acc, x))
+
+fn scaled(k: Int, acc: Int) -> Int
+    match k
+        0 -> acc
+        _ -> scaled(k - 1, 3 * acc)
+
+fn twice(x: Int) -> Int
+    Bits.and(x, x) + x
+
+fn kept(x: Int, y: Int) -> List<Int>
+    [Bits.or(x, y), x - y, y]
+
+fn first(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [x, .._] -> x
+
+fn fits(n: Int, xs: List<Int>) -> Bool
+    List.len(xs) * 2 == n + first(xs)
+"#,
+            "demo",
+        );
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+        // The accumulator is moved into the step that replaces it.
+        assert!(entry.contains("(acc).bit_xor_owned(&(x))"), "{entry}");
+        // The right operand is the one moved when the left one is a literal.
+        assert!(entry.contains(".mul_owned_rhs(acc)"), "{entry}");
+        // `x op x` borrows `x` twice; the sum's left operand is a temporary
+        // (this is its exact path, past the machine-word one).
+        assert!(entry.contains("(x).bit_and(&(x))"), "{entry}");
+        assert!(entry.contains("(x).bit_and(&(x)).add_owned(&x)"), "{entry}");
+        // An operand read again later is borrowed; one read last is moved.
+        assert!(
+            entry.contains("(x).bit_or(&(y)), x.sub_owned(&y), y]"),
+            "{entry}"
+        );
+    }
+
+    #[test]
     fn a_large_record_the_program_copies_is_counted() {
         let mut ctx = ctx_from_source(
             r#"
@@ -2607,7 +2656,7 @@ fn step(t: Ten) -> Ten
         assert!(entry.contains("pub __count: aver_rt::Count,"));
         assert!(entry.contains("unsafe impl aver_rt::Counts for Nine__Fields {"));
         assert!(entry.contains(
-            "{ let mut __record0 = aver_rt::Counted::into_box(r); __record0.a = __record0.a.add(&aver_rt::AverInt::from_i64(1)); aver_rt::Counted::from_box(__record0) }"
+            "{ let mut __record0 = aver_rt::Counted::into_box(r); __record0.a = __record0.a.add_owned(&aver_rt::AverInt::from_i64(1)); aver_rt::Counted::from_box(__record0) }"
         ));
         // Nothing copies a `Ten`.
         assert!(entry.contains("pub type Ten = Box<Ten__Fields>;"));

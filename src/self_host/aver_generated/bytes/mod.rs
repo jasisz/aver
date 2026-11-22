@@ -216,7 +216,7 @@ pub fn firstOutOfRangeIndex(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
                     & (head <= aver_rt::AverInt::from_i64(255)))
                 {
                     aver_rt::AverInt::from_i64(1)
-                        .add(&crate::aver_generated::bytes::firstOutOfRangeIndex(&tail))
+                        .add_owned_rhs(crate::aver_generated::bytes::firstOutOfRangeIndex(&tail))
                 } else {
                     aver_rt::AverInt::from_i64(0)
                 }
@@ -350,7 +350,7 @@ pub fn parseHexChars(
         crate::cancel_checkpoint();
         aver_list_match!(chars, [] => { return Ok((acc).reverse_owned()); }, [highChar, afterHigh] => { aver_list_match!(afterHigh, [] => { return Err(::aver_rt::str_lit!("Bytes.fromHex: expected an even number of hex characters")); }, [lowChar, rest] => { match crate::aver_generated::bytes::hexDigitValue(&highChar) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(63usize); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_display(&(highChar)); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(high @ _) => { match crate::aver_generated::bytes::hexDigitValue(&lowChar) { None => { return Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(63usize); __b.push_str(&::aver_rt::str_lit!("Bytes.fromHex: invalid hexadecimal character '")); __b }; __b.push_display(&(lowChar)); __b }; __b.push_str(&::aver_rt::str_lit!("'")); __b })); }, Some(low @ _) => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::AverIntList::prepend_owned(({ let __word: Option<i64> = (|| Some((((((high).inline_word()?) >> 1).checked_mul(((33i64)) ^ 1)? | 1)).checked_add(((low).inline_word()?) ^ 1)?))(); match __word { Some(__word) => aver_rt::AverInt::from_inline_word(__word), None => high.mul(&aver_rt::AverInt::from_i64(16)).add(&low) } }), acc);
+            let __tco1 = aver_rt::AverIntList::prepend_owned(({ let __word: Option<i64> = (|| Some((((((high).inline_word()?) >> 1).checked_mul(((33i64)) ^ 1)? | 1)).checked_add(((low).inline_word()?) ^ 1)?))(); match __word { Some(__word) => aver_rt::AverInt::from_inline_word(__word), None => high.mul_owned(&aver_rt::AverInt::from_i64(16)).add_owned(&low) } }), acc);
             chars = __tco0;
             acc = __tco1;
             continue;
@@ -676,10 +676,10 @@ pub fn parseHexChars__cursor(
                                                                 )
                                                             }
                                                             None => high
-                                                                .mul(&aver_rt::AverInt::from_i64(
-                                                                    16,
-                                                                ))
-                                                                .add(&low),
+                                                                .mul_owned(
+                                                                    &aver_rt::AverInt::from_i64(16),
+                                                                )
+                                                                .add_owned(&low),
                                                         }
                                                     }),
                                                     acc,
@@ -841,10 +841,10 @@ pub fn parseHexChars__cursor__collected(
                                                                 )
                                                             }
                                                             None => high
-                                                                .mul(&aver_rt::AverInt::from_i64(
-                                                                    16,
-                                                                ))
-                                                                .add(&low),
+                                                                .mul_owned(
+                                                                    &aver_rt::AverInt::from_i64(16),
+                                                                )
+                                                                .add_owned(&low),
                                                         }
                                                     }),
                                                 );

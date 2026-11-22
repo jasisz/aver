@@ -51,7 +51,7 @@ pub fn buildSlotEnvLoop(
                             _ => __vec,
                         }
                     };
-                    let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = idx.add_owned(&aver_rt::AverInt::from_i64(1));
                     match __tco0 {
                         aver_rt::ListRest::Lent(__rest) => {
                             args = __rest;

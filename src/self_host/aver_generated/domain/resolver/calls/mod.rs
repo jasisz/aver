@@ -19,7 +19,7 @@ pub fn buildFnMap(
                 Some((f, rest)) => {
                     let __tco0 = rest;
                     let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
-                    let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = idx.add_owned(&aver_rt::AverInt::from_i64(1));
                     match __tco0 {
                         aver_rt::ListRest::Lent(__rest) => {
                             fns = __rest;

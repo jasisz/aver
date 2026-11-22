@@ -1061,7 +1061,7 @@ pub fn caseCount(
             Some((g, rest)) => aver_rt::AverInt::from_i64(
                 ((crate::proof_std::aver_generated::kernel::finite::values(&g.fin)).len() as i64),
             )
-            .mul(&crate::proof_std::aver_generated::kernel::std::caseCount(
+            .mul_owned_rhs(crate::proof_std::aver_generated::kernel::std::caseCount(
                 &rest,
             )),
             None => aver_rt::AverInt::from_i64(1),
@@ -1383,7 +1383,7 @@ pub fn rounds(
                         s,
                         hyps,
                         step.to.clone(),
-                        n.sub(&aver_rt::AverInt::from_i64(1)),
+                        n.sub_owned(&aver_rt::AverInt::from_i64(1)),
                     )?;
                     crate::proof_std::aver_generated::kernel::lib::chain(r.to.clone(), step, __arg6)
                 };

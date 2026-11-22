@@ -4632,7 +4632,9 @@ pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) ->
         })();
         match __word {
             Some(__word) => aver_rt::AverInt::from_inline_word(__word),
-            None => acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code),
+            None => acc
+                .mul_owned(&aver_rt::AverInt::from_i64(131))
+                .add_owned(&code),
         }
     });
     (next).rem_euclid_word(1000003i64)
@@ -4821,8 +4823,8 @@ pub fn ctorNameToTag__indexed(
                     if &*__dispatch_subject == "Option.None" {
                         aver_rt::AverInt::from_i64(4)
                     } else {
-                        aver_rt::AverInt::from_i64(100).add(
-                            &crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
+                        aver_rt::AverInt::from_i64(100).add_owned_rhs(
+                            crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
                                 name,
                                 __str_index,
                             ),
@@ -4984,7 +4986,7 @@ pub fn canonicalCtorNameAtBothDots__indexed(
             aver_rt::string_index_slice_i64(
                 &name,
                 &__str_index,
-                aver_rt::string_position(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
+                aver_rt::string_position(&prevDot.add_owned(&aver_rt::AverInt::from_i64(1))),
                 total,
             )
         } else {

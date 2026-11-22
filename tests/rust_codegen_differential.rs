@@ -750,11 +750,11 @@ fn nested_list_pattern_moves_the_other_fields() {
     let emitted = emitted_entry_module("rust_nested_list_moves_fields", &src);
     for shape in [
         "let __pat0 = step(s, i.clone()); match __pat0 {",
-        "let __tco0 = put(__pat2, aver_rt::string_position(&a), b.add(&c));",
+        "let __tco0 = put(__pat2, aver_rt::string_position(&a), b.add_owned(&c));",
         "let other = Step::Vals(__pat1, __pat2);",
         "let __tco0 = put(__pat7, 0i64, i.clone());",
         "let __pat0 = split(s, aver_rt::AverInt::from_i64(n)); { let (__pat1, __pat2) = __pat0;",
-        "put(__pat2, n, x.add(&y))",
+        "put(__pat2, n, x.add_owned(&y))",
         "let whole = (__pat1, __pat2);",
     ] {
         assert!(emitted.contains(shape), "missing `{shape}`:\n{emitted}");
@@ -4446,11 +4446,11 @@ fn mutual_tail_group_invariant_consumed_on_an_exit_moves() {
     for shape in [
         "pub fn evenSteps(s @ _: Store, cfg @ _: &Cfg,",
         "pub fn oddSteps(s @ _: Store, cfg @ _: &Cfg,",
-        "__MutualTco1::OddSteps(s, k.sub(",
+        "__MutualTco1::OddSteps(s, k.sub_owned(",
         "return put(s, 0i64, acc)",
         "pub fn fill(v @ _: aver_rt::AverVector<aver_rt::AverInt>,",
         "pub fn drain(k @ _: aver_rt::AverInt, v @ _: aver_rt::AverVector<aver_rt::AverInt>,",
-        "__MutualTco3::Fill(v, k.sub(",
+        "__MutualTco3::Fill(v, k.sub_owned(",
         "pub fn peekA(s @ _: &Store,",
         "pub fn readA(cfg @ _: &Cfg,",
         "let __tco0 = { let __arg4 @ _ = aver_rt::AverInt::from_i64((i).rem_euclid_word(5i64)); evenSteps(s, cfg, __arg4,",
@@ -5997,7 +5997,7 @@ fn rust_an_update_whose_values_read_a_kept_field_moves_the_replaced_ones() {
     for moved in [
         "a: bump(x.a, 0i64), w: wrap(x.keep.clone()), ..x }",
         "b: bump(x.a, 1i64), n: total(&x.keep,",
-        "a: bump(x.a, 2i64), n: x.n.add(&total(&x.w.v,",
+        "a: bump(x.a, 2i64), n: x.n.add_owned(&total(&x.w.v,",
         "a: bump(x.a.clone(), 3i64)",
     ] {
         assert!(emitted.contains(moved), "expected `{moved}` in:\n{emitted}");
@@ -7062,7 +7062,7 @@ fn a_large_record_is_boxed_and_updated_in_its_box() {
         "pub type Big = Box<Big__Fields>;",
         "{ let mut __record0 = aver_rt::Counted::into_box(s); let __field0 = was.add(&i); let __field1 = __record0.seen.insert_owned(",
         "{ let mut __record0 = aver_rt::Counted::into_box(s); let __field0 = __record0.b; let __field1 = __record0.a; __record0.a = __field0; __record0.b = __field1; aver_rt::Counted::from_box(__record0) }",
-        "{ let mut __record0 = aver_rt::Counted::into_box(r.st); __record0.c = __record0.c.add(&r.v); aver_rt::Counted::from_box(__record0) }",
+        "{ let mut __record0 = aver_rt::Counted::into_box(r.st); __record0.c = __record0.c.add_owned(&r.v); aver_rt::Counted::from_box(__record0) }",
         "b.st = __field0; b.x = __field1; b }",
         "let mut __record0 = aver_rt::Counted::into_box(s.clone()); __record0.e = __field0;",
         // A field read out of a counted record is copied, not moved, so the

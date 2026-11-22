@@ -11,17 +11,17 @@ pub fn applyBinop(
     match op {
         crate::aver_generated::domain::ast::BinOp::OpAdd => {
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                crate::aver_generated::domain::value::Val__ValInt(x.add(&y)),
+                crate::aver_generated::domain::value::Val__ValInt(x.add_owned(&y)),
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpSub => {
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                crate::aver_generated::domain::value::Val__ValInt(x.sub(&y)),
+                crate::aver_generated::domain::value::Val__ValInt(x.sub_owned(&y)),
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpMul => {
             Ok(crate::aver_generated::domain::value::Val::ValInt(
-                crate::aver_generated::domain::value::Val__ValInt(x.mul(&y)),
+                crate::aver_generated::domain::value::Val__ValInt(x.mul_owned(&y)),
             ))
         }
         crate::aver_generated::domain::ast::BinOp::OpDiv => {
@@ -232,7 +232,7 @@ pub fn evalNegVals(
                 let n = __n_fields.0.clone();
                 Ok(crate::aver_generated::domain::value::Val::ValInt(
                     crate::aver_generated::domain::value::Val__ValInt(
-                        aver_rt::AverInt::from_i64(0).sub(&n),
+                        aver_rt::AverInt::from_i64(0).sub_owned_rhs(n),
                     ),
                 ))
             }

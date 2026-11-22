@@ -234,7 +234,7 @@ fn __mutual_tco_trampoline_3(
                     crate::aver_generated::domain::token::Token::TkComma => {
                         let __arg4 @ _ = crate::aver_generated::domain::parser::expr::skipNl(
                             &*tokens,
-                            pos2.add(&aver_rt::AverInt::from_i64(1)),
+                            pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
                         );
                         __MutualTco3::ParseMapEntries(__arg4, acc)
                     }
@@ -254,7 +254,7 @@ fn __mutual_tco_trampoline_3(
                                     __field1, __field0,
                                 )
                             }),
-                            pos2.add(&aver_rt::AverInt::from_i64(1)),
+                            pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => return Err(::aver_rt::str_lit!("Expected ',' or '}' in map literal")),
@@ -334,7 +334,7 @@ fn __mutual_tco_trampoline_4(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkInterpEnd => {
                         __MutualTco4::ParseInterpContinue(
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             acc,
                         )
                     }
@@ -373,7 +373,10 @@ fn __mutual_tco_trampoline_4(
                 crate::cancel_checkpoint();
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkInterpStart => {
-                        __MutualTco4::ParseInterpParts(pos.add(&aver_rt::AverInt::from_i64(1)), acc)
+                        __MutualTco4::ParseInterpParts(
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
+                            acc,
+                        )
                     }
                     _ => {
                         return Ok((
@@ -467,7 +470,7 @@ fn __mutual_tco_trampoline_5(
                     crate::aver_generated::domain::token::Token::TkComma => {
                         let __arg4 @ _ = crate::aver_generated::domain::parser::expr::skipNl(
                             &*tokens,
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         );
                         __MutualTco5::ParseListAfterComma(__arg4, items)
                     }
@@ -478,7 +481,7 @@ fn __mutual_tco_trampoline_5(
                                     (items).reverse_owned(),
                                 ),
                             ),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => return Err(::aver_rt::str_lit!("Expected ',' or ']' in list literal")),
@@ -492,7 +495,7 @@ fn __mutual_tco_trampoline_5(
                             crate::aver_generated::domain::ast::Expr::ExprList(
                                 crate::aver_generated::domain::ast::Expr__ExprList(items),
                             ),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => __MutualTco5::ParseListItems(pos, items),
@@ -569,14 +572,14 @@ fn __mutual_tco_trampoline_6(
                     crate::aver_generated::domain::token::Token::TkComma => {
                         let __arg4 @ _ = crate::aver_generated::domain::parser::expr::skipNl(
                             &*tokens,
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         );
                         __MutualTco6::ParseTupleAfterComma(__arg4, items)
                     }
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return crate::aver_generated::domain::parser::expr::finishTupleOrProduct(
                             &*tokens,
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             (items).reverse_owned(),
                         );
                     }
@@ -589,7 +592,7 @@ fn __mutual_tco_trampoline_6(
                     crate::aver_generated::domain::token::Token::TkRParen => {
                         return crate::aver_generated::domain::parser::expr::finishTupleOrProduct(
                             &*tokens,
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             items,
                         );
                     }
@@ -644,7 +647,7 @@ fn __mutual_tco_trampoline_7(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkIdent(field) => {
                         __MutualTco7::ParseFieldAccessTail(
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             crate::aver_generated::domain::ast::Expr::ExprFieldAccess(
                                 crate::aver_generated::domain::ast::Expr__ExprFieldAccess(
                                     obj, field,
@@ -660,7 +663,7 @@ fn __mutual_tco_trampoline_7(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkDot => {
                         __MutualTco7::ParseFieldAccess(
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             expr,
                         )
                     }
@@ -725,7 +728,7 @@ fn __mutual_tco_trampoline_8(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkIdent(field) => {
                         __MutualTco8::ParseRecordField(
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             name,
                             acc,
                             field,
@@ -765,7 +768,7 @@ fn __mutual_tco_trampoline_8(
                     crate::aver_generated::domain::token::Token::TkComma => {
                         let __arg5 @ _ = crate::aver_generated::domain::parser::expr::skipNl(
                             &*tokens,
-                            pos2.add(&aver_rt::AverInt::from_i64(1)),
+                            pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
                         );
                         __MutualTco8::ParseRecordAfterComma(__arg5, name, fields)
                     }
@@ -777,7 +780,7 @@ fn __mutual_tco_trampoline_8(
                                     (fields).reverse_owned(),
                                 ),
                             ),
-                            pos2.add(&aver_rt::AverInt::from_i64(1)),
+                            pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => {
@@ -795,7 +798,7 @@ fn __mutual_tco_trampoline_8(
                             crate::aver_generated::domain::ast::Expr::ExprRecord(
                                 crate::aver_generated::domain::ast::Expr__ExprRecord(name, fields),
                             ),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => __MutualTco8::ParseRecordFields(pos, name, fields),
@@ -904,7 +907,7 @@ fn __mutual_tco_trampoline_9(
                     crate::aver_generated::domain::token::Token::TkComma => {
                         let __arg5 @ _ = crate::aver_generated::domain::parser::expr::skipNl(
                             &*tokens,
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         );
                         __MutualTco9::ParseCallArgsAfterComma(__arg5, name, args)
                     }
@@ -917,7 +920,7 @@ fn __mutual_tco_trampoline_9(
                                     __field1, __field0,
                                 )
                             }),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => return Err(::aver_rt::str_lit!("Expected ',' or ')' in argument list")),
@@ -935,7 +938,7 @@ fn __mutual_tco_trampoline_9(
                                     __field1, __field0,
                                 )
                             }),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     crate::aver_generated::domain::token::Token::TkIdent(field) => {
@@ -1056,7 +1059,7 @@ fn __mutual_tco_trampoline_10(
                 match crate::aver_generated::domain::parser_match::tokenAt(&*tokens, pos.clone()) {
                     crate::aver_generated::domain::token::Token::TkIdent(field) => {
                         __MutualTco10::ParseNamedArgField(
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                             name,
                             namedAcc,
                             field,
@@ -1082,7 +1085,7 @@ fn __mutual_tco_trampoline_10(
                                     __field1, __field0,
                                 )
                             }),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => {
@@ -1119,7 +1122,7 @@ fn __mutual_tco_trampoline_10(
                     crate::aver_generated::domain::token::Token::TkComma => {
                         let __arg6 @ _ = crate::aver_generated::domain::parser::expr::skipNl(
                             &*tokens,
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         );
                         __MutualTco10::ParseNamedArgs(__arg6, name, namedAcc)
                     }
@@ -1143,7 +1146,7 @@ fn __mutual_tco_trampoline_10(
                                     __field1, __field0,
                                 )
                             }),
-                            pos.add(&aver_rt::AverInt::from_i64(1)),
+                            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                         ));
                     }
                     _ => {
@@ -1246,7 +1249,7 @@ fn __mutual_tco_trampoline_11(
                                         (acc).reverse_owned(),
                                     ),
                                 ),
-                                pos2.add(&aver_rt::AverInt::from_i64(1)),
+                                pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
                             ));
                         }
                     }
@@ -1506,7 +1509,7 @@ pub fn parsePostfixQuestion(
             crate::aver_generated::domain::ast::Expr::ExprPropagate(
                 crate::aver_generated::domain::ast::Expr__ExprPropagate(expr),
             ),
-            pos.add(&aver_rt::AverInt::from_i64(1)),
+            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
         ),
         _ => (expr, pos),
     }
@@ -1757,7 +1760,7 @@ pub fn parseMapLiteral(
                 );
                 crate::aver_generated::domain::ast::Expr__ExprCall(__field1, __field0)
             }),
-            pos2.add(&aver_rt::AverInt::from_i64(1)),
+            pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
         )),
         _ => {
             let __arg3 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty();
@@ -1795,7 +1798,7 @@ pub fn parseStringOrInterp(
         crate::aver_generated::domain::token::Token::TkInterpStart => {
             crate::aver_generated::domain::parser::expr::parseInterpParts(
                 tokens,
-                pos.add(&aver_rt::AverInt::from_i64(1)),
+                pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                 aver_rt::AverList::prepend_owned(
                     crate::aver_generated::domain::ast::Expr::ExprStr(
                         crate::aver_generated::domain::ast::Expr__ExprStr(prefix),
@@ -1825,7 +1828,7 @@ pub fn parseListExpr(
             crate::aver_generated::domain::ast::Expr::ExprList(
                 crate::aver_generated::domain::ast::Expr__ExprList(aver_rt::AverList::empty()),
             ),
-            pos.add(&aver_rt::AverInt::from_i64(1)),
+            pos.add_owned(&aver_rt::AverInt::from_i64(1)),
         )),
         _ => {
             let __arg3 @ _ = <aver_rt::AverList<crate::aver_generated::domain::ast::Expr>>::empty();
@@ -1847,12 +1850,12 @@ pub fn parseParenExpr(
             crate::aver_generated::domain::token::Token::TkComma => {
                 crate::aver_generated::domain::parser::expr::parseTupleRest(
                     tokens,
-                    pos2.add(&aver_rt::AverInt::from_i64(1)),
+                    pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
                     aver_rt::AverList::prepend_owned(expr, aver_rt::AverList::empty()),
                 )
             }
             crate::aver_generated::domain::token::Token::TkRParen => {
-                Ok((expr, pos2.add(&aver_rt::AverInt::from_i64(1))))
+                Ok((expr, pos2.add_owned(&aver_rt::AverInt::from_i64(1))))
             }
             _ => Err(::aver_rt::str_lit!("Expected ')' or ',' after expression")),
         }
@@ -1879,7 +1882,7 @@ pub fn finishTupleOrProduct(
                             items, true,
                         ),
                     ),
-                    pos.add(&aver_rt::AverInt::from_i64(2)),
+                    pos.add_owned(&aver_rt::AverInt::from_i64(2)),
                 )),
                 _ => Ok((
                     crate::aver_generated::domain::ast::Expr::ExprTuple(
@@ -1907,7 +1910,7 @@ pub fn finishTupleOrProduct(
                             items, false,
                         ),
                     ),
-                    pos.add(&aver_rt::AverInt::from_i64(1)),
+                    pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                 )),
             }
         }
@@ -1933,7 +1936,7 @@ pub fn parseIdentOrLazy(
             crate::aver_generated::domain::token::Token::TkIdent(callee) => {
                 crate::aver_generated::domain::parser::expr::parseLazyCall(
                     tokens,
-                    pos.add(&aver_rt::AverInt::from_i64(1)),
+                    pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                     callee,
                 )
             }
@@ -1960,7 +1963,7 @@ pub fn parseLazyCall(
                 if (&*word == "knowing") {
                     crate::aver_generated::domain::parser::expr::skipKnowing(
                         tokens,
-                        next.add(&aver_rt::AverInt::from_i64(1)),
+                        next.add_owned(&aver_rt::AverInt::from_i64(1)),
                         call,
                     )
                 } else {
@@ -1983,7 +1986,7 @@ pub fn skipKnowing(
         crate::aver_generated::domain::token::Token::TkIdent(law) => {
             let __arg4 @ _ = crate::aver_generated::domain::parser::expr::parseIdentOrCall(
                 tokens,
-                pos.add(&aver_rt::AverInt::from_i64(1)),
+                pos.add_owned(&aver_rt::AverInt::from_i64(1)),
                 law,
             )?;
             crate::aver_generated::domain::parser::expr::skipKnowingArgs(tokens, &__arg4, call)
@@ -2005,7 +2008,7 @@ pub fn skipKnowingArgs(
             crate::aver_generated::domain::token::Token::TkLParen => {
                 let __arg4 @ _ = crate::aver_generated::domain::parser::expr::chainFieldAccess(
                     tokens,
-                    next.add(&aver_rt::AverInt::from_i64(1)),
+                    next.add_owned(&aver_rt::AverInt::from_i64(1)),
                     ::aver_rt::str_lit!("knowing"),
                 )?;
                 crate::aver_generated::domain::parser::expr::skipKnowingLaw(&__arg4, call)
@@ -2114,7 +2117,7 @@ pub fn parseCallOrRecord(
                 let __field1 = aver_rt::AverList::empty();
                 crate::aver_generated::domain::ast::Expr__ExprCall(__field1, __field0)
             }),
-            pos2.add(&aver_rt::AverInt::from_i64(1)),
+            pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
         )),
         crate::aver_generated::domain::token::Token::TkIdent(first) => {
             crate::aver_generated::domain::parser::expr::parseCallOrRecordLookahead(
@@ -2189,7 +2192,7 @@ pub fn parseMatchAfterSubject(
         crate::aver_generated::domain::token::Token::TkIndent => {
             crate::aver_generated::domain::parser::expr::parseMatchArms(
                 tokens,
-                pos2.add(&aver_rt::AverInt::from_i64(1)),
+                pos2.add_owned(&aver_rt::AverInt::from_i64(1)),
                 subject,
                 aver_rt::AverList::empty(),
             )

@@ -335,7 +335,7 @@ pub fn negated(a @ _: Option<&Val>) -> Option<Val> {
                 let x = x.clone();
                 Some(
                     crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
-                        aver_rt::AverInt::from_i64(0).sub(&x),
+                        aver_rt::AverInt::from_i64(0).sub_owned_rhs(x),
                     ),
                 )
             }
@@ -392,13 +392,17 @@ pub fn intOp(o @ _: &AverStr, x @ _: aver_rt::AverInt, y @ _: aver_rt::AverInt) 
     {
         let __dispatch_subject = &**o;
         if &*__dispatch_subject == "+" {
-            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.add(&y)))
+            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.add_owned(&y)))
         } else {
             if &*__dispatch_subject == "-" {
-                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.sub(&y)))
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.sub_owned(&y)))
             } else {
                 if &*__dispatch_subject == "*" {
-                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.mul(&y)))
+                    Some(
+                        crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
+                            x.mul_owned(&y),
+                        ),
+                    )
                 } else {
                     if &*__dispatch_subject == "<" {
                         Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x < y)))

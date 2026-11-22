@@ -453,9 +453,10 @@ pub fn holeCount(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) -
                     let o = __o_fields.0.clone();
                     let a = &__o_fields.1;
                     let b = &__o_fields.2;
-                    return crate::proof_std::aver_generated::kernel::subst::holeCount(a).add(
-                        &crate::proof_std::aver_generated::kernel::subst::holeCount(b),
-                    );
+                    return crate::proof_std::aver_generated::kernel::subst::holeCount(a)
+                        .add_owned(&crate::proof_std::aver_generated::kernel::subst::holeCount(
+                            b,
+                        ));
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TNeg(__a_fields) => {
                     let a = &__a_fields.0;
@@ -473,9 +474,10 @@ pub fn holeCount(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) -
                 crate::proof_std::aver_generated::kernel::term::Term__view::TMatch(__s_fields) => {
                     let s = &__s_fields.0;
                     let arms = &__s_fields.1;
-                    return crate::proof_std::aver_generated::kernel::subst::holeCount(s).add(
-                        &crate::proof_std::aver_generated::kernel::subst::holeCountArms(arms),
-                    );
+                    return crate::proof_std::aver_generated::kernel::subst::holeCount(s)
+                        .add_owned(
+                            &crate::proof_std::aver_generated::kernel::subst::holeCountArms(arms),
+                        );
                 }
                 crate::proof_std::aver_generated::kernel::term::Term__view::TParts(__xs_fields) => {
                     let xs = &__xs_fields.0;
@@ -498,9 +500,10 @@ pub fn holeCount(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) -
                     let n = __n_fields.0.clone();
                     let b = &__n_fields.1;
                     let fs = &__n_fields.2;
-                    return crate::proof_std::aver_generated::kernel::subst::holeCount(b).add(
-                        &crate::proof_std::aver_generated::kernel::subst::holeCountFields(fs),
-                    );
+                    return crate::proof_std::aver_generated::kernel::subst::holeCount(b)
+                        .add_owned(
+                            &crate::proof_std::aver_generated::kernel::subst::holeCountFields(fs),
+                        );
                 }
                 _ => {
                     return aver_rt::AverInt::from_i64(0);
@@ -520,7 +523,7 @@ pub fn holeCountAll(
         let __list_subject = xs;
         match aver_rt::list_uncons(__list_subject) {
             Some((x, rest)) => crate::proof_std::aver_generated::kernel::subst::holeCount(x)
-                .add(&crate::proof_std::aver_generated::kernel::subst::holeCountAll(&rest)),
+                .add_owned(&crate::proof_std::aver_generated::kernel::subst::holeCountAll(&rest)),
             None => aver_rt::AverInt::from_i64(0),
         }
     }
@@ -536,7 +539,9 @@ pub fn holeCountFields(
         let __list_subject = fs;
         match aver_rt::list_uncons(__list_subject) {
             Some((f, rest)) => crate::proof_std::aver_generated::kernel::subst::holeCount(&f.value)
-                .add(&crate::proof_std::aver_generated::kernel::subst::holeCountFields(&rest)),
+                .add_owned(
+                    &crate::proof_std::aver_generated::kernel::subst::holeCountFields(&rest),
+                ),
             None => aver_rt::AverInt::from_i64(0),
         }
     }
@@ -552,7 +557,7 @@ pub fn holeCountArms(
         let __list_subject = arms;
         match aver_rt::list_uncons(__list_subject) {
             Some((a, rest)) => crate::proof_std::aver_generated::kernel::subst::holeCount(&a.body)
-                .add(&crate::proof_std::aver_generated::kernel::subst::holeCountArms(&rest)),
+                .add_owned(&crate::proof_std::aver_generated::kernel::subst::holeCountArms(&rest)),
             None => aver_rt::AverInt::from_i64(0),
         }
     }

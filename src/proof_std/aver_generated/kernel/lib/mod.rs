@@ -177,7 +177,7 @@ fn __mutual_tco_trampoline_1(
                                 __MutualTco1::SelectFrom(
                                     rest,
                                     v,
-                                    k.add(&aver_rt::AverInt::from_i64(1)),
+                                    k.add_owned(&aver_rt::AverInt::from_i64(1)),
                                 )
                             } else {
                                 return None;
@@ -193,7 +193,7 @@ fn __mutual_tco_trampoline_1(
                                 __MutualTco1::SelectFrom(
                                     rest,
                                     v,
-                                    k.add(&aver_rt::AverInt::from_i64(1)),
+                                    k.add_owned(&aver_rt::AverInt::from_i64(1)),
                                 )
                             } else {
                                 return None;
@@ -216,7 +216,7 @@ fn __mutual_tco_trampoline_1(
                                     __MutualTco1::SelectFrom(
                                         rest,
                                         v,
-                                        k.add(&aver_rt::AverInt::from_i64(1)),
+                                        k.add_owned(&aver_rt::AverInt::from_i64(1)),
                                     )
                                 } else {
                                     return None;
@@ -233,7 +233,7 @@ fn __mutual_tco_trampoline_1(
         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__d_fields) => {
             let d = __d_fields.1.clone();
             let ys = __d_fields.0.clone();
-            if (c == d) { return Some((k, a, ys)) } else { __MutualTco1::SelectFrom(rest, v, k.add(&aver_rt::AverInt::from_i64(1))) }
+            if (c == d) { return Some((k, a, ys)) } else { __MutualTco1::SelectFrom(rest, v, k.add_owned(&aver_rt::AverInt::from_i64(1))) }
         },
         _ => {
             return None
@@ -583,7 +583,7 @@ pub fn __lent_evalWithin(
         crate::proof_std::aver_generated::kernel::lib::__lent_evalNode(
             s,
             t,
-            depth.sub(&aver_rt::AverInt::from_i64(1)),
+            depth.sub_owned(&aver_rt::AverInt::from_i64(1)),
         )
     } else {
         Err(::aver_rt::str_lit!("evaluation nested too deep"))
@@ -1463,17 +1463,17 @@ pub fn intOp(
         let __dispatch_subject = &**o;
         if &*__dispatch_subject == "+" {
             Some(crate::proof_std::aver_generated::kernel::term::Term::TInt(
-                crate::proof_std::aver_generated::kernel::term::Term__TInt(x.add(&y)),
+                crate::proof_std::aver_generated::kernel::term::Term__TInt(x.add_owned(&y)),
             ))
         } else {
             if &*__dispatch_subject == "-" {
                 Some(crate::proof_std::aver_generated::kernel::term::Term::TInt(
-                    crate::proof_std::aver_generated::kernel::term::Term__TInt(x.sub(&y)),
+                    crate::proof_std::aver_generated::kernel::term::Term__TInt(x.sub_owned(&y)),
                 ))
             } else {
                 if &*__dispatch_subject == "*" {
                     Some(crate::proof_std::aver_generated::kernel::term::Term::TInt(
-                        crate::proof_std::aver_generated::kernel::term::Term__TInt(x.mul(&y)),
+                        crate::proof_std::aver_generated::kernel::term::Term__TInt(x.mul_owned(&y)),
                     ))
                 } else {
                     if &*__dispatch_subject == "<=" {
@@ -2570,7 +2570,7 @@ pub fn freshFrom(
         });
         if used.contains(&name) {
             {
-                let __tco2 = k.add(&aver_rt::AverInt::from_i64(1));
+                let __tco2 = k.add_owned(&aver_rt::AverInt::from_i64(1));
                 k = __tco2;
                 continue;
             }

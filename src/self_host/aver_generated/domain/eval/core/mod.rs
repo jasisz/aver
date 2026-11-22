@@ -5814,7 +5814,7 @@ pub fn evalArgsMapToSlotEnv(
                                 aver_rt::string_position(&idx),
                                 v,
                             );
-                            let __tco4 = idx.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco4 = idx.add_owned(&aver_rt::AverInt::from_i64(1));
                             match __tco0 {
                                 aver_rt::ListRest::Lent(__rest) => {
                                     exprs = __rest;
@@ -5880,7 +5880,7 @@ pub fn evalArgsSlotToSlotEnv(
                                 aver_rt::string_position(&idx),
                                 v,
                             );
-                            let __tco5 = idx.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco5 = idx.add_owned(&aver_rt::AverInt::from_i64(1));
                             match __tco0 {
                                 aver_rt::ListRest::Lent(__rest) => {
                                     exprs = __rest;

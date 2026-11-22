@@ -1490,7 +1490,7 @@ pub fn repeatStr(mut s @ _: AverStr, mut n @ _: aver_rt::AverInt, mut acc @ _: A
         crate::cancel_checkpoint();
         if (n > aver_rt::AverInt::from_i64(0)) {
             {
-                let __tco1 = n.sub(&aver_rt::AverInt::from_i64(1));
+                let __tco1 = n.sub_owned(&aver_rt::AverInt::from_i64(1));
                 let __tco2 = (acc + &s);
                 n = __tco1;
                 acc = __tco2;
