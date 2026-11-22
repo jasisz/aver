@@ -4621,7 +4621,7 @@ pub fn userCtorTagOffsetLoop(
 }
 
 /// Update the user constructor rolling hash and keep it in a bounded range.
-pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) -> aver_rt::AverInt {
+pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) -> i64 {
     crate::cancel_checkpoint();
     let next @ _ = ({
         let __word: Option<i64> = (|| {
@@ -4635,9 +4635,7 @@ pub fn userCtorTagStep(acc @ _: aver_rt::AverInt, code @ _: aver_rt::AverInt) ->
             None => acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code),
         }
     });
-    (next)
-        .rem_euclid(&(aver_rt::AverInt::from_i64(1000003)))
-        .unwrap()
+    (next).rem_euclid_word(1000003i64)
 }
 
 /// One spelling per constructor: drop the declaring-module qualifier from a Module.Type.Variant reference, so a variant a dependency builds as Shade.Dark and its caller writes as Palette.Shade.Dark is the same constructor.
@@ -4881,14 +4879,14 @@ pub fn userCtorTagOffsetLoop__indexed(
             match aver_rt::string_index_char_at_i64(&name, &__str_index, pos) {
                 Some(ch @ _) => {
                     let __tco1 = (pos + 1i64);
-                    let __tco2 = {
+                    let __tco2 = aver_rt::AverInt::from_i64({
                         let __arg6 @ _ = (ch)
                             .chars()
                             .next()
                             .map(|c| aver_rt::AverInt::from_i64(c as i64))
                             .unwrap_or(aver_rt::AverInt::from_i64(0));
                         crate::aver_generated::domain::ast::userCtorTagStep(acc, __arg6)
-                    };
+                    });
                     pos = __tco1;
                     acc = __tco2;
                     continue;
