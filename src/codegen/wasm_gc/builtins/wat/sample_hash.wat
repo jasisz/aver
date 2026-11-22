@@ -3,13 +3,15 @@
           (func (export "helper") (param $a (ref null $aint)) (result i64)
             (local $m (ref null $mag)) (local $limbs i32) (local $at i32)
             (local $small i64) (local $neg i64) (local $n i64) (local $count i64)
-            (local $k i64) (local $i i64) (local $d i64) (local $t i64) (local $h i64)
+            (local $k i64) (local $i i64) (local $d i64) (local $h i64)
+            (local $q i64) (local $r i64) (local $acc i64)
 
             ;; `Int.sampleHash`, as `aver_rt::AverInt::sample_hash`: the sign,
             ;; the count `n` of base-2^64 digits of the magnitude, and at most
-            ;; 64 of those digits at their positions, mixed by the splitmix64
-            ;; finalizer. A Small is its own one digit (`|i64::MIN|` is the
-            ;; word 2^63); a Big pairs its 32-bit limbs into 64-bit digits.
+            ;; 64 of those digits at their positions, one multiply each, and the
+            ;; splitmix64 finalizer once at the end. A Small is its own one
+            ;; digit (`|i64::MIN|` is the word 2^63); a Big pairs its 32-bit
+            ;; limbs into 64-bit digits.
             (local.set $m (struct.get $aint $magf (local.get $a)))
             (if (ref.is_null (local.get $m))
               (then
@@ -35,25 +37,22 @@
                 (local.set $n (i64.shr_u (i64.add (i64.extend_i32_u (local.get $limbs)) (i64.const 1))
                   (i64.const 1)))))
 
-            ;; h = mix(K0 ^ n ^ (s << 63))
+            ;; h = K0 ^ n ^ (s << 63)
             (local.set $h (i64.xor (i64.xor (i64.const 0x9e3779b97f4a7c15) (local.get $n))
               (i64.shl (local.get $neg) (i64.const 63))))
-            (local.set $h (i64.mul (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 30)))
-              (i64.const 0xbf58476d1ce4e5b9)))
-            (local.set $h (i64.mul (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 27)))
-              (i64.const 0x94d049bb133111eb)))
-            (local.set $h (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 31))))
 
-            ;; Every position when n <= 64, else floor(k * (n - 1) / 63).
+            ;; Every position when n <= 64, else floor(k * (n - 1) / 63),
+            ;; stepped by q = (n - 1) / 63 and the remainder r, carried in $acc.
             (local.set $count (select (local.get $n) (i64.const 64)
               (i64.le_u (local.get $n) (i64.const 64))))
+            (if (i64.gt_u (local.get $n) (i64.const 64))
+              (then
+                (local.set $q (i64.div_u (i64.sub (local.get $n) (i64.const 1)) (i64.const 63)))
+                (local.set $r (i64.rem_u (i64.sub (local.get $n) (i64.const 1)) (i64.const 63))))
+              (else (local.set $q (i64.const 1))))
             (block $done
               (loop $next
                 (br_if $done (i64.ge_u (local.get $k) (local.get $count)))
-                (local.set $i (select (local.get $k)
-                  (i64.div_u (i64.mul (local.get $k) (i64.sub (local.get $n) (i64.const 1)))
-                    (i64.const 63))
-                  (i64.le_u (local.get $n) (i64.const 64))))
                 ;; d_i
                 (if (ref.is_null (local.get $m))
                   (then (local.set $d (local.get $small)))
@@ -65,20 +64,24 @@
                       (then (local.set $d (i64.or (local.get $d)
                         (i64.shl (array.get $mag (local.get $m) (i32.add (local.get $at) (i32.const 1)))
                           (i64.const 32))))))))
-                ;; t = mix(i + K1)
-                (local.set $t (i64.add (local.get $i) (i64.const 0x6a09e667f3bcc908)))
-                (local.set $t (i64.mul (i64.xor (local.get $t) (i64.shr_u (local.get $t) (i64.const 30)))
-                  (i64.const 0xbf58476d1ce4e5b9)))
-                (local.set $t (i64.mul (i64.xor (local.get $t) (i64.shr_u (local.get $t) (i64.const 27)))
-                  (i64.const 0x94d049bb133111eb)))
-                (local.set $t (i64.xor (local.get $t) (i64.shr_u (local.get $t) (i64.const 31))))
-                ;; h = mix(h ^ d_i ^ t)
-                (local.set $h (i64.xor (i64.xor (local.get $h) (local.get $d)) (local.get $t)))
-                (local.set $h (i64.mul (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 30)))
-                  (i64.const 0xbf58476d1ce4e5b9)))
-                (local.set $h (i64.mul (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 27)))
-                  (i64.const 0x94d049bb133111eb)))
-                (local.set $h (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 31))))
+                ;; h = (rotl(h, 26) ^ d_i ^ i * K1) * K0
+                (local.set $h (i64.mul
+                  (i64.xor (i64.xor (i64.rotl (local.get $h) (i64.const 26)) (local.get $d))
+                    (i64.mul (local.get $i) (i64.const 0x6a09e667f3bcc908)))
+                  (i64.const 0x9e3779b97f4a7c15)))
+                ;; the next position
+                (local.set $i (i64.add (local.get $i) (local.get $q)))
+                (local.set $acc (i64.add (local.get $acc) (local.get $r)))
+                (if (i64.ge_u (local.get $acc) (i64.const 63))
+                  (then
+                    (local.set $acc (i64.sub (local.get $acc) (i64.const 63)))
+                    (local.set $i (i64.add (local.get $i) (i64.const 1)))))
                 (local.set $k (i64.add (local.get $k) (i64.const 1)))
                 (br $next)))
+            ;; mix(h) >> 2
+            (local.set $h (i64.mul (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 30)))
+              (i64.const 0xbf58476d1ce4e5b9)))
+            (local.set $h (i64.mul (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 27)))
+              (i64.const 0x94d049bb133111eb)))
+            (local.set $h (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 31))))
             (i64.shr_u (local.get $h) (i64.const 2))))

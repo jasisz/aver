@@ -55,10 +55,10 @@ pub use counted::{Count, Counted, Counts};
 pub use display::{AverDisplay, aver_display};
 pub use int::{
     AverInt, MAX_MATERIALIZED_BITS, SAMPLE_HASH_DIGITS, SAMPLE_HASH_K0, SAMPLE_HASH_K1,
-    ShiftCountError, bit_width_too_large_message, int_endian_value_error_message,
-    int_endian_width_error_message, int_from_big_endian, int_from_little_endian, int_to_big_endian,
-    int_to_little_endian, sample_hash_bigint, sample_hash_i64, sample_hash_mix,
-    sample_hash_position, shift_count_too_large_message,
+    SAMPLE_HASH_ROTATE, SAMPLE_HASH_STEP, ShiftCountError, bit_width_too_large_message,
+    int_endian_value_error_message, int_endian_width_error_message, int_from_big_endian,
+    int_from_little_endian, int_to_big_endian, int_to_little_endian, sample_hash_bigint,
+    sample_hash_i64, sample_hash_mix, sample_hash_position, shift_count_too_large_message,
 };
 pub use int_list::{
     AverIntList, AverIntListIter, int_list_builder_finalize, int_list_builder_new,
