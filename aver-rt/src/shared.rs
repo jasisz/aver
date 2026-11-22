@@ -92,15 +92,105 @@ pub struct Shared<T: ?Sized> {
 unsafe impl<T: ?Sized + Sync + Send> Send for Shared<T> {}
 unsafe impl<T: ?Sized + Sync + Send> Sync for Shared<T> {}
 
+/// Memory for a counted node of `layout` whose first word is its 64-bit
+/// count: before the first fork the owner's goes to the born heap of such
+/// nodes, which the fork freezes by one scan (see `crate::born`); any other
+/// comes from the global allocator. Either is given back through the global
+/// allocator, after [`before_free`].
+///
+/// # Safety
+/// `layout` is not zero-sized.
+#[inline(always)]
+pub(crate) unsafe fn alloc_counted(layout: Layout) -> *mut u8 {
+    #[cfg(all(
+        not(target_family = "wasm"),
+        feature = "mimalloc",
+        not(feature = "plain-counts")
+    ))]
+    {
+        let born = crate::born::alloc64(layout.size(), layout.align());
+        if !born.is_null() {
+            return born;
+        }
+    }
+    // SAFETY: the caller's layout is not zero-sized.
+    unsafe { alloc::alloc(layout) }
+}
+
+/// Called before a counted node made by [`alloc_counted`] is given back
+/// or moved (`realloc`): a thread other than the born heap's owner ends the
+/// born phase first, so the scan never reads a block given back meanwhile
+/// (see `crate::born`).
+#[inline(always)]
+pub(crate) fn before_free() {
+    #[cfg(all(
+        not(target_family = "wasm"),
+        feature = "mimalloc",
+        not(feature = "plain-counts")
+    ))]
+    crate::born::on_free();
+}
+
 impl<T> Shared<T> {
     /// A new node holding `value`, with a count of one.
     #[inline]
     pub fn new(value: T) -> Self {
-        let node = Box::new(Node {
-            count: AtomicUsize::new(1),
-            value,
-        });
-        Self::from_node(NonNull::from(Box::leak(node)))
+        let layout = Layout::new::<Node<T>>();
+        // SAFETY: the node holds its count, so it is never zero-sized.
+        let memory = unsafe { alloc_counted(layout) } as *mut Node<T>;
+        let Some(ptr) = NonNull::new(memory) else {
+            alloc::handle_alloc_error(layout)
+        };
+        // SAFETY: fresh memory laid out for a `Node<T>`, freed as a `Box`
+        // of one (through the global allocator, see `alloc_counted`).
+        unsafe {
+            ptr.as_ptr().write(Node {
+                count: AtomicUsize::new(1),
+                value,
+            })
+        };
+        Self::from_node(ptr)
+    }
+
+    /// The address of the value, handing this owner's count to the caller,
+    /// as `Arc::into_raw`; [`Shared::from_raw`] takes it back.
+    #[inline]
+    pub(crate) fn into_raw(this: Self) -> *const T {
+        let ptr = Self::as_ptr(&this);
+        std::mem::forget(this);
+        ptr
+    }
+
+    /// The owner [`Shared::into_raw`] gave up, back, as `Arc::from_raw`.
+    ///
+    /// # Safety
+    /// `ptr` came from `Shared::<T>::into_raw`, and the count it handed on
+    /// is the caller's to give back.
+    #[inline]
+    pub(crate) unsafe fn from_raw(ptr: *const T) -> Self {
+        // SAFETY: the value sits at its offset in the node (`repr(C)`).
+        let node = unsafe { ptr.byte_sub(Self::VALUE_OFFSET) } as *mut Node<T>;
+        Self::from_node(unsafe { NonNull::new_unchecked(node) })
+    }
+
+    /// Where the value sits in the node: past the count, aligned for `T`.
+    const VALUE_OFFSET: usize = {
+        let align = std::mem::align_of::<T>();
+        let count = std::mem::size_of::<AtomicUsize>();
+        count.div_ceil(align) * align
+    };
+
+    /// The count of the node whose value is at `ptr`, for freezing it (see
+    /// `crate::freeze`).
+    ///
+    /// # Safety
+    /// `ptr` came from `Shared::<T>::into_raw`, and the node is alive for
+    /// `'a`.
+    #[cfg(not(feature = "plain-counts"))]
+    #[inline]
+    pub(crate) unsafe fn count_of_raw<'a>(ptr: *const T) -> &'a AtomicUsize {
+        // SAFETY: as in `from_raw`; the count is the node's first word.
+        unsafe { &*(ptr.byte_sub(Self::VALUE_OFFSET) as *const AtomicUsize) }
     }
 }
 
@@ -213,6 +303,7 @@ impl<T> Shared<T> {
         let ptr = this.ptr;
         std::mem::forget(this);
         // This was the last owner: take the node back.
+        before_free();
         let node = unsafe { Box::from_raw(ptr.as_ptr()) };
         Ok(node.value)
     }
@@ -249,6 +340,7 @@ impl<T: ?Sized> Drop for Shared<T> {
         if !crate::counts::dec(&self.node().count) {
             return;
         }
+        before_free();
         drop(unsafe { Box::from_raw(self.ptr.as_ptr()) });
     }
 }
@@ -322,7 +414,7 @@ impl Shared<str> {
         let len = parts().map(str::len).sum::<usize>();
         let (layout, offset) = str_node_layout(len);
         unsafe {
-            let memory = alloc::alloc(layout);
+            let memory = alloc_counted(layout);
             if memory.is_null() {
                 alloc::handle_alloc_error(layout);
             }
@@ -355,6 +447,7 @@ impl Shared<str> {
         let len = this.len();
         let (old, offset) = str_node_layout(len);
         let (new, _) = str_node_layout(len.checked_add(tail.len()).expect("a str fits in isize"));
+        before_free();
         unsafe {
             let memory = alloc::realloc(this.ptr.as_ptr().cast::<u8>(), old, new.size());
             if memory.is_null() {

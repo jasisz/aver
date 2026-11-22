@@ -14,6 +14,17 @@
 //! the ordinary heap, and nothing about counts changes: a clone or a drop
 //! tests the sign bit of the count as before.
 //!
+//! The other counted nodes the owner makes meanwhile, those of
+//! [`crate::Shared`] (strings, list and map nodes, large integers) and of
+//! the blocks of vectors and flat lists, go to a second born heap, whose
+//! blocks all begin with a 64-bit count, and the same scan freezes them.
+//! Without it the scan froze the nodes of recursive sums and left counted
+//! what they hold: the walk stops at a frozen node, so a string held by
+//! every name of a namespace stayed counted, and every thread that copied
+//! one of those names wrote to the same count. Only the owner allocates
+//! there, and only once it is the owner: a node of this kind that another
+//! thread makes is allocated as usual and ends nothing.
+//!
 //! A program that reads a large structure before it forks (a checker
 //! building its environment) thereby skips a walk that chases a pointer per
 //! node, and freezes nodes the walk did not reach, such as those behind a
@@ -35,8 +46,11 @@
 //!   to mimalloc only through the code of [`crate::thin::Thin`] that frees a
 //!   node: the drop of its last owner (`drop_slow`, which frees every node
 //!   that drop leaves without owners), a `take` that empties it, and a lazy
-//!   call that moves a node's fields out (`fill_with`). Each calls
-//!   [`on_free`] first: while the born phase lasts, a thread other than the
+//!   call that moves a node's fields out (`fill_with`). A block of the
+//!   second born heap goes back only through the code of [`crate::Shared`]
+//!   and of `Block` that frees or moves a node: the drop of its last owner,
+//!   `try_unwrap`, and a `realloc` that grows a node its only owner holds
+//!   (`Shared::append`, `Block::grow`). Each calls [`on_free`] first: while the born phase lasts, a thread other than the
 //!   owner ends it before anything is given back. Ending it is a Dekker
 //!   handshake with the scan on `ENDED` and `SCANNING` (sequentially
 //!   consistent): either the scan sees `ENDED` and does not run, or the
@@ -52,6 +66,13 @@
 //! - The owner itself does not free while it scans, and if it exits before
 //!   the first fork the born phase ends with it, so a later thread that gets
 //!   the same thread pointer cannot scan.
+//! - A node of the second heap that its only owner, on another thread,
+//!   changes in place (`get_mut`) or frees after its count read 1 while the
+//!   scan freezes it: the scan writes only the count, the owner only the
+//!   value, and the free waits for the scan in [`on_free`]. Freezing a node
+//!   no other thread holds does nothing but keep it: the owner frees it
+//!   still, or the next write copies it, as for any node with several
+//!   owners.
 //! - A node another thread still decrements meanwhile: the scan sets the
 //!   mark with a compare-and-swap from the count it read, nonzero and below
 //!   the mark. If the last decrement comes first, the swap fails and the
@@ -71,15 +92,18 @@
 //! # Why the leak is bounded
 //!
 //! A node alive at the fork that no thread uses afterwards is never freed:
-//! the leak is at most what the owner's nodes alive at the first fork take,
-//! once per process. A program that never forks never scans and leaks
-//! nothing.
+//! the leak is at most what the owner's counted nodes alive at the first
+//! fork take, in both heaps, once per process. A node the owner still
+//! changes in place after the fork (a string it appends to, a vector it
+//! pushes onto) is copied by the first such change, as a shared one is, and
+//! the copy is changed in place from then on. A program that never forks
+//! never scans and leaks nothing.
 
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
-use crate::counts::frozen::F32;
+use crate::counts::frozen::{F32, F64};
 
 #[repr(C)]
 struct HeapArea {
@@ -126,8 +150,13 @@ static OWNER: AtomicUsize = AtomicUsize::new(0);
 static WATCH: AtomicUsize = AtomicUsize::new(0);
 /// The born heap, made with the first node.
 static HEAP: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+/// The second born heap, of nodes whose count is a 64-bit word at their
+/// front ([`alloc64`]), made with the first such node of the owner.
+static HEAP64: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 /// How many nodes the scan froze, for tests.
 static SCANNED: AtomicUsize = AtomicUsize::new(0);
+/// How many of them were in the second heap, for tests.
+static SCANNED64: AtomicUsize = AtomicUsize::new(0);
 
 /// A word unique to the running thread among the live ones, read without a
 /// call where the platform keeps one in a register.
@@ -288,6 +317,54 @@ pub fn alloc(size: usize) -> *mut u8 {
     }
 }
 
+/// The second born heap, made on the owner's first use; null when the born
+/// heap was never made (the global allocator is not mimalloc, or the owner
+/// made no node of a recursive sum yet).
+#[cold]
+#[inline(never)]
+fn heap64() -> *mut c_void {
+    let h = HEAP64.load(Ordering::Acquire);
+    if !h.is_null() || HEAP.load(Ordering::Acquire).is_null() {
+        return h;
+    }
+    // SAFETY: a new heap, used by the owner alone (only the owner calls
+    // this, see `alloc64`).
+    let new = unsafe { mi_heap_new() };
+    HEAP64.store(new, Ordering::Release);
+    new
+}
+
+/// Memory for a counted node of `size` bytes aligned to `align`, whose
+/// first word is its 64-bit count once it is written (a [`crate::Shared`]
+/// node or a vector's block), in the second born heap; null when the node
+/// is to be allocated as usual. Only the owner gets memory here; any other
+/// thread, or the owner before it made a node of a recursive sum, gets
+/// null and changes nothing.
+#[inline(always)]
+pub fn alloc64(size: usize, align: usize) -> *mut u8 {
+    if !ACTIVE.load(Ordering::Relaxed) || align > 16 || align > size {
+        return std::ptr::null_mut();
+    }
+    if OWNER.load(Ordering::Relaxed) != thread_word() {
+        return std::ptr::null_mut();
+    }
+    let mut h = HEAP64.load(Ordering::Relaxed);
+    if h.is_null() {
+        h = heap64();
+        if h.is_null() {
+            return std::ptr::null_mut();
+        }
+    }
+    // SAFETY: the owner allocating in its heap.
+    unsafe {
+        if size <= SMALL {
+            mi_heap_malloc_small(h, size).cast()
+        } else {
+            mi_heap_malloc(h, size).cast()
+        }
+    }
+}
+
 /// Called by the global allocator before it gives back a block: a thread
 /// other than the owner ends the born phase first (see the module docs).
 #[inline(always)]
@@ -296,6 +373,35 @@ pub fn on_free() {
     if owner != 0 && owner != thread_word() {
         end();
     }
+}
+
+/// [`freeze_block`] for a block of the second born heap, whose count is
+/// the 64-bit word at its front.
+extern "C" fn freeze_block64(
+    _heap: *const c_void,
+    _area: *const HeapArea,
+    block: *mut c_void,
+    _size: usize,
+    frozen: *mut c_void,
+) -> bool {
+    if block.is_null() {
+        return true;
+    }
+    // SAFETY: every block of the second born heap holds a counted node,
+    // whose first word is its count, and no block is given back meanwhile.
+    let count = unsafe { &*(block as *const AtomicUsize) };
+    let mut now = count.load(Ordering::Relaxed);
+    while now != 0 && now < F64 {
+        match count.compare_exchange_weak(now, now | F64, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => {
+                // SAFETY: `frozen` is the scan's counter.
+                unsafe { *(frozen as *mut usize) += 1 };
+                break;
+            }
+            Err(seen) => now = seen,
+        }
+    }
+    true
 }
 
 extern "C" fn freeze_block(
@@ -326,7 +432,7 @@ extern "C" fn freeze_block(
 }
 
 /// Ends the born phase at the first fork: on the owner, every node alive
-/// in the born heap is frozen first. Returns how many.
+/// in the born heaps is frozen first. Returns how many.
 pub fn freeze_born() -> usize {
     if !ACTIVE.load(Ordering::Acquire) {
         return 0;
@@ -342,6 +448,14 @@ pub fn freeze_born() -> usize {
         // SAFETY: the owner visits its heap; no block of it is given back
         // or allocated meanwhile (see the module docs).
         unsafe { mi_heap_visit_blocks(h, true, freeze_block, (&raw mut frozen).cast()) };
+        let h64 = HEAP64.load(Ordering::Acquire);
+        if !h64.is_null() {
+            let mut frozen64 = 0usize;
+            // SAFETY: as above, for the second heap.
+            unsafe { mi_heap_visit_blocks(h64, true, freeze_block64, (&raw mut frozen64).cast()) };
+            SCANNED64.fetch_add(frozen64, Ordering::Relaxed);
+            frozen += frozen64;
+        }
         SCANNED.fetch_add(frozen, Ordering::Relaxed);
     }
     SCANNING.store(false, Ordering::SeqCst);
@@ -354,6 +468,12 @@ pub fn freeze_born() -> usize {
 #[doc(hidden)]
 pub fn scanned() -> usize {
     SCANNED.load(Ordering::Relaxed)
+}
+
+/// How many nodes of the second heap the scan froze, for tests.
+#[doc(hidden)]
+pub fn scanned64() -> usize {
+    SCANNED64.load(Ordering::Relaxed)
 }
 
 /// Whether the born phase is still on, for tests.

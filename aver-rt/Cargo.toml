@@ -81,6 +81,10 @@ harness = false
 name = "born_frozen_race"
 harness = false
 
+[[test]]
+name = "born_frozen_held"
+harness = false
+
 # On wasm32-unknown-unknown:
 # - `rand` pulls in `getrandom`, which needs the `js` feature to use
 #   the browser's crypto API. Configuring getrandom here (not behind

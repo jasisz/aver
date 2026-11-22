@@ -273,8 +273,10 @@ fn count_reaches_sign_tail(n: &AverInt, value: &AverInt) -> bool {
 ///
 /// The word is odd for an inline integer `n`, stored as `2n + 1`, which covers
 /// `[-2^62, 2^62)`. It is even for any other value: then it is the address of
-/// a heap `BigInt` that this value owns, allocated in an `Arc` (so aligned to at
-/// least 8, its lowest bit is 0). Neither form is zero, so `Option<AverInt>`
+/// a heap `BigInt` that this value owns, allocated in a [`crate::Shared`] (so
+/// aligned to at least 8, its lowest bit is 0). Its count is the runtime's own,
+/// so a large integer a frozen value holds is frozen too (see
+/// `crate::freeze`): copies of it on many threads write no count. Neither form is zero, so `Option<AverInt>`
 /// takes the zero word for `None` and is one word too.
 ///
 /// Odd for inline values keeps every fast path a word operation: both
@@ -288,7 +290,8 @@ mod repr {
     use core::num::NonZeroU64;
 
     use num_bigint::BigInt;
-    use std::sync::Arc;
+
+    use crate::Shared;
 
     /// The smallest value stored inline.
     pub(super) const INLINE_MIN: i64 = -(1 << 62);
@@ -297,10 +300,10 @@ mod repr {
 
     pub(super) struct Repr {
         word: NonZeroU64,
-        // An even word owns one count of an `Arc<BigInt>`: `Send`, `Sync`
+        // An even word owns one count of a `Shared<BigInt>`: `Send`, `Sync`
         // and drop check follow from it. A copy shares the integer, so
         // passing a large value around costs a count, not its digits.
-        _owns: PhantomData<Arc<BigInt>>,
+        _owns: PhantomData<Shared<BigInt>>,
     }
 
     impl Repr {
@@ -332,8 +335,8 @@ mod repr {
         /// Box `b`. Canonical form wants `b` outside the inline range; that is
         /// the caller's rule, not a condition of memory safety.
         pub(super) fn from_big(b: BigInt) -> Self {
-            let address = Arc::into_raw(Arc::new(b)).expose_provenance() as u64;
-            debug_assert!(address & 1 == 0, "a BigInt in an Arc is aligned");
+            let address = Shared::into_raw(Shared::new(b)).expose_provenance() as u64;
+            debug_assert!(address & 1 == 0, "a BigInt in a Shared is aligned");
             Repr {
                 word: NonZeroU64::new(address).expect("a Box address is not null"),
                 _owns: PhantomData,
@@ -363,6 +366,27 @@ mod repr {
             Some(unsafe { &*self.pointer() })
         }
 
+        /// The count of the heap integer and the integer, when the word is
+        /// an address, for freezing it (see `crate::freeze`).
+        #[cfg(not(feature = "plain-counts"))]
+        pub(super) fn big_count(&self) -> Option<(&core::sync::atomic::AtomicUsize, &BigInt)> {
+            if self.is_inline() {
+                return None;
+            }
+            // SAFETY: as in `big`.
+            Some(unsafe { (Shared::count_of_raw(self.pointer()), &*self.pointer()) })
+        }
+
+        /// The count of the heap integer, 0 for an inline value; for tests.
+        pub(super) fn big_count_value(&self) -> usize {
+            if self.is_inline() {
+                return 0;
+            }
+            // SAFETY: as in `big`; the clone is given back at once.
+            let this = ManuallyDrop::new(unsafe { Shared::from_raw(self.pointer()) });
+            Shared::strong_count(&this)
+        }
+
         /// The heap integer by value, or the inline value's word.
         pub(super) fn into_big(self) -> Result<BigInt, i64> {
             let this = ManuallyDrop::new(self);
@@ -371,8 +395,8 @@ mod repr {
             }
             // SAFETY: as in `big`; `this` is never dropped, so its count is
             // given up once, here.
-            let shared = unsafe { Arc::from_raw(this.pointer()) };
-            Ok(Arc::try_unwrap(shared).unwrap_or_else(|shared| (*shared).clone()))
+            let shared = unsafe { Shared::from_raw(this.pointer()) };
+            Ok(Shared::try_unwrap(shared).unwrap_or_else(|shared| (*shared).clone()))
         }
     }
 
@@ -408,7 +432,7 @@ mod repr {
         #[inline(never)]
         fn drop_big(&mut self) {
             // SAFETY: as in `big`; drop runs once, and only for a boxed word.
-            drop(unsafe { Arc::from_raw(self.pointer()) });
+            drop(unsafe { Shared::from_raw(self.pointer()) });
         }
 
         #[cold]
@@ -416,7 +440,8 @@ mod repr {
         fn clone_big(&self) -> Self {
             // SAFETY: as in `big`; called only for a boxed word, whose count
             // this value holds, so the integer is alive.
-            unsafe { Arc::increment_strong_count(self.pointer()) };
+            let this = ManuallyDrop::new(unsafe { Shared::from_raw(self.pointer()) });
+            std::mem::forget(Shared::clone(&this));
             Repr {
                 word: self.word,
                 _owns: PhantomData,
@@ -427,6 +452,22 @@ mod repr {
 
 use repr::{INLINE_MAX, INLINE_MIN, Repr};
 
+/// A large integer is one counted node (its digits are a plain buffer it
+/// owns): frozen as a leaf node. An inline one has no node.
+#[cfg(not(feature = "plain-counts"))]
+impl crate::freeze::Freeze for AverInt {
+    #[inline]
+    fn freeze(&self, f: &mut crate::freeze::Freezer) -> bool {
+        match self.0.big_count() {
+            None => true,
+            Some((count, big)) => {
+                let bytes = 8 + size_of::<BigInt>() + (big.bits() as usize).div_ceil(8);
+                f.node64(count, bytes, |_| true)
+            }
+        }
+    }
+}
+
 const _: () = assert!(core::mem::size_of::<AverInt>() == 8);
 const _: () = assert!(core::mem::size_of::<Option<AverInt>>() == 8);
 
@@ -436,6 +477,26 @@ const _: () = assert!(core::mem::size_of::<Option<AverInt>>() == 8);
 /// module docs). Always construct/renormalize through this type's API.
 #[derive(Clone)]
 pub struct AverInt(Repr);
+
+impl AverInt {
+    /// This value, kept for the rest of the process (an integer literal
+    /// parsed into a static, see [`crate::int_lit!`]): a large one is frozen
+    /// (see `crate::freeze`), so copies of it on many threads write no
+    /// count.
+    /// The count of the heap integer, 0 for an inline one; for tests.
+    pub(crate) fn big_count_for_tests(&self) -> usize {
+        self.0.big_count_value()
+    }
+
+    #[doc(hidden)]
+    pub fn kept(self) -> Self {
+        #[cfg(not(feature = "plain-counts"))]
+        crate::freeze::kept(|f| {
+            let _ = crate::freeze::Freeze::freeze(&self, f);
+        });
+        self
+    }
+}
 
 /// One value read either way: inline, or the heap integer.
 enum View<'a> {
