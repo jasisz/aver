@@ -7106,9 +7106,35 @@ fn emit_mir_match_with(
     // cloned out.
     let by_ref = match_on_ref || matches!(shape, ViewShape::Tuple(_));
     debug_assert!(matches!(path, MatchPath::Generic { by_ref: b } if b == by_ref));
+    // A match on a string against literals matches its `&str`. Where an
+    // arm binds the whole subject by name, that name gets the string itself,
+    // moved out of a `let` the subject is bound by first (or copied off a
+    // borrowed subject), never the `&str` the literals are matched against.
+    let string_match = !viewed && needs_as_str && has_string_literal_patterns(&arms);
+    let names_subject = string_match
+        && arms
+            .iter()
+            .any(|arm| matches!(arm.pattern, ResolvedPattern::Ident(_)));
+    let string_temp = generated_ident("subject");
+    let (subj, bound) = match names_subject {
+        true => (
+            string_temp.clone(),
+            Some(match bound {
+                Some(bound) => format!("{bound} let {string_temp} = {subj};"),
+                None => format!("let {string_temp} = {subj};"),
+            }),
+        ),
+        false => (subj, bound),
+    };
+    let bind = |code: String| match &bound {
+        Some(bound) => format!("{{ {bound} {code} }}"),
+        None => code,
+    };
     let match_expr = if viewed {
         shape.scrutinee(&subject_temp, by_ref)
-    } else if needs_as_str && has_string_literal_patterns(&arms) {
+    } else if names_subject && borrowed_subject {
+        format!("&**{subj}")
+    } else if string_match {
         format!("&*{}", subj)
     } else {
         subj.clone()
@@ -7119,9 +7145,17 @@ fn emit_mir_match_with(
         // A name bound at a viewed place would bind the view: it matches `_`
         // and is bound to the value it stands for instead.
         let mut whole = Vec::new();
-        let pattern = match viewed {
-            true => shape.unbind(&arm.pattern, &subject_temp, by_ref, &mut whole),
-            false => arm.pattern.clone(),
+        let pattern = match (viewed, &arm.pattern) {
+            (true, _) => shape.unbind(&arm.pattern, &subject_temp, by_ref, &mut whole),
+            (false, ResolvedPattern::Ident(name)) if names_subject => {
+                let name = aver_name_to_rust(name);
+                whole.push(match borrowed_subject {
+                    true => format!("let {name} = aver_rt::AverStr::clone({subj});"),
+                    false => format!("let {name} = {subj};"),
+                });
+                ResolvedPattern::Wildcard
+            }
+            (false, _) => arm.pattern.clone(),
         };
         let (pat, guard) = emit_pattern_with_guard(&pattern, needs_as_str, codegen);
         let pat = match guard {
