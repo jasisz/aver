@@ -29,7 +29,7 @@ pub fn byName(
     g @ _: &crate::proof_std::aver_generated::kernel::proof::Goal,
 ) -> Result<crate::proof_std::aver_generated::kernel::proof::Proof, AverStr> {
     crate::proof_std::cancel_checkpoint();
-    match &*plan.clone() {
+    match &*plan {
         "cases" => crate::proof_std::aver_generated::kernel::std::cases(g),
         _ => Err(aver_rt::AverStr::from({
             let mut __b = {

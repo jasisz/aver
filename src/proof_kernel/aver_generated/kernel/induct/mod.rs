@@ -962,8 +962,8 @@ pub fn recursive(
                                 let __t = s;
                                 match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(____pat2_fields) => {
-            let __pat2 = ____pat2_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::induct::onParts(d, ds, { let __arg16 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg16, &__pat2, aver_rt::AverInt::from_i64(0)) }, arms)
+            let __pat2 = &____pat2_fields.0;
+            crate::proof_kernel::aver_generated::kernel::induct::onParts(d, ds, { let __arg16 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg16, __pat2, aver_rt::AverInt::from_i64(0)) }, arms)
         },
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(____pat3_fields) => {
             let __pat3 = ____pat3_fields.0.clone();
@@ -1062,8 +1062,8 @@ pub fn guarded(
             let inner = &____pat2_fields.1;
             { let __t = __pat2; match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__p_fields) => {
-            let p = __p_fields.0.clone();
-            crate::proof_kernel::aver_generated::kernel::induct::onParts(d, ds, { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg13, &p, aver_rt::AverInt::from_i64(0)) }, inner)
+            let p = &__p_fields.0;
+            crate::proof_kernel::aver_generated::kernel::induct::onParts(d, ds, { let __arg13 @ _ = crate::proof_kernel::aver_generated::kernel::proof::givenNames(&d.params); crate::proof_kernel::aver_generated::kernel::induct::indexOf(__arg13, p, aver_rt::AverInt::from_i64(0)) }, inner)
         },
         _ => {
             Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity(56usize); __b.push_display(&(d.name)); __b }; __b.push_str(&::aver_rt::str_lit!(" recurses outside a match on a parameter")); __b }))
@@ -1409,9 +1409,9 @@ pub fn stopsAt(
         let __t = guard;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(____pat0_fields) => {
-                let __pat0 = ____pat0_fields.0.clone();
+                let __pat0 = &____pat0_fields.0;
                 {
-                    let __dispatch_subject = __pat0;
+                    let __dispatch_subject = &**__pat0;
                     if &*__dispatch_subject == "<=" {
                         Some(true)
                     } else {
@@ -1554,7 +1554,7 @@ pub fn descends(
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(
                     ____pat1_fields,
                 ) => {
-                    let __pat1 = ____pat1_fields.0.clone();
+                    let __pat1 = &____pat1_fields.0;
                     let __pat2 = &____pat1_fields.1;
                     let __pat3 = &____pat1_fields.2;
                     {
@@ -1565,11 +1565,11 @@ pub fn descends(
                                 let __t = __pat2;
                                 match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__q_fields) => {
-            let q = __q_fields.0.clone();
+            let q = &__q_fields.0;
             { let __t = __pat3; match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(____pat4_fields) => {
             let __pat4 = ____pat4_fields.0.clone();
-            { let __int_match_subject = __pat4; if __int_match_subject == aver_rt::AverInt::from_i64(1) { (&(q) == p) } else { false } }
+            { let __int_match_subject = __pat4; if __int_match_subject == aver_rt::AverInt::from_i64(1) { (q == p) } else { false } }
         },
         _ => {
             false
@@ -1589,9 +1589,9 @@ pub fn descends(
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(
                     ____pat5_fields,
                 ) => {
-                    let __pat5 = ____pat5_fields.1.clone();
+                    let __pat5 = &____pat5_fields.1;
                     let __pat6 = &____pat5_fields.0;
-                    match &*__pat5 {
+                    match &**__pat5 {
                         "__int_div_euclid" => {
                             let __list_subject = __pat6;
                             match aver_rt::list_uncons(__list_subject) {
@@ -1599,11 +1599,11 @@ pub fn descends(
                                     let __t = __pat7;
                                     match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TVar(__q_fields) => {
-            let q = __q_fields.0.clone();
+            let q = &__q_fields.0;
             { let __list_subject = __pat8; match aver_rt::list_uncons(&__list_subject) { Some((__pat9, __pat10)) => { { let __t = __pat9; match __t.view() {
         crate::proof_kernel::aver_generated::kernel::term::Term__view::TInt(__k_fields) => {
             let k = __k_fields.0.clone();
-            { let __list_subject = __pat10; if __list_subject.is_empty() { ((&(q) == p) & (k >= aver_rt::AverInt::from_i64(2))) } else { false } }
+            { let __list_subject = __pat10; if __list_subject.is_empty() { ((q == p) & (k >= aver_rt::AverInt::from_i64(2))) } else { false } }
         },
         _ => {
             false
@@ -1776,9 +1776,9 @@ pub fn shorter(
                 crate::proof_kernel::aver_generated::kernel::term::Term__view::TCall(
                     __g_fields,
                 ) => {
-                    let g = __g_fields.1.clone();
+                    let g = &__g_fields.1;
                     let xs = &__g_fields.0;
-                    return (((g != m.f)
+                    return (((g != &(m.f))
                         || ((aver_rt::AverInt::from_i64(((xs).len() as i64)) == m.n) && {
                             let __arg26 @ _ =
                                 crate::proof_kernel::aver_generated::kernel::induct::nthTerm(
@@ -2555,9 +2555,9 @@ pub fn smaller(
                     crate::proof_kernel::aver_generated::kernel::term::Term__view::TBi(
                         ____pat1_fields,
                     ) => {
-                        let __pat1 = ____pat1_fields.1.clone();
+                        let __pat1 = &____pat1_fields.1;
                         let __pat2 = &____pat1_fields.0;
-                        match &*__pat1 {
+                        match &**__pat1 {
                             "List.drop" => {
                                 let __list_subject = __pat2;
                                 match aver_rt::list_uncons(__list_subject) {

@@ -60,3 +60,51 @@ fn frozen_values_are_shared_by_threads_and_never_freed() {
     at_first_fork(&SITE, |_| ran = true);
     assert!(!ran);
 }
+
+#[test]
+fn a_large_integer_is_frozen_with_what_holds_it() {
+    use aver_rt::{AverInt, NodeCountForTests};
+    use std::str::FromStr;
+    let big = AverInt::from_str("-98765432109876543210987654321098765432109876543210").unwrap();
+    let small = AverInt::from(5i64);
+    let held = Shared::new((big.clone(), small.clone()));
+    assert_eq!(big.node_count_for_tests(), 2);
+    let mut f_ran = false;
+    aver_rt::freeze::kept(|f| {
+        f_ran = true;
+        assert!(f.freeze(&held));
+    });
+    assert!(f_ran);
+    let frozen = big.node_count_for_tests();
+    assert!(
+        frozen >= 1 << 63,
+        "the integer's node is frozen: {frozen:#x}"
+    );
+    assert_eq!(
+        small.node_count_for_tests(),
+        0,
+        "an inline integer has no node"
+    );
+    std::thread::scope(|s| {
+        for _ in 0..8 {
+            s.spawn(|| {
+                for _ in 0..10_000 {
+                    let copy = held.0.clone();
+                    assert_eq!(copy, big);
+                }
+            });
+        }
+    });
+    assert_eq!(big.node_count_for_tests(), frozen, "no thread counted it");
+    // Taken apart by value, a frozen integer is copied, not moved out.
+    let one = AverInt::from(1i64);
+    assert_eq!(big.add(&one).sub(&one), big);
+}
+
+#[test]
+fn an_integer_literal_in_a_static_is_frozen() {
+    use aver_rt::NodeCountForTests;
+    let lit: &'static aver_rt::AverInt = aver_rt::int_lit!("123456789012345678901234567890");
+    assert!(lit.node_count_for_tests() >= 1 << 63);
+    assert_eq!(lit.to_string(), "123456789012345678901234567890");
+}

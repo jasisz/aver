@@ -2051,8 +2051,8 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                     crate::aver_generated::domain::value::Val__view::ValStr(__x_fields),
                     crate::aver_generated::domain::value::Val__view::ValStr(__y_fields),
                 ) => {
-                    let x = __x_fields.0.clone();
-                    let y = __y_fields.0.clone();
+                    let x = &__x_fields.0;
+                    let y = &__y_fields.0;
                     return (x == y);
                 }
                 (
@@ -2067,8 +2067,8 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                     crate::aver_generated::domain::value::Val__view::ValFnRef(__x_fields),
                     crate::aver_generated::domain::value::Val__view::ValFnRef(__y_fields),
                 ) => {
-                    let x = __x_fields.0.clone();
-                    let y = __y_fields.0.clone();
+                    let x = &__x_fields.0;
+                    let y = &__y_fields.0;
                     return (x == y);
                 }
                 (
@@ -2167,9 +2167,9 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                     crate::aver_generated::domain::value::Val__view::ValRecord(__n_fields),
                     crate::aver_generated::domain::value::Val__view::ValRecord(__m_fields),
                 ) => {
-                    let n = __n_fields.0.clone();
+                    let n = &__n_fields.0;
                     let fs = &__n_fields.1;
-                    let m = __m_fields.0.clone();
+                    let m = &__m_fields.0;
                     let gs = &__m_fields.1;
                     if (n == m) {
                         {
@@ -2215,9 +2215,9 @@ pub fn valEq(a @ _: &Val, b @ _: &Val) -> bool {
                     crate::aver_generated::domain::value::Val__view::ValVariant(__n_fields),
                     crate::aver_generated::domain::value::Val__view::ValVariant(__m_fields),
                 ) => {
-                    let n = __n_fields.1.clone();
+                    let n = &__n_fields.1;
                     let fs = &__n_fields.2;
-                    let m = __m_fields.1.clone();
+                    let m = &__m_fields.1;
                     let gs = &__m_fields.2;
                     if (n == m) {
                         return crate::aver_generated::domain::value::valsEq(fs, gs);

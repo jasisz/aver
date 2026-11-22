@@ -226,10 +226,10 @@ pub fn plain(
 
 /// The rule with this identifier.
 #[inline]
-pub fn schema(id @ _: AverStr) -> Option<Schema> {
+pub fn schema(id @ _: &AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __dispatch_subject = id.clone();
+        let __dispatch_subject = &**id;
         if &*__dispatch_subject == "bool.and.true_l" {
             {
                 let __arg3 @ _ = aver_rt::AverList::prepend_owned(
@@ -532,14 +532,14 @@ pub fn complement(
 }
 
 /// != on Int as the negation of ==, an Int equality decided by the two orders, == as equality, as reflexive and as symmetric where the type's == is equality, and the product of two nonnegative Ints. A comparison decided by its complement (a > b false gives a <= b true) is a linear step, not a rule.
-pub fn comparisonSchema(id @ _: AverStr) -> Option<Schema> {
+pub fn comparisonSchema(id @ _: &AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let ints @ _ = aver_rt::AverList::from_array([
         crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("a")),
         crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("b")),
     ]);
     {
-        let __dispatch_subject = id.clone();
+        let __dispatch_subject = &**id;
         if &*__dispatch_subject == "int.ne.def" {
             {
                 let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
@@ -797,10 +797,10 @@ pub fn range(
 
 /// Int.div and Int.mod by a divisor that is not 0 as the Euclidean quotient and remainder, and Euclidean division by a positive divisor.
 #[inline]
-pub fn divisionSchema(id @ _: AverStr) -> Option<Schema> {
+pub fn divisionSchema(id @ _: &AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __dispatch_subject = id.clone();
+        let __dispatch_subject = &**id;
         if &*__dispatch_subject == "int.div.ok" {
             Some(crate::proof_kernel::aver_generated::kernel::rules::Schema {
                 binders: aver_rt::AverList::from_array([
@@ -1125,10 +1125,10 @@ pub fn powerOfTwo(
 
 /// The bit-level view of Int, infinite two's complement: complement, a shift left, a low mask 2^n - 1 and a one-bit mask 2^n.
 #[inline]
-pub fn bitsSchema(id @ _: AverStr) -> Option<Schema> {
+pub fn bitsSchema(id @ _: &AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __dispatch_subject = id.clone();
+        let __dispatch_subject = &**id;
         if &*__dispatch_subject == "bits.not" {
             {
                 let __arg1 @ _ = aver_rt::AverList::prepend_owned(
@@ -1445,7 +1445,7 @@ pub fn counted(
 }
 
 /// Each list builtin on an element in front of a list, and on the empty list where it has another argument; List.len([]) and List.reverse([]) are closed, so compute shows them.
-pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
+pub fn listSchema(id @ _: &AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let xa @ _ = {
         let __arg5 @ _ =
@@ -1476,7 +1476,7 @@ pub fn listSchema(id @ _: AverStr) -> Option<Schema> {
         crate::proof_kernel::aver_generated::kernel::rules::i(::aver_rt::str_lit!("n")),
     ]);
     {
-        let __dispatch_subject = id.clone();
+        let __dispatch_subject = &**id;
         if &*__dispatch_subject == "list.concat.nil" {
             {
                 let __arg8 @ _ = aver_rt::AverList::prepend_owned(
@@ -1786,7 +1786,7 @@ pub fn mb(
 }
 
 /// Each Map read on the empty map and on a set: at the key set, at another key, and the size by membership.
-pub fn mapSchema(id @ _: AverStr) -> Option<Schema> {
+pub fn mapSchema(id @ _: &AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let set @ _ = {
         let __arg6 @ _ = aver_rt::AverList::from_array([
@@ -1828,7 +1828,7 @@ pub fn mapSchema(id @ _: AverStr) -> Option<Schema> {
         crate::proof_kernel::aver_generated::kernel::rules::key(::aver_rt::str_lit!("k2")),
     ]);
     {
-        let __dispatch_subject = id.clone();
+        let __dispatch_subject = &**id;
         if &*__dispatch_subject == "map.get.empty" {
             {
                 let __arg10 @ _ = aver_rt::AverList::prepend_owned(
@@ -2111,7 +2111,7 @@ pub fn inRange(
 }
 
 /// A vector as the list it holds; reads out of range; a read and the length after a write; a literal-size Vector.new.
-pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
+pub fn vectorSchema(id @ _: &AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let len @ _ = {
         let __arg6 @ _ = aver_rt::AverList::prepend_owned(
@@ -2156,7 +2156,7 @@ pub fn vectorSchema(id @ _: AverStr) -> Option<Schema> {
         crate::proof_kernel::aver_generated::kernel::rules::any(::aver_rt::str_lit!("x")),
     ]);
     {
-        let __dispatch_subject = id.clone();
+        let __dispatch_subject = &**id;
         if &*__dispatch_subject == "vector.to_list.of_list" {
             {
                 let __arg9 @ _ = aver_rt::AverList::prepend_owned(
@@ -2431,7 +2431,7 @@ pub fn picked(
 
 /// Int.min and Int.max by a <= b, Int.abs by a < 0; List.contains on [], on an element in front that the value looked for is (found) and past one it is not, by y == x as the builtin compares. Both read == only at a type whose == is equality, where x == x is true of every value.
 #[inline]
-pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
+pub fn pickSchema(id @ _: &AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let le @ _ = crate::proof_kernel::aver_generated::kernel::term::Term::TOp(
         crate::proof_kernel::aver_generated::kernel::term::Term__TOp(
@@ -2486,7 +2486,7 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
         )
     };
     {
-        let __dispatch_subject = id.clone();
+        let __dispatch_subject = &**id;
         if &*__dispatch_subject == "int.min.le" {
             {
                 let __arg8 @ _ = aver_rt::AverList::from_array([
@@ -2667,7 +2667,7 @@ pub fn pickSchema(id @ _: AverStr) -> Option<Schema> {
 
 /// Option.withDefault and Result.withDefault on each constructor: the value a Some or an Ok holds, the default d for None or an Err.
 #[inline]
-pub fn defaultSchema(id @ _: AverStr) -> Option<Schema> {
+pub fn defaultSchema(id @ _: &AverStr) -> Option<Schema> {
     crate::proof_kernel::cancel_checkpoint();
     let err @ _ = {
         let __arg2 @ _ = crate::proof_kernel::aver_generated::kernel::term::Ty::TyVar(
@@ -2679,7 +2679,7 @@ pub fn defaultSchema(id @ _: AverStr) -> Option<Schema> {
         crate::proof_kernel::aver_generated::kernel::term::typed(::aver_rt::str_lit!("e"), __arg2)
     };
     {
-        let __dispatch_subject = id;
+        let __dispatch_subject = &**id;
         if &*__dispatch_subject == "option.with_default.some" {
             {
                 let __arg3 @ _ = aver_rt::AverList::from_array([

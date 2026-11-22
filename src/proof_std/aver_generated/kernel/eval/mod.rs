@@ -166,7 +166,7 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
                 ))
             }
             crate::proof_std::aver_generated::kernel::term::Term__view::TOp(__o_fields) => {
-                let o = __o_fields.0.clone();
+                let o = &__o_fields.0;
                 let a = &__o_fields.1;
                 let b = &__o_fields.2;
                 {
@@ -175,15 +175,15 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
                         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(
                             __c_fields,
                         ) => {
-                            let c = __c_fields.1.clone();
+                            let c = &__c_fields.1;
                             let xs = &__c_fields.0;
                             {
                                 let __t = b;
                                 match __t.view() {
         crate::proof_std::aver_generated::kernel::term::Term__view::TCtor(__d_fields) => {
-            let d = __d_fields.1.clone();
+            let d = &__d_fields.1;
             let ys = &__d_fields.0;
-            { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(((xs).len() as i64)).add(&aver_rt::AverInt::from_i64(((ys).len() as i64))); crate::proof_std::aver_generated::kernel::eval::sameCtor(&c, &d, __arg14) }; crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
+            { let __arg15 @ _ = { let __arg14 @ _ = aver_rt::AverInt::from_i64(((xs).len() as i64)).add(&aver_rt::AverInt::from_i64(((ys).len() as i64))); crate::proof_std::aver_generated::kernel::eval::sameCtor(c, d, __arg14) }; crate::proof_std::aver_generated::kernel::eval::ctorOp(o, &__arg15) }
         },
         _ => {
             { let __arg16 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(a); { let __arg17 @ _ = crate::proof_std::aver_generated::kernel::eval::evalClosed(b); crate::proof_std::aver_generated::kernel::eval::evalOp(o, &__arg16, &__arg17) } }
@@ -231,7 +231,7 @@ pub fn evalClosed(t @ _: &crate::proof_std::aver_generated::kernel::term::Term) 
 
 /// == or != on two constructor applications, once whether they are the same value is known.
 #[inline(always)]
-pub fn ctorOp(o @ _: AverStr, same @ _: &Option<bool>) -> Option<Val> {
+pub fn ctorOp(o @ _: &AverStr, same @ _: &Option<bool>) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
     match same {
         Some(s @ _) => {
@@ -342,7 +342,7 @@ pub fn negated(a @ _: Option<&Val>) -> Option<Val> {
 }
 
 /// A binary operator on two values.
-pub fn evalOp(o @ _: AverStr, a @ _: &Option<Val>, b @ _: &Option<Val>) -> Option<Val> {
+pub fn evalOp(o @ _: &AverStr, a @ _: &Option<Val>, b @ _: &Option<Val>) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
     {
         let (__pat0, __pat1) = (a.clone(), b.clone());
@@ -383,10 +383,10 @@ pub fn evalOp(o @ _: AverStr, a @ _: &Option<Val>, b @ _: &Option<Val>) -> Optio
 
 /// Int arithmetic and comparison.
 #[inline(always)]
-pub fn intOp(o @ _: AverStr, x @ _: aver_rt::AverInt, y @ _: aver_rt::AverInt) -> Option<Val> {
+pub fn intOp(o @ _: &AverStr, x @ _: aver_rt::AverInt, y @ _: aver_rt::AverInt) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __dispatch_subject = o;
+        let __dispatch_subject = &**o;
         if &*__dispatch_subject == "+" {
             Some(crate::proof_std::aver_generated::kernel::eval::Val::VInt(
                 x.add(&y),
@@ -445,10 +445,10 @@ pub fn intOp(o @ _: AverStr, x @ _: aver_rt::AverInt, y @ _: aver_rt::AverInt) -
 
 /// Equality of Bools.
 #[inline(always)]
-pub fn boolOp(o @ _: AverStr, x @ _: bool, y @ _: bool) -> Option<Val> {
+pub fn boolOp(o @ _: &AverStr, x @ _: bool, y @ _: bool) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __dispatch_subject = o;
+        let __dispatch_subject = &**o;
         if &*__dispatch_subject == "==" {
             Some(crate::proof_std::aver_generated::kernel::eval::Val::VBool(
                 (x == y),
@@ -468,13 +468,13 @@ pub fn boolOp(o @ _: AverStr, x @ _: bool, y @ _: bool) -> Option<Val> {
 /// Equality of lists.
 #[inline(always)]
 pub fn listOp(
-    o @ _: AverStr,
+    o @ _: &AverStr,
     x @ _: &aver_rt::AverList<Val>,
     y @ _: &aver_rt::AverList<Val>,
 ) -> Option<Val> {
     crate::proof_std::cancel_checkpoint();
     {
-        let __dispatch_subject = o;
+        let __dispatch_subject = &**o;
         if &*__dispatch_subject == "==" {
             Some(crate::proof_std::aver_generated::kernel::eval::Val::VBool(
                 (x == y),
@@ -500,7 +500,7 @@ pub fn evalBuiltin(
     {
         let (__pat0, __pat1) = (name.clone(), args.clone());
         {
-            let __dispatch_subject = __pat0;
+            let __dispatch_subject = &*__pat0;
             if &*__dispatch_subject == "Bool.and" {
                 {
                     let __list_subject = __pat1;
@@ -783,7 +783,7 @@ pub fn listBuiltin(
     {
         let (__pat0, __pat1) = (name, args);
         {
-            let __dispatch_subject = __pat0;
+            let __dispatch_subject = &*__pat0;
             if &*__dispatch_subject == "List.prepend" {
                 {
                     let __list_subject = __pat1;

@@ -124,7 +124,9 @@ impl<T> Block<T> {
         let (layout, offset) = layout::<T>(cap);
         debug_assert_eq!(offset, Self::OFFSET);
         // SAFETY: the layout holds the header, so it is never zero-sized.
-        let memory = unsafe { alloc::alloc(layout) };
+        // Before the first fork the owner's block may go to the born heap
+        // of counted nodes (see `crate::born`): its count is its first word.
+        let memory = unsafe { crate::shared::alloc_counted(layout) };
         let Some(ptr) = NonNull::new(memory as *mut Header) else {
             alloc::handle_alloc_error(layout)
         };
@@ -332,6 +334,7 @@ impl<T> Block<T> {
         // SAFETY: the allocation was made with `old`; the new size is that
         // of a layout with the same alignment. Held alone, so moving it
         // leaves no other pointer behind.
+        crate::shared::before_free();
         let memory = unsafe { alloc::realloc(self.ptr.as_ptr() as *mut u8, old, new.size()) };
         let Some(ptr) = NonNull::new(memory as *mut Header) else {
             alloc::handle_alloc_error(new)
@@ -470,6 +473,7 @@ impl<T> Block<T> {
         // the allocation is freed with the layout of its room.
         unsafe {
             ptr::drop_in_place(ptr::slice_from_raw_parts_mut(self.data(), len));
+            crate::shared::before_free();
             alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout::<T>(cap).0);
         }
     }

@@ -955,11 +955,11 @@ pub fn asNonneg(
         let __t = t;
         match __t.view() {
             crate::proof_kernel::aver_generated::kernel::term::Term__view::TOp(____pat0_fields) => {
-                let __pat0 = ____pat0_fields.0.clone();
+                let __pat0 = &____pat0_fields.0;
                 let a = &____pat0_fields.1;
                 let b = &____pat0_fields.2;
                 {
-                    let __dispatch_subject = __pat0;
+                    let __dispatch_subject = &**__pat0;
                     if &*__dispatch_subject == "<" {
                         Some(
                             crate::proof_kernel::aver_generated::kernel::ring::difference(

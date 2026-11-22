@@ -640,7 +640,7 @@ fn __mutual_tco_trampoline_1(
                 mut env @ _,
             ) => {
                 crate::cancel_checkpoint();
-                match &*name.clone() {
+                match &*name {
                     "Option.withDefault" => __MutualTco1::EvalOptionWithDefaultExpr(argExprs, env),
                     _ => {
                         return crate::aver_generated::domain::eval::core::evalCallBuiltin(
@@ -684,7 +684,7 @@ fn __mutual_tco_trampoline_1(
                             let name = __name_fields.1.clone();
                             let vecArgs = __name_fields.0.clone();
                             {
-                                let __dispatch_subject = name;
+                                let __dispatch_subject = &*name;
                                 if &*__dispatch_subject == "Vector.set" {
                                     __MutualTco1::EvalVectorSetWithDefaultExpr(
                                         vecArgs,
@@ -1950,7 +1950,7 @@ fn __mutual_tco_trampoline_3(
                 mut env @ _,
             ) => {
                 crate::cancel_checkpoint();
-                match &*name.clone() {
+                match &*name {
                     "Option.withDefault" => {
                         __MutualTco3::EvalOptionWithDefaultExprSlot(argExprs, env)
                     }
@@ -1997,7 +1997,7 @@ fn __mutual_tco_trampoline_3(
                             let name = __name_fields.1.clone();
                             let vecArgs = __name_fields.0.clone();
                             {
-                                let __dispatch_subject = name;
+                                let __dispatch_subject = &*name;
                                 if &*__dispatch_subject == "Vector.set" {
                                     __MutualTco3::EvalVectorSetWithDefaultExprSlot(
                                         vecArgs,
@@ -3280,7 +3280,7 @@ pub fn evalVar(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "Unit" {
             Ok(crate::aver_generated::domain::value::Val::ValUnit)
         } else {
@@ -4237,11 +4237,11 @@ pub fn evalResolvedSlotDirect(
                 __slot_fields,
             ) => {
                 let slot = __slot_fields.0.clone();
-                let expected = __slot_fields.1.clone();
+                let expected = &__slot_fields.1;
                 let thenLeaf = &__slot_fields.2;
                 let elseLeaf = &__slot_fields.3;
                 crate::aver_generated::domain::eval::fast::fastEqStringBranch(
-                    &calleeEnv, slot, &expected, thenLeaf, elseLeaf,
+                    &calleeEnv, slot, expected, thenLeaf, elseLeaf,
                 )
             }
             crate::aver_generated::domain::ast::FnFastPath__view::FastLtIntSlotsBranch(
@@ -4362,11 +4362,11 @@ pub fn evalResolvedSlotStep(
                 __slot_fields,
             ) => {
                 let slot = __slot_fields.0.clone();
-                let expected = __slot_fields.1.clone();
+                let expected = &__slot_fields.1;
                 let thenLeaf = &__slot_fields.2;
                 let elseLeaf = &__slot_fields.3;
                 match crate::aver_generated::domain::eval::fast::fastEqStringBranch(
-                    &calleeEnv, slot, &expected, thenLeaf, elseLeaf,
+                    &calleeEnv, slot, expected, thenLeaf, elseLeaf,
                 ) {
                     Ok(v @ _) => Ok(
                         crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v),
@@ -5144,7 +5144,7 @@ pub fn evalVarSlot(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "Unit" {
             Ok(crate::aver_generated::domain::value::Val::ValUnit)
         } else {

@@ -4594,7 +4594,7 @@ pub fn userTagSpan() -> aver_rt::AverInt {
 
 /// Map constructor names to tag IDs. Builtins keep fixed tags; user constructors get stable hashed tags.
 #[inline(always)]
-pub fn ctorNameToTag(name @ _: AverStr) -> aver_rt::AverInt {
+pub fn ctorNameToTag(name @ _: &AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let __arg1 @ _ = aver_rt::string_index_build(&name);
     crate::aver_generated::domain::ast::ctorNameToTag__indexed(name, &__arg1)
@@ -4707,10 +4707,10 @@ pub fn lastDotAtOrBefore(name @ _: &AverStr, pos @ _: aver_rt::AverInt) -> aver_
 
 /// Map builtin function names to integer IDs for fast dispatch.
 #[inline(always)]
-pub fn builtinNameToId(name @ _: AverStr) -> Option<aver_rt::AverInt> {
+pub fn builtinNameToId(name @ _: &AverStr) -> Option<aver_rt::AverInt> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name;
+        let __dispatch_subject = &**name;
         if &*__dispatch_subject == "Map.set" {
             Some(aver_rt::AverInt::from_i64(1))
         } else {
@@ -4803,12 +4803,12 @@ pub fn builtinNameToId(name @ _: AverStr) -> Option<aver_rt::AverInt> {
 /// Synthesized indexed worker of `ctorNameToTag`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn ctorNameToTag__indexed(
-    name @ _: AverStr,
+    name @ _: &AverStr,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &**name;
         if &*__dispatch_subject == "Result.Ok" {
             aver_rt::AverInt::from_i64(1)
         } else {
@@ -4823,7 +4823,7 @@ pub fn ctorNameToTag__indexed(
                     } else {
                         aver_rt::AverInt::from_i64(100).add(
                             &crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
-                                &name,
+                                name,
                                 __str_index,
                             ),
                         )

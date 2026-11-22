@@ -196,7 +196,9 @@ macro_rules! int_lit {
     ($digits:literal) => {{
         static VALUE: ::std::sync::OnceLock<$crate::AverInt> = ::std::sync::OnceLock::new();
         VALUE.get_or_init(|| {
-            <$crate::AverInt as ::std::str::FromStr>::from_str($digits).expect("an integer literal")
+            <$crate::AverInt as ::std::str::FromStr>::from_str($digits)
+                .expect("an integer literal")
+                .kept()
         })
     }};
 }
@@ -4374,6 +4376,44 @@ mod tests {
                 edge + 1
             );
         }
+    }
+}
+
+/// The count of a value's own node, for tests of freezing (see
+/// [`freeze`]): 0 for a value that has none (an empty list or map, an
+/// inline integer), past `1 << 63` for a frozen or static one.
+#[doc(hidden)]
+pub trait NodeCountForTests {
+    fn node_count_for_tests(&self) -> usize;
+}
+
+impl NodeCountForTests for AverStr {
+    fn node_count_for_tests(&self) -> usize {
+        Rc::strong_count(&self.0)
+    }
+}
+
+impl NodeCountForTests for AverInt {
+    fn node_count_for_tests(&self) -> usize {
+        self.big_count_for_tests()
+    }
+}
+
+impl<T> NodeCountForTests for AverList<T> {
+    fn node_count_for_tests(&self) -> usize {
+        self.inner.as_ref().map_or(0, Rc::strong_count)
+    }
+}
+
+impl<K, V> NodeCountForTests for AverMap<K, V> {
+    fn node_count_for_tests(&self) -> usize {
+        self.inner.as_ref().map_or(0, Rc::strong_count)
+    }
+}
+
+impl<T> NodeCountForTests for AverVector<T> {
+    fn node_count_for_tests(&self) -> usize {
+        block::Block::strong_count(&self.inner)
     }
 }
 

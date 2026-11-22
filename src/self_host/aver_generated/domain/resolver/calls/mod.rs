@@ -225,7 +225,7 @@ pub fn __lent_resolveCallsInExpr(
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
                 let name = __name_fields.1.clone();
                 let args = &__name_fields.0;
-                match crate::aver_generated::domain::ast::builtinNameToId(name.clone()) {
+                match crate::aver_generated::domain::ast::builtinNameToId(&name) {
                     Some(id @ _) => crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId({
                         let __field0 = id;
                         let __field1 = {

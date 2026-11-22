@@ -1,0 +1,128 @@
+module StringPartsInPlace
+    intent = "Strings matched against literals, compared and read in place: name components of a recursive sum, params and computed subjects, borrowed where only read and owned where kept."
+    effects [Console.print]
+
+type Name
+    Anon
+    Str(Name, String, Int)
+
+fn name2(a: String, b: String) -> Name
+    ? "a.b"
+    Name.Str(Name.Str(Name.Anon, a, 1), b, 2)
+
+fn isNatOp(op: String) -> Bool
+    ? "A binary Nat operation."
+    match op
+        "add" -> true
+        "sub" -> true
+        "mul" -> true
+        _ -> false
+
+fn arityAt(op: String, k: Int) -> Int
+    ? "1 for succ of one, 2 for a binary operation of two."
+    match Bool.and(op == "succ", k == 1)
+        true -> 1
+        false -> match Bool.and(isNatOp(op), k == 2)
+            true -> 2
+            false -> 0
+
+fn arity(n: Name, k: Int) -> Int
+    ? "A nested literal and a component handed to a lent param."
+    match n
+        Name.Str(Name.Str(Name.Anon, "Nat", _), op, _) -> arityAt(op, k)
+        _ -> 0
+
+fn opName(n: Name) -> Option<String>
+    ? "The component kept: copied out."
+    match n
+        Name.Str(Name.Str(Name.Anon, "Nat", _), op, _) -> match isNatOp(op)
+            true -> Option.Some(op)
+            false -> Option.None
+        _ -> Option.None
+
+fn shown(o: Option<String>) -> String
+    ? "The option as text."
+    Option.withDefault(o, "none")
+
+fn sameLast(n: Name, m: Name) -> Bool
+    ? "Two components compared."
+    match n
+        Name.Str(_, a, _) -> match m
+            Name.Str(_, b, _) -> a == b
+            Name.Anon -> false
+        Name.Anon -> false
+
+fn width(n: Name) -> Int
+    ? "A component read in place by builtins, and matched."
+    match n
+        Name.Str(_, s, _) -> match s
+            "" -> 0
+            _ -> String.len(s) + String.len(String.slice(s, 0, 1))
+        Name.Anon -> -1
+
+fn shout(n: Name) -> String
+    ? "A component bound by name in a literal match, then used owned."
+    match n
+        Name.Str(_, s, _) -> match s
+            "" -> "-"
+            other -> other + "!"
+        Name.Anon -> "?"
+
+fn f(op: String) -> Int
+    ? "Length."
+    String.len(op)
+
+fn g1(s: String) -> Int
+    ? "A borrowed subject, a binding the body borrows."
+    match s
+        "" -> 0
+        op -> f(op)
+
+fn g2(s: String) -> Int
+    ? "A borrowed subject, no binding."
+    match s
+        "" -> 0
+        _ -> String.len(s)
+
+fn g3(s: String) -> String
+    ? "An owned binding returned."
+    match s
+        "" -> "empty"
+        op -> op + "!"
+
+fn g4(s: String, t: String) -> Bool
+    ? "A binding compared."
+    match s
+        "" -> false
+        op -> op == t
+
+fn g5(x: Int) -> Int
+    ? "A computed subject."
+    match String.fromInt(x)
+        "" -> 0
+        op -> f(op)
+
+fn g7(s: String) -> Int
+    ? "A borrowed subject read again."
+    match s
+        "" -> 0
+        _ -> f(s)
+
+fn g8(s: String) -> Int
+    ? "Two literals over a borrowed subject."
+    match s
+        "a" -> 1
+        "b" -> 2
+        _ -> f(s)
+
+fn main() -> Unit
+    ? "Prints."
+    ! [Console.print]
+    nat = name2("Nat", "add")
+    succ = name2("Nat", "succ")
+    other = name2("Int", "add")
+    empty = Name.Str(Name.Anon, "", 0)
+    Console.print("{arity(nat, 2)} {arity(succ, 1)} {arity(other, 2)} {arity(nat, 3)}")
+    Console.print("{shown(opName(nat))} {shown(opName(succ))} {shown(opName(other))}")
+    Console.print("{sameLast(nat, other)} {sameLast(nat, succ)} {width(nat)} {width(empty)} {shout(succ)} {shout(Name.Anon)}")
+    Console.print("{g1("abc")} {g1("")} {g2("ab")} {g3("x")} {g3("")} {g4("a", "a")} {g4("", "")} {g5(1234)} {g7("abc")} {g7("")} {g8("a")} {g8("xyz")}")

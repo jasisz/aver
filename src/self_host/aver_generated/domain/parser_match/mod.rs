@@ -373,7 +373,7 @@ fn __mutual_tco_trampoline_4(
                     crate::aver_generated::domain::token::Token::TkNewline => return pos,
                     crate::aver_generated::domain::token::Token::TkFn => return pos,
                     crate::aver_generated::domain::token::Token::TkIdent(kw) => {
-                        let __dispatch_subject = kw;
+                        let __dispatch_subject = &*kw;
                         if &*__dispatch_subject == "module" {
                             return pos;
                         } else {

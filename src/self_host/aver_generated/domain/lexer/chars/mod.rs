@@ -3,7 +3,7 @@ use crate::*;
 
 /// Check if a single character is a digit.
 #[inline(always)]
-pub fn isDigit(c @ _: AverStr) -> bool {
+pub fn isDigit(c @ _: &AverStr) -> bool {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
@@ -78,13 +78,13 @@ pub fn isAlphaNum(c @ _: AverStr) -> bool {
     if crate::aver_generated::domain::lexer::chars::isAlpha(c.clone()) {
         true
     } else {
-        crate::aver_generated::domain::lexer::chars::isDigit(c)
+        crate::aver_generated::domain::lexer::chars::isDigit(&c)
     }
 }
 
 /// Convert a digit character to its integer value.
 #[inline(always)]
-pub fn digitVal(c @ _: AverStr) -> aver_rt::AverInt {
+pub fn digitVal(c @ _: &AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
@@ -190,7 +190,7 @@ pub fn readIdent(
 pub fn keywordOrIdent(s @ _: AverStr) -> crate::aver_generated::domain::token::Token {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = s.clone();
+        let __dispatch_subject = &*s;
         if &*__dispatch_subject == "fn" {
             crate::aver_generated::domain::token::Token::TkFn
         } else {

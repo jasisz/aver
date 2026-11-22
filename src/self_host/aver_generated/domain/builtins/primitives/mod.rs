@@ -9,7 +9,7 @@ pub fn callInt(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "String.fromInt" {
             crate::aver_generated::domain::builtins::primitives::builtinIntToString(args)
         } else {
@@ -152,7 +152,7 @@ pub fn callString(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "String.len" {
             crate::aver_generated::domain::builtins::primitives::builtinStringLen(args)
         } else {
@@ -794,7 +794,7 @@ pub fn callFloat(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "String.fromFloat" {
             crate::aver_generated::domain::builtins::primitives::builtinFloatToString(args)
         } else {

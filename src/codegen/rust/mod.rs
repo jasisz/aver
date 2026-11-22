@@ -4382,6 +4382,112 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
     /// one-thread ones; it says which and why. Verify cases next to a
     /// module-level binding keep one thread: under `cargo test` the cases
     /// run one at a time. `"many"` keeps threads for a program without
+    /// A string a pattern binds out of a node and only compares or hands to
+    /// a lent param is borrowed (`let op = &fields.2;`), not copied: a copy
+    /// is an atomic increment and decrement on a node every thread may
+    /// share. A param matched against literals is lent, and its match reads
+    /// the `&str` in place. A component the arm keeps is still copied.
+    #[test]
+    fn string_parts_only_compared_are_borrowed() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Name
+    Anon
+    Str(Name, String, Int)
+
+fn isNatOp(op: String) -> Bool
+    match op
+        "add" -> true
+        "sub" -> true
+        _ -> false
+
+fn arity(n: Name) -> Int
+    match n
+        Name.Str(Name.Str(Name.Anon, "Nat", _), op, _) -> match isNatOp(op)
+            true -> 2
+            false -> match op == "succ"
+                true -> 1
+                false -> 0
+        _ -> 0
+
+fn kept(n: Name) -> String
+    match n
+        Name.Str(_, s, _) -> s
+        Name.Anon -> ""
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(arity(Name.Str(Name.Str(Name.Anon, "Nat", 0), "add", 1))))
+    Console.print(kept(Name.Anon))
+"#,
+            "demo",
+        );
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+        let body = |name: &str| {
+            let at = entry
+                .find(&format!("pub fn {name}("))
+                .unwrap_or_else(|| panic!("fn {name}"));
+            let rest = &entry[at..];
+            &rest[..rest.find("\n}\n").expect("end of fn")]
+        };
+        let is_nat_op = body("isNatOp");
+        assert!(is_nat_op.contains("op @ _: &AverStr"), "{is_nat_op}");
+        assert!(!is_nat_op.contains(".clone()"), "{is_nat_op}");
+        let arity = body("arity");
+        assert!(arity.contains("let op = &____pat0_fields."), "{arity}");
+        assert!(arity.contains("match &**__pat2 {"), "{arity}");
+        assert!(!arity.contains(".clone()"), "{arity}");
+        let kept = body("kept");
+        assert!(
+            kept.contains(".clone()"),
+            "a kept component is copied: {kept}"
+        );
+    }
+
+    /// A build that freezes (atomic counts and a product) freezes the value
+    /// of a module-level binding once it is computed, so the copies every
+    /// read makes on every thread write no count; a build for one thread
+    /// counts plainly and freezes nothing.
+    #[cfg(feature = "runtime")]
+    #[test]
+    fn module_binding_values_are_frozen_where_the_build_freezes() {
+        use crate::config::RustThreads;
+        let source = "module Demo\n\nnames = [\"nat\", \"int\"]\n\nfn count(n: Int) -> Int\n    List.len(names) + n\n\nfn both(n: Int) -> Int\n    match (count(n), count(n + 1))!\n        (a, b) -> a + b\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(String.fromInt(both(3)))\n";
+        let emit = |threads| {
+            super::transpile_with_provider_manifest_for_project(
+                &mut ctx_from_source(source, "demo"),
+                None,
+                &std::collections::BTreeSet::new(),
+                None,
+                crate::config::RustOptions {
+                    threads,
+                    ..Default::default()
+                },
+            )
+            .expect("transpile")
+        };
+        let many = emit(RustThreads::Many);
+        let entry = generated_file(&many, "src/aver_generated/entry/mod.rs");
+        let getter = entry
+            .split("pub fn __binding_names()")
+            .nth(1)
+            .expect("the getter of names");
+        let getter = &getter[..getter.find("\n}").expect("its end")];
+        assert!(
+            getter.contains("aver_rt::freeze::kept(|__f|")
+                && getter.contains("(&aver_rt::freeze::Probe(&__value)).freeze_into(__f)"),
+            "{getter}"
+        );
+        let one = emit(RustThreads::One);
+        assert!(
+            !generated_file(&one, "src/aver_generated/entry/mod.rs").contains("freeze::kept"),
+            "a one-thread build freezes nothing"
+        );
+    }
+
     /// any, and `"one"` runs a product in sequence.
     #[cfg(feature = "runtime")]
     #[test]

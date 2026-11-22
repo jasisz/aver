@@ -459,6 +459,17 @@ fn recursive_sum_as_one_pointer_matches_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Strings matched against literals, compared and read in place: a name
+/// component a pattern binds is borrowed out of its node, a param matched
+/// against literals is lent, an arm that names the whole subject gets the
+/// string (not the `&str` the literals match), and a component kept is
+/// copied out. Each shape prints what the VM prints.
+#[test]
+fn strings_read_in_place_match_vm() {
+    assert_plain_parity("tests/fixtures/string_parts_in_place.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// `==` on a recursive sum compares two pointers before it reads either
 /// node: terms rebuilt above shared leaves, equal or apart at each level, a
 /// sum holding a `Float` (which does not take that shortcut), deferred calls

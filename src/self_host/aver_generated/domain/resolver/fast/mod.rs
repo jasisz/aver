@@ -329,7 +329,7 @@ pub fn classifyFastLeafExpr(
                 crate::aver_generated::domain::resolver::fast::classifyFastFieldAccess(obj, field)
             }
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
-                let name = __name_fields.1.clone();
+                let name = &__name_fields.1;
                 let args = &__name_fields.0;
                 crate::aver_generated::domain::resolver::fast::classifyFastBuiltinLeaf(name, args)
             }
@@ -534,12 +534,12 @@ pub fn classifyFastCmpSlots(
 /// Recognize tiny builtin wrappers that only shuffle slots and integer constants.
 #[inline(always)]
 pub fn classifyFastBuiltinLeaf(
-    name @ _: AverStr,
+    name @ _: &AverStr,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name;
+        let __dispatch_subject = &**name;
         if &*__dispatch_subject == "Vector.new" {
             crate::aver_generated::domain::resolver::fast::classifyFastVectorNew(args)
         } else {
@@ -910,9 +910,9 @@ pub fn classifyFastOptionWithDefaultArgs(
         let __t = optionExpr;
         match __t.view() {
             crate::aver_generated::domain::ast::Expr__view::ExprCallBuiltin(__name_fields) => {
-                let name = __name_fields.1.clone();
+                let name = &__name_fields.1;
                 let innerArgs = &__name_fields.0;
-                if (&*name == "Vector.get") {
+                if (&**name == "Vector.get") {
                     crate::aver_generated::domain::resolver::fast::classifyFastVectorGet(
                         innerArgs,
                         defaultExpr,

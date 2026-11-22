@@ -18,6 +18,14 @@
 //! outlive the code that began it; a frozen node does not mind. A task
 //! sent through its codec is copied instead, and freezes nothing.
 //!
+//! A value kept for the rest of the process is frozen when it is made
+//! ([`kept`]): the value of a module-level binding, which its static holds
+//! once the first thread to read it computed it, and an integer literal
+//! parsed into a static. Every read of such a value copies it, on any
+//! thread; frozen, a copy writes no count. Nothing it holds is ever freed
+//! while the static holds it, which is for ever, so freezing it leaks
+//! nothing.
+//!
 //! The walk goes from the leaves up: a node is frozen only once everything
 //! it holds is, and it stops at nodes already frozen and at nodes kept in
 //! statics, whose counts are past the mark too. A call deferred and not yet
@@ -43,7 +51,8 @@
 //! - once per place in the program, of which there are as many as `(a, b)!`
 //!   and `begin` calls of job kinds in its source, however many times each
 //!   runs: a program that hands fresh data to its threads or begins jobs
-//!   with fresh tasks in a loop freezes the first round's only;
+//!   with fresh tasks in a loop freezes the first round's only (a value kept
+//!   for the rest of the process leaks nothing it did not keep already);
 //! - a quarter of the machine's physical memory over the whole process.
 //!   Past it a node is left as it is, and so is every node above it, which
 //!   is then counted and freed as before: what leaks is exactly the frozen
@@ -262,6 +271,16 @@ pub fn at_first_fork(site: &AtomicBool, walk: impl FnOnce(&mut Freezer)) {
     }
 }
 
+/// Freezes what `walk` reaches of a value kept for the rest of the
+/// process: the value of a module-level binding once it is computed, or an
+/// integer literal parsed into a static (see the module docs).
+pub fn kept(walk: impl FnOnce(&mut Freezer)) {
+    let mut f = Freezer::new();
+    if !f.spent {
+        walk(&mut f);
+    }
+}
+
 /// A value whose nodes can be frozen; true when all of them are.
 pub trait Freeze {
     fn freeze(&self, f: &mut Freezer) -> bool;
@@ -326,7 +345,6 @@ leaf!(
     f32,
     f64,
     String,
-    crate::AverInt,
     crate::Count,
 );
 

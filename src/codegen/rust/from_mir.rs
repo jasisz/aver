@@ -2567,9 +2567,14 @@ fn reads_text_in_place(callee: &MirCallee, builtins: &[String]) -> bool {
                     | "String.toUpper"
             )
         ),
+        // The code of a one-character string, which a match on such
+        // literals compares (`aver_rt::str_code1(&s)`).
         MirCallee::Intrinsic(intrinsic) => matches!(
             intrinsic,
-            BuiltinIntrinsic::StrIndexBuild
+            BuiltinIntrinsic::StrCode1
+                | BuiltinIntrinsic::StrCode1Lower
+                | BuiltinIntrinsic::StrCode1Upper
+                | BuiltinIntrinsic::StrIndexBuild
                 | BuiltinIntrinsic::StrIndexCharAt
                 | BuiltinIntrinsic::StrIndexCodeAt
                 | BuiltinIntrinsic::StrIndexSlice
@@ -2638,6 +2643,14 @@ fn reads_string_in_place_by(
                 .iter()
                 .all(|side| is_slot(&side.node) || recur(&side.node))
         }
+        // A match of the string against literals only compares it, unless an
+        // arm binds the whole string by name.
+        MirExpr::Match(m) if is_slot(&m.node.subject.node) => m.node.arms.iter().all(|arm| {
+            matches!(
+                arm.pattern,
+                MirPattern::Wildcard | MirPattern::Literal(crate::ast::Literal::Str(_))
+            ) && recur(&arm.body.node)
+        }),
         _ => {
             let mut only = true;
             crate::ir::mir::expr::walk_children(expr, &mut |child| {
@@ -2646,6 +2659,21 @@ fn reads_string_in_place_by(
             only
         }
     }
+}
+
+/// Whether the `String` a pattern binds into `slot` is read only in place in
+/// `body` (see [`lent_string_params`]), where it may also be handed to a
+/// lent param of another function: the arm then borrows it out of the node
+/// (`let s = &fields.1;`) instead of counting a copy (an atomic increment and
+/// decrement on a node that every thread may share). A tail call takes its
+/// args by value, so a string handed to one is copied.
+fn string_binding_read_in_place(body: &MirExpr, slot: LocalId, ctx: &MirEmitCtx<'_>) -> bool {
+    let Some(codegen) = ctx.codegen else {
+        return false;
+    };
+    reads_string_in_place_by(body, slot, ctx.mir_builtins, &|callee, j, tail| {
+        !tail && lent_string(codegen, callee, j)
+    })
 }
 
 /// Whether `String` param `index` of `fn_id` is lent (see
@@ -5849,6 +5877,16 @@ pub(super) fn emit_module_binding_getters(scope: Option<&str>, ctx: &CodegenCont
         });
         match rendered {
             Ok((rust_ty, Some(value))) => {
+                // A build that freezes (see `aver_rt::freeze`) freezes the
+                // value once it is computed: its static keeps it for the
+                // whole process, and every read on every thread copies it.
+                // A type without a walk is left as it is.
+                let value = match ctx.rust_freezes {
+                    true => format!(
+                        "{{ let __value = {value}; aver_rt::freeze::kept(|__f| {{ #[allow(unused_imports)] use aver_rt::freeze::{{ViaFreeze as _, ViaSkip as _}}; let _ = (&aver_rt::freeze::Probe(&__value)).freeze_into(__f); }}); __value }}"
+                    ),
+                    false => value,
+                };
                 out.push_str(&format!(
                     "/// The module-level binding `{name}`.\n\
                      #[allow(non_snake_case)]\n\
@@ -6669,9 +6707,14 @@ fn emit_mir_match_with(
             // payload borrows from.
             (MatchPath::LentWrapper, Some(_)) => lent_payload(&arm.pattern, &arm.body),
             _ if !keeps_subject => HashSet::new(),
-            (MatchPath::Generic { by_ref }, Some(codegen)) => {
-                lent_parts(&arm.pattern, &resolved.pattern, &arm.body, by_ref, codegen)
-            }
+            (MatchPath::Generic { by_ref }, Some(codegen)) => lent_parts(
+                &arm.pattern,
+                &resolved.pattern,
+                &arm.body,
+                by_ref,
+                codegen,
+                emit_ctx,
+            ),
             (MatchPath::List, Some(_)) if !takes_list_apart(m, emit_ctx) => {
                 lent_head(&arm.pattern, &arm.body)
             }
@@ -6961,6 +7004,12 @@ fn emit_mir_match_with(
     // so it is read by value WITHOUT `.clone()` and the Int-literal guards
     // compare against raw `{N}i64` rather than `AverInt::from_i64(N)`.
     let subject_is_bare = any_int_literal_pattern && mir_expr_is_bare_i64(&m.subject, emit_ctx);
+    // A string matched against literals with no arm that names the whole
+    // subject: the match only compares it.
+    let str_subject_read_only = has_string_literal_patterns(&arms)
+        && !arms
+            .iter()
+            .any(|arm| matches!(arm.pattern, ResolvedPattern::Ident(_)));
 
     let subj = if let Some((map, key)) = lent_get {
         format!(
@@ -6980,6 +7029,15 @@ fn emit_mir_match_with(
     } else if subject_is_bare {
         // A bare i64 subject: emit the plain value (no clone — Copy).
         emit_bare_i64(&m.subject, emit_ctx).or_else(|| emit_mir_expr(&m.subject, emit_ctx))?
+    } else if str_subject_read_only {
+        // A string matched against literals only: its `&str`, read in
+        // place, never a copy (of a borrowed `&AverStr` too). The table of
+        // literals and the generic `match` compare it as it is.
+        let deref = match borrowed_subject {
+            true => "&**",
+            false => "&*",
+        };
+        format!("{deref}{}", emit_mir_expr(&m.subject, emit_ctx)?)
     } else if borrowed_subject {
         emit_mir_expr(&m.subject, emit_ctx)?
     } else if kept_subject {
@@ -7096,9 +7154,34 @@ fn emit_mir_match_with(
     // cloned out.
     let by_ref = match_on_ref || matches!(shape, ViewShape::Tuple(_));
     debug_assert!(matches!(path, MatchPath::Generic { by_ref: b } if b == by_ref));
+    // A match on a string against literals matches its `&str`. Where an
+    // arm binds the whole subject by name, that name gets the string itself,
+    // moved out of a `let` the subject is bound by first (or copied off a
+    // borrowed subject), never the `&str` the literals are matched against.
+    let string_match = !viewed && needs_as_str && has_string_literal_patterns(&arms);
+    let names_subject = string_match && !str_subject_read_only;
+    let string_temp = generated_ident("subject");
+    let (subj, bound) = match (string_match, names_subject) {
+        (true, true) => (
+            string_temp.clone(),
+            Some(match bound {
+                Some(bound) => format!("{bound} let {string_temp} = {subj};"),
+                None => format!("let {string_temp} = {subj};"),
+            }),
+        ),
+        _ => (subj, bound),
+    };
+    let bind = |code: String| match &bound {
+        Some(bound) => format!("{{ {bound} {code} }}"),
+        None => code,
+    };
     let match_expr = if viewed {
         shape.scrutinee(&subject_temp, by_ref)
-    } else if needs_as_str && has_string_literal_patterns(&arms) {
+    } else if str_subject_read_only {
+        subj.clone()
+    } else if names_subject && borrowed_subject {
+        format!("&**{subj}")
+    } else if string_match {
         format!("&*{}", subj)
     } else {
         subj.clone()
@@ -7109,9 +7192,17 @@ fn emit_mir_match_with(
         // A name bound at a viewed place would bind the view: it matches `_`
         // and is bound to the value it stands for instead.
         let mut whole = Vec::new();
-        let pattern = match viewed {
-            true => shape.unbind(&arm.pattern, &subject_temp, by_ref, &mut whole),
-            false => arm.pattern.clone(),
+        let pattern = match (viewed, &arm.pattern) {
+            (true, _) => shape.unbind(&arm.pattern, &subject_temp, by_ref, &mut whole),
+            (false, ResolvedPattern::Ident(name)) if names_subject => {
+                let name = aver_name_to_rust(name);
+                whole.push(match borrowed_subject {
+                    true => format!("let {name} = aver_rt::AverStr::clone({subj});"),
+                    false => format!("let {name} = {subj};"),
+                });
+                ResolvedPattern::Wildcard
+            }
+            (false, _) => arm.pattern.clone(),
         };
         let (pat, guard) = emit_pattern_with_guard(&pattern, needs_as_str, codegen);
         let pat = match guard {
@@ -7932,22 +8023,25 @@ fn lent_head(pattern: &MirPattern, body: &Spanned<MirExpr>) -> HashSet<String> {
 
 /// The parts of a constructor an arm binds and only reads, which the arm
 /// borrows instead of cloning out of the subject: every read of the part
-/// passes it where a borrow will do (see [`reads_only_borrow`]). Only a part
-/// that would otherwise be cloned qualifies: a field held in a shared or thin
-/// node (`let b = &fields.1;`), or any field when the match is on a
-/// reference (`b` is already `&T`), the payload of `Some(b)` among them.
+/// passes it where a borrow will do (see [`reads_only_borrow`]), and for a
+/// `String` every read is in place (see [`string_binding_read_in_place`]).
+/// Only a part that would otherwise be cloned qualifies: a field held in a
+/// shared or thin node (`let b = &fields.1;`), or any field when the match
+/// is on a reference (`b` is already `&T`), the payload of `Some(b)` among
+/// them.
 fn lent_parts(
     pattern: &MirPattern,
     resolved: &ResolvedPattern,
     body: &Spanned<MirExpr>,
     by_ref: bool,
     codegen: &CodegenContext,
+    ctx: &MirEmitCtx<'_>,
 ) -> HashSet<String> {
     let mut out = HashSet::new();
     match (pattern, resolved) {
         (MirPattern::Tuple(items), ResolvedPattern::Tuple(resolved_items)) => {
             for (item, resolved_item) in items.iter().zip(resolved_items) {
-                out.extend(lent_parts(item, resolved_item, body, by_ref, codegen));
+                out.extend(lent_parts(item, resolved_item, body, by_ref, codegen, ctx));
             }
         }
         (
@@ -7966,8 +8060,15 @@ fn lent_parts(
                 if name.is_empty() || name == "_" {
                     continue;
                 }
-                if read_type(&body.node, *slot).is_some_and(should_borrow_param) {
-                    out.insert(name.clone());
+                match read_type(&body.node, *slot) {
+                    Some(ty) if should_borrow_param(ty) => {
+                        out.insert(name.clone());
+                    }
+                    // A string the arm only compares or reads in place.
+                    Some(Type::Str) if string_binding_read_in_place(&body.node, *slot, ctx) => {
+                        out.insert(name.clone());
+                    }
+                    _ => {}
                 }
             }
         }

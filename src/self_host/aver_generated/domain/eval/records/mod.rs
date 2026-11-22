@@ -60,8 +60,8 @@ pub fn isNamedSentinelInner(
                     crate::aver_generated::domain::value::Val__view::ValRecord(
                         __typeName_fields,
                     ) => {
-                        let typeName = __typeName_fields.0.clone();
-                        (&*typeName == "_named")
+                        let typeName = &__typeName_fields.0;
+                        (&**typeName == "_named")
                     }
                     _ => false,
                 }

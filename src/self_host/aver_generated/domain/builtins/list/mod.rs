@@ -9,7 +9,7 @@ pub fn call(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = name.clone();
+        let __dispatch_subject = &*name;
         if &*__dispatch_subject == "List.prepend" {
             crate::aver_generated::domain::builtins::list::builtinListPrepend(args)
         } else {

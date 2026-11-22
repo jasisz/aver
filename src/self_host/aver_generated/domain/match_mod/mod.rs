@@ -86,8 +86,7 @@ pub fn matchPattern(
             crate::aver_generated::domain::match_mod::matchPatBool(b, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatStr(s) => {
-            let s = s.clone();
-            crate::aver_generated::domain::match_mod::matchPatStr(&s, &v)
+            crate::aver_generated::domain::match_mod::matchPatStr(s, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatEmpty => {
             crate::aver_generated::domain::match_mod::matchPatEmpty(&v)
@@ -98,14 +97,12 @@ pub fn matchPattern(
             crate::aver_generated::domain::match_mod::matchPatCons(h, t, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatConstructor(ctorName, bindings) => {
-            let ctorName = ctorName.clone();
             crate::aver_generated::domain::match_mod::matchPatConstructor(ctorName, bindings, &v)
         }
         crate::aver_generated::domain::ast::Pattern::PatConstructorId(tag, ctorName, bindings) => {
             let tag = tag.clone();
-            let ctorName = ctorName.clone();
             crate::aver_generated::domain::match_mod::matchPatConstructorById(
-                tag, &ctorName, bindings, &v,
+                tag, ctorName, bindings, &v,
             )
         }
         crate::aver_generated::domain::ast::Pattern::PatTuple(pats) => {
@@ -197,8 +194,8 @@ pub fn matchPatStr(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValStr(__vs_fields) => {
-                let vs = __vs_fields.0.clone();
-                if (s == &(vs)) {
+                let vs = &__vs_fields.0;
+                if (s == vs) {
                     Ok(aver_rt::AverList::empty())
                 } else {
                     Err(::aver_rt::str_lit!("no match"))
@@ -269,31 +266,31 @@ pub fn matchPatCons(
 /// Match constructor pattern. Checks tag name and extracts inner values.
 #[inline]
 pub fn matchPatConstructor(
-    ctorName @ _: AverStr,
+    ctorName @ _: &AverStr,
     bindings @ _: &aver_rt::AverList<AverStr>,
     v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = ctorName.clone();
+        let __dispatch_subject = &**ctorName;
         if &*__dispatch_subject == "Result.Ok" {
             crate::aver_generated::domain::match_mod::matchWrapperPat(
                 v,
-                ::aver_rt::str_lit!("Ok"),
+                &::aver_rt::str_lit!("Ok"),
                 bindings,
             )
         } else {
             if &*__dispatch_subject == "Result.Err" {
                 crate::aver_generated::domain::match_mod::matchWrapperPat(
                     v,
-                    ::aver_rt::str_lit!("Err"),
+                    &::aver_rt::str_lit!("Err"),
                     bindings,
                 )
             } else {
                 if &*__dispatch_subject == "Option.Some" {
                     crate::aver_generated::domain::match_mod::matchWrapperPat(
                         v,
-                        ::aver_rt::str_lit!("Some"),
+                        &::aver_rt::str_lit!("Some"),
                         bindings,
                     )
                 } else {
@@ -301,7 +298,7 @@ pub fn matchPatConstructor(
                         crate::aver_generated::domain::match_mod::matchNonePat(v)
                     } else {
                         crate::aver_generated::domain::match_mod::matchGenericConstructor(
-                            &ctorName, bindings, v,
+                            ctorName, bindings, v,
                         )
                     }
                 }
@@ -350,10 +347,10 @@ pub fn matchGenericConstructor(
         let __t = v;
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVariant(__fullName_fields) => {
-                let fullName = __fullName_fields.1.clone();
+                let fullName = &__fullName_fields.1;
                 let fields = &__fullName_fields.2;
                 crate::aver_generated::domain::match_mod::matchGenericCtorCheck(
-                    ctorName, &fullName, bindings, fields,
+                    ctorName, fullName, bindings, fields,
                 )
             }
             _ => Err(::aver_rt::str_lit!("no match")),
@@ -485,10 +482,10 @@ pub fn matchGenericCtorById(
         match __t.view() {
             crate::aver_generated::domain::value::Val__view::ValVariant(__vTag_fields) => {
                 let vTag = __vTag_fields.0.clone();
-                let fullName = __vTag_fields.1.clone();
+                let fullName = &__vTag_fields.1;
                 let fields = &__vTag_fields.2;
                 if (vTag == tag) {
-                    if (&(fullName) == ctorName) {
+                    if (fullName == ctorName) {
                         Ok(crate::aver_generated::domain::match_mod::zipBindings(
                             bindings, fields,
                         ))
@@ -524,12 +521,12 @@ pub fn matchNonePat(
 #[inline(always)]
 pub fn matchWrapperPat(
     v @ _: &crate::aver_generated::domain::value::Val,
-    tag @ _: AverStr,
+    tag @ _: &AverStr,
     bindings @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject = tag;
+        let __dispatch_subject = &**tag;
         if &*__dispatch_subject == "Ok" {
             {
                 let __t = v;

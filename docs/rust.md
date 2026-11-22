@@ -136,9 +136,11 @@ A record whose fields take more than 128 bytes is kept behind a pointer to the s
 
 `aver_rt::Shared` is `std::sync::Arc` without weak references: its node is one atomic count followed by the fields, 8 bytes of header instead of the 16 of an `Arc`, and the atomic operations are those of `Arc`'s strong count, because values cross threads in `(a, b)!`. It has the `Arc` methods generated code uses (`new`, `clone`, `ptr_eq`, `as_ptr`, `strong_count`, `get_mut`, `make_mut`, `try_unwrap`, `unwrap_or_clone`) and `Deref`, `AsRef<T>`, `Borrow<T>`, `Clone`, `Debug`, `Display`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`, `Hash` and `Default`, all reading the value. Its `==` never compares addresses; a payload whose `==` is reflexive (no `Float` inside) starts its own `==` with `std::ptr::eq`, which is what `Arc` does for such a type. Hand-written Rust that holds an `Arc<T>` converts with `Shared::from(arc)` and `Arc::from(shared)`: the value moves when the source is its only owner and is cloned otherwise. The runtime's lists, vectors, maps and strings keep their nodes in `Shared` too (`AverStr` holds a `Shared<str>`, one node with the count and the bytes; `AverStr::from` also takes an `Arc<str>`, copying the text). Provider objects are still registered as `std::sync::Arc<dyn CapabilityProvider>`, and the work engine, the TCP reactor and the string index keep `Arc`.
 
+A string only read in place is borrowed, not copied: a copy of an `AverStr` is a count up and a count down on its node, atomic in a build with threads, on a node every thread may share (a name component held by every name of a namespace). A `String` parameter is `&AverStr` when the function only reads it in place: as the text a string built-in reads (`String.len(s)`, `String.slice(s, ..)`, `String.startsWith(s, ..)` and the like), as an operand of `==` or `!=`, as the subject of a `match` against string literals whose arms do not bind it by name, or handed to another such parameter. A string a pattern binds out of a node and reads only so is borrowed out of the node (`let op = &fields.2;`), and a match against literals reads its subject's `&str` without a copy. A string an arm keeps, returns or builds on is copied, as before.
+
 ### Int
 
-An `Int` is one machine word, `aver_rt::AverInt` (8 bytes, `Option<Int>` too): a value in `[-2^62, 2^62)` is stored in the word and arithmetic on it stays in registers, while a larger magnitude goes to the heap as a `BigInt`, so a program that packs a full 63 bits into one `Int` (a 64-bit hash, several fields in one word) pays an allocation for every value past `2^62`.
+An `Int` is one machine word, `aver_rt::AverInt` (8 bytes, `Option<Int>` too): a value in `[-2^62, 2^62)` is stored in the word and arithmetic on it stays in registers, while a larger magnitude goes to the heap as a `BigInt`, so a program that packs a full 63 bits into one `Int` (a 64-bit hash, several fields in one word) pays an allocation for every value past `2^62`. The heap integer is one `aver_rt::Shared<BigInt>` node, so a copy shares its digits for a count, and a frozen value (see below) freezes it as well.
 
 ### Refinements over Int
 
@@ -201,6 +203,16 @@ When developing the runtime inside the Aver repository, set `AVER_RUNTIME_PATH` 
 ```bash
 AVER_RUNTIME_PATH="$(pwd)/aver-rt" aver compile examples/core/hello.av -o /tmp/hello-rs
 ```
+
+### Frozen values
+
+With atomic counts, a node that threads share costs every thread a write to its count's cache line on each copy and drop, and on x86 a `lock`ed one; many threads copying one node take turns at that line. So `aver-rt` freezes what threads are handed: a frozen node's count is past a mark (its sign bit), no copy or drop changes it, and it is never freed nor changed in place (a write copies it first, as for a shared one). What is frozen:
+
+- The first time an independent product `(a, b)!` runs at a place in the program, or a job kind's `begin` there, everything its elements read from outside, before its threads start (`aver_rt::freeze`).
+- At the first such fork, every counted node alive that the program made on its first thread before it: the nodes of recursive sums, strings, list and map nodes, the blocks of vectors and flat lists, large integers and `Shared` values. Until then the first thread that makes a node of a recursive sum allocates those nodes in two mimalloc heaps of their own, and the fork visits them once, page by page, without following a pointer (`aver_rt::born`). A node another thread makes is allocated as usual.
+- The value of a module-level binding, when the first thread to read it has computed it, in a build that freezes (one with atomic counts and a product or a job kind), and an integer literal past the machine word, when it is parsed into its static. Their statics keep them for the whole process, so freezing them leaks nothing.
+
+What a fork freezes is never freed, so freezing leaks: at most what was alive on the first thread at the first fork, once per process, and what each fork place's elements read the first time it runs, within a quarter of the machine's memory. A program that never forks freezes only its module-level values and literals. With `--single-thread` nothing is frozen: counts are plain and no other thread shares them.
 
 ## Native custom capability providers
 

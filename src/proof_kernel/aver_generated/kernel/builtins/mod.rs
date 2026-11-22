@@ -40,10 +40,10 @@ impl aver_rt::AverDisplay for Sig {
 
 /// The signature of a builtin, by its dotted name.
 #[inline]
-pub fn sig(name @ _: AverStr) -> Option<Sig> {
+pub fn sig(name @ _: &AverStr) -> Option<Sig> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __dispatch_subject = name;
+        let __dispatch_subject = &**name;
         if &*__dispatch_subject == "Bits.and" {
             Some(crate::proof_kernel::aver_generated::kernel::builtins::Sig {
                 params: aver_rt::AverList::from_array([
@@ -163,10 +163,10 @@ pub fn sig(name @ _: AverStr) -> Option<Sig> {
 
 /// Whether == between two values of a type of this shape is equality once it is for the shape's parts: the shapes Lean's model proves it for. A hole, the type of no value, has one.
 #[inline(always)]
-pub fn equality(shape @ _: AverStr) -> bool {
+pub fn equality(shape @ _: &AverStr) -> bool {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let __dispatch_subject = shape;
+        let __dispatch_subject = &**shape;
         if &*__dispatch_subject == "Int" {
             true
         } else {
