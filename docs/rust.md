@@ -208,9 +208,9 @@ With atomic counts, a node that threads share costs every thread a write to its 
 
 - The first time an independent product `(a, b)!` runs at a place in the program, or a job kind's `begin` there, everything its elements read from outside, before its threads start (`aver_rt::freeze`).
 - At the first such fork, every counted node alive that the program made on its first thread before it: the nodes of recursive sums, strings, list and map nodes, the blocks of vectors and flat lists, large integers and `Shared` values. Until then the first thread that makes a node of a recursive sum allocates those nodes in two mimalloc heaps of their own, and the fork visits them once, page by page, without following a pointer (`aver_rt::born`). A node another thread makes is allocated as usual.
-- An integer literal past the machine word, when it is parsed into its static. The static keeps it for the whole process, so freezing it leaks nothing.
+- The value of a module-level binding, when the first thread to read it has computed it, in a build that freezes (one with atomic counts and a product or a job kind), and an integer literal past the machine word, when it is parsed into its static. Their statics keep them for the whole process, so freezing them leaks nothing.
 
-What a fork freezes is never freed, so freezing leaks: at most what was alive on the first thread at the first fork, once per process, and what each fork place's elements read the first time it runs, within a quarter of the machine's memory. A program that never forks freezes only its literals. With `--single-thread` nothing is frozen: counts are plain and no other thread shares them.
+What a fork freezes is never freed, so freezing leaks: at most what was alive on the first thread at the first fork, once per process, and what each fork place's elements read the first time it runs, within a quarter of the machine's memory. A program that never forks freezes only its module-level values and literals. With `--single-thread` nothing is frozen: counts are plain and no other thread shares them.
 
 ## Native custom capability providers
 

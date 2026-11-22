@@ -4382,6 +4382,47 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
     /// one-thread ones; it says which and why. Verify cases next to a
     /// module-level binding keep one thread: under `cargo test` the cases
     /// run one at a time. `"many"` keeps threads for a program without
+    /// A build that freezes (atomic counts and a product) freezes the value
+    /// of a module-level binding once it is computed, so the copies every
+    /// read makes on every thread write no count; a build for one thread
+    /// counts plainly and freezes nothing.
+    #[cfg(feature = "runtime")]
+    #[test]
+    fn module_binding_values_are_frozen_where_the_build_freezes() {
+        use crate::config::RustThreads;
+        let source = "module Demo\n\nnames = [\"nat\", \"int\"]\n\nfn count(n: Int) -> Int\n    List.len(names) + n\n\nfn both(n: Int) -> Int\n    match (count(n), count(n + 1))!\n        (a, b) -> a + b\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(String.fromInt(both(3)))\n";
+        let emit = |threads| {
+            super::transpile_with_provider_manifest_for_project(
+                &mut ctx_from_source(source, "demo"),
+                None,
+                &std::collections::BTreeSet::new(),
+                None,
+                crate::config::RustOptions {
+                    threads,
+                    ..Default::default()
+                },
+            )
+            .expect("transpile")
+        };
+        let many = emit(RustThreads::Many);
+        let entry = generated_file(&many, "src/aver_generated/entry/mod.rs");
+        let getter = entry
+            .split("pub fn __binding_names()")
+            .nth(1)
+            .expect("the getter of names");
+        let getter = &getter[..getter.find("\n}").expect("its end")];
+        assert!(
+            getter.contains("aver_rt::freeze::kept(|__f|")
+                && getter.contains("(&aver_rt::freeze::Probe(&__value)).freeze_into(__f)"),
+            "{getter}"
+        );
+        let one = emit(RustThreads::One);
+        assert!(
+            !generated_file(&one, "src/aver_generated/entry/mod.rs").contains("freeze::kept"),
+            "a one-thread build freezes nothing"
+        );
+    }
+
     /// any, and `"one"` runs a product in sequence.
     #[cfg(feature = "runtime")]
     #[test]

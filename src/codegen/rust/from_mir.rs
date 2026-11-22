@@ -5849,6 +5849,16 @@ pub(super) fn emit_module_binding_getters(scope: Option<&str>, ctx: &CodegenCont
         });
         match rendered {
             Ok((rust_ty, Some(value))) => {
+                // A build that freezes (see `aver_rt::freeze`) freezes the
+                // value once it is computed: its static keeps it for the
+                // whole process, and every read on every thread copies it.
+                // A type without a walk is left as it is.
+                let value = match ctx.rust_freezes {
+                    true => format!(
+                        "{{ let __value = {value}; aver_rt::freeze::kept(|__f| {{ #[allow(unused_imports)] use aver_rt::freeze::{{ViaFreeze as _, ViaSkip as _}}; let _ = (&aver_rt::freeze::Probe(&__value)).freeze_into(__f); }}); __value }}"
+                    ),
+                    false => value,
+                };
                 out.push_str(&format!(
                     "/// The module-level binding `{name}`.\n\
                      #[allow(non_snake_case)]\n\
