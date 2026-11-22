@@ -10914,11 +10914,11 @@ enum GivenUp {
 /// so `acc = Bits.xor(acc, x)` or `acc * 3` over megabyte numbers writes
 /// `acc` in place instead of copying it into a new integer every step.
 ///
-/// The left operand is preferred, unless it is one word (an `Int` literal,
-/// a machine word boxed) and the right one can be given up: in `3 * acc` it
-/// is `acc` that may be large. The right one is given up only when the left
-/// one does not read its variable: in `x + x` the left read borrows `x`
-/// while the right one would move it.
+/// An operand that is one word (an `Int` literal, a machine word boxed)
+/// is never large and is not given up: in `3 * acc` it is `acc`. The left
+/// operand is preferred; the right one is given up only when the left one
+/// does not read its variable: in `x + x` the left read borrows `x` while
+/// the right one would move it.
 fn int_operand_given_up(
     lhs: &Spanned<MirExpr>,
     rhs: &Spanned<MirExpr>,
@@ -10936,16 +10936,12 @@ fn int_operand_given_up(
         matches!(expr, MirExpr::Box(_))
             || matches!(expr, MirExpr::Literal(lit) if matches!(lit.node, crate::ast::Literal::Int(_)))
     };
-    let lhs_moves = moves(lhs);
-    let rhs_moves = moves(rhs)
-        && projection_root_local(&rhs.node)
-            .is_none_or(|root| !super::arg_order::reads_slot(&lhs.node, root.slot));
-    match (lhs_moves, rhs_moves) {
-        (true, true) if one_word(&lhs.node) && !one_word(&rhs.node) => Some(GivenUp::Rhs),
-        (true, _) => Some(GivenUp::Lhs),
-        (false, true) => Some(GivenUp::Rhs),
-        (false, false) => None,
+    if moves(lhs) && !one_word(&lhs.node) {
+        return Some(GivenUp::Lhs);
     }
+    let rhs_free = projection_root_local(&rhs.node)
+        .is_none_or(|root| !super::arg_order::reads_slot(&lhs.node, root.slot));
+    (moves(rhs) && !one_word(&rhs.node) && rhs_free).then_some(GivenUp::Rhs)
 }
 
 /// Detach an operand Rust holds borrowed while it evaluates later operands.

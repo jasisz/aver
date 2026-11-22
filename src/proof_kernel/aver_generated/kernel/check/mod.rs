@@ -1689,10 +1689,9 @@ pub fn declarationsAcyclic(
                                     crate::proof_kernel::aver_generated::kernel::term::Term,
                                 >>::empty();
                                 {
-                                    let __arg9 @ _ = aver_rt::AverInt::from_i64(
-                                        ((ds).len() as i64),
-                                    )
-                                    .add_owned(&aver_rt::AverInt::from_i64(((cs).len() as i64)));
+                                    let __arg9 @ _ =
+                                        aver_rt::AverInt::from_i64(((ds).len() as i64))
+                                            .add(&aver_rt::AverInt::from_i64(((cs).len() as i64)));
                                     crate::proof_kernel::aver_generated::kernel::check::declarationCycle(__arg6, &__arg7, ds, cs, __arg8, __arg9)
                                 }
                             }

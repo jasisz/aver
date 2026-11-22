@@ -266,7 +266,7 @@ fn __mutual_tco_trampoline_3(
                 mut kw @ _,
             ) => {
                 crate::cancel_checkpoint();
-                let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
+                let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
                 {
                     let __dispatch_subject = &*kw;
                     if &*__dispatch_subject == "module" {
@@ -535,7 +535,7 @@ pub fn countIndentsInRange(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < endPos) {
             match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkIndent => {
@@ -573,7 +573,7 @@ pub fn skipNDedents(
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
         if (n > aver_rt::AverInt::from_i64(0)) {
             match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos.clone()) {
                 crate::aver_generated::domain::token::Token::TkNewline => {

@@ -893,9 +893,7 @@ fn __mutual_tco_trampoline_1(
                                 {
                                     let __arg10 @ _ =
                                         crate::proof_std::aver_generated::kernel::std::Node {
-                                            depth: n
-                                                .depth
-                                                .add_owned_rhs(aver_rt::AverInt::from_i64(1)),
+                                            depth: n.depth.add(&aver_rt::AverInt::from_i64(1)),
                                             ..here
                                         };
                                     __MutualTco1::Within(__arg10, next)
@@ -2053,7 +2051,7 @@ pub fn first(
                             }
                             crate::proof_std::aver_generated::kernel::std::Stop::Refused(why) => {
                                 let __tco1 = rest;
-                                let __tco2 = i.add_owned_rhs(aver_rt::AverInt::from_i64(1));
+                                let __tco2 = i.add(&aver_rt::AverInt::from_i64(1));
                                 let __tco3 = aver_rt::AverList::prepend_owned(
                                     aver_rt::AverStr::from({
                                         let mut __b = {

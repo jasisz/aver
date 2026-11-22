@@ -1429,7 +1429,7 @@ pub fn dotToSlash__indexed(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        let nextPos @ _ = pos.add_owned_rhs(aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < total) {
             match aver_rt::string_index_char_at_i64(
                 &name,

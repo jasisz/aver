@@ -567,7 +567,7 @@ pub fn helperBody(
                 &h.lets,
                 f.clone(),
                 ds,
-                fuel.sub_owned_rhs(aver_rt::AverInt::from_i64(1)),
+                fuel.sub(&aver_rt::AverInt::from_i64(1)),
             )? == aver_rt::AverInt::from_i64(0)),
         );
         match __subject {
@@ -1740,7 +1740,7 @@ pub fn shorterSomewhere(
                         f: f.clone(),
                         p: p,
                         j: j.clone(),
-                        n: j.add_owned_rhs(aver_rt::AverInt::from_i64(((ps).len() as i64))),
+                        n: j.add(&aver_rt::AverInt::from_i64(((ps).len() as i64))),
                     };
                     {
                         let __arg7 @ _ = <aver_rt::AverList<AverStr>>::empty();

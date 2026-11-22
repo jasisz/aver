@@ -753,7 +753,7 @@ pub fn resolveStmts(
             { let (__stp3, __stp2) = crate::aver_generated::domain::resolver::core::resolveExpr(__stp0.clone(), slots); { let __stp4 = __stp2.insert_owned(__stp1, next.clone()); {
             let __tco0 = rest;
             let __tco1 = __stp4;
-            let __tco2 = next.add_owned_rhs(aver_rt::AverInt::from_i64(1));
+            let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
             let __tco3 = aver_rt::AverList::prepend_owned(crate::aver_generated::domain::ast::Stmt::StmtBindSlot(next, __stp3), acc);
             stmts = __tco0;
             slots = __tco1;
@@ -903,7 +903,7 @@ pub fn resolveStmtBindFinish(
     crate::aver_generated::domain::resolver::core::resolveStmts(
         rest,
         newSlots,
-        next.add_owned_rhs(aver_rt::AverInt::from_i64(1)),
+        next.add(&aver_rt::AverInt::from_i64(1)),
         aver_rt::AverList::prepend_owned(
             crate::aver_generated::domain::ast::Stmt::StmtBindSlot(next, newExpr),
             acc,
@@ -1990,7 +1990,7 @@ pub fn patternBindingSlotsCons(
     crate::cancel_checkpoint();
     let bindingSlots2 @ _ = bindingSlots.insert_owned(h, next.clone());
     (
-        bindingSlots2.insert_owned(t, next.add_owned_rhs(aver_rt::AverInt::from_i64(1))),
+        bindingSlots2.insert_owned(t, next.add(&aver_rt::AverInt::from_i64(1))),
         next.add_owned(&aver_rt::AverInt::from_i64(2)),
     )
 }
@@ -2254,7 +2254,7 @@ pub fn addConsSlots(
     crate::cancel_checkpoint();
     let slots2 @ _ = slots.insert_owned(h, next.clone());
     (
-        slots2.insert_owned(t, next.add_owned_rhs(aver_rt::AverInt::from_i64(1))),
+        slots2.insert_owned(t, next.add(&aver_rt::AverInt::from_i64(1))),
         next.add_owned(&aver_rt::AverInt::from_i64(2)),
     )
 }
@@ -2400,7 +2400,7 @@ pub fn resolveStmts__collected(
                                 {
                                     let __tco0 = rest;
                                     let __tco1 = __stp4;
-                                    let __tco2 = next.add_owned_rhs(aver_rt::AverInt::from_i64(1));
+                                    let __tco2 = next.add(&aver_rt::AverInt::from_i64(1));
                                     let __tco3 = aver_rt::list_builder_push(
                                         acc,
                                         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
