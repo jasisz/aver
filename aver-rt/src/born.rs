@@ -121,8 +121,9 @@ type Visitor =
 
 unsafe extern "C" {
     fn mi_heap_new() -> *mut c_void;
-    fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void;
-    fn mi_heap_malloc_small(heap: *mut c_void, size: usize) -> *mut c_void;
+    fn mi_heap_theap(heap: *mut c_void) -> *mut c_void;
+    fn mi_theap_malloc(theap: *mut c_void, size: usize) -> *mut c_void;
+    fn mi_theap_malloc_small(theap: *mut c_void, size: usize) -> *mut c_void;
     fn mi_heap_visit_blocks(
         heap: *mut c_void,
         visit_blocks: bool,
@@ -153,6 +154,14 @@ static HEAP: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 /// The second born heap, of nodes whose count is a 64-bit word at their
 /// front ([`alloc64`]), made with the first such node of the owner.
 static HEAP64: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+/// The owner's thread-local part of each heap (mimalloc's `theap`), which
+/// the owner allocates through directly: allocating through the heap looks
+/// its thread's part up, and mimalloc caches only the part of the heap used
+/// last, so a thread that allocates from three heaps in turn (these two and
+/// its default one) looked it up on almost every allocation. Only the owner
+/// reads them.
+static THEAP: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static THEAP64: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 /// How many nodes the scan froze, for tests.
 static SCANNED: AtomicUsize = AtomicUsize::new(0);
 /// How many of them were in the second heap, for tests.
@@ -278,7 +287,7 @@ fn heap() -> *mut c_void {
     }
     // SAFETY: a new heap, used by the owner alone.
     let new = unsafe { mi_heap_new() };
-    match HEAP.compare_exchange(
+    let h = match HEAP.compare_exchange(
         std::ptr::null_mut(),
         new,
         Ordering::AcqRel,
@@ -286,7 +295,11 @@ fn heap() -> *mut c_void {
     ) {
         Ok(_) => new,
         Err(seen) => seen,
-    }
+    };
+    // SAFETY: the owner's part of its heap, made for it here.
+    let theap = unsafe { mi_heap_theap(h) };
+    THEAP.store(theap, Ordering::Relaxed);
+    theap
 }
 
 /// Memory for a node of `size` bytes aligned to at most 16 in the born
@@ -300,38 +313,42 @@ pub fn alloc(size: usize) -> *mut u8 {
     if OWNER.load(Ordering::Relaxed) != me && !claim(me) {
         return std::ptr::null_mut();
     }
-    let mut h = HEAP.load(Ordering::Relaxed);
-    if h.is_null() {
-        h = heap();
-        if h.is_null() {
+    let mut t = THEAP.load(Ordering::Relaxed);
+    if t.is_null() {
+        t = heap();
+        if t.is_null() {
             return std::ptr::null_mut();
         }
     }
-    // SAFETY: the owner allocating in its heap.
+    // SAFETY: the owner allocating in its part of its heap.
     unsafe {
         if size <= SMALL {
-            mi_heap_malloc_small(h, size).cast()
+            mi_theap_malloc_small(t, size).cast()
         } else {
-            mi_heap_malloc(h, size).cast()
+            mi_theap_malloc(t, size).cast()
         }
     }
 }
 
-/// The second born heap, made on the owner's first use; null when the born
-/// heap was never made (the global allocator is not mimalloc, or the owner
-/// made no node of a recursive sum yet).
+/// The owner's part of the second born heap, which is made on the owner's
+/// first use; null when the born heap was never made (the global allocator
+/// is not mimalloc, or the owner made no node of a recursive sum yet).
 #[cold]
 #[inline(never)]
 fn heap64() -> *mut c_void {
-    let h = HEAP64.load(Ordering::Acquire);
-    if !h.is_null() || HEAP.load(Ordering::Acquire).is_null() {
-        return h;
+    let t = THEAP64.load(Ordering::Relaxed);
+    if !t.is_null() || HEAP.load(Ordering::Acquire).is_null() {
+        return t;
     }
     // SAFETY: a new heap, used by the owner alone (only the owner calls
-    // this, see `alloc64`).
-    let new = unsafe { mi_heap_new() };
-    HEAP64.store(new, Ordering::Release);
-    new
+    // this, see `alloc64`), and the owner's part of it.
+    let theap = unsafe {
+        let new = mi_heap_new();
+        HEAP64.store(new, Ordering::Release);
+        mi_heap_theap(new)
+    };
+    THEAP64.store(theap, Ordering::Relaxed);
+    theap
 }
 
 /// Memory for a counted node of `size` bytes aligned to `align`, whose
@@ -348,19 +365,19 @@ pub fn alloc64(size: usize, align: usize) -> *mut u8 {
     if OWNER.load(Ordering::Relaxed) != thread_word() {
         return std::ptr::null_mut();
     }
-    let mut h = HEAP64.load(Ordering::Relaxed);
-    if h.is_null() {
-        h = heap64();
-        if h.is_null() {
+    let mut t = THEAP64.load(Ordering::Relaxed);
+    if t.is_null() {
+        t = heap64();
+        if t.is_null() {
             return std::ptr::null_mut();
         }
     }
-    // SAFETY: the owner allocating in its heap.
+    // SAFETY: the owner allocating in its part of its heap.
     unsafe {
         if size <= SMALL {
-            mi_heap_malloc_small(h, size).cast()
+            mi_theap_malloc_small(t, size).cast()
         } else {
-            mi_heap_malloc(h, size).cast()
+            mi_theap_malloc(t, size).cast()
         }
     }
 }
