@@ -87,10 +87,10 @@ fn i64_interval() -> Interval {
 
 /// A builtin the Rust backend computes on raw `i64` operands: the
 /// remainder and quotient by a literal `k > 0` (Euclidean, as `Int` is),
-/// the bitwise operations, a shift or the low bits by a literal count, and
-/// the smaller or larger of two. Each gives the exact `Int` result for
-/// operands within `i64` and a result its bound ([`RawOp::interval`]) keeps
-/// within `i64`.
+/// the bitwise operations, a shift or the low bits by a literal count, the
+/// smaller or larger of two, the absolute value and the complement. Each
+/// gives the exact `Int` result for operands within `i64` and a result its
+/// bound ([`RawOp::interval`]) keeps within `i64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawOp {
     Mod,
@@ -98,6 +98,11 @@ pub enum RawOp {
     And,
     Or,
     Xor,
+    /// `Int.abs(x)`, of one operand: raw only when its bound keeps it
+    /// within `i64`, so never of `i64::MIN`.
+    Abs,
+    /// `Bits.not(x)`, of one operand: `-x - 1`.
+    Not,
     Min,
     Max,
     /// `Bits.shiftRight(x, k)`: rounds down, as Euclidean division by `2^k`.
@@ -118,8 +123,40 @@ impl RawOp {
             "Bits.xor" => RawOp::Xor,
             "Int.min" => RawOp::Min,
             "Int.max" => RawOp::Max,
+            "Int.abs" => RawOp::Abs,
+            "Bits.not" => RawOp::Not,
             _ => return None,
         })
+    }
+
+    /// How many operands the op takes.
+    pub fn arity(self) -> usize {
+        match self {
+            RawOp::Abs | RawOp::Not => 1,
+            _ => 2,
+        }
+    }
+
+    /// The result's bound from the bound `value` gives each operand, with
+    /// a literal second operand read as the literal it must be. `None`
+    /// when an operand has none, or is not the literal the op takes.
+    pub fn over(
+        self,
+        args: &[Spanned<MirExpr>],
+        mut value: impl FnMut(&MirExpr) -> Option<Interval>,
+    ) -> Option<Interval> {
+        if args.len() != self.arity() {
+            return None;
+        }
+        let a = value(&args[0].node)?;
+        if self.arity() == 1 {
+            return self.interval(a, a);
+        }
+        let b = match self.literal_operand(&args[1].node) {
+            Some(k) => Interval::point(k?),
+            None => value(&args[1].node)?,
+        };
+        self.interval(a, b)
     }
 
     /// The literal the second operand must be: a divisor above zero, or a
@@ -153,6 +190,8 @@ impl RawOp {
             RawOp::Or | RawOp::Xor => a.bit_or(b),
             RawOp::Min => a.min_with(b),
             RawOp::Max => a.max_with(b),
+            RawOp::Abs => a.abs(),
+            RawOp::Not => Interval::point(-1).sub(a),
             RawOp::Shr => a.div_euclid_by(1i128 << k?),
             RawOp::Shl => a.mul(Interval::point(1i128 << k?)),
             RawOp::Low => Interval::rem_euclid_by(1i128 << k?),
@@ -178,6 +217,10 @@ impl RawOp {
 ///   `[0, 2^k - 1]`, the low 64 bits of `x` masked.
 /// - `Bits.popCount(x, k)` for a literal `0 <= k <= 64`: a count of `k`
 ///   bits, in `[0, k]`, the one bits of the low 64 bits of `x` masked.
+/// - `Int.mod(x, k)` for a literal `k > 0`: the remainder is Euclidean (the
+///   VM, `aver_rt::AverInt::rem_euclid` and the Lean model's `Int.emod`
+///   agree), so it is in `[0, k - 1]` for every `x`, whatever its sign or
+///   length (`aver_rt::AverInt::rem_euclid_word` computes it).
 ///
 /// The `Bits` ones are found only with the other operand a literal the
 /// resolver or the source wrote, never through a computed value. A width
@@ -192,6 +235,8 @@ pub enum WordOp {
     Low(u32),
     /// The width `k`.
     PopCount(u32),
+    /// The divisor `k > 0`.
+    Mod(i64),
 }
 
 impl WordOp {
@@ -202,13 +247,14 @@ impl WordOp {
             WordOp::AndMask(c) => Interval::between(0, c as i128),
             WordOp::Low(k) => Interval::between(0, (1i128 << k) - 1),
             WordOp::PopCount(k) => Interval::between(0, k as i128),
+            WordOp::Mod(k) => Interval::rem_euclid_by(k as i128),
         }
     }
 
     /// The low-bits mask a `Bits` word applies to the operand's low 64 bits.
     pub fn mask(self) -> u64 {
         match self {
-            WordOp::SampleHash => u64::MAX,
+            WordOp::SampleHash | WordOp::Mod(_) => u64::MAX,
             WordOp::AndMask(c) => c as u64,
             WordOp::Low(k) | WordOp::PopCount(k) => u64::MAX.checked_shr(64 - k).unwrap_or(0),
         }
@@ -227,10 +273,13 @@ pub struct RawOps {
     /// `List.take` and `List.drop`, whose count the Rust backend clamps to
     /// a `usize` from either representation (see [`RawOps::takes_count`]).
     counts: HashSet<crate::ir::BuiltinId>,
-    /// The lengths (`List.len`, `Vector.len`, `Map.len`, `String.len`): the
-    /// size of something already in memory, which the Rust backend reads as
-    /// an `i64` (see [`RawOps::length`], [`LENGTH_TOP`]).
+    /// The lengths (`List.len`, `Vector.len`, `Map.len`, `String.len`,
+    /// `String.byteLength`): the size of something already in memory, which
+    /// the Rust backend reads as an `i64` (see [`RawOps::length`],
+    /// [`LENGTH_TOP`]).
     lengths: HashSet<crate::ir::BuiltinId>,
+    /// `String.byteLength`, the one length of a string that counts bytes.
+    byte_lengths: HashSet<crate::ir::BuiltinId>,
     /// `Vector.get` and `Vector.set`, whose index the Rust backend converts
     /// to a `usize` from either representation (see [`RawOps::takes_index`]).
     indexes: HashSet<crate::ir::BuiltinId>,
@@ -262,12 +311,17 @@ impl RawOps {
                 .filter(|&id| {
                     matches!(
                         program.builtin_name(id),
-                        "List.len" | "Vector.len" | "Map.len" | "String.len"
+                        "List.len" | "Vector.len" | "Map.len" | "String.len" | "String.byteLength"
                     )
                 })
                 .collect(),
             false => HashSet::new(),
         };
+        let byte_lengths = lengths
+            .iter()
+            .copied()
+            .filter(|&id| program.builtin_name(id) == "String.byteLength")
+            .collect();
         let indexes = match on {
             true => (0..program.builtins.len() as u32)
                 .map(crate::ir::BuiltinId)
@@ -291,6 +345,7 @@ impl RawOps {
             builtins,
             counts,
             lengths,
+            byte_lengths,
             indexes,
             words,
         }
@@ -322,6 +377,11 @@ impl RawOps {
             MirCallee::Intrinsic(I::BitsPopCount) if args.len() == 2 => literal(1)
                 .filter(|k| (0..=64).contains(k))
                 .map(|k| WordOp::PopCount(k as u32)),
+            // Only a divisor above zero: a negative one (a negation, or a
+            // literal folded from one) keeps the boxed call.
+            MirCallee::Intrinsic(I::IntModEuclid) if args.len() == 2 => {
+                literal(1).filter(|k| *k > 0).map(WordOp::Mod)
+            }
             _ => None,
         }
     }
@@ -330,6 +390,12 @@ impl RawOps {
     /// `0..=LENGTH_TOP` (see [`RawOps::lengths`]).
     pub fn length(&self, callee: &MirCallee) -> bool {
         matches!(callee, MirCallee::Builtin(id) if self.lengths.contains(id))
+    }
+
+    /// Whether a length of `callee` counts the bytes of a string, not its
+    /// characters (`String.byteLength`).
+    pub fn counts_bytes(&self, callee: &MirCallee) -> bool {
+        matches!(callee, MirCallee::Builtin(id) if self.byte_lengths.contains(id))
     }
 
     /// Whether argument `i` of a call of `callee` is a count of list
@@ -805,7 +871,7 @@ impl FnBareFacts {
             return None;
         };
         let op = self.raw_ops.op(&c.node.callee)?;
-        (c.node.args.len() == 2).then_some((op, c.node.args.as_slice()))
+        (c.node.args.len() == op.arity()).then_some((op, c.node.args.as_slice()))
     }
 
     /// Rust: the range of a length (`Vector.len(v)` …): the count of
@@ -887,12 +953,7 @@ impl FnBareFacts {
             MirExpr::Call(_) if let Some((op, _)) = self.word_call(e) => op.interval(),
             MirExpr::Call(_) if self.raw_op_over_raw(e) => {
                 let (op, args) = self.raw_op_call(e)?;
-                let a = self.proven_interval_inner(&args[0].node)?;
-                let b = match op.literal_operand(&args[1].node) {
-                    Some(k) => Interval::point(k?),
-                    None => self.proven_interval_inner(&args[1].node)?,
-                };
-                op.interval(a, b)?
+                op.over(args, |a| self.proven_interval_inner(a))?
             }
             MirExpr::Neg(inner) => Interval::point(0).sub(self.proven_interval_inner(&inner.node)?),
             MirExpr::BinOp(b) => {
@@ -921,12 +982,8 @@ impl FnBareFacts {
     /// operand is not raw or not the literal the op takes.
     fn raw_op_interval(&self, e: &MirExpr) -> Option<Interval> {
         let (op, args) = self.raw_op_call(e)?;
-        let a = self.bare_expr_interval(&args[0].node)?;
-        let b = match op.literal_operand(&args[1].node) {
-            Some(k) => Interval::point(k?),
-            None => self.bare_expr_interval(&args[1].node)?,
-        };
-        op.interval(a, b).filter(|iv| iv.fits_i64())
+        op.over(args, |a| self.bare_expr_interval(a))
+            .filter(|iv| iv.fits_i64())
     }
 
     /// ETAP-2 carrier-`i64`: does `e` read a bare carrier's i64 `.value`
@@ -4250,14 +4307,8 @@ fn eval_interval(
             let Some((op, args)) = facts.raw_op_call(e) else {
                 return word.unwrap_or_else(Interval::unbounded);
             };
-            let a = eval_interval(&args[0].node, env, worst, facts);
-            let b = match op.literal_operand(&args[1].node) {
-                Some(Some(k)) => Some(Interval::point(k)),
-                Some(None) => None,
-                None => Some(eval_interval(&args[1].node, env, worst, facts)),
-            };
-            let r = b
-                .and_then(|b| op.interval(a, b))
+            let r = op
+                .over(args, |a| Some(eval_interval(a, env, worst, facts)))
                 .unwrap_or_else(Interval::unbounded);
             let r = word.map_or(r, |w| r.intersect(w));
             *worst = worst.hull(r);
@@ -6849,7 +6900,60 @@ fn sampledWord(n: Int) -> Word
                     "popCount({x}, {k}) off 64 bits"
                 );
             }
+            for k in [
+                1i64,
+                2,
+                7,
+                2147483647,
+                1 << 32,
+                (1 << 62) - 1,
+                1 << 62,
+                i64::MAX,
+            ] {
+                let op = WordOp::Mod(k);
+                let r = x.rem_euclid(&i(k)).unwrap();
+                assert!(inside(op.interval(), &r), "mod({x}, {k})");
+                assert_eq!(r, i(x.rem_euclid_word(k)), "mod({x}, {k}) as a word");
+            }
         }
+    }
+
+    /// The bounds of the one-operand ops computed raw, `Int.abs` and
+    /// `Bits.not`, against the runtime's own operations over values at the
+    /// ends of each interval and of `i64`, of both signs.
+    #[test]
+    fn unary_raw_op_intervals_hold_for_the_runtime_operations() {
+        use aver_rt::AverInt;
+        let i = AverInt::from_i64;
+        let inside =
+            |iv: Interval, v: &AverInt| v.to_i64().is_some_and(|v| iv.contains_point(v as i128));
+        let (min, max) = (i64::MIN as i128, i64::MAX as i128);
+        for (lo, hi) in [
+            (-512i128, 511),
+            (0, 7),
+            (-7, 0),
+            (-9, -3),
+            (3, 9),
+            (min + 1, max),
+            (min, -1),
+            (-(1 << 62), (1 << 62) - 1),
+        ] {
+            let iv = Interval::between(lo, hi);
+            let abs = RawOp::Abs.interval(iv, iv).unwrap();
+            let not = RawOp::Not.interval(iv, iv).unwrap();
+            for x in [lo, hi, (lo + hi) / 2, lo.max(-1).min(hi), 0.max(lo).min(hi)] {
+                let v = i(x as i64);
+                let a = v.abs();
+                let n = v.bit_not();
+                assert_eq!(a.to_string(), x.abs().to_string(), "the runtime's abs({x})");
+                assert!(abs.contains_point(x.abs()), "abs({x}) in {abs:?}");
+                assert!(inside(not, &n), "not({x}) in {not:?}");
+            }
+        }
+        // `i64::MIN` has no `i64` absolute value, so its bound leaves `i64`
+        // and the op is not computed raw.
+        let edge = Interval::between(min, 0);
+        assert!(!RawOp::Abs.interval(edge, edge).unwrap().fits_i64());
     }
 
     #[test]
