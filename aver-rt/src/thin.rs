@@ -246,6 +246,21 @@ impl<S: ThinSum> Thin<S> {
         }
     }
 
+    /// The tag of the value's constructor and the node's equality class
+    /// bits (see [`crate::eq_classes`]), read from one load of the tag word:
+    /// what [`Thin::tag`] and [`Thin::class_bits`] answer.
+    #[inline]
+    pub fn tag_and_class_bits(&self) -> (u32, u32) {
+        if self.is_empty_ctor() {
+            return ((self.ptr.as_ptr().addr() - 1) as u32, 0);
+        }
+        let word = self.header().tag.load(Ordering::Relaxed);
+        match S::LAZY || !cfg!(feature = "equality-classes") {
+            true => (word & Self::TAG_MASK, 0),
+            false => (word & Self::TAG_MASK, word >> 8),
+        }
+    }
+
     /// The bits of the tag word a constructor's tag takes: all of them in a
     /// sum some `lazy f(…)` returns, whose deferred calls keep their state
     /// there, and the low eight otherwise (`MAX_TAGS`), the rest holding the
@@ -1442,6 +1457,18 @@ macro_rules! thin_sum {
                 })
             }
 
+            /// `view_pair` with both nodes' equality class bits (0 for a
+            /// node that keeps none, see `aver_rt::eq_classes`), read from
+            /// the tag word `view_pair` reads, for
+            /// `aver_rt::Walk::node_classed`.
+            #[inline]
+            $vis fn view_pair_classed<'a>(
+                a: &'a Self,
+                b: &'a Self,
+            ) -> ::std::option::Option<($pair<'a>, u32, u32)> {
+                $crate::thin_sum!(@pair_classed $name $pair a b $( $lazy )? ; $( $tag $ctor $( ( $fields ) )? ),+)
+            }
+
             /// The tag of the value's constructor (its declaration index).
             #[inline]
             $vis fn tag(&self) -> u32 {
@@ -1483,6 +1510,26 @@ macro_rules! thin_sum {
         }
     };
 
+    // A sum some `lazy f(…)` returns keeps no classes.
+    (@pair_classed $name:ident $pair:ident $a:ident $b:ident $lazy:literal ; $( $tag:literal $ctor:ident $( ( $fields:ty ) )? ),+) => {
+        $name::view_pair($a, $b).map(|pair| (pair, 0, 0))
+    };
+    (@pair_classed $name:ident $pair:ident $a:ident $b:ident ; $( $tag:literal $ctor:ident $( ( $fields:ty ) )? ),+) => {{
+        let ((tag, bits_a), (other, bits_b)) = ($a.0.tag_and_class_bits(), $b.0.tag_and_class_bits());
+        if tag != other {
+            return None;
+        }
+        let (a, b) = (&$a.0, &$b.0);
+        Some((
+            match tag {
+                $( $tag => $pair::$ctor $( (unsafe { a.fields::<$fields>() }, unsafe { b.fields::<$fields>() }) )?, )+
+                // As in `view`.
+                _ => unsafe { ::std::hint::unreachable_unchecked() },
+            },
+            bits_a,
+            bits_b,
+        ))
+    }};
     (@is_lazy) => { false };
     (@is_lazy $lazy:literal) => { true };
     (@tag_of $name:ident $tag:literal $fields:ty) => {
@@ -1642,19 +1689,23 @@ mod tests {
 
     impl WalkEq for T {
         fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
-            match T::view_pair(self, other) {
-                None => false,
-                Some(T__Pairs::Leaf(a, b)) => a == b,
-                Some(T__Pairs::Nil | T__Pairs::Unit) => true,
-                Some(T__Pairs::Opt(a, b)) => a.0.walk_eq(&b.0, walk),
+            let Some((pair, bits_a, bits_b)) = T::view_pair_classed(self, other) else {
+                return false;
+            };
+            #[cfg(not(feature = "equality-classes"))]
+            let _ = (bits_a, bits_b);
+            match pair {
+                T__Pairs::Leaf(a, b) => a == b,
+                T__Pairs::Nil | T__Pairs::Unit => true,
+                T__Pairs::Opt(a, b) => a.0.walk_eq(&b.0, walk),
                 #[cfg(feature = "equality-classes")]
-                Some(T__Pairs::Pair(a, b)) => {
-                    walk.node_classed::<4, _>(self, other, true, |walk| {
+                T__Pairs::Pair(a, b) => {
+                    walk.node_classed::<4, _>(self, other, (bits_a, bits_b), true, |walk| {
                         a.2 == b.2 && a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                     })
                 }
                 #[cfg(not(feature = "equality-classes"))]
-                Some(T__Pairs::Pair(a, b)) => walk.node(self, other, true, |walk| {
+                T__Pairs::Pair(a, b) => walk.node(self, other, true, |walk| {
                     a.2 == b.2 && a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
             }
@@ -2030,6 +2081,17 @@ mod tests {
         assert_eq!(node.tag(), 2);
         assert!(matches!(node.view(), T__View::Pair(_)));
         assert!(T::view_pair(&node, &other).is_some());
+        // The pair with class bits reads the same tag and the bits as
+        // `class_bits` does; a constructor without fields keeps none.
+        assert!(matches!(
+            T::view_pair_classed(&node, &other),
+            Some((T__Pairs::Pair(..), 0xff_ffff, 0xff_ffff))
+        ));
+        assert!(matches!(
+            T::view_pair_classed(&T::Nil, &T::Nil),
+            Some((T__Pairs::Nil, 0, 0))
+        ));
+        assert!(T::view_pair_classed(&node, &T::Nil).is_none());
         assert_eq!(sum(&node), 15);
         let address = super::Thin::addr(&node.0);
         let Ok((T__Pair(x, y, n), token)) = node.try_take_reusing::<T__Pair>() else {
@@ -2256,19 +2318,23 @@ mod tests {
 
     impl WalkEq for L {
         fn walk_eq<'v>(&'v self, other: &'v Self, walk: Walk<'_, 'v>) -> bool {
-            match L::view_pair(self, other) {
-                None => false,
-                Some(L__Pairs::Leaf(a, b)) => a == b,
-                Some(L__Pairs::Nil) => true,
-                Some(L__Pairs::Held(a, b)) => a.0 == b.0,
+            let Some((pair, bits_a, bits_b)) = L::view_pair_classed(self, other) else {
+                return false;
+            };
+            #[cfg(not(feature = "equality-classes"))]
+            let _ = (bits_a, bits_b);
+            match pair {
+                L__Pairs::Leaf(a, b) => a == b,
+                L__Pairs::Nil => true,
+                L__Pairs::Held(a, b) => a.0 == b.0,
                 #[cfg(feature = "equality-classes")]
-                Some(L__Pairs::Node(a, b)) => {
-                    walk.node_classed::<4, _>(self, other, true, |walk| {
+                L__Pairs::Node(a, b) => {
+                    walk.node_classed::<4, _>(self, other, (bits_a, bits_b), true, |walk| {
                         a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                     })
                 }
                 #[cfg(not(feature = "equality-classes"))]
-                Some(L__Pairs::Node(a, b)) => walk.node(self, other, true, |walk| {
+                L__Pairs::Node(a, b) => walk.node(self, other, true, |walk| {
                     a.0.walk_eq(&b.0, walk) && a.1.walk_eq(&b.1, walk)
                 }),
             }

@@ -38,10 +38,6 @@ struct Memory<'v> {
     top: Cell<usize>,
     /// Empty until a pair is remembered or left for later.
     spent: Cell<Option<Box<Spent<'v>>>>,
-    /// How many pairs of nodes the comparison has met, which tells how deep
-    /// a pair went (see [`crate::eq_classes`]).
-    #[cfg(feature = "equality-classes")]
-    steps: Cell<u32>,
 }
 
 #[derive(Default)]
@@ -194,23 +190,33 @@ impl<'v> Walk<'_, 'v> {
 
     /// [`Walk::node`] with equality classes (see [`crate::eq_classes`]):
     /// two nodes that both carry a class of this thread are equal at once
-    /// when the classes meet, and two nodes found equal by a walk at least
-    /// `MIN_STEPS` pairs deep, the two counted, join one class. What the
+    /// when the classes meet, and two nodes found equal by a walk that spent
+    /// at least `MIN_STEPS` steps of its budget on them, their own pair
+    /// counted, join one class. `bits_a` and `bits_b` are the nodes' class
+    /// bits as [`NodeId::class_bits`] reads them, which the caller has read
+    /// already with their tags (`view_pair_classed` of a thin sum). What the
     /// generated `==` of a recursive sum calls when `[rust]
     /// equality_classes` in `aver.toml` is `MIN_STEPS` above 0.
+    ///
+    /// How deep a pair went is read off the budget: `left` only goes down,
+    /// by one for each pair of nodes and each pair of collections met while
+    /// the budget lasts, so what it lost under this pair is how many it met.
+    /// A pair met once it is spent is remembered, and marks where its
+    /// memory began; a pair under which the budget ran out joins only when
+    /// no such mark was made, so no pair below it was left for later.
     #[cfg(feature = "equality-classes")]
     #[inline]
     pub fn node_classed<const MIN_STEPS: u32, N: NodeId + WalkEq>(
         self,
         a: &'v N,
         b: &'v N,
+        (bits_a, bits_b): (u32, u32),
         reflexive: bool,
         fields_eq: impl FnOnce(Self) -> bool,
     ) -> bool {
         if reflexive && a.addr() == b.addr() {
             return true;
         }
-        let (bits_a, bits_b) = (a.class_bits(), b.class_bits());
         if bits_a != 0 && bits_b != 0 && crate::eq_classes::same(a.addr(), bits_a, b.addr(), bits_b)
         {
             #[cfg(feature = "equality-classes-check")]
@@ -225,16 +231,14 @@ impl<'v> Walk<'_, 'v> {
             return self.remembering(a, b, fields_eq);
         }
         self.left.set(left - 1);
-        let start = self.memory.steps.get();
-        self.memory.steps.set(start.wrapping_add(1));
         let same = fields_eq(self);
         // Joined only when the answer is final: no pair below was left for
         // later, which happens only once the budget is spent.
-        if same
-            && self.memory.steps.get().wrapping_sub(start) >= MIN_STEPS
-            && self.memory.top.get() == 0
-        {
-            crate::eq_classes::join(a, b);
+        if same && MIN_STEPS <= left {
+            let after = self.left.get();
+            if left - after >= MIN_STEPS && (after != 0 || self.memory.top.get() == 0) {
+                crate::eq_classes::join(a, b);
+            }
         }
         same
     }

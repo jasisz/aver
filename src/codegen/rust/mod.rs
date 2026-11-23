@@ -2912,8 +2912,10 @@ fn width(s: Shape) -> Int
             "Tree::ptr_eq(self, other) || self.aver_walk_eq_nodes(other, walk)",
             // `[rust] equality_classes` is on by default (12 pairs). The
             // scalar field tells two nodes apart before the class lookup.
-            "Some(Tree__pair::Node(a0, b0)) => a0.0 == b0.0 && walk.node_classed::<12, _>(self, other, false, |walk| a0.walk_eq(b0, walk)),",
-            "Some(Tree__pair::Leaf(a0, b0)) => a0 == b0,",
+            // The class bits come with the pair, read with the tags.
+            "match Tree::view_pair_classed(self, other) {",
+            "Some((Tree__pair::Node(a0, b0), bits_a, bits_b)) => a0.0 == b0.0 && walk.node_classed::<12, _>(self, other, (bits_a, bits_b), false, |walk| a0.walk_eq(b0, walk)),",
+            "Some((Tree__pair::Leaf(a0, b0), _, _)) => a0 == b0,",
             "impl aver_rt::WalkEq for Tree__Node {\n    fn walk_eq<'v>(&'v self, other: &'v Self, walk: aver_rt::Walk<'_, 'v>) -> bool {\n        self.0 == other.0 && self.1.walk_eq(&other.1, walk) && self.2.walk_eq(&other.2, walk)\n    }\n}",
             "(Cell::Cell(a0, a1, a2), Cell::Cell(b0, b1, b2)) => a1 == b1 && a2 == b2 && a0 == b0,",
             "(Cell::Empty, Cell::Empty) => true,",

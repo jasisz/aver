@@ -895,6 +895,16 @@ fn emit_sum_type(
     // comparison meets are one node, equal with no call and no load (see
     // `walk_eq_by_node`).
     let one_first = recursive && thin && capabilities.eq && !lazy;
+    // A thin sum with equality classes matches on `view_pair_classed`, which
+    // hands each arm both nodes' class bits read with their tags, so that
+    // `node_classed` does not read the tag words again.
+    let classed = thin
+        && !lazy
+        && ctx.rust_equality_classes > 0
+        && variants
+            .iter()
+            .enumerate()
+            .any(|(i, v)| !v.fields.is_empty() && walks_on(i));
     if inline_eq {
         let mut arms = String::new();
         // The arms of the `==` of a sum that is not thin, which carries no
@@ -957,7 +967,7 @@ fn emit_sum_type(
                     // `Cargo.toml` turns on aver-rt's `equality-classes`.
                     ctx.rust_classed_eq.set(true);
                     format!(
-                        "{scalars_first}walk.node_classed::<{}, _>(self, other, {}, |walk| a0.walk_eq(b0, walk))",
+                        "{scalars_first}walk.node_classed::<{}, _>(self, other, (bits_a, bits_b), {}, |walk| a0.walk_eq(b0, walk))",
                         ctx.rust_equality_classes,
                         capabilities.eq && !one_first
                     )
@@ -993,10 +1003,28 @@ fn emit_sum_type(
                 )
                 .unwrap();
             }
+            let classed_arm = classed && !order.is_empty() && walks_on(i);
             match thin {
+                true if classed && order.is_empty() => {
+                    writeln!(
+                        arms,
+                        "            Some(({pair}::{}, _, _)) => {test},",
+                        v.name
+                    )
+                }
                 true if order.is_empty() => {
                     writeln!(arms, "            Some({pair}::{}) => {test},", v.name)
                 }
+                true if classed_arm => writeln!(
+                    arms,
+                    "            Some(({pair}::{}(a0, b0), bits_a, bits_b)) => {test},",
+                    v.name
+                ),
+                true if classed => writeln!(
+                    arms,
+                    "            Some(({pair}::{}(a0, b0), _, _)) => {test},",
+                    v.name
+                ),
                 true => writeln!(
                     arms,
                     "            Some({pair}::{}(a0, b0)) => {test},",
@@ -1015,7 +1043,11 @@ fn emit_sum_type(
         if recursive {
             let test = match thin {
                 true => format!(
-                    "match {name}::view_pair(self, other) {{\n{arms}            None => false,\n        }}"
+                    "match {name}::{}(self, other) {{\n{arms}            None => false,\n        }}",
+                    match classed {
+                        true => "view_pair_classed",
+                        false => "view_pair",
+                    }
                 ),
                 false => {
                     format!("match (self, other) {{\n{arms}            _ => false,\n        }}")
@@ -3150,7 +3182,9 @@ mod tests {
         // the context records that the code calls `node_classed`.
         ctx.rust_equality_classes = 12;
         let classed = emit_public_type_def(&td, &ctx);
-        assert!(classed.contains("walk.node_classed::<12, _>(self, other, "));
+        assert!(classed.contains("match Tree::view_pair_classed(self, other) {"));
+        assert!(classed.contains("Some((Tree__pair::Empty, _, _)) => true,"));
+        assert!(classed.contains("walk.node_classed::<12, _>(self, other, (bits_a, bits_b), "));
         assert!(ctx.rust_classed_eq.get());
     }
 

@@ -5,7 +5,8 @@
 //! node by node each time it meets them. When the same pairs come back —
 //! a term checked against its copy again and again — so does the work.
 //! Here a comparison that walked a pair of nodes of a recursive sum, went at
-//! least `MIN_STEPS` pairs deep (a parameter of
+//! least `MIN_STEPS` steps of its budget deep, pairs of nodes and of
+//! collections counted (a parameter of
 //! [`Walk::node_classed`](crate::Walk::node_classed), which the code
 //! generator sets from `[rust] equality_classes`) and found them equal joins
 //! the two nodes into one class, in a union-find of this thread; a later
@@ -18,7 +19,8 @@
 //! # Where a class is kept
 //!
 //! The tag word of a node of a [`thin`](crate::thin) sum is 32 bits, of
-//! which a constructor's tag takes the low eight (`MAX_TAGS`). The upper 24
+//! which a constructor's tag takes the low eight (`MAX_TAGS`), and `==`
+//! reads both from one load of it (`view_pair_classed`). The upper 24
 //! hold the node's class: the slot of the thread that gave it ([`SLOT_BITS`]
 //! bits) and the class id plus one ([`ID_BITS`] bits); 0 is no class. Each
 //! thread keeps, for each id it gave, its parent in the union-find (`par`)
