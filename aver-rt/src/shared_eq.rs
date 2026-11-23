@@ -231,10 +231,16 @@ impl<'v> Walk<'_, 'v> {
             return self.remembering(a, b, fields_eq);
         }
         self.left.set(left - 1);
+        // With less budget left than `MIN_STEPS` the pair cannot go deep
+        // enough to join: the comparison goes on as `Walk::node`'s does, in
+        // tail position.
+        if left < MIN_STEPS {
+            return fields_eq(self);
+        }
         let same = fields_eq(self);
         // Joined only when the answer is final: no pair below was left for
         // later, which happens only once the budget is spent.
-        if same && MIN_STEPS <= left {
+        if same {
             let after = self.left.get();
             if left - after >= MIN_STEPS && (after != 0 || self.memory.top.get() == 0) {
                 crate::eq_classes::join(a, b);
